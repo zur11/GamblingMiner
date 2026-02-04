@@ -1,0 +1,90 @@
+[gd_scene load_steps=2 format=3 uid="uid://c711y35rvk5gf"]
+
+[ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame.cs" id="1_k3ff0"]
+
+[node name="DiceGame" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_k3ff0")
+
+[node name="BalanceText" type="Label" parent="."]
+layout_mode = 0
+offset_left = 612.0
+offset_top = 19.0
+offset_right = 802.0
+offset_bottom = 88.0
+theme_override_font_sizes/font_size = 50
+text = "Balance"
+
+[node name="BalanceValue" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 577.0
+offset_top = 104.0
+offset_right = 848.0
+offset_bottom = 173.0
+theme_override_font_sizes/font_size = 50
+text = "1.00000000"
+
+[node name="BetText" type="Label" parent="."]
+layout_mode = 0
+offset_left = 82.0
+offset_top = 299.0
+offset_right = 196.0
+offset_bottom = 395.0
+theme_override_font_sizes/font_size = 70
+text = "Bet"
+
+[node name="BetInput" type="LineEdit" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 75.0
+offset_top = 430.0
+offset_right = 473.0
+offset_bottom = 534.0
+theme_override_font_sizes/font_size = 70
+placeholder_text = "0.00000000"
+max_length = 16
+
+[node name="ResultText" type="Label" parent="."]
+layout_mode = 0
+offset_left = 1109.0
+offset_top = 289.0
+offset_right = 1362.0
+offset_bottom = 385.0
+theme_override_font_sizes/font_size = 70
+text = "Result"
+
+[node name="ResultValue" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 1135.0
+offset_top = 415.0
+offset_right = 1175.0
+offset_bottom = 511.0
+theme_override_font_sizes/font_size = 70
+text = "0"
+
+[node name="PlayHighBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 584.0
+offset_top = 268.0
+offset_right = 907.0
+offset_bottom = 372.0
+theme_override_font_sizes/font_size = 70
+text = "Play High"
+
+[node name="PlayLowBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 590.0
+offset_top = 521.0
+offset_right = 895.0
+offset_bottom = 625.0
+theme_override_font_sizes/font_size = 70
+text = "Play Low"
