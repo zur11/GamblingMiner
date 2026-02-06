@@ -5,22 +5,28 @@ using System.Text.RegularExpressions;
 
 public partial class DiceGame : Control
 {
-	// Nodos
+	// --- Nodos UI ---
 	private Label _balanceValue;
 	private LineEdit _betInput;
 	private Label _resultValue;
-	private Button _playHighBtn;
-	private Button _playLowBtn;
 
-	// Estado del juego
+	private Label _winnerNumbersValue;
+	private Label _chanceToWinValue;
+	private Label _multiplierValue;
+
+	private Slider _chanceSlider;
+	private Button _highLowToggleBtn;
+	private Button _betBtn;
+
+	// --- Estado ---
 	private decimal _balance = 1.00000000m;
-	private const decimal Payout = 1.9804m;
+	private const decimal RTP = 0.9902m;
 
 	private Random _rng = new Random();
 
-	// Regexp para validar entrada decimal
+	// --- Validación decimal ---
 	private static readonly Regex BetRegex =
-	new Regex(@"^\d+(\.\d{1,8})?$", RegexOptions.Compiled);
+		new Regex(@"^\d+(\.\d{1,8})?$", RegexOptions.Compiled);
 
 	public override void _Ready()
 	{
@@ -28,28 +34,43 @@ public partial class DiceGame : Control
 		_balanceValue = GetNode<Label>("%BalanceValue");
 		_betInput = GetNode<LineEdit>("%BetInput");
 		_resultValue = GetNode<Label>("%ResultValue");
-		_playHighBtn = GetNode<Button>("%PlayHighBtn");
-		_playLowBtn = GetNode<Button>("%PlayLowBtn");
+
+		_winnerNumbersValue = GetNode<Label>("%WinnerNumbersValue");
+		_chanceToWinValue = GetNode<Label>("%ChanceToWinValue");
+		_multiplierValue = GetNode<Label>("%MultiplierValue");
+
+		_chanceSlider = GetNode<Slider>("%ChanceSlider");
+		_highLowToggleBtn = GetNode<Button>("%HighLowToggleBtn");
+		_betBtn = GetNode<Button>("%BetBtn");
+
+		// Configurar toggle
+		_highLowToggleBtn.ToggleMode = true;
+		_highLowToggleBtn.ButtonPressed = false;
+		_highLowToggleBtn.Text = "LOW";
 
 		// Conectar señales
-		_playHighBtn.Pressed += OnPlayHigh;
-		_playLowBtn.Pressed += OnPlayLow;
+		_highLowToggleBtn.Pressed += OnHighLowToggled;
+		_chanceSlider.ValueChanged += OnChanceChanged;
+		_betBtn.Pressed += OnBetPressed;
 
-		UpdateBalanceUI();
+		UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
 	}
 
-	private void OnPlayHigh()
+	// --- Eventos UI ---
+
+	private void OnHighLowToggled()
 	{
-		PlayRound(isHigh: true);
+		_highLowToggleBtn.Text = _highLowToggleBtn.ButtonPressed ? "HIGH" : "LOW";
+		UpdateAllUI();
 	}
 
-	private void OnPlayLow()
+	private void OnChanceChanged(double _)
 	{
-		PlayRound(isHigh: false);
+		UpdateAllUI();
 	}
 
-	private void PlayRound(bool isHigh)
+	private void OnBetPressed()
 	{
 		if (!TryGetBet(out decimal bet))
 		{
@@ -63,23 +84,89 @@ public partial class DiceGame : Control
 			return;
 		}
 
-		int roll = _rng.Next(0, 100); // 0–99
-		bool win = isHigh ? roll >= 50 : roll < 50;
+		int roll = _rng.Next(0, 100);
+		int chance = (int)_chanceSlider.Value;
+		bool isHigh = _highLowToggleBtn.ButtonPressed;
+
+		bool win = isHigh
+			? roll >= 100 - chance
+			: roll < chance;
 
 		if (win)
 		{
-			decimal profit = bet * Payout - bet;
+			decimal multiplier = GetMultiplier(chance);
+			decimal profit = bet * multiplier - bet;
 			_balance += profit;
-			_resultValue.Text = $"WIN 🎉 Roll: {roll}";
+			_resultValue.Text = $"WIN 🎉 Roll: {roll:00}";
 		}
 		else
 		{
 			_balance -= bet;
-			_resultValue.Text = $"LOSS ❌ Roll: {roll}";
+			_resultValue.Text = $"LOSS ❌ Roll: {roll:00}";
 		}
 
 		UpdateBalanceUI();
 	}
+
+	// --- Cálculos ---
+
+	private decimal GetMultiplier(int chance)
+	{
+		return RTP * 100m / chance;
+	}
+
+	// --- UI Updates ---
+
+	private void UpdateAllUI()
+	{
+		UpdateBalanceUI();
+		UpdateChanceUI();
+		UpdateWinnerRangeUI();
+		UpdateMultiplierUI();
+	}
+
+	private void UpdateBalanceUI()
+	{
+		_balanceValue.Text = _balance.ToString("F8", CultureInfo.InvariantCulture);
+	}
+
+	private void UpdateChanceUI()
+	{
+		int chance = (int)_chanceSlider.Value;
+		_chanceToWinValue.Text = $"{chance}%";
+	}
+
+	private void UpdateMultiplierUI()
+	{
+		int chance = (int)_chanceSlider.Value;
+		decimal multiplier = GetMultiplier(chance);
+		_multiplierValue.Text = $"x {multiplier:F4}";
+	}
+
+	private void UpdateWinnerRangeUI()
+	{
+		int chance = (int)_chanceSlider.Value;
+		bool isHigh = _highLowToggleBtn.ButtonPressed;
+
+		if (isHigh)
+		{
+			int min = 100 - chance;
+			_winnerNumbersValue.Text =
+				chance == 1
+					? "99"
+					: $"{min:00} to 99";
+		}
+		else
+		{
+			int max = chance - 1;
+			_winnerNumbersValue.Text =
+				chance == 1
+					? "00"
+					: $"00 to {max:00}";
+		}
+	}
+
+	// --- Validación apuesta ---
 
 	private bool TryGetBet(out decimal bet)
 	{
@@ -87,11 +174,9 @@ public partial class DiceGame : Control
 
 		string text = _betInput.Text.Trim().Replace(',', '.');
 
-		// 1. Validar formato
 		if (!BetRegex.IsMatch(text))
 			return false;
 
-		// 2. Parsear decimal
 		if (!decimal.TryParse(
 			text,
 			NumberStyles.AllowDecimalPoint,
@@ -99,13 +184,6 @@ public partial class DiceGame : Control
 			out bet))
 			return false;
 
-		// 3. Valor positivo
 		return bet > 0m;
-	}
-
-
-	private void UpdateBalanceUI()
-	{
-		_balanceValue.Text = _balance.ToString("F8", CultureInfo.InvariantCulture);
 	}
 }
