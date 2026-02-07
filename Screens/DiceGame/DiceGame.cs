@@ -2,9 +2,13 @@ using Godot;
 using System;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Scripts.Dice;
 
 public partial class DiceGame : Control
 {
+	// --- Engine ---
+	private DiceEngine _engine;
+
 	// --- Nodos UI ---
 	private Label _balanceValue;
 	private LineEdit _betInput;
@@ -18,18 +22,15 @@ public partial class DiceGame : Control
 	private Button _highLowToggleBtn;
 	private Button _betBtn;
 
-	// --- Estado ---
-	private decimal _balance = 1.00000000m;
-	private const decimal RTP = 0.9902m;
-
-	private Random _rng = new Random();
-
 	// --- Validación decimal ---
 	private static readonly Regex BetRegex =
 		new Regex(@"^\d+(\.\d{1,8})?$", RegexOptions.Compiled);
 
 	public override void _Ready()
 	{
+		// Setear Balance inicial en el engine
+		_engine = new DiceEngine(initialBalance: 1.00000000m);
+
 		// Obtener nodos
 		_balanceValue = GetNode<Label>("%BalanceValue");
 		_betInput = GetNode<LineEdit>("%BetInput");
@@ -78,41 +79,33 @@ public partial class DiceGame : Control
 			return;
 		}
 
-		if (bet > _balance)
-		{
-			_resultValue.Text = "Insufficient balance.";
-			return;
-		}
-
-		int roll = _rng.Next(0, 100);
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
 
-		bool win = isHigh
-			? roll >= 100 - chance
-			: roll < chance;
-
-		if (win)
+		try
 		{
-			decimal multiplier = GetMultiplier(chance);
-			decimal profit = bet * multiplier - bet;
-			_balance += profit;
-			_resultValue.Text = $"WIN 🎉 Roll: {roll:00}";
+			var result = _engine.Play(
+				bet: bet,
+				chancePercent: chance,
+				isHigh: isHigh
+			);
+
+			if (result.IsWin)
+			{
+				_resultValue.Text = $"WIN 🎉 Roll: {result.Roll:00}";
+			}
+			else
+			{
+				_resultValue.Text = $"LOSS ❌ Roll: {result.Roll:00}";
+			}
+
+			UpdateBalanceUI();
 		}
-		else
+		catch (Exception ex)
 		{
-			_balance -= bet;
-			_resultValue.Text = $"LOSS ❌ Roll: {roll:00}";
+			// Errores del engine (balance insuficiente, etc.)
+			_resultValue.Text = ex.Message;
 		}
-
-		UpdateBalanceUI();
-	}
-
-	// --- Cálculos ---
-
-	private decimal GetMultiplier(int chance)
-	{
-		return RTP * 100m / chance;
 	}
 
 	// --- UI Updates ---
@@ -127,7 +120,8 @@ public partial class DiceGame : Control
 
 	private void UpdateBalanceUI()
 	{
-		_balanceValue.Text = _balance.ToString("F8", CultureInfo.InvariantCulture);
+		_balanceValue.Text =
+			_engine.Balance.ToString("F8", CultureInfo.InvariantCulture);
 	}
 
 	private void UpdateChanceUI()
@@ -139,7 +133,7 @@ public partial class DiceGame : Control
 	private void UpdateMultiplierUI()
 	{
 		int chance = (int)_chanceSlider.Value;
-		decimal multiplier = GetMultiplier(chance);
+		decimal multiplier = Math.Round(100m / chance, 4);
 		_multiplierValue.Text = $"x {multiplier:F4}";
 	}
 
