@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://c711y35rvk5gf"]
 
-[ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame.cs" id="1_k3ff0"]
+[ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame/DiceGame.cs" id="1_k3ff0"]
 
 [node name="DiceGame" type="Control"]
 layout_mode = 3
