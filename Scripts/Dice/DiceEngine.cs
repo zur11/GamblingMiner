@@ -4,7 +4,8 @@ namespace Scripts.Dice
 {
 	public class DiceEngine
 	{
-		private readonly Random _rng = new Random();
+        private readonly Random _rng = new Random();
+        private const decimal RTP = 0.9902m;
 		private decimal _balance;
 
 		public decimal Balance => _balance;
@@ -87,10 +88,9 @@ namespace Scripts.Dice
 			}
 		}
 
-		private static decimal CalculateMultiplier(int chancePercent)
-		{
-			// Fórmula típica de dice (sin edge aquí; puedes añadirlo luego)
-			return Math.Round(100m / chancePercent, 4);
-		}
-	}
+        private static decimal CalculateMultiplier(int chancePercent)
+        {
+            return Math.Round((100m * RTP) / chancePercent, 4);
+        }
+    }
 }
