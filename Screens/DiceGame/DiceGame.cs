@@ -113,9 +113,8 @@ public partial class DiceGame : Control
 	private void UpdateAllUI()
 	{
 		UpdateBalanceUI();
-		UpdateChanceUI();
+		UpdateChanceAndMultiplierUIs();
 		UpdateWinnerRangeUI();
-		UpdateMultiplierUI();
 	}
 
 	private void UpdateBalanceUI()
@@ -124,17 +123,13 @@ public partial class DiceGame : Control
 			_engine.Balance.ToString("F8", CultureInfo.InvariantCulture);
 	}
 
-	private void UpdateChanceUI()
+	private void UpdateChanceAndMultiplierUIs()
 	{
 		int chance = (int)_chanceSlider.Value;
-		_chanceToWinValue.Text = $"{chance}%";
-	}
+		decimal payout = _engine.GetPayoutMultiplier(chance);
 
-	private void UpdateMultiplierUI()
-	{
-		int chance = (int)_chanceSlider.Value;
-		decimal multiplier = Math.Round(100m / chance, 4);
-		_multiplierValue.Text = $"x {multiplier:F4}";
+		_chanceToWinValue.Text = $"{chance}%";
+		_multiplierValue.Text = $"x {payout:F4}";
 	}
 
 	private void UpdateWinnerRangeUI()
