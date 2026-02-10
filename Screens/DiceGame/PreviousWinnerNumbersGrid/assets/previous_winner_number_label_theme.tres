@@ -1,0 +1,32 @@
+[gd_resource type="Theme" load_steps=4 format=3 uid="uid://kwh7ggojclfh"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_pkmvj"]
+resource_name = "WinnerNumberBox"
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+corner_detail = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_11o3o"]
+resource_name = "WinnerNumberBox_Lose"
+bg_color = Color(0.9490196, 0.039215688, 0.039215688, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+corner_detail = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_gb3b3"]
+resource_name = "WinnerNumberBox_Win"
+bg_color = Color(0.39607844, 0.96862745, 0.078431375, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+corner_detail = 4
+
+[resource]
+/styles/WinnerNumberBox = SubResource("StyleBoxFlat_pkmvj")
+/styles/WinnerNumberBox_Lose = SubResource("StyleBoxFlat_11o3o")
+/styles/WinnerNumberBox_Win = SubResource("StyleBoxFlat_gb3b3")
