@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3 uid="uid://dcj5ru0ys536m"]
+
+[ext_resource type="Script" uid="uid://doipkbtqg0v42" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/PreviousWinnerNumbersGrid.cs" id="1_26cau"]
+
+[node name="PreviousWinnerNumbersGrid" type="GridContainer"]
+columns = 10
+script = ExtResource("1_26cau")

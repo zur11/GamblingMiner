@@ -22,6 +22,10 @@ public partial class DiceGame : Control
 	private Button _highLowToggleBtn;
 	private Button _betBtn;
 
+	[Export]
+	private PreviousWinnerNumbersGrid _previousWinnerNumbersGrid;
+
+
 	// --- Validación decimal ---
 	private static readonly Regex BetRegex =
 		new Regex(@"^\d+(\.\d{1,8})?$", RegexOptions.Compiled);
@@ -100,6 +104,10 @@ public partial class DiceGame : Control
 			}
 
 			UpdateBalanceUI();
+			_previousWinnerNumbersGrid.AddWinnerNumber(
+			result.Roll,
+			result.IsWin
+			);
 		}
 		catch (Exception ex)
 		{

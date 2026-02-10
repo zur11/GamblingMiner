@@ -1,8 +1,9 @@
-[gd_scene load_steps=2 format=3 uid="uid://c711y35rvk5gf"]
+[gd_scene load_steps=3 format=3 uid="uid://c711y35rvk5gf"]
 
 [ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame/DiceGame.cs" id="1_k3ff0"]
+[ext_resource type="PackedScene" uid="uid://dcj5ru0ys536m" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/PreviousWinnerNumbersGrid.tscn" id="2_5hi04"]
 
-[node name="DiceGame" type="Control"]
+[node name="DiceGame" type="Control" node_paths=PackedStringArray("_previousWinnerNumbersGrid")]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -10,6 +11,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_k3ff0")
+_previousWinnerNumbersGrid = NodePath("ScrollContainer/PreviousWinnerNumbersGrid")
 
 [node name="BalanceText" type="Label" parent="."]
 layout_mode = 0
@@ -156,3 +158,15 @@ offset_right = 117.0
 offset_bottom = 890.0
 theme_override_font_sizes/font_size = 60
 text = "Bet"
+
+[node name="ScrollContainer" type="ScrollContainer" parent="."]
+custom_minimum_size = Vector2(550, 700)
+layout_mode = 0
+offset_left = 762.0
+offset_top = 281.0
+offset_right = 1262.0
+offset_bottom = 781.0
+
+[node name="PreviousWinnerNumbersGrid" parent="ScrollContainer" instance=ExtResource("2_5hi04")]
+unique_name_in_owner = true
+layout_mode = 2
