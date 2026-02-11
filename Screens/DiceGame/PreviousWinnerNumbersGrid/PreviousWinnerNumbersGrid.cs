@@ -29,13 +29,10 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 
 		panel.AddThemeStyleboxOverride("panel", sb);
 
-
 		panel.AddChild(label);
 		AddChild(panel);
 
 		// mover el último resultado a la primera posición del grid
 		MoveChild(panel, 0);
 	}
-
-
 }

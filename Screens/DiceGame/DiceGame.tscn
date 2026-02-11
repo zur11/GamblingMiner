@@ -34,10 +34,10 @@ text = "1.00000000"
 
 [node name="BetText" type="Label" parent="."]
 layout_mode = 0
-offset_left = 13.0
-offset_top = 594.0
-offset_right = 127.0
-offset_bottom = 690.0
+offset_left = 14.0
+offset_top = 485.0
+offset_right = 504.0
+offset_bottom = 581.0
 theme_override_font_sizes/font_size = 70
 text = "Amount to bet"
 
@@ -45,12 +45,41 @@ text = "Amount to bet"
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 14.0
-offset_top = 680.0
+offset_top = 597.0
 offset_right = 412.0
-offset_bottom = 784.0
+offset_bottom = 701.0
 theme_override_font_sizes/font_size = 70
 placeholder_text = "0.00000000"
 max_length = 16
+
+[node name="IncreaseOnLossText" type="Label" parent="."]
+layout_mode = 0
+offset_left = 14.0
+offset_top = 713.0
+offset_right = 554.0
+offset_bottom = 809.0
+theme_override_font_sizes/font_size = 70
+text = "Increase on loss"
+
+[node name="IncreaseOnLossText2" type="Label" parent="."]
+layout_mode = 0
+offset_left = 486.0
+offset_top = 793.0
+offset_right = 546.0
+offset_bottom = 889.0
+theme_override_font_sizes/font_size = 70
+text = "%"
+
+[node name="IncreaseOnLossInput" type="LineEdit" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 14.0
+offset_top = 802.0
+offset_right = 472.0
+offset_bottom = 893.0
+theme_override_font_sizes/font_size = 60
+placeholder_text = "25"
+alignment = 1
 
 [node name="ResultText" type="Label" parent="."]
 layout_mode = 0
@@ -152,10 +181,10 @@ text = "Betting Low"
 [node name="BetBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 11.0
-offset_top = 799.0
-offset_right = 117.0
-offset_bottom = 890.0
+offset_left = 14.0
+offset_top = 928.0
+offset_right = 120.0
+offset_bottom = 1019.0
 theme_override_font_sizes/font_size = 60
 text = "Bet"
 

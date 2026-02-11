@@ -22,6 +22,14 @@ public partial class DiceGame : Control
 	private Button _highLowToggleBtn;
 	private Button _betBtn;
 
+	private LineEdit _increaseOnLossInput;
+
+	// --- Variables para aumento progresivo de apuesta ---
+	private decimal _baseBet;
+	private decimal _currentBet;
+	private decimal _increasePercent;
+	private bool _isFirstBet = true;
+
 	[Export]
 	private PreviousWinnerNumbersGrid _previousWinnerNumbersGrid;
 
@@ -47,6 +55,8 @@ public partial class DiceGame : Control
 		_chanceSlider = GetNode<Slider>("%ChanceSlider");
 		_highLowToggleBtn = GetNode<Button>("%HighLowToggleBtn");
 		_betBtn = GetNode<Button>("%BetBtn");
+
+		_increaseOnLossInput = GetNode<LineEdit>("%IncreaseOnLossInput");
 
 		// Configurar toggle
 		_highLowToggleBtn.ToggleMode = true;
@@ -77,9 +87,15 @@ public partial class DiceGame : Control
 
 	private void OnBetPressed()
 	{
-		if (!TryGetBet(out decimal bet))
+		if (!TryGetBet(out decimal baseBet))
 		{
-			_resultValue.Text = "Invalid bet.";
+			_resultValue.Text = "Invalid base bet.";
+			return;
+		}
+
+		if (!TryGetIncreasePercent(out decimal increasePercent))
+		{
+			_resultValue.Text = "Invalid increase %.";
 			return;
 		}
 
@@ -88,8 +104,24 @@ public partial class DiceGame : Control
 
 		try
 		{
+			// --- Inicialización de ciclo ---
+			if (_isFirstBet)
+			{
+				_baseBet = baseBet;
+				_currentBet = baseBet;
+				_increasePercent = increasePercent;
+				_isFirstBet = false;
+			}
+
+			// Verificar si tenemos saldo suficiente
+			if (_currentBet > _engine.Balance)
+			{
+				_resultValue.Text = "Bet exceeds balance.";
+				return;
+			}
+
 			var result = _engine.Play(
-				bet: bet,
+				bet: _currentBet,
 				chancePercent: chance,
 				isHigh: isHigh
 			);
@@ -97,27 +129,38 @@ public partial class DiceGame : Control
 			if (result.IsWin)
 			{
 				_resultValue.Text = $"WIN 🎉 Roll: {result.Roll:00}";
+
+				// Reset al base
+				_currentBet = _baseBet;
+				_isFirstBet = true;
 			}
 			else
 			{
 				_resultValue.Text = $"LOSS ❌ Roll: {result.Roll:00}";
+
+				// Incremento porcentual
+				decimal multiplier = 1m + (_increasePercent / 100m);
+				_currentBet *= multiplier;
 			}
 
+			// Mostrar siguiente apuesta en el LineEdit
+			_betInput.Text = _currentBet
+				.ToString("F8", CultureInfo.InvariantCulture);
+
 			UpdateBalanceUI();
+
 			_previousWinnerNumbersGrid.AddWinnerNumber(
-			result.Roll,
-			result.IsWin
+				result.Roll,
+				result.IsWin
 			);
 		}
 		catch (Exception ex)
 		{
-			// Errores del engine (balance insuficiente, etc.)
 			_resultValue.Text = ex.Message;
 		}
 	}
 
 	// --- UI Updates ---
-
 	private void UpdateAllUI()
 	{
 		UpdateBalanceUI();
@@ -163,8 +206,27 @@ public partial class DiceGame : Control
 		}
 	}
 
-	// --- Validación apuesta ---
+	// --- Aumento progresivo de apuesta ---
+	private bool TryGetIncreasePercent(out decimal percent)
+	{
+		percent = 0m;
 
+		string text = _increaseOnLossInput.Text.Trim().Replace(',', '.');
+
+		if (!BetRegex.IsMatch(text))
+			return false;
+
+		if (!decimal.TryParse(
+			text,
+			NumberStyles.AllowDecimalPoint,
+			CultureInfo.InvariantCulture,
+			out percent))
+			return false;
+
+		return percent >= 0m;
+	}
+
+	// --- Validación apuesta ---
 	private bool TryGetBet(out decimal bet)
 	{
 		bet = 0m;
