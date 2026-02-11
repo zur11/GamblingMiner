@@ -12,7 +12,7 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 
 		var label = new Label
 		{
-			Text = number.ToString(),
+			Text = number.ToString("D2"),
 			HorizontalAlignment = HorizontalAlignment.Center,
 			VerticalAlignment = VerticalAlignment.Center
 		};
