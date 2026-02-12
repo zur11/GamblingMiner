@@ -1,11 +1,43 @@
 using Godot;
 using System;
 using System.Globalization;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Scripts.Dice;
 
 public partial class DiceGame : Control
 {
+	// --- Enums ---
+	private enum BetState
+	{
+		Idle,
+		Progression,
+		Bankrupt
+	}
+
+	private enum BetEvent
+	{
+		BetPressed,
+		Win,
+		Loss,
+		InsufficientBalance,
+		ManualReset
+	}
+
+	// Variables de estado
+	private BetState _state = BetState.Idle;
+	private readonly Dictionary<(BetState, BetEvent), BetState> _transitions
+		= new Dictionary<(BetState, BetEvent), BetState>
+	{
+		{ (BetState.Idle, BetEvent.BetPressed), BetState.Progression },
+
+		{ (BetState.Progression, BetEvent.Win), BetState.Idle },
+		{ (BetState.Progression, BetEvent.Loss), BetState.Progression },
+		{ (BetState.Progression, BetEvent.InsufficientBalance), BetState.Bankrupt },
+
+		{ (BetState.Bankrupt, BetEvent.ManualReset), BetState.Idle }
+	};
+
 	// --- Engine ---
 	private DiceEngine _engine;
 
@@ -75,8 +107,52 @@ public partial class DiceGame : Control
 		_resultValue.Text = "Place your bet.";
 	}
 
-	// --- Eventos UI ---
+	// State Machine Methods
+	private void OnEnterState(BetState state)
+	{
+		switch (state)
+		{
+			case BetState.Idle:
+				break;
 
+			case BetState.Progression:
+				break;
+
+			case BetState.Bankrupt:
+				_resultValue.Text = "Insufficient balance.";
+				break;
+		}
+	}
+
+	private void OnExitState(BetState state)
+	{
+		// Si necesitas limpiar cosas al salir
+	}
+
+
+	private void Transition(BetEvent trigger)
+	{
+		var key = (_state, trigger);
+
+		if (_transitions.TryGetValue(key, out var newState))
+		{
+			LogTransition(_state, trigger, newState);
+			OnExitState(_state);
+			_state = newState;
+			OnEnterState(newState);
+		}
+		else
+		{
+			GD.PrintErr($"Invalid transition: {_state} + {trigger}");
+		}
+	}
+
+	private void LogTransition(BetState from, BetEvent trigger, BetState to)
+	{
+		GD.Print($"[FSM] {from} --({trigger})--> {to}");
+	}
+
+	// --- Eventos UI ---
 	private void OnHighLowToggled()
 	{
 		_highLowToggleBtn.Text = _highLowToggleBtn.ButtonPressed ? "HIGH" : "LOW";
@@ -91,84 +167,55 @@ public partial class DiceGame : Control
 	private void OnBetPressed()
 	{
 		if (!TryGetBet(out decimal baseBet))
-		{
-			_resultValue.Text = "Invalid base bet.";
 			return;
-		}
 
 		if (!TryGetIncreasePercent(out decimal increasePercent))
-		{
-			_resultValue.Text = "Invalid increase %.";
 			return;
-		}
 
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
 
-		try
+		if (_state == BetState.Idle)
 		{
-			// Si el usuario modificó manualmente el input
-			if (_userModifiedBase)
-			{
-				_baseBet = baseBet;
-				_currentBet = baseBet;
-				_userModifiedBase = false;
-			}
-
-			// Primera ejecución real
-			if (_currentBet <= 0m)
-			{
-				_baseBet = baseBet;
-				_currentBet = baseBet;
-			}
-
+			_baseBet = baseBet;
+			_currentBet = baseBet;
 			_increasePercent = increasePercent;
 
-			if (_currentBet > _engine.Balance)
-			{
-				_resultValue.Text = "Bet exceeds balance.";
-				return;
-			}
-
-			var result = _engine.Play(
-				bet: _currentBet,
-				chancePercent: chance,
-				isHigh: isHigh
-			);
-
-			if (result.IsWin)
-			{
-				_resultValue.Text = $"WIN 🎉 Roll: {result.Roll:00}";
-				_currentBet = _baseBet;
-			}
-			else
-			{
-				_resultValue.Text = $"LOSS ❌ Roll: {result.Roll:00}";
-
-				if (_increasePercent > 0m)
-				{
-					decimal multiplier = 1m + (_increasePercent / 100m);
-					_currentBet *= multiplier;
-				}
-			}
-
-			// IMPORTANTE:
-			// Actualizamos el texto SIN activar reinicio manual.
-			_userModifiedBase = false;
-			_betInput.Text = _currentBet
-				.ToString("F8", CultureInfo.InvariantCulture);
-
-			UpdateBalanceUI();
-
-			_previousWinnerNumbersGrid.AddWinnerNumber(
-				result.Roll,
-				result.IsWin
-			);
+			Transition(BetEvent.BetPressed);
 		}
-		catch (Exception ex)
+
+		if (_currentBet > _engine.Balance)
 		{
-			_resultValue.Text = ex.Message;
+			Transition(BetEvent.InsufficientBalance);
+			return;
 		}
+
+		DiceResult result = _engine.Play(_currentBet, chance, isHigh);
+
+		// Always update UI immediately after play
+		UpdateResultUI(result);
+		UpdatePreviousNumbers(result);
+
+		if (result.IsWin)
+		{
+			_currentBet = _baseBet;
+			Transition(BetEvent.Win);
+		}
+		else
+		{
+			if (_increasePercent > 0m)
+			{
+				decimal multiplier = 1m + (_increasePercent / 100m);
+				_currentBet *= multiplier;
+			}
+
+			Transition(BetEvent.Loss);
+		}
+
+		_betInput.Text = _currentBet
+			.ToString("F8", CultureInfo.InvariantCulture);
+
+		UpdateBalanceUI();
 	}
 
 	private void OnBetInputChanged(string newText)
@@ -221,6 +268,27 @@ public partial class DiceGame : Control
 					: $"00 to {max:00}";
 		}
 	}
+
+	private void UpdateResultUI(DiceResult result)
+	{
+		if (result.IsWin)
+		{
+			_resultValue.Text = $"WIN - Roll: {result.Roll}";
+		}
+		else
+		{
+			_resultValue.Text = $"LOSS - Roll: {result.Roll}";
+		}
+	}
+
+	private void UpdatePreviousNumbers(DiceResult result)
+	{
+		_previousWinnerNumbersGrid.AddWinnerNumber(
+			result.Roll,
+			result.IsWin
+			);
+	}
+
 
 	// --- Aumento progresivo de apuesta ---
 	private bool TryGetIncreasePercent(out decimal percent)
