@@ -25,10 +25,11 @@ public partial class DiceGame : Control
 	private LineEdit _increaseOnLossInput;
 
 	// --- Variables para aumento progresivo de apuesta ---
-	private decimal _baseBet;
-	private decimal _currentBet;
-	private decimal _increasePercent;
-	private bool _isFirstBet = true;
+	private decimal _baseBet = 0m;
+	private decimal _currentBet = 0m;
+	private decimal _increasePercent = 0m;
+
+	private bool _userModifiedBase = false;
 
 	[Export]
 	private PreviousWinnerNumbersGrid _previousWinnerNumbersGrid;
@@ -67,6 +68,8 @@ public partial class DiceGame : Control
 		_highLowToggleBtn.Pressed += OnHighLowToggled;
 		_chanceSlider.ValueChanged += OnChanceChanged;
 		_betBtn.Pressed += OnBetPressed;
+		_betInput.TextChanged += OnBetInputChanged;
+
 
 		UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
@@ -104,16 +107,23 @@ public partial class DiceGame : Control
 
 		try
 		{
-			// --- Inicialización de ciclo ---
-			if (_isFirstBet)
+			// Si el usuario modificó manualmente el input
+			if (_userModifiedBase)
 			{
 				_baseBet = baseBet;
 				_currentBet = baseBet;
-				_increasePercent = increasePercent;
-				_isFirstBet = false;
+				_userModifiedBase = false;
 			}
 
-			// Verificar si tenemos saldo suficiente
+			// Primera ejecución real
+			if (_currentBet <= 0m)
+			{
+				_baseBet = baseBet;
+				_currentBet = baseBet;
+			}
+
+			_increasePercent = increasePercent;
+
 			if (_currentBet > _engine.Balance)
 			{
 				_resultValue.Text = "Bet exceeds balance.";
@@ -129,21 +139,22 @@ public partial class DiceGame : Control
 			if (result.IsWin)
 			{
 				_resultValue.Text = $"WIN 🎉 Roll: {result.Roll:00}";
-
-				// Reset al base
 				_currentBet = _baseBet;
-				_isFirstBet = true;
 			}
 			else
 			{
 				_resultValue.Text = $"LOSS ❌ Roll: {result.Roll:00}";
 
-				// Incremento porcentual
-				decimal multiplier = 1m + (_increasePercent / 100m);
-				_currentBet *= multiplier;
+				if (_increasePercent > 0m)
+				{
+					decimal multiplier = 1m + (_increasePercent / 100m);
+					_currentBet *= multiplier;
+				}
 			}
 
-			// Mostrar siguiente apuesta en el LineEdit
+			// IMPORTANTE:
+			// Actualizamos el texto SIN activar reinicio manual.
+			_userModifiedBase = false;
 			_betInput.Text = _currentBet
 				.ToString("F8", CultureInfo.InvariantCulture);
 
@@ -158,6 +169,11 @@ public partial class DiceGame : Control
 		{
 			_resultValue.Text = ex.Message;
 		}
+	}
+
+	private void OnBetInputChanged(string newText)
+	{
+		_userModifiedBase = true;
 	}
 
 	// --- UI Updates ---
@@ -211,19 +227,21 @@ public partial class DiceGame : Control
 	{
 		percent = 0m;
 
-		string text = _increaseOnLossInput.Text.Trim().Replace(',', '.');
+		string text = _increaseOnLossInput.Text.Trim();
 
-		if (!BetRegex.IsMatch(text))
+		// Vacío = sin incremento
+		if (string.IsNullOrEmpty(text))
+			return true;
+
+		// Solo enteros
+		if (!int.TryParse(text, out int value))
 			return false;
 
-		if (!decimal.TryParse(
-			text,
-			NumberStyles.AllowDecimalPoint,
-			CultureInfo.InvariantCulture,
-			out percent))
+		if (value < 0 || value > 100_000_000)
 			return false;
 
-		return percent >= 0m;
+		percent = value;
+		return true;
 	}
 
 	// --- Validación apuesta ---
