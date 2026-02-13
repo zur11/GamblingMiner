@@ -12,6 +12,9 @@ namespace Scripts.Dice
 
 		public DiceEngine(decimal initialBalance)
 		{
+			if (initialBalance < 0m)
+				throw new ArgumentException("Initial balance cannot be negative.");
+
 			_balance = initialBalance;
 		}
 
@@ -30,8 +33,10 @@ namespace Scripts.Dice
 			if (chancePercent < 1 || chancePercent > 95)
 				throw new ArgumentOutOfRangeException(nameof(chancePercent));
 
+			// --- Roll ---
 			int roll = _rng.Next(0, 100); // 0–99
 
+			// --- Winning range ---
 			GetWinningRange(
 				chancePercent,
 				isHigh,
@@ -41,32 +46,40 @@ namespace Scripts.Dice
 
 			bool isWin = roll >= winMin && roll <= winMax;
 
+			// --- Multiplier ---
 			decimal multiplier = CalculateMultiplier(chancePercent);
-			decimal profit = 0m;
+
+			// --- Financial calculation ---
+			decimal profit;
+			decimal balanceAfter;
 
 			if (isWin)
 			{
 				profit = bet * multiplier - bet;
-				_balance += profit;
+				balanceAfter = _balance + profit;
 			}
 			else
 			{
-				_balance -= bet;
+				profit = -bet;
+				balanceAfter = _balance - bet;
 			}
 
-			return new DiceResult
-			{
-				Roll = roll,
-				IsWin = isWin,
-				WinMin = winMin,
-				WinMax = winMax,
-				Bet = bet,
-				Profit = profit,
-				BalanceAfter = _balance,
-				Chance = chancePercent,
-				Multiplier = multiplier,
-				IsHigh = isHigh
-			};
+			// Commit balance change AFTER calculation
+			_balance = balanceAfter;
+
+			// --- Construct immutable result ---
+			return new DiceResult(
+				roll,
+				isWin,
+				bet,
+				chancePercent,
+				multiplier,
+				isHigh,
+				profit,
+				balanceAfter,
+				winMin,
+				winMax
+			);
 		}
 
 		public decimal GetPayoutMultiplier(int chancePercent)
