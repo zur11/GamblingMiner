@@ -20,20 +20,25 @@ public partial class DiceGame : Control
 		BetPressed,
 		Win,
 		Loss,
-		InsufficientBalance,
+		ProgressionAborted,
+		BankruptDetected,
 		ManualReset
 	}
 
 	// Variables de estado
 	private BetState _state = BetState.Idle;
-	private readonly Dictionary<(BetState, BetEvent), BetState> _transitions
-		= new Dictionary<(BetState, BetEvent), BetState>
+	private readonly Dictionary<(BetState, BetEvent), BetState>
+		_transitions = new()
 	{
 		{ (BetState.Idle, BetEvent.BetPressed), BetState.Progression },
 
 		{ (BetState.Progression, BetEvent.Win), BetState.Idle },
 		{ (BetState.Progression, BetEvent.Loss), BetState.Progression },
-		{ (BetState.Progression, BetEvent.InsufficientBalance), BetState.Bankrupt },
+		{ (BetState.Progression, BetEvent.ProgressionAborted), BetState.Idle },
+
+		{ (BetState.Progression, BetEvent.BankruptDetected), BetState.Bankrupt },
+		{ (BetState.Progression, BetEvent.ManualReset), BetState.Idle },
+		{ (BetState.Idle, BetEvent.BankruptDetected), BetState.Bankrupt },
 
 		{ (BetState.Bankrupt, BetEvent.ManualReset), BetState.Idle }
 	};
@@ -119,16 +124,54 @@ public partial class DiceGame : Control
 				break;
 
 			case BetState.Bankrupt:
-				_resultValue.Text = "Insufficient balance.";
+				_resultValue.Text = "Bankrupt. Deposit required.";
+				_betBtn.Disabled = true;
 				break;
+
 		}
 	}
 
 	private void OnExitState(BetState state)
 	{
-		// Si necesitas limpiar cosas al salir
+		if (state == BetState.Bankrupt)
+		{
+			_betBtn.Disabled = false;
+		}
 	}
 
+	private void HandleBetPressed(decimal baseBet, decimal increasePercent)
+	{
+		_baseBet = baseBet;
+		_currentBet = baseBet;
+		_increasePercent = increasePercent;
+
+		Transition(BetEvent.BetPressed);
+	}
+
+	private void HandleWin()
+	{
+		_currentBet = _baseBet;
+		Transition(BetEvent.Win);
+	}
+
+	private void HandleLoss()
+	{
+		if (_increasePercent > 0m)
+		{
+			decimal multiplier = 1m + (_increasePercent / 100m);
+			_currentBet *= multiplier;
+		}
+
+		Transition(BetEvent.Loss);
+	}
+
+	private void HandleProgressionAborted()
+	{
+		_currentBet = 0m;
+		_resultValue.Text = "Bet exceeds balance. Progression stopped.";
+
+		Transition(BetEvent.ProgressionAborted);
+	}
 
 	private void Transition(BetEvent trigger)
 	{
@@ -177,16 +220,18 @@ public partial class DiceGame : Control
 
 		if (_state == BetState.Idle)
 		{
-			_baseBet = baseBet;
-			_currentBet = baseBet;
-			_increasePercent = increasePercent;
-
-			Transition(BetEvent.BetPressed);
+			HandleBetPressed(baseBet, increasePercent);
 		}
 
 		if (_currentBet > _engine.Balance)
 		{
-			Transition(BetEvent.InsufficientBalance);
+			_resultValue.Text = "Bet exceeds current balance.";
+
+			if (_state == BetState.Progression)
+			{
+				HandleProgressionAborted();
+			}
+
 			return;
 		}
 
@@ -198,29 +243,46 @@ public partial class DiceGame : Control
 
 		if (result.IsWin)
 		{
-			_currentBet = _baseBet;
-			Transition(BetEvent.Win);
+			HandleWin();
 		}
 		else
 		{
-			if (_increasePercent > 0m)
-			{
-				decimal multiplier = 1m + (_increasePercent / 100m);
-				_currentBet *= multiplier;
-			}
-
-			Transition(BetEvent.Loss);
+			HandleLoss();
 		}
 
 		_betInput.Text = _currentBet
 			.ToString("F8", CultureInfo.InvariantCulture);
 
 		UpdateBalanceUI();
+		
+		if (_engine.Balance <= 0m)
+		{
+			Transition(BetEvent.BankruptDetected);
+		}
 	}
 
 	private void OnBetInputChanged(string newText)
 	{
-		_userModifiedBase = true;
+		if (_state == BetState.Progression)
+		{
+			_currentBet = 0m;
+			_baseBet = 0m;
+			_increasePercent = 0m;
+
+			Transition(BetEvent.ManualReset);
+
+			_resultValue.Text = "Progression manually reset.";
+		}
+		if (_state == BetState.Bankrupt)
+		{
+			_currentBet = 0m;
+			_baseBet = 0m;
+			_increasePercent = 0m;
+
+			Transition(BetEvent.ManualReset);
+
+			_resultValue.Text = "Manual reset after Bankrupt.";
+		}
 	}
 
 	// --- UI Updates ---
@@ -288,7 +350,6 @@ public partial class DiceGame : Control
 			result.IsWin
 			);
 	}
-
 
 	// --- Aumento progresivo de apuesta ---
 	private bool TryGetIncreasePercent(out decimal percent)
