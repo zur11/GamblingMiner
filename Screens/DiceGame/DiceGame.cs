@@ -61,6 +61,9 @@ public partial class DiceGame : Control
 
 	private LineEdit _increaseOnLossInput;
 
+	private DepositPopup _depositPopup;
+	private Button _depositBtn;
+
 	// --- Variables para aumento progresivo de apuesta ---
 	private decimal _baseBet = 0m;
 	private decimal _currentBet = 0m;
@@ -85,16 +88,15 @@ public partial class DiceGame : Control
 		_balanceValue = GetNode<Label>("%BalanceValue");
 		_betInput = GetNode<LineEdit>("%BetInput");
 		_resultValue = GetNode<Label>("%ResultValue");
-
 		_winnerNumbersValue = GetNode<Label>("%WinnerNumbersValue");
 		_chanceToWinValue = GetNode<Label>("%ChanceToWinValue");
 		_multiplierValue = GetNode<Label>("%MultiplierValue");
-
 		_chanceSlider = GetNode<Slider>("%ChanceSlider");
 		_highLowToggleBtn = GetNode<Button>("%HighLowToggleBtn");
 		_betBtn = GetNode<Button>("%BetBtn");
-
 		_increaseOnLossInput = GetNode<LineEdit>("%IncreaseOnLossInput");
+		_depositPopup = GetNode<DepositPopup>("%DepositPopup");
+		_depositBtn = GetNode<Button>("%DepositBtn");
 
 		// Configurar toggle
 		_highLowToggleBtn.ToggleMode = true;
@@ -106,7 +108,9 @@ public partial class DiceGame : Control
 		_chanceSlider.ValueChanged += OnChanceChanged;
 		_betBtn.Pressed += OnBetPressed;
 		_betInput.TextChanged += OnBetInputChanged;
-
+		_depositBtn.Pressed += OnDepositBtnPressed;
+		_depositPopup.DepositConfirmed += OnDepositConfirmed;
+		_depositPopup.DepositCanceled += OnDepositCanceled;
 
 		UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
@@ -285,6 +289,27 @@ public partial class DiceGame : Control
 		}
 	}
 
+	private void OnDepositBtnPressed()
+	{
+		_depositPopup.Open();
+	}
+
+	private void OnDepositConfirmed(double amountDouble)
+	{
+		decimal amount = (decimal)amountDouble;
+
+		var transaction = new Scripts.Transaction.Transaction(
+			Scripts.Transaction.TransactionType.Deposit,
+			amount);
+
+		ApplyTransaction(transaction);
+	}
+
+	private void OnDepositCanceled()
+	{
+		_resultValue.Text = "Deposit canceled.";
+	}
+
 	// --- UI Updates ---
 	private void UpdateAllUI()
 	{
@@ -391,5 +416,25 @@ public partial class DiceGame : Control
 			return false;
 
 		return bet > 0m;
+	}
+
+	// --- Transacciones ---
+	private void ApplyTransaction(Scripts.Transaction.Transaction transaction)
+	{
+		switch (transaction.Type)
+		{
+			case Scripts.Transaction.TransactionType.Deposit:
+				_engine.AddBalance(transaction.Amount);
+				_resultValue.Text = $"Deposited {transaction.Amount:F8}";
+				break;
+		}
+
+		UpdateBalanceUI();
+
+		// Si estaba en Bankrupt, salir automáticamente
+		if (_state == BetState.Bankrupt)
+		{
+			Transition(BetEvent.ManualReset);
+		}
 	}
 }

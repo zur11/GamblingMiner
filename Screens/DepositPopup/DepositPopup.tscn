@@ -1,0 +1,76 @@
+[gd_scene load_steps=2 format=3 uid="uid://c3gxcrrobecpj"]
+
+[ext_resource type="Script" uid="uid://y2gevgnusu1h" path="res://Screens/DepositPopup/DepositPopup.cs" id="1_scjyq"]
+
+[node name="DepositPopup" type="Control"]
+layout_mode = 3
+anchor_right = 0.549
+anchor_bottom = 0.77300006
+offset_right = -0.080078125
+offset_bottom = 0.15991211
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_scjyq")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.6666667, 0.8, 0, 1)
+
+[node name="DepositsTitle" type="Label" parent="."]
+layout_mode = 0
+offset_left = 328.0
+offset_top = 3.0
+offset_right = 701.0
+offset_bottom = 113.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 80
+text = "DEPOSITS"
+
+[node name="AmountToDepositText" type="Label" parent="."]
+layout_mode = 0
+offset_left = 217.0
+offset_top = 179.0
+offset_right = 774.0
+offset_bottom = 262.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 60
+text = "Amount to deposit"
+
+[node name="AmountToDepositInput" type="LineEdit" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 276.0
+offset_top = 297.0
+offset_right = 674.0
+offset_bottom = 401.0
+theme_override_font_sizes/font_size = 70
+placeholder_text = "0.00000000"
+max_length = 16
+
+[node name="ConfirmDepositBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 195.0
+offset_top = 466.0
+offset_right = 747.0
+offset_bottom = 570.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 70
+text = "Confirm deposit"
+
+[node name="CancelDepositBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 199.0
+offset_top = 622.0
+offset_right = 704.0
+offset_bottom = 726.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 70
+text = "Cancel deposit"
+alignment = 0

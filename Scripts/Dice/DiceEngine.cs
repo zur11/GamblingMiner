@@ -64,8 +64,8 @@ namespace Scripts.Dice
 				balanceAfter = _balance - bet;
 			}
 
-			// Commit balance change AFTER calculation
-			_balance = balanceAfter;
+		// Commit balance change AFTER calculation
+		_balance = balanceAfter;
 
 			// --- Construct immutable result ---
 			return new DiceResult(
@@ -112,6 +112,14 @@ namespace Scripts.Dice
 		private static decimal CalculateMultiplier(int chancePercent)
 		{
 			return Math.Round((100m * RTP) / chancePercent, 4);
+		}
+
+		public void AddBalance(decimal amount)
+		{
+			if (amount <= 0m)
+				throw new ArgumentException("Amount must be greater than zero.");
+
+			_balance += amount;
 		}
 	}
 }
