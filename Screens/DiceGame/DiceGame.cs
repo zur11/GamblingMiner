@@ -4,46 +4,12 @@ using System.Globalization;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Scripts.Dice;
+using Scripts.GameState;
 
 public partial class DiceGame : Control
 {
-	// --- Enums ---
-	private enum BetState
-	{
-		Idle,
-		Progression,
-		Bankrupt
-	}
-
-	private enum GameEvent
-	{
-		BetPressed,
-		Win,
-		Loss,
-		ProgressionAborted,
-		BankruptDetected,
-		ManualReset,
-
-		BalanceRefilled
-	}
-
-	// Variables de estado
-	private BetState _state = BetState.Idle;
-	private readonly Dictionary<(BetState, GameEvent), BetState>
-		_transitions = new()
-	{
-		{ (BetState.Idle, GameEvent.BetPressed), BetState.Progression },
-
-		{ (BetState.Progression, GameEvent.Win), BetState.Idle },
-		{ (BetState.Progression, GameEvent.Loss), BetState.Progression },
-		{ (BetState.Progression, GameEvent.ProgressionAborted), BetState.Idle },
-
-		{ (BetState.Progression, GameEvent.ManualReset), BetState.Idle },
-		{ (BetState.Progression, GameEvent.BankruptDetected), BetState.Bankrupt },
-		{ (BetState.Idle, GameEvent.BankruptDetected), BetState.Bankrupt },
-
-		{ (BetState.Bankrupt, GameEvent.BalanceRefilled), BetState.Idle }
-	};
+	// --- State Machine ---
+	private GameStateMachine _fsm;
 
 	// --- Engine ---
 	private DiceEngine _engine;
@@ -106,6 +72,9 @@ public partial class DiceGame : Control
 		_highLowToggleBtn.Text = "LOW";
 
 		// Conectar señales
+		_fsm = new GameStateMachine();
+		_fsm.StateEntered += OnStateEntered;
+		_fsm.StateExited += OnStateExited;
 		_highLowToggleBtn.Pressed += OnHighLowToggled;
 		_chanceSlider.ValueChanged += OnChanceChanged;
 		_betBtn.Pressed += OnBetPressed;
@@ -113,31 +82,25 @@ public partial class DiceGame : Control
 		_depositBtn.Pressed += OnDepositBtnPressed;
 		_depositPopup.DepositConfirmed += OnDepositConfirmed;
 		_depositPopup.DepositCanceled += OnDepositCanceled;
+		_fsm.OnTransition += LogTransition;
 
 		UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
 	}
 
 	// State Machine Methods
-	private void OnEnterState(BetState state)
+	private void OnStateEntered(BetState state)
 	{
 		switch (state)
 		{
-			case BetState.Idle:
-				break;
-
-			case BetState.Progression:
-				break;
-
 			case BetState.Bankrupt:
 				_resultValue.Text = "Bankrupt. Deposit required.";
 				_betBtn.Disabled = true;
 				break;
-
 		}
 	}
 
-	private void OnExitState(BetState state)
+	private void OnStateExited(BetState state)
 	{
 		if (state == BetState.Bankrupt)
 		{
@@ -151,13 +114,13 @@ public partial class DiceGame : Control
 		_currentBet = baseBet;
 		_increasePercent = increasePercent;
 
-		Transition(GameEvent.BetPressed);
+		_fsm.Fire(GameEvent.BetPressed);
 	}
 
 	private void HandleWin()
 	{
 		_currentBet = _baseBet;
-		Transition(GameEvent.Win);
+		_fsm.Fire(GameEvent.Win);
 	}
 
 	private void HandleLoss()
@@ -168,7 +131,7 @@ public partial class DiceGame : Control
 			_currentBet *= multiplier;
 		}
 
-		Transition(GameEvent.Loss);
+		_fsm.Fire(GameEvent.Loss);
 	}
 
 	private void HandleProgressionAborted()
@@ -176,24 +139,7 @@ public partial class DiceGame : Control
 		_currentBet = 0m;
 		_resultValue.Text = "Bet exceeds balance. Progression stopped.";
 
-		Transition(GameEvent.ProgressionAborted);
-	}
-
-	private void Transition(GameEvent trigger)
-	{
-		var key = (_state, trigger);
-
-		if (_transitions.TryGetValue(key, out var newState))
-		{
-			LogTransition(_state, trigger, newState);
-			OnExitState(_state);
-			_state = newState;
-			OnEnterState(newState);
-		}
-		else
-		{
-			GD.PrintErr($"Invalid transition: {_state} + {trigger}");
-		}
+		_fsm.Fire(GameEvent.ProgressionAborted);
 	}
 
 	private void LogTransition(BetState from, GameEvent trigger, BetState to)
@@ -224,7 +170,7 @@ public partial class DiceGame : Control
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
 
-		if (_state == BetState.Idle)
+		if (_fsm.CurrentState == BetState.Idle)
 		{
 			HandleBetPressed(baseBet, increasePercent);
 		}
@@ -233,7 +179,7 @@ public partial class DiceGame : Control
 		{
 			_resultValue.Text = "Bet exceeds current balance.";
 
-			if (_state == BetState.Progression)
+			if (_fsm.CurrentState == BetState.Progression)
 			{
 				HandleProgressionAborted();
 			}
@@ -263,19 +209,19 @@ public partial class DiceGame : Control
 		
 		if (_engine.Balance <= 0m)
 		{
-			Transition(GameEvent.BankruptDetected);
+			_fsm.Fire(GameEvent.BankruptDetected);
 		}
 	}
 
 	private void OnBetInputChanged(string newText)
 	{
-		if (_state == BetState.Progression)
+		if (_fsm.CurrentState == BetState.Progression)
 		{
 			_currentBet = 0m;
 			_baseBet = 0m;
 			_increasePercent = 0m;
 
-			Transition(GameEvent.ManualReset);
+			_fsm.Fire(GameEvent.ManualReset);
 
 			_resultValue.Text = "Progression manually reset.";
 		}
@@ -424,9 +370,9 @@ public partial class DiceGame : Control
 		UpdateBalanceUI();
 
 		// Si estaba en Bankrupt, salir automáticamente
-		if (_state == BetState.Bankrupt)
+		if (_fsm.CurrentState == BetState.Bankrupt)
 		{
-			Transition(GameEvent.BalanceRefilled);
+			_fsm.Fire(GameEvent.BalanceRefilled);
 		}
 	}
 }
