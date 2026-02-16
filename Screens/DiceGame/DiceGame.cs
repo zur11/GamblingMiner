@@ -15,32 +15,34 @@ public partial class DiceGame : Control
 		Bankrupt
 	}
 
-	private enum BetEvent
+	private enum GameEvent
 	{
 		BetPressed,
 		Win,
 		Loss,
 		ProgressionAborted,
 		BankruptDetected,
-		ManualReset
+		ManualReset,
+
+		BalanceRefilled
 	}
 
 	// Variables de estado
 	private BetState _state = BetState.Idle;
-	private readonly Dictionary<(BetState, BetEvent), BetState>
+	private readonly Dictionary<(BetState, GameEvent), BetState>
 		_transitions = new()
 	{
-		{ (BetState.Idle, BetEvent.BetPressed), BetState.Progression },
+		{ (BetState.Idle, GameEvent.BetPressed), BetState.Progression },
 
-		{ (BetState.Progression, BetEvent.Win), BetState.Idle },
-		{ (BetState.Progression, BetEvent.Loss), BetState.Progression },
-		{ (BetState.Progression, BetEvent.ProgressionAborted), BetState.Idle },
+		{ (BetState.Progression, GameEvent.Win), BetState.Idle },
+		{ (BetState.Progression, GameEvent.Loss), BetState.Progression },
+		{ (BetState.Progression, GameEvent.ProgressionAborted), BetState.Idle },
 
-		{ (BetState.Progression, BetEvent.BankruptDetected), BetState.Bankrupt },
-		{ (BetState.Progression, BetEvent.ManualReset), BetState.Idle },
-		{ (BetState.Idle, BetEvent.BankruptDetected), BetState.Bankrupt },
+		{ (BetState.Progression, GameEvent.ManualReset), BetState.Idle },
+		{ (BetState.Progression, GameEvent.BankruptDetected), BetState.Bankrupt },
+		{ (BetState.Idle, GameEvent.BankruptDetected), BetState.Bankrupt },
 
-		{ (BetState.Bankrupt, BetEvent.ManualReset), BetState.Idle }
+		{ (BetState.Bankrupt, GameEvent.BalanceRefilled), BetState.Idle }
 	};
 
 	// --- Engine ---
@@ -149,13 +151,13 @@ public partial class DiceGame : Control
 		_currentBet = baseBet;
 		_increasePercent = increasePercent;
 
-		Transition(BetEvent.BetPressed);
+		Transition(GameEvent.BetPressed);
 	}
 
 	private void HandleWin()
 	{
 		_currentBet = _baseBet;
-		Transition(BetEvent.Win);
+		Transition(GameEvent.Win);
 	}
 
 	private void HandleLoss()
@@ -166,7 +168,7 @@ public partial class DiceGame : Control
 			_currentBet *= multiplier;
 		}
 
-		Transition(BetEvent.Loss);
+		Transition(GameEvent.Loss);
 	}
 
 	private void HandleProgressionAborted()
@@ -174,10 +176,10 @@ public partial class DiceGame : Control
 		_currentBet = 0m;
 		_resultValue.Text = "Bet exceeds balance. Progression stopped.";
 
-		Transition(BetEvent.ProgressionAborted);
+		Transition(GameEvent.ProgressionAborted);
 	}
 
-	private void Transition(BetEvent trigger)
+	private void Transition(GameEvent trigger)
 	{
 		var key = (_state, trigger);
 
@@ -194,7 +196,7 @@ public partial class DiceGame : Control
 		}
 	}
 
-	private void LogTransition(BetState from, BetEvent trigger, BetState to)
+	private void LogTransition(BetState from, GameEvent trigger, BetState to)
 	{
 		GD.Print($"[FSM] {from} --({trigger})--> {to}");
 	}
@@ -261,7 +263,7 @@ public partial class DiceGame : Control
 		
 		if (_engine.Balance <= 0m)
 		{
-			Transition(BetEvent.BankruptDetected);
+			Transition(GameEvent.BankruptDetected);
 		}
 	}
 
@@ -273,19 +275,9 @@ public partial class DiceGame : Control
 			_baseBet = 0m;
 			_increasePercent = 0m;
 
-			Transition(BetEvent.ManualReset);
+			Transition(GameEvent.ManualReset);
 
 			_resultValue.Text = "Progression manually reset.";
-		}
-		if (_state == BetState.Bankrupt)
-		{
-			_currentBet = 0m;
-			_baseBet = 0m;
-			_increasePercent = 0m;
-
-			Transition(BetEvent.ManualReset);
-
-			_resultValue.Text = "Manual reset after Bankrupt.";
 		}
 	}
 
@@ -434,7 +426,7 @@ public partial class DiceGame : Control
 		// Si estaba en Bankrupt, salir automáticamente
 		if (_state == BetState.Bankrupt)
 		{
-			Transition(BetEvent.ManualReset);
+			Transition(GameEvent.BalanceRefilled);
 		}
 	}
 }
