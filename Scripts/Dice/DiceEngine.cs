@@ -2,21 +2,10 @@ using System;
 
 namespace Scripts.Dice
 {
-	public class DiceEngine
+	public sealed class DiceEngine
 	{
-		private readonly Random _rng = new Random();
+		private readonly Random _rng = new();
 		private const decimal RTP = 0.9902m;
-		private decimal _balance;
-
-		public decimal Balance => _balance;
-
-		public DiceEngine(decimal initialBalance)
-		{
-			if (initialBalance < 0m)
-				throw new ArgumentException("Initial balance cannot be negative.");
-
-			_balance = initialBalance;
-		}
 
 		public DiceResult Play(
 			decimal bet,
@@ -27,14 +16,11 @@ namespace Scripts.Dice
 			if (bet <= 0m)
 				throw new ArgumentException("Bet must be positive.");
 
-			if (bet > _balance)
-				throw new InvalidOperationException("Insufficient balance.");
-
 			if (chancePercent < 1 || chancePercent > 95)
 				throw new ArgumentOutOfRangeException(nameof(chancePercent));
 
 			// --- Roll ---
-			int roll = _rng.Next(0, 100); // 0–99
+			int roll = _rng.Next(0, 100);
 
 			// --- Winning range ---
 			GetWinningRange(
@@ -49,25 +35,11 @@ namespace Scripts.Dice
 			// --- Multiplier ---
 			decimal multiplier = CalculateMultiplier(chancePercent);
 
-			// --- Financial calculation ---
-			decimal profit;
-			decimal balanceAfter;
+			// --- Profit calculation ---
+			decimal profit = isWin
+				? bet * multiplier - bet
+				: -bet;
 
-			if (isWin)
-			{
-				profit = bet * multiplier - bet;
-				balanceAfter = _balance + profit;
-			}
-			else
-			{
-				profit = -bet;
-				balanceAfter = _balance - bet;
-			}
-
-		// Commit balance change AFTER calculation
-		_balance = balanceAfter;
-
-			// --- Construct immutable result ---
 			return new DiceResult(
 				roll,
 				isWin,
@@ -76,7 +48,6 @@ namespace Scripts.Dice
 				multiplier,
 				isHigh,
 				profit,
-				balanceAfter,
 				winMin,
 				winMax
 			);
@@ -112,14 +83,6 @@ namespace Scripts.Dice
 		private static decimal CalculateMultiplier(int chancePercent)
 		{
 			return Math.Round((100m * RTP) / chancePercent, 4);
-		}
-
-		public void AddBalance(decimal amount)
-		{
-			if (amount <= 0m)
-				throw new ArgumentException("Amount must be greater than zero.");
-
-			_balance += amount;
 		}
 	}
 }

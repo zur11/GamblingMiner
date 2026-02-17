@@ -5,13 +5,19 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Scripts.Dice;
 using Scripts.GameState;
+using Scripts.Finance;
+using Scripts.Game;
 
 public partial class DiceGame : Control
 {
 	// --- State Machine ---
 	private GameStateMachine _fsm;
 
-	// --- Engine ---
+	// --- Finanzas ---
+	private Wallet _wallet;
+
+	// --- Servicio de apuestas ---
+	private BetService _betService;
 	private DiceEngine _engine;
 
 	// --- Nodos UI ---
@@ -49,8 +55,10 @@ public partial class DiceGame : Control
 
 	public override void _Ready()
 	{
-		// Setear Balance inicial en el engine
-		_engine = new DiceEngine(initialBalance: 1.00000000m);
+		// Inicializar motor y servicios
+		_engine = new DiceEngine();
+		_wallet = new Wallet(1.00000000m);
+		_betService = new BetService(_engine, _wallet);
 
 		// Obtener nodos
 		_balanceValue = GetNode<Label>("%BalanceValue");
@@ -175,7 +183,7 @@ public partial class DiceGame : Control
 			HandleBetPressed(baseBet, increasePercent);
 		}
 
-		if (_currentBet > _engine.Balance)
+		if (_currentBet > _wallet.Balance)
 		{
 			_resultValue.Text = "Bet exceeds current balance.";
 
@@ -187,7 +195,17 @@ public partial class DiceGame : Control
 			return;
 		}
 
-		DiceResult result = _engine.Play(_currentBet, chance, isHigh);
+		DiceResult result;
+
+		try
+		{
+			result = _betService.ExecuteBet(_currentBet, chance, isHigh);
+		}
+		catch
+		{
+			_resultValue.Text = "Insufficient balance.";
+			return;
+		}
 
 		// Always update UI immediately after play
 		UpdateResultUI(result);
@@ -207,7 +225,7 @@ public partial class DiceGame : Control
 
 		UpdateBalanceUI();
 		
-		if (_engine.Balance <= 0m)
+		if (_wallet.Balance <= 0m)
 		{
 			_fsm.Fire(GameEvent.BankruptDetected);
 		}
@@ -236,11 +254,20 @@ public partial class DiceGame : Control
 	{
 		decimal amount = (decimal)amountDouble;
 
-		var transaction = new Scripts.Transaction.Transaction(
-			Scripts.Transaction.TransactionType.Deposit,
+		var transaction = new Transaction(
+			TransactionType.Deposit,
 			amount);
 
-		ApplyTransaction(transaction);
+		_wallet.ApplyTransaction(transaction);
+
+		_resultValue.Text = $"Deposited {amount:F8}";
+
+		UpdateBalanceUI();
+
+		if (_fsm.CurrentState == BetState.Bankrupt)
+		{
+			_fsm.Fire(GameEvent.BalanceRefilled);
+		}
 	}
 
 	private void OnDepositCanceled()
@@ -259,7 +286,7 @@ public partial class DiceGame : Control
 	private void UpdateBalanceUI()
 	{
 		_balanceValue.Text =
-			_engine.Balance.ToString("F8", CultureInfo.InvariantCulture);
+			_wallet.Balance.ToString("F8", CultureInfo.InvariantCulture);
 	}
 
 	private void UpdateChanceAndMultiplierUIs()
@@ -354,25 +381,5 @@ public partial class DiceGame : Control
 			return false;
 
 		return bet > 0m;
-	}
-
-	// --- Transacciones ---
-	private void ApplyTransaction(Scripts.Transaction.Transaction transaction)
-	{
-		switch (transaction.Type)
-		{
-			case Scripts.Transaction.TransactionType.Deposit:
-				_engine.AddBalance(transaction.Amount);
-				_resultValue.Text = $"Deposited {transaction.Amount:F8}";
-				break;
-		}
-
-		UpdateBalanceUI();
-
-		// Si estaba en Bankrupt, salir automáticamente
-		if (_fsm.CurrentState == BetState.Bankrupt)
-		{
-			_fsm.Fire(GameEvent.BalanceRefilled);
-		}
 	}
 }

@@ -31,7 +31,7 @@ namespace Scripts.GameState
 
         public event Action<BetState> StateEntered;
         public event Action<BetState> StateExited;
-        public event Action<BetState, GameEvent, BetState>? OnTransition;
+        public event Action<BetState, GameEvent, BetState> OnTransition;
 
         public GameStateMachine()
         {

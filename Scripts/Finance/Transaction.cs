@@ -1,8 +1,9 @@
 using System;
 
-namespace Scripts.Transaction
+namespace Scripts.Finance
+
 {
-	public enum TransactionType
+    public enum TransactionType
 	{
 		Deposit,
 		Withdrawal
