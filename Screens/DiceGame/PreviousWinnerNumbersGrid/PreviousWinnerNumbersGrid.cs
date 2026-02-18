@@ -3,36 +3,16 @@ using System;
 
 public partial class PreviousWinnerNumbersGrid : GridContainer
 {
+	[Export]
+	private PackedScene _winnerPresenterScene;
+
 	public void AddWinnerNumber(int number, bool won)
 	{
-		var panel = new PanelContainer
-		{
-			CustomMinimumSize = new Vector2(40, 40)
-		};
+		var item = _winnerPresenterScene.Instantiate<WinnerNumberPresenter>();
 
-		var label = new Label
-		{
-			Text = number.ToString("D2"),
-			HorizontalAlignment = HorizontalAlignment.Center,
-			VerticalAlignment = VerticalAlignment.Center
-		};
+		AddChild(item);
+		item.Setup(number, won);
 
-		var sb = new StyleBoxFlat
-		{
-			BgColor = won ? Colors.Green : Colors.Red,
-			CornerRadiusTopLeft = 6,
-			CornerRadiusTopRight = 6,
-			CornerRadiusBottomLeft = 6,
-			CornerRadiusBottomRight = 6,
-			DrawCenter = true
-		};
-
-		panel.AddThemeStyleboxOverride("panel", sb);
-
-		panel.AddChild(label);
-		AddChild(panel);
-
-		// mover el último resultado a la primera posición del grid
-		MoveChild(panel, 0);
+		MoveChild(item, 0);
 	}
 }

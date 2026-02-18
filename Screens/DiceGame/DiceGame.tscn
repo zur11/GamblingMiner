@@ -180,6 +180,14 @@ offset_bottom = 981.0
 unique_name_in_owner = true
 layout_mode = 2
 
+[node name="ScrollContainer2" type="ScrollContainer" parent="."]
+custom_minimum_size = Vector2(550, 700)
+layout_mode = 0
+offset_left = 1296.0
+offset_top = 290.0
+offset_right = 1846.0
+offset_bottom = 990.0
+
 [node name="HighLowToggleBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
