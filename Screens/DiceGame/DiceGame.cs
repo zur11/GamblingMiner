@@ -18,7 +18,8 @@ public partial class DiceGame : Control
 
 	// --- Servicio de apuestas ---
 	private BetService _betService;
-	private DiceEngine _engine;
+    private BetHistory _betHistory;
+    private DiceEngine _engine;
 
 	// --- Nodos UI ---
 	private Label _balanceValue;
@@ -59,9 +60,10 @@ public partial class DiceGame : Control
 		_engine = new DiceEngine();
 		_wallet = new Wallet(1.00000000m);
 		_betService = new BetService(_engine, _wallet);
+        _betHistory = new BetHistory();
 
-		// Obtener nodos
-		_balanceValue = GetNode<Label>("%BalanceValue");
+        // Obtener nodos
+        _balanceValue = GetNode<Label>("%BalanceValue");
 		_betInput = GetNode<LineEdit>("%BetInput");
 		_resultValue = GetNode<Label>("%ResultValue");
 		_winnerNumbersValue = GetNode<Label>("%WinnerNumbersValue");
@@ -195,20 +197,25 @@ public partial class DiceGame : Control
 			return;
 		}
 
-		DiceResult result;
+        DiceResult result;
+        Scripts.Finance.BetTransactionEvent betEvent;
 
-		try
-		{
-			result = _betService.ExecuteBet(_currentBet, chance, isHigh);
-		}
-		catch
-		{
-			_resultValue.Text = "Insufficient balance.";
-			return;
-		}
+        try
+        {
+            var execution = _betService.ExecuteBet(_currentBet, chance, isHigh);
 
-		// Always update UI immediately after play
-		UpdateResultUI(result);
+            result = execution.Result;
+            betEvent = execution.Event;
+            _betHistory.Add(betEvent);
+        }
+        catch
+        {
+            _resultValue.Text = "Insufficient balance.";
+            return;
+        }
+
+        // Always update UI immediately after play
+        UpdateResultUI(result);
 		UpdatePreviousNumbers(result);
 
 		if (result.IsWin)

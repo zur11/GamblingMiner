@@ -1,3 +1,4 @@
+using System;
 using Scripts.Dice;
 using Scripts.Finance;
 
@@ -14,33 +15,46 @@ namespace Scripts.Game
             _wallet = wallet;
         }
 
-        public DiceResult ExecuteBet(
+        public (DiceResult Result, BetTransactionEvent Event) ExecuteBet(
             decimal bet,
             int chance,
             bool isHigh
         )
         {
-            // 1. Validar fondos
             if (bet > _wallet.Balance)
-                throw new System.InvalidOperationException("Insufficient balance.");
+                throw new InvalidOperationException("Insufficient balance.");
 
-            // 2. Retirar apuesta
+            // Withdraw bet
             _wallet.ApplyTransaction(
                 new Transaction(TransactionType.Withdrawal, bet)
             );
 
-            // 3. Ejecutar motor
+            // Execute engine
             DiceResult result = _engine.Play(bet, chance, isHigh);
 
-            // 4. Aplicar profit
-            if (result.Profit > 0m)
+            decimal payout = 0m;
+
+            if (result.IsWin)
             {
+                payout = bet + result.Profit;
+
                 _wallet.ApplyTransaction(
-                    new Transaction(TransactionType.Deposit, result.Profit + bet)
+                    new Transaction(TransactionType.Deposit, payout)
                 );
             }
 
-            return result;
+            var transactionEvent = new BetTransactionEvent(
+                BetAmount: bet,
+                Profit: result.Profit,
+                BalanceAfter: _wallet.Balance,
+                IsWin: result.IsWin,
+                Roll: result.Roll,
+                Chance: (int)result.Chance,
+                IsHigh: result.IsHigh,
+                Timestamp: DateTime.UtcNow
+            );
+
+            return (result, transactionEvent);
         }
     }
 }
