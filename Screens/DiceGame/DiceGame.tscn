@@ -188,6 +188,10 @@ offset_top = 290.0
 offset_right = 1846.0
 offset_bottom = 990.0
 
+[node name="BetHistoryContainer" type="Control" parent="ScrollContainer2"]
+unique_name_in_owner = true
+layout_mode = 2
+
 [node name="HighLowToggleBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0

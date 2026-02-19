@@ -10,8 +10,11 @@ using Scripts.Game;
 
 public partial class DiceGame : Control
 {
-	// --- State Machine ---
-	private GameStateMachine _fsm;
+    // --- Eventos ---
+    public event Action<BetTransactionEvent> BetExecuted;
+
+    // --- State Machine ---
+    private GameStateMachine _fsm;
 
 	// --- Finanzas ---
 	private Wallet _wallet;
@@ -93,8 +96,9 @@ public partial class DiceGame : Control
 		_depositPopup.DepositConfirmed += OnDepositConfirmed;
 		_depositPopup.DepositCanceled += OnDepositCanceled;
 		_fsm.OnTransition += LogTransition;
+        _previousWinnerNumbersGrid.SubscribeTo(this);
 
-		UpdateAllUI();
+        UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
 	}
 
@@ -204,9 +208,8 @@ public partial class DiceGame : Control
         {
             var execution = _betService.ExecuteBet(_currentBet, chance, isHigh);
 
+            BetExecuted?.Invoke(execution.Event);
             result = execution.Result;
-            betEvent = execution.Event;
-            _betHistory.Add(betEvent);
         }
         catch
         {
@@ -216,7 +219,6 @@ public partial class DiceGame : Control
 
         // Always update UI immediately after play
         UpdateResultUI(result);
-		UpdatePreviousNumbers(result);
 
 		if (result.IsWin)
 		{
