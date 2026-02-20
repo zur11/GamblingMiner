@@ -1,0 +1,30 @@
+[gd_scene load_steps=2 format=3 uid="uid://cql4v111wirfn"]
+
+[ext_resource type="Script" uid="uid://2yhfk5tbxx4c" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryItem.cs" id="1_07qma"]
+
+[node name="BetHistoryItem" type="PanelContainer" node_paths=PackedStringArray("_timestampLabel", "_multiplierLabel", "_betLabel", "_profitLabel")]
+script = ExtResource("1_07qma")
+_timestampLabel = NodePath("HBoxContainer/TimestampLabel")
+_multiplierLabel = NodePath("HBoxContainer/MultiplierLabel")
+_betLabel = NodePath("HBoxContainer/BetLabel")
+_profitLabel = NodePath("HBoxContainer/ProfitLabel")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="TimestampLabel" type="Label" parent="HBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+
+[node name="MultiplierLabel" type="Label" parent="HBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+
+[node name="BetLabel" type="Label" parent="HBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+
+[node name="ProfitLabel" type="Label" parent="HBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20

@@ -21,7 +21,10 @@ public partial class DiceGame : Control
 
 	// --- Servicio de apuestas ---
 	private BetService _betService;
-    private BetHistory _betHistory;
+
+    [Export]
+    private BetHistoryContainer _betHistoryContainer;
+
     private DiceEngine _engine;
 
 	// --- Nodos UI ---
@@ -63,7 +66,7 @@ public partial class DiceGame : Control
 		_engine = new DiceEngine();
 		_wallet = new Wallet(1.00000000m);
 		_betService = new BetService(_engine, _wallet);
-        _betHistory = new BetHistory();
+        //_betHistory = new BetHistory();
 
         // Obtener nodos
         _balanceValue = GetNode<Label>("%BalanceValue");
@@ -97,6 +100,7 @@ public partial class DiceGame : Control
 		_depositPopup.DepositCanceled += OnDepositCanceled;
 		_fsm.OnTransition += LogTransition;
         _previousWinnerNumbersGrid.SubscribeTo(this);
+        _betHistoryContainer.SubscribeTo(this);
 
         UpdateAllUI();
 		_resultValue.Text = "Place your bet.";

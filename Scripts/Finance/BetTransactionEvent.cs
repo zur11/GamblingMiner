@@ -10,6 +10,7 @@ namespace Scripts.Finance
         bool IsWin,
         int Roll,
         int Chance,
+        decimal Multiplier,
         bool IsHigh,
         DateTime Timestamp
     );

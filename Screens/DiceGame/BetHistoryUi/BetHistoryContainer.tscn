@@ -1,0 +1,8 @@
+[gd_scene load_steps=3 format=3 uid="uid://cc4mcdfki2u7r"]
+
+[ext_resource type="Script" uid="uid://crbrcyw7yi6ha" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.cs" id="1_7mvc1"]
+[ext_resource type="PackedScene" uid="uid://cql4v111wirfn" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryItem.tscn" id="2_m1k7w"]
+
+[node name="BetHistoryContainer" type="VBoxContainer"]
+script = ExtResource("1_7mvc1")
+_betHistoryItemScene = ExtResource("2_m1k7w")

@@ -1,10 +1,11 @@
-[gd_scene load_steps=4 format=3 uid="uid://c711y35rvk5gf"]
+[gd_scene load_steps=5 format=3 uid="uid://c711y35rvk5gf"]
 
 [ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame/DiceGame.cs" id="1_k3ff0"]
 [ext_resource type="PackedScene" uid="uid://dcj5ru0ys536m" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/PreviousWinnerNumbersGrid.tscn" id="2_5hi04"]
 [ext_resource type="PackedScene" uid="uid://c3gxcrrobecpj" path="res://Screens/DepositPopup/DepositPopup.tscn" id="3_gu5sn"]
+[ext_resource type="PackedScene" uid="uid://cc4mcdfki2u7r" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.tscn" id="3_usic0"]
 
-[node name="DiceGame" type="Control" node_paths=PackedStringArray("_previousWinnerNumbersGrid")]
+[node name="DiceGame" type="Control" node_paths=PackedStringArray("_betHistoryContainer", "_previousWinnerNumbersGrid")]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -12,6 +13,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_k3ff0")
+_betHistoryContainer = NodePath("ScrollContainer2/BetHistoryContainer")
 _previousWinnerNumbersGrid = NodePath("ScrollContainer/PreviousWinnerNumbersGrid")
 
 [node name="BalanceText" type="Label" parent="."]
@@ -180,6 +182,42 @@ offset_bottom = 981.0
 unique_name_in_owner = true
 layout_mode = 2
 
+[node name="BetTimeText" type="Label" parent="."]
+layout_mode = 0
+offset_left = 1296.0
+offset_top = 253.0
+offset_right = 1355.0
+offset_bottom = 288.0
+theme_override_font_sizes/font_size = 25
+text = "Time"
+
+[node name="MultiplierText2" type="Label" parent="."]
+layout_mode = 0
+offset_left = 1391.0
+offset_top = 253.0
+offset_right = 1450.0
+offset_bottom = 288.0
+theme_override_font_sizes/font_size = 25
+text = "Mult"
+
+[node name="BetAmountText" type="Label" parent="."]
+layout_mode = 0
+offset_left = 1498.0
+offset_top = 253.0
+offset_right = 1539.0
+offset_bottom = 288.0
+theme_override_font_sizes/font_size = 25
+text = "Bet"
+
+[node name="ProfitAmountText" type="Label" parent="."]
+layout_mode = 0
+offset_left = 1625.0
+offset_top = 253.0
+offset_right = 1770.0
+offset_bottom = 288.0
+theme_override_font_sizes/font_size = 25
+text = "Profit/Loss"
+
 [node name="ScrollContainer2" type="ScrollContainer" parent="."]
 custom_minimum_size = Vector2(550, 700)
 layout_mode = 0
@@ -188,8 +226,7 @@ offset_top = 290.0
 offset_right = 1846.0
 offset_bottom = 990.0
 
-[node name="BetHistoryContainer" type="Control" parent="ScrollContainer2"]
-unique_name_in_owner = true
+[node name="BetHistoryContainer" parent="ScrollContainer2" instance=ExtResource("3_usic0")]
 layout_mode = 2
 
 [node name="HighLowToggleBtn" type="Button" parent="."]

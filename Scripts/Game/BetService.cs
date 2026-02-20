@@ -33,6 +33,7 @@ namespace Scripts.Game
             DiceResult result = _engine.Play(bet, chance, isHigh);
 
             decimal payout = 0m;
+            decimal multiplier = result.Multiplier;
 
             if (result.IsWin)
             {
@@ -50,6 +51,7 @@ namespace Scripts.Game
                 IsWin: result.IsWin,
                 Roll: result.Roll,
                 Chance: (int)result.Chance,
+                Multiplier: multiplier,
                 IsHigh: result.IsHigh,
                 Timestamp: DateTime.UtcNow
             );
