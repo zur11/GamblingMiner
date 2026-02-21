@@ -16,7 +16,12 @@ script = ExtResource("1_k3ff0")
 _betHistoryContainer = NodePath("ScrollContainer2/BetHistoryContainer")
 _previousWinnerNumbersGrid = NodePath("ScrollContainer/PreviousWinnerNumbersGrid")
 
-[node name="BalanceText" type="Label" parent="."]
+[node name="UiTextLabels" type="Control" parent="."]
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="BalanceText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 612.0
 offset_top = 19.0
@@ -24,6 +29,105 @@ offset_right = 802.0
 offset_bottom = 88.0
 theme_override_font_sizes/font_size = 50
 text = "Balance"
+
+[node name="IncreaseOnLossText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 14.0
+offset_top = 713.0
+offset_right = 554.0
+offset_bottom = 809.0
+theme_override_font_sizes/font_size = 70
+text = "Increase on loss"
+
+[node name="IncreaseOnLossText2" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 486.0
+offset_top = 793.0
+offset_right = 546.0
+offset_bottom = 889.0
+theme_override_font_sizes/font_size = 70
+text = "%"
+
+[node name="BetText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 14.0
+offset_top = 485.0
+offset_right = 504.0
+offset_bottom = 581.0
+theme_override_font_sizes/font_size = 70
+text = "Amount to bet"
+
+[node name="ResultText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 1098.0
+offset_top = 12.0
+offset_right = 1351.0
+offset_bottom = 108.0
+theme_override_font_sizes/font_size = 70
+text = "Result"
+
+[node name="WinnerNumbersText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 261.0
+offset_right = 444.0
+offset_bottom = 330.0
+theme_override_font_sizes/font_size = 50
+text = "Winner Numbers:"
+
+[node name="ChanceToWinText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 86.0
+offset_top = 337.0
+offset_right = 440.0
+offset_bottom = 406.0
+theme_override_font_sizes/font_size = 50
+text = "Chance to win:"
+
+[node name="MultiplierText2" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 1391.0
+offset_top = 381.0
+offset_right = 1450.0
+offset_bottom = 416.0
+theme_override_font_sizes/font_size = 25
+text = "Mult"
+
+[node name="MultiplierText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 130.0
+offset_top = 413.0
+offset_right = 484.0
+offset_bottom = 482.0
+theme_override_font_sizes/font_size = 50
+text = "Payout mult:"
+
+[node name="BetTimeText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 1296.0
+offset_top = 381.0
+offset_right = 1355.0
+offset_bottom = 416.0
+theme_override_font_sizes/font_size = 25
+text = "Time"
+
+[node name="BetAmountText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 1498.0
+offset_top = 381.0
+offset_right = 1539.0
+offset_bottom = 416.0
+theme_override_font_sizes/font_size = 25
+text = "Bet"
+
+[node name="ProfitAmountText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 1625.0
+offset_top = 381.0
+offset_right = 1770.0
+offset_bottom = 416.0
+theme_override_font_sizes/font_size = 25
+text = "Profit/Loss"
 
 [node name="BalanceValue" type="Label" parent="."]
 unique_name_in_owner = true
@@ -34,15 +138,6 @@ offset_right = 848.0
 offset_bottom = 173.0
 theme_override_font_sizes/font_size = 50
 text = "1.00000000"
-
-[node name="BetText" type="Label" parent="."]
-layout_mode = 0
-offset_left = 14.0
-offset_top = 485.0
-offset_right = 504.0
-offset_bottom = 581.0
-theme_override_font_sizes/font_size = 70
-text = "Amount to bet"
 
 [node name="BetInput" type="LineEdit" parent="."]
 unique_name_in_owner = true
@@ -55,24 +150,6 @@ theme_override_font_sizes/font_size = 70
 placeholder_text = "0.00000000"
 max_length = 16
 
-[node name="IncreaseOnLossText" type="Label" parent="."]
-layout_mode = 0
-offset_left = 14.0
-offset_top = 713.0
-offset_right = 554.0
-offset_bottom = 809.0
-theme_override_font_sizes/font_size = 70
-text = "Increase on loss"
-
-[node name="IncreaseOnLossText2" type="Label" parent="."]
-layout_mode = 0
-offset_left = 486.0
-offset_top = 793.0
-offset_right = 546.0
-offset_bottom = 889.0
-theme_override_font_sizes/font_size = 70
-text = "%"
-
 [node name="IncreaseOnLossInput" type="LineEdit" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
@@ -82,15 +159,6 @@ offset_right = 472.0
 offset_bottom = 893.0
 theme_override_font_sizes/font_size = 60
 alignment = 1
-
-[node name="ResultText" type="Label" parent="."]
-layout_mode = 0
-offset_left = 1098.0
-offset_top = 12.0
-offset_right = 1351.0
-offset_bottom = 108.0
-theme_override_font_sizes/font_size = 70
-text = "Result"
 
 [node name="ResultValue" type="Label" parent="."]
 unique_name_in_owner = true
@@ -113,15 +181,6 @@ min_value = 1.0
 max_value = 95.0
 value = 50.0
 
-[node name="WinnerNumbersText" type="Label" parent="."]
-layout_mode = 0
-offset_left = 18.0
-offset_top = 261.0
-offset_right = 444.0
-offset_bottom = 330.0
-theme_override_font_sizes/font_size = 50
-text = "Winner Numbers:"
-
 [node name="WinnerNumbersValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
@@ -131,15 +190,6 @@ offset_right = 669.0
 offset_bottom = 334.0
 theme_override_font_sizes/font_size = 50
 text = "00 to 49"
-
-[node name="ChanceToWinText" type="Label" parent="."]
-layout_mode = 0
-offset_left = 86.0
-offset_top = 337.0
-offset_right = 440.0
-offset_bottom = 406.0
-theme_override_font_sizes/font_size = 50
-text = "Chance to win:"
 
 [node name="ChanceToWinValue" type="Label" parent="."]
 unique_name_in_owner = true
@@ -151,15 +201,6 @@ offset_bottom = 408.0
 theme_override_font_sizes/font_size = 50
 text = "50%"
 
-[node name="MultiplierText" type="Label" parent="."]
-layout_mode = 0
-offset_left = 130.0
-offset_top = 413.0
-offset_right = 484.0
-offset_bottom = 482.0
-theme_override_font_sizes/font_size = 50
-text = "Payout mult:"
-
 [node name="MultiplierValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
@@ -170,61 +211,53 @@ offset_bottom = 484.0
 theme_override_font_sizes/font_size = 50
 text = "x 1.9804"
 
+[node name="UserBettingStats" type="HBoxContainer" parent="."]
+layout_mode = 0
+offset_left = 729.0
+offset_top = 257.0
+offset_right = 1826.0
+offset_bottom = 297.0
+theme_override_constants/separation = 30
+
+[node name="LastDepositProfitText" type="Label" parent="UserBettingStats"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "Last deposit profit/loss"
+
+[node name="GeneralProfitText" type="Label" parent="UserBettingStats"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "General profit/loss"
+
+[node name="LastDepositGambledText" type="Label" parent="UserBettingStats"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "Last deposit gambled"
+
+[node name="TotalGambledText" type="Label" parent="UserBettingStats"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "Total gambled"
+
 [node name="ScrollContainer" type="ScrollContainer" parent="."]
 custom_minimum_size = Vector2(550, 700)
 layout_mode = 0
-offset_left = 762.0
-offset_top = 281.0
-offset_right = 1312.0
-offset_bottom = 981.0
+offset_left = 720.0
+offset_top = 381.0
+offset_right = 1270.0
+offset_bottom = 1081.0
 
 [node name="PreviousWinnerNumbersGrid" parent="ScrollContainer" instance=ExtResource("2_5hi04")]
 unique_name_in_owner = true
 layout_mode = 2
 
-[node name="BetTimeText" type="Label" parent="."]
-layout_mode = 0
-offset_left = 1296.0
-offset_top = 253.0
-offset_right = 1355.0
-offset_bottom = 288.0
-theme_override_font_sizes/font_size = 25
-text = "Time"
-
-[node name="MultiplierText2" type="Label" parent="."]
-layout_mode = 0
-offset_left = 1391.0
-offset_top = 253.0
-offset_right = 1450.0
-offset_bottom = 288.0
-theme_override_font_sizes/font_size = 25
-text = "Mult"
-
-[node name="BetAmountText" type="Label" parent="."]
-layout_mode = 0
-offset_left = 1498.0
-offset_top = 253.0
-offset_right = 1539.0
-offset_bottom = 288.0
-theme_override_font_sizes/font_size = 25
-text = "Bet"
-
-[node name="ProfitAmountText" type="Label" parent="."]
-layout_mode = 0
-offset_left = 1625.0
-offset_top = 253.0
-offset_right = 1770.0
-offset_bottom = 288.0
-theme_override_font_sizes/font_size = 25
-text = "Profit/Loss"
-
 [node name="ScrollContainer2" type="ScrollContainer" parent="."]
-custom_minimum_size = Vector2(550, 700)
+custom_minimum_size = Vector2(550, 660)
 layout_mode = 0
 offset_left = 1296.0
-offset_top = 290.0
+offset_top = 415.0
 offset_right = 1846.0
-offset_bottom = 990.0
+offset_bottom = 1075.0
 
 [node name="BetHistoryContainer" parent="ScrollContainer2" instance=ExtResource("3_usic0")]
 layout_mode = 2
