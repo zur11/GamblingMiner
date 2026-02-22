@@ -21,6 +21,7 @@ public partial class DiceGame : Control
 
 	// --- Servicio de apuestas ---
 	private BetService _betService;
+    private UserStatsService _userStatsService;
 
     [Export]
     private BetHistoryContainer _betHistoryContainer;
@@ -81,9 +82,11 @@ public partial class DiceGame : Control
 		_increaseOnLossInput = GetNode<LineEdit>("%IncreaseOnLossInput");
 		_depositPopup = GetNode<DepositPopup>("%DepositPopup");
 		_depositBtn = GetNode<Button>("%DepositBtn");
+        _userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 
-		// Configurar toggle
-		_highLowToggleBtn.ToggleMode = true;
+
+        // Configurar toggle
+        _highLowToggleBtn.ToggleMode = true;
 		_highLowToggleBtn.ButtonPressed = false;
 		_highLowToggleBtn.Text = "LOW";
 
@@ -213,6 +216,8 @@ public partial class DiceGame : Control
             var execution = _betService.ExecuteBet(_currentBet, chance, isHigh);
 
             BetExecuted?.Invoke(execution.Event);
+            _userStatsService.RegisterBet("Dice", execution.Event);
+
             result = execution.Result;
         }
         catch
@@ -272,8 +277,9 @@ public partial class DiceGame : Control
 			amount);
 
 		_wallet.ApplyTransaction(transaction);
+        _userStatsService.RegisterDeposit();
 
-		_resultValue.Text = $"Deposited {amount:F8}";
+        _resultValue.Text = $"Deposited {amount:F8}";
 
 		UpdateBalanceUI();
 

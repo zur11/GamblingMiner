@@ -11,9 +11,9 @@ public partial class UserStatsService : Node
         Stats = new UserBettingStats();
     }
 
-    public void RegisterBet(BetTransactionEvent bet)
+    public void RegisterBet(string gameId, BetTransactionEvent bet)
     {
-        Stats.RegisterBet(bet);
+        Stats.RegisterBet(gameId, bet);
     }
 
     public void RegisterDeposit()
