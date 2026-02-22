@@ -11,7 +11,7 @@ public partial class BetHistoryContainer : VBoxContainer
 		game.BetExecuted += OnBetExecuted;
 	}
 
-	private void OnBetExecuted(BetTransactionEvent betEvent)
+	private void OnBetExecuted(string _, BetTransactionEvent betEvent) // string _ es para ignorar el parámetro gameId, que podria implementar si quisiera mostrar el historial de varios juegos en un mismo contenedor
 	{
 		AddEntry(betEvent);
 	}

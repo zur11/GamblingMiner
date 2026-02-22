@@ -1,6 +1,7 @@
 using Godot;
 using Scripts.Finance;
 using Scripts.User;
+using Scripts.Game;
 
 public partial class UserStatsService : Node
 {
@@ -19,5 +20,15 @@ public partial class UserStatsService : Node
     public void RegisterDeposit()
     {
         Stats.RegisterDeposit();
+    }
+
+    public void RegisterSource(IBetEventSource source)
+    {
+        source.BetExecuted += OnBetExecuted;
+    }
+
+    private void OnBetExecuted(string gameId, BetTransactionEvent bet)
+    {
+        Stats.RegisterBet(gameId, bet);
     }
 }

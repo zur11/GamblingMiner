@@ -12,7 +12,7 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 		game.BetExecuted += OnBetExecuted;
 	}
 
-	private void OnBetExecuted(BetTransactionEvent betEvent)
+	private void OnBetExecuted(string _, BetTransactionEvent betEvent)
 	{
 		AddWinnerNumber(betEvent.Roll, betEvent.IsWin);
 	}

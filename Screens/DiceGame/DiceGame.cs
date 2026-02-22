@@ -8,10 +8,13 @@ using Scripts.GameState;
 using Scripts.Finance;
 using Scripts.Game;
 
-public partial class DiceGame : Control
+public partial class DiceGame : Control, IBetEventSource
 {
+    // --- Propiedades ---
+    public string GameId => "Dice";
+
     // --- Eventos ---
-    public event Action<BetTransactionEvent> BetExecuted;
+    public event Action<string, BetTransactionEvent> BetExecuted;
 
     // --- State Machine ---
     private GameStateMachine _fsm;
@@ -104,6 +107,7 @@ public partial class DiceGame : Control
 		_fsm.OnTransition += LogTransition;
         _previousWinnerNumbersGrid.SubscribeTo(this);
         _betHistoryContainer.SubscribeTo(this);
+        _userStatsService.RegisterSource(this);
 
         UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
@@ -209,16 +213,15 @@ public partial class DiceGame : Control
 		}
 
         DiceResult result;
-        Scripts.Finance.BetTransactionEvent betEvent;
 
         try
         {
-            var execution = _betService.ExecuteBet(_currentBet, chance, isHigh);
+            var (diceResult, betEvent) =
+                _betService.ExecuteBet(_currentBet, chance, isHigh);
 
-            BetExecuted?.Invoke(execution.Event);
-            _userStatsService.RegisterBet("Dice", execution.Event);
+            BetExecuted?.Invoke(GameId, betEvent);
 
-            result = execution.Result;
+            result = diceResult;
         }
         catch
         {
