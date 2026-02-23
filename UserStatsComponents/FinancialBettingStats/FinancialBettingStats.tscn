@@ -1,0 +1,71 @@
+[gd_scene load_steps=2 format=3 uid="uid://c2crwe1sryeto"]
+
+[ext_resource type="Script" uid="uid://dc5d23kpgengh" path="res://UserStatsComponents/FinancialBettingStats/FinancialBettingStats.cs" id="1_jwxx3"]
+
+[node name="FinancialBettingStats" type="Control" node_paths=PackedStringArray("_lastDepositProfitLabel", "_lastDepositGambledLabel", "_generalProfitLabel", "_totalGambledLabel")]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = -1270.0
+offset_bottom = -841.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_jwxx3")
+_lastDepositProfitLabel = NodePath("StatsValues/LastDepositProfitValue")
+_lastDepositGambledLabel = NodePath("StatsValues/LastDepositGambledValue")
+_generalProfitLabel = NodePath("StatsValues/GeneralProfitValue")
+_totalGambledLabel = NodePath("StatsValues/TotalGambledValue")
+
+[node name="StatsTitles" type="VBoxContainer" parent="."]
+layout_mode = 0
+offset_right = 299.0
+offset_bottom = 238.0
+theme_override_constants/separation = 30
+
+[node name="LastDepositProfitText" type="Label" parent="StatsTitles"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "Last deposit profit/loss"
+
+[node name="LastDepositGambledText" type="Label" parent="StatsTitles"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "Last deposit gambled"
+
+[node name="GeneralProfitText" type="Label" parent="StatsTitles"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "General profit/loss"
+
+[node name="TotalGambledText" type="Label" parent="StatsTitles"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "Total gambled"
+
+[node name="StatsValues" type="VBoxContainer" parent="."]
+layout_mode = 0
+offset_left = 320.0
+offset_right = 466.0
+offset_bottom = 238.0
+theme_override_constants/separation = 30
+
+[node name="LastDepositProfitValue" type="Label" parent="StatsValues"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "0.00000000"
+
+[node name="LastDepositGambledValue" type="Label" parent="StatsValues"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "0.00000000"
+
+[node name="GeneralProfitValue" type="Label" parent="StatsValues"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "0.00000000"
+
+[node name="TotalGambledValue" type="Label" parent="StatsValues"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 27
+text = "0.00000000"

@@ -10,26 +10,27 @@ using Scripts.Game;
 
 public partial class DiceGame : Control, IBetEventSource
 {
-    // --- Propiedades ---
-    public string GameId => "Dice";
+	// --- Eventos ---
+	public event Action<string, BetTransactionEvent> BetExecuted;
 
-    // --- Eventos ---
-    public event Action<string, BetTransactionEvent> BetExecuted;
+	// --- Propiedades ---
+	public string GameId => "Dice";
 
-    // --- State Machine ---
-    private GameStateMachine _fsm;
+	// --- State Machine ---
+	private GameStateMachine _fsm;
 
 	// --- Finanzas ---
 	private Wallet _wallet;
 
 	// --- Servicio de apuestas ---
 	private BetService _betService;
-    private UserStatsService _userStatsService;
+	private UserStatsService _userStatsService;
+	private FinancialBettingStats _financialStats;
 
-    [Export]
-    private BetHistoryContainer _betHistoryContainer;
+	[Export]
+	private BetHistoryContainer _betHistoryContainer;
 
-    private DiceEngine _engine;
+	private DiceEngine _engine;
 
 	// --- Nodos UI ---
 	private Label _balanceValue;
@@ -70,10 +71,10 @@ public partial class DiceGame : Control, IBetEventSource
 		_engine = new DiceEngine();
 		_wallet = new Wallet(1.00000000m);
 		_betService = new BetService(_engine, _wallet);
-        //_betHistory = new BetHistory();
+		//_betHistory = new BetHistory();
 
-        // Obtener nodos
-        _balanceValue = GetNode<Label>("%BalanceValue");
+		// Obtener nodos
+		_balanceValue = GetNode<Label>("%BalanceValue");
 		_betInput = GetNode<LineEdit>("%BetInput");
 		_resultValue = GetNode<Label>("%ResultValue");
 		_winnerNumbersValue = GetNode<Label>("%WinnerNumbersValue");
@@ -85,11 +86,12 @@ public partial class DiceGame : Control, IBetEventSource
 		_increaseOnLossInput = GetNode<LineEdit>("%IncreaseOnLossInput");
 		_depositPopup = GetNode<DepositPopup>("%DepositPopup");
 		_depositBtn = GetNode<Button>("%DepositBtn");
-        _userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
+		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
+		_financialStats = GetNode<FinancialBettingStats>("%FinancialBettingStats");
 
 
-        // Configurar toggle
-        _highLowToggleBtn.ToggleMode = true;
+		// Configurar toggle
+		_highLowToggleBtn.ToggleMode = true;
 		_highLowToggleBtn.ButtonPressed = false;
 		_highLowToggleBtn.Text = "LOW";
 
@@ -105,11 +107,12 @@ public partial class DiceGame : Control, IBetEventSource
 		_depositPopup.DepositConfirmed += OnDepositConfirmed;
 		_depositPopup.DepositCanceled += OnDepositCanceled;
 		_fsm.OnTransition += LogTransition;
-        _previousWinnerNumbersGrid.SubscribeTo(this);
-        _betHistoryContainer.SubscribeTo(this);
-        _userStatsService.RegisterSource(this);
+		_previousWinnerNumbersGrid.SubscribeTo(this);
+		_betHistoryContainer.SubscribeTo(this);
+		_userStatsService.RegisterSource(this);
+		BetExecuted += OnBetExecuted_UpdateFinancialStats;
 
-        UpdateAllUI();
+		UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
 	}
 
@@ -212,25 +215,25 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-        DiceResult result;
+		DiceResult result;
 
-        try
-        {
-            var (diceResult, betEvent) =
-                _betService.ExecuteBet(_currentBet, chance, isHigh);
+		try
+		{
+			var (diceResult, betEvent) =
+				_betService.ExecuteBet(_currentBet, chance, isHigh);
 
-            BetExecuted?.Invoke(GameId, betEvent);
+			BetExecuted?.Invoke(GameId, betEvent);
 
-            result = diceResult;
-        }
-        catch
-        {
-            _resultValue.Text = "Insufficient balance.";
-            return;
-        }
+			result = diceResult;
+		}
+		catch
+		{
+			_resultValue.Text = "Insufficient balance.";
+			return;
+		}
 
-        // Always update UI immediately after play
-        UpdateResultUI(result);
+		// Always update UI immediately after play
+		UpdateResultUI(result);
 
 		if (result.IsWin)
 		{
@@ -280,9 +283,9 @@ public partial class DiceGame : Control, IBetEventSource
 			amount);
 
 		_wallet.ApplyTransaction(transaction);
-        _userStatsService.RegisterDeposit();
+		_userStatsService.RegisterDeposit();
 
-        _resultValue.Text = $"Deposited {amount:F8}";
+		_resultValue.Text = $"Deposited {amount:F8}";
 
 		UpdateBalanceUI();
 
@@ -295,6 +298,13 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnDepositCanceled()
 	{
 		_resultValue.Text = "Deposit canceled.";
+	}
+
+	private void OnBetExecuted_UpdateFinancialStats(
+	string gameId,
+	BetTransactionEvent betEvent)
+	{
+		_financialStats.UpdateFrom(_userStatsService.Stats);
 	}
 
 	// --- UI Updates ---

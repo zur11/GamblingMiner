@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3 uid="uid://c711y35rvk5gf"]
+[gd_scene load_steps=6 format=3 uid="uid://c711y35rvk5gf"]
 
 [ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame/DiceGame.cs" id="1_k3ff0"]
 [ext_resource type="PackedScene" uid="uid://dcj5ru0ys536m" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/PreviousWinnerNumbersGrid.tscn" id="2_5hi04"]
 [ext_resource type="PackedScene" uid="uid://c3gxcrrobecpj" path="res://Screens/DepositPopup/DepositPopup.tscn" id="3_gu5sn"]
 [ext_resource type="PackedScene" uid="uid://cc4mcdfki2u7r" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.tscn" id="3_usic0"]
+[ext_resource type="PackedScene" uid="uid://c2crwe1sryeto" path="res://UserStatsComponents/FinancialBettingStats/FinancialBettingStats.tscn" id="5_ne2vn"]
 
 [node name="DiceGame" type="Control" node_paths=PackedStringArray("_betHistoryContainer", "_previousWinnerNumbersGrid")]
 layout_mode = 3
@@ -32,28 +33,28 @@ text = "Balance"
 
 [node name="IncreaseOnLossText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 14.0
-offset_top = 713.0
-offset_right = 554.0
-offset_bottom = 809.0
+offset_left = 1290.0
+offset_top = 200.0
+offset_right = 1830.0
+offset_bottom = 296.0
 theme_override_font_sizes/font_size = 70
 text = "Increase on loss"
 
 [node name="IncreaseOnLossText2" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 486.0
-offset_top = 793.0
-offset_right = 546.0
-offset_bottom = 889.0
+offset_left = 1690.0
+offset_top = 286.0
+offset_right = 1750.0
+offset_bottom = 382.0
 theme_override_font_sizes/font_size = 70
 text = "%"
 
 [node name="BetText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 14.0
-offset_top = 485.0
-offset_right = 504.0
-offset_bottom = 581.0
+offset_left = 736.0
+offset_top = 200.0
+offset_right = 1226.0
+offset_bottom = 296.0
 theme_override_font_sizes/font_size = 70
 text = "Amount to bet"
 
@@ -84,15 +85,6 @@ offset_bottom = 406.0
 theme_override_font_sizes/font_size = 50
 text = "Chance to win:"
 
-[node name="MultiplierText2" type="Label" parent="UiTextLabels"]
-layout_mode = 0
-offset_left = 1391.0
-offset_top = 381.0
-offset_right = 1450.0
-offset_bottom = 416.0
-theme_override_font_sizes/font_size = 25
-text = "Mult"
-
 [node name="MultiplierText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 130.0
@@ -102,30 +94,39 @@ offset_bottom = 482.0
 theme_override_font_sizes/font_size = 50
 text = "Payout mult:"
 
+[node name="MultiplierText2" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 1391.0
+offset_top = 437.0
+offset_right = 1450.0
+offset_bottom = 472.0
+theme_override_font_sizes/font_size = 25
+text = "Mult"
+
 [node name="BetTimeText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 1296.0
-offset_top = 381.0
+offset_top = 437.0
 offset_right = 1355.0
-offset_bottom = 416.0
+offset_bottom = 472.0
 theme_override_font_sizes/font_size = 25
 text = "Time"
 
 [node name="BetAmountText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 1498.0
-offset_top = 381.0
+offset_top = 437.0
 offset_right = 1539.0
-offset_bottom = 416.0
+offset_bottom = 472.0
 theme_override_font_sizes/font_size = 25
 text = "Bet"
 
 [node name="ProfitAmountText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 1625.0
-offset_top = 381.0
+offset_top = 437.0
 offset_right = 1770.0
-offset_bottom = 416.0
+offset_bottom = 472.0
 theme_override_font_sizes/font_size = 25
 text = "Profit/Loss"
 
@@ -142,10 +143,10 @@ text = "1.00000000"
 [node name="BetInput" type="LineEdit" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 14.0
-offset_top = 597.0
-offset_right = 412.0
-offset_bottom = 701.0
+offset_left = 733.0
+offset_top = 291.0
+offset_right = 1131.0
+offset_bottom = 395.0
 theme_override_font_sizes/font_size = 70
 placeholder_text = "0.00000000"
 max_length = 16
@@ -153,10 +154,10 @@ max_length = 16
 [node name="IncreaseOnLossInput" type="LineEdit" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 14.0
-offset_top = 802.0
-offset_right = 472.0
-offset_bottom = 893.0
+offset_left = 1298.0
+offset_top = 291.0
+offset_right = 1756.0
+offset_bottom = 382.0
 theme_override_font_sizes/font_size = 60
 alignment = 1
 
@@ -211,53 +212,25 @@ offset_bottom = 484.0
 theme_override_font_sizes/font_size = 50
 text = "x 1.9804"
 
-[node name="UserBettingStats" type="HBoxContainer" parent="."]
-layout_mode = 0
-offset_left = 729.0
-offset_top = 257.0
-offset_right = 1826.0
-offset_bottom = 297.0
-theme_override_constants/separation = 30
-
-[node name="LastDepositProfitText" type="Label" parent="UserBettingStats"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 27
-text = "Last deposit profit/loss"
-
-[node name="GeneralProfitText" type="Label" parent="UserBettingStats"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 27
-text = "General profit/loss"
-
-[node name="LastDepositGambledText" type="Label" parent="UserBettingStats"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 27
-text = "Last deposit gambled"
-
-[node name="TotalGambledText" type="Label" parent="UserBettingStats"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 27
-text = "Total gambled"
-
 [node name="ScrollContainer" type="ScrollContainer" parent="."]
-custom_minimum_size = Vector2(550, 700)
+custom_minimum_size = Vector2(550, 640)
 layout_mode = 0
 offset_left = 720.0
-offset_top = 381.0
+offset_top = 434.0
 offset_right = 1270.0
-offset_bottom = 1081.0
+offset_bottom = 1078.0
 
 [node name="PreviousWinnerNumbersGrid" parent="ScrollContainer" instance=ExtResource("2_5hi04")]
 unique_name_in_owner = true
 layout_mode = 2
 
 [node name="ScrollContainer2" type="ScrollContainer" parent="."]
-custom_minimum_size = Vector2(550, 660)
+custom_minimum_size = Vector2(550, 600)
 layout_mode = 0
 offset_left = 1296.0
-offset_top = 415.0
+offset_top = 480.0
 offset_right = 1846.0
-offset_bottom = 1075.0
+offset_bottom = 1080.0
 
 [node name="BetHistoryContainer" parent="ScrollContainer2" instance=ExtResource("3_usic0")]
 layout_mode = 2
@@ -275,10 +248,10 @@ text = "Betting Low"
 [node name="BetBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 14.0
-offset_top = 928.0
-offset_right = 120.0
-offset_bottom = 1019.0
+offset_left = 1789.0
+offset_top = 291.0
+offset_right = 1895.0
+offset_bottom = 382.0
 theme_override_font_sizes/font_size = 60
 text = "Bet"
 
@@ -298,3 +271,11 @@ visible = false
 layout_mode = 1
 offset_left = 861.0
 offset_right = 860.9199
+
+[node name="FinancialBettingStats" parent="." instance=ExtResource("5_ne2vn")]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 17.0
+offset_top = 540.0
+offset_right = -1253.0
+offset_bottom = -301.0
