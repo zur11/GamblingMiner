@@ -12,6 +12,8 @@ public partial class FinancialBettingStats : Control
 	[Export] private Color _winColor = Colors.Green;
 	[Export] private Color _lossColor = Colors.Red;
 
+	private UserStatsService _connectedService;
+
 	public void UpdateFrom(UserBettingStats stats)
 	{
 		_lastDepositProfitLabel.Text =
@@ -32,14 +34,19 @@ public partial class FinancialBettingStats : Control
 
 	public void ConnectTo(UserStatsService service)
 	{
+		_connectedService = service;
 		service.StatsChanged += UpdateFrom;
-
-		// opcional pero recomendable:
 		UpdateFrom(service.Stats);
 	}
 
 	private void UpdateColor(Label label, decimal value)
 	{
 		label.Modulate = value >= 0 ? _winColor : _lossColor;
+	}
+
+	public override void _ExitTree()
+	{
+		if (_connectedService != null)
+			_connectedService.StatsChanged -= UpdateFrom;
 	}
 }
