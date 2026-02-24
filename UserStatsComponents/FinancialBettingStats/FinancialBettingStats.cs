@@ -30,6 +30,14 @@ public partial class FinancialBettingStats : Control
 		UpdateColor(_generalProfitLabel, stats.TotalProfit);
 	}
 
+	public void ConnectTo(UserStatsService service)
+	{
+		service.StatsChanged += UpdateFrom;
+
+		// opcional pero recomendable:
+		UpdateFrom(service.Stats);
+	}
+
 	private void UpdateColor(Label label, decimal value)
 	{
 		label.Modulate = value >= 0 ? _winColor : _lossColor;

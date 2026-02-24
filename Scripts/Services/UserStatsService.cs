@@ -1,10 +1,13 @@
 using Godot;
+using System;
 using Scripts.Finance;
 using Scripts.User;
 using Scripts.Game;
 
 public partial class UserStatsService : Node
 {
+    public event Action<UserBettingStats> StatsChanged;
+
     public UserBettingStats Stats { get; private set; }
 
     public override void _Ready()
@@ -12,23 +15,20 @@ public partial class UserStatsService : Node
         Stats = new UserBettingStats();
     }
 
-    public void RegisterBet(string gameId, BetTransactionEvent bet)
+    public void OnBetExecutedRegisterBet(string gameId, BetTransactionEvent bet)
     {
         Stats.RegisterBet(gameId, bet);
+        StatsChanged?.Invoke(Stats);
     }
 
     public void RegisterDeposit()
     {
         Stats.RegisterDeposit();
+        StatsChanged?.Invoke(Stats);
     }
 
     public void RegisterSource(IBetEventSource source)
     {
-        source.BetExecuted += OnBetExecuted;
-    }
-
-    private void OnBetExecuted(string gameId, BetTransactionEvent bet)
-    {
-        Stats.RegisterBet(gameId, bet);
+        source.BetExecuted += OnBetExecutedRegisterBet;
     }
 }

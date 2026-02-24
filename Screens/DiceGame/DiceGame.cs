@@ -110,7 +110,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_previousWinnerNumbersGrid.SubscribeTo(this);
 		_betHistoryContainer.SubscribeTo(this);
 		_userStatsService.RegisterSource(this);
-		BetExecuted += OnBetExecuted_UpdateFinancialStats;
+		_financialStats.ConnectTo(_userStatsService);
 
 		UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
@@ -298,13 +298,6 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnDepositCanceled()
 	{
 		_resultValue.Text = "Deposit canceled.";
-	}
-
-	private void OnBetExecuted_UpdateFinancialStats(
-	string gameId,
-	BetTransactionEvent betEvent)
-	{
-		_financialStats.UpdateFrom(_userStatsService.Stats);
 	}
 
 	// --- UI Updates ---
