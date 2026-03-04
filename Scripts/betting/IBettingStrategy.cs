@@ -2,6 +2,17 @@ namespace Scripts.Betting
 {
     public interface IBettingStrategy
     {
+        public enum StopReason
+        {
+            StopOnProfit,
+            StopOnLoss,
+            InsufficientBalance
+        }
+
+        StopReason? LastStopReason { get; }
+
+        void OnBalanceDeltaChanged(decimal amount);
+
         void StartSession(decimal startingBalance);
 
         void ApplyConfiguration(BettingStrategyConfig config);
@@ -17,5 +28,7 @@ namespace Scripts.Betting
         void Stop();
 
         void Reset();
+
+        void ClearStopReason();
     }
 }

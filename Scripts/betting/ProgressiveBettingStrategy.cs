@@ -8,8 +8,21 @@ namespace Scripts.Betting
 
         private decimal _currentBet;
         private decimal _sessionStartBalance;
+		private SessionCapitalTracker _capitalTracker = new();
 
-        public bool IsRunning { get; private set; }
+		public bool IsRunning { get; private set; }
+        public IBettingStrategy.StopReason? LastStopReason { get; private set; }
+		private int _remainingBets;
+
+		public void OnBalanceDeltaChanged(decimal amount)
+		{
+			_capitalTracker.OnBalanceDeltaChanged(amount);
+		}
+
+		public void SetBetCount(int count)
+        {
+            _remainingBets = count; // 0 = infinito
+        }
 
         public void ApplyConfiguration(BettingStrategyConfig config)
         {
@@ -19,12 +32,14 @@ namespace Scripts.Betting
 
         public void StartSession(decimal startingBalance)
         {
+            _capitalTracker.Reset();
             if (_config == null)
                 throw new InvalidOperationException("Strategy not configured.");
 
             _sessionStartBalance = startingBalance;
             _currentBet = _config.BaseBet;
 
+            LastStopReason = null;
             IsRunning = true;
         }
 
@@ -55,17 +70,44 @@ namespace Scripts.Betting
         public bool ShouldStop(decimal currentBalance)
         {
             if (!IsRunning)
-                return true;
+                return false;
 
-            decimal delta = currentBalance - _sessionStartBalance;
+            decimal delta = currentBalance - (_sessionStartBalance + _capitalTracker.GetDifferenceWithBalance());
 
-            if (_config.StopOnProfit.HasValue &&
+			if (_config.StopOnProfit.HasValue &&
                 delta >= _config.StopOnProfit.Value)
+            {
+                LastStopReason = IBettingStrategy.StopReason.StopOnProfit;
+                IsRunning = false;
                 return true;
+            }
 
             if (_config.StopOnLoss.HasValue &&
                 delta <= -_config.StopOnLoss.Value)
+            {
+                LastStopReason = IBettingStrategy.StopReason.StopOnLoss;
+                IsRunning = false;
                 return true;
+            }
+
+            if (currentBalance < _currentBet)
+            {
+                LastStopReason = IBettingStrategy.StopReason.InsufficientBalance;
+                IsRunning = false;
+                return true;
+            }
+
+            if (_remainingBets > 0)
+            {
+                _remainingBets--;
+
+                if (_remainingBets == 0)
+                {
+					IsRunning = false;
+                    LastStopReason = null; // no es stop por regla
+                    return true;
+                }
+            }
 
             return false;
         }
@@ -75,11 +117,28 @@ namespace Scripts.Betting
             IsRunning = false;
         }
 
+        public void RestartSession(decimal currentBalance)
+        {
+            _sessionStartBalance = currentBalance;
+            _currentBet = _config.BaseBet;
+            LastStopReason = null;
+            IsRunning = true;
+			_capitalTracker.Reset();
+		}
+
         public void Reset()
         {
             IsRunning = false;
             _currentBet = 0m;
             _sessionStartBalance = 0m;
+            LastStopReason = null;
+            _capitalTracker.Reset();
+            _remainingBets = 0;
+        }
+
+        public void ClearStopReason()
+        {
+            LastStopReason = null;
         }
     }
 }

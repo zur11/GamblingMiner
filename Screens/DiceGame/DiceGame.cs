@@ -12,6 +12,7 @@ public partial class DiceGame : Control, IBetEventSource
 {
 	// --- Eventos ---
 	public event Action<string, BetTransactionEvent> BetExecuted;
+	public event Action BankruptDetected;
 
 	// --- Propiedades ---
 	public string GameId => "Dice";
@@ -70,7 +71,7 @@ public partial class DiceGame : Control, IBetEventSource
 		// Inicializar motor y servicios
 		_engine = new DiceEngine();
 		_wallet = new Wallet(1.00000000m);
-		_betService = new BetService(_engine, _wallet);
+		_betService = new BetService(_engine, _wallet, TransactionSource.Bet);
 		//_betHistory = new BetHistory();
 
 		// Obtener nodos
@@ -104,9 +105,10 @@ public partial class DiceGame : Control, IBetEventSource
 		_betBtn.Pressed += OnBetPressed;
 		_betInput.TextChanged += OnBetInputChanged;
 		_depositBtn.Pressed += OnDepositBtnPressed;
-		_depositPopup.DepositConfirmed += OnDepositConfirmed;
+		_depositPopup.DepositConfirmed += OnDepositPopupDepositConfirmed;
 		_depositPopup.DepositCanceled += OnDepositCanceled;
 		_fsm.OnTransition += LogTransition;
+		_wallet.BalanceDeltaChanged += OnBalanceDeltaChanged;
 		_previousWinnerNumbersGrid.SubscribeTo(this);
 		_betHistoryContainer.SubscribeTo(this);
 		_userStatsService.RegisterSource(this);
@@ -114,6 +116,26 @@ public partial class DiceGame : Control, IBetEventSource
 
 		UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
+	}
+	// API
+
+	public decimal GetCurrentBalance()
+	{
+		return _wallet.Balance;
+	}
+
+	public (DiceResult result, BetTransactionEvent betEvent)
+	ExecuteAutoBet(decimal amount, Guid sessionId)
+	{
+		int chance = (int)_chanceSlider.Value;
+		bool isHigh = _highLowToggleBtn.ButtonPressed;
+
+		return _betService.ExecuteBet(amount, chance, isHigh, sessionId);
+	}
+
+	public Wallet GetWallet()
+	{
+		return _wallet;
 	}
 
 	// State Machine Methods
@@ -220,7 +242,7 @@ public partial class DiceGame : Control, IBetEventSource
 		try
 		{
 			var (diceResult, betEvent) =
-				_betService.ExecuteBet(_currentBet, chance, isHigh);
+				_betService.ExecuteBet(_currentBet, chance, isHigh, null);
 
 			BetExecuted?.Invoke(GameId, betEvent);
 
@@ -252,6 +274,7 @@ public partial class DiceGame : Control, IBetEventSource
 		if (_wallet.Balance <= 0m)
 		{
 			_fsm.Fire(GameEvent.BankruptDetected);
+			BankruptDetected?.Invoke();
 		}
 	}
 
@@ -274,12 +297,14 @@ public partial class DiceGame : Control, IBetEventSource
 		_depositPopup.Open();
 	}
 
-	private void OnDepositConfirmed(double amountDouble)
+	private void OnDepositPopupDepositConfirmed(double amountDouble)
 	{
 		decimal amount = (decimal)amountDouble;
 
 		var transaction = new Transaction(
 			TransactionType.Deposit,
+			TransactionSource.External,
+			null,
 			amount);
 
 		_wallet.ApplyTransaction(transaction);
@@ -298,6 +323,13 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnDepositCanceled()
 	{
 		_resultValue.Text = "Deposit canceled.";
+	}
+
+	// --- Handlers Intermediarios---
+
+	private void OnBalanceDeltaChanged(Guid? sessionId, decimal amount)
+	{
+		UpdateBalanceUI();
 	}
 
 	// --- UI Updates ---

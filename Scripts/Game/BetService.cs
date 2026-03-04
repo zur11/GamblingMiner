@@ -8,17 +8,20 @@ namespace Scripts.Game
     {
         private readonly DiceEngine _engine;
         private readonly Wallet _wallet;
+        private readonly TransactionSource _source;
 
-        public BetService(DiceEngine engine, Wallet wallet)
+        public BetService(DiceEngine engine, Wallet wallet, TransactionSource source)
         {
             _engine = engine;
             _wallet = wallet;
+            _source = source;
         }
 
         public (DiceResult Result, BetTransactionEvent Event) ExecuteBet(
             decimal bet,
             int chance,
-            bool isHigh
+            bool isHigh,
+            Guid? sessionId
         )
         {
             if (bet > _wallet.Balance)
@@ -26,9 +29,9 @@ namespace Scripts.Game
 
             // Withdraw bet
             _wallet.ApplyTransaction(
-                new Transaction(TransactionType.Withdrawal, bet)
+                new Transaction(TransactionType.Withdrawal, TransactionSource.Bet, sessionId, bet)
             );
-
+  
             // Execute engine
             DiceResult result = _engine.Play(bet, chance, isHigh);
 
@@ -40,7 +43,7 @@ namespace Scripts.Game
                 payout = bet + result.Profit;
 
                 _wallet.ApplyTransaction(
-                    new Transaction(TransactionType.Deposit, payout)
+                    new Transaction(TransactionType.Deposit, TransactionSource.Bet, sessionId, payout)
                 );
             }
 

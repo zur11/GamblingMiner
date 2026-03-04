@@ -4,8 +4,9 @@ namespace Scripts.Finance
 {
     public sealed class Wallet
     {
-        private decimal _balance;
+        public event Action<Guid?, decimal> BalanceDeltaChanged;
 
+        private decimal _balance;
         public decimal Balance => _balance;
 
         public Wallet(decimal initialBalance)
@@ -28,6 +29,8 @@ namespace Scripts.Finance
                         throw new ArgumentException("Deposit must be positive.");
 
                     _balance += transaction.Amount;
+
+                    BalanceDeltaChanged?.Invoke(transaction.SessionId, transaction.Amount);
                     break;
 
                 case TransactionType.Withdrawal:
@@ -38,6 +41,8 @@ namespace Scripts.Finance
                         throw new InvalidOperationException("Insufficient balance.");
 
                     _balance -= transaction.Amount;
+
+                    BalanceDeltaChanged?.Invoke(transaction.SessionId, -transaction.Amount);
                     break;
 
                 default:
