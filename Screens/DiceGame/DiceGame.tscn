@@ -1,12 +1,13 @@
-[gd_scene load_steps=6 format=3 uid="uid://c711y35rvk5gf"]
+[gd_scene load_steps=7 format=3 uid="uid://c711y35rvk5gf"]
 
 [ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame/DiceGame.cs" id="1_k3ff0"]
 [ext_resource type="PackedScene" uid="uid://dcj5ru0ys536m" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/PreviousWinnerNumbersGrid.tscn" id="2_5hi04"]
 [ext_resource type="PackedScene" uid="uid://c3gxcrrobecpj" path="res://Screens/DepositPopup/DepositPopup.tscn" id="3_gu5sn"]
 [ext_resource type="PackedScene" uid="uid://cc4mcdfki2u7r" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.tscn" id="3_usic0"]
 [ext_resource type="PackedScene" uid="uid://c2crwe1sryeto" path="res://UserStatsComponents/FinancialBettingStats/FinancialBettingStats.tscn" id="5_ne2vn"]
+[ext_resource type="PackedScene" uid="uid://drs5mewqvl7kt" path="res://GameComponents/StrategyControlPanel/StrategyControlPanel.tscn" id="6_8x8ps"]
 
-[node name="DiceGame" type="Control" node_paths=PackedStringArray("_betHistoryContainer", "_previousWinnerNumbersGrid")]
+[node name="DiceGame" type="Control" node_paths=PackedStringArray("_betHistoryContainer", "_previousWinnerNumbersGrid", "_strategyPanel")]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -16,6 +17,7 @@ grow_vertical = 2
 script = ExtResource("1_k3ff0")
 _betHistoryContainer = NodePath("ScrollContainer2/BetHistoryContainer")
 _previousWinnerNumbersGrid = NodePath("ScrollContainer/PreviousWinnerNumbersGrid")
+_strategyPanel = NodePath("StrategyControlPanel")
 
 [node name="UiTextLabels" type="Control" parent="."]
 anchors_preset = 0
@@ -31,33 +33,6 @@ offset_bottom = 88.0
 theme_override_font_sizes/font_size = 50
 text = "Balance"
 
-[node name="IncreaseOnLossText" type="Label" parent="UiTextLabels"]
-layout_mode = 0
-offset_left = 1290.0
-offset_top = 200.0
-offset_right = 1830.0
-offset_bottom = 296.0
-theme_override_font_sizes/font_size = 70
-text = "Increase on loss"
-
-[node name="IncreaseOnLossText2" type="Label" parent="UiTextLabels"]
-layout_mode = 0
-offset_left = 1690.0
-offset_top = 286.0
-offset_right = 1750.0
-offset_bottom = 382.0
-theme_override_font_sizes/font_size = 70
-text = "%"
-
-[node name="BetText" type="Label" parent="UiTextLabels"]
-layout_mode = 0
-offset_left = 736.0
-offset_top = 200.0
-offset_right = 1226.0
-offset_bottom = 296.0
-theme_override_font_sizes/font_size = 70
-text = "Amount to bet"
-
 [node name="ResultText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 1098.0
@@ -70,27 +45,27 @@ text = "Result"
 [node name="WinnerNumbersText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 18.0
-offset_top = 261.0
+offset_top = 561.0
 offset_right = 444.0
-offset_bottom = 330.0
+offset_bottom = 630.0
 theme_override_font_sizes/font_size = 50
 text = "Winner Numbers:"
 
 [node name="ChanceToWinText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 86.0
-offset_top = 337.0
+offset_top = 637.0
 offset_right = 440.0
-offset_bottom = 406.0
+offset_bottom = 706.0
 theme_override_font_sizes/font_size = 50
 text = "Chance to win:"
 
 [node name="MultiplierText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 130.0
-offset_top = 413.0
+offset_top = 713.0
 offset_right = 484.0
-offset_bottom = 482.0
+offset_bottom = 782.0
 theme_override_font_sizes/font_size = 50
 text = "Payout mult:"
 
@@ -140,27 +115,6 @@ offset_bottom = 173.0
 theme_override_font_sizes/font_size = 50
 text = "1.00000000"
 
-[node name="BetInput" type="LineEdit" parent="."]
-unique_name_in_owner = true
-layout_mode = 0
-offset_left = 733.0
-offset_top = 291.0
-offset_right = 1131.0
-offset_bottom = 395.0
-theme_override_font_sizes/font_size = 70
-placeholder_text = "0.00000000"
-max_length = 16
-
-[node name="IncreaseOnLossInput" type="LineEdit" parent="."]
-unique_name_in_owner = true
-layout_mode = 0
-offset_left = 1298.0
-offset_top = 291.0
-offset_right = 1756.0
-offset_bottom = 382.0
-theme_override_font_sizes/font_size = 60
-alignment = 1
-
 [node name="ResultValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
@@ -175,9 +129,9 @@ text = "0"
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 51.0
-offset_top = 136.0
+offset_top = 536.0
 offset_right = 503.0
-offset_bottom = 152.0
+offset_bottom = 552.0
 min_value = 1.0
 max_value = 95.0
 value = 50.0
@@ -186,9 +140,9 @@ value = 50.0
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 479.0
-offset_top = 265.0
+offset_top = 565.0
 offset_right = 669.0
-offset_bottom = 334.0
+offset_bottom = 634.0
 theme_override_font_sizes/font_size = 50
 text = "00 to 49"
 
@@ -196,9 +150,9 @@ text = "00 to 49"
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 463.0
-offset_top = 339.0
+offset_top = 639.0
 offset_right = 563.0
-offset_bottom = 408.0
+offset_bottom = 708.0
 theme_override_font_sizes/font_size = 50
 text = "50%"
 
@@ -206,9 +160,9 @@ text = "50%"
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 460.0
-offset_top = 415.0
+offset_top = 715.0
 offset_right = 660.0
-offset_bottom = 484.0
+offset_bottom = 784.0
 theme_override_font_sizes/font_size = 50
 text = "x 1.9804"
 
@@ -239,21 +193,11 @@ layout_mode = 2
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 28.0
-offset_top = 16.0
+offset_top = 436.0
 offset_right = 515.0
-offset_bottom = 107.0
+offset_bottom = 527.0
 theme_override_font_sizes/font_size = 60
 text = "Betting Low"
-
-[node name="BetBtn" type="Button" parent="."]
-unique_name_in_owner = true
-layout_mode = 0
-offset_left = 1789.0
-offset_top = 291.0
-offset_right = 1895.0
-offset_bottom = 382.0
-theme_override_font_sizes/font_size = 60
-text = "Bet"
 
 [node name="DepositBtn" type="Button" parent="."]
 unique_name_in_owner = true
@@ -276,6 +220,13 @@ offset_right = 860.9199
 unique_name_in_owner = true
 layout_mode = 1
 offset_left = 17.0
-offset_top = 540.0
+offset_top = 840.0
 offset_right = -1253.0
-offset_bottom = -301.0
+offset_bottom = -1.0
+
+[node name="StrategyControlPanel" parent="." instance=ExtResource("6_8x8ps")]
+layout_mode = 1
+offset_left = 499.0
+offset_top = 210.0
+offset_right = 498.19995
+offset_bottom = 210.23999

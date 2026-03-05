@@ -2,15 +2,20 @@
 
 [ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://GameComponents/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
 
-[node name="StrategyControlPanel" type="Control"]
+[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_IncreaseOnLossWinToggle", "_betAmountInput", "_increasePercentageInput")]
 layout_mode = 3
-anchor_right = 0.69000006
+anchor_right = 0.74
 anchor_bottom = 0.19700001
-offset_right = -0.8000488
+offset_right = 0.19995117
 offset_bottom = 0.23999023
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_lmglg")
+_betOnceBtn = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/BetOnceBtn")
+_autoBetToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoBetToggle")
+_IncreaseOnLossWinToggle = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnLossWinToggle")
+_betAmountInput = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/AmountToBetContainer/BetInput")
+_increasePercentageInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/HBoxContainer/IncreaseOnLossInput")
 
 [node name="VBoxContainer" type="VBoxContainer" parent="."]
 layout_mode = 0
@@ -19,6 +24,7 @@ offset_bottom = 40.0
 
 [node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer"]
 layout_mode = 2
+theme_override_constants/separation = 50
 
 [node name="BetInputAndCTABtnsContainer" type="HBoxContainer" parent="VBoxContainer/HBoxContainer"]
 layout_mode = 2
@@ -35,19 +41,18 @@ theme_override_font_sizes/font_size = 70
 text = "Amount to bet"
 
 [node name="BetInput" type="LineEdit" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/AmountToBetContainer"]
-unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 70
 placeholder_text = "0.00000000"
 max_length = 16
 
-[node name="BetBtnsContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer"]
+[node name="MultDivBtnsContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer"]
 layout_mode = 2
 
 [node name="IncreasePercentageContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer"]
 layout_mode = 2
 
-[node name="IncreaseOnLossText" type="Label" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
+[node name="IncreaseOnLossWinToggle" type="Button" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 70
 text = "Increase on loss"
@@ -56,7 +61,6 @@ text = "Increase on loss"
 layout_mode = 2
 
 [node name="IncreaseOnLossInput" type="LineEdit" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer/HBoxContainer"]
-unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 60
 alignment = 1
@@ -74,7 +78,7 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 60
 text = "Bet Once"
 
-[node name="AutoBetBtn" type="Button" parent="VBoxContainer/HBoxContainer/BetBtnsContainer"]
+[node name="AutoBetToggle" type="Button" parent="VBoxContainer/HBoxContainer/BetBtnsContainer"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 60
 text = "Auto Bet"

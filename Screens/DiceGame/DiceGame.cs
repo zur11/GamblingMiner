@@ -7,6 +7,7 @@ using Scripts.Dice;
 using Scripts.GameState;
 using Scripts.Finance;
 using Scripts.Game;
+using GameComponents.StrategyControlPanel;
 
 public partial class DiceGame : Control, IBetEventSource
 {
@@ -35,7 +36,6 @@ public partial class DiceGame : Control, IBetEventSource
 
 	// --- Nodos UI ---
 	private Label _balanceValue;
-	private LineEdit _betInput;
 	private Label _resultValue;
 
 	private Label _winnerNumbersValue;
@@ -44,9 +44,6 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private Slider _chanceSlider;
 	private Button _highLowToggleBtn;
-	private Button _betBtn;
-
-	private LineEdit _increaseOnLossInput;
 
 	private DepositPopup _depositPopup;
 	private Button _depositBtn;
@@ -61,6 +58,9 @@ public partial class DiceGame : Control, IBetEventSource
 	[Export]
 	private PreviousWinnerNumbersGrid _previousWinnerNumbersGrid;
 
+	// --- Componentes del juego ---
+	[Export]
+	private StrategyControlPanel _strategyPanel;
 
 	// --- Validación decimal ---
 	private static readonly Regex BetRegex =
@@ -76,15 +76,12 @@ public partial class DiceGame : Control, IBetEventSource
 
 		// Obtener nodos
 		_balanceValue = GetNode<Label>("%BalanceValue");
-		_betInput = GetNode<LineEdit>("%BetInput");
 		_resultValue = GetNode<Label>("%ResultValue");
 		_winnerNumbersValue = GetNode<Label>("%WinnerNumbersValue");
 		_chanceToWinValue = GetNode<Label>("%ChanceToWinValue");
 		_multiplierValue = GetNode<Label>("%MultiplierValue");
 		_chanceSlider = GetNode<Slider>("%ChanceSlider");
 		_highLowToggleBtn = GetNode<Button>("%HighLowToggleBtn");
-		_betBtn = GetNode<Button>("%BetBtn");
-		_increaseOnLossInput = GetNode<LineEdit>("%IncreaseOnLossInput");
 		_depositPopup = GetNode<DepositPopup>("%DepositPopup");
 		_depositBtn = GetNode<Button>("%DepositBtn");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
@@ -102,8 +99,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_fsm.StateExited += OnStateExited;
 		_highLowToggleBtn.Pressed += OnHighLowToggled;
 		_chanceSlider.ValueChanged += OnChanceChanged;
-		_betBtn.Pressed += OnBetPressed;
-		_betInput.TextChanged += OnBetInputChanged;
 		_depositBtn.Pressed += OnDepositBtnPressed;
 		_depositPopup.DepositConfirmed += OnDepositPopupDepositConfirmed;
 		_depositPopup.DepositCanceled += OnDepositCanceled;
@@ -113,12 +108,15 @@ public partial class DiceGame : Control, IBetEventSource
 		_betHistoryContainer.SubscribeTo(this);
 		_userStatsService.RegisterSource(this);
 		_financialStats.ConnectTo(_userStatsService);
+		_strategyPanel.BetOnceBtnPressed += OnManualBetFromPanel;
+		_strategyPanel.AutoBetToggled += OnAutoBetToggled;
+		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
 
 		UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
 	}
-	// API
 
+	// --- API ---
 	public decimal GetCurrentBalance()
 	{
 		return _wallet.Balance;
@@ -145,7 +143,7 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			case BetState.Bankrupt:
 				_resultValue.Text = "Bankrupt. Deposit required.";
-				_betBtn.Disabled = true;
+				//_betBtn.Disabled = true;
 				break;
 		}
 	}
@@ -154,7 +152,7 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		if (state == BetState.Bankrupt)
 		{
-			_betBtn.Disabled = false;
+			//_betBtn.Disabled = false;
 		}
 	}
 
@@ -209,75 +207,6 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateAllUI();
 	}
 
-	private void OnBetPressed()
-	{
-		if (!TryGetBet(out decimal baseBet))
-			return;
-
-		if (!TryGetIncreasePercent(out decimal increasePercent))
-			return;
-
-		int chance = (int)_chanceSlider.Value;
-		bool isHigh = _highLowToggleBtn.ButtonPressed;
-
-		if (_fsm.CurrentState == BetState.Idle)
-		{
-			HandleBetPressed(baseBet, increasePercent);
-		}
-
-		if (_currentBet > _wallet.Balance)
-		{
-			_resultValue.Text = "Bet exceeds current balance.";
-
-			if (_fsm.CurrentState == BetState.Progression)
-			{
-				HandleProgressionAborted();
-			}
-
-			return;
-		}
-
-		DiceResult result;
-
-		try
-		{
-			var (diceResult, betEvent) =
-				_betService.ExecuteBet(_currentBet, chance, isHigh, null);
-
-			BetExecuted?.Invoke(GameId, betEvent);
-
-			result = diceResult;
-		}
-		catch
-		{
-			_resultValue.Text = "Insufficient balance.";
-			return;
-		}
-
-		// Always update UI immediately after play
-		UpdateResultUI(result);
-
-		if (result.IsWin)
-		{
-			HandleWin();
-		}
-		else
-		{
-			HandleLoss();
-		}
-
-		_betInput.Text = _currentBet
-			.ToString("F8", CultureInfo.InvariantCulture);
-
-		UpdateBalanceUI();
-		
-		if (_wallet.Balance <= 0m)
-		{
-			_fsm.Fire(GameEvent.BankruptDetected);
-			BankruptDetected?.Invoke();
-		}
-	}
-
 	private void OnBetInputChanged(string newText)
 	{
 		if (_fsm.CurrentState == BetState.Progression)
@@ -289,6 +218,34 @@ public partial class DiceGame : Control, IBetEventSource
 			_fsm.Fire(GameEvent.ManualReset);
 
 			_resultValue.Text = "Progression manually reset.";
+		}
+	}
+
+	// --- Eventos de componentes ---
+	private void OnManualBetFromPanel()
+	{
+		decimal baseBet = _strategyPanel.BetAmount;
+		decimal increasePercent = _strategyPanel.IncreasePercent;
+
+		if (baseBet <= 0m) return;
+
+		if (_fsm.CurrentState == BetState.Idle)
+		{
+			HandleBetPressed(baseBet, increasePercent);
+		}
+
+		ExecuteProgressionBet();
+	}
+
+	private void OnAutoBetToggled(bool isOn)
+	{
+		if (isOn)
+		{
+			_resultValue.Text = "Auto-bet enabled.";
+		}
+		else
+		{
+			_resultValue.Text = "Auto-bet disabled.";
 		}
 	}
 
@@ -398,45 +355,47 @@ public partial class DiceGame : Control, IBetEventSource
 			);
 	}
 
-	// --- Aumento progresivo de apuesta ---
-	private bool TryGetIncreasePercent(out decimal percent)
+	private void ExecuteSingleBet(decimal baseBet, decimal increasePercent)
 	{
-		percent = 0m;
+		int chance = (int)_chanceSlider.Value;
+		bool isHigh = _highLowToggleBtn.ButtonPressed;
 
-		string text = _increaseOnLossInput.Text.Trim();
+		var (result, betEvent) = _betService.ExecuteBet(baseBet, chance, isHigh, null);
 
-		// Vacío = sin incremento
-		if (string.IsNullOrEmpty(text))
-			return true;
+		BetExecuted?.Invoke(GameId, betEvent);
 
-		// Solo enteros
-		if (!int.TryParse(text, out int value))
-			return false;
+		UpdateResultUI(result);
 
-		if (value < 0 || value > 100_000_000)
-			return false;
-
-		percent = value;
-		return true;
+		if (_wallet.Balance <= 0m)
+		{
+			_fsm.Fire(GameEvent.BankruptDetected);
+			BankruptDetected?.Invoke();
+		}
 	}
 
-	// --- Validación apuesta ---
-	private bool TryGetBet(out decimal bet)
+	private void ExecuteProgressionBet()
 	{
-		bet = 0m;
+		int chance = (int)_chanceSlider.Value;
+		bool isHigh = _highLowToggleBtn.ButtonPressed;
 
-		string text = _betInput.Text.Trim().Replace(',', '.');
+		if (_currentBet > _wallet.Balance)
+		{
+			HandleProgressionAborted();
+			return;
+		}
 
-		if (!BetRegex.IsMatch(text))
-			return false;
+		var (result, betEvent) =
+			_betService.ExecuteBet(_currentBet, chance, isHigh, null);
 
-		if (!decimal.TryParse(
-			text,
-			NumberStyles.AllowDecimalPoint,
-			CultureInfo.InvariantCulture,
-			out bet))
-			return false;
+		BetExecuted?.Invoke(GameId, betEvent);
 
-		return bet > 0m;
+		UpdateResultUI(result);
+
+		if (result.IsWin)
+			HandleWin();
+		else
+			HandleLoss();
+
+		_strategyPanel.SetBetAmount(_currentBet);
 	}
 }
