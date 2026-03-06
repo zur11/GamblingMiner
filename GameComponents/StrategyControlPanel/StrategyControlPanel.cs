@@ -11,13 +11,16 @@ namespace GameComponents.StrategyControlPanel
 		public event Action<bool> AutoBetToggled;
 		public event Action<string> BetAmountInputChanged;
 
+		// --- Flags ---
+		private bool _internalUpdate = false;
+
 		// --- Nodos UI ---
 		[Export]
 		private Button _betOnceBtn;
 		[Export]
 		private Button _autoBetToggle;
 		[Export]
-		private Button _IncreaseOnLossWinToggle;
+		private Button _increaseOnLossWinToggle;
 		[Export]
 		private LineEdit _betAmountInput;
 		[Export]
@@ -46,10 +49,23 @@ namespace GameComponents.StrategyControlPanel
 			}
 		}
 
+
+		public bool IncreasingOnWin
+		{
+			get
+			{
+				return _increaseOnLossWinToggle.ButtonPressed;
+			}
+		}
+
 		public void SetBetAmount(decimal amount)
 		{
+			_internalUpdate = true;
+
 			_betAmountInput.Text =
 				amount.ToString("F8", CultureInfo.InvariantCulture);
+
+			_internalUpdate = false;
 		}
 
 		public override void _Ready()
@@ -57,6 +73,7 @@ namespace GameComponents.StrategyControlPanel
 			_betOnceBtn.Pressed += OnBetOncePressed;
 			_autoBetToggle.Pressed += OnAutoTogglePressed;
 			_betAmountInput.TextChanged += OnBetAmountInputTextChanged;
+			_increaseOnLossWinToggle.Pressed += OnIncreaseOnWinLossTogglePressed;
 		}
 
 		private void OnBetOncePressed()
@@ -73,7 +90,16 @@ namespace GameComponents.StrategyControlPanel
 
 		private void OnBetAmountInputTextChanged(string text)
 		{
+			if (_internalUpdate)
+				return;
+
 			BetAmountInputChanged?.Invoke(text);
+		}
+
+		private void OnIncreaseOnWinLossTogglePressed()
+		{
+			bool increasingOnWin = _increaseOnLossWinToggle.ButtonPressed;
+			_increaseOnLossWinToggle.Text = increasingOnWin ? "Increase on win" : "Increase on loss"; 
 		}
 	}
 }

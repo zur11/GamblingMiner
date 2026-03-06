@@ -87,7 +87,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_financialStats = GetNode<FinancialBettingStats>("%FinancialBettingStats");
 
-
 		// Configurar toggle
 		_highLowToggleBtn.ToggleMode = true;
 		_highLowToggleBtn.ButtonPressed = false;
@@ -156,36 +155,54 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 	}
 
-	private void HandleBetPressed(decimal baseBet, decimal increasePercent)
+	private void HandleIdleBet(decimal baseBet, decimal increasePercent)
 	{
 		_baseBet = baseBet;
 		_currentBet = baseBet;
 		_increasePercent = increasePercent;
 
-		_fsm.Fire(GameEvent.BetPressed);
+		if (_increasePercent > 0m && _strategyPanel.IncreasingOnWin)
+		{
+			_fsm.Fire(GameEvent.StartWinProgression);
+		}
+		if (_increasePercent > 0m && !_strategyPanel.IncreasingOnWin)
+		{
+			_fsm.Fire(GameEvent.StartLossProgression);
+		}
 	}
 
 	private void HandleWin()
 	{
-		_currentBet = _baseBet;
+		if (_increasePercent > 0m && _strategyPanel.IncreasingOnWin) 
+		{ 
+			decimal multiplier = 1m + (_increasePercent / 100m);
+			_currentBet *= multiplier;
+		}
+		else 
+		{
+			_currentBet = _baseBet;
+		}
 		_fsm.Fire(GameEvent.Win);
 	}
 
 	private void HandleLoss()
 	{
-		if (_increasePercent > 0m)
+		if (_increasePercent > 0m && !_strategyPanel.IncreasingOnWin)
 		{
 			decimal multiplier = 1m + (_increasePercent / 100m);
 			_currentBet *= multiplier;
 		}
-
+		else
+		{
+			_currentBet = _baseBet;
+		}
 		_fsm.Fire(GameEvent.Loss);
 	}
 
 	private void HandleProgressionAborted()
 	{
 		_currentBet = 0m;
-		_resultValue.Text = "Bet exceeds balance. Progression stopped.";
+		_resultValue.Text = "Bet exceeds balance. ProgressionOnLoss stopped.";
 
 		_fsm.Fire(GameEvent.ProgressionAborted);
 	}
@@ -209,7 +226,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnBetInputChanged(string newText)
 	{
-		if (_fsm.CurrentState == BetState.Progression)
+		if (_fsm.CurrentState == BetState.ProgressionOnLoss ||
+			 _fsm.CurrentState == BetState.ProgressionOnWin)
 		{
 			_currentBet = 0m;
 			_baseBet = 0m;
@@ -224,17 +242,17 @@ public partial class DiceGame : Control, IBetEventSource
 	// --- Eventos de componentes ---
 	private void OnManualBetFromPanel()
 	{
-		decimal baseBet = _strategyPanel.BetAmount;
-		decimal increasePercent = _strategyPanel.IncreasePercent;
-
-		if (baseBet <= 0m) return;
-
 		if (_fsm.CurrentState == BetState.Idle)
 		{
-			HandleBetPressed(baseBet, increasePercent);
+			decimal baseBet = _strategyPanel.BetAmount;
+			decimal increasePercent = _strategyPanel.IncreasePercent;
+
+			if (baseBet <= 0m) return;
+
+			HandleIdleBet(baseBet, increasePercent);
 		}
 
-		ExecuteProgressionBet();
+		ExecuteCurrentStateBet();
 	}
 
 	private void OnAutoBetToggled(bool isOn)
@@ -373,7 +391,7 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 	}
 
-	private void ExecuteProgressionBet()
+	private void ExecuteCurrentStateBet()
 	{
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;

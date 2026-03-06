@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://GameComponents/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
 
-[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_IncreaseOnLossWinToggle", "_betAmountInput", "_increasePercentageInput")]
+[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_increaseOnLossWinToggle", "_betAmountInput", "_increasePercentageInput")]
 layout_mode = 3
 anchor_right = 0.74
 anchor_bottom = 0.19700001
@@ -13,7 +13,7 @@ grow_vertical = 2
 script = ExtResource("1_lmglg")
 _betOnceBtn = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/BetOnceBtn")
 _autoBetToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoBetToggle")
-_IncreaseOnLossWinToggle = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnLossWinToggle")
+_increaseOnLossWinToggle = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnLossWinToggle")
 _betAmountInput = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/AmountToBetContainer/BetInput")
 _increasePercentageInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/HBoxContainer/IncreaseOnLossInput")
 
@@ -55,6 +55,7 @@ layout_mode = 2
 [node name="IncreaseOnLossWinToggle" type="Button" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 70
+toggle_mode = true
 text = "Increase on loss"
 
 [node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
@@ -81,6 +82,7 @@ text = "Bet Once"
 [node name="AutoBetToggle" type="Button" parent="VBoxContainer/HBoxContainer/BetBtnsContainer"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 60
+toggle_mode = true
 text = "Auto Bet"
 
 [node name="GridContainer" type="GridContainer" parent="VBoxContainer"]

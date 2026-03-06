@@ -6,15 +6,19 @@ namespace Scripts.GameState
     public enum BetState
     {
         Idle,
-        Progression,
+        ProgressionOnLoss,
+        ProgressionOnWin,
         Bankrupt
     }
 
     public enum GameEvent
     {
-        BetPressed,
+        StartLossProgression,
+        StartWinProgression,
+
         Win,
         Loss,
+
         ProgressionAborted,
         BankruptDetected,
         ManualReset,
@@ -39,14 +43,23 @@ namespace Scripts.GameState
 
             _transitions = new()
             {
-                { (BetState.Idle, GameEvent.BetPressed), BetState.Progression },
+                { (BetState.Idle, GameEvent.StartLossProgression), BetState.ProgressionOnLoss },
+                { (BetState.Idle, GameEvent.StartWinProgression), BetState.ProgressionOnWin },
 
-                { (BetState.Progression, GameEvent.Win), BetState.Idle },
-                { (BetState.Progression, GameEvent.Loss), BetState.Progression },
-                { (BetState.Progression, GameEvent.ProgressionAborted), BetState.Idle },
+                { (BetState.ProgressionOnLoss, GameEvent.Win), BetState.Idle },
+                { (BetState.ProgressionOnLoss, GameEvent.Loss), BetState.ProgressionOnLoss },
 
-                { (BetState.Progression, GameEvent.ManualReset), BetState.Idle },
-                { (BetState.Progression, GameEvent.BankruptDetected), BetState.Bankrupt },
+                { (BetState.ProgressionOnWin, GameEvent.Win), BetState.ProgressionOnWin },
+                { (BetState.ProgressionOnWin, GameEvent.Loss), BetState.Idle },
+
+                { (BetState.ProgressionOnLoss, GameEvent.ProgressionAborted), BetState.Idle },
+                { (BetState.ProgressionOnWin, GameEvent.ProgressionAborted), BetState.Idle },
+
+                { (BetState.ProgressionOnLoss, GameEvent.ManualReset), BetState.Idle },
+                { (BetState.ProgressionOnWin, GameEvent.ManualReset), BetState.Idle },
+
+                { (BetState.ProgressionOnLoss, GameEvent.BankruptDetected), BetState.Bankrupt },
+                { (BetState.ProgressionOnWin, GameEvent.BankruptDetected), BetState.Bankrupt },
                 { (BetState.Idle, GameEvent.BankruptDetected), BetState.Bankrupt },
 
                 { (BetState.Bankrupt, GameEvent.BalanceRefilled), BetState.Idle }
