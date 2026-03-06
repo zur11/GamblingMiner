@@ -237,6 +237,20 @@ public partial class DiceGame : Control, IBetEventSource
 
 			_resultValue.Text = "Progression manually reset.";
 		}
+
+		if (newText == "MAX")
+		{
+			decimal maxBet = _wallet.Balance;
+			_strategyPanel.ManualSetBetAmount(maxBet);
+			return;
+		}
+
+		if (newText == "MIN")
+		{
+			decimal minBet = 0.00000001m;
+			_strategyPanel.ManualSetBetAmount(minBet);
+			return;
+		}
 	}
 
 	// --- Eventos de componentes ---
@@ -371,24 +385,6 @@ public partial class DiceGame : Control, IBetEventSource
 			result.Roll,
 			result.IsWin
 			);
-	}
-
-	private void ExecuteSingleBet(decimal baseBet, decimal increasePercent)
-	{
-		int chance = (int)_chanceSlider.Value;
-		bool isHigh = _highLowToggleBtn.ButtonPressed;
-
-		var (result, betEvent) = _betService.ExecuteBet(baseBet, chance, isHigh, null);
-
-		BetExecuted?.Invoke(GameId, betEvent);
-
-		UpdateResultUI(result);
-
-		if (_wallet.Balance <= 0m)
-		{
-			_fsm.Fire(GameEvent.BankruptDetected);
-			BankruptDetected?.Invoke();
-		}
 	}
 
 	private void ExecuteCurrentStateBet()

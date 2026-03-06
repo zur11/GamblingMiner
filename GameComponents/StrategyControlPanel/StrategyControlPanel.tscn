@@ -2,11 +2,11 @@
 
 [ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://GameComponents/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
 
-[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_increaseOnLossWinToggle", "_betAmountInput", "_increasePercentageInput")]
+[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput")]
 layout_mode = 3
-anchor_right = 0.74
+anchor_right = 0.818
 anchor_bottom = 0.19700001
-offset_right = 0.19995117
+offset_right = -0.5600586
 offset_bottom = 0.23999023
 grow_horizontal = 2
 grow_vertical = 2
@@ -14,6 +14,10 @@ script = ExtResource("1_lmglg")
 _betOnceBtn = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/BetOnceBtn")
 _autoBetToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoBetToggle")
 _increaseOnLossWinToggle = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnLossWinToggle")
+_maxBetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer/MaxBetAmountBtn")
+_minBetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer/MinBetAmountBtn")
+_x2BetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer/X2BetAmountBtn")
+_divBy2BetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer/DivBy2BetAmountBtn")
 _betAmountInput = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/AmountToBetContainer/BetInput")
 _increasePercentageInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/HBoxContainer/IncreaseOnLossInput")
 
@@ -32,6 +36,20 @@ layout_mode = 2
 [node name="MinMaxBtnsContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer"]
 layout_mode = 2
 
+[node name="Control" type="Control" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer"]
+custom_minimum_size = Vector2(0, 70)
+layout_mode = 2
+
+[node name="MaxBetAmountBtn" type="Button" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 40
+text = "MAX"
+
+[node name="MinBetAmountBtn" type="Button" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 40
+text = "MIN"
+
 [node name="AmountToBetContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer"]
 layout_mode = 2
 
@@ -48,6 +66,20 @@ max_length = 16
 
 [node name="MultDivBtnsContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer"]
 layout_mode = 2
+
+[node name="Control" type="Control" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer"]
+custom_minimum_size = Vector2(0, 70)
+layout_mode = 2
+
+[node name="X2BetAmountBtn" type="Button" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 40
+text = "X2"
+
+[node name="DivBy2BetAmountBtn" type="Button" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 40
+text = "/2"
 
 [node name="IncreasePercentageContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer"]
 layout_mode = 2

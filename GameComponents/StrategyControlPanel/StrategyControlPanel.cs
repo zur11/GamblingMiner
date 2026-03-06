@@ -22,6 +22,14 @@ namespace GameComponents.StrategyControlPanel
 		[Export]
 		private Button _increaseOnLossWinToggle;
 		[Export]
+		private Button _maxBetAmountBtn;
+		[Export]
+		private Button _minBetAmountBtn;
+		[Export]
+		private Button _x2BetAmountBtn;
+		[Export]
+		private Button _divBy2BetAmountBtn;
+		[Export]
 		private LineEdit _betAmountInput;
 		[Export]
 		private LineEdit _increasePercentageInput;
@@ -68,12 +76,22 @@ namespace GameComponents.StrategyControlPanel
 			_internalUpdate = false;
 		}
 
+		public void ManualSetBetAmount(decimal amount)
+		{
+			_betAmountInput.Text =
+				amount.ToString("F8", CultureInfo.InvariantCulture);
+		}
+
 		public override void _Ready()
 		{
 			_betOnceBtn.Pressed += OnBetOncePressed;
 			_autoBetToggle.Pressed += OnAutoTogglePressed;
 			_betAmountInput.TextChanged += OnBetAmountInputTextChanged;
 			_increaseOnLossWinToggle.Pressed += OnIncreaseOnWinLossTogglePressed;
+			_maxBetAmountBtn.Pressed += OnMaxBetAmountBtnPressed;
+			_minBetAmountBtn.Pressed += OnMinBetAmountBtnPressed;
+			_x2BetAmountBtn.Pressed += OnX2BetAmountBtnPressed;
+			_divBy2BetAmountBtn.Pressed += OnDivBy2BetAmountBtnPressed;
 		}
 
 		private void OnBetOncePressed()
@@ -100,6 +118,28 @@ namespace GameComponents.StrategyControlPanel
 		{
 			bool increasingOnWin = _increaseOnLossWinToggle.ButtonPressed;
 			_increaseOnLossWinToggle.Text = increasingOnWin ? "Increase on win" : "Increase on loss"; 
+		}
+
+		private void OnMaxBetAmountBtnPressed()
+		{
+			BetAmountInputChanged?.Invoke("MAX");
+		}
+
+		private void OnMinBetAmountBtnPressed()
+		{ 
+			BetAmountInputChanged?.Invoke("MIN"); 
+		}
+
+		private void OnX2BetAmountBtnPressed()
+		{ 
+			ManualSetBetAmount(BetAmount * 2);
+			BetAmountInputChanged?.Invoke(_betAmountInput.Text); 
+		}
+
+		private void OnDivBy2BetAmountBtnPressed()
+		{
+			ManualSetBetAmount(BetAmount / 2);
+			BetAmountInputChanged?.Invoke(_betAmountInput.Text);
 		}
 	}
 }
