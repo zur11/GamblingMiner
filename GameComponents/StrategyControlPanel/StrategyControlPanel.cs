@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Globalization;
+using Scripts.Betting;
 
 namespace GameComponents.StrategyControlPanel
 {
@@ -33,6 +34,12 @@ namespace GameComponents.StrategyControlPanel
 		private LineEdit _betAmountInput;
 		[Export]
 		private LineEdit _increasePercentageInput;
+		[Export]
+		private LineEdit _numberOfBetsInput;
+		[Export]
+		private LineEdit _stopOnProfitInput;
+		[Export]
+		private LineEdit _stopOnLossInput;
 
 		// --- Propiedades API ---
 		public decimal BetAmount
@@ -63,6 +70,17 @@ namespace GameComponents.StrategyControlPanel
 			get
 			{
 				return _increaseOnLossWinToggle.ButtonPressed;
+			}
+		}
+
+		public int NumberOfBets
+		{
+			get
+			{
+				if (int.TryParse(_numberOfBetsInput.Text, out var value))
+					return value;
+
+				return 0;
 			}
 		}
 
@@ -140,6 +158,27 @@ namespace GameComponents.StrategyControlPanel
 		{
 			ManualSetBetAmount(BetAmount / 2);
 			BetAmountInputChanged?.Invoke(_betAmountInput.Text);
+		}
+
+		public BettingStrategyConfig BuildConfig()
+		{
+			return new BettingStrategyConfig
+			{
+				BaseBet = BetAmount,
+				IncreasePercent = IncreasePercent,
+				IncreaseOnLoss = !IncreasingOnWin,
+				IncreaseOnWin = IncreasingOnWin,
+				StopOnProfit = ParseDecimal(_stopOnProfitInput.Text),
+				StopOnLoss = ParseDecimal(_stopOnLossInput.Text)
+			};
+		}
+
+		private decimal? ParseDecimal(string text)
+		{
+			if (decimal.TryParse(text, out var value))
+				return value;
+
+			return null;
 		}
 	}
 }

@@ -17,6 +17,12 @@ namespace Scripts.Game
             _strategy = strategy;
         }
 
+        public void SetBetCount(int count)
+        {
+            if (_strategy is ProgressiveBettingStrategy progressive)
+                progressive.SetBetCount(count);
+        }
+
         public void SubscribeToBalanceChanged(Wallet wallet)
         {   
             _wallet = wallet;
@@ -26,7 +32,10 @@ namespace Scripts.Game
         private void OnBalanceDeltaChanged(Guid? sessionId, decimal amount)
         {
             if (sessionId == SessionId)
+            {
                 _strategy.OnBalanceDeltaChanged(amount);
+                return; // evita EvaluateStop prematuro
+            }
 
             EvaluateStop();
         }

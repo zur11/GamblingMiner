@@ -56,7 +56,10 @@ namespace Scripts.Betting
                 (!outcome.IsWin && _config.IncreaseOnLoss);
 
             if (!shouldIncrease)
+            {
+                _currentBet = _config.BaseBet;
                 return;
+            }
 
             var multiplier = 1m + (_config.IncreasePercent / 100m);
             _currentBet *= multiplier;

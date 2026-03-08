@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://GameComponents/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
 
-[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput")]
+[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput")]
 layout_mode = 3
 anchor_right = 0.818
 anchor_bottom = 0.19700001
@@ -20,6 +20,9 @@ _x2BetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContai
 _divBy2BetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer/DivBy2BetAmountBtn")
 _betAmountInput = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/AmountToBetContainer/BetInput")
 _increasePercentageInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/HBoxContainer/IncreaseOnLossInput")
+_numberOfBetsInput = NodePath("VBoxContainer/GridContainer/NumberOfBetsContainer/NumberOfBetsInput")
+_stopOnProfitInput = NodePath("VBoxContainer/GridContainer/StopOnProfitContainer/StopOnProfitInput")
+_stopOnLossInput = NodePath("VBoxContainer/GridContainer/StopOnLossContainer/StopOnLossInput")
 
 [node name="VBoxContainer" type="VBoxContainer" parent="."]
 layout_mode = 0
@@ -119,3 +122,46 @@ text = "Auto Bet"
 
 [node name="GridContainer" type="GridContainer" parent="VBoxContainer"]
 layout_mode = 2
+theme_override_constants/h_separation = 44
+columns = 3
+
+[node name="NumberOfBetsContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
+layout_mode = 2
+
+[node name="NumberOfBetsText" type="Label" parent="VBoxContainer/GridContainer/NumberOfBetsContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 70
+text = "Number of bets"
+
+[node name="NumberOfBetsInput" type="LineEdit" parent="VBoxContainer/GridContainer/NumberOfBetsContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 60
+alignment = 1
+
+[node name="StopOnProfitContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
+layout_mode = 2
+
+[node name="StopOnProfitText" type="Label" parent="VBoxContainer/GridContainer/StopOnProfitContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 70
+text = "Stop on profit"
+
+[node name="StopOnProfitInput" type="LineEdit" parent="VBoxContainer/GridContainer/StopOnProfitContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 70
+placeholder_text = "0.00000000"
+max_length = 16
+
+[node name="StopOnLossContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
+layout_mode = 2
+
+[node name="StopOnLossText" type="Label" parent="VBoxContainer/GridContainer/StopOnLossContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 70
+text = "Stop on loss"
+
+[node name="StopOnLossInput" type="LineEdit" parent="VBoxContainer/GridContainer/StopOnLossContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 70
+placeholder_text = "0.00000000"
+max_length = 16

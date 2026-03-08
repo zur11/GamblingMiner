@@ -7,6 +7,7 @@ using Scripts.Dice;
 using Scripts.GameState;
 using Scripts.Finance;
 using Scripts.Game;
+using Scripts.Betting;
 using GameComponents.StrategyControlPanel;
 
 public partial class DiceGame : Control, IBetEventSource
@@ -28,6 +29,8 @@ public partial class DiceGame : Control, IBetEventSource
 	private BetService _betService;
 	private UserStatsService _userStatsService;
 	private FinancialBettingStats _financialStats;
+	private AutoBetSession _autoBetSession;
+	private Timer _autoBetTimer;
 
 	[Export]
 	private BetHistoryContainer _betHistoryContainer;
@@ -72,7 +75,16 @@ public partial class DiceGame : Control, IBetEventSource
 		_engine = new DiceEngine();
 		_wallet = new Wallet(1.00000000m);
 		_betService = new BetService(_engine, _wallet, TransactionSource.Bet);
-		//_betHistory = new BetHistory();
+		var strategy = new ProgressiveBettingStrategy();
+
+		_autoBetSession = new AutoBetSession(strategy);
+
+		_autoBetTimer = new Timer();
+		_autoBetTimer.WaitTime = 1.0; // 1 segundo
+		_autoBetTimer.OneShot = true;
+
+		AddChild(_autoBetTimer);
+
 
 		// Obtener nodos
 		_balanceValue = GetNode<Label>("%BalanceValue");
@@ -110,6 +122,9 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.BetOnceBtnPressed += OnManualBetFromPanel;
 		_strategyPanel.AutoBetToggled += OnAutoBetToggled;
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
+		_autoBetSession.SubscribeToBalanceChanged(_wallet);
+		_autoBetSession.SessionStopped += OnAutoBetSessionStopped;
+		_autoBetTimer.Timeout += OnAutoBetTimerTimeout;
 
 		UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
@@ -269,21 +284,41 @@ public partial class DiceGame : Control, IBetEventSource
 		ExecuteCurrentStateBet();
 	}
 
-	private void OnAutoBetToggled(bool isOn)
+	// --- Autobet Session
+	private void OnAutoBetToggled(bool running)
 	{
-		if (isOn)
+		if (!running)
 		{
-			_resultValue.Text = "Auto-bet enabled.";
+			_autoBetSession.Stop();
+			_autoBetTimer.Stop();
+			return;
 		}
-		else
-		{
-			_resultValue.Text = "Auto-bet disabled.";
-		}
+
+		var config = _strategyPanel.BuildConfig();
+
+		_autoBetSession.Configure(config);
+		_autoBetSession.SetBetCount(_strategyPanel.NumberOfBets);
+
+		_autoBetSession.Start(_wallet.Balance);
+
+		_autoBetTimer.Start();
 	}
 
+	private void OnAutoBetSessionStopped(Guid id,
+	IBettingStrategy.StopReason? reason)
+	{
+		GD.Print($"AutoBet stopped: {reason}");
+	}
+
+	// --- Depositos ---
 	private void OnDepositBtnPressed()
 	{
 		_depositPopup.Open();
+	}
+
+	private void OnAutoBetTimerTimeout()
+	{
+		ExecuteNextAutoBet();
 	}
 
 	private void OnDepositPopupDepositConfirmed(double amountDouble)
@@ -379,14 +414,7 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 	}
 
-	private void UpdatePreviousNumbers(DiceResult result)
-	{
-		_previousWinnerNumbersGrid.AddWinnerNumber(
-			result.Roll,
-			result.IsWin
-			);
-	}
-
+	// --- Metodos ejecutores de apuesta ---
 	private void ExecuteCurrentStateBet()
 	{
 		int chance = (int)_chanceSlider.Value;
@@ -411,5 +439,38 @@ public partial class DiceGame : Control, IBetEventSource
 			HandleLoss();
 
 		_strategyPanel.SetBetAmount(_currentBet);
+	}
+
+	private void ExecuteNextAutoBet()
+	{
+		if (!_autoBetSession.IsRunning)
+			return;
+
+		decimal bet = _autoBetSession.GetNextBet();
+
+		var (result, betEvent) =
+			ExecuteAutoBet(bet, _autoBetSession.SessionId);
+
+		BetExecuted?.Invoke(GameId, betEvent);
+		UpdateResultUI(result);
+
+		var outcome = new BetOutcome(
+			bet,
+			betEvent.Profit,
+			result.IsWin
+		);
+
+		_autoBetSession.NotifyResult(
+			outcome.BetAmount,
+			outcome.Profit,
+			outcome.IsWin,
+			_wallet.Balance
+		);
+
+		decimal nextBet = _autoBetSession.GetNextBet();
+		_strategyPanel.SetBetAmount(nextBet);
+
+		if (_autoBetSession.IsRunning)
+			_autoBetTimer.Start();
 	}
 }
