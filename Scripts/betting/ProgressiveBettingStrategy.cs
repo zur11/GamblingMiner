@@ -9,12 +9,13 @@ namespace Scripts.Betting
         private decimal _currentBet;
         private decimal _sessionStartBalance;
 		private SessionCapitalTracker _capitalTracker = new();
+		private int _remainingBets;
 
 		public bool IsRunning { get; private set; }
         public IBettingStrategy.StopReason? LastStopReason { get; private set; }
-		private int _remainingBets;
+        public int RemainingBets => _remainingBets;
 
-		public void OnBalanceDeltaChanged(decimal amount)
+        public void OnBalanceDeltaChanged(decimal amount)
 		{
 			_capitalTracker.OnBalanceDeltaChanged(amount);
 		}

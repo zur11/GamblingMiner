@@ -469,6 +469,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 		decimal nextBet = _autoBetSession.GetNextBet();
 		_strategyPanel.SetBetAmount(nextBet);
+		_strategyPanel.SetNumberOfBets(_autoBetSession.RemainingBets);
 
 		if (_autoBetSession.IsRunning)
 			_autoBetTimer.Start();

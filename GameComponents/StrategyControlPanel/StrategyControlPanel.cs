@@ -100,6 +100,11 @@ namespace GameComponents.StrategyControlPanel
 				amount.ToString("F8", CultureInfo.InvariantCulture);
 		}
 
+		public void SetNumberOfBets(int value)
+		{
+			_numberOfBetsInput.Text = value.ToString();
+		}
+
 		public override void _Ready()
 		{
 			_betOnceBtn.Pressed += OnBetOncePressed;

@@ -11,6 +11,16 @@ namespace Scripts.Game
         public Guid SessionId { get; } = Guid.NewGuid();
         private readonly IBettingStrategy _strategy;
         private Wallet _wallet;
+        public int RemainingBets
+        {
+            get
+            {
+                if (_strategy is ProgressiveBettingStrategy progressive)
+                    return progressive.RemainingBets;
+
+                return 0;
+            }
+        }
 
         public AutoBetSession(IBettingStrategy strategy)
         {
