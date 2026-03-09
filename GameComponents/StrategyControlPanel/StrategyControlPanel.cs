@@ -105,6 +105,11 @@ namespace GameComponents.StrategyControlPanel
 			_numberOfBetsInput.Text = value.ToString();
 		}
 
+		public void SetManualEnabled(bool enabled)
+		{
+			_betOnceBtn.Disabled = !enabled;
+		}
+
 		public override void _Ready()
 		{
 			_betOnceBtn.Pressed += OnBetOncePressed;

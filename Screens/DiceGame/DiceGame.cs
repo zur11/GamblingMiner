@@ -287,6 +287,8 @@ public partial class DiceGame : Control, IBetEventSource
 	// --- Autobet Session
 	private void OnAutoBetToggled(bool running)
 	{
+		_strategyPanel.SetManualEnabled(!running);
+		
 		if (!running)
 		{
 			_autoBetSession.Stop();
@@ -308,6 +310,7 @@ public partial class DiceGame : Control, IBetEventSource
 	IBettingStrategy.StopReason? reason)
 	{
 		GD.Print($"AutoBet stopped: {reason}");
+		_strategyPanel.SetManualEnabled(true);
 	}
 
 	// --- Depositos ---
