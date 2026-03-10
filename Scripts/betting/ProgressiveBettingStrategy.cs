@@ -25,6 +25,11 @@ namespace Scripts.Betting
             _remainingBets = count; // 0 = infinito
         }
 
+        public void SetLastStopReason(IBettingStrategy.StopReason reason)
+        {
+            LastStopReason = reason;
+        }
+
         public void ApplyConfiguration(BettingStrategyConfig config)
         {
             _config = config;
@@ -108,7 +113,7 @@ namespace Scripts.Betting
                 if (_remainingBets == 0)
                 {
 					IsRunning = false;
-                    LastStopReason = null; // no es stop por regla
+                    LastStopReason = IBettingStrategy.StopReason.CounterCountReached;
                     return true;
                 }
             }

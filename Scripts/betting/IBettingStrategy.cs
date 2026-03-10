@@ -13,6 +13,8 @@ namespace Scripts.Betting
 
         StopReason? LastStopReason { get; }
 
+        void SetLastStopReason(StopReason reason);
+
         void OnBalanceDeltaChanged(decimal amount);
 
         void StartSession(decimal startingBalance);

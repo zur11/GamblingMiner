@@ -33,6 +33,11 @@ namespace Scripts.Game
                 progressive.SetBetCount(count);
         }
 
+        public void SetLastStopReason(IBettingStrategy.StopReason reason)
+        {
+            _strategy.SetLastStopReason(reason);
+        }
+
         public void SubscribeToBalanceChanged(Wallet wallet)
         {   
             _wallet = wallet;
@@ -61,9 +66,12 @@ namespace Scripts.Game
                 _strategy.StartSession(currentBalance);
         }
 
-        public void Stop()
+        public void Stop(IBettingStrategy.StopReason reason)
         {
+            _strategy.SetLastStopReason(reason);
             _strategy.Stop();
+
+            SessionStopped?.Invoke(SessionId, reason);
         }
 
         public decimal GetNextBet()

@@ -311,7 +311,7 @@ public partial class DiceGame : Control, IBetEventSource
 		
 		if (!running)
 		{
-			_autoBetSession.Stop();
+			_autoBetSession.Stop(IBettingStrategy.StopReason.ManualStop);
 			_autoBetTimer.Stop();
 			return;
 		}
