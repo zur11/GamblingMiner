@@ -11,6 +11,7 @@ namespace GameComponents.StrategyControlPanel
 		public event Action BetOnceBtnPressed;
 		public event Action<bool> AutoBetToggled;
 		public event Action<string> BetAmountInputChanged;
+		public event Action StrategyConfigChanged;
 
 		// --- Flags ---
 		private bool _internalUpdate = false;
@@ -98,6 +99,7 @@ namespace GameComponents.StrategyControlPanel
 		{
 			_betAmountInput.Text =
 				amount.ToString("F8", CultureInfo.InvariantCulture);
+			StrategyConfigChanged?.Invoke();
 		}
 
 		public void SetNumberOfBets(int value)
@@ -110,6 +112,12 @@ namespace GameComponents.StrategyControlPanel
 			_betOnceBtn.Disabled = !enabled;
 		}
 
+		public void SetAutoRunning(bool running)
+		{
+			_autoBetToggle.ButtonPressed = running;
+			_autoBetToggle.Text = running ? "STOP" : "AUTO";
+		}
+
 		public override void _Ready()
 		{
 			_betOnceBtn.Pressed += OnBetOncePressed;
@@ -120,6 +128,11 @@ namespace GameComponents.StrategyControlPanel
 			_minBetAmountBtn.Pressed += OnMinBetAmountBtnPressed;
 			_x2BetAmountBtn.Pressed += OnX2BetAmountBtnPressed;
 			_divBy2BetAmountBtn.Pressed += OnDivBy2BetAmountBtnPressed;
+			_stopOnProfitInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
+			_increasePercentageInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
+			_stopOnLossInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
+			_betAmountInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
+			_numberOfBetsInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
 		}
 
 		private void OnBetOncePressed()
@@ -130,7 +143,7 @@ namespace GameComponents.StrategyControlPanel
 		private void OnAutoTogglePressed()
 		{
 			bool running = _autoBetToggle.ButtonPressed;
-			_autoBetToggle.Text = running ? "STOP" : "AUTO";
+			SetAutoRunning(running);
 			AutoBetToggled?.Invoke(running);
 		}
 
@@ -145,17 +158,20 @@ namespace GameComponents.StrategyControlPanel
 		private void OnIncreaseOnWinLossTogglePressed()
 		{
 			bool increasingOnWin = _increaseOnLossWinToggle.ButtonPressed;
-			_increaseOnLossWinToggle.Text = increasingOnWin ? "Increase on win" : "Increase on loss"; 
+			_increaseOnLossWinToggle.Text = increasingOnWin ? "Increase on win" : "Increase on loss";
+			StrategyConfigChanged?.Invoke();
 		}
 
 		private void OnMaxBetAmountBtnPressed()
 		{
 			BetAmountInputChanged?.Invoke("MAX");
+			StrategyConfigChanged?.Invoke();
 		}
 
 		private void OnMinBetAmountBtnPressed()
 		{ 
-			BetAmountInputChanged?.Invoke("MIN"); 
+			BetAmountInputChanged?.Invoke("MIN");
+			StrategyConfigChanged?.Invoke();
 		}
 
 		private void OnX2BetAmountBtnPressed()

@@ -31,6 +31,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private FinancialBettingStats _financialStats;
 	private AutoBetSession _autoBetSession;
 	private Timer _autoBetTimer;
+	private bool _betCounterStarted = false;
 
 	[Export]
 	private BetHistoryContainer _betHistoryContainer;
@@ -125,6 +126,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_autoBetSession.SubscribeToBalanceChanged(_wallet);
 		_autoBetSession.SessionStopped += OnAutoBetSessionStopped;
 		_autoBetTimer.Timeout += OnAutoBetTimerTimeout;
+		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
 
 		UpdateAllUI();
 		_resultValue.Text = "Place your bet.";
@@ -281,7 +283,25 @@ public partial class DiceGame : Control, IBetEventSource
 			HandleIdleBet(baseBet, increasePercent);
 		}
 
+		_betCounterStarted = _strategyPanel.NumberOfBets > 0;
 		ExecuteCurrentStateBet();
+		if (_betCounterStarted)
+		{
+			_strategyPanel.SetNumberOfBets(_strategyPanel.NumberOfBets - 1);
+
+			if (_strategyPanel.NumberOfBets == 0)
+			{
+				_betCounterStarted = false;
+				_fsm.Fire(GameEvent.CounterCountReached);
+				_strategyPanel.SetManualEnabled(false);
+			}
+		}
+	}
+
+	private void OnStrategyConfigChanged()
+	{
+		if (_fsm.CurrentState != BetState.Bankrupt)
+			_strategyPanel.SetManualEnabled(true);
 	}
 
 	// --- Autobet Session
@@ -304,13 +324,19 @@ public partial class DiceGame : Control, IBetEventSource
 		_autoBetSession.Start(_wallet.Balance);
 
 		_autoBetTimer.Start();
+		_fsm.Fire(GameEvent.AutoBetSessionStarted);
 	}
 
 	private void OnAutoBetSessionStopped(Guid id,
 	IBettingStrategy.StopReason? reason)
 	{
 		GD.Print($"AutoBet stopped: {reason}");
+		_strategyPanel.SetAutoRunning(false);
 		_strategyPanel.SetManualEnabled(true);
+		if (_strategyPanel.NumberOfBets == 0)
+		{
+			_betCounterStarted = false;
+		}
 	}
 
 	// --- Depositos ---

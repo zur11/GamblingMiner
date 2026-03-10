@@ -6,7 +6,9 @@ namespace Scripts.Betting
         {
             StopOnProfit,
             StopOnLoss,
-            InsufficientBalance
+            InsufficientBalance,
+            ManualStop,
+            CounterCountReached
         }
 
         StopReason? LastStopReason { get; }

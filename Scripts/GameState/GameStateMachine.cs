@@ -22,7 +22,9 @@ namespace Scripts.GameState
         ProgressionAborted,
         BankruptDetected,
         ManualReset,
-        BalanceRefilled
+        BalanceRefilled,
+        CounterCountReached,
+        AutoBetSessionStarted
     }
 
     public class GameStateMachine
@@ -57,6 +59,12 @@ namespace Scripts.GameState
 
                 { (BetState.ProgressionOnLoss, GameEvent.ManualReset), BetState.Idle },
                 { (BetState.ProgressionOnWin, GameEvent.ManualReset), BetState.Idle },
+
+                { (BetState.ProgressionOnLoss, GameEvent.CounterCountReached), BetState.Idle },
+                { (BetState.ProgressionOnWin, GameEvent.CounterCountReached), BetState.Idle },
+                
+                { (BetState.ProgressionOnLoss, GameEvent.AutoBetSessionStarted), BetState.Idle },
+                { (BetState.ProgressionOnWin, GameEvent.AutoBetSessionStarted), BetState.Idle },
 
                 { (BetState.ProgressionOnLoss, GameEvent.BankruptDetected), BetState.Bankrupt },
                 { (BetState.ProgressionOnWin, GameEvent.BankruptDetected), BetState.Bankrupt },
