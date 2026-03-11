@@ -123,7 +123,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.BetOnceBtnPressed += OnManualBetFromPanel;
 		_strategyPanel.AutoBetToggled += OnAutoBetToggled;
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
-		_autoBetSession.SubscribeToBalanceChanged(_wallet);
 		_autoBetSession.SessionStopped += OnAutoBetSessionStopped;
 		_autoBetTimer.Timeout += OnAutoBetTimerTimeout;
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;

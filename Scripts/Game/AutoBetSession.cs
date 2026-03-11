@@ -11,7 +11,6 @@ namespace Scripts.Game
 
         public Guid SessionId { get; } = Guid.NewGuid();
         private readonly IBettingStrategy _strategy;
-        private Wallet _wallet;
         public int RemainingBets
         {
             get
@@ -37,26 +36,6 @@ namespace Scripts.Game
         public void SetLastStopReason(IBettingStrategy.StopReason reason)
         {
             _strategy.SetLastStopReason(reason);
-        }
-
-        public void SubscribeToBalanceChanged(Wallet wallet)
-        {   
-            _wallet = wallet;
-            _wallet.BalanceDeltaChanged += OnBalanceDeltaChanged;
-        }
-
-        private void OnBalanceDeltaChanged(Guid? sessionId, decimal amount)
-        {
-            if (sessionId == SessionId)
-            {
-                // delta causado por esta sesión
-                return;
-            }
-
-            // delta externo
-            _strategy.OnExternalBalanceDelta(amount);
-
-            EvaluateStop();
         }
 
         public void Configure(BettingStrategyConfig config)
@@ -86,36 +65,31 @@ namespace Scripts.Game
         public void NotifyResult(decimal betAmount, decimal profit, bool isWin, decimal currentBalance)
         {
             var outcome = new BetOutcome(betAmount, profit, isWin);
-            
+
             _strategy.OnBetResolved(outcome, currentBalance);
 
-            GD.Print("NotifyResult called");
-            EvaluateStop();
+            EvaluateStop(currentBalance);
+        }
+
+        private void EvaluateStop(decimal balance)
+        {
+            if (!_strategy.IsRunning)
+                return;
+
+            if (_strategy.ShouldStop(balance))
+            {
+                var reason = _strategy.LastStopReason;
+
+                _strategy.Stop();
+
+                SessionStopped?.Invoke(SessionId, reason);
+            }
         }
 
         public bool ShouldStop(decimal currentBalance)
         {
             GD.Print("Calling ShouldStop");
             return _strategy.ShouldStop(currentBalance);
-        }
-
-        private void EvaluateStop()
-        {
-            GD.Print("EvaluateStop running");
-
-            if (!_strategy.IsRunning)
-                return;
-
-            if (_wallet == null)
-                return;
-
-            if (_strategy.ShouldStop(_wallet.Balance))
-            {
-                var reason = _strategy.LastStopReason;
-                _strategy.Stop();
-
-                SessionStopped?.Invoke(SessionId, reason);
-            }
         }
 
         public bool IsRunning => _strategy.IsRunning;

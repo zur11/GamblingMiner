@@ -8,28 +8,14 @@ namespace Scripts.Betting
         private BettingStrategyConfig _config;
 
         private decimal _currentBet;
-        private decimal _sessionStartBalance;
-		private SessionCapitalTracker _capitalTracker = new();
-		private int _remainingBets;
+        private decimal _sessionProfit;
+        private int _remainingBets;
 
-		public bool IsRunning { get; private set; }
+        public bool IsRunning { get; private set; }
+
         public IBettingStrategy.StopReason? LastStopReason { get; private set; }
+
         public int RemainingBets => _remainingBets;
-
-        public void OnExternalBalanceDelta(decimal amount)
-        {
-            _capitalTracker.OnBalanceDeltaChanged(amount);
-        }
-
-        public void SetBetCount(int count)
-        {
-            _remainingBets = count; // 0 = infinito
-        }
-
-        public void SetLastStopReason(IBettingStrategy.StopReason reason)
-        {
-            LastStopReason = reason;
-        }
 
         public void ApplyConfiguration(BettingStrategyConfig config)
         {
@@ -37,18 +23,27 @@ namespace Scripts.Betting
             Reset();
         }
 
+        public void SetBetCount(int count)
+        {
+            _remainingBets = count;
+        }
+
+        public void SetLastStopReason(IBettingStrategy.StopReason reason)
+        {
+            LastStopReason = reason;
+        }
+
         public void StartSession(decimal startingBalance)
         {
-            GD.Print($"StopProfit: {_config.StopOnProfit}");
-            GD.Print($"StopLoss: {_config.StopOnLoss}");
-            _capitalTracker.Reset();
             if (_config == null)
                 throw new InvalidOperationException("Strategy not configured.");
 
-            _sessionStartBalance = startingBalance;
             _currentBet = _config.BaseBet;
 
+            _sessionProfit = 0m;
+
             LastStopReason = null;
+
             IsRunning = true;
         }
 
@@ -56,6 +51,8 @@ namespace Scripts.Betting
         {
             if (!IsRunning)
                 return;
+
+            _sessionProfit += outcome.Profit;
 
             if (_config.IncreasePercent <= 0m)
                 return;
@@ -71,6 +68,7 @@ namespace Scripts.Betting
             }
 
             var multiplier = 1m + (_config.IncreasePercent / 100m);
+
             _currentBet *= multiplier;
         }
 
@@ -84,18 +82,8 @@ namespace Scripts.Betting
             if (!IsRunning)
                 return false;
 
-            decimal delta = currentBalance - (_sessionStartBalance + _capitalTracker.GetDifferenceWithBalance());
-
-            decimal tracker = _capitalTracker.GetDifferenceWithBalance();
-            decimal delta2 = currentBalance - (_sessionStartBalance + tracker);
-
-            GD.Print($"start: {_sessionStartBalance}");
-            GD.Print($"balance: {currentBalance}");
-            GD.Print($"tracker: {tracker}");
-            GD.Print($"delta: {delta2}");
-
             if (_config.StopOnProfit.HasValue &&
-                delta >= _config.StopOnProfit.Value)
+                _sessionProfit >= _config.StopOnProfit.Value)
             {
                 LastStopReason = IBettingStrategy.StopReason.StopOnProfit;
                 IsRunning = false;
@@ -103,7 +91,7 @@ namespace Scripts.Betting
             }
 
             if (_config.StopOnLoss.HasValue &&
-                delta <= -_config.StopOnLoss.Value)
+                _sessionProfit <= -_config.StopOnLoss.Value)
             {
                 LastStopReason = IBettingStrategy.StopReason.StopOnLoss;
                 IsRunning = false;
@@ -123,8 +111,8 @@ namespace Scripts.Betting
 
                 if (_remainingBets == 0)
                 {
-					IsRunning = false;
                     LastStopReason = IBettingStrategy.StopReason.CounterCountReached;
+                    IsRunning = false;
                     return true;
                 }
             }
@@ -137,23 +125,17 @@ namespace Scripts.Betting
             IsRunning = false;
         }
 
-        public void RestartSession(decimal currentBalance)
-        {
-            _sessionStartBalance = currentBalance;
-            _currentBet = _config.BaseBet;
-            LastStopReason = null;
-            IsRunning = true;
-			_capitalTracker.Reset();
-		}
-
         public void Reset()
         {
             IsRunning = false;
+
             _currentBet = 0m;
-            _sessionStartBalance = 0m;
-            LastStopReason = null;
-            _capitalTracker.Reset();
+
+            _sessionProfit = 0m;
+
             _remainingBets = 0;
+
+            LastStopReason = null;
         }
 
         public void ClearStopReason()

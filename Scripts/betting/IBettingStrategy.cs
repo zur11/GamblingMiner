@@ -15,8 +15,6 @@ namespace Scripts.Betting
 
         void SetLastStopReason(StopReason reason);
 
-        void OnExternalBalanceDelta(decimal amount);
-
         void StartSession(decimal startingBalance);
 
         void ApplyConfiguration(BettingStrategyConfig config);
