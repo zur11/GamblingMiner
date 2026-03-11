@@ -1,4 +1,5 @@
 using System;
+using Godot;
 
 namespace Scripts.Betting
 {
@@ -15,12 +16,12 @@ namespace Scripts.Betting
         public IBettingStrategy.StopReason? LastStopReason { get; private set; }
         public int RemainingBets => _remainingBets;
 
-        public void OnBalanceDeltaChanged(decimal amount)
-		{
-			_capitalTracker.OnBalanceDeltaChanged(amount);
-		}
+        public void OnExternalBalanceDelta(decimal amount)
+        {
+            _capitalTracker.OnBalanceDeltaChanged(amount);
+        }
 
-		public void SetBetCount(int count)
+        public void SetBetCount(int count)
         {
             _remainingBets = count; // 0 = infinito
         }
@@ -38,6 +39,8 @@ namespace Scripts.Betting
 
         public void StartSession(decimal startingBalance)
         {
+            GD.Print($"StopProfit: {_config.StopOnProfit}");
+            GD.Print($"StopLoss: {_config.StopOnLoss}");
             _capitalTracker.Reset();
             if (_config == null)
                 throw new InvalidOperationException("Strategy not configured.");
@@ -83,7 +86,15 @@ namespace Scripts.Betting
 
             decimal delta = currentBalance - (_sessionStartBalance + _capitalTracker.GetDifferenceWithBalance());
 
-			if (_config.StopOnProfit.HasValue &&
+            decimal tracker = _capitalTracker.GetDifferenceWithBalance();
+            decimal delta2 = currentBalance - (_sessionStartBalance + tracker);
+
+            GD.Print($"start: {_sessionStartBalance}");
+            GD.Print($"balance: {currentBalance}");
+            GD.Print($"tracker: {tracker}");
+            GD.Print($"delta: {delta2}");
+
+            if (_config.StopOnProfit.HasValue &&
                 delta >= _config.StopOnProfit.Value)
             {
                 LastStopReason = IBettingStrategy.StopReason.StopOnProfit;

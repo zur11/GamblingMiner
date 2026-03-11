@@ -1,4 +1,5 @@
 using System;
+using Godot;
 using System.Collections.Generic;
 
 namespace Scripts.GameState
@@ -90,7 +91,7 @@ namespace Scripts.GameState
             }
             else
             {
-                Console.WriteLine($"Invalid transition: {_currentState} + {trigger}");
+                GD.Print($"Invalid transition: {_currentState} + {trigger}");
             }
         }
     }

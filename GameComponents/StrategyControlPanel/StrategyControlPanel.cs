@@ -201,7 +201,13 @@ namespace GameComponents.StrategyControlPanel
 
 		private decimal? ParseDecimal(string text)
 		{
-			if (decimal.TryParse(text, out var value))
+			text = text.Trim().Replace(',', '.');
+
+			if (decimal.TryParse(
+				text,
+				NumberStyles.Any,
+				CultureInfo.InvariantCulture,
+				out var value))
 				return value;
 
 			return null;

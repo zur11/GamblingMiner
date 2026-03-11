@@ -1,4 +1,5 @@
 using System;
+using Godot;
 using Scripts.Betting;
 using Scripts.Finance;
 
@@ -48,9 +49,12 @@ namespace Scripts.Game
         {
             if (sessionId == SessionId)
             {
-                _strategy.OnBalanceDeltaChanged(amount);
-                return; // evita EvaluateStop prematuro
+                // delta causado por esta sesión
+                return;
             }
+
+            // delta externo
+            _strategy.OnExternalBalanceDelta(amount);
 
             EvaluateStop();
         }
@@ -84,16 +88,21 @@ namespace Scripts.Game
             var outcome = new BetOutcome(betAmount, profit, isWin);
             
             _strategy.OnBetResolved(outcome, currentBalance);
+
+            GD.Print("NotifyResult called");
             EvaluateStop();
         }
 
         public bool ShouldStop(decimal currentBalance)
         {
+            GD.Print("Calling ShouldStop");
             return _strategy.ShouldStop(currentBalance);
         }
 
         private void EvaluateStop()
         {
+            GD.Print("EvaluateStop running");
+
             if (!_strategy.IsRunning)
                 return;
 
