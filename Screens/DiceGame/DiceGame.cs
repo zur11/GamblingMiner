@@ -7,8 +7,9 @@ using Scripts.Dice;
 using Scripts.GameState;
 using Scripts.Finance;
 using Scripts.Game;
+using Scripts.Sessions;
 using Scripts.Betting;
-using GameComponents.StrategyControlPanel;
+using UI.StrategyControlPanel;
 
 public partial class DiceGame : Control, IBetEventSource
 {

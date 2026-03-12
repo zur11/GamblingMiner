@@ -3,7 +3,7 @@ using Godot;
 using Scripts.Betting;
 using Scripts.Finance;
 
-namespace Scripts.Game
+namespace Scripts.Sessions
 {
     public class AutoBetSession
     {

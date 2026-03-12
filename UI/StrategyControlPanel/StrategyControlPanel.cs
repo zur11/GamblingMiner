@@ -3,7 +3,7 @@ using System;
 using System.Globalization;
 using Scripts.Betting;
 
-namespace GameComponents.StrategyControlPanel
+namespace UI.StrategyControlPanel
 {
 	public partial class StrategyControlPanel : Control
 	{
