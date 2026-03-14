@@ -2,10 +2,10 @@
 
 [ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame/DiceGame.cs" id="1_k3ff0"]
 [ext_resource type="PackedScene" uid="uid://dcj5ru0ys536m" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/PreviousWinnerNumbersGrid.tscn" id="2_5hi04"]
-[ext_resource type="PackedScene" uid="uid://c3gxcrrobecpj" path="res://Screens/DepositPopup/DepositPopup.tscn" id="3_gu5sn"]
+[ext_resource type="PackedScene" uid="uid://c3gxcrrobecpj" path="res://UI/DepositPopup/DepositPopup.tscn" id="3_gu5sn"]
 [ext_resource type="PackedScene" uid="uid://cc4mcdfki2u7r" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.tscn" id="3_usic0"]
-[ext_resource type="PackedScene" uid="uid://c2crwe1sryeto" path="res://UserStatsComponents/FinancialBettingStats/FinancialBettingStats.tscn" id="5_ne2vn"]
-[ext_resource type="PackedScene" uid="uid://drs5mewqvl7kt" path="res://GameComponents/StrategyControlPanel/StrategyControlPanel.tscn" id="6_8x8ps"]
+[ext_resource type="PackedScene" uid="uid://c2crwe1sryeto" path="res://UI/FinancialBettingStats/FinancialBettingStats.tscn" id="5_ne2vn"]
+[ext_resource type="PackedScene" uid="uid://drs5mewqvl7kt" path="res://UI/StrategyControlPanel/StrategyControlPanel.tscn" id="6_8x8ps"]
 
 [node name="DiceGame" type="Control" node_paths=PackedStringArray("_betHistoryContainer", "_previousWinnerNumbersGrid", "_strategyPanel")]
 layout_mode = 3
@@ -197,6 +197,7 @@ offset_top = 436.0
 offset_right = 515.0
 offset_bottom = 527.0
 theme_override_font_sizes/font_size = 60
+toggle_mode = true
 text = "Betting Low"
 
 [node name="DepositBtn" type="Button" parent="."]

@@ -2,52 +2,54 @@ using System;
 
 namespace Scripts.Finance
 {
-    public sealed class Wallet
-    {
-        public event Action<Guid?, decimal> BalanceDeltaChanged;
+	public sealed class Wallet
+	{
+		public event Action<Guid?, decimal> BalanceDeltaChanged;
 
-        private decimal _balance;
-        public decimal Balance => _balance;
+		private decimal _balance;
+		public decimal Balance => _balance;
 
-        public Wallet(decimal initialBalance)
-        {
-            if (initialBalance < 0m)
-                throw new ArgumentException("Initial balance cannot be negative.");
+		public Wallet(decimal initialBalance)
+		{
+			if (initialBalance < 0m)
+				throw new ArgumentException("Initial balance cannot be negative.");
 
-            _balance = initialBalance;
-        }
+			_balance = initialBalance;
+		}
 
-        public void ApplyTransaction(Transaction transaction)
-        {
-            if (transaction is null)
-                throw new ArgumentNullException(nameof(transaction));
+		public void ApplyTransaction(Transaction transaction)
+		{
+			if (transaction is null)
+				throw new ArgumentNullException(nameof(transaction));
 
-            switch (transaction.Type)
-            {
-                case TransactionType.Deposit:
-                    if (transaction.Amount <= 0m)
-                        throw new ArgumentException("Deposit must be positive.");
+			switch (transaction.Type)
+			{
+				case TransactionType.Deposit:
+					if (transaction.Amount <= 0m)
+						throw new ArgumentException("Deposit must be positive.");
 
-                    _balance += transaction.Amount;
+					_balance += transaction.Amount;
+					_balance = Money.Normalize(_balance);
 
-                    BalanceDeltaChanged?.Invoke(transaction.SessionId, transaction.Amount);
-                    break;
+					BalanceDeltaChanged?.Invoke(transaction.SessionId, transaction.Amount);
+					break;
 
-                case TransactionType.Withdrawal:
-                    if (transaction.Amount <= 0m)
-                        throw new ArgumentException("Withdrawal must be positive.");
+				case TransactionType.Withdrawal:
+					if (transaction.Amount <= 0m)
+						throw new ArgumentException("Withdrawal must be positive.");
 
-                    if (transaction.Amount > _balance)
-                        throw new InvalidOperationException("Insufficient balance.");
+					if (transaction.Amount > _balance)
+						throw new InvalidOperationException("Insufficient balance.");
 
-                    _balance -= transaction.Amount;
+					_balance -= transaction.Amount;
+					_balance = Money.Normalize(_balance);
 
-                    BalanceDeltaChanged?.Invoke(transaction.SessionId, -transaction.Amount);
-                    break;
+					BalanceDeltaChanged?.Invoke(transaction.SessionId, -transaction.Amount);
+					break;
 
-                default:
-                    throw new InvalidOperationException("Unknown transaction type.");
-            }
-        }
-    }
+				default:
+					throw new InvalidOperationException("Unknown transaction type.");
+			}
+		}
+	}
 }
