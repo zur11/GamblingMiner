@@ -11,6 +11,7 @@ namespace Scripts.Sessions
 
         public Guid SessionId { get; } = Guid.NewGuid();
         private readonly IBettingStrategy _strategy;
+        public bool IsRunning => _strategy.IsRunning;
         public int RemainingBets
         {
             get
@@ -22,6 +23,9 @@ namespace Scripts.Sessions
             }
         }
 
+        public IBettingStrategy.StopReason? LastStopReason =>
+            _strategy.LastStopReason;
+
         public AutoBetSession(IBettingStrategy strategy)
         {
             _strategy = strategy;
@@ -31,6 +35,11 @@ namespace Scripts.Sessions
         {
             if (_strategy is ProgressiveBettingStrategy progressive)
                 progressive.SetBetCount(count);
+        }
+
+        public bool ShouldStop(decimal currentBalance)
+        {
+            return _strategy.ShouldStop(currentBalance);
         }
 
         public void SetLastStopReason(IBettingStrategy.StopReason reason)
@@ -85,17 +94,6 @@ namespace Scripts.Sessions
                 SessionStopped?.Invoke(SessionId, reason);
             }
         }
-
-        public bool ShouldStop(decimal currentBalance)
-        {
-            GD.Print("Calling ShouldStop");
-            return _strategy.ShouldStop(currentBalance);
-        }
-
-        public bool IsRunning => _strategy.IsRunning;
-
-        public IBettingStrategy.StopReason? LastStopReason =>
-            _strategy.LastStopReason;
 
         public void ClearStopReason()
         {
