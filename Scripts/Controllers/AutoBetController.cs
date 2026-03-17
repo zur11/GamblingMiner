@@ -9,6 +9,8 @@ namespace Scripts.Controllers
 {
 	public class AutoBetController
 	{
+		public event Action<IBettingStrategy.StopReason?> OnStopped;
+
 		private readonly BetController _betController;
 
 		public bool IsRunning => _betController.IsRunning;
@@ -17,6 +19,11 @@ namespace Scripts.Controllers
 		public AutoBetController(BetController betController)
 		{
 			_betController = betController;
+
+			_betController.OnStopped += reason =>
+			{
+				OnStopped?.Invoke(reason);
+			};
 		}
 
 		public void Configure(BettingStrategyConfig config, int betCount)

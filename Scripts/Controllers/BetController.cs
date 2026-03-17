@@ -8,6 +8,8 @@ namespace Scripts.Controllers
 {
     public class BetController
     {
+        public event Action<IBettingStrategy.StopReason?> OnStopped;
+
         private readonly BetService _betService;
         private readonly Wallet _wallet;
         private readonly IBettingStrategy _strategy;
@@ -15,6 +17,7 @@ namespace Scripts.Controllers
         public bool IsRunning => _strategy.IsRunning;
         public decimal Balance => _wallet.Balance;
         public int RemainingBets { get; private set; }
+        public bool IsInfinite => RemainingBets == int.MaxValue;
 
         public BetController(
             BetService betService,
@@ -129,7 +132,16 @@ namespace Scripts.Controllers
                 if (RemainingBets <= 0)
                 {
                     _strategy.Stop();
+                    OnStopped?.Invoke(IBettingStrategy.StopReason.CounterCountReached);
+                    return;
                 }
+            }
+
+            if (_strategy.ShouldStop(_wallet.Balance))
+            {
+                var reason = _strategy.LastStopReason;
+                _strategy.Stop();
+                OnStopped?.Invoke(reason);
             }
         }
     }

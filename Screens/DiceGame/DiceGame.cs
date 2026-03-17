@@ -36,6 +36,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private Timer _autoBetTimer;
 	[Export]
 	private BetHistoryContainer _betHistoryContainer;
+	private decimal _lastValidBet = 0m;
 
 	// --- State Machines ---
 	private WalletStateMachine _walletFSM;
@@ -126,6 +127,11 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
 		_autoBetTimer.Timeout += OnAutoBetTimerTimeout;
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
+		_autoBetController.OnStopped += OnAutoBetStopped;
+		_betController.OnStopped += reason =>
+		{
+			_strategyPanel.SetManualEnabled(false);
+		};
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>
 		{
 			if (_walletController.Balance <= 0m)
@@ -221,6 +227,16 @@ public partial class DiceGame : Control, IBetEventSource
 		);
 
 		_autoBetTimer.Start();
+	}
+
+	private void OnAutoBetStopped(IBettingStrategy.StopReason? reason)
+	{
+		_autoBetTimer.Stop();
+
+		_strategyPanel.SetAutoRunning(false);
+		// _strategyPanel.SetManualEnabled(false); // 👈 importante
+
+		_resultValue.Text = $"Stopped: {reason}";
 	}
 
 	// --- Depositos ---
@@ -399,10 +415,17 @@ public partial class DiceGame : Control, IBetEventSource
 
 		decimal nextBet = _autoBetController.GetNextBet();
 
-		_strategyPanel.SetBetAmount(nextBet);
+		if (_autoBetController.IsRunning)
+		{
+			_lastValidBet = nextBet;
+		}
+
+		_strategyPanel.SetBetAmount(
+			_autoBetController.IsRunning ? nextBet : _lastValidBet
+		);
 
 		_strategyPanel.SetNumberOfBets(
-			_autoBetController.RemainingBets
+			_betController.IsInfinite ? 0 : _betController.RemainingBets
 		);
 
 		if (_autoBetController.IsRunning)
