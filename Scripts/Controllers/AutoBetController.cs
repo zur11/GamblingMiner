@@ -7,63 +7,56 @@ using Scripts.Sessions;
 
 namespace Scripts.Controllers
 {
-    public class AutoBetController
-    {
-        private readonly BetController _betController;
-        private readonly BetSession _session;
+	public class AutoBetController
+	{
+		private readonly BetController _betController;
 
-        public bool IsRunning => _session.IsRunning;
+		public bool IsRunning => _betController.IsRunning;
+		public int RemainingBets => _betController.RemainingBets;
 
-        public int RemainingBets => _session.RemainingBets;
+		public AutoBetController(BetController betController)
+		{
+			_betController = betController;
+		}
 
-        public AutoBetController(
-            BetController betController,
-            IBettingStrategy strategy)
-        {
-            _betController = betController;
-            _session = new BetSession(strategy);
-        }
+		public void Configure(BettingStrategyConfig config, int betCount)
+		{
+			_betController.ConfigureStrategy(config);
+		}
 
-        public void Configure(BettingStrategyConfig config, int betCount)
-        {
-            _betController.ConfigureStrategy(config);
-        }
+		public void Start(decimal balance, int betCount)
+		{
+			_betController.StartSession(balance, betCount);
+		}
 
-        public void Start(decimal balance, int betCount)
-        {
-            _session.Start(balance, betCount);
-        }
+		public void Stop(IBettingStrategy.StopReason reason)
+		{
+			_betController.Stop(); // ← necesitas exponer esto
+		}
 
-        public void Stop(IBettingStrategy.StopReason reason)
-        {
-            _session.Stop(reason);
-        }
+		public (DiceResult, BetTransactionEvent) ExecuteNextBet(
+			int chance,
+			bool isHigh)
+		{
+			var (result, betEvent) =
+				_betController.ExecuteBet(
+					chance,
+					isHigh,
+					null
+				);
 
-        public (DiceResult, BetTransactionEvent) ExecuteNextBet(
-            int chance,
-            bool isHigh)
-        {
-            decimal bet = _session.GetNextBet();
+			_betController.NotifyBetResult(
+				betEvent.BetAmount,
+				betEvent.Profit,
+				result.IsWin
+			);
 
-            var (result, betEvent) =
-                _betController.ExecuteManualBet(
-                    bet,
-                    chance,
-                    isHigh);
+			return (result, betEvent);
+		}
 
-            _session.NotifyResult(
-                betEvent.BetAmount,
-                betEvent.Profit,
-                result.IsWin,
-                _betController.Balance
-            );
-
-            return (result, betEvent);
-        }
-
-        public decimal GetNextBet()
-        {
-            return _session.GetNextBet();
-        }
-    }
+		public decimal GetNextBet()
+		{
+			return _betController.GetNextBet();
+		}
+	}
 }

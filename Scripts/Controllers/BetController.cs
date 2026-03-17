@@ -33,9 +33,16 @@ namespace Scripts.Controllers
 
         public void StartSession(decimal startingBalance, int betCount)
         {
-            RemainingBets = betCount;
+            RemainingBets = betCount <= 0
+                ? int.MaxValue   // infinito
+                : betCount;
 
             _strategy.StartSession(startingBalance);
+        }
+
+        public void Stop()
+        {
+            _strategy.Stop();
         }
 
         public (DiceResult result, BetTransactionEvent betEvent) ExecuteBet(
@@ -115,8 +122,15 @@ namespace Scripts.Controllers
 
             _strategy.OnBetResolved(outcome, _wallet.Balance);
 
-            if (RemainingBets > 0)
+            if (RemainingBets != int.MaxValue)
+            {
                 RemainingBets--;
+
+                if (RemainingBets <= 0)
+                {
+                    _strategy.Stop();
+                }
+            }
         }
     }
 }

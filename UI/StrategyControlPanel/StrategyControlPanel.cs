@@ -116,7 +116,12 @@ namespace UI.StrategyControlPanel
 		{
 			_autoBetToggle.ButtonPressed = running;
 			_autoBetToggle.Text = running ? "STOP" : "AUTO";
-		}
+
+			if (!running)
+			{
+				StrategyConfigChanged?.Invoke();
+			}
+        }
 
 		public override void _Ready()
 		{

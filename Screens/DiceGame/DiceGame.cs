@@ -80,8 +80,7 @@ public partial class DiceGame : Control, IBetEventSource
 		);
 
 		_autoBetController = new AutoBetController(
-			_betController,
-			strategy
+			_betController
 		);
 
 		_walletController = new WalletController(_wallet);
@@ -210,6 +209,10 @@ public partial class DiceGame : Control, IBetEventSource
 		_autoBetController.Configure(
 			config,
 			_strategyPanel.NumberOfBets
+		);
+
+		_autoBetController.Stop(
+			IBettingStrategy.StopReason.ManualStop
 		);
 
 		_autoBetController.Start(
@@ -365,8 +368,15 @@ public partial class DiceGame : Control, IBetEventSource
 		);
 
 		_strategyPanel.SetNumberOfBets(
-			_betController.RemainingBets
+			_betController.RemainingBets == int.MaxValue
+				? 0
+				: _betController.RemainingBets
 		);
+
+		if (_betController.RemainingBets <= 0)
+		{
+			_strategyPanel.SetManualEnabled(false);
+		}
 	}
 
 	private void ExecuteNextAutoBet()
@@ -396,6 +406,12 @@ public partial class DiceGame : Control, IBetEventSource
 		);
 
 		if (_autoBetController.IsRunning)
+		{
 			_autoBetTimer.Start();
+		}
+		else
+		{
+			_strategyPanel.SetAutoRunning(false);
+		}
 	}
 }
