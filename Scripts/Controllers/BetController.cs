@@ -18,6 +18,8 @@ namespace Scripts.Controllers
         public decimal Balance => _wallet.Balance;
         public int RemainingBets { get; private set; }
         public bool IsInfinite => RemainingBets == int.MaxValue;
+        public IBettingStrategy.StopReason? LastStopReason =>
+            _strategy.LastStopReason;
 
         public BetController(
             BetService betService,

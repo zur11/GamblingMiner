@@ -36,7 +36,6 @@ public partial class DiceGame : Control, IBetEventSource
 	private Timer _autoBetTimer;
 	[Export]
 	private BetHistoryContainer _betHistoryContainer;
-	private decimal _lastValidBet = 0m;
 
 	// --- State Machines ---
 	private WalletStateMachine _walletFSM;
@@ -80,10 +79,9 @@ public partial class DiceGame : Control, IBetEventSource
 			strategy
 		);
 
-		_autoBetController = new AutoBetController(
-			_betController
-		);
+		var session = new BetSession(_betController);
 
+		_autoBetController = new AutoBetController(session);
 		_walletController = new WalletController(_wallet);
 
 		_autoBetTimer = new Timer();
@@ -210,16 +208,15 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		var config = _strategyPanel.BuildConfig();
+		_strategyPanel.SetAutoRunning(true);
 
-		_autoBetController.Configure(
-			config,
-			_strategyPanel.NumberOfBets
-		);
+		var config = _strategyPanel.BuildConfig();
 
 		_autoBetController.Stop(
 			IBettingStrategy.StopReason.ManualStop
 		);
+
+		_betController.ConfigureStrategy(config);
 
 		_autoBetController.Start(
 			_walletController.Balance,
@@ -403,7 +400,7 @@ public partial class DiceGame : Control, IBetEventSource
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
 
-		var (result, betEvent) =
+		var (result, betEvent, nextBet) =
 			_autoBetController.ExecuteNextBet(
 				chance,
 				isHigh
@@ -413,19 +410,11 @@ public partial class DiceGame : Control, IBetEventSource
 
 		UpdateResultUI(result);
 
-		decimal nextBet = _autoBetController.GetNextBet();
-
-		if (_autoBetController.IsRunning)
-		{
-			_lastValidBet = nextBet;
-		}
-
-		_strategyPanel.SetBetAmount(
-			_autoBetController.IsRunning ? nextBet : _lastValidBet
-		);
+		// 🔥 SIEMPRE respetar la estrategia
+		_strategyPanel.SetBetAmount(nextBet);
 
 		_strategyPanel.SetNumberOfBets(
-			_betController.IsInfinite ? 0 : _betController.RemainingBets
+			_autoBetController.IsInfinite ? 0 : _autoBetController.RemainingBets
 		);
 
 		if (_autoBetController.IsRunning)

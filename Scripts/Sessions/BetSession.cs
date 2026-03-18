@@ -2,81 +2,86 @@ using System;
 using Godot;
 using Scripts.Betting;
 using Scripts.Finance;
+using Scripts.Controllers;
+using Scripts.Dice;
 
 namespace Scripts.Sessions
 {
     public class BetSession
     {
-        private readonly IBettingStrategy _strategy;
+        public event Action<IBettingStrategy.StopReason?> OnStopped;
 
-        public Guid SessionId { get; } = Guid.NewGuid();
+        private readonly BetController _betController;
 
         public bool IsRunning { get; private set; }
 
         public int RemainingBets { get; private set; }
 
-        public IBettingStrategy.StopReason? LastStopReason { get; private set; }
+        public bool IsInfinite => RemainingBets == int.MaxValue;
 
-        public BetSession(IBettingStrategy strategy)
+        public BetSession(BetController betController)
         {
-            _strategy = strategy;
+            _betController = betController;
         }
 
-        public void Start(decimal startingBalance, int betCount)
+        public void Start(decimal balance, int betCount)
         {
-            _strategy.StartSession(startingBalance);
+            RemainingBets = betCount <= 0 ? int.MaxValue : betCount;
 
-            RemainingBets = betCount;
-
-            LastStopReason = null;
+            _betController.StartSession(balance, betCount);
 
             IsRunning = true;
         }
 
-        public decimal GetNextBet()
-        {
-            return _strategy.GetNextBet();
-        }
-
-        public void NotifyResult(
-            decimal betAmount,
-            decimal profit,
-            bool isWin,
-            decimal balance)
-        {
-            if (!IsRunning)
-                return;
-
-            var outcome = new BetOutcome(betAmount, profit, isWin);
-
-            _strategy.OnBetResolved(outcome, balance);
-
-            if (RemainingBets > 0)
-                RemainingBets--;
-
-            EvaluateStop(balance);
-        }
-
-        private void EvaluateStop(decimal balance)
-        {
-            if (RemainingBets == 0)
-            {
-                Stop(IBettingStrategy.StopReason.CounterCountReached);
-                return;
-            }
-
-            if (_strategy.ShouldStop(balance))
-            {
-                Stop(_strategy.LastStopReason ??
-                    IBettingStrategy.StopReason.ManualStop);
-            }
-        }
-
         public void Stop(IBettingStrategy.StopReason reason)
         {
-            LastStopReason = reason;
             IsRunning = false;
-            _strategy.Stop();
+            _betController.Stop();
+            OnStopped?.Invoke(reason);
+        }
+
+        public (DiceResult, BetTransactionEvent, decimal nextBet) ExecuteNext(
+            int chance,
+            bool isHigh)
+        {
+            if (!IsRunning)
+                throw new InvalidOperationException("Session not running");
+
+            var (result, betEvent) =
+                _betController.ExecuteBet(chance, isHigh, null);
+
+            _betController.NotifyBetResult(
+                betEvent.BetAmount,
+                betEvent.Profit,
+                result.IsWin
+            );
+
+            // 🔥 CLAVE: obtener siguiente bet ANTES del Stop
+            decimal nextBet = _betController.GetNextBet();
+
+            if (RemainingBets != int.MaxValue)
+            {
+                RemainingBets--;
+
+                if (RemainingBets <= 0)
+                {
+                    Stop(IBettingStrategy.StopReason.CounterCountReached);
+                    return (result, betEvent, nextBet);
+                }
+            }
+
+            if (!_betController.IsRunning)
+            {
+                Stop(_betController.LastStopReason
+                    ?? IBettingStrategy.StopReason.ManualStop);
+            }
+
+            return (result, betEvent, nextBet);
+        }
+
+        public decimal GetNextBet()
+        {
+            return _betController.GetNextBet();
         }
     }
 }

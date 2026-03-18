@@ -9,61 +9,43 @@ namespace Scripts.Controllers
 {
 	public class AutoBetController
 	{
-		public event Action<IBettingStrategy.StopReason?> OnStopped;
+		private readonly BetSession _session;
 
-		private readonly BetController _betController;
-
-		public bool IsRunning => _betController.IsRunning;
-		public int RemainingBets => _betController.RemainingBets;
-
-		public AutoBetController(BetController betController)
+		public AutoBetController(BetSession session)
 		{
-			_betController = betController;
-
-			_betController.OnStopped += reason =>
-			{
-				OnStopped?.Invoke(reason);
-			};
+			_session = session;
 		}
 
-		public void Configure(BettingStrategyConfig config, int betCount)
+		public bool IsRunning => _session.IsRunning;
+
+		public int RemainingBets => _session.RemainingBets;
+
+		public bool IsInfinite => _session.IsInfinite;
+
+		public event Action<IBettingStrategy.StopReason?> OnStopped
 		{
-			_betController.ConfigureStrategy(config);
+			add => _session.OnStopped += value;
+			remove => _session.OnStopped -= value;
 		}
 
 		public void Start(decimal balance, int betCount)
 		{
-			_betController.StartSession(balance, betCount);
+			_session.Start(balance, betCount);
 		}
 
 		public void Stop(IBettingStrategy.StopReason reason)
 		{
-			_betController.Stop(); // ← necesitas exponer esto
+			_session.Stop(reason);
 		}
 
-		public (DiceResult, BetTransactionEvent) ExecuteNextBet(
-			int chance,
-			bool isHigh)
+		public (DiceResult, BetTransactionEvent, decimal nextBet) ExecuteNextBet(int chance, bool isHigh)
 		{
-			var (result, betEvent) =
-				_betController.ExecuteBet(
-					chance,
-					isHigh,
-					null
-				);
-
-			_betController.NotifyBetResult(
-				betEvent.BetAmount,
-				betEvent.Profit,
-				result.IsWin
-			);
-
-			return (result, betEvent);
+			return _session.ExecuteNext(chance, isHigh);
 		}
 
 		public decimal GetNextBet()
 		{
-			return _betController.GetNextBet();
+			return _session.GetNextBet();
 		}
 	}
 }
