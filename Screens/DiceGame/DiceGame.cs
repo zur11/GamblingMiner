@@ -197,7 +197,7 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		_isAutoRunning = running;
 		_strategyPanel.SetManualEnabled(!_isAutoRunning);
-		_strategyPanel.SetAutoRunning(running);
+		_strategyPanel.SetAutoRunning(_isAutoRunning);
 		if (!running)
 		{
 			_autoBetTimer.Stop();
@@ -226,7 +226,12 @@ public partial class DiceGame : Control, IBetEventSource
 			_resultValue.Text = $"Stopped: {reason}";
 			return;
 		}
-		_strategyPanel.SetManualEnabled(false);
+
+		if (reason != IBettingStrategy.StopReason.ManualStop)
+		{
+			_strategyPanel.SetManualEnabled(false);
+		}
+
 		_resultValue.Text = $"Stopped: {reason}";
 	}
 
