@@ -34,6 +34,8 @@ public partial class DiceGame : Control, IBetEventSource
 	private UserStatsService _userStatsService;
 	private FinancialBettingStats _financialStats;
 	private Timer _autoBetTimer;
+	private BetSession _betSession;
+	private bool _isAutoRunning;
 	[Export]
 	private BetHistoryContainer _betHistoryContainer;
 
@@ -79,9 +81,9 @@ public partial class DiceGame : Control, IBetEventSource
 			strategy
 		);
 
-		var session = new BetSession(_betController);
+		_betSession = new BetSession(_betController);
 
-		_autoBetController = new AutoBetController(session);
+		_autoBetController = new AutoBetController(_betSession);
 		_walletController = new WalletController(_wallet);
 
 		_autoBetTimer = new Timer();
@@ -125,11 +127,8 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
 		_autoBetTimer.Timeout += OnAutoBetTimerTimeout;
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
-		_autoBetController.OnStopped += OnAutoBetStopped;
-		_betController.OnStopped += reason =>
-		{
-			_strategyPanel.SetManualEnabled(false);
-		};
+		_betSession.OnStopped += OnBetSessionStopped;
+
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>
 		{
 			if (_walletController.Balance <= 0m)
@@ -196,25 +195,16 @@ public partial class DiceGame : Control, IBetEventSource
 	// --- Autobet Session
 	private void OnAutoBetToggled(bool running)
 	{
-		_strategyPanel.SetManualEnabled(!running);
-
+		_isAutoRunning = running;
+		_strategyPanel.SetManualEnabled(!_isAutoRunning);
+		_strategyPanel.SetAutoRunning(running);
 		if (!running)
 		{
-			_autoBetController.Stop(
-				IBettingStrategy.StopReason.ManualStop
-			);
-
 			_autoBetTimer.Stop();
+			_autoBetController.Stop(IBettingStrategy.StopReason.ManualStop);
 			return;
 		}
-
-		_strategyPanel.SetAutoRunning(true);
-
 		var config = _strategyPanel.BuildConfig();
-
-		_autoBetController.Stop(
-			IBettingStrategy.StopReason.ManualStop
-		);
 
 		_betController.ConfigureStrategy(config);
 
@@ -226,13 +216,17 @@ public partial class DiceGame : Control, IBetEventSource
 		_autoBetTimer.Start();
 	}
 
-	private void OnAutoBetStopped(IBettingStrategy.StopReason? reason)
+	private void OnBetSessionStopped(IBettingStrategy.StopReason? reason)
 	{
-		_autoBetTimer.Stop();
-
-		_strategyPanel.SetAutoRunning(false);
-		// _strategyPanel.SetManualEnabled(false); // 👈 importante
-
+		if (_isAutoRunning)
+		{
+			_autoBetTimer.Stop();
+			_strategyPanel.SetAutoRunning(false); 
+			_isAutoRunning = false;
+			_resultValue.Text = $"Stopped: {reason}";
+			return;
+		}
+		_strategyPanel.SetManualEnabled(false);
 		_resultValue.Text = $"Stopped: {reason}";
 	}
 
@@ -355,17 +349,16 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		if (!_betController.IsRunning)
+		if (!_betSession.IsRunning)
 		{
-			_betController.StartSession(_walletController.Balance, _strategyPanel.NumberOfBets);
+			_betSession.Start(
+				_walletController.Balance,
+				_strategyPanel.NumberOfBets
+			);
 		}
 
-		var (result, betEvent) =
-			_betController.ExecuteManualBet(
-				bet,
-				chance,
-				isHigh
-			);
+		var (result, betEvent, nextBet) =
+			_betSession.ExecuteNext(chance, isHigh);
 
 		BetExecuted?.Invoke(GameId, betEvent);
 		UpdateResultUI(result);
@@ -376,20 +369,11 @@ public partial class DiceGame : Control, IBetEventSource
 			result.IsWin
 		);
 
-		_strategyPanel.SetBetAmount(
-			_betController.GetNextStrategyBet()
-		);
+		_strategyPanel.SetBetAmount(nextBet);
 
 		_strategyPanel.SetNumberOfBets(
-			_betController.RemainingBets == int.MaxValue
-				? 0
-				: _betController.RemainingBets
+			_betSession.IsInfinite ? 0 : _betSession.RemainingBets
 		);
-
-		if (_betController.RemainingBets <= 0)
-		{
-			_strategyPanel.SetManualEnabled(false);
-		}
 	}
 
 	private void ExecuteNextAutoBet()
@@ -401,16 +385,12 @@ public partial class DiceGame : Control, IBetEventSource
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
 
 		var (result, betEvent, nextBet) =
-			_autoBetController.ExecuteNextBet(
-				chance,
-				isHigh
-			);
+			_autoBetController.ExecuteNextBet(chance, isHigh);
 
 		BetExecuted?.Invoke(GameId, betEvent);
 
 		UpdateResultUI(result);
 
-		// 🔥 SIEMPRE respetar la estrategia
 		_strategyPanel.SetBetAmount(nextBet);
 
 		_strategyPanel.SetNumberOfBets(
@@ -418,12 +398,6 @@ public partial class DiceGame : Control, IBetEventSource
 		);
 
 		if (_autoBetController.IsRunning)
-		{
 			_autoBetTimer.Start();
-		}
-		else
-		{
-			_strategyPanel.SetAutoRunning(false);
-		}
 	}
 }

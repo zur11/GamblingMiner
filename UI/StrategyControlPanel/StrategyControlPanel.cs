@@ -148,7 +148,6 @@ namespace UI.StrategyControlPanel
 		private void OnAutoTogglePressed()
 		{
 			bool running = _autoBetToggle.ButtonPressed;
-			SetAutoRunning(running);
 			AutoBetToggled?.Invoke(running);
 		}
 

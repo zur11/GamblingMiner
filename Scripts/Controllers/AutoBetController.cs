@@ -22,12 +22,6 @@ namespace Scripts.Controllers
 
 		public bool IsInfinite => _session.IsInfinite;
 
-		public event Action<IBettingStrategy.StopReason?> OnStopped
-		{
-			add => _session.OnStopped += value;
-			remove => _session.OnStopped -= value;
-		}
-
 		public void Start(decimal balance, int betCount)
 		{
 			_session.Start(balance, betCount);

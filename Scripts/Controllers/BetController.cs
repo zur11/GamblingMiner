@@ -8,8 +8,6 @@ namespace Scripts.Controllers
 {
     public class BetController
     {
-        public event Action<IBettingStrategy.StopReason?> OnStopped;
-
         private readonly BetService _betService;
         private readonly Wallet _wallet;
         private readonly IBettingStrategy _strategy;
@@ -29,6 +27,16 @@ namespace Scripts.Controllers
             _betService = betService;
             _wallet = wallet;
             _strategy = strategy;
+        }
+
+        public decimal GetNextBet()
+        {
+            return _strategy.GetNextBet();
+        }
+
+        public decimal GetNextStrategyBet()
+        {
+            return _strategy.GetNextBet();
         }
 
         public void ConfigureStrategy(BettingStrategyConfig config)
@@ -66,16 +74,6 @@ namespace Scripts.Controllers
             // Strategy resolution moved to session
 
             return _betService.ExecuteBet(bet, chance, isHigh, sessionId);
-        }
-
-        public decimal GetNextBet()
-        {
-            return _strategy.GetNextBet();
-        }
-
-        public decimal GetNextStrategyBet()
-        {
-            return _strategy.GetNextBet();
         }
 
         public (DiceResult result, BetTransactionEvent betEvent) ExecuteManualBet(
@@ -127,23 +125,10 @@ namespace Scripts.Controllers
 
             _strategy.OnBetResolved(outcome, _wallet.Balance);
 
-            if (RemainingBets != int.MaxValue)
-            {
-                RemainingBets--;
-
-                if (RemainingBets <= 0)
-                {
-                    _strategy.Stop();
-                    OnStopped?.Invoke(IBettingStrategy.StopReason.CounterCountReached);
-                    return;
-                }
-            }
-
             if (_strategy.ShouldStop(_wallet.Balance))
             {
                 var reason = _strategy.LastStopReason;
                 _strategy.Stop();
-                OnStopped?.Invoke(reason);
             }
         }
     }
