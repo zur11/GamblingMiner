@@ -182,6 +182,15 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnStrategyConfigChanged()
 	{
+		if (_isAutoRunning)
+			return;
+
+		// 🔥 reset inmediato en manual
+		if (_betSession.IsRunning)
+		{
+			_betSession.Stop(IBettingStrategy.StopReason.ManualStop);
+		}
+
 		if (_walletFSM.State != WalletState.Bankrupt)
 			_strategyPanel.SetManualEnabled(true);
 	}
