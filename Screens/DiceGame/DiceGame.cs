@@ -32,8 +32,10 @@ public partial class DiceGame : Control, IBetEventSource
 	private UserStatsService _userStatsService;
 	private FinancialBettingStats _financialStats;
 	private Timer _autoBetTimer;
-	private BetSession _betSession;
-	private bool _isAutoRunning;
+	private ManualBetSession _manualSession;
+	private AutoBetSession _autoSession;
+
+	// Componentes UI
 	[Export]
 	private BetHistoryContainer _betHistoryContainer;
 
@@ -73,7 +75,8 @@ public partial class DiceGame : Control, IBetEventSource
 		_betService = new BetService(_engine, _wallet, TransactionSource.Bet);
 		var strategy = new ProgressiveBettingStrategy();
 
-		_betSession = new BetSession(_betService, _wallet, strategy);
+		_manualSession = new ManualBetSession(_betService, _wallet, strategy);
+		_autoSession = new AutoBetSession(_betService, _wallet, strategy);
 
 		_walletController = new WalletController(_wallet);
 
@@ -118,7 +121,8 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
 		_autoBetTimer.Timeout += OnAutoBetTimerTimeout;
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
-		_betSession.OnStopped += OnBetSessionStopped;
+		_manualSession.OnStopped += OnManualBetSessionStopped;
+		_autoSession.OnStopped += OnAutoBetSessionStopped;
 
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>
 		{
@@ -175,13 +179,10 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnStrategyConfigChanged()
 	{
-		if (_isAutoRunning)
-			return;
-
 		// 🔥 reset inmediato en manual
-		if (_betSession.IsRunning)
+		if (_manualSession.IsRunning)
 		{
-			_betSession.Stop(IBettingStrategy.StopReason.ManualStop);
+			_manualSession.Stop(IBettingStrategy.StopReason.ManualStop);
 		}
 
 		if (_walletFSM.State != WalletState.Bankrupt)
@@ -191,22 +192,19 @@ public partial class DiceGame : Control, IBetEventSource
 	// --- Autobet Session
 	private void OnAutoBetToggled(bool running)
 	{
-		_isAutoRunning = running;
-
 		_strategyPanel.SetManualEnabled(!running);
 		_strategyPanel.SetAutoRunning(running);
 
 		if (!running)
 		{
 			_autoBetTimer.Stop();
-			_betSession.Stop(IBettingStrategy.StopReason.ManualStop);
+			_autoSession.Stop(IBettingStrategy.StopReason.ManualStop);
 			return;
 		}
 
 		var config = _strategyPanel.BuildConfig();
 
-		_betSession.Start(
-			_walletController.Balance,
+		_autoSession.Start(
 			_strategyPanel.NumberOfBets,
 			config
 		);
@@ -214,22 +212,16 @@ public partial class DiceGame : Control, IBetEventSource
 		_autoBetTimer.Start();
 	}
 
-	private void OnBetSessionStopped(IBettingStrategy.StopReason? reason)
+	private void OnManualBetSessionStopped(IBettingStrategy.StopReason? reason)
 	{
-		if (_isAutoRunning)
-		{
-			_autoBetTimer.Stop();
-			_strategyPanel.SetAutoRunning(false); 
-			_isAutoRunning = false;
-			_resultValue.Text = $"Stopped: {reason}";
-			return;
-		}
+		_strategyPanel.SetManualEnabled(false);
+		_resultValue.Text = $"Stopped: {reason}";
+	}
 
-		if (reason != IBettingStrategy.StopReason.ManualStop)
-		{
-			_strategyPanel.SetManualEnabled(false);
-		}
-
+	private void OnAutoBetSessionStopped(IBettingStrategy.StopReason? reason)
+	{
+		_autoBetTimer.Stop();
+		_strategyPanel.SetAutoRunning(false);
 		_resultValue.Text = $"Stopped: {reason}";
 	}
 
@@ -352,19 +344,18 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		if (!_betSession.IsRunning)
+		if (!_manualSession.IsRunning)
 		{
 			var config = _strategyPanel.BuildConfig();
 
-			_betSession.Start(
-				_walletController.Balance,
+			_manualSession.Start(
 				_strategyPanel.NumberOfBets,
 				config
 			);
 		}
 
 		var (result, betEvent, nextBet) =
-			_betSession.ExecuteNext(chance, isHigh);
+			_manualSession.ExecuteNext(chance, isHigh);
 
 		BetExecuted?.Invoke(GameId, betEvent);
 		UpdateResultUI(result);
@@ -372,20 +363,20 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.SetBetAmount(nextBet);
 
 		_strategyPanel.SetNumberOfBets(
-			_betSession.IsInfinite ? 0 : _betSession.RemainingBets
+			_manualSession.IsInfinite ? 0 : _manualSession.RemainingBets
 		);
 	}
 
 	private void ExecuteNextAutoBet()
 	{
-		if (!_betSession.IsRunning)
+		if (!_autoSession.IsRunning)
 			return;
 
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
 
 		var (result, betEvent, nextBet) =
-			_betSession.ExecuteNext(chance, isHigh);
+			_autoSession.ExecuteNext(chance, isHigh);
 
 		BetExecuted?.Invoke(GameId, betEvent);
 
@@ -394,10 +385,10 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.SetBetAmount(nextBet);
 
 		_strategyPanel.SetNumberOfBets(
-			_betSession.IsInfinite ? 0 : _betSession.RemainingBets
+			_autoSession.IsInfinite ? 0 : _autoSession.RemainingBets
 		);
 
-		if (_betSession.IsRunning)
+		if (_autoSession.IsRunning)
 			_autoBetTimer.Start();
 	}
 }

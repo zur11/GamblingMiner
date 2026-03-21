@@ -8,25 +8,23 @@ using Scripts.Game;
 
 namespace Scripts.Sessions
 {
-    public class BetSession
+    public abstract class BaseBetSession
     {
         public event Action<IBettingStrategy.StopReason?> OnStopped;
 
-        public bool IsRunning { get; private set; }
-
-        public int RemainingBets { get; private set; }
-
+        public bool IsRunning { get; protected set; }
+        public int RemainingBets { get; protected set; }
         public bool IsInfinite => RemainingBets == int.MaxValue;
 
-        private decimal _currentBet;
-        private decimal _sessionProfit;
-        private BettingStrategyConfig _config;
+        protected decimal _currentBet;
+        protected decimal _sessionProfit;
+        protected BettingStrategyConfig _config;
 
-        private readonly BetService _betService;
-        private readonly Wallet _wallet;
-        private readonly ProgressiveBettingStrategy _strategy;
+        protected readonly BetService _betService;
+        protected readonly Wallet _wallet;
+        protected readonly ProgressiveBettingStrategy _strategy;
 
-        public BetSession(
+        protected BaseBetSession(
             BetService betService,
             Wallet wallet,
             ProgressiveBettingStrategy strategy)
@@ -36,25 +34,24 @@ namespace Scripts.Sessions
             _strategy = strategy;
         }
 
-        public void Start(decimal balance, int betCount, BettingStrategyConfig config)
+        public virtual void Start(int betCount, BettingStrategyConfig config)
         {
             RemainingBets = betCount <= 0 ? int.MaxValue : betCount;
 
             _config = config;
-
             _currentBet = config.BaseBet;
             _sessionProfit = 0m;
 
             IsRunning = true;
         }
 
-        public void Stop(IBettingStrategy.StopReason reason)
+        public virtual void Stop(IBettingStrategy.StopReason reason)
         {
             IsRunning = false;
             OnStopped?.Invoke(reason);
         }
 
-        public (DiceResult, BetTransactionEvent, decimal nextBet) ExecuteNext(
+        public (DiceResult, BetTransactionEvent, decimal) ExecuteNext(
             int chance,
             bool isHigh)
         {
@@ -62,7 +59,12 @@ namespace Scripts.Sessions
                 throw new InvalidOperationException("Session not running");
 
             var (result, betEvent) =
-                _betService.ExecuteBet(_currentBet, chance, isHigh, null);
+                _betService.ExecuteBet(
+                    _currentBet,
+                    chance,
+                    isHigh,
+                    GetSessionId() // 🔥 punto clave
+                );
 
             var outcome = new BetOutcome(
                 betEvent.BetAmount,
@@ -78,7 +80,17 @@ namespace Scripts.Sessions
                 _config
             );
 
-            // stop conditions
+            ApplyStopConditions();
+
+            return (result, betEvent, _currentBet);
+        }
+
+        // 🔥 EXTENSION POINTS
+
+        protected abstract Guid? GetSessionId();
+
+        protected virtual void ApplyStopConditions()
+        {
             if (_config.StopOnProfit.HasValue &&
                 _sessionProfit >= _config.StopOnProfit.Value)
             {
@@ -96,7 +108,6 @@ namespace Scripts.Sessions
                 Stop(IBettingStrategy.StopReason.InsufficientBalance);
             }
 
-            // contador
             if (RemainingBets != int.MaxValue)
             {
                 RemainingBets--;
@@ -106,8 +117,6 @@ namespace Scripts.Sessions
                     Stop(IBettingStrategy.StopReason.CounterCountReached);
                 }
             }
-
-            return (result, betEvent, _currentBet);
         }
     }
 }
