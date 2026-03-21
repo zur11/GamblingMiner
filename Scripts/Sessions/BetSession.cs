@@ -4,14 +4,13 @@ using Scripts.Betting;
 using Scripts.Finance;
 using Scripts.Controllers;
 using Scripts.Dice;
+using Scripts.Game;
 
 namespace Scripts.Sessions
 {
     public class BetSession
     {
         public event Action<IBettingStrategy.StopReason?> OnStopped;
-
-        private readonly BetController _betController;
 
         public bool IsRunning { get; private set; }
 
@@ -23,9 +22,18 @@ namespace Scripts.Sessions
         private decimal _sessionProfit;
         private BettingStrategyConfig _config;
 
-        public BetSession(BetController betController)
+        private readonly BetService _betService;
+        private readonly Wallet _wallet;
+        private readonly ProgressiveBettingStrategy _strategy;
+
+        public BetSession(
+            BetService betService,
+            Wallet wallet,
+            ProgressiveBettingStrategy strategy)
         {
-            _betController = betController;
+            _betService = betService;
+            _wallet = wallet;
+            _strategy = strategy;
         }
 
         public void Start(decimal balance, int betCount, BettingStrategyConfig config)
@@ -47,14 +55,14 @@ namespace Scripts.Sessions
         }
 
         public (DiceResult, BetTransactionEvent, decimal nextBet) ExecuteNext(
-     int chance,
-     bool isHigh)
+            int chance,
+            bool isHigh)
         {
             if (!IsRunning)
                 throw new InvalidOperationException("Session not running");
 
             var (result, betEvent) =
-                _betController.ExecuteManualBet(_currentBet, chance, isHigh);
+                _betService.ExecuteBet(_currentBet, chance, isHigh, null);
 
             var outcome = new BetOutcome(
                 betEvent.BetAmount,
@@ -64,8 +72,7 @@ namespace Scripts.Sessions
 
             _sessionProfit += outcome.Profit;
 
-            // calcular siguiente bet
-            _currentBet = _betController.CalculateNextBet(
+            _currentBet = _strategy.CalculateNextBet(
                 _currentBet,
                 outcome,
                 _config
@@ -84,7 +91,7 @@ namespace Scripts.Sessions
                 Stop(IBettingStrategy.StopReason.StopOnLoss);
             }
 
-            if (_currentBet > _betController.Balance)
+            if (_currentBet > _wallet.Balance)
             {
                 Stop(IBettingStrategy.StopReason.InsufficientBalance);
             }

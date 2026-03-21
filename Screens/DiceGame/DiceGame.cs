@@ -27,7 +27,6 @@ public partial class DiceGame : Control, IBetEventSource
 	private Wallet _wallet;
 
 	// --- Servicio de apuestas ---
-	private BetController _betController;
 	private WalletController _walletController;
 	private BetService _betService;
 	private UserStatsService _userStatsService;
@@ -74,13 +73,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_betService = new BetService(_engine, _wallet, TransactionSource.Bet);
 		var strategy = new ProgressiveBettingStrategy();
 
-		_betController = new BetController(
-			_betService,
-			_wallet,
-			strategy
-		);
-
-		_betSession = new BetSession(_betController);
+		_betSession = new BetSession(_betService, _wallet, strategy);
 
 		_walletController = new WalletController(_wallet);
 
