@@ -63,8 +63,8 @@ public partial class DiceGame : Control, IBetEventSource
 	[Export]
 	private StrategyControlPanel _strategyPanel;
 
-	// Inicialización
-	public override void _Ready()
+    // Inicialización
+    public override void _Ready()
 	{
 		// Inicializar motor y servicios
 		_engine = new DiceEngine();
@@ -418,12 +418,6 @@ public partial class DiceGame : Control, IBetEventSource
 			StopAllSessions(IBettingStrategy.StopReason.InvalidBetAmount);
 			return false;
 		}
-
-		//if (!BetRegex.IsMatch(input))
-		//{
-		//          _resultValue.Text = "Invalid bet input.";
-		//          return false;
-		//}
 
 		if (input <= 0m)
 		{
