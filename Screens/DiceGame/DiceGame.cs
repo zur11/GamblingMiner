@@ -63,10 +63,7 @@ public partial class DiceGame : Control, IBetEventSource
 	[Export]
 	private StrategyControlPanel _strategyPanel;
 
-	// --- Validación decimal ---
-	private static readonly Regex BetRegex =
-		new Regex(@"^\d+(\.\d{1,8})?$", RegexOptions.Compiled);
-
+	// Inicialización
 	public override void _Ready()
 	{
 		// Inicializar motor y servicios
@@ -174,6 +171,17 @@ public partial class DiceGame : Control, IBetEventSource
 	// --- Eventos de componentes ---
 	private void OnManualBetFromPanel()
 	{
+		if (!_strategyPanel.TryGetValidBet(out decimal bet))
+		{
+			_resultValue.Text = "Invalid bet format.";
+			return;
+		}
+
+		bool isValidBet = IsBetAmountValid(_strategyPanel.BetAmount);
+
+		if (!isValidBet)
+			return;
+
 		ExecuteManualBet();
 	}
 
@@ -192,6 +200,23 @@ public partial class DiceGame : Control, IBetEventSource
 	// --- Autobet Session
 	private void OnAutoBetToggled(bool running)
 	{
+		if (running)
+		{
+			if (!_strategyPanel.TryGetValidBet(out decimal bet))
+			{
+				_resultValue.Text = "Invalid bet format.";
+				return;
+			}
+
+			bool isValidBet = IsBetAmountValid(_strategyPanel.BetAmount);
+
+			if (!isValidBet)
+			{
+				_strategyPanel.SetAutoRunning(!running);
+				return;
+			}
+		}
+
 		_strategyPanel.SetManualEnabled(!running);
 		_strategyPanel.SetAutoRunning(running);
 
@@ -233,6 +258,10 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnAutoBetTimerTimeout()
 	{
+		bool isValidBet = IsBetAmountValid(_strategyPanel.BetAmount);
+
+		if (!isValidBet)
+			return;
 		ExecuteNextAutoBet();
 	}
 
@@ -332,18 +361,6 @@ public partial class DiceGame : Control, IBetEventSource
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
 
-		if (bet <= 0m)
-		{
-			_resultValue.Text = "Invalid bet amount.";
-			return;
-		}
-
-		if (bet > _walletController.Balance)
-		{
-			_resultValue.Text = "Insufficient balance.";
-			return;
-		}
-
 		if (!_manualSession.IsRunning)
 		{
 			var config = _strategyPanel.BuildConfig();
@@ -390,5 +407,51 @@ public partial class DiceGame : Control, IBetEventSource
 
 		if (_autoSession.IsRunning)
 			_autoBetTimer.Start();
+	}
+
+	// Funciones auxiliares
+	private bool IsBetAmountValid(decimal input)
+	{
+		if (input == 0m)
+		{
+			_resultValue.Text = "Bet input is empty.";
+			StopAllSessions(IBettingStrategy.StopReason.InvalidBetAmount);
+			return false;
+		}
+
+		//if (!BetRegex.IsMatch(input))
+		//{
+		//          _resultValue.Text = "Invalid bet input.";
+		//          return false;
+		//}
+
+		if (input <= 0m)
+		{
+			_resultValue.Text = "Invalid bet amount.";
+			StopAllSessions(IBettingStrategy.StopReason.InvalidBetAmount);
+			return false;
+		}
+
+		if (input > _walletController.Balance)
+		{
+			_resultValue.Text = "Insufficient balance.";
+			StopAllSessions(IBettingStrategy.StopReason.InsufficientBalance);
+			return false;
+		}
+
+		return true;
+	}
+
+	private void StopAllSessions(IBettingStrategy.StopReason stopReason)
+	{
+		if (_manualSession.IsRunning)
+		{
+			_manualSession.Stop(stopReason);
+		}
+
+		if (_autoSession.IsRunning)
+		{
+			_autoSession.Stop(stopReason);
+		}
 	}
 }

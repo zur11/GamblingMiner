@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Scripts.Betting;
 
 namespace UI.StrategyControlPanel
@@ -13,8 +14,12 @@ namespace UI.StrategyControlPanel
 		public event Action<string> BetAmountInputChanged;
 		public event Action StrategyConfigChanged;
 
-		// --- Flags ---
-		private bool _internalUpdate = false;
+        // --- Validación decimal ---
+        private static readonly Regex BetRegex =
+            new Regex(@"^\d+(\.\d{1,8})?$", RegexOptions.Compiled);
+
+        // --- Flags ---
+        private bool _internalUpdate = false;
 
 		// --- Nodos UI ---
 		[Export]
@@ -42,19 +47,18 @@ namespace UI.StrategyControlPanel
 		[Export]
 		private LineEdit _stopOnLossInput;
 
-		// --- Propiedades API ---
-		public decimal BetAmount
-		{
-			get
-			{
-				string text = _betAmountInput.Text.Trim().Replace(',', '.');
-				if (!decimal.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
-					return 0m;
-				return value;
-			}
-		}
+        // --- Propiedades API ---
+        public decimal BetAmount
+        {
+            get
+            {
+                return TryParseDecimal(_betAmountInput.Text, out var value)
+                    ? value
+                    : 0m;
+            }
+        }
 
-		public decimal IncreasePercent
+        public decimal IncreasePercent
 		{
 			get
 			{
@@ -127,8 +131,8 @@ namespace UI.StrategyControlPanel
 		{
 			_betOnceBtn.Pressed += OnBetOncePressed;
 			_autoBetToggle.Pressed += OnAutoTogglePressed;
-			_betAmountInput.TextChanged += OnBetAmountInputTextChanged;
-			_increaseOnLossWinToggle.Pressed += OnIncreaseOnWinLossTogglePressed;
+            _betAmountInput.TextChanged += OnBetAmountInputTextChanged;
+            _increaseOnLossWinToggle.Pressed += OnIncreaseOnWinLossTogglePressed;
 			_maxBetAmountBtn.Pressed += OnMaxBetAmountBtnPressed;
 			_minBetAmountBtn.Pressed += OnMinBetAmountBtnPressed;
 			_x2BetAmountBtn.Pressed += OnX2BetAmountBtnPressed;
@@ -136,7 +140,6 @@ namespace UI.StrategyControlPanel
 			_stopOnProfitInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
 			_increasePercentageInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
 			_stopOnLossInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
-			_betAmountInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
 			_numberOfBetsInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
 		}
 
@@ -151,15 +154,19 @@ namespace UI.StrategyControlPanel
 			AutoBetToggled?.Invoke(running);
 		}
 
-		private void OnBetAmountInputTextChanged(string text)
-		{
-			if (_internalUpdate)
-				return;
+        private void OnBetAmountInputTextChanged(string text)
+        {
+            if (_internalUpdate)
+                return;
 
-			BetAmountInputChanged?.Invoke(text);
-		}
+            if (TryParseDecimal(text, out decimal _))
+            {
+                BetAmountInputChanged?.Invoke(text);
+                StrategyConfigChanged?.Invoke();
+            }
+        }
 
-		private void OnIncreaseOnWinLossTogglePressed()
+        private void OnIncreaseOnWinLossTogglePressed()
 		{
 			bool increasingOnWin = _increaseOnLossWinToggle.ButtonPressed;
 			_increaseOnLossWinToggle.Text = increasingOnWin ? "Increase on win" : "Increase on loss";
@@ -203,18 +210,33 @@ namespace UI.StrategyControlPanel
 			};
 		}
 
-		private decimal? ParseDecimal(string text)
-		{
-			text = text.Trim().Replace(',', '.');
+        private decimal? ParseDecimal(string text)
+        {
+            return TryParseDecimal(text, out var value)
+                ? value
+                : null;
+        }
 
-			if (decimal.TryParse(
-				text,
-				NumberStyles.Any,
-				CultureInfo.InvariantCulture,
-				out var value))
-				return value;
+        public bool TryGetValidBet(out decimal value)
+        {
+            return TryParseDecimal(_betAmountInput.Text, out value);
+        }
 
-			return null;
-		}
-	}
+        private bool TryParseDecimal(string text, out decimal value)
+        {
+            value = 0m;
+
+            text = text.Trim().Replace(',', '.');
+
+            if (!BetRegex.IsMatch(text))
+                return false;
+
+            return decimal.TryParse(
+                text,
+                NumberStyles.Number,
+                CultureInfo.InvariantCulture,
+                out value
+            );
+        }
+    }
 }

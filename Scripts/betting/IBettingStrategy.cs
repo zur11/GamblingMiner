@@ -8,7 +8,8 @@ namespace Scripts.Betting
             StopOnLoss,
             InsufficientBalance,
             ManualStop,
-            CounterCountReached
+            CounterCountReached,
+            InvalidBetAmount
         }
 
         decimal CalculateNextBet(
