@@ -14,6 +14,7 @@ namespace Scripts.Sessions
 
         public bool IsRunning { get; protected set; }
         public int RemainingBets { get; protected set; }
+        public IBettingStrategy.StopReason LastStopReason { get; private set; }
         public bool IsInfinite => RemainingBets == int.MaxValue;
 
         protected decimal _currentBet;
@@ -47,7 +48,12 @@ namespace Scripts.Sessions
 
         public virtual void Stop(IBettingStrategy.StopReason reason)
         {
+            if (!IsRunning)
+                return;
+
             IsRunning = false;
+            LastStopReason = reason;
+
             OnStopped?.Invoke(reason);
         }
 
@@ -94,18 +100,21 @@ namespace Scripts.Sessions
             if (_config.StopOnProfit.HasValue &&
                 _sessionProfit >= _config.StopOnProfit.Value)
             {
-                Stop(IBettingStrategy.StopReason.StopOnProfit);
+                LastStopReason = IBettingStrategy.StopReason.StopOnProfit;
+                Stop(LastStopReason);
             }
 
             if (_config.StopOnLoss.HasValue &&
                 _sessionProfit <= -_config.StopOnLoss.Value)
             {
-                Stop(IBettingStrategy.StopReason.StopOnLoss);
+                LastStopReason = IBettingStrategy.StopReason.StopOnLoss;
+                Stop(LastStopReason);
             }
 
             if (_currentBet > _wallet.Balance)
             {
-                Stop(IBettingStrategy.StopReason.InsufficientBalance);
+                LastStopReason = IBettingStrategy.StopReason.InsufficientBalance;
+                Stop(LastStopReason);
             }
 
             if (RemainingBets != int.MaxValue)
@@ -114,7 +123,8 @@ namespace Scripts.Sessions
 
                 if (RemainingBets <= 0)
                 {
-                    Stop(IBettingStrategy.StopReason.CounterCountReached);
+                    LastStopReason = IBettingStrategy.StopReason.CounterCountReached;
+                    Stop(LastStopReason);
                 }
             }
         }

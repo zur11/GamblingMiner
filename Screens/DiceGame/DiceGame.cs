@@ -63,8 +63,8 @@ public partial class DiceGame : Control, IBetEventSource
 	[Export]
 	private StrategyControlPanel _strategyPanel;
 
-    // Inicialización
-    public override void _Ready()
+	// Inicialización
+	public override void _Ready()
 	{
 		// Inicializar motor y servicios
 		_engine = new DiceEngine();
@@ -133,12 +133,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_resultValue.Text = "Place your bet.";
 	}
 
-	// --- API ---
-	public decimal GetCurrentBalance()
-	{
-		return _walletController.Balance; // No usado actualmente, pero expuesto para posibles futuras necesidades
-	}
-
 	// --- Eventos UI ---
 	private void OnHighLowToggled()
 	{
@@ -151,6 +145,7 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateAllUI();
 	}
 
+	// --- Eventos de componentes ---
 	private void OnBetInputChanged(string newText)
 	{
 		if (newText == "MAX")
@@ -168,7 +163,19 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 	}
 
-	// --- Eventos de componentes ---
+	private void OnStrategyConfigChanged()
+	{
+		// 🔥 reset inmediato en manual
+		if (_manualSession.IsRunning)
+		{
+			_manualSession.Stop(IBettingStrategy.StopReason.ManualStop);
+		}
+
+		if (_walletFSM.State != WalletState.Bankrupt)
+			_strategyPanel.SetManualEnabled(true);
+	}
+
+	// --- Manual Bet Session
 	private void OnManualBetFromPanel()
 	{
 		if (!_strategyPanel.TryGetValidBet(out decimal bet))
@@ -185,16 +192,44 @@ public partial class DiceGame : Control, IBetEventSource
 		ExecuteManualBet();
 	}
 
-	private void OnStrategyConfigChanged()
+	private void ExecuteManualBet()
 	{
-		// 🔥 reset inmediato en manual
-		if (_manualSession.IsRunning)
+		decimal bet = _strategyPanel.BetAmount;
+
+		int chance = (int)_chanceSlider.Value;
+		bool isHigh = _highLowToggleBtn.ButtonPressed;
+
+		if (!_manualSession.IsRunning)
 		{
-			_manualSession.Stop(IBettingStrategy.StopReason.ManualStop);
+			var config = _strategyPanel.BuildConfig();
+
+			_manualSession.Start(
+				_strategyPanel.NumberOfBets,
+				config
+			);
 		}
 
-		if (_walletFSM.State != WalletState.Bankrupt)
-			_strategyPanel.SetManualEnabled(true);
+		var (result, betEvent, nextBet) =
+			_manualSession.ExecuteNext(chance, isHigh);
+
+		BetExecuted?.Invoke(GameId, betEvent);
+
+		_strategyPanel.SetNumberOfBets(
+			_manualSession.IsInfinite ? 0 : _manualSession.RemainingBets
+		);
+
+		_strategyPanel.SetBetAmount(nextBet);
+
+		if (!_manualSession.IsRunning)
+			return;
+
+		UpdateResultUI(result);
+	}
+
+	private void OnManualBetSessionStopped(IBettingStrategy.StopReason? reason)
+	{
+		_strategyPanel.SetManualEnabled(false);
+		HandleSessionStopped(_manualSession, "Manual stopped");
 	}
 
 	// --- Autobet Session
@@ -237,32 +272,51 @@ public partial class DiceGame : Control, IBetEventSource
 		_autoBetTimer.Start();
 	}
 
-	private void OnManualBetSessionStopped(IBettingStrategy.StopReason? reason)
+	private void ExecuteNextAutoBet()
 	{
-		_strategyPanel.SetManualEnabled(false);
-		_resultValue.Text = $"Stopped: {reason}";
+		int chance = (int)_chanceSlider.Value;
+		bool isHigh = _highLowToggleBtn.ButtonPressed;
+
+		var (result, betEvent, nextBet) =
+			_autoSession.ExecuteNext(chance, isHigh);
+
+		BetExecuted?.Invoke(GameId, betEvent);
+
+		_strategyPanel.SetNumberOfBets(
+			_autoSession.IsInfinite ? 0 : _autoSession.RemainingBets
+		);
+
+		_strategyPanel.SetBetAmount(nextBet);
+
+		if (!_autoSession.IsRunning)
+			return; // 🔥 CLAVE: evita pisar el mensaje del evento
+
+		UpdateResultUI(result); // Si se coloca antes del return, _resultLabel no muestra razon de parada
+		_autoBetTimer.Start();
 	}
 
 	private void OnAutoBetSessionStopped(IBettingStrategy.StopReason? reason)
 	{
 		_autoBetTimer.Stop();
 		_strategyPanel.SetAutoRunning(false);
-		_resultValue.Text = $"Stopped: {reason}";
+		HandleSessionStopped(_autoSession, "Auto stopped");
+	}
+
+	private void OnAutoBetTimerTimeout()
+	{
+		ExecuteNextAutoBet();
+	}
+
+	// --- Handlers comunes de sesión ---
+	private void HandleSessionStopped(BaseBetSession session, string prefix)
+	{
+		_resultValue.Text = $"{prefix}: {session.LastStopReason}";
 	}
 
 	// --- Depositos ---
 	private void OnDepositBtnPressed()
 	{
 		_depositPopup.Open();
-	}
-
-	private void OnAutoBetTimerTimeout()
-	{
-		bool isValidBet = IsBetAmountValid(_strategyPanel.BetAmount);
-
-		if (!isValidBet)
-			return;
-		ExecuteNextAutoBet();
 	}
 
 	private void OnDepositPopupDepositConfirmed(double amountDouble)
@@ -353,99 +407,21 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 	}
 
-	// --- Metodos ejecutores de apuesta ---
-	private void ExecuteManualBet()
-	{
-		decimal bet = _strategyPanel.BetAmount;
-
-		int chance = (int)_chanceSlider.Value;
-		bool isHigh = _highLowToggleBtn.ButtonPressed;
-
-		if (!_manualSession.IsRunning)
-		{
-			var config = _strategyPanel.BuildConfig();
-
-			_manualSession.Start(
-				_strategyPanel.NumberOfBets,
-				config
-			);
-		}
-
-		var (result, betEvent, nextBet) =
-			_manualSession.ExecuteNext(chance, isHigh);
-
-		BetExecuted?.Invoke(GameId, betEvent);
-		UpdateResultUI(result);
-
-		_strategyPanel.SetBetAmount(nextBet);
-
-		_strategyPanel.SetNumberOfBets(
-			_manualSession.IsInfinite ? 0 : _manualSession.RemainingBets
-		);
-	}
-
-	private void ExecuteNextAutoBet()
-	{
-		if (!_autoSession.IsRunning)
-			return;
-
-		int chance = (int)_chanceSlider.Value;
-		bool isHigh = _highLowToggleBtn.ButtonPressed;
-
-		var (result, betEvent, nextBet) =
-			_autoSession.ExecuteNext(chance, isHigh);
-
-		BetExecuted?.Invoke(GameId, betEvent);
-
-		UpdateResultUI(result);
-
-		_strategyPanel.SetBetAmount(nextBet);
-
-		_strategyPanel.SetNumberOfBets(
-			_autoSession.IsInfinite ? 0 : _autoSession.RemainingBets
-		);
-
-		if (_autoSession.IsRunning)
-			_autoBetTimer.Start();
-	}
-
 	// Funciones auxiliares
 	private bool IsBetAmountValid(decimal input)
 	{
 		if (input == 0m)
 		{
 			_resultValue.Text = "Bet input is empty.";
-			StopAllSessions(IBettingStrategy.StopReason.InvalidBetAmount);
-			return false;
-		}
-
-		if (input <= 0m)
-		{
-			_resultValue.Text = "Invalid bet amount.";
-			StopAllSessions(IBettingStrategy.StopReason.InvalidBetAmount);
 			return false;
 		}
 
 		if (input > _walletController.Balance)
 		{
 			_resultValue.Text = "Insufficient balance.";
-			StopAllSessions(IBettingStrategy.StopReason.InsufficientBalance);
 			return false;
 		}
 
 		return true;
-	}
-
-	private void StopAllSessions(IBettingStrategy.StopReason stopReason)
-	{
-		if (_manualSession.IsRunning)
-		{
-			_manualSession.Stop(stopReason);
-		}
-
-		if (_autoSession.IsRunning)
-		{
-			_autoSession.Stop(stopReason);
-		}
 	}
 }
