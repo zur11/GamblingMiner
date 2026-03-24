@@ -32,8 +32,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private UserStatsService _userStatsService;
 	private FinancialBettingStats _financialStats;
 	private Timer _autoBetTimer;
-	private ManualBetSession _manualSession;
-	private AutoBetSession _autoSession;
+	private BaseBetSession _session;
 
 	// Componentes UI
 	[Export]
@@ -72,8 +71,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_betService = new BetService(_engine, _wallet, TransactionSource.Bet);
 		var strategy = new ProgressiveBettingStrategy();
 
-		_manualSession = new ManualBetSession(_betService, _wallet, strategy);
-		_autoSession = new AutoBetSession(_betService, _wallet, strategy);
+		_session = CreateSession(false); // default manual
 
 		_walletController = new WalletController(_wallet);
 
@@ -118,8 +116,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
 		_autoBetTimer.Timeout += OnAutoBetTimerTimeout;
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
-		_manualSession.OnStopped += OnManualBetSessionStopped;
-		_autoSession.OnStopped += OnAutoBetSessionStopped;
+		_session.OnStopped += OnSessionStopped;
 
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>
 		{
@@ -166,9 +163,9 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnStrategyConfigChanged()
 	{
 		// 🔥 reset inmediato en manual
-		if (_manualSession.IsRunning)
+		if (_session.IsRunning)
 		{
-			_manualSession.Stop(IBettingStrategy.StopReason.ManualStop);
+			_session.Stop(IBettingStrategy.StopReason.ManualStop);
 		}
 
 		if (_walletFSM.State != WalletState.Bankrupt)
@@ -178,58 +175,18 @@ public partial class DiceGame : Control, IBetEventSource
 	// --- Manual Bet Session
 	private void OnManualBetFromPanel()
 	{
-		if (!_strategyPanel.TryGetValidBet(out decimal bet))
+		if (!_strategyPanel.TryGetValidBet(out _))
 		{
 			_resultValue.Text = "Invalid bet format.";
 			return;
 		}
 
-		bool isValidBet = IsBetAmountValid(_strategyPanel.BetAmount);
-
-		if (!isValidBet)
+		if (!IsBetAmountValid(_strategyPanel.BetAmount))
 			return;
 
-		ExecuteManualBet();
-	}
+		EnsureSession(false); // 🔥 manual
 
-	private void ExecuteManualBet()
-	{
-		decimal bet = _strategyPanel.BetAmount;
-
-		int chance = (int)_chanceSlider.Value;
-		bool isHigh = _highLowToggleBtn.ButtonPressed;
-
-		if (!_manualSession.IsRunning)
-		{
-			var config = _strategyPanel.BuildConfig();
-
-			_manualSession.Start(
-				_strategyPanel.NumberOfBets,
-				config
-			);
-		}
-
-		var (result, betEvent, nextBet) =
-			_manualSession.ExecuteNext(chance, isHigh);
-
-		BetExecuted?.Invoke(GameId, betEvent);
-
-		_strategyPanel.SetNumberOfBets(
-			_manualSession.IsInfinite ? 0 : _manualSession.RemainingBets
-		);
-
-		_strategyPanel.SetBetAmount(nextBet);
-
-		if (!_manualSession.IsRunning)
-			return;
-
-		UpdateResultUI(result);
-	}
-
-	private void OnManualBetSessionStopped(BaseBetSession session)
-	{
-		_strategyPanel.SetManualEnabled(false);
-		HandleSessionStopped(session, "Manual stopped");
+		ExecuteBet();
 	}
 
 	// --- Autobet Session
@@ -258,59 +215,88 @@ public partial class DiceGame : Control, IBetEventSource
 		if (!running)
 		{
 			_autoBetTimer.Stop();
-			_autoSession.Stop(IBettingStrategy.StopReason.ManualStop);
+			_session.Stop(IBettingStrategy.StopReason.ManualStop);
 			return;
 		}
 
-		var config = _strategyPanel.BuildConfig();
-
-		_autoSession.Start(
-			_strategyPanel.NumberOfBets,
-			config
-		);
+		EnsureSession(true); // 🔥 auto
 
 		_autoBetTimer.Start();
-	}
-
-	private void ExecuteNextAutoBet()
-	{
-		int chance = (int)_chanceSlider.Value;
-		bool isHigh = _highLowToggleBtn.ButtonPressed;
-
-		var (result, betEvent, nextBet) =
-			_autoSession.ExecuteNext(chance, isHigh);
-
-		BetExecuted?.Invoke(GameId, betEvent);
-
-		_strategyPanel.SetNumberOfBets(
-			_autoSession.IsInfinite ? 0 : _autoSession.RemainingBets
-		);
-
-		_strategyPanel.SetBetAmount(nextBet);
-
-		if (!_autoSession.IsRunning)
-			return; // 🔥 CLAVE: evita pisar el mensaje del evento
-
-		UpdateResultUI(result); // Si se coloca antes del return, _resultLabel no muestra razon de parada
-		_autoBetTimer.Start();
-	}
-
-	private void OnAutoBetSessionStopped(BaseBetSession session)
-	{
-		_autoBetTimer.Stop();
-		_strategyPanel.SetAutoRunning(false);
-		HandleSessionStopped(session, "Auto stopped");
 	}
 
 	private void OnAutoBetTimerTimeout()
 	{
-		ExecuteNextAutoBet();
+		ExecuteBet();
+
+		if (_session.IsRunning)
+			_autoBetTimer.Start();
 	}
 
 	// --- Handlers comunes de sesión ---
 	private void HandleSessionStopped(BaseBetSession session, string prefix)
 	{
 		_resultValue.Text = $"{prefix}: {session.LastStopReason}";
+	}
+
+	private BaseBetSession CreateSession(bool isAuto)
+	{
+		var strategy = new ProgressiveBettingStrategy();
+
+		if (isAuto)
+			return new AutoBetSession(_betService, _wallet, strategy);
+
+		return new ManualBetSession(_betService, _wallet, strategy);
+	}
+
+	private void OnSessionStopped(BaseBetSession session)
+	{
+		if (session is ManualBetSession)
+		{
+			_strategyPanel.SetManualEnabled(false);
+			HandleSessionStopped(session, "Manual stopped");
+		}
+
+		else if (session is AutoBetSession)
+		{
+			_autoBetTimer.Stop();
+			_strategyPanel.SetAutoRunning(false);
+			HandleSessionStopped(session, "Auto stopped");
+		}
+	}
+
+	private void EnsureSession(bool isAuto)
+	{
+		if (_session != null && _session.IsRunning)
+			return;
+
+		_session = CreateSession(isAuto);
+		_session.OnStopped += OnSessionStopped;
+
+		var config = _strategyPanel.BuildConfig();
+
+		_session.Start(_strategyPanel.NumberOfBets, config);
+	}
+
+	private void ExecuteBet()
+	{
+		int chance = (int)_chanceSlider.Value;
+		bool isHigh = _highLowToggleBtn.ButtonPressed;
+
+		var (result, betEvent, nextBet) =
+			_session.ExecuteNext(chance, isHigh);
+
+		BetExecuted?.Invoke(GameId, betEvent);
+
+		_strategyPanel.SetNumberOfBets(
+			_session.IsInfinite ? 0 : _session.RemainingBets
+		);
+
+		_strategyPanel.SetBetAmount(nextBet);
+
+		if (!_session.IsRunning)
+			return;
+
+		UpdateResultUI(result);
 	}
 
 	// --- Depositos ---
