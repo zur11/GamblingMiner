@@ -226,10 +226,10 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateResultUI(result);
 	}
 
-	private void OnManualBetSessionStopped(IBettingStrategy.StopReason? reason)
+	private void OnManualBetSessionStopped(BaseBetSession session)
 	{
 		_strategyPanel.SetManualEnabled(false);
-		HandleSessionStopped(_manualSession, "Manual stopped");
+		HandleSessionStopped(session, "Manual stopped");
 	}
 
 	// --- Autobet Session
@@ -295,11 +295,11 @@ public partial class DiceGame : Control, IBetEventSource
 		_autoBetTimer.Start();
 	}
 
-	private void OnAutoBetSessionStopped(IBettingStrategy.StopReason? reason)
+	private void OnAutoBetSessionStopped(BaseBetSession session)
 	{
 		_autoBetTimer.Stop();
 		_strategyPanel.SetAutoRunning(false);
-		HandleSessionStopped(_autoSession, "Auto stopped");
+		HandleSessionStopped(session, "Auto stopped");
 	}
 
 	private void OnAutoBetTimerTimeout()

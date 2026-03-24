@@ -10,7 +10,7 @@ namespace Scripts.Sessions
 {
     public abstract class BaseBetSession
     {
-        public event Action<IBettingStrategy.StopReason?> OnStopped;
+        public event Action<BaseBetSession> OnStopped;
 
         public bool IsRunning { get; protected set; }
         public int RemainingBets { get; protected set; }
@@ -54,7 +54,7 @@ namespace Scripts.Sessions
             IsRunning = false;
             LastStopReason = reason;
 
-            OnStopped?.Invoke(reason);
+            OnStopped?.Invoke(this);
         }
 
         public (DiceResult, BetTransactionEvent, decimal) ExecuteNext(
