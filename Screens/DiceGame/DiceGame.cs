@@ -54,6 +54,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private DepositPopup _depositPopup;
 	private Button _depositBtn;
+	private Button _openCalculatorBtn;
+	private MartingaleCalculator _martingaleCalculator;
 
 	// --- Componentes del juego ---
 	[Export]
@@ -94,6 +96,8 @@ public partial class DiceGame : Control, IBetEventSource
 		_highLowToggleBtn = GetNode<Button>("%HighLowToggleBtn");
 		_depositPopup = GetNode<DepositPopup>("%DepositPopup");
 		_depositBtn = GetNode<Button>("%DepositBtn");
+		_openCalculatorBtn = GetNode<Button>("%OpenCalculatorBtn");
+		_martingaleCalculator = GetNode<MartingaleCalculator>("%MartingaleCalculator");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_financialStats = GetNode<FinancialBettingStats>("%FinancialBettingStats");
 
@@ -104,8 +108,10 @@ public partial class DiceGame : Control, IBetEventSource
 		_highLowToggleBtn.Pressed += OnHighLowToggled;
 		_chanceSlider.ValueChanged += OnChanceChanged;
 		_depositBtn.Pressed += OnDepositBtnPressed;
+		_openCalculatorBtn.Pressed += OnOpenCalculatorPressed;
 		_depositPopup.DepositConfirmed += OnDepositPopupDepositConfirmed;
 		_depositPopup.DepositCanceled += OnDepositCanceled;
+		_martingaleCalculator.CloseRequested += OnCalculatorCloseRequested;
 		_wallet.BalanceDeltaChanged += OnBalanceDeltaChanged;
 		_previousWinnerNumbersGrid.SubscribeTo(this);
 		_betHistoryContainer.SubscribeTo(this);
@@ -326,6 +332,16 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnDepositCanceled()
 	{
 		_resultValue.Text = "Deposit canceled.";
+	}
+
+	private void OnOpenCalculatorPressed()
+	{
+		_martingaleCalculator.Open();
+	}
+
+	private void OnCalculatorCloseRequested()
+	{
+		_martingaleCalculator.Close();
 	}
 
 	// --- Handlers Intermediarios---
