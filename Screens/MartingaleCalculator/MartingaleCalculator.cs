@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Globalization;
+using Scripts.Betting;
 
 public partial class MartingaleCalculator : Control
 {
@@ -13,6 +14,14 @@ public partial class MartingaleCalculator : Control
 	private VBoxContainer _rowsContainer;
 	private Label _statusLabel;
 	private PackedScene _rowScene;
+	private bool _hasGameContext;
+	private decimal _ctxBankroll;
+	private BettingStrategyConfig _ctxConfig;
+	private decimal _ctxCurrentBet;
+	private bool _ctxStrategyStarted;
+	private int _ctxChance;
+	private int _ctxExecutedBetsCount;
+	private int _ctxProgressionStreak;
 
 	public override void _Ready()
 	{
@@ -59,6 +68,12 @@ public partial class MartingaleCalculator : Control
 
 	private void OnCalculatePressed()
 	{
+		if (_hasGameContext)
+		{
+			CalculateFromGameContext();
+			return;
+		}
+
 		if (!TryParsePositive(_totalBankrollInput.Text, out double bankroll)
 			|| !TryParsePositive(_initialBetInput.Text, out double initialBet)
 			|| !TryParsePositive(_multiplyOnLossInput.Text, out double multiplyOnLoss))
@@ -75,6 +90,211 @@ public partial class MartingaleCalculator : Control
 
 		OnResetPressed();
 		BuildRows(bankroll, initialBet, multiplyOnLoss);
+	}
+
+	public void UpdateFromGameSettings(
+		decimal bankroll,
+		BettingStrategyConfig config,
+		decimal currentBet,
+		bool strategyStarted,
+		int chance,
+		int executedBetsCount,
+		int progressionStreak)
+	{
+		_ctxBankroll = bankroll;
+		_ctxConfig = config;
+		_ctxCurrentBet = currentBet;
+		_ctxStrategyStarted = strategyStarted;
+		_ctxChance = chance;
+		_ctxExecutedBetsCount = executedBetsCount;
+		_ctxProgressionStreak = progressionStreak;
+		_hasGameContext = true;
+
+		_totalBankrollInput.Text = bankroll.ToString("F8", CultureInfo.InvariantCulture);
+		_initialBetInput.Text = config.BaseBet.ToString("F8", CultureInfo.InvariantCulture);
+		_multiplyOnLossInput.Text = (1m + (config.IncreasePercent / 100m))
+			.ToString("F8", CultureInfo.InvariantCulture);
+
+		CalculateFromGameContext();
+	}
+
+	private void CalculateFromGameContext()
+	{
+		if (_ctxBankroll <= 0m || _ctxConfig.BaseBet <= 0m)
+		{
+			OnResetPressed();
+			_statusLabel.Text = "Waiting for valid strategy values.";
+			return;
+		}
+
+		OnResetPressed();
+
+		decimal remaining = _ctxBankroll;
+		decimal nextBet = _ctxConfig.BaseBet;
+		decimal cumulativeLoss = 0m;
+		decimal multiplier = 1m + (_ctxConfig.IncreasePercent / 100m);
+		decimal payoutMultiplier = (100m * 0.9902m) / Math.Max(1, _ctxChance);
+		int roll = 1;
+		int maxRows = 500;
+		bool stopLossMarked = false;
+		bool stopWinMarked = false;
+		bool truncatedByOverflow = false;
+		int currentAttemptIndex = ResolveCurrentAttemptIndex(multiplier, maxRows);
+
+		while (roll <= maxRows)
+		{
+			if (nextBet > remaining)
+				break;
+
+			var row = _rowScene.Instantiate<BetRollRow>();
+			_rowsContainer.AddChild(row);
+
+			if (!TrySafeSubtract(remaining, nextBet, out remaining))
+			{
+				truncatedByOverflow = true;
+				break;
+			}
+			if (!TrySafeAdd(cumulativeLoss, nextBet, out cumulativeLoss))
+			{
+				truncatedByOverflow = true;
+				break;
+			}
+
+			if (!TrySafeSubtract(cumulativeLoss, nextBet, out decimal previousLosses))
+			{
+				truncatedByOverflow = true;
+				break;
+			}
+			if (!TrySafeMultiply(nextBet, payoutMultiplier, out decimal grossWin))
+			{
+				truncatedByOverflow = true;
+				break;
+			}
+			if (!TrySafeSubtract(grossWin, nextBet, out decimal winProfit))
+			{
+				truncatedByOverflow = true;
+				break;
+			}
+			if (!TrySafeSubtract(winProfit, previousLosses, out decimal profitIfWinNow))
+			{
+				truncatedByOverflow = true;
+				break;
+			}
+
+			bool isDoneAttempt = _ctxStrategyStarted && _ctxProgressionStreak > 0 && roll < currentAttemptIndex;
+			bool isCurrentAttempt = _ctxStrategyStarted && roll == currentAttemptIndex;
+			bool hitsStopOnLoss = !stopLossMarked
+				&& _ctxConfig.StopOnLoss.HasValue
+				&& cumulativeLoss >= _ctxConfig.StopOnLoss.Value;
+			bool hitsStopOnProfit = !stopWinMarked
+				&& _ctxConfig.StopOnProfit.HasValue
+				&& profitIfWinNow >= _ctxConfig.StopOnProfit.Value;
+
+			if (hitsStopOnLoss) stopLossMarked = true;
+			if (hitsStopOnProfit) stopWinMarked = true;
+
+			row.SetData(roll, (double)nextBet, (double)remaining);
+			row.SetFlags(isDoneAttempt, isCurrentAttempt, hitsStopOnLoss, hitsStopOnProfit);
+
+			try
+			{
+				nextBet = GetNextLossBet(nextBet, multiplier);
+			}
+			catch (OverflowException)
+			{
+				truncatedByOverflow = true;
+				break;
+			}
+			roll++;
+		}
+
+		_statusLabel.Text = _ctxStrategyStarted
+			? "Auto-calculated from active progression (full sequence view)."
+			: "Auto-calculated from current game inputs.";
+
+		if (truncatedByOverflow)
+			_statusLabel.Text += " Sequence truncated due to very large bet values.";
+	}
+
+	private decimal GetNextLossBet(decimal currentBet, decimal multiplier)
+	{
+		if (_ctxConfig.IncreasePercent <= 0m || !_ctxConfig.IncreaseOnLoss)
+			return _ctxConfig.BaseBet;
+
+		return decimal.Multiply(currentBet, multiplier);
+	}
+
+	private static bool AreClose(decimal a, decimal b)
+	{
+		return Math.Abs(a - b) <= 0.00000001m;
+	}
+
+	private int ResolveCurrentAttemptIndex(decimal multiplier, int maxRows)
+	{
+		if (!_ctxStrategyStarted)
+			return 1;
+		if (_ctxProgressionStreak >= 0)
+			return Math.Clamp(_ctxProgressionStreak + 1, 1, maxRows);
+		if (_ctxExecutedBetsCount > 0)
+			return Math.Clamp(_ctxExecutedBetsCount + 1, 1, maxRows);
+		if (AreClose(_ctxCurrentBet, _ctxConfig.BaseBet))
+			return 1;
+		if (_ctxConfig.IncreasePercent <= 0m || !_ctxConfig.IncreaseOnLoss)
+			return 1;
+
+		decimal probe = _ctxConfig.BaseBet;
+		for (int i = 1; i <= maxRows; i++)
+		{
+			if (AreClose(probe, _ctxCurrentBet))
+				return i;
+
+			if (!TrySafeMultiply(probe, multiplier, out probe))
+				break;
+		}
+
+		return 1;
+	}
+
+	private static bool TrySafeAdd(decimal a, decimal b, out decimal result)
+	{
+		try
+		{
+			result = decimal.Add(a, b);
+			return true;
+		}
+		catch (OverflowException)
+		{
+			result = 0m;
+			return false;
+		}
+	}
+
+	private static bool TrySafeSubtract(decimal a, decimal b, out decimal result)
+	{
+		try
+		{
+			result = decimal.Subtract(a, b);
+			return true;
+		}
+		catch (OverflowException)
+		{
+			result = 0m;
+			return false;
+		}
+	}
+
+	private static bool TrySafeMultiply(decimal a, decimal b, out decimal result)
+	{
+		try
+		{
+			result = decimal.Multiply(a, b);
+			return true;
+		}
+		catch (OverflowException)
+		{
+			result = 0m;
+			return false;
+		}
 	}
 
 	private void BuildRows(double totalBankroll, double initialBet, double multiplyOnLoss)

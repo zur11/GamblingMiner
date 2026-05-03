@@ -133,6 +133,7 @@ public partial class DiceGame : Control, IBetEventSource
 		};
 
 		UpdateAllUI();
+		RefreshCalculatorFromGameSettings();
 		_resultValue.Text = "Place your bet.";
 	}
 
@@ -146,6 +147,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnChanceChanged(double _)
 	{
 		UpdateAllUI();
+		RefreshCalculatorFromGameSettings();
 	}
 
 	// --- Eventos de componentes ---
@@ -164,6 +166,8 @@ public partial class DiceGame : Control, IBetEventSource
 			_strategyPanel.ManualSetBetAmount(minBet);
 			return;
 		}
+
+		RefreshCalculatorFromGameSettings();
 	}
 
 	private void OnStrategyConfigChanged()
@@ -176,6 +180,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 		if (_walletFSM.State != WalletState.Bankrupt)
 			_strategyPanel.SetManualEnabled(true);
+
+		RefreshCalculatorFromGameSettings();
 	}
 
 	// --- Manual Bet Session
@@ -222,12 +228,14 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			_autoBetTimer.Stop();
 			_session.Stop(IBettingStrategy.StopReason.ManualStop);
+			RefreshCalculatorFromGameSettings();
 			return;
 		}
 
 		EnsureSession(true); // 🔥 auto
 
 		_autoBetTimer.Start();
+		RefreshCalculatorFromGameSettings();
 	}
 
 	private void OnAutoBetTimerTimeout()
@@ -268,6 +276,8 @@ public partial class DiceGame : Control, IBetEventSource
 			_strategyPanel.SetAutoRunning(false);
 			HandleSessionStopped(session, "Auto stopped");
 		}
+
+		RefreshCalculatorFromGameSettings();
 	}
 
 	private void EnsureSession(bool isAuto)
@@ -298,6 +308,7 @@ public partial class DiceGame : Control, IBetEventSource
 		);
 
 		_strategyPanel.SetBetAmount(nextBet);
+		RefreshCalculatorFromGameSettings();
 
 		if (!_session.IsRunning)
 			return;
@@ -337,11 +348,39 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnOpenCalculatorPressed()
 	{
 		_martingaleCalculator.Open();
+		RefreshCalculatorFromGameSettings();
 	}
 
 	private void OnCalculatorCloseRequested()
 	{
 		_martingaleCalculator.Close();
+	}
+
+	private void RefreshCalculatorFromGameSettings()
+	{
+		var uiConfig = _strategyPanel.BuildConfig();
+		bool strategyRunning = _session != null && _session.IsRunning;
+		decimal baseBet = strategyRunning ? _session.SessionBaseBet : uiConfig.BaseBet;
+		var config = new BettingStrategyConfig
+		{
+			BaseBet = baseBet,
+			IncreasePercent = uiConfig.IncreasePercent,
+			IncreaseOnLoss = uiConfig.IncreaseOnLoss,
+			IncreaseOnWin = uiConfig.IncreaseOnWin,
+			StopOnProfit = uiConfig.StopOnProfit,
+			StopOnLoss = uiConfig.StopOnLoss
+		};
+		int chance = (int)_chanceSlider.Value;
+
+		_martingaleCalculator.UpdateFromGameSettings(
+			_walletController.Balance,
+			config,
+			_session?.CurrentBet ?? _strategyPanel.BetAmount,
+			strategyRunning,
+			chance,
+			_session?.ExecutedBetsCount ?? 0,
+			_session?.ProgressionTriggerStreak ?? 0
+		);
 	}
 
 	// --- Handlers Intermediarios---

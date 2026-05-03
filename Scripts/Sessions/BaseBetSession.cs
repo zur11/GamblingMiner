@@ -16,6 +16,10 @@ namespace Scripts.Sessions
         public int RemainingBets { get; protected set; }
         public IBettingStrategy.StopReason LastStopReason { get; private set; }
         public bool IsInfinite => RemainingBets == int.MaxValue;
+        public int ExecutedBetsCount { get; private set; }
+        public decimal CurrentBet => _currentBet;
+        public int ProgressionTriggerStreak { get; private set; }
+        public decimal SessionBaseBet => _config?.BaseBet ?? 0m;
 
         protected decimal _currentBet;
         protected decimal _sessionProfit;
@@ -42,6 +46,8 @@ namespace Scripts.Sessions
             _config = config;
             _currentBet = config.BaseBet;
             _sessionProfit = 0m;
+            ExecutedBetsCount = 0;
+            ProgressionTriggerStreak = 0;
 
             IsRunning = true;
         }
@@ -79,16 +85,33 @@ namespace Scripts.Sessions
             );
 
             _sessionProfit += outcome.Profit;
+            UpdateProgressionStreak(outcome);
 
             _currentBet = _strategy.CalculateNextBet(
                 _currentBet,
                 outcome,
                 _config
             );
+            ExecutedBetsCount++;
 
             ApplyStopConditions();
 
             return (result, betEvent, _currentBet);
+        }
+
+        private void UpdateProgressionStreak(BetOutcome outcome)
+        {
+            bool isTriggerOutcome =
+                (outcome.IsWin && _config.IncreaseOnWin) ||
+                (!outcome.IsWin && _config.IncreaseOnLoss);
+
+            if (isTriggerOutcome)
+            {
+                ProgressionTriggerStreak++;
+                return;
+            }
+
+            ProgressionTriggerStreak = 0;
         }
 
         // 🔥 EXTENSION POINTS

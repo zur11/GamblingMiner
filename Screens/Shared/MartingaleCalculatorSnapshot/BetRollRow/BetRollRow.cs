@@ -6,7 +6,6 @@ public partial class BetRollRow : HBoxContainer
 	private Label _betRollNumberLabel;
 	private Label _betRollValueLabel;
 	private Label _betRollBalanceLabel;
-	private Label _flagsLabel;
 
 	public override void _Ready()
 	{
@@ -26,24 +25,5 @@ public partial class BetRollRow : HBoxContainer
 		_betRollNumberLabel ??= GetNode<Label>("%BetRollNumberLabel");
 		_betRollValueLabel ??= GetNode<Label>("%BetRollValueLabel");
 		_betRollBalanceLabel ??= GetNode<Label>("%BetRollBalanceLabel");
-		_flagsLabel ??= GetNode<Label>("%FlagsLabel");
-	}
-
-	public void SetFlags(bool isDoneAttempt, bool isCurrentAttempt, bool hitsStopOnLoss, bool hitsStopOnProfit)
-	{
-		EnsureNodes();
-
-		string flags = "";
-
-		if (isDoneAttempt)
-			flags += "[DONE] ";
-		if (isCurrentAttempt)
-			flags += "[CURRENT] ";
-		if (hitsStopOnLoss)
-			flags += "[STOP LOSS] ";
-		if (hitsStopOnProfit)
-			flags += "[STOP WIN] ";
-
-		_flagsLabel.Text = flags.TrimEnd();
 	}
 }
