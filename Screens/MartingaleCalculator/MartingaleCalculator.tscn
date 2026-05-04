@@ -52,6 +52,12 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 42
 text = "Martingale Calculator"
 
+[node name="ProgressionStartingBalanceLabel" type="Label" parent="Panel/MarginContainer/VBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Progression starting balance: 0.00000000"
+
 [node name="InputsGrid" type="GridContainer" parent="Panel/MarginContainer/VBoxContainer"]
 layout_mode = 2
 columns = 2

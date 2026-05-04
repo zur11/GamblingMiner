@@ -33,6 +33,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private FinancialBettingStats _financialStats;
 	private Timer _autoBetTimer;
 	private BaseBetSession _session;
+	private bool _isAutoPaused;
 
 	// Componentes UI
 	[Export]
@@ -119,6 +120,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_financialStats.ConnectTo(_userStatsService);
 		_strategyPanel.BetOnceBtnPressed += OnManualBetFromPanel;
 		_strategyPanel.AutoBetToggled += OnAutoBetToggled;
+		_strategyPanel.AutoPauseToggled += OnAutoPauseToggled;
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
 		_autoBetTimer.Timeout += OnAutoBetTimerTimeout;
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
@@ -223,6 +225,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_strategyPanel.SetManualEnabled(!running);
 		_strategyPanel.SetAutoRunning(running);
+		_strategyPanel.SetAutoPaused(false);
+		_isAutoPaused = false;
 
 		if (!running)
 		{
@@ -232,14 +236,35 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		EnsureSession(true); // 🔥 auto
+		EnsureSession(true);
 
 		_autoBetTimer.Start();
 		RefreshCalculatorFromGameSettings();
 	}
 
+	private void OnAutoPauseToggled(bool paused)
+	{
+		if (_session == null || !_session.IsRunning)
+			return;
+
+		_isAutoPaused = paused;
+		_strategyPanel.SetAutoPaused(paused);
+
+		if (paused)
+		{
+			_autoBetTimer.Stop();
+			_resultValue.Text = "Auto paused.";
+			return;
+		}
+
+		_autoBetTimer.Start();
+		_resultValue.Text = "Auto resumed.";
+	}
 	private void OnAutoBetTimerTimeout()
 	{
+		if (_isAutoPaused)
+			return;
+
 		ExecuteBet();
 
 		if (_session.IsRunning)
@@ -273,6 +298,8 @@ public partial class DiceGame : Control, IBetEventSource
 		else if (session is AutoBetSession)
 		{
 			_autoBetTimer.Stop();
+			_isAutoPaused = false;
+			_strategyPanel.SetAutoPaused(false);
 			_strategyPanel.SetAutoRunning(false);
 			HandleSessionStopped(session, "Auto stopped");
 		}
@@ -360,7 +387,19 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		var uiConfig = _strategyPanel.BuildConfig();
 		bool strategyRunning = _session != null && _session.IsRunning;
-		decimal baseBet = strategyRunning ? _session.SessionBaseBet : uiConfig.BaseBet;
+		bool hasPendingProgressionWhileStopped =
+			_session != null &&
+			!_session.IsRunning &&
+			_session.ProgressionTriggerStreak > 0;
+		bool useSessionProgressionContext = strategyRunning || hasPendingProgressionWhileStopped;
+		decimal baseBet = uiConfig.BaseBet;
+		if (useSessionProgressionContext)
+		{
+			baseBet = _session.SessionBaseBet;
+		}
+		decimal bankrollForCalculator = useSessionProgressionContext
+			? _session.ProgressionAnchorBalance
+			: _walletController.Balance;
 		var config = new BettingStrategyConfig
 		{
 			BaseBet = baseBet,
@@ -373,13 +412,15 @@ public partial class DiceGame : Control, IBetEventSource
 		int chance = (int)_chanceSlider.Value;
 
 		_martingaleCalculator.UpdateFromGameSettings(
-			_walletController.Balance,
+			bankrollForCalculator,
 			config,
-			_session?.CurrentBet ?? _strategyPanel.BetAmount,
+			useSessionProgressionContext ? _session.CurrentBet : _strategyPanel.BetAmount,
+			useSessionProgressionContext,
 			strategyRunning,
 			chance,
 			_session?.ExecutedBetsCount ?? 0,
-			_session?.ProgressionTriggerStreak ?? 0
+			_session?.ProgressionTriggerStreak ?? 0,
+			_session?.SessionProfit ?? 0m
 		);
 	}
 

@@ -20,6 +20,9 @@ namespace Scripts.Sessions
         public decimal CurrentBet => _currentBet;
         public int ProgressionTriggerStreak { get; private set; }
         public decimal SessionBaseBet => _config?.BaseBet ?? 0m;
+        public decimal SessionStartingBalance { get; private set; }
+        public decimal ProgressionAnchorBalance { get; private set; }
+        public decimal SessionProfit => _sessionProfit;
 
         protected decimal _currentBet;
         protected decimal _sessionProfit;
@@ -42,12 +45,14 @@ namespace Scripts.Sessions
         public virtual void Start(int betCount, BettingStrategyConfig config)
         {
             RemainingBets = betCount <= 0 ? int.MaxValue : betCount;
+            SessionStartingBalance = _wallet.Balance;
 
             _config = config;
             _currentBet = config.BaseBet;
             _sessionProfit = 0m;
             ExecutedBetsCount = 0;
             ProgressionTriggerStreak = 0;
+            ProgressionAnchorBalance = _wallet.Balance;
 
             IsRunning = true;
         }
@@ -84,8 +89,10 @@ namespace Scripts.Sessions
                 result.IsWin
             );
 
+            decimal balanceBeforeBet = betEvent.BalanceAfter - outcome.Profit;
+
             _sessionProfit += outcome.Profit;
-            UpdateProgressionStreak(outcome);
+            UpdateProgressionStreak(outcome, balanceBeforeBet, betEvent.BalanceAfter);
 
             _currentBet = _strategy.CalculateNextBet(
                 _currentBet,
@@ -99,7 +106,10 @@ namespace Scripts.Sessions
             return (result, betEvent, _currentBet);
         }
 
-        private void UpdateProgressionStreak(BetOutcome outcome)
+        private void UpdateProgressionStreak(
+            BetOutcome outcome,
+            decimal balanceBeforeBet,
+            decimal balanceAfterBet)
         {
             bool isTriggerOutcome =
                 (outcome.IsWin && _config.IncreaseOnWin) ||
@@ -107,11 +117,15 @@ namespace Scripts.Sessions
 
             if (isTriggerOutcome)
             {
+                if (ProgressionTriggerStreak == 0)
+                    ProgressionAnchorBalance = balanceBeforeBet;
+
                 ProgressionTriggerStreak++;
                 return;
             }
 
             ProgressionTriggerStreak = 0;
+            ProgressionAnchorBalance = balanceAfterBet;
         }
 
         // 🔥 EXTENSION POINTS

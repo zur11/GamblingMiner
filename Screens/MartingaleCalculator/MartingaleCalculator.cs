@@ -13,6 +13,7 @@ public partial class MartingaleCalculator : Control
 	private LineEdit _multiplyOnLossInput;
 	private VBoxContainer _rowsContainer;
 	private Label _statusLabel;
+	private Label _progressionStartingBalanceLabel;
 	private PackedScene _rowScene;
 	private bool _hasGameContext;
 	private decimal _ctxBankroll;
@@ -22,6 +23,8 @@ public partial class MartingaleCalculator : Control
 	private int _ctxChance;
 	private int _ctxExecutedBetsCount;
 	private int _ctxProgressionStreak;
+	private decimal _ctxSessionProfit;
+	private bool _ctxShowDoneRows;
 
 	public override void _Ready()
 	{
@@ -30,6 +33,7 @@ public partial class MartingaleCalculator : Control
 		_multiplyOnLossInput = GetNode<LineEdit>("%MultiplyOnLossInput");
 		_rowsContainer = GetNode<VBoxContainer>("%RowsContainer");
 		_statusLabel = GetNode<Label>("%StatusLabel");
+		_progressionStartingBalanceLabel = GetNode<Label>("%ProgressionStartingBalanceLabel");
 		_rowScene = GD.Load<PackedScene>("res://Screens/MartingaleCalculator/BetRollRow/BetRollRow.tscn");
 
 		GetNode<Button>("%CalculateButton").Pressed += OnCalculatePressed;
@@ -97,23 +101,29 @@ public partial class MartingaleCalculator : Control
 		BettingStrategyConfig config,
 		decimal currentBet,
 		bool strategyStarted,
+		bool showDoneRows,
 		int chance,
 		int executedBetsCount,
-		int progressionStreak)
+		int progressionStreak,
+		decimal sessionProfit)
 	{
 		_ctxBankroll = bankroll;
 		_ctxConfig = config;
 		_ctxCurrentBet = currentBet;
 		_ctxStrategyStarted = strategyStarted;
+		_ctxShowDoneRows = showDoneRows;
 		_ctxChance = chance;
 		_ctxExecutedBetsCount = executedBetsCount;
 		_ctxProgressionStreak = progressionStreak;
+		_ctxSessionProfit = sessionProfit;
 		_hasGameContext = true;
 
 		_totalBankrollInput.Text = bankroll.ToString("F8", CultureInfo.InvariantCulture);
 		_initialBetInput.Text = config.BaseBet.ToString("F8", CultureInfo.InvariantCulture);
 		_multiplyOnLossInput.Text = (1m + (config.IncreasePercent / 100m))
 			.ToString("F8", CultureInfo.InvariantCulture);
+		_progressionStartingBalanceLabel.Text =
+			$"Progression starting balance: {bankroll.ToString("F8", CultureInfo.InvariantCulture)}";
 
 		CalculateFromGameContext();
 	}
@@ -129,7 +139,6 @@ public partial class MartingaleCalculator : Control
 
 		OnResetPressed();
 
-		decimal remaining = _ctxBankroll;
 		decimal nextBet = _ctxConfig.BaseBet;
 		decimal cumulativeLoss = 0m;
 		decimal multiplier = 1m + (_ctxConfig.IncreasePercent / 100m);
@@ -140,6 +149,35 @@ public partial class MartingaleCalculator : Control
 		bool stopWinMarked = false;
 		bool truncatedByOverflow = false;
 		int currentAttemptIndex = ResolveCurrentAttemptIndex(multiplier, maxRows);
+		decimal remaining = _ctxBankroll;
+
+		if (!_ctxShowDoneRows && _ctxStrategyStarted && _ctxProgressionStreak > 0)
+		{
+			for (int i = 1; i < currentAttemptIndex; i++)
+			{
+				if (!TrySafeSubtract(remaining, nextBet, out remaining))
+				{
+					truncatedByOverflow = true;
+					break;
+				}
+				if (!TrySafeAdd(cumulativeLoss, nextBet, out cumulativeLoss))
+				{
+					truncatedByOverflow = true;
+					break;
+				}
+				try
+				{
+					nextBet = GetNextLossBet(nextBet, multiplier);
+				}
+				catch (OverflowException)
+				{
+					truncatedByOverflow = true;
+					break;
+				}
+			}
+
+			roll = currentAttemptIndex;
+		}
 
 		while (roll <= maxRows)
 		{
@@ -181,14 +219,16 @@ public partial class MartingaleCalculator : Control
 				break;
 			}
 
-			bool isDoneAttempt = _ctxStrategyStarted && _ctxProgressionStreak > 0 && roll < currentAttemptIndex;
+			bool isDoneAttempt = _ctxShowDoneRows && _ctxStrategyStarted && _ctxProgressionStreak > 0 && roll < currentAttemptIndex;
 			bool isCurrentAttempt = _ctxStrategyStarted && roll == currentAttemptIndex;
+			decimal projectedSessionProfitIfLoss = _ctxSessionProfit - cumulativeLoss;
+			decimal projectedSessionProfitIfWinNow = _ctxSessionProfit + profitIfWinNow;
 			bool hitsStopOnLoss = !stopLossMarked
 				&& _ctxConfig.StopOnLoss.HasValue
-				&& cumulativeLoss >= _ctxConfig.StopOnLoss.Value;
+				&& projectedSessionProfitIfLoss <= -_ctxConfig.StopOnLoss.Value;
 			bool hitsStopOnProfit = !stopWinMarked
 				&& _ctxConfig.StopOnProfit.HasValue
-				&& profitIfWinNow >= _ctxConfig.StopOnProfit.Value;
+				&& projectedSessionProfitIfWinNow >= _ctxConfig.StopOnProfit.Value;
 
 			if (hitsStopOnLoss) stopLossMarked = true;
 			if (hitsStopOnProfit) stopWinMarked = true;

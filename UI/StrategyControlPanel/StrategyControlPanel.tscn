@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://GameComponents/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
 
-[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput")]
+[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput")]
 layout_mode = 3
 anchor_right = 0.818
 anchor_bottom = 0.19700001
@@ -13,6 +13,7 @@ grow_vertical = 2
 script = ExtResource("1_lmglg")
 _betOnceBtn = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/BetOnceBtn")
 _autoBetToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoBetToggle")
+_autoPauseResumeToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoPauseResumeToggle")
 _increaseOnLossWinToggle = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnLossWinToggle")
 _maxBetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer/MaxBetAmountBtn")
 _minBetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer/MinBetAmountBtn")
@@ -119,6 +120,13 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 60
 toggle_mode = true
 text = "Auto Bet"
+
+[node name="AutoPauseResumeToggle" type="Button" parent="VBoxContainer/HBoxContainer/BetBtnsContainer"]
+visible = false
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+toggle_mode = true
+text = "PAUSE"
 
 [node name="GridContainer" type="GridContainer" parent="VBoxContainer"]
 layout_mode = 2

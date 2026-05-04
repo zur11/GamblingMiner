@@ -11,6 +11,7 @@ namespace UI.StrategyControlPanel
 		// --- Eventos ---
 		public event Action BetOnceBtnPressed;
 		public event Action<bool> AutoBetToggled;
+		public event Action<bool> AutoPauseToggled;
 		public event Action<string> BetAmountInputChanged;
 		public event Action StrategyConfigChanged;
 
@@ -26,6 +27,8 @@ namespace UI.StrategyControlPanel
 		private Button _betOnceBtn;
 		[Export]
 		private Button _autoBetToggle;
+		[Export]
+		private Button _autoPauseResumeToggle;
 		[Export]
 		private Button _increaseOnLossWinToggle;
 		[Export]
@@ -120,6 +123,9 @@ namespace UI.StrategyControlPanel
 		{
 			_autoBetToggle.ButtonPressed = running;
 			_autoBetToggle.Text = running ? "STOP" : "AUTO";
+			_autoPauseResumeToggle.Visible = running;
+			_autoPauseResumeToggle.ButtonPressed = false;
+			_autoPauseResumeToggle.Text = "PAUSE";
 
 			if (!running)
 			{
@@ -127,10 +133,17 @@ namespace UI.StrategyControlPanel
 			}
         }
 
+		public void SetAutoPaused(bool paused)
+		{
+			_autoPauseResumeToggle.ButtonPressed = paused;
+			_autoPauseResumeToggle.Text = paused ? "RESUME" : "PAUSE";
+		}
+
 		public override void _Ready()
 		{
 			_betOnceBtn.Pressed += OnBetOncePressed;
 			_autoBetToggle.Pressed += OnAutoTogglePressed;
+			_autoPauseResumeToggle.Pressed += OnAutoPauseResumePressed;
             _betAmountInput.TextChanged += OnBetAmountInputTextChanged;
             _increaseOnLossWinToggle.Pressed += OnIncreaseOnWinLossTogglePressed;
 			_maxBetAmountBtn.Pressed += OnMaxBetAmountBtnPressed;
@@ -152,6 +165,12 @@ namespace UI.StrategyControlPanel
 		{
 			bool running = _autoBetToggle.ButtonPressed;
 			AutoBetToggled?.Invoke(running);
+		}
+
+		private void OnAutoPauseResumePressed()
+		{
+			bool paused = _autoPauseResumeToggle.ButtonPressed;
+			AutoPauseToggled?.Invoke(paused);
 		}
 
         private void OnBetAmountInputTextChanged(string text)
