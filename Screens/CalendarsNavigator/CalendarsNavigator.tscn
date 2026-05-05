@@ -29,7 +29,7 @@ theme_override_constants/separation = 16
 
 [node name="Title" type="Label" parent="RootMargin/RootVBox"]
 layout_mode = 2
-text = "Calendars Navigator"
+text = "Calendar Navigator"
 horizontal_alignment = 1
 
 [node name="PresentersPanel" type="PanelContainer" parent="RootMargin/RootVBox"]
@@ -73,7 +73,7 @@ theme_override_constants/separation = 10
 [node name="HourFormatToggle" type="CheckButton" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Formato 24 horas"
+text = "Use 24-hour format"
 button_pressed = true
 
 [node name="DateGrid" type="GridContainer" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
@@ -82,7 +82,7 @@ columns = 2
 
 [node name="YearLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 layout_mode = 2
-text = "Anio"
+text = "Year"
 
 [node name="YearInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 unique_name_in_owner = true
@@ -94,7 +94,7 @@ value = 2026.0
 
 [node name="MonthLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 layout_mode = 2
-text = "Mes"
+text = "Month"
 
 [node name="MonthInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 unique_name_in_owner = true
@@ -105,7 +105,7 @@ value = 1.0
 
 [node name="DayLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 layout_mode = 2
-text = "Dia"
+text = "Day"
 
 [node name="DayInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 unique_name_in_owner = true
@@ -116,7 +116,7 @@ value = 1.0
 
 [node name="HourLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 layout_mode = 2
-text = "Hora"
+text = "Hour"
 
 [node name="HourInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 unique_name_in_owner = true
@@ -126,9 +126,19 @@ max_value = 23.0
 
 [node name="MinuteLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 layout_mode = 2
-text = "Minuto"
+text = "Minute"
 
 [node name="MinuteInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 0.0
+max_value = 59.0
+
+[node name="SecondLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+layout_mode = 2
+text = "Second"
+
+[node name="SecondInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 unique_name_in_owner = true
 layout_mode = 2
 min_value = 0.0
@@ -141,9 +151,67 @@ alignment = 1
 [node name="ApplyDateTimeButton" type="Button" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/ButtonsHBox"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Aplicar fecha y hora"
+text = "Apply date and time"
 
 [node name="SetNowButton" type="Button" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/ButtonsHBox"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Ahora"
+text = "Now"
+
+[node name="BackToDiceGameButton" type="Button" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/ButtonsHBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Back to Dice Game"
+
+[node name="SummariesPanel" type="PanelContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="SummariesVBox" type="VBoxContainer" parent="RootMargin/RootVBox/SummariesPanel"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="SummariesTitle" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
+layout_mode = 2
+text = "Live Summaries"
+
+[node name="DaySummaryPresenter" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "-"
+
+[node name="HourSummaryPresenter" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "-"
+
+[node name="MinuteSummaryPresenter" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "-"
+
+[node name="BalanceAtTimePresenter" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "-"
+
+[node name="StatsAtTimePresenter" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "-"
+
+[node name="BetsPanel" type="PanelContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="BetsVBox" type="VBoxContainer" parent="RootMargin/RootVBox/BetsPanel"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BetListTitle" type="Label" parent="RootMargin/RootVBox/BetsPanel/BetsVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Bets in selected day (0)"
+
+[node name="DayBetsList" type="ItemList" parent="RootMargin/RootVBox/BetsPanel/BetsVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 220)
+layout_mode = 2

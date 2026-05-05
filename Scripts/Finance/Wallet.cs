@@ -51,5 +51,13 @@ namespace Scripts.Finance
 					throw new InvalidOperationException("Unknown transaction type.");
 			}
 		}
+
+		public void SetBalanceForTimeTravel(decimal newBalance)
+		{
+			if (newBalance < 0m)
+				throw new ArgumentException("Balance cannot be negative.");
+
+			_balance = Money.Normalize(newBalance);
+		}
 	}
 }

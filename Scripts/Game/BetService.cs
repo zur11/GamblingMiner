@@ -9,12 +9,14 @@ namespace Scripts.Game
 		private readonly DiceEngine _engine;
 		private readonly Wallet _wallet;
 		private readonly TransactionSource _source;
+		private readonly Func<DateTime> _utcNowProvider;
 
-		public BetService(DiceEngine engine, Wallet wallet, TransactionSource source)
+		public BetService(DiceEngine engine, Wallet wallet, TransactionSource source, Func<DateTime> utcNowProvider = null)
 		{
 			_engine = engine;
 			_wallet = wallet;
 			_source = source;
+			_utcNowProvider = utcNowProvider ?? (() => DateTime.UtcNow);
 		}
 
 		public (DiceResult Result, BetTransactionEvent Event) ExecuteBet(
@@ -58,7 +60,7 @@ namespace Scripts.Game
 				Chance: (int)result.Chance,
 				Multiplier: multiplier,
 				IsHigh: result.IsHigh,
-				Timestamp: DateTime.UtcNow
+				Timestamp: _utcNowProvider()
 			);
 
 			return (result, transactionEvent);

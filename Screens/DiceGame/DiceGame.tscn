@@ -73,38 +73,47 @@ text = "Payout mult:"
 [node name="MultiplierText2" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 1391.0
-offset_top = 437.0
+offset_top = 537.0
 offset_right = 1450.0
-offset_bottom = 472.0
+offset_bottom = 572.0
 theme_override_font_sizes/font_size = 25
 text = "Mult"
 
 [node name="BetTimeText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 1296.0
-offset_top = 437.0
+offset_top = 537.0
 offset_right = 1355.0
-offset_bottom = 472.0
+offset_bottom = 572.0
 theme_override_font_sizes/font_size = 25
 text = "Time"
 
 [node name="BetAmountText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 1498.0
-offset_top = 437.0
+offset_top = 537.0
 offset_right = 1539.0
-offset_bottom = 472.0
+offset_bottom = 572.0
 theme_override_font_sizes/font_size = 25
 text = "Bet"
 
 [node name="ProfitAmountText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 1625.0
-offset_top = 437.0
+offset_top = 537.0
 offset_right = 1770.0
-offset_bottom = 472.0
+offset_bottom = 572.0
 theme_override_font_sizes/font_size = 25
 text = "Profit/Loss"
+
+[node name="CurrentAppTimeText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 1467.0
+offset_top = 447.0
+offset_right = 1807.0
+offset_bottom = 478.0
+theme_override_font_sizes/font_size = 22
+text = "Current app time:"
 
 [node name="BalanceValue" type="Label" parent="."]
 unique_name_in_owner = true
@@ -167,11 +176,21 @@ offset_bottom = 784.0
 theme_override_font_sizes/font_size = 50
 text = "x 1.9804"
 
+[node name="CurrentAppTimeValue" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 1462.0
+offset_top = 478.0
+offset_right = 1812.0
+offset_bottom = 509.0
+theme_override_font_sizes/font_size = 22
+text = "-"
+
 [node name="ScrollContainer" type="ScrollContainer" parent="."]
-custom_minimum_size = Vector2(550, 640)
+custom_minimum_size = Vector2(550, 540)
 layout_mode = 0
 offset_left = 720.0
-offset_top = 434.0
+offset_top = 534.0
 offset_right = 1270.0
 offset_bottom = 1078.0
 
@@ -180,10 +199,10 @@ unique_name_in_owner = true
 layout_mode = 2
 
 [node name="ScrollContainer2" type="ScrollContainer" parent="."]
-custom_minimum_size = Vector2(550, 600)
+custom_minimum_size = Vector2(550, 500)
 layout_mode = 0
 offset_left = 1296.0
-offset_top = 480.0
+offset_top = 580.0
 offset_right = 1846.0
 offset_bottom = 1080.0
 
@@ -214,12 +233,22 @@ text = "Deposit"
 [node name="OpenCalculatorBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 210.0
-offset_top = 125.0
-offset_right = 624.0
-offset_bottom = 202.0
+offset_left = 540.0
+offset_top = 439.0
+offset_right = 954.0
+offset_bottom = 516.0
 theme_override_font_sizes/font_size = 38
 text = "Martingale Calc"
+
+[node name="OpenCalendarNavigatorBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 971.0
+offset_top = 439.0
+offset_right = 1456.0
+offset_bottom = 516.0
+theme_override_font_sizes/font_size = 32
+text = "Calendar Navigator"
 
 [node name="FinancialBettingStats" parent="." instance=ExtResource("5_ne2vn")]
 unique_name_in_owner = true

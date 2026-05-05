@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://Screens/MartingaleCalculator/MartingaleCalculator.cs" id="1_sq3wh"]
+[ext_resource type="Script" path="res://Screens/Shared/MartingaleCalculatorSnapshot/MartingaleCalculator.cs" id="1_sq3wh"]
 
 [node name="MartingaleCalculator" type="Control"]
 visible = false

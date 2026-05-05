@@ -1,5 +1,6 @@
 using Godot;
 using Scripts.User;
+using Scripts.History;
 using System.Globalization;
 
 public partial class FinancialBettingStats : Control
@@ -37,6 +38,24 @@ public partial class FinancialBettingStats : Control
 		_connectedService = service;
 		service.StatsChanged += UpdateFrom;
 		UpdateFrom(service.Stats);
+	}
+
+	public void UpdateFromTimeBased(TimeBasedBetStats stats)
+	{
+		_lastDepositProfitLabel.Text =
+			stats.NetProfitSinceLastDeposit.ToString("F8", CultureInfo.InvariantCulture);
+
+		_generalProfitLabel.Text =
+			stats.NetProfit.ToString("F8", CultureInfo.InvariantCulture);
+
+		_lastDepositGambledLabel.Text =
+			stats.WageredSinceLastDeposit.ToString("F8", CultureInfo.InvariantCulture);
+
+		_totalGambledLabel.Text =
+			stats.TotalWagered.ToString("F8", CultureInfo.InvariantCulture);
+
+		UpdateColor(_lastDepositProfitLabel, stats.NetProfitSinceLastDeposit);
+		UpdateColor(_generalProfitLabel, stats.NetProfit);
 	}
 
 	private void UpdateColor(Label label, decimal value)

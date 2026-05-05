@@ -18,6 +18,8 @@ config/icon="res://icon.svg"
 [autoload]
 
 UserStatsService="*res://Scripts/Services/UserStatsService.cs"
+CalendarTimeService="*res://Scripts/Services/CalendarTimeService.cs"
+BankrollStateService="*res://Scripts/Services/BankrollStateService.cs"
 
 [display]
 

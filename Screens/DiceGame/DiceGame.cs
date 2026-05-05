@@ -10,6 +10,7 @@ using Scripts.Sessions;
 using Scripts.Betting;
 using Scripts.StateMachines;
 using Scripts.Controllers;
+using Scripts.History;
 using UI.StrategyControlPanel;
 
 public partial class DiceGame : Control, IBetEventSource
@@ -30,10 +31,13 @@ public partial class DiceGame : Control, IBetEventSource
 	private WalletController _walletController;
 	private BetService _betService;
 	private UserStatsService _userStatsService;
+	private CalendarTimeService _calendarTimeService;
+	private BankrollStateService _bankrollStateService;
 	private FinancialBettingStats _financialStats;
 	private Timer _autoBetTimer;
 	private BaseBetSession _session;
 	private bool _isAutoPaused;
+	private long _lastAppliedTimelineSecond = long.MinValue;
 
 	// Componentes UI
 	[Export]
@@ -49,6 +53,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private Label _winnerNumbersValue;
 	private Label _chanceToWinValue;
 	private Label _multiplierValue;
+	private Label _currentAppTimeValue;
 
 	private Slider _chanceSlider;
 	private Button _highLowToggleBtn;
@@ -56,6 +61,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private DepositPopup _depositPopup;
 	private Button _depositBtn;
 	private Button _openCalculatorBtn;
+	private Button _openCalendarNavigatorBtn;
 	private MartingaleCalculator _martingaleCalculator;
 
 	// --- Componentes del juego ---
@@ -70,8 +76,17 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		// Inicializar motor y servicios
 		_engine = new DiceEngine();
-		_wallet = new Wallet(1.00000000m);
-		_betService = new BetService(_engine, _wallet, TransactionSource.Bet);
+		_bankrollStateService = GetNodeOrNull<BankrollStateService>("/root/BankrollStateService");
+		_bankrollStateService?.EnsureInitialized(1.00000000m);
+		decimal initialBalance = _bankrollStateService?.CurrentBalance ?? 1.00000000m;
+		_wallet = new Wallet(initialBalance);
+		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		_betService = new BetService(
+			_engine,
+			_wallet,
+			TransactionSource.Bet,
+			() => _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow
+		);
 		var strategy = new ProgressiveBettingStrategy();
 
 		_session = CreateSession(false); // default manual
@@ -93,11 +108,13 @@ public partial class DiceGame : Control, IBetEventSource
 		_winnerNumbersValue = GetNode<Label>("%WinnerNumbersValue");
 		_chanceToWinValue = GetNode<Label>("%ChanceToWinValue");
 		_multiplierValue = GetNode<Label>("%MultiplierValue");
+		_currentAppTimeValue = GetNode<Label>("%CurrentAppTimeValue");
 		_chanceSlider = GetNode<Slider>("%ChanceSlider");
 		_highLowToggleBtn = GetNode<Button>("%HighLowToggleBtn");
 		_depositPopup = GetNode<DepositPopup>("%DepositPopup");
 		_depositBtn = GetNode<Button>("%DepositBtn");
 		_openCalculatorBtn = GetNode<Button>("%OpenCalculatorBtn");
+		_openCalendarNavigatorBtn = GetNode<Button>("%OpenCalendarNavigatorBtn");
 		_martingaleCalculator = GetNode<MartingaleCalculator>("%MartingaleCalculator");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_financialStats = GetNode<FinancialBettingStats>("%FinancialBettingStats");
@@ -110,10 +127,12 @@ public partial class DiceGame : Control, IBetEventSource
 		_chanceSlider.ValueChanged += OnChanceChanged;
 		_depositBtn.Pressed += OnDepositBtnPressed;
 		_openCalculatorBtn.Pressed += OnOpenCalculatorPressed;
+		_openCalendarNavigatorBtn.Pressed += OnOpenCalendarNavigatorPressed;
 		_depositPopup.DepositConfirmed += OnDepositPopupDepositConfirmed;
 		_depositPopup.DepositCanceled += OnDepositCanceled;
 		_martingaleCalculator.CloseRequested += OnCalculatorCloseRequested;
 		_wallet.BalanceDeltaChanged += OnBalanceDeltaChanged;
+		_wallet.BalanceDeltaChanged += (_, _) => _bankrollStateService?.SetBalance(_wallet.Balance);
 		_previousWinnerNumbersGrid.SubscribeTo(this);
 		_betHistoryContainer.SubscribeTo(this);
 		_userStatsService.RegisterSource(this);
@@ -137,6 +156,12 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
 		_resultValue.Text = "Place your bet.";
+	}
+
+	public override void _Process(double delta)
+	{
+		UpdateCurrentAppTimeUI();
+		ApplyTemporalStateFromCalendarIfNeeded();
 	}
 
 	// --- Eventos UI ---
@@ -355,7 +380,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_walletController.Deposit(amount);
 
-		_userStatsService.RegisterDeposit();
+		DateTime timestampUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		_userStatsService.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
 
 		_resultValue.Text = $"Deposited {amount:F8}";
 
@@ -376,6 +402,11 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		_martingaleCalculator.Open();
 		RefreshCalculatorFromGameSettings();
+	}
+
+	private void OnOpenCalendarNavigatorPressed()
+	{
+		GetTree().ChangeSceneToFile("res://Screens/CalendarsNavigator/CalendarsNavigator.tscn");
 	}
 
 	private void OnCalculatorCloseRequested()
@@ -437,6 +468,38 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateBalanceUI();
 		UpdateChanceAndMultiplierUIs();
 		UpdateWinnerRangeUI();
+		UpdateCurrentAppTimeUI();
+	}
+
+	private void UpdateCurrentAppTimeUI()
+	{
+		DateTime local = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
+		_currentAppTimeValue.Text = local.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+	}
+
+	private void ApplyTemporalStateFromCalendarIfNeeded()
+	{
+		if (_userStatsService == null || _calendarTimeService == null)
+		{
+			return;
+		}
+
+		DateTime local = _calendarTimeService.CurrentLocalDateTime;
+		long currentSecond = new DateTimeOffset(local).ToUnixTimeSeconds();
+		if (currentSecond == _lastAppliedTimelineSecond)
+		{
+			return;
+		}
+
+		_lastAppliedTimelineSecond = currentSecond;
+
+		decimal reconstructedBalance = _userStatsService.GetBalanceAtOrBefore(local, TimeZoneInfo.Local);
+		_wallet.SetBalanceForTimeTravel(reconstructedBalance);
+		_bankrollStateService?.SetBalance(reconstructedBalance);
+		UpdateBalanceUI();
+
+		TimeBasedBetStats statsAtTime = _userStatsService.GetStatsUpTo(local, TimeZoneInfo.Local);
+		_financialStats.UpdateFromTimeBased(statsAtTime);
 	}
 
 	private void UpdateBalanceUI()
