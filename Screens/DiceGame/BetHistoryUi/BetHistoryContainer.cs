@@ -3,6 +3,8 @@ using Scripts.Finance;
 
 public partial class BetHistoryContainer : VBoxContainer
 {
+	private const int MaxRecentEntries = 260;
+
 	[Export]
 	private PackedScene _betHistoryItemScene;
 
@@ -25,5 +27,15 @@ public partial class BetHistoryContainer : VBoxContainer
 		item.Setup(betEvent);
 
 		MoveChild(item, 0);
+		TrimToRecentLimit();
+	}
+
+	private void TrimToRecentLimit()
+	{
+		while (GetChildCount() > MaxRecentEntries)
+		{
+			Node oldest = GetChild(GetChildCount() - 1);
+			oldest.QueueFree();
+		}
 	}
 }

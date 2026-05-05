@@ -4,6 +4,8 @@ using Scripts.Finance;
 
 public partial class PreviousWinnerNumbersGrid : GridContainer
 {
+	private const int MaxRecentEntries = 260;
+
 	[Export]
 	private PackedScene _winnerPresenterScene;
 
@@ -25,5 +27,15 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 		item.Setup(number, won);
 
 		MoveChild(item, 0);
+		TrimToRecentLimit();
+	}
+
+	private void TrimToRecentLimit()
+	{
+		while (GetChildCount() > MaxRecentEntries)
+		{
+			Node oldest = GetChild(GetChildCount() - 1);
+			oldest.QueueFree();
+		}
 	}
 }
