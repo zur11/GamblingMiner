@@ -10,3 +10,140 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_p2pif")
+
+[node name="RootMargin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = 24.0
+offset_right = -24.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Title" type="Label" parent="RootMargin/RootVBox"]
+layout_mode = 2
+text = "Calendars Navigator"
+horizontal_alignment = 1
+
+[node name="PresentersPanel" type="PanelContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="PresentersVBox" type="VBoxContainer" parent="RootMargin/RootVBox/PresentersPanel"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="DayPresenter" type="Label" parent="RootMargin/RootVBox/PresentersPanel/PresentersVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "-"
+horizontal_alignment = 1
+
+[node name="TimePresenter" type="Label" parent="RootMargin/RootVBox/PresentersPanel/PresentersVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "-"
+horizontal_alignment = 1
+
+[node name="WeekPresenter" type="Label" parent="RootMargin/RootVBox/PresentersPanel/PresentersVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "-"
+horizontal_alignment = 1
+
+[node name="MonthPresenter" type="Label" parent="RootMargin/RootVBox/PresentersPanel/PresentersVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "-"
+horizontal_alignment = 1
+
+[node name="ControlsPanel" type="PanelContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="ControlsVBox" type="VBoxContainer" parent="RootMargin/RootVBox/ControlsPanel"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="HourFormatToggle" type="CheckButton" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Formato 24 horas"
+button_pressed = true
+
+[node name="DateGrid" type="GridContainer" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
+layout_mode = 2
+columns = 2
+
+[node name="YearLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+layout_mode = 2
+text = "Anio"
+
+[node name="YearInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(180, 0)
+layout_mode = 2
+min_value = 1.0
+max_value = 9999.0
+value = 2026.0
+
+[node name="MonthLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+layout_mode = 2
+text = "Mes"
+
+[node name="MonthInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 1.0
+max_value = 12.0
+value = 1.0
+
+[node name="DayLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+layout_mode = 2
+text = "Dia"
+
+[node name="DayInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 1.0
+max_value = 31.0
+value = 1.0
+
+[node name="HourLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+layout_mode = 2
+text = "Hora"
+
+[node name="HourInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 0.0
+max_value = 23.0
+
+[node name="MinuteLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+layout_mode = 2
+text = "Minuto"
+
+[node name="MinuteInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 0.0
+max_value = 59.0
+
+[node name="ButtonsHBox" type="HBoxContainer" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
+layout_mode = 2
+alignment = 1
+
+[node name="ApplyDateTimeButton" type="Button" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/ButtonsHBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Aplicar fecha y hora"
+
+[node name="SetNowButton" type="Button" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/ButtonsHBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Ahora"
