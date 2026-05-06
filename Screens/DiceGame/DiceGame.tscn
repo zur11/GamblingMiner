@@ -115,6 +115,15 @@ offset_bottom = 478.0
 theme_override_font_sizes/font_size = 22
 text = "Current app time:"
 
+[node name="BetsPerSecondText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 1470.0
+offset_top = 395.0
+offset_right = 1806.0
+offset_bottom = 426.0
+theme_override_font_sizes/font_size = 22
+text = "Auto bets per second:"
+
 [node name="BalanceValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
@@ -185,6 +194,18 @@ offset_right = 1812.0
 offset_bottom = 509.0
 theme_override_font_sizes/font_size = 22
 text = "-"
+
+[node name="BetsPerSecondInput" type="SpinBox" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 1698.0
+offset_top = 397.0
+offset_right = 1842.0
+offset_bottom = 429.0
+min_value = 1.0
+max_value = 100.0
+step = 1.0
+value = 1.0
 
 [node name="ScrollContainer" type="ScrollContainer" parent="."]
 custom_minimum_size = Vector2(550, 540)

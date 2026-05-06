@@ -76,6 +76,18 @@ layout_mode = 2
 text = "Use 24-hour format"
 button_pressed = true
 
+[node name="TimeSpeedRow" type="HBoxContainer" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
+layout_mode = 2
+
+[node name="TimeSpeedLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/TimeSpeedRow"]
+layout_mode = 2
+text = "Time speed"
+
+[node name="TimeSpeedSelector" type="OptionButton" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/TimeSpeedRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(140, 0)
+layout_mode = 2
+
 [node name="DateGrid" type="GridContainer" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
 layout_mode = 2
 columns = 2

@@ -12,6 +12,7 @@ public partial class CalendarsNavigator : Control
 	private Label _weekPresenter;
 	private Label _monthPresenter;
 	private CheckButton _hourFormatToggle;
+	private OptionButton _timeSpeedSelector;
 	private SpinBox _yearInput;
 	private SpinBox _monthInput;
 	private SpinBox _dayInput;
@@ -41,6 +42,7 @@ public partial class CalendarsNavigator : Control
 		_weekPresenter = GetNode<Label>("%WeekPresenter");
 		_monthPresenter = GetNode<Label>("%MonthPresenter");
 		_hourFormatToggle = GetNode<CheckButton>("%HourFormatToggle");
+		_timeSpeedSelector = GetNode<OptionButton>("%TimeSpeedSelector");
 		_yearInput = GetNode<SpinBox>("%YearInput");
 		_monthInput = GetNode<SpinBox>("%MonthInput");
 		_dayInput = GetNode<SpinBox>("%DayInput");
@@ -63,6 +65,7 @@ public partial class CalendarsNavigator : Control
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 
 		_hourFormatToggle.Toggled += OnHourFormatToggled;
+		_timeSpeedSelector.ItemSelected += OnTimeSpeedSelected;
 		_applyDateTimeButton.Pressed += OnApplyDateTimePressed;
 		_setNowButton.Pressed += OnSetNowPressed;
 		_backToDiceGameButton.Pressed += OnBackToDiceGamePressed;
@@ -75,6 +78,7 @@ public partial class CalendarsNavigator : Control
 		}
 
 		SyncInputsFromClock();
+		InitializeTimeSpeedSelector();
 		UpdatePresenters();
 		UpdateHistoryPanels();
 	}
@@ -93,6 +97,18 @@ public partial class CalendarsNavigator : Control
 
 	private void OnHourFormatToggled(bool toggledOn)
 	{
+		UpdatePresenters();
+	}
+
+	private void OnTimeSpeedSelected(long index)
+	{
+		if (_calendarTimeService == null)
+		{
+			return;
+		}
+
+		double selectedSpeed = _timeSpeedSelector.GetItemMetadata((int)index).AsDouble();
+		_calendarTimeService.SpeedMultiplier = selectedSpeed;
 		UpdatePresenters();
 	}
 
@@ -161,8 +177,60 @@ public partial class CalendarsNavigator : Control
 		_timePresenter.Text = _hourFormatToggle.ButtonPressed
 			? current.ToString("HH:mm:ss", CultureInfo.InvariantCulture)
 			: current.ToString("h:mm:ss tt", CultureInfo.InvariantCulture);
+
+		if (_calendarTimeService != null)
+		{
+			_timePresenter.Text += $"  |  Speed x{_calendarTimeService.SpeedMultiplier:0.##}";
+		}
+
 		_weekPresenter.Text = $"ISO Week: {week.WeekOfYear} (Monday to Sunday)";
 		_monthPresenter.Text = $"Month: {month.MonthName} ({month.Days.Count} days)";
+	}
+
+	private void InitializeTimeSpeedSelector()
+	{
+		_timeSpeedSelector.Clear();
+		AddSpeedOption("x0.25", 0.25);
+		AddSpeedOption("x0.5", 0.5);
+		AddSpeedOption("x1", 1.0);
+		AddSpeedOption("x2", 2.0);
+		AddSpeedOption("x4", 4.0);
+		AddSpeedOption("x8", 8.0);
+
+		double currentSpeed = _calendarTimeService?.SpeedMultiplier ?? 1.0;
+		int selectedIndex = FindBestSpeedIndex(currentSpeed);
+		_timeSpeedSelector.Select(selectedIndex);
+
+		if (_calendarTimeService != null)
+		{
+			_calendarTimeService.SpeedMultiplier = _timeSpeedSelector.GetItemMetadata(selectedIndex).AsDouble();
+		}
+	}
+
+	private void AddSpeedOption(string label, double speed)
+	{
+		int index = _timeSpeedSelector.ItemCount;
+		_timeSpeedSelector.AddItem(label);
+		_timeSpeedSelector.SetItemMetadata(index, speed);
+	}
+
+	private int FindBestSpeedIndex(double speed)
+	{
+		int bestIndex = 0;
+		double bestDistance = double.MaxValue;
+
+		for (int i = 0; i < _timeSpeedSelector.ItemCount; i++)
+		{
+			double option = _timeSpeedSelector.GetItemMetadata(i).AsDouble();
+			double distance = Math.Abs(option - speed);
+			if (distance < bestDistance)
+			{
+				bestDistance = distance;
+				bestIndex = i;
+			}
+		}
+
+		return bestIndex;
 	}
 
 	private void UpdateHistoryPanels()

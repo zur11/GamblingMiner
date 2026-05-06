@@ -54,6 +54,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private Label _chanceToWinValue;
 	private Label _multiplierValue;
 	private Label _currentAppTimeValue;
+	private SpinBox _betsPerSecondInput;
 
 	private Slider _chanceSlider;
 	private Button _highLowToggleBtn;
@@ -109,6 +110,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_chanceToWinValue = GetNode<Label>("%ChanceToWinValue");
 		_multiplierValue = GetNode<Label>("%MultiplierValue");
 		_currentAppTimeValue = GetNode<Label>("%CurrentAppTimeValue");
+		_betsPerSecondInput = GetNode<SpinBox>("%BetsPerSecondInput");
 		_chanceSlider = GetNode<Slider>("%ChanceSlider");
 		_highLowToggleBtn = GetNode<Button>("%HighLowToggleBtn");
 		_depositPopup = GetNode<DepositPopup>("%DepositPopup");
@@ -143,6 +145,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
 		_autoBetTimer.Timeout += OnAutoBetTimerTimeout;
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
+		_betsPerSecondInput.ValueChanged += OnBetsPerSecondChanged;
 		_session.OnStopped += OnSessionStopped;
 
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>
@@ -263,7 +266,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 		EnsureSession(true);
 
-		_autoBetTimer.Start();
+		StartAutoBetTimerWithCurrentSpeed();
+		_resultValue.Text = $"Auto running | {GetAutoBetApsText()}";
 		RefreshCalculatorFromGameSettings();
 	}
 
@@ -278,12 +282,12 @@ public partial class DiceGame : Control, IBetEventSource
 		if (paused)
 		{
 			_autoBetTimer.Stop();
-			_resultValue.Text = "Auto paused.";
+			_resultValue.Text = $"Auto paused | {GetAutoBetApsText()}";
 			return;
 		}
 
-		_autoBetTimer.Start();
-		_resultValue.Text = "Auto resumed.";
+		StartAutoBetTimerWithCurrentSpeed();
+		_resultValue.Text = $"Auto resumed | {GetAutoBetApsText()}";
 	}
 	private void OnAutoBetTimerTimeout()
 	{
@@ -293,7 +297,16 @@ public partial class DiceGame : Control, IBetEventSource
 		ExecuteBet();
 
 		if (_session.IsRunning)
-			_autoBetTimer.Start();
+			StartAutoBetTimerWithCurrentSpeed();
+	}
+
+	private void OnBetsPerSecondChanged(double _)
+	{
+		if (_session != null && _session.IsRunning && !_isAutoPaused)
+		{
+			StartAutoBetTimerWithCurrentSpeed();
+			_resultValue.Text = $"Auto running | {GetAutoBetApsText()}";
+		}
 	}
 
 	// --- Handlers comunes de sesión ---
@@ -544,12 +557,41 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		if (result.IsWin)
 		{
-			_resultValue.Text = $"WIN - Roll: {result.Roll}";
+			_resultValue.Text = $"WIN - Roll: {result.Roll}{BuildAutoBetResultSuffix()}";
 		}
 		else
 		{
-			_resultValue.Text = $"LOSS - Roll: {result.Roll}";
+			_resultValue.Text = $"LOSS - Roll: {result.Roll}{BuildAutoBetResultSuffix()}";
 		}
+	}
+
+	private void StartAutoBetTimerWithCurrentSpeed()
+	{
+		double effectiveBetsPerSecond = GetEffectiveAutoBetsPerSecond();
+		double intervalSeconds = 1.0d / effectiveBetsPerSecond;
+		_autoBetTimer.Start(intervalSeconds);
+	}
+
+	private string BuildAutoBetResultSuffix()
+	{
+		return _session is AutoBetSession && _session.IsRunning
+			? $" | {GetAutoBetApsText()}"
+			: string.Empty;
+	}
+
+	private string GetAutoBetApsText()
+	{
+		int betsPerSecond = Math.Clamp((int)Math.Round(_betsPerSecondInput.Value), 1, 100);
+		double effectiveBetsPerSecond = GetEffectiveAutoBetsPerSecond();
+		return $"APS: {betsPerSecond} (effective: {effectiveBetsPerSecond:0.##}/s)";
+	}
+
+	private double GetEffectiveAutoBetsPerSecond()
+	{
+		int betsPerSecond = Math.Clamp((int)Math.Round(_betsPerSecondInput.Value), 1, 100);
+		double timeSpeed = _calendarTimeService?.SpeedMultiplier ?? 1.0d;
+		double normalizedSpeed = Math.Max(0.0001d, timeSpeed);
+		return betsPerSecond * normalizedSpeed;
 	}
 
 	// Funciones auxiliares
