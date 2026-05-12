@@ -8,10 +8,14 @@ using System.Collections.Generic;
 
 public partial class UserStatsService : Node
 {
+    private static readonly TimeSpan HighFrequencyStatsEmitInterval = TimeSpan.FromMilliseconds(250);
     public event Action<UserBettingStats> StatsChanged;
 
     public UserBettingStats Stats { get; private set; }
     public BetHistoryRepository BetHistory { get; private set; }
+    private bool _highFrequencyMode;
+    private DateTime _lastStatsEmitUtc = DateTime.MinValue;
+    private bool _hasPendingStatsChange;
 
     public override void _Ready()
     {
@@ -28,14 +32,14 @@ public partial class UserStatsService : Node
             TimestampUtc = DateTime.SpecifyKind(bet.Timestamp, DateTimeKind.Utc),
             Outcome = bet.IsWin ? BetOutcome.Win : BetOutcome.Loss,
             BetAmount = bet.BetAmount,
-            NetAmount = bet.Profit,
+            NetAmount = bet.CreditedProfit,
             BalanceAfter = bet.BalanceAfter
         };
 
         BetHistory.Add(record);
 
         Stats.RegisterBet(gameId, bet);
-        StatsChanged?.Invoke(Stats);
+        EmitStatsChangedIfNeeded();
     }
 
     public void RegisterDeposit(decimal amount, decimal balanceAfter, DateTime timestampUtc)
@@ -49,12 +53,56 @@ public partial class UserStatsService : Node
         BetHistory.AddDeposit(depositRecord);
 
         Stats.RegisterDeposit();
-        StatsChanged?.Invoke(Stats);
+        EmitStatsChangedImmediate();
     }
 
     public void RegisterSource(IBetEventSource source)
     {
         source.BetExecuted += OnBetExecutedRegisterBet;
+    }
+
+    public void FlushHistory()
+    {
+        BetHistory?.Flush();
+    }
+
+    public void SetHighFrequencyMode(bool enabled)
+    {
+        bool wasEnabled = _highFrequencyMode;
+        _highFrequencyMode = enabled;
+        BetHistory?.SetSaveSuspended(enabled);
+        if (wasEnabled && !enabled)
+        {
+            if (_hasPendingStatsChange)
+            {
+                EmitStatsChangedImmediate();
+            }
+        }
+    }
+
+    private void EmitStatsChangedIfNeeded()
+    {
+        if (!_highFrequencyMode)
+        {
+            EmitStatsChangedImmediate();
+            return;
+        }
+
+        _hasPendingStatsChange = true;
+        DateTime now = DateTime.UtcNow;
+        if ((now - _lastStatsEmitUtc) < HighFrequencyStatsEmitInterval)
+        {
+            return;
+        }
+
+        EmitStatsChangedImmediate();
+    }
+
+    private void EmitStatsChangedImmediate()
+    {
+        _hasPendingStatsChange = false;
+        _lastStatsEmitUtc = DateTime.UtcNow;
+        StatsChanged?.Invoke(Stats);
     }
 
     public IReadOnlyList<BetRecord> GetBetsForCalendarDay(DateTime localDate, TimeZoneInfo timezone = null)

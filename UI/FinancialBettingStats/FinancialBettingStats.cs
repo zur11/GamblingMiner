@@ -1,6 +1,7 @@
 using Godot;
 using Scripts.User;
 using Scripts.History;
+using Scripts.Finance;
 using System.Globalization;
 
 public partial class FinancialBettingStats : Control
@@ -18,10 +19,10 @@ public partial class FinancialBettingStats : Control
 	public void UpdateFrom(UserBettingStats stats)
 	{
 		_lastDepositProfitLabel.Text =
-			stats.ProfitSinceDeposit.ToString("F8", CultureInfo.InvariantCulture);
+			Money.FormatSignedAdaptive(stats.ProfitSinceDeposit);
 
 		_generalProfitLabel.Text =
-			stats.TotalProfit.ToString("F8", CultureInfo.InvariantCulture);
+			Money.FormatSignedAdaptive(stats.TotalProfit);
 
 		_lastDepositGambledLabel.Text =
 			stats.AmountWageredSinceDeposit.ToString("F8", CultureInfo.InvariantCulture);
@@ -43,10 +44,10 @@ public partial class FinancialBettingStats : Control
 	public void UpdateFromTimeBased(TimeBasedBetStats stats)
 	{
 		_lastDepositProfitLabel.Text =
-			stats.NetProfitSinceLastDeposit.ToString("F8", CultureInfo.InvariantCulture);
+			Money.FormatSignedAdaptive(stats.NetProfitSinceLastDeposit);
 
 		_generalProfitLabel.Text =
-			stats.NetProfit.ToString("F8", CultureInfo.InvariantCulture);
+			Money.FormatSignedAdaptive(stats.NetProfit);
 
 		_lastDepositGambledLabel.Text =
 			stats.WageredSinceLastDeposit.ToString("F8", CultureInfo.InvariantCulture);

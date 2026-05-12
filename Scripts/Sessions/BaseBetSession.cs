@@ -70,7 +70,8 @@ namespace Scripts.Sessions
 
         public (DiceResult, BetTransactionEvent, decimal) ExecuteNext(
             int chance,
-            bool isHigh)
+            bool isHigh,
+            DateTime? timestampUtc = null)
         {
             if (!IsRunning)
                 throw new InvalidOperationException("Session not running");
@@ -80,12 +81,13 @@ namespace Scripts.Sessions
                     _currentBet,
                     chance,
                     isHigh,
-                    GetSessionId() // 🔥 punto clave
+                    GetSessionId(),
+                    timestampUtc
                 );
 
             var outcome = new BetOutcome(
                 betEvent.BetAmount,
-                betEvent.Profit,
+                betEvent.CreditedProfit,
                 result.IsWin
             );
 
@@ -94,11 +96,14 @@ namespace Scripts.Sessions
             _sessionProfit += outcome.Profit;
             UpdateProgressionStreak(outcome, balanceBeforeBet, betEvent.BalanceAfter);
 
-            _currentBet = _strategy.CalculateNextBet(
-                _currentBet,
+            decimal previousBet = _currentBet;
+            decimal nextBet = Money.Normalize(_strategy.CalculateNextBet(
+                outcome.BetAmount,
                 outcome,
                 _config
-            );
+            ));
+            DebugAssertProgression(previousBet, outcome, nextBet);
+            _currentBet = nextBet;
             ExecutedBetsCount++;
 
             ApplyStopConditions();
@@ -163,6 +168,25 @@ namespace Scripts.Sessions
                     LastStopReason = IBettingStrategy.StopReason.CounterCountReached;
                     Stop(LastStopReason);
                 }
+            }
+        }
+
+        protected virtual void DebugAssertProgression(decimal previousBet, BetOutcome outcome, decimal nextBet)
+        {
+            if (_config == null)
+            {
+                return;
+            }
+
+            if (outcome.IsWin || !_config.IncreaseOnLoss || _config.IncreasePercent <= 0m)
+            {
+                return;
+            }
+
+            // If we lost and should increase on loss, next bet should be > previous bet (unless clamped by balance later).
+            if (nextBet <= previousBet && nextBet == _config.BaseBet)
+            {
+                GD.Print($"[ProgressionDebug] Loss but next bet did not increase. prev={previousBet:F8} next={nextBet:F8} base={_config.BaseBet:F8} inc%={_config.IncreasePercent}");
             }
         }
     }

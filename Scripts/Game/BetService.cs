@@ -10,6 +10,7 @@ namespace Scripts.Game
 		private readonly Wallet _wallet;
 		private readonly TransactionSource _source;
 		private readonly Func<DateTime> _utcNowProvider;
+		private decimal _pendingFractionalProfit;
 
 		public BetService(DiceEngine engine, Wallet wallet, TransactionSource source, Func<DateTime> utcNowProvider = null)
 		{
@@ -23,7 +24,8 @@ namespace Scripts.Game
 			decimal bet,
 			int chance,
 			bool isHigh,
-			Guid? sessionId
+			Guid? sessionId,
+			DateTime? timestampUtc = null
 		)
 		{
 			bet = Money.Normalize(bet);
@@ -41,10 +43,15 @@ namespace Scripts.Game
 
 			decimal payout = 0m;
 			decimal multiplier = result.Multiplier;
+			decimal creditedProfit = result.Profit;
 
 			if (result.IsWin)
 			{
-				payout = bet + result.Profit;
+				decimal combinedProfit = result.Profit + _pendingFractionalProfit;
+				creditedProfit = Money.Normalize(combinedProfit);
+				_pendingFractionalProfit = combinedProfit - creditedProfit;
+
+				payout = bet + creditedProfit;
 
 				_wallet.ApplyTransaction(
 					new Transaction(TransactionType.Deposit, TransactionSource.Bet, sessionId, payout)
@@ -54,13 +61,14 @@ namespace Scripts.Game
 			var transactionEvent = new BetTransactionEvent(
 				BetAmount: bet,
 				Profit: result.Profit,
+				CreditedProfit: creditedProfit,
 				BalanceAfter: _wallet.Balance,
 				IsWin: result.IsWin,
 				Roll: result.Roll,
 				Chance: (int)result.Chance,
 				Multiplier: multiplier,
 				IsHigh: result.IsHigh,
-				Timestamp: _utcNowProvider()
+				Timestamp: timestampUtc ?? _utcNowProvider()
 			);
 
 			return (result, transactionEvent);

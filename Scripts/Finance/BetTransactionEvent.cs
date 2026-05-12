@@ -6,6 +6,7 @@ namespace Scripts.Finance
     public sealed record BetTransactionEvent(
         decimal BetAmount,
         decimal Profit,
+        decimal CreditedProfit,
         decimal BalanceAfter,
         bool IsWin,
         int Roll,

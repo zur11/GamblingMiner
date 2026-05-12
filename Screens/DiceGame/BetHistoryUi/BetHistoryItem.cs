@@ -24,10 +24,8 @@ public partial class BetHistoryItem : PanelContainer
 			.ToString("F8", CultureInfo.InvariantCulture);
 
 		_profitLabel.Text = data.IsWin ? 
-			"+" + data.Profit
-			.ToString("F8", CultureInfo.InvariantCulture) :
-			data.Profit
-			.ToString("F8", CultureInfo.InvariantCulture);
+			Money.FormatSignedAdaptive(data.Profit) :
+			Money.FormatSignedAdaptive(data.Profit);
 
 		_profitLabel.Modulate =
 			data.IsWin ? _winColor : _lossColor;

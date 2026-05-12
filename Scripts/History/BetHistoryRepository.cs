@@ -11,14 +11,24 @@ namespace Scripts.History
 	public sealed class BetHistoryRepository
 	{
 		private const decimal DefaultInitialBalance = 1.00000000m;
+		private const int FlushEveryMutations = 200;
+		private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(3);
+		private const string EntryTypeBet = "bet";
+		private const string EntryTypeDeposit = "deposit";
 		private readonly string _filePath;
+		private readonly string _legacySnapshotPath;
 		private readonly List<BetRecord> _records = new();
 		private readonly List<DepositRecord> _deposits = new();
-		private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+		private readonly List<HistoryJournalEntry> _pendingJournalEntries = new();
+		private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = false };
+		private int _mutationsSinceLastSave;
+		private DateTime _lastSaveUtc = DateTime.UtcNow;
+		private bool _saveSuspended;
 
 		public BetHistoryRepository(string filePath)
 		{
 			_filePath = filePath;
+			_legacySnapshotPath = GetLegacySnapshotPath(filePath);
 		}
 
 		public IReadOnlyList<BetRecord> Records => _records;
@@ -28,13 +38,54 @@ namespace Scripts.History
 		{
 			_records.Clear();
 			_deposits.Clear();
+			_pendingJournalEntries.Clear();
+			_mutationsSinceLastSave = 0;
 
-			if (!File.Exists(_filePath))
+			if (File.Exists(_filePath))
 			{
+				LoadFromJournalFile(_filePath);
 				return;
 			}
 
-			string json = File.ReadAllText(_filePath);
+			if (File.Exists(_legacySnapshotPath))
+			{
+				LoadFromLegacySnapshot(_legacySnapshotPath);
+				NormalizeLegacyRecordsInPlace();
+				RebuildJournalFromCurrentState();
+			}
+		}
+
+		private void LoadFromJournalFile(string path)
+		{
+			foreach (string rawLine in File.ReadLines(path))
+			{
+				if (string.IsNullOrWhiteSpace(rawLine))
+				{
+					continue;
+				}
+
+				HistoryJournalEntry entry;
+				try
+				{
+					entry = JsonSerializer.Deserialize<HistoryJournalEntry>(rawLine, _jsonOptions);
+				}
+				catch
+				{
+					continue;
+				}
+
+				if (entry == null)
+				{
+					continue;
+				}
+
+				ApplyJournalEntry(entry);
+			}
+		}
+
+		private void LoadFromLegacySnapshot(string path)
+		{
+			string json = File.ReadAllText(path);
 			if (string.IsNullOrWhiteSpace(json))
 			{
 				return;
@@ -51,11 +102,6 @@ namespace Scripts.History
 			{
 				_deposits.AddRange(snapshot.Deposits.Where(d => d != null));
 			}
-
-			if (NormalizeLegacyRecordsInPlace())
-			{
-				Save();
-			}
 		}
 
 		public void Add(BetRecord record)
@@ -66,7 +112,8 @@ namespace Scripts.History
 			}
 
 			_records.Add(record);
-			Save();
+			_pendingJournalEntries.Add(HistoryJournalEntry.FromBet(record));
+			MarkDirtyAndSaveIfNeeded();
 		}
 
 		public void AddDeposit(DepositRecord record)
@@ -77,7 +124,8 @@ namespace Scripts.History
 			}
 
 			_deposits.Add(record);
-			Save();
+			_pendingJournalEntries.Add(HistoryJournalEntry.FromDeposit(record));
+			MarkDirtyAndSaveIfNeeded();
 		}
 
 		public IReadOnlyList<BetRecord> GetBetsForCalendarDay(DateTime localDate, TimeZoneInfo timezone = null)
@@ -117,17 +165,20 @@ namespace Scripts.History
 			DateTime target = utcDateTime.Kind == DateTimeKind.Utc ? utcDateTime : utcDateTime.ToUniversalTime();
 			decimal balance = DefaultInitialBalance;
 
-			var events = new List<(DateTime TimestampUtc, int Priority, decimal Amount)>();
-			events.AddRange(_deposits
-				.Where(d => d.TimestampUtc <= target)
-				.Select(d => (d.TimestampUtc, 0, d.Amount)));
-			events.AddRange(_records
-				.Where(r => r.TimestampUtc <= target)
-				.Select(r => (r.TimestampUtc, 1, r.NetAmount)));
-
-			foreach (var timelineEvent in events.OrderBy(e => e.TimestampUtc).ThenBy(e => e.Priority))
+			foreach (DepositRecord deposit in _deposits)
 			{
-				balance = Money.Normalize(balance + timelineEvent.Amount);
+				if (deposit.TimestampUtc <= target)
+				{
+					balance = Money.Normalize(balance + deposit.Amount);
+				}
+			}
+
+			foreach (BetRecord record in _records)
+			{
+				if (record.TimestampUtc <= target)
+				{
+					balance = Money.Normalize(balance + record.NetAmount);
+				}
 			}
 
 			return balance;
@@ -136,44 +187,63 @@ namespace Scripts.History
 		public TimeBasedBetStats BuildStatsUpToUtc(DateTime utcDateTime)
 		{
 			DateTime target = utcDateTime.Kind == DateTimeKind.Utc ? utcDateTime : utcDateTime.ToUniversalTime();
-			var filtered = _records.Where(r => r.TimestampUtc <= target).ToList();
+			DateTime? lastDepositUtc = null;
+			foreach (DepositRecord deposit in _deposits)
+			{
+				if (deposit.TimestampUtc <= target)
+				{
+					if (!lastDepositUtc.HasValue || deposit.TimestampUtc > lastDepositUtc.Value)
+					{
+						lastDepositUtc = deposit.TimestampUtc;
+					}
+				}
+			}
+
+			int totalBets = 0;
+			int wins = 0;
+			int losses = 0;
+			decimal totalWagered = 0m;
+			decimal netProfit = 0m;
+			decimal wageredSinceLastDeposit = 0m;
+			decimal netProfitSinceLastDeposit = 0m;
+
+			foreach (BetRecord record in _records)
+			{
+				if (record.TimestampUtc > target)
+				{
+					continue;
+				}
+
+				totalBets++;
+				if (record.Outcome == BetOutcome.Win)
+				{
+					wins++;
+				}
+				else if (record.Outcome == BetOutcome.Loss)
+				{
+					losses++;
+				}
+
+				totalWagered += record.BetAmount;
+				netProfit += record.NetAmount;
+
+				if (!lastDepositUtc.HasValue || record.TimestampUtc > lastDepositUtc.Value)
+				{
+					wageredSinceLastDeposit += record.BetAmount;
+					netProfitSinceLastDeposit += record.NetAmount;
+				}
+			}
 
 			return new TimeBasedBetStats
 			{
-				TotalBets = filtered.Count,
-				Wins = filtered.Count(r => r.Outcome == BetOutcome.Win),
-				Losses = filtered.Count(r => r.Outcome == BetOutcome.Loss),
-				TotalWagered = Money.Normalize(filtered.Sum(r => r.BetAmount)),
-				NetProfit = Money.Normalize(filtered.Sum(r => r.NetAmount)),
-				WageredSinceLastDeposit = Money.Normalize(BuildWageredSinceLastDeposit(target)),
-				NetProfitSinceLastDeposit = Money.Normalize(BuildProfitSinceLastDeposit(target))
+				TotalBets = totalBets,
+				Wins = wins,
+				Losses = losses,
+				TotalWagered = Money.Normalize(totalWagered),
+				NetProfit = Money.Normalize(netProfit),
+				WageredSinceLastDeposit = Money.Normalize(wageredSinceLastDeposit),
+				NetProfitSinceLastDeposit = Money.Normalize(netProfitSinceLastDeposit)
 			};
-		}
-
-		private decimal BuildWageredSinceLastDeposit(DateTime targetUtc)
-		{
-			DateTime? lastDeposit = _deposits
-				.Where(d => d.TimestampUtc <= targetUtc)
-				.OrderBy(d => d.TimestampUtc)
-				.Select(d => (DateTime?)d.TimestampUtc)
-				.LastOrDefault();
-
-			return _records
-				.Where(r => r.TimestampUtc <= targetUtc && (!lastDeposit.HasValue || r.TimestampUtc > lastDeposit.Value))
-				.Sum(r => r.BetAmount);
-		}
-
-		private decimal BuildProfitSinceLastDeposit(DateTime targetUtc)
-		{
-			DateTime? lastDeposit = _deposits
-				.Where(d => d.TimestampUtc <= targetUtc)
-				.OrderBy(d => d.TimestampUtc)
-				.Select(d => (DateTime?)d.TimestampUtc)
-				.LastOrDefault();
-
-			return _records
-				.Where(r => r.TimestampUtc <= targetUtc && (!lastDeposit.HasValue || r.TimestampUtc > lastDeposit.Value))
-				.Sum(r => r.NetAmount);
 		}
 
 		private static DateTime TruncateToBucketStartUtc(DateTime dateTimeUtc, TimeBucketType bucketType)
@@ -192,7 +262,64 @@ namespace Scripts.History
 			};
 		}
 
-		private void Save()
+		private void Flush(bool force = false)
+		{
+			if (!force && _pendingJournalEntries.Count <= 0)
+			{
+				return;
+			}
+
+			string folderPath = Path.GetDirectoryName(_filePath) ?? string.Empty;
+			if (!string.IsNullOrWhiteSpace(folderPath))
+			{
+				Directory.CreateDirectory(folderPath);
+			}
+
+			using var stream = new FileStream(_filePath, FileMode.Append, System.IO.FileAccess.Write, FileShare.Read);
+			using var writer = new StreamWriter(stream);
+			foreach (HistoryJournalEntry entry in _pendingJournalEntries)
+			{
+				string line = JsonSerializer.Serialize(entry, _jsonOptions);
+				writer.WriteLine(line);
+			}
+
+			_pendingJournalEntries.Clear();
+			_mutationsSinceLastSave = 0;
+			_lastSaveUtc = DateTime.UtcNow;
+		}
+
+		public void Flush()
+		{
+			Flush(force: false);
+		}
+
+		public void SetSaveSuspended(bool suspended)
+		{
+			_saveSuspended = suspended;
+			if (!suspended)
+			{
+				Flush(force: false);
+			}
+		}
+
+		private void MarkDirtyAndSaveIfNeeded()
+		{
+			_mutationsSinceLastSave++;
+			if (_saveSuspended)
+			{
+				return;
+			}
+
+			bool reachedMutationThreshold = _mutationsSinceLastSave >= FlushEveryMutations;
+			bool reachedTimeThreshold = (DateTime.UtcNow - _lastSaveUtc) >= FlushInterval;
+
+			if (reachedMutationThreshold || reachedTimeThreshold)
+			{
+				Flush(force: false);
+			}
+		}
+
+		private void RebuildJournalFromCurrentState()
 		{
 			string folderPath = Path.GetDirectoryName(_filePath) ?? string.Empty;
 			if (!string.IsNullOrWhiteSpace(folderPath))
@@ -200,13 +327,34 @@ namespace Scripts.History
 				Directory.CreateDirectory(folderPath);
 			}
 
-			var snapshot = new BetHistorySnapshot
+			using var stream = new FileStream(_filePath, FileMode.Create, System.IO.FileAccess.Write, FileShare.Read);
+			using var writer = new StreamWriter(stream);
+
+			foreach (DepositRecord deposit in _deposits.OrderBy(d => d.TimestampUtc))
 			{
-				Records = new List<BetRecord>(_records),
-				Deposits = new List<DepositRecord>(_deposits)
-			};
-			string json = JsonSerializer.Serialize(snapshot, _jsonOptions);
-			File.WriteAllText(_filePath, json);
+				string line = JsonSerializer.Serialize(HistoryJournalEntry.FromDeposit(deposit), _jsonOptions);
+				writer.WriteLine(line);
+			}
+
+			foreach (BetRecord record in _records.OrderBy(r => r.TimestampUtc))
+			{
+				string line = JsonSerializer.Serialize(HistoryJournalEntry.FromBet(record), _jsonOptions);
+				writer.WriteLine(line);
+			}
+		}
+
+		private void ApplyJournalEntry(HistoryJournalEntry entry)
+		{
+			if (entry.Type == EntryTypeBet && entry.Bet != null)
+			{
+				_records.Add(entry.Bet);
+				return;
+			}
+
+			if (entry.Type == EntryTypeDeposit && entry.Deposit != null)
+			{
+				_deposits.Add(entry.Deposit);
+			}
 		}
 
 		private bool NormalizeLegacyRecordsInPlace()
@@ -287,7 +435,42 @@ namespace Scripts.History
 
 		public static string ResolveDefaultPath()
 		{
-			return ProjectSettings.GlobalizePath("user://bet_history.json");
+			return ProjectSettings.GlobalizePath("user://bet_history.jsonl");
+		}
+
+		private static string GetLegacySnapshotPath(string currentPath)
+		{
+			if (currentPath.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase))
+			{
+				return currentPath.Substring(0, currentPath.Length - 1);
+			}
+
+			return currentPath + ".json";
+		}
+
+		private sealed class HistoryJournalEntry
+		{
+			public string Type { get; set; } = string.Empty;
+			public BetRecord Bet { get; set; }
+			public DepositRecord Deposit { get; set; }
+
+			public static HistoryJournalEntry FromBet(BetRecord record)
+			{
+				return new HistoryJournalEntry
+				{
+					Type = EntryTypeBet,
+					Bet = record
+				};
+			}
+
+			public static HistoryJournalEntry FromDeposit(DepositRecord deposit)
+			{
+				return new HistoryJournalEntry
+				{
+					Type = EntryTypeDeposit,
+					Deposit = deposit
+				};
+			}
 		}
 	}
 }
