@@ -22,6 +22,7 @@ public partial class WinnerNumberPresenter : PanelContainer
 
 	public void Setup(int number, bool won)
 	{
+		Visible = true;
 		_numberLabel.Text = number.ToString("D2");
 
 		if (_styleBox != null)

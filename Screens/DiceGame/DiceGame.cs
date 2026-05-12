@@ -45,12 +45,14 @@ public partial class DiceGame : Control, IBetEventSource
 	private const int MaxAutoBetsPerFrame = 10;
 	private const double MaxAutoBetGameDeltaPerFrameSeconds = 0.25d;
 	private const double MaxAutoBetBacklogGameSeconds = 2.0d;
+	private const double MaxAutoBetsPerRealSecond = 180.0d;
 	private long _autoBetLastRateSampleMsec;
 	private int _autoBetBetsSinceSample;
 	private double _autoBetLastMeasuredRealPerSec;
 	private double _autoBetLastMeasuredGamePerSec;
 	private DateTime _autoBetVirtualTimestampUtc;
 	private bool _autoBetVirtualTimestampInitialized;
+	private DateTime? _autoBetLastExecutedTimestampUtc;
 
 	// Componentes UI
 	[Export]
@@ -278,8 +280,10 @@ public partial class DiceGame : Control, IBetEventSource
 			_autoBetLastMeasuredRealPerSec = 0d;
 			_autoBetLastMeasuredGamePerSec = 0d;
 			_autoBetVirtualTimestampInitialized = false;
+			_autoBetLastExecutedTimestampUtc = null;
 			_userStatsService?.SetHighFrequencyMode(false);
 			_session.Stop(IBettingStrategy.StopReason.ManualStop);
+			ResetTimeSpeedAfterAutoBetStop();
 			RefreshCalculatorFromGameSettings();
 			return;
 		}
@@ -294,6 +298,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_autoBetLastMeasuredGamePerSec = 0d;
 		_autoBetVirtualTimestampUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
 		_autoBetVirtualTimestampInitialized = true;
+		_autoBetLastExecutedTimestampUtc = null;
 		_resultValue.Text = $"Auto running | {GetAutoBetApsText()}";
 		RefreshCalculatorFromGameSettings();
 	}
@@ -354,10 +359,12 @@ public partial class DiceGame : Control, IBetEventSource
 			_autoBetTimer.Stop();
 			_autoBetAccumulatorGameSeconds = 0d;
 			_autoBetVirtualTimestampInitialized = false;
+			_autoBetLastExecutedTimestampUtc = null;
 			_isAutoPaused = false;
 			_strategyPanel.SetAutoPaused(false);
 			_strategyPanel.SetAutoRunning(false);
 			_userStatsService?.SetHighFrequencyMode(false);
+			ResetTimeSpeedAfterAutoBetStop();
 			HandleSessionStopped(session, "Auto stopped");
 		}
 
@@ -390,30 +397,48 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void ExecuteBet(DateTime? timestampUtc = null)
 	{
-		if (_session is AutoBetSession && _session.IsRunning)
-		{
-			_autoBetBetsSinceSample++;
-		}
-
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
 
-		var (result, betEvent, nextBet) =
-			_session.ExecuteNext(chance, isHigh, timestampUtc);
+		try
+		{
+			if (_session is AutoBetSession && _session.IsRunning)
+			{
+				_autoBetBetsSinceSample++;
+			}
 
-		BetExecuted?.Invoke(GameId, betEvent);
+			var (result, betEvent, nextBet) =
+				_session.ExecuteNext(chance, isHigh, timestampUtc);
 
-		_strategyPanel.SetNumberOfBets(
-			_session.IsInfinite ? 0 : _session.RemainingBets
-		);
+			BetExecuted?.Invoke(GameId, betEvent);
 
-		_strategyPanel.SetBetAmount(nextBet);
-		RefreshCalculatorFromGameSettingsThrottled();
+			_strategyPanel.SetNumberOfBets(
+				_session.IsInfinite ? 0 : _session.RemainingBets
+			);
 
-		if (!_session.IsRunning)
-			return;
+			_strategyPanel.SetBetAmount(nextBet);
+			RefreshCalculatorFromGameSettingsThrottled();
 
-		UpdateResultUI(result);
+			if (!_session.IsRunning)
+				return;
+
+			UpdateResultUI(result);
+		}
+		catch (Exception ex)
+		{
+			// Prevent unhandled exceptions from crashing the game during high-frequency autobet.
+			GD.PushError($"[AutoBetError] {ex}");
+			try
+			{
+				_session?.Stop(IBettingStrategy.StopReason.InsufficientBalance);
+			}
+			catch
+			{
+				// Ignore secondary failures.
+			}
+
+			_resultValue.Text = $"Auto error: {ex.GetType().Name}";
+		}
 	}
 
 	private void ExecuteAutoBetOnce(double intervalGameSeconds)
@@ -424,10 +449,33 @@ public partial class DiceGame : Control, IBetEventSource
 			_autoBetVirtualTimestampInitialized = true;
 		}
 
+		_autoBetLastExecutedTimestampUtc = _autoBetVirtualTimestampUtc;
 		ExecuteBet(_autoBetVirtualTimestampUtc);
 
 		// Advance virtual time by game-seconds-per-bet so bet history reflects APS even when multiple bets execute in one frame.
 		_autoBetVirtualTimestampUtc = _autoBetVirtualTimestampUtc.AddSeconds(intervalGameSeconds);
+	}
+
+	private void ResetTimeSpeedAfterAutoBetStop()
+	{
+		if (_calendarTimeService == null)
+		{
+			return;
+		}
+
+		// Keep the clock at the last executed bet timestamp (if it is ahead),
+		// and always return speed to 1x after an autobet session ends.
+		if (_autoBetLastExecutedTimestampUtc.HasValue)
+		{
+			DateTime lastUtc = _autoBetLastExecutedTimestampUtc.Value;
+			DateTime currentUtc = _calendarTimeService.CurrentUtcDateTime;
+			if (lastUtc > currentUtc)
+			{
+				_calendarTimeService.SetLocalDateTime(lastUtc.ToLocalTime());
+			}
+		}
+
+		_calendarTimeService.SpeedMultiplier = 1.0d;
 	}
 
 	private void TickAutoBet(double realDeltaSeconds)
@@ -449,7 +497,14 @@ public partial class DiceGame : Control, IBetEventSource
 
 		int betsPerGameSecond = Math.Clamp((int)Math.Round(_betsPerSecondInput.Value), 1, 100);
 		double speedMultiplier = _calendarTimeService?.SpeedMultiplier ?? 1.0d;
-		double effectiveGameDelta = Math.Max(0.0d, realDeltaSeconds) * Math.Max(0.0d, speedMultiplier);
+		double targetRealPerSec = betsPerGameSecond * Math.Max(0.0d, speedMultiplier);
+		double effectiveSpeedMultiplier = speedMultiplier;
+		if (targetRealPerSec > MaxAutoBetsPerRealSecond && betsPerGameSecond > 0)
+		{
+			// Hard cap to prevent freezing the main thread at extreme simulated speeds.
+			effectiveSpeedMultiplier = MaxAutoBetsPerRealSecond / betsPerGameSecond;
+		}
+		double effectiveGameDelta = Math.Max(0.0d, realDeltaSeconds) * Math.Max(0.0d, effectiveSpeedMultiplier);
 		// Avoid "spiral of death": if a frame stalls, don't try to catch up an unbounded amount of game time in one tick.
 		effectiveGameDelta = Math.Min(effectiveGameDelta, MaxAutoBetGameDeltaPerFrameSeconds);
 
@@ -723,7 +778,9 @@ public partial class DiceGame : Control, IBetEventSource
 		int betsPerSecond = Math.Clamp((int)Math.Round(_betsPerSecondInput.Value), 1, 100);
 		double speedMultiplier = _calendarTimeService?.SpeedMultiplier ?? 1.0d;
 		double effectiveBetsPerRealSecond = betsPerSecond * Math.Max(0.0d, speedMultiplier);
-		return $"APS: {betsPerSecond}/game-sec (target: {effectiveBetsPerRealSecond:0.##}/real-sec, actual: {_autoBetLastMeasuredRealPerSec:0.##}/real-sec, {_autoBetLastMeasuredGamePerSec:0.##}/game-sec)";
+		double cappedTarget = Math.Min(effectiveBetsPerRealSecond, MaxAutoBetsPerRealSecond);
+		string capTag = effectiveBetsPerRealSecond > MaxAutoBetsPerRealSecond ? " (CAPPED)" : string.Empty;
+		return $"APS {betsPerSecond}/game | target {effectiveBetsPerRealSecond:0.#}/real (cap {cappedTarget:0.#}{capTag}) | actual {_autoBetLastMeasuredRealPerSec:0.#}/real";
 	}
 
 	// Funciones auxiliares

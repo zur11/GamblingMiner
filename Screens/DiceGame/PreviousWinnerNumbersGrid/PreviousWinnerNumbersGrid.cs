@@ -8,6 +8,9 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 	private const int HighFrequencySampleEvery = 4;
 	private DiceGame _game;
 	private int _highFrequencySkipCounter;
+	private WinnerNumberPresenter[] _pool;
+	private int _poolIndex;
+	private bool _poolReady;
 
 	[Export]
 	private PackedScene _winnerPresenterScene;
@@ -40,21 +43,32 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 
 	public void AddWinnerNumber(int number, bool won)
 	{
-		var item = _winnerPresenterScene.Instantiate<WinnerNumberPresenter>();
+		EnsurePool();
 
-		AddChild(item);
+		WinnerNumberPresenter item = _pool[_poolIndex];
+		_poolIndex = (_poolIndex + 1) % MaxRecentEntries;
+
 		item.Setup(number, won);
-
 		MoveChild(item, 0);
-		TrimToRecentLimit();
 	}
 
-	private void TrimToRecentLimit()
+	private void EnsurePool()
 	{
-		while (GetChildCount() > MaxRecentEntries)
+		if (_poolReady)
 		{
-			Node oldest = GetChild(GetChildCount() - 1);
-			oldest.QueueFree();
+			return;
 		}
+
+		_pool = new WinnerNumberPresenter[MaxRecentEntries];
+		for (int i = 0; i < MaxRecentEntries; i++)
+		{
+			var item = _winnerPresenterScene.Instantiate<WinnerNumberPresenter>();
+			_pool[i] = item;
+			AddChild(item);
+			item.Visible = false;
+		}
+
+		_poolIndex = 0;
+		_poolReady = true;
 	}
 }

@@ -13,6 +13,8 @@ namespace Scripts.History
 		private const decimal DefaultInitialBalance = 1.00000000m;
 		private const int FlushEveryMutations = 200;
 		private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(3);
+		private const int MaxPendingJournalEntriesWhileSuspended = 2000;
+		private static readonly TimeSpan SuspendedFlushMinInterval = TimeSpan.FromSeconds(0.5);
 		private const string EntryTypeBet = "bet";
 		private const string EntryTypeDeposit = "deposit";
 		private readonly string _filePath;
@@ -23,6 +25,7 @@ namespace Scripts.History
 		private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = false };
 		private int _mutationsSinceLastSave;
 		private DateTime _lastSaveUtc = DateTime.UtcNow;
+		private DateTime _lastSuspendedFlushUtc = DateTime.MinValue;
 		private bool _saveSuspended;
 
 		public BetHistoryRepository(string filePath)
@@ -33,6 +36,47 @@ namespace Scripts.History
 
 		public IReadOnlyList<BetRecord> Records => _records;
 		public IReadOnlyList<DepositRecord> Deposits => _deposits;
+
+		public DateTime? GetLatestTimestampUtc()
+		{
+			DateTime? latest = null;
+
+			foreach (BetRecord record in _records)
+			{
+				if (record == null)
+				{
+					continue;
+				}
+
+				DateTime utc = record.TimestampUtc.Kind == DateTimeKind.Utc
+					? record.TimestampUtc
+					: record.TimestampUtc.ToUniversalTime();
+
+				if (!latest.HasValue || utc > latest.Value)
+				{
+					latest = utc;
+				}
+			}
+
+			foreach (DepositRecord deposit in _deposits)
+			{
+				if (deposit == null)
+				{
+					continue;
+				}
+
+				DateTime utc = deposit.TimestampUtc.Kind == DateTimeKind.Utc
+					? deposit.TimestampUtc
+					: deposit.TimestampUtc.ToUniversalTime();
+
+				if (!latest.HasValue || utc > latest.Value)
+				{
+					latest = utc;
+				}
+			}
+
+			return latest;
+		}
 
 		public void Load()
 		{
@@ -307,6 +351,14 @@ namespace Scripts.History
 			_mutationsSinceLastSave++;
 			if (_saveSuspended)
 			{
+				// In high-frequency mode we avoid frequent IO, but we must not let RAM grow unbounded.
+				if (_pendingJournalEntries.Count >= MaxPendingJournalEntriesWhileSuspended &&
+					(DateTime.UtcNow - _lastSuspendedFlushUtc) >= SuspendedFlushMinInterval)
+				{
+					_lastSuspendedFlushUtc = DateTime.UtcNow;
+					Flush(force: true);
+				}
+
 				return;
 			}
 

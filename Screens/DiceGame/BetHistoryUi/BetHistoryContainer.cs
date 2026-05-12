@@ -7,6 +7,9 @@ public partial class BetHistoryContainer : VBoxContainer
 	private const int HighFrequencySampleEvery = 4;
 	private DiceGame _game;
 	private int _highFrequencySkipCounter;
+	private BetHistoryItem[] _pool;
+	private int _poolIndex;
+	private bool _poolReady;
 
 	[Export]
 	private PackedScene _betHistoryItemScene;
@@ -39,22 +42,33 @@ public partial class BetHistoryContainer : VBoxContainer
 
 	private void AddEntry(BetTransactionEvent betEvent)
 	{
-		var item = _betHistoryItemScene
-			.Instantiate<BetHistoryItem>();
+		EnsurePool();
 
-		AddChild(item);
+		BetHistoryItem item = _pool[_poolIndex];
+		_poolIndex = (_poolIndex + 1) % MaxRecentEntries;
+
 		item.Setup(betEvent);
-
 		MoveChild(item, 0);
-		TrimToRecentLimit();
 	}
 
-	private void TrimToRecentLimit()
+	private void EnsurePool()
 	{
-		while (GetChildCount() > MaxRecentEntries)
+		if (_poolReady)
 		{
-			Node oldest = GetChild(GetChildCount() - 1);
-			oldest.QueueFree();
+			return;
 		}
+
+		_pool = new BetHistoryItem[MaxRecentEntries];
+		for (int i = 0; i < MaxRecentEntries; i++)
+		{
+			var item = _betHistoryItemScene.Instantiate<BetHistoryItem>();
+			_pool[i] = item;
+			AddChild(item);
+			// Avoid initial noise; items will be populated as bets arrive.
+			item.Visible = false;
+		}
+
+		_poolIndex = 0;
+		_poolReady = true;
 	}
 }

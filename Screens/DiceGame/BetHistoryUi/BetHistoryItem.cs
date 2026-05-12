@@ -14,6 +14,7 @@ public partial class BetHistoryItem : PanelContainer
 
 	public void Setup(BetTransactionEvent data)
 	{
+		Visible = true;
 		_timestampLabel.Text = data.Timestamp
 			.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 

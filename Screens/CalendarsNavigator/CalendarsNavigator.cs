@@ -196,6 +196,10 @@ public partial class CalendarsNavigator : Control
 		AddSpeedOption("x2", 2.0);
 		AddSpeedOption("x4", 4.0);
 		AddSpeedOption("x8", 8.0);
+		AddSpeedOption("x16", 16.0);
+		AddSpeedOption("x32", 32.0);
+		AddSpeedOption("x64", 64.0);
+		AddSpeedOption("x120", 120.0);
 
 		double currentSpeed = _calendarTimeService?.SpeedMultiplier ?? 1.0;
 		int selectedIndex = FindBestSpeedIndex(currentSpeed);
