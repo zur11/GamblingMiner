@@ -47,7 +47,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private const double MaxAutoBetBacklogGameSeconds = 2.0d;
 	private const double MaxAutoBetsPerRealSecond = 500.0d;
 	private const int MaxAutoBetBaseAps = 9;
-	private const int MaxAutoBetApsMultiplier = 11;
+	private const int MaxAutoBetApsMultiplier = 5;
 	private long _autoBetLastRateSampleMsec;
 	private int _autoBetBetsSinceSample;
 	private double _autoBetLastMeasuredRealPerSec;
@@ -191,11 +191,11 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		_apsMultiplierSelector.Clear();
-		for (int i = 1; i <= MaxAutoBetApsMultiplier; i++)
+		for (int mult = 1; mult <= MaxAutoBetApsMultiplier; mult++)
 		{
 			int index = _apsMultiplierSelector.ItemCount;
-			_apsMultiplierSelector.AddItem($"x{i}");
-			_apsMultiplierSelector.SetItemMetadata(index, i);
+			_apsMultiplierSelector.AddItem($"x{mult}");
+			_apsMultiplierSelector.SetItemMetadata(index, mult);
 		}
 
 		_apsMultiplierSelector.Select(0); // x1 default
@@ -524,11 +524,11 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		int betsPerGameSecond = GetEffectiveAutoBetsPerGameSecond();
+		double betsPerGameSecond = GetEffectiveAutoBetsPerGameSecond();
 		double speedMultiplier = _calendarTimeService?.SpeedMultiplier ?? 1.0d;
 		double targetRealPerSec = betsPerGameSecond * Math.Max(0.0d, speedMultiplier);
 		double effectiveSpeedMultiplier = speedMultiplier;
-		if (targetRealPerSec > MaxAutoBetsPerRealSecond && betsPerGameSecond > 0)
+		if (targetRealPerSec > MaxAutoBetsPerRealSecond && betsPerGameSecond > 0.0001d)
 		{
 			// Hard cap to prevent freezing the main thread at extreme simulated speeds.
 			effectiveSpeedMultiplier = MaxAutoBetsPerRealSecond / betsPerGameSecond;
@@ -543,7 +543,7 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateAutoBetMeasuredRates(speedMultiplier);
 		MaybePrintAutoBetTelemetry();
 
-		double intervalGameSeconds = 1.0d / betsPerGameSecond;
+		double intervalGameSeconds = 1.0d / Math.Max(0.0001d, betsPerGameSecond);
 		int executedThisFrame = 0;
 
 		while (_autoBetAccumulatorGameSeconds >= intervalGameSeconds &&
@@ -823,13 +823,13 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		int baseAps = GetAutoBetBaseAps();
 		int multiplier = GetAutoBetApsMultiplier();
-		int effective = GetEffectiveAutoBetsPerGameSecond();
+		double effective = GetEffectiveAutoBetsPerGameSecond();
 		return multiplier == 1
 			? $"APS: {baseAps}"
-			: $"APS: {baseAps} x{multiplier} (= {effective})";
+			: $"APS: {baseAps} x{multiplier} (= {effective:0.##})";
 	}
 
-	private int GetEffectiveAutoBetsPerGameSecond()
+	private double GetEffectiveAutoBetsPerGameSecond()
 	{
 		int baseAps = GetAutoBetBaseAps();
 		int multiplier = GetAutoBetApsMultiplier();

@@ -68,7 +68,7 @@ namespace Scripts.Game
 				Chance: (int)result.Chance,
 				Multiplier: multiplier,
 				IsHigh: result.IsHigh,
-				Timestamp: timestampUtc ?? _utcNowProvider()
+				Timestamp: DateTime.SpecifyKind(timestampUtc ?? _utcNowProvider(), DateTimeKind.Utc)
 			);
 
 			return (result, transactionEvent);

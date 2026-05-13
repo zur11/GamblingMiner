@@ -13,11 +13,15 @@ namespace Scripts.History
 		private const decimal DefaultInitialBalance = 1.00000000m;
 		private const int FlushEveryMutations = 200;
 		private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(3);
+		private const int MaxJournalEntriesPerChunkFile = 33000;
+		private const int ChunkIndexDigits = 6;
 		private const int MaxPendingJournalEntriesWhileSuspended = 2000;
 		private static readonly TimeSpan SuspendedFlushMinInterval = TimeSpan.FromSeconds(0.5);
 		private const string EntryTypeBet = "bet";
 		private const string EntryTypeDeposit = "deposit";
 		private readonly string _filePath;
+		private string _activeJournalPath;
+		private int _activeJournalLineCount;
 		private readonly string _legacySnapshotPath;
 		private readonly List<BetRecord> _records = new();
 		private readonly List<DepositRecord> _deposits = new();
@@ -31,6 +35,7 @@ namespace Scripts.History
 		public BetHistoryRepository(string filePath)
 		{
 			_filePath = filePath;
+			_activeJournalPath = filePath;
 			_legacySnapshotPath = GetLegacySnapshotPath(filePath);
 		}
 
@@ -85,9 +90,9 @@ namespace Scripts.History
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
 
-			if (File.Exists(_filePath))
+			InitializeJournalPathsAndLoadAllChunks();
+			if (_records.Count > 0 || _deposits.Count > 0)
 			{
-				LoadFromJournalFile(_filePath);
 				return;
 			}
 
@@ -97,6 +102,121 @@ namespace Scripts.History
 				NormalizeLegacyRecordsInPlace();
 				RebuildJournalFromCurrentState();
 			}
+		}
+
+		private void InitializeJournalPathsAndLoadAllChunks()
+		{
+			var paths = GetJournalChunkPaths(includeLegacyBaseFile: true);
+			if (paths.Count <= 0)
+			{
+				_activeJournalPath = _filePath;
+				_activeJournalLineCount = 0;
+				return;
+			}
+
+			foreach (string path in paths)
+			{
+				LoadFromJournalFile(path);
+			}
+
+			// Use the latest chunk as the active append target.
+			_activeJournalPath = paths[^1];
+			try
+			{
+				_activeJournalLineCount = File.ReadLines(_activeJournalPath).Count();
+			}
+			catch
+			{
+				_activeJournalLineCount = 0;
+			}
+		}
+
+		private List<string> GetJournalChunkPaths(bool includeLegacyBaseFile)
+		{
+			var result = new List<string>();
+
+			if (includeLegacyBaseFile && File.Exists(_filePath))
+			{
+				result.Add(_filePath);
+			}
+
+			string folder = Path.GetDirectoryName(_filePath) ?? string.Empty;
+			string baseName = Path.GetFileNameWithoutExtension(_filePath);
+			string ext = Path.GetExtension(_filePath);
+
+			if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(baseName) || string.IsNullOrWhiteSpace(ext))
+			{
+				return result;
+			}
+
+			string pattern = $"{baseName}_*{ext}";
+			string[] files;
+			try
+			{
+				files = Directory.GetFiles(folder, pattern);
+			}
+			catch
+			{
+				return result;
+			}
+
+			var parsed = new List<(int Index, string Path)>();
+			foreach (string file in files)
+			{
+				string name = Path.GetFileNameWithoutExtension(file);
+				if (name == null || !name.StartsWith(baseName + "_", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				string suffix = name.Substring(baseName.Length + 1);
+				if (!int.TryParse(suffix, out int index))
+				{
+					continue;
+				}
+
+				parsed.Add((index, file));
+			}
+
+			foreach (var entry in parsed.OrderBy(p => p.Index))
+			{
+				result.Add(entry.Path);
+			}
+
+			return result;
+		}
+
+		private string BuildChunkPath(int index)
+		{
+			string folder = Path.GetDirectoryName(_filePath) ?? string.Empty;
+			string baseName = Path.GetFileNameWithoutExtension(_filePath);
+			string ext = Path.GetExtension(_filePath);
+
+			string fileName = $"{baseName}_{index.ToString($"D{ChunkIndexDigits}")}{ext}";
+			return Path.Combine(folder, fileName);
+		}
+
+		private void RotateToNextChunkFile()
+		{
+			// Determine next index from existing chunk files.
+			var paths = GetJournalChunkPaths(includeLegacyBaseFile: false);
+			int nextIndex = 1;
+			if (paths.Count > 0)
+			{
+				string baseName = Path.GetFileNameWithoutExtension(_filePath);
+				string lastName = Path.GetFileNameWithoutExtension(paths[^1]);
+				if (lastName != null && lastName.StartsWith(baseName + "_", StringComparison.OrdinalIgnoreCase))
+				{
+					string suffix = lastName.Substring(baseName.Length + 1);
+					if (int.TryParse(suffix, out int lastIndex))
+					{
+						nextIndex = lastIndex + 1;
+					}
+				}
+			}
+
+			_activeJournalPath = BuildChunkPath(nextIndex);
+			_activeJournalLineCount = 0;
 		}
 
 		private void LoadFromJournalFile(string path)
@@ -313,18 +433,46 @@ namespace Scripts.History
 				return;
 			}
 
-			string folderPath = Path.GetDirectoryName(_filePath) ?? string.Empty;
+			if (string.IsNullOrWhiteSpace(_activeJournalPath))
+			{
+				_activeJournalPath = _filePath;
+			}
+
+			string folderPath = Path.GetDirectoryName(_activeJournalPath) ?? string.Empty;
 			if (!string.IsNullOrWhiteSpace(folderPath))
 			{
 				Directory.CreateDirectory(folderPath);
 			}
 
-			using var stream = new FileStream(_filePath, FileMode.Append, System.IO.FileAccess.Write, FileShare.Read);
-			using var writer = new StreamWriter(stream);
-			foreach (HistoryJournalEntry entry in _pendingJournalEntries)
+			int index = 0;
+			while (index < _pendingJournalEntries.Count)
 			{
-				string line = JsonSerializer.Serialize(entry, _jsonOptions);
-				writer.WriteLine(line);
+				if (_activeJournalLineCount >= MaxJournalEntriesPerChunkFile)
+				{
+					RotateToNextChunkFile();
+					folderPath = Path.GetDirectoryName(_activeJournalPath) ?? string.Empty;
+					if (!string.IsNullOrWhiteSpace(folderPath))
+					{
+						Directory.CreateDirectory(folderPath);
+					}
+				}
+
+				int remainingCapacity = Math.Max(1, MaxJournalEntriesPerChunkFile - _activeJournalLineCount);
+				int toWrite = Math.Min(remainingCapacity, _pendingJournalEntries.Count - index);
+
+				using (var stream = new FileStream(_activeJournalPath, FileMode.Append, System.IO.FileAccess.Write, FileShare.Read))
+				using (var writer = new StreamWriter(stream))
+				{
+					for (int i = 0; i < toWrite; i++)
+					{
+						HistoryJournalEntry entry = _pendingJournalEntries[index + i];
+						string line = JsonSerializer.Serialize(entry, _jsonOptions);
+						writer.WriteLine(line);
+					}
+				}
+
+				index += toWrite;
+				_activeJournalLineCount += toWrite;
 			}
 
 			_pendingJournalEntries.Clear();
@@ -373,25 +521,30 @@ namespace Scripts.History
 
 		private void RebuildJournalFromCurrentState()
 		{
-			string folderPath = Path.GetDirectoryName(_filePath) ?? string.Empty;
+			_activeJournalPath = _filePath;
+			_activeJournalLineCount = 0;
+
+			string folderPath = Path.GetDirectoryName(_activeJournalPath) ?? string.Empty;
 			if (!string.IsNullOrWhiteSpace(folderPath))
 			{
 				Directory.CreateDirectory(folderPath);
 			}
 
-			using var stream = new FileStream(_filePath, FileMode.Create, System.IO.FileAccess.Write, FileShare.Read);
+			using var stream = new FileStream(_activeJournalPath, FileMode.Create, System.IO.FileAccess.Write, FileShare.Read);
 			using var writer = new StreamWriter(stream);
 
 			foreach (DepositRecord deposit in _deposits.OrderBy(d => d.TimestampUtc))
 			{
 				string line = JsonSerializer.Serialize(HistoryJournalEntry.FromDeposit(deposit), _jsonOptions);
 				writer.WriteLine(line);
+				_activeJournalLineCount++;
 			}
 
 			foreach (BetRecord record in _records.OrderBy(r => r.TimestampUtc))
 			{
 				string line = JsonSerializer.Serialize(HistoryJournalEntry.FromBet(record), _jsonOptions);
 				writer.WriteLine(line);
+				_activeJournalLineCount++;
 			}
 		}
 
