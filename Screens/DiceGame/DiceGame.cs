@@ -15,6 +15,15 @@ using UI.StrategyControlPanel;
 
 public partial class DiceGame : Control, IBetEventSource
 {
+	// --- Configuracion ---
+	private const double AutoUiCalculatorRefreshIntervalSeconds = 0.2d;
+	private const int MaxAutoBetsPerFrame = 10;
+	private const double MaxAutoBetGameDeltaPerFrameSeconds = 0.25d;
+	private const double MaxAutoBetBacklogGameSeconds = 2.0d;
+	private const double MaxAutoBetsPerRealSecond = 500.0d;
+	private const int MaxAutoBetBaseAps = 9;
+	private const int MaxAutoBetApsMultiplier = 5;
+
 	// --- Eventos ---
 	public event Action<string, BetTransactionEvent> BetExecuted;
 
@@ -39,15 +48,8 @@ public partial class DiceGame : Control, IBetEventSource
 	private bool _isAutoPaused;
 	private long _lastAppliedTimelineSecond = long.MinValue;
 	private double _lastCalculatorRefreshRealtimeSeconds = -1d;
-	private const double AutoUiCalculatorRefreshIntervalSeconds = 0.2d;
 	private decimal _sessionStartBaseBet;
 	private double _autoBetAccumulatorGameSeconds;
-	private const int MaxAutoBetsPerFrame = 10;
-	private const double MaxAutoBetGameDeltaPerFrameSeconds = 0.25d;
-	private const double MaxAutoBetBacklogGameSeconds = 2.0d;
-	private const double MaxAutoBetsPerRealSecond = 500.0d;
-	private const int MaxAutoBetBaseAps = 9;
-	private const int MaxAutoBetApsMultiplier = 5;
 	private long _autoBetLastRateSampleMsec;
 	private int _autoBetBetsSinceSample;
 	private double _autoBetLastMeasuredRealPerSec;
