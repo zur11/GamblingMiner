@@ -68,7 +68,11 @@ public partial class UserStatsService : Node
                 Outcome = bet.IsWin ? BetOutcome.Win : BetOutcome.Loss,
                 BetAmount = bet.BetAmount,
                 NetAmount = bet.CreditedProfit,
-                BalanceAfter = bet.BalanceAfter
+                BalanceAfter = bet.BalanceAfter,
+                Roll = bet.Roll,
+                Chance = bet.Chance,
+                Multiplier = bet.Multiplier,
+                IsHigh = bet.IsHigh
             };
 
             BetHistory.Add(record);
@@ -106,6 +110,42 @@ public partial class UserStatsService : Node
         {
             BetHistory?.Flush();
         }
+    }
+
+    public void EnsureFullHistoryLoaded()
+    {
+        if (!EnableHistoryPersistence || BetHistory == null)
+        {
+            return;
+        }
+
+        BetHistory.EnsureAllChunksLoaded();
+    }
+
+    public decimal GetLatestKnownBalance(decimal fallbackBalance)
+    {
+        if (!EnableHistoryPersistence || BetHistory == null)
+        {
+            return fallbackBalance;
+        }
+
+        return BetHistory.GetLatestKnownBalance(fallbackBalance);
+    }
+
+    public TimeBasedBetStats GetLoadedHistoryStats()
+    {
+        if (!EnableHistoryPersistence || BetHistory == null)
+        {
+            return new TimeBasedBetStats();
+        }
+
+        DateTime? latestUtc = BetHistory.GetLatestTimestampUtc();
+        if (!latestUtc.HasValue)
+        {
+            return new TimeBasedBetStats();
+        }
+
+        return BetHistory.BuildStatsUpToUtc(latestUtc.Value);
     }
 
     public void SetHighFrequencyMode(bool enabled)

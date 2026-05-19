@@ -37,7 +37,6 @@ public partial class DiceGame : Control, IBetEventSource
 	private Timer _autoBetTimer;
 	private BaseBetSession _session;
 	private bool _isAutoPaused;
-	private long _lastAppliedTimelineSecond = long.MinValue;
 	private double _lastCalculatorRefreshRealtimeSeconds = -1d;
 	private const double AutoUiCalculatorRefreshIntervalSeconds = 0.2d;
 	private decimal _sessionStartBaseBet;
@@ -106,8 +105,14 @@ public partial class DiceGame : Control, IBetEventSource
 			_engine,
 			_wallet,
 			TransactionSource.Bet,
-			() => _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow
+			() => DateTime.UtcNow
 		);
+		_calendarTimeService?.SetNow();
+		if (_calendarTimeService != null)
+		{
+			_calendarTimeService.SpeedMultiplier = 1.0d;
+			_calendarTimeService.IsRunning = true;
+		}
 		var strategy = new ProgressiveBettingStrategy();
 
 		_session = CreateSession(false); // default manual
@@ -160,6 +165,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_betHistoryContainer.SubscribeTo(this);
 		_userStatsService.RegisterSource(this);
 		_financialStats.ConnectTo(_userStatsService);
+		ApplyRealtimeBootstrapFromLoadedHistory();
 		_strategyPanel.BetOnceBtnPressed += OnManualBetFromPanel;
 		_strategyPanel.AutoBetToggled += OnAutoBetToggled;
 		_strategyPanel.AutoPauseToggled += OnAutoPauseToggled;
@@ -204,7 +210,6 @@ public partial class DiceGame : Control, IBetEventSource
 	public override void _Process(double delta)
 	{
 		UpdateCurrentAppTimeUI();
-		ApplyTemporalStateFromCalendarIfNeeded();
 		TickAutoBet(delta);
 	}
 
@@ -309,7 +314,6 @@ public partial class DiceGame : Control, IBetEventSource
 			_autoBetLastExecutedTimestampUtc = null;
 			_userStatsService?.SetHighFrequencyMode(false);
 			_session.Stop(IBettingStrategy.StopReason.ManualStop);
-			ResetTimeSpeedAfterAutoBetStop();
 			RefreshCalculatorFromGameSettings();
 			return;
 		}
@@ -322,12 +326,12 @@ public partial class DiceGame : Control, IBetEventSource
 		_autoBetBetsSinceSample = 0;
 		_autoBetLastMeasuredRealPerSec = 0d;
 		_autoBetLastMeasuredGamePerSec = 0d;
-		_autoBetVirtualTimestampUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		_autoBetVirtualTimestampUtc = DateTime.UtcNow;
 		_autoBetVirtualTimestampInitialized = true;
 		_autoBetLastExecutedTimestampUtc = null;
 		_lastPrintedMeasuredRealPerSec = 0d;
 		_lastAutoBetTelemetryPrintMsec = 0;
-		GD.Print($"[AutoBet] Start aps_base={GetAutoBetBaseAps()} mult=x{GetAutoBetApsMultiplier()} effective_game_aps={GetEffectiveAutoBetsPerGameSecond()} speed={_calendarTimeService?.SpeedMultiplier ?? 1.0d:0.##}");
+		GD.Print($"[AutoBet] Start aps_base={GetAutoBetBaseAps()} mult=x{GetAutoBetApsMultiplier()} effective_game_aps={GetEffectiveAutoBetsPerGameSecond()}");
 		_resultValue.Text = $"Auto running | {GetAutoBetApsText()}";
 		RefreshCalculatorFromGameSettings();
 	}
@@ -393,7 +397,6 @@ public partial class DiceGame : Control, IBetEventSource
 			_strategyPanel.SetAutoPaused(false);
 			_strategyPanel.SetAutoRunning(false);
 			_userStatsService?.SetHighFrequencyMode(false);
-			ResetTimeSpeedAfterAutoBetStop();
 			HandleSessionStopped(session, "Auto stopped");
 		}
 
@@ -474,7 +477,7 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		if (!_autoBetVirtualTimestampInitialized)
 		{
-			_autoBetVirtualTimestampUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
+			_autoBetVirtualTimestampUtc = DateTime.UtcNow;
 			_autoBetVirtualTimestampInitialized = true;
 		}
 
@@ -483,28 +486,6 @@ public partial class DiceGame : Control, IBetEventSource
 
 		// Advance virtual time by game-seconds-per-bet so bet history reflects APS even when multiple bets execute in one frame.
 		_autoBetVirtualTimestampUtc = _autoBetVirtualTimestampUtc.AddSeconds(intervalGameSeconds);
-	}
-
-	private void ResetTimeSpeedAfterAutoBetStop()
-	{
-		if (_calendarTimeService == null)
-		{
-			return;
-		}
-
-		// Keep the clock at the last executed bet timestamp (if it is ahead),
-		// and always return speed to 1x after an autobet session ends.
-		if (_autoBetLastExecutedTimestampUtc.HasValue)
-		{
-			DateTime lastUtc = _autoBetLastExecutedTimestampUtc.Value;
-			DateTime currentUtc = _calendarTimeService.CurrentUtcDateTime;
-			if (lastUtc > currentUtc)
-			{
-				_calendarTimeService.SetLocalDateTime(lastUtc.ToLocalTime());
-			}
-		}
-
-		_calendarTimeService.SpeedMultiplier = 1.0d;
 	}
 
 	private void TickAutoBet(double realDeltaSeconds)
@@ -525,22 +506,21 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		double betsPerGameSecond = GetEffectiveAutoBetsPerGameSecond();
-		double speedMultiplier = _calendarTimeService?.SpeedMultiplier ?? 1.0d;
-		double targetRealPerSec = betsPerGameSecond * Math.Max(0.0d, speedMultiplier);
-		double effectiveSpeedMultiplier = speedMultiplier;
+		double targetRealPerSec = betsPerGameSecond;
+		double effectiveRealDelta = Math.Max(0.0d, realDeltaSeconds);
 		if (targetRealPerSec > MaxAutoBetsPerRealSecond && betsPerGameSecond > 0.0001d)
 		{
 			// Hard cap to prevent freezing the main thread at extreme simulated speeds.
-			effectiveSpeedMultiplier = MaxAutoBetsPerRealSecond / betsPerGameSecond;
+			effectiveRealDelta *= MaxAutoBetsPerRealSecond / betsPerGameSecond;
 		}
-		double effectiveGameDelta = Math.Max(0.0d, realDeltaSeconds) * Math.Max(0.0d, effectiveSpeedMultiplier);
+		double effectiveGameDelta = effectiveRealDelta;
 		// Avoid "spiral of death": if a frame stalls, don't try to catch up an unbounded amount of game time in one tick.
 		effectiveGameDelta = Math.Min(effectiveGameDelta, MaxAutoBetGameDeltaPerFrameSeconds);
 
 		_autoBetAccumulatorGameSeconds += effectiveGameDelta;
 		_autoBetAccumulatorGameSeconds = Math.Min(_autoBetAccumulatorGameSeconds, MaxAutoBetBacklogGameSeconds);
 
-		UpdateAutoBetMeasuredRates(speedMultiplier);
+		UpdateAutoBetMeasuredRates(1.0d);
 		MaybePrintAutoBetTelemetry();
 
 		double intervalGameSeconds = 1.0d / Math.Max(0.0001d, betsPerGameSecond);
@@ -594,7 +574,7 @@ public partial class DiceGame : Control, IBetEventSource
 		if (Math.Abs(_autoBetLastMeasuredRealPerSec - _lastPrintedMeasuredRealPerSec) >= 5.0d)
 		{
 			_lastPrintedMeasuredRealPerSec = _autoBetLastMeasuredRealPerSec;
-			GD.Print($"[AutoBet] actual_real={_autoBetLastMeasuredRealPerSec:0.#}/s aps_base={GetAutoBetBaseAps()} mult=x{GetAutoBetApsMultiplier()} effective_game_aps={GetEffectiveAutoBetsPerGameSecond()} speed={_calendarTimeService?.SpeedMultiplier ?? 1.0d:0.##}");
+			GD.Print($"[AutoBet] actual_real={_autoBetLastMeasuredRealPerSec:0.#}/s aps_base={GetAutoBetBaseAps()} mult=x{GetAutoBetApsMultiplier()} effective_game_aps={GetEffectiveAutoBetsPerGameSecond()}");
 		}
 	}
 
@@ -634,7 +614,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_walletController.Deposit(amount);
 
-		DateTime timestampUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		DateTime timestampUtc = DateTime.UtcNow;
 		_userStatsService.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
 
 		_resultValue.Text = $"Deposited {amount:F8}";
@@ -716,6 +696,25 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateBalanceUI();
 	}
 
+	private void ApplyRealtimeBootstrapFromLoadedHistory()
+	{
+		if (_userStatsService == null)
+		{
+			return;
+		}
+
+		decimal current = _walletController.Balance;
+		decimal restored = _userStatsService.GetLatestKnownBalance(current);
+		if (restored != current)
+		{
+			_wallet.SetBalanceForTimeTravel(restored);
+			_bankrollStateService?.SetBalance(restored);
+		}
+
+		TimeBasedBetStats loadedStats = _userStatsService.GetLoadedHistoryStats();
+		_financialStats.UpdateFromTimeBased(loadedStats);
+	}
+
 	// --- UI Updates ---
 	private void UpdateAllUI()
 	{
@@ -727,39 +726,10 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void UpdateCurrentAppTimeUI()
 	{
-		DateTime local = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
+		DateTime local = DateTime.Now;
 		_currentAppTimeValue.Text = local.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 	}
 
-	private void ApplyTemporalStateFromCalendarIfNeeded()
-	{
-		if (_userStatsService == null || _calendarTimeService == null)
-		{
-			return;
-		}
-
-		if (_session is AutoBetSession && _session.IsRunning)
-		{
-			return;
-		}
-
-		DateTime local = _calendarTimeService.CurrentLocalDateTime;
-		long currentSecond = new DateTimeOffset(local).ToUnixTimeSeconds();
-		if (currentSecond == _lastAppliedTimelineSecond)
-		{
-			return;
-		}
-
-		_lastAppliedTimelineSecond = currentSecond;
-
-		decimal reconstructedBalance = _userStatsService.GetBalanceAtOrBefore(local, TimeZoneInfo.Local);
-		_wallet.SetBalanceForTimeTravel(reconstructedBalance);
-		_bankrollStateService?.SetBalance(reconstructedBalance);
-		UpdateBalanceUI();
-
-		TimeBasedBetStats statsAtTime = _userStatsService.GetStatsUpTo(local, TimeZoneInfo.Local);
-		_financialStats.UpdateFromTimeBased(statsAtTime);
-	}
 
 	private void UpdateBalanceUI()
 	{

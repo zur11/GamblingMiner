@@ -1,0 +1,135 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://Screens/BetsHistoryExplorer/BetsHistoryExplorer.cs" id="1"]
+[ext_resource type="PackedScene" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/PreviousWinnerNumbersGrid.tscn" id="3"]
+
+[node name="BetsHistoryExplorer" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="RootMargin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = 20.0
+offset_right = -20.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="HeaderRow" type="HBoxContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="SelectedTimeLabel" type="Label" parent="RootMargin/RootVBox/HeaderRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Selected timeline: -"
+
+[node name="PlayPauseButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Pause"
+
+[node name="SpeedButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Speed 1x"
+
+[node name="BackToCalendarButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Back to Calendar"
+
+[node name="BackToDiceButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Back to Dice"
+
+[node name="LoaderPanel" type="PanelContainer" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="LoaderVBox" type="VBoxContainer" parent="RootMargin/RootVBox/LoaderPanel"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="LoaderLabel" type="Label" parent="RootMargin/RootVBox/LoaderPanel/LoaderVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Loading..."
+horizontal_alignment = 1
+
+[node name="LoaderProgress" type="ProgressBar" parent="RootMargin/RootVBox/LoaderPanel/LoaderVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+max_value = 100.0
+value = 0.0
+
+[node name="ContentPanel" type="VBoxContainer" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+visible = false
+
+[node name="SummaryLabel" type="Label" parent="RootMargin/RootVBox/ContentPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "-"
+autowrap_mode = 3
+
+[node name="Bodies" type="HSplitContainer" parent="RootMargin/RootVBox/ContentPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+split_offset = 520
+
+[node name="HistoryPanel" type="VBoxContainer" parent="RootMargin/RootVBox/ContentPanel/Bodies"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="HistoryTitle" type="Label" parent="RootMargin/RootVBox/ContentPanel/Bodies/HistoryPanel"]
+layout_mode = 2
+text = "Bet History"
+
+[node name="HistoryScroll" type="ScrollContainer" parent="RootMargin/RootVBox/ContentPanel/Bodies/HistoryPanel"]
+custom_minimum_size = Vector2(0, 540)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="BetHistoryContainer" parent="RootMargin/RootVBox/ContentPanel/Bodies/HistoryPanel/HistoryScroll" instance=ExtResource("2")]
+unique_name_in_owner = true
+
+[node name="WinnersPanel" type="VBoxContainer" parent="RootMargin/RootVBox/ContentPanel/Bodies"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="WinnersTitle" type="Label" parent="RootMargin/RootVBox/ContentPanel/Bodies/WinnersPanel"]
+layout_mode = 2
+text = "Previous Winner Numbers"
+
+[node name="WinnersScroll" type="ScrollContainer" parent="RootMargin/RootVBox/ContentPanel/Bodies/WinnersPanel"]
+custom_minimum_size = Vector2(0, 540)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="PreviousWinnerNumbersGrid" parent="RootMargin/RootVBox/ContentPanel/Bodies/WinnersPanel/WinnersScroll" instance=ExtResource("3")]
+unique_name_in_owner = true

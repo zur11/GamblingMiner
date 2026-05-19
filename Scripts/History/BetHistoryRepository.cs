@@ -13,7 +13,7 @@ namespace Scripts.History
 		private const decimal DefaultInitialBalance = 1.00000000m;
 		private const int FlushEveryMutations = 200;
 		private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(3);
-		private const int MaxJournalEntriesPerChunkFile = 33000;
+		private const int MaxJournalEntriesPerChunkFile = 10000;
 		private const int ChunkIndexDigits = 6;
 		private const int MaxPendingJournalEntriesWhileSuspended = 2000;
 		private static readonly TimeSpan SuspendedFlushMinInterval = TimeSpan.FromSeconds(0.5);
@@ -31,6 +31,7 @@ namespace Scripts.History
 		private DateTime _lastSaveUtc = DateTime.UtcNow;
 		private DateTime _lastSuspendedFlushUtc = DateTime.MinValue;
 		private bool _saveSuspended;
+		private bool _loadedAllChunks;
 
 		public BetHistoryRepository(string filePath)
 		{
@@ -83,14 +84,46 @@ namespace Scripts.History
 			return latest;
 		}
 
+		public decimal GetLatestKnownBalance(decimal fallbackBalance)
+		{
+			DateTime latestTimestamp = DateTime.MinValue;
+			decimal? latestBalance = null;
+
+			foreach (DepositRecord deposit in _deposits)
+			{
+				if (deposit != null && deposit.TimestampUtc >= latestTimestamp)
+				{
+					latestTimestamp = deposit.TimestampUtc;
+					latestBalance = deposit.BalanceAfter;
+				}
+			}
+
+			foreach (BetRecord record in _records)
+			{
+				if (record != null && record.TimestampUtc >= latestTimestamp)
+				{
+					latestTimestamp = record.TimestampUtc;
+					latestBalance = record.BalanceAfter;
+				}
+			}
+
+			return latestBalance ?? fallbackBalance;
+		}
+
 		public void Load()
+		{
+			LoadLatestChunkOnly();
+		}
+
+		public void LoadLatestChunkOnly()
 		{
 			_records.Clear();
 			_deposits.Clear();
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
+			_loadedAllChunks = false;
 
-			InitializeJournalPathsAndLoadAllChunks();
+			InitializeJournalPathsAndLoadLatestChunk();
 			if (_records.Count > 0 || _deposits.Count > 0)
 			{
 				return;
@@ -101,6 +134,45 @@ namespace Scripts.History
 				LoadFromLegacySnapshot(_legacySnapshotPath);
 				NormalizeLegacyRecordsInPlace();
 				RebuildJournalFromCurrentState();
+			}
+		}
+
+		public void EnsureAllChunksLoaded()
+		{
+			if (_loadedAllChunks)
+			{
+				return;
+			}
+
+			_records.Clear();
+			_deposits.Clear();
+			_pendingJournalEntries.Clear();
+			_mutationsSinceLastSave = 0;
+			InitializeJournalPathsAndLoadAllChunks();
+			_loadedAllChunks = true;
+		}
+
+		private void InitializeJournalPathsAndLoadLatestChunk()
+		{
+			var paths = GetJournalChunkPaths(includeLegacyBaseFile: true);
+			if (paths.Count <= 0)
+			{
+				_activeJournalPath = _filePath;
+				_activeJournalLineCount = 0;
+				return;
+			}
+
+			string latestPath = paths[^1];
+			LoadFromJournalFile(latestPath);
+
+			_activeJournalPath = latestPath;
+			try
+			{
+				_activeJournalLineCount = File.ReadLines(_activeJournalPath).Count();
+			}
+			catch
+			{
+				_activeJournalLineCount = 0;
 			}
 		}
 
@@ -118,6 +190,7 @@ namespace Scripts.History
 			{
 				LoadFromJournalFile(path);
 			}
+			_loadedAllChunks = true;
 
 			// Use the latest chunk as the active append target.
 			_activeJournalPath = paths[^1];

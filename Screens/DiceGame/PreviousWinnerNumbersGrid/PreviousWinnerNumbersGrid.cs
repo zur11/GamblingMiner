@@ -1,6 +1,9 @@
 using Godot;
 using System;
 using Scripts.Finance;
+using Scripts.History;
+using System.Collections.Generic;
+using System.Linq;
 
 public partial class PreviousWinnerNumbersGrid : GridContainer
 {
@@ -50,6 +53,32 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 
 		item.Setup(number, won);
 		MoveChild(item, 0);
+	}
+
+	public void LoadFromHistoricalRecords(IReadOnlyList<BetRecord> records)
+	{
+		EnsurePool();
+		ClearEntries();
+
+		if (records == null || records.Count <= 0)
+		{
+			return;
+		}
+
+		foreach (BetRecord record in records.TakeLast(MaxRecentEntries))
+		{
+			AddWinnerNumber(record.Roll, record.Outcome == BetOutcome.Win);
+		}
+	}
+
+	public void ClearEntries()
+	{
+		EnsurePool();
+		_poolIndex = 0;
+		for (int i = 0; i < _pool.Length; i++)
+		{
+			_pool[i].Visible = false;
+		}
 	}
 
 	private void EnsurePool()

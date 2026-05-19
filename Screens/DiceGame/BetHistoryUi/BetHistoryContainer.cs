@@ -1,5 +1,8 @@
 using Godot;
 using Scripts.Finance;
+using Scripts.History;
+using System.Collections.Generic;
+using System.Linq;
 
 public partial class BetHistoryContainer : VBoxContainer
 {
@@ -49,6 +52,45 @@ public partial class BetHistoryContainer : VBoxContainer
 
 		item.Setup(betEvent);
 		MoveChild(item, 0);
+	}
+
+	public void LoadFromHistoricalRecords(IReadOnlyList<BetRecord> records)
+	{
+		EnsurePool();
+		ClearEntries();
+
+		if (records == null || records.Count <= 0)
+		{
+			return;
+		}
+
+		foreach (BetRecord record in records.TakeLast(MaxRecentEntries))
+		{
+			BetTransactionEvent evt = new(
+				record.BetAmount,
+				record.NetAmount,
+				record.NetAmount,
+				record.BalanceAfter,
+				record.Outcome == BetOutcome.Win,
+				record.Roll,
+				record.Chance,
+				record.Multiplier,
+				record.IsHigh,
+				record.TimestampUtc
+			);
+
+			AddEntry(evt);
+		}
+	}
+
+	public void ClearEntries()
+	{
+		EnsurePool();
+		_poolIndex = 0;
+		for (int i = 0; i < _pool.Length; i++)
+		{
+			_pool[i].Visible = false;
+		}
 	}
 
 	private void EnsurePool()

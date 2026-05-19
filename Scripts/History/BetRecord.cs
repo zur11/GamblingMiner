@@ -11,5 +11,9 @@ namespace Scripts.History
 		public decimal BetAmount { get; set; }
 		public decimal NetAmount { get; set; }
 		public decimal BalanceAfter { get; set; }
+		public int Roll { get; set; }
+		public int Chance { get; set; }
+		public decimal Multiplier { get; set; }
+		public bool IsHigh { get; set; }
 	}
 }

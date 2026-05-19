@@ -170,60 +170,12 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Now"
 
+[node name="OpenHistoryExplorerButton" type="Button" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/ButtonsHBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Open Bets Explorer"
+
 [node name="BackToDiceGameButton" type="Button" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/ButtonsHBox"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Back to Dice Game"
-
-[node name="SummariesPanel" type="PanelContainer" parent="RootMargin/RootVBox"]
-layout_mode = 2
-
-[node name="SummariesVBox" type="VBoxContainer" parent="RootMargin/RootVBox/SummariesPanel"]
-layout_mode = 2
-theme_override_constants/separation = 6
-
-[node name="SummariesTitle" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
-layout_mode = 2
-text = "Live Summaries"
-
-[node name="DaySummaryPresenter" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "-"
-
-[node name="HourSummaryPresenter" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "-"
-
-[node name="MinuteSummaryPresenter" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "-"
-
-[node name="BalanceAtTimePresenter" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "-"
-
-[node name="StatsAtTimePresenter" type="Label" parent="RootMargin/RootVBox/SummariesPanel/SummariesVBox"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "-"
-
-[node name="BetsPanel" type="PanelContainer" parent="RootMargin/RootVBox"]
-layout_mode = 2
-
-[node name="BetsVBox" type="VBoxContainer" parent="RootMargin/RootVBox/BetsPanel"]
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="BetListTitle" type="Label" parent="RootMargin/RootVBox/BetsPanel/BetsVBox"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Bets in selected day (0)"
-
-[node name="DayBetsList" type="ItemList" parent="RootMargin/RootVBox/BetsPanel/BetsVBox"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 220)
-layout_mode = 2

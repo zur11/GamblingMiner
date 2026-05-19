@@ -282,9 +282,9 @@ text = "Calendar Navigator"
 unique_name_in_owner = true
 layout_mode = 1
 offset_left = 17.0
-offset_top = 840.0
+offset_top = 800.0
 offset_right = -1253.0
-offset_bottom = -1.0
+offset_bottom = -41.0
 
 [node name="StrategyControlPanel" parent="." instance=ExtResource("6_8x8ps")]
 layout_mode = 1
