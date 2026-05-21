@@ -1,0 +1,86 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Screens/BlockExplorer/BlockExplorer.cs" id="1"]
+[ext_resource type="Script" path="res://Scripts/BlockchainPort/Simulation/NetworkRoot.cs" id="2"]
+
+[node name="BlockExplorer" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="NetworkRoot" type="Node" parent="."]
+script = ExtResource("2")
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 24
+
+[node name="VBox" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "Blockchain Simulator Explorer"
+
+[node name="ChainInfoLabel" type="Label" parent="Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Chain length: - | Pending tx: -"
+
+[node name="Controls" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="AmountInput" type="LineEdit" parent="Margin/VBox/Controls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(160, 0)
+layout_mode = 2
+placeholder_text = "Amount (e.g. 1.25)"
+text = "1.00"
+
+[node name="RecipientOption" type="OptionButton" parent="Margin/VBox/Controls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(130, 0)
+layout_mode = 2
+
+[node name="CreateTxButton" type="Button" parent="Margin/VBox/Controls"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Create Tx"
+
+[node name="MineButton" type="Button" parent="Margin/VBox/Controls"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Mine Block"
+
+[node name="ConsensusButton" type="Button" parent="Margin/VBox/Controls"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Run Consensus"
+
+[node name="RefreshButton" type="Button" parent="Margin/VBox/Controls"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Refresh"
+
+[node name="LatestBlockLabel" type="RichTextLabel" parent="Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+scroll_active = true
+fit_content = true
