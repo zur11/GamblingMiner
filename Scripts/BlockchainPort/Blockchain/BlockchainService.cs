@@ -246,12 +246,10 @@ public sealed class BlockchainService
         decimal balance = GetAddressData(address).AddressBalance;
         foreach (Transaction pending in PendingTransactions)
         {
-            if (pending.Recipient == address)
+            if (pending.Sender == address)
             {
-                balance += pending.Amount;
-            }
-            else if (pending.Sender == address)
-            {
+                // Pending outgoing transactions reserve funds immediately.
+                // Pending incoming transactions are not spendable until mined.
                 balance -= pending.Amount;
             }
         }
