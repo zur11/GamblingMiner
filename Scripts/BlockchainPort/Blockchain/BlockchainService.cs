@@ -81,13 +81,42 @@ public sealed class BlockchainService
 
     public bool AddTransactionToPendingTransactions(Transaction transaction)
     {
+        if (transaction.Amount <= 0m)
+        {
+            return false;
+        }
+
+        if (ContainsTransactionId(transaction.TransactionId))
+        {
+            return false;
+        }
+
         if (!ValidateTransactionSignature(transaction))
         {
             return false;
         }
 
+        if (transaction.Sender != CoinbaseSender)
+        {
+            decimal spendableBalance = GetAddressSpendableBalance(transaction.Sender);
+            if (spendableBalance < transaction.Amount)
+            {
+                return false;
+            }
+        }
+
         PendingTransactions.Add(transaction);
         return true;
+    }
+
+    public bool ContainsTransactionId(string transactionId)
+    {
+        if (PendingTransactions.Any(t => t.TransactionId == transactionId))
+        {
+            return true;
+        }
+
+        return Chain.Any(b => b.Transactions.Any(t => t.TransactionId == transactionId));
     }
 
     public string HashBlock(string previousBlockHash, object currentBlockData, long nonce)
@@ -210,6 +239,24 @@ public sealed class BlockchainService
             AddressTransactions = addressTransactions,
             AddressBalance = balance
         };
+    }
+
+    public decimal GetAddressSpendableBalance(string address)
+    {
+        decimal balance = GetAddressData(address).AddressBalance;
+        foreach (Transaction pending in PendingTransactions)
+        {
+            if (pending.Recipient == address)
+            {
+                balance += pending.Amount;
+            }
+            else if (pending.Sender == address)
+            {
+                balance -= pending.Amount;
+            }
+        }
+
+        return balance;
     }
 
     public bool TryReplaceChain(List<Block> newChain, List<Transaction> newPendingTransactions)

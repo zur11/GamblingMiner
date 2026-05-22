@@ -63,17 +63,22 @@ text = "Transactions"
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="AmountInput" type="LineEdit" parent="Margin/MainVBox/Panels/Left/TxControls"]
+[node name="FromNodeOption" type="OptionButton" parent="Margin/MainVBox/Panels/Left/TxControls"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(150, 0)
+custom_minimum_size = Vector2(110, 0)
 layout_mode = 2
-placeholder_text = "Amount"
-text = "1.00"
 
-[node name="RecipientOption" type="OptionButton" parent="Margin/MainVBox/Panels/Left/TxControls"]
+[node name="ToNodeOption" type="OptionButton" parent="Margin/MainVBox/Panels/Left/TxControls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(110, 0)
+layout_mode = 2
+
+[node name="AmountInput" type="LineEdit" parent="Margin/MainVBox/Panels/Left/TxControls"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(120, 0)
 layout_mode = 2
+placeholder_text = "Amount"
+text = "1.00"
 
 [node name="CreateTxButton" type="Button" parent="Margin/MainVBox/Panels/Left/TxControls"]
 unique_name_in_owner = true
@@ -87,6 +92,11 @@ text = "Mining / Consensus"
 [node name="MiningControls" type="HBoxContainer" parent="Margin/MainVBox/Panels/Left"]
 layout_mode = 2
 theme_override_constants/separation = 6
+
+[node name="MinerNodeOption" type="OptionButton" parent="Margin/MainVBox/Panels/Left/MiningControls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
 
 [node name="MineButton" type="Button" parent="Margin/MainVBox/Panels/Left/MiningControls"]
 unique_name_in_owner = true
@@ -156,6 +166,7 @@ text = "Find Block"
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 220)
 bbcode_enabled = true
 fit_content = false
 scroll_active = true
