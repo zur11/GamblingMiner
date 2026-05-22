@@ -13,13 +13,22 @@ public static class CryptoUtils
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
-    public static (string publicKeyBase64, string privateKeyBase64) GenerateWallet()
+    public static (string address, string publicKeyBase64, string privateKeyBase64) GenerateWallet()
     {
         using ECDsa ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        string publicKeyBase64 = Convert.ToBase64String(ecdsa.ExportSubjectPublicKeyInfo());
         return (
-            Convert.ToBase64String(ecdsa.ExportSubjectPublicKeyInfo()),
+            DeriveAddressFromPublicKey(publicKeyBase64),
+            publicKeyBase64,
             Convert.ToBase64String(ecdsa.ExportPkcs8PrivateKey())
         );
+    }
+
+    public static string DeriveAddressFromPublicKey(string publicKeyBase64)
+    {
+        byte[] publicKeyBytes = Convert.FromBase64String(publicKeyBase64);
+        string digest = Convert.ToHexString(SHA256.HashData(publicKeyBytes)).ToLowerInvariant();
+        return digest[..40];
     }
 
     public static string Sign(string payload, string privateKeyBase64)

@@ -22,65 +22,172 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/margin_left = 24
-theme_override_constants/margin_top = 24
-theme_override_constants/margin_right = 24
-theme_override_constants/margin_bottom = 24
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
 
-[node name="VBox" type="VBoxContainer" parent="Margin"]
+[node name="MainVBox" type="VBoxContainer" parent="Margin"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 10
 
-[node name="Title" type="Label" parent="Margin/VBox"]
+[node name="Title" type="Label" parent="Margin/MainVBox"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 24
 text = "Blockchain Simulator Explorer"
 
-[node name="ChainInfoLabel" type="Label" parent="Margin/VBox"]
+[node name="ChainInfoLabel" type="Label" parent="Margin/MainVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Chain length: - | Pending tx: -"
 
-[node name="Controls" type="HBoxContainer" parent="Margin/VBox"]
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="AmountInput" type="LineEdit" parent="Margin/VBox/Controls"]
+[node name="ActionFeedbackLabel" type="Label" parent="Margin/MainVBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(160, 0)
 layout_mode = 2
-placeholder_text = "Amount (e.g. 1.25)"
+text = "Actions log"
+
+[node name="Panels" type="HSplitContainer" parent="Margin/MainVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+split_offset = 580
+
+[node name="Left" type="VBoxContainer" parent="Margin/MainVBox/Panels"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="TxTitle" type="Label" parent="Margin/MainVBox/Panels/Left"]
+layout_mode = 2
+text = "Transactions"
+
+[node name="TxControls" type="HBoxContainer" parent="Margin/MainVBox/Panels/Left"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="AmountInput" type="LineEdit" parent="Margin/MainVBox/Panels/Left/TxControls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+placeholder_text = "Amount"
 text = "1.00"
 
-[node name="RecipientOption" type="OptionButton" parent="Margin/VBox/Controls"]
+[node name="RecipientOption" type="OptionButton" parent="Margin/MainVBox/Panels/Left/TxControls"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(130, 0)
+custom_minimum_size = Vector2(120, 0)
 layout_mode = 2
 
-[node name="CreateTxButton" type="Button" parent="Margin/VBox/Controls"]
+[node name="CreateTxButton" type="Button" parent="Margin/MainVBox/Panels/Left/TxControls"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Create Tx"
 
-[node name="MineButton" type="Button" parent="Margin/VBox/Controls"]
+[node name="MiningTitle" type="Label" parent="Margin/MainVBox/Panels/Left"]
+layout_mode = 2
+text = "Mining / Consensus"
+
+[node name="MiningControls" type="HBoxContainer" parent="Margin/MainVBox/Panels/Left"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="MineButton" type="Button" parent="Margin/MainVBox/Panels/Left/MiningControls"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Mine Block"
 
-[node name="ConsensusButton" type="Button" parent="Margin/VBox/Controls"]
+[node name="ConsensusButton" type="Button" parent="Margin/MainVBox/Panels/Left/MiningControls"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Run Consensus"
 
-[node name="RefreshButton" type="Button" parent="Margin/VBox/Controls"]
+[node name="RefreshButton" type="Button" parent="Margin/MainVBox/Panels/Left/MiningControls"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Refresh"
 
-[node name="LatestBlockLabel" type="RichTextLabel" parent="Margin/VBox"]
+[node name="LookupTitle" type="Label" parent="Margin/MainVBox/Panels/Left"]
+layout_mode = 2
+text = "Lookups"
+
+[node name="TxLookup" type="HBoxContainer" parent="Margin/MainVBox/Panels/Left"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="TxLookupInput" type="LineEdit" parent="Margin/MainVBox/Panels/Left/TxLookup"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Transaction hash"
+
+[node name="LookupTxButton" type="Button" parent="Margin/MainVBox/Panels/Left/TxLookup"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Find Tx"
+
+[node name="AddressLookup" type="HBoxContainer" parent="Margin/MainVBox/Panels/Left"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="AddressLookupInput" type="LineEdit" parent="Margin/MainVBox/Panels/Left/AddressLookup"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Address (hex)"
+
+[node name="LookupAddressButton" type="Button" parent="Margin/MainVBox/Panels/Left/AddressLookup"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Find Address"
+
+[node name="BlockLookup" type="HBoxContainer" parent="Margin/MainVBox/Panels/Left"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="BlockLookupInput" type="LineEdit" parent="Margin/MainVBox/Panels/Left/BlockLookup"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+placeholder_text = "Block #"
+
+[node name="LookupBlockButton" type="Button" parent="Margin/MainVBox/Panels/Left/BlockLookup"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Find Block"
+
+[node name="LookupResultLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Left"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 bbcode_enabled = true
+fit_content = false
 scroll_active = true
-fit_content = true
+selection_enabled = true
+
+[node name="Right" type="VBoxContainer" parent="Margin/MainVBox/Panels"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="LatestBlockLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Right"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = false
+scroll_active = true
+selection_enabled = true
+
+[node name="NetworkStatusLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Right"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = false
+scroll_active = true
+selection_enabled = true
+
+[node name="AddressDirectoryLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Right"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = false
+scroll_active = true
+selection_enabled = true

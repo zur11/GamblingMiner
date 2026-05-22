@@ -71,6 +71,11 @@ public sealed class BlockchainService
             return false;
         }
 
+        if (!string.Equals(tx.Sender, CryptoUtils.DeriveAddressFromPublicKey(tx.PublicKeyBase64), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
         return CryptoUtils.Verify(BuildTransactionPayload(tx), tx.SignatureBase64, tx.PublicKeyBase64);
     }
 
@@ -176,6 +181,11 @@ public sealed class BlockchainService
             }
         }
         return (null, null);
+    }
+
+    public Transaction? GetPendingTransaction(string transactionId)
+    {
+        return PendingTransactions.FirstOrDefault(t => t.TransactionId == transactionId);
     }
 
     public AddressData GetAddressData(string address)

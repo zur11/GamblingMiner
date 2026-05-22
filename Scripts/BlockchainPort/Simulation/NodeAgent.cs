@@ -5,6 +5,7 @@ namespace GodotBlockchainPort.Simulation;
 public sealed class NodeAgent
 {
     public string NodeId { get; }
+    public string WalletAddress { get; }
     public string WalletPublicKey { get; }
     public string WalletPrivateKey { get; }
     public BlockchainService Blockchain { get; } = new();
@@ -12,12 +13,12 @@ public sealed class NodeAgent
     public NodeAgent(string nodeId)
     {
         NodeId = nodeId;
-        (WalletPublicKey, WalletPrivateKey) = CryptoUtils.GenerateWallet();
+        (WalletAddress, WalletPublicKey, WalletPrivateKey) = CryptoUtils.GenerateWallet();
     }
 
-    public Transaction CreateSignedTransaction(decimal amount, string recipientPublicKey)
+    public Transaction CreateSignedTransaction(decimal amount, string recipientAddress)
     {
-        Transaction tx = Blockchain.CreateUnsignedTransaction(amount, WalletPublicKey, recipientPublicKey);
+        Transaction tx = Blockchain.CreateUnsignedTransaction(amount, WalletAddress, recipientAddress);
         string payload = BlockchainService.BuildTransactionPayload(tx);
         tx.SignatureBase64 = CryptoUtils.Sign(payload, WalletPrivateKey);
         tx.PublicKeyBase64 = WalletPublicKey;
@@ -30,14 +31,14 @@ public sealed class NodeAgent
         {
             Amount = amount,
             Sender = BlockchainService.CoinbaseSender,
-            Recipient = WalletPublicKey,
+            Recipient = WalletAddress,
             TransactionId = System.Guid.NewGuid().ToString("N")
         };
     }
 
     public Block MinePendingTransactions(decimal rewardAmount = 12.5m)
     {
-        Blockchain.AddTransactionToPendingTransactions(CreateCoinbaseReward(rewardAmount));
+        // Mine current pending transactions first.
         Block lastBlock = Blockchain.GetLastBlock();
         var currentBlockData = new
         {
@@ -47,6 +48,10 @@ public sealed class NodeAgent
 
         long nonce = Blockchain.ProofOfWork(lastBlock.Hash, currentBlockData);
         string hash = Blockchain.HashBlock(lastBlock.Hash, currentBlockData, nonce);
-        return Blockchain.CreateNewBlock(nonce, lastBlock.Hash, hash);
+        Block minedBlock = Blockchain.CreateNewBlock(nonce, lastBlock.Hash, hash);
+
+        // Reward becomes pending for the next block, matching your expected flow.
+        Blockchain.AddTransactionToPendingTransactions(CreateCoinbaseReward(rewardAmount));
+        return minedBlock;
     }
 }
