@@ -195,6 +195,16 @@ offset_bottom = 509.0
 theme_override_font_sizes/font_size = 22
 text = "-"
 
+[node name="BlockchainStatusValue" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 781.0
+offset_top = 552.0
+offset_right = 1207.0
+offset_bottom = 676.0
+theme_override_font_sizes/font_size = 18
+text = "Blockchain status..."
+
 [node name="BetsPerSecondInput" type="SpinBox" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
@@ -215,6 +225,7 @@ offset_right = 1850.0
 offset_bottom = 429.0
 
 [node name="ScrollContainer" type="ScrollContainer" parent="."]
+visible = false
 custom_minimum_size = Vector2(550, 540)
 layout_mode = 0
 offset_left = 720.0

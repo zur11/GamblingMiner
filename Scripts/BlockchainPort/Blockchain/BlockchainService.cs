@@ -9,7 +9,8 @@ namespace GodotBlockchainPort.Blockchain;
 public sealed class BlockchainService
 {
     public const string CoinbaseSender = "00";
-    public const string DifficultyPrefix = "0000";
+    public const string DifficultyPrefix = "00";
+    public const char DifficultyNextHexMaxInclusive = '6';
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -129,7 +130,7 @@ public sealed class BlockchainService
     {
         long nonce = 0;
         string hash = HashBlock(previousBlockHash, currentBlockData, nonce);
-        while (!hash.StartsWith(DifficultyPrefix, StringComparison.Ordinal))
+        while (!IsHashAtTargetDifficulty(hash))
         {
             nonce++;
             hash = HashBlock(previousBlockHash, currentBlockData, nonce);
@@ -157,7 +158,7 @@ public sealed class BlockchainService
                 currentBlock.Nonce
             );
 
-            if (!blockHash.StartsWith(DifficultyPrefix, StringComparison.Ordinal))
+            if (!IsHashAtTargetDifficulty(blockHash))
             {
                 validChain = false;
             }
@@ -187,7 +188,7 @@ public sealed class BlockchainService
             return false;
         }
 
-        if (!newBlock.Hash.StartsWith(DifficultyPrefix, StringComparison.Ordinal))
+        if (!IsHashAtTargetDifficulty(newBlock.Hash))
         {
             return false;
         }
@@ -269,5 +270,30 @@ public sealed class BlockchainService
         PendingTransactions.Clear();
         PendingTransactions.AddRange(newPendingTransactions);
         return true;
+    }
+
+    public static bool IsHashAtTargetDifficulty(string hash)
+    {
+        if (!hash.StartsWith(DifficultyPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (hash.Length <= DifficultyPrefix.Length)
+        {
+            return false;
+        }
+
+        char nextHex = hash[DifficultyPrefix.Length];
+        return nextHex is >= '0' and <= DifficultyNextHexMaxInclusive;
+    }
+
+    public static double GetExpectedAttemptsForCurrentDifficulty()
+    {
+        double prefixProbability = Math.Pow(16d, -DifficultyPrefix.Length);
+        int acceptedNextHexValues = (DifficultyNextHexMaxInclusive - '0') + 1;
+        double nextNibbleProbability = acceptedNextHexValues / 16d;
+        double successProbability = prefixProbability * nextNibbleProbability;
+        return 1d / successProbability;
     }
 }

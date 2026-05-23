@@ -35,4 +35,14 @@ public partial class CalendarTimeService : Node
 		SetLocalDateTime(DateTime.Now);
 		SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
 	}
+
+	public void AdvanceSeconds(double seconds)
+	{
+		if (seconds <= 0d)
+		{
+			return;
+		}
+
+		CurrentLocalDateTime = CurrentLocalDateTime.AddSeconds(seconds);
+	}
 }

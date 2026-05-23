@@ -76,6 +76,31 @@ public partial class NetworkRoot : Node
         return true;
     }
 
+    public bool TryMineSingleNonceAttempt(string minerNodeId, out Block? minedBlock)
+    {
+        minedBlock = null;
+        if (!_nodesById.TryGetValue(minerNodeId, out NodeAgent? miner))
+        {
+            return false;
+        }
+
+        minedBlock = miner.TryMineSingleNonceAttempt();
+        if (minedBlock is null)
+        {
+            return false;
+        }
+
+        _network.BroadcastBlock(miner.NodeId, minedBlock);
+        Transaction? rewardTx = miner.Blockchain.PendingTransactions
+            .LastOrDefault(t => t.Sender == BlockchainService.CoinbaseSender && t.Recipient == miner.WalletAddress);
+        if (rewardTx is not null)
+        {
+            _network.BroadcastTransaction(miner.NodeId, rewardTx);
+        }
+
+        return true;
+    }
+
     public void RunConsensus()
     {
         _network.RunConsensusRound();
@@ -204,5 +229,26 @@ public partial class NetworkRoot : Node
         }
 
         return node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
+    }
+
+    public string BuildMiningStatusLine(string nodeId)
+    {
+        if (!_nodesById.TryGetValue(nodeId, out NodeAgent? node))
+        {
+            return "Node not found.";
+        }
+
+        int nextBlock = node.Blockchain.GetLastBlock().Index + 1;
+        int pending = node.Blockchain.PendingTransactions.Count;
+        long nonce = node.GetCurrentCandidateNonce();
+        double expected = BlockchainService.GetExpectedAttemptsForCurrentDifficulty();
+
+        return
+            $"Miner: {nodeId}\n" +
+            $"Next block target: #{nextBlock}\n" +
+            $"Current nonce attempt: {nonce}\n" +
+            $"Pending tx in candidate: {pending}\n" +
+            $"Expected attempts avg: {expected:0}\n" +
+            "Attempts per bet: 1";
     }
 }

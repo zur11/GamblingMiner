@@ -12,6 +12,8 @@ using Scripts.StateMachines;
 using Scripts.Controllers;
 using Scripts.History;
 using UI.StrategyControlPanel;
+using GodotBlockchainPort.Simulation;
+using GodotBlockchainPort.Blockchain;
 
 public partial class DiceGame : Control, IBetEventSource
 {
@@ -56,6 +58,9 @@ public partial class DiceGame : Control, IBetEventSource
 	private DateTime _autoBetVirtualTimestampUtc;
 	private bool _autoBetVirtualTimestampInitialized;
 	private DateTime? _autoBetLastExecutedTimestampUtc;
+	private NetworkRoot _blockchainNetworkRoot;
+	private const string ActiveMinerNodeId = "player";
+	private Label _blockchainStatusValue;
 
 	// Componentes UI
 	[Export]
@@ -111,8 +116,11 @@ public partial class DiceGame : Control, IBetEventSource
 		if (_calendarTimeService != null)
 		{
 			_calendarTimeService.SpeedMultiplier = 1.0d;
-			_calendarTimeService.IsRunning = true;
+			_calendarTimeService.IsRunning = false;
 		}
+		_blockchainNetworkRoot = new NetworkRoot();
+		_blockchainNetworkRoot.Name = "BlockchainNetworkRoot";
+		AddChild(_blockchainNetworkRoot);
 		var strategy = new ProgressiveBettingStrategy();
 
 		_session = CreateSession(false); // default manual
@@ -135,6 +143,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_chanceToWinValue = GetNode<Label>("%ChanceToWinValue");
 		_multiplierValue = GetNode<Label>("%MultiplierValue");
 		_currentAppTimeValue = GetNode<Label>("%CurrentAppTimeValue");
+		_blockchainStatusValue = GetNode<Label>("%BlockchainStatusValue");
 		_betsPerSecondInput = GetNode<SpinBox>("%BetsPerSecondInput");
 		_apsMultiplierSelector = GetNode<OptionButton>("%ApsMultiplierSelector");
 		_chanceSlider = GetNode<Slider>("%ChanceSlider");
@@ -304,6 +313,10 @@ public partial class DiceGame : Control, IBetEventSource
 
 		if (!running)
 		{
+			if (_calendarTimeService != null)
+			{
+				_calendarTimeService.IsRunning = false;
+			}
 			_autoBetTimer.Stop();
 			_autoBetAccumulatorGameSeconds = 0d;
 			_autoBetLastRateSampleMsec = 0;
@@ -319,6 +332,11 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		_userStatsService?.SetHighFrequencyMode(true);
+		if (_calendarTimeService != null)
+		{
+			_calendarTimeService.SpeedMultiplier = 1.0d;
+			_calendarTimeService.IsRunning = true;
+		}
 		EnsureSession(true);
 
 		_autoBetAccumulatorGameSeconds = 0d;
@@ -346,11 +364,19 @@ public partial class DiceGame : Control, IBetEventSource
 
 		if (paused)
 		{
+			if (_calendarTimeService != null)
+			{
+				_calendarTimeService.IsRunning = false;
+			}
 			_autoBetTimer.Stop();
 			_resultValue.Text = $"Auto paused | {GetAutoBetApsText()}";
 			return;
 		}
 
+		if (_calendarTimeService != null)
+		{
+			_calendarTimeService.IsRunning = true;
+		}
 		_resultValue.Text = $"Auto resumed | {GetAutoBetApsText()}";
 	}
 
@@ -389,6 +415,10 @@ public partial class DiceGame : Control, IBetEventSource
 
 		else if (session is AutoBetSession)
 		{
+			if (_calendarTimeService != null)
+			{
+				_calendarTimeService.IsRunning = false;
+			}
 			_autoBetTimer.Stop();
 			_autoBetAccumulatorGameSeconds = 0d;
 			_autoBetVirtualTimestampInitialized = false;
@@ -431,6 +461,9 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
+		DateTime effectiveTimestampUtc = timestampUtc
+			?? _calendarTimeService?.CurrentUtcDateTime
+			?? DateTime.UtcNow;
 
 		try
 		{
@@ -440,9 +473,11 @@ public partial class DiceGame : Control, IBetEventSource
 			}
 
 			var (result, betEvent, nextBet) =
-				_session.ExecuteNext(chance, isHigh, timestampUtc);
+				_session.ExecuteNext(chance, isHigh, effectiveTimestampUtc);
 
 			BetExecuted?.Invoke(GameId, betEvent);
+			ProcessBlockchainAttemptForBet();
+			AdvanceClockForBet();
 
 			_strategyPanel.SetNumberOfBets(
 				_session.IsInfinite ? 0 : _session.RemainingBets
@@ -475,17 +510,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void ExecuteAutoBetOnce(double intervalGameSeconds)
 	{
-		if (!_autoBetVirtualTimestampInitialized)
-		{
-			_autoBetVirtualTimestampUtc = DateTime.UtcNow;
-			_autoBetVirtualTimestampInitialized = true;
-		}
-
-		_autoBetLastExecutedTimestampUtc = _autoBetVirtualTimestampUtc;
-		ExecuteBet(_autoBetVirtualTimestampUtc);
-
-		// Advance virtual time by game-seconds-per-bet so bet history reflects APS even when multiple bets execute in one frame.
-		_autoBetVirtualTimestampUtc = _autoBetVirtualTimestampUtc.AddSeconds(intervalGameSeconds);
+		_autoBetLastExecutedTimestampUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		ExecuteBet(_autoBetLastExecutedTimestampUtc);
 	}
 
 	private void TickAutoBet(double realDeltaSeconds)
@@ -726,8 +752,45 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void UpdateCurrentAppTimeUI()
 	{
-		DateTime local = DateTime.Now;
+		DateTime local = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
 		_currentAppTimeValue.Text = local.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+		UpdateBlockchainStatusUI();
+	}
+
+	private void AdvanceClockForBet()
+	{
+		if (_session is AutoBetSession)
+		{
+			return;
+		}
+
+		_calendarTimeService?.AdvanceSeconds(1.0d);
+	}
+
+	private void ProcessBlockchainAttemptForBet()
+	{
+		if (_blockchainNetworkRoot is null)
+		{
+			return;
+		}
+
+		bool mined = _blockchainNetworkRoot.TryMineSingleNonceAttempt(ActiveMinerNodeId, out var minedBlock);
+		if (!mined || minedBlock is null)
+		{
+			return;
+		}
+
+		_resultValue.Text = $"BLOCK MINED #{minedBlock.Index} | {BuildAutoBetResultSuffix()}";
+	}
+
+	private void UpdateBlockchainStatusUI()
+	{
+		if (_blockchainStatusValue == null || _blockchainNetworkRoot == null)
+		{
+			return;
+		}
+
+		_blockchainStatusValue.Text = _blockchainNetworkRoot.BuildMiningStatusLine(ActiveMinerNodeId);
 	}
 
 
