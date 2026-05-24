@@ -11,6 +11,8 @@ public sealed class BlockchainService
     public const string CoinbaseSender = "00";
     public const string DifficultyPrefix = "00";
     public const char DifficultyNextHexMaxInclusive = '6';
+    public static readonly long GenesisTimestampUnixMs =
+        new DateTimeOffset(2009, 10, 3, 4, 59, 59, TimeSpan.Zero).ToUnixTimeMilliseconds();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -22,7 +24,8 @@ public sealed class BlockchainService
 
     public BlockchainService()
     {
-        CreateNewBlock(100, "0", "0");
+        Block genesis = CreateNewBlock(100, "0", "0");
+        genesis.Timestamp = GenesisTimestampUnixMs;
     }
 
     public Block CreateNewBlock(long nonce, string previousBlockHash, string hash)

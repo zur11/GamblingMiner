@@ -45,6 +45,8 @@ public partial class NetworkRoot : Node
         }
 
         LoadStateFromDisk();
+        NormalizeGenesisTimestampAcrossNodes();
+        PersistStateToDisk();
         _isInitialized = true;
     }
 
@@ -367,6 +369,15 @@ public partial class NetworkRoot : Node
 
     private static void WriteMonthlyChunks(List<Block> chain)
     {
+        string absoluteDir = ProjectSettings.GlobalizePath(BlockchainDir);
+        if (System.IO.Directory.Exists(absoluteDir))
+        {
+            foreach (string staleFile in System.IO.Directory.GetFiles(absoluteDir, "blocks-*.json"))
+            {
+                System.IO.File.Delete(staleFile);
+            }
+        }
+
         Dictionary<string, List<Block>> byMonth = chain
             .Where(b => b.Index > 0)
             .GroupBy(b => DateTimeOffset.FromUnixTimeMilliseconds(b.Timestamp).UtcDateTime.ToString("yyyy-MM"))
@@ -414,6 +425,19 @@ public partial class NetworkRoot : Node
         }
 
         DirAccess.MakeDirRecursiveAbsolute(ProjectSettings.GlobalizePath(path));
+    }
+
+    private static void NormalizeGenesisTimestampAcrossNodes()
+    {
+        foreach (NodeAgent node in SharedNodesById.Values)
+        {
+            if (node.Blockchain.Chain.Count <= 0)
+            {
+                continue;
+            }
+
+            node.Blockchain.Chain[0].Timestamp = BlockchainService.GenesisTimestampUnixMs;
+        }
     }
 
     private sealed class BlockchainStateSnapshot
