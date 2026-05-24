@@ -56,6 +56,7 @@ public partial class BlockExplorer : Control
         GetNode<Button>("%LookupTxButton").Pressed += OnLookupTransactionPressed;
         GetNode<Button>("%LookupAddressButton").Pressed += OnLookupAddressPressed;
         GetNode<Button>("%LookupBlockButton").Pressed += OnLookupBlockPressed;
+        GetNode<Button>("%BackToDiceButton").Pressed += OnBackToDicePressed;
 
         _fromNodeOption.ItemSelected += _ => RefreshTransferState();
         _toNodeOption.ItemSelected += _ => RefreshTransferState();
@@ -206,6 +207,13 @@ public partial class BlockExplorer : Control
         }
 
         _lookupResultLabel.Text = sb.ToString();
+    }
+
+    private void OnBackToDicePressed()
+    {
+        CalendarTimeService? calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+        calendar?.PersistCurrentTime();
+        GetTree().ChangeSceneToFile("res://Screens/DiceGame/DiceGame.tscn");
     }
 
     private void RefreshUi()

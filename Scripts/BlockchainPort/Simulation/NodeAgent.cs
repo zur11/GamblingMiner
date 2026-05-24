@@ -53,6 +53,8 @@ public sealed class NodeAgent
         long nonce = Blockchain.ProofOfWork(lastBlock.Hash, currentBlockData);
         string hash = Blockchain.HashBlock(lastBlock.Hash, currentBlockData, nonce);
         Block minedBlock = Blockchain.CreateNewBlock(nonce, lastBlock.Hash, hash);
+        minedBlock.MinedByNodeId = NodeId;
+        minedBlock.MinedByAddress = WalletAddress;
 
         // Reward becomes pending for the next block, matching your expected flow.
         Blockchain.AddTransactionToPendingTransactions(CreateCoinbaseReward(rewardAmount));
@@ -86,6 +88,8 @@ public sealed class NodeAgent
         }
 
         Block minedBlock = Blockchain.CreateNewBlock(_candidateNonce, lastBlock.Hash, hash);
+        minedBlock.MinedByNodeId = NodeId;
+        minedBlock.MinedByAddress = WalletAddress;
         Blockchain.AddTransactionToPendingTransactions(CreateCoinbaseReward(rewardAmount));
 
         _candidateNonce = 0;

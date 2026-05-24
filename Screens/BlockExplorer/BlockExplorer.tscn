@@ -46,6 +46,14 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Actions log"
 
+[node name="TopActions" type="HBoxContainer" parent="Margin/MainVBox"]
+layout_mode = 2
+
+[node name="BackToDiceButton" type="Button" parent="Margin/MainVBox/TopActions"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Back To DiceGame"
+
 [node name="Panels" type="HSplitContainer" parent="Margin/MainVBox"]
 layout_mode = 2
 size_flags_vertical = 3

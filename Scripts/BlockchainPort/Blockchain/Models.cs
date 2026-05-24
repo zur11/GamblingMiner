@@ -21,6 +21,8 @@ public sealed class Block
     public long Nonce { get; set; }
     public string Hash { get; set; } = string.Empty;
     public string PreviousBlockHash { get; set; } = string.Empty;
+    public string MinedByNodeId { get; set; } = string.Empty;
+    public string MinedByAddress { get; set; } = string.Empty;
 }
 
 public sealed class AddressData

@@ -36,6 +36,32 @@ public partial class CalendarTimeService : Node
 		SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
 	}
 
+	public void EnsureGameEpochInitialized()
+	{
+		const string statePath = "user://calendar_state.json";
+		if (!FileAccess.FileExists(statePath))
+		{
+			// Bitcoin genesis-era style game bootstrap date requested by design.
+			DateTime bootstrapLocal = new DateTime(2009, 10, 3, 0, 0, 0, DateTimeKind.Local);
+			SetLocalDateTime(bootstrapLocal);
+			SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
+			PersistCurrentTime();
+			return;
+		}
+
+		using FileAccess file = FileAccess.Open(statePath, FileAccess.ModeFlags.Read);
+		string value = file.GetAsText();
+		if (!long.TryParse(value, out long ticks))
+		{
+			SetLocalDateTime(new DateTime(2009, 10, 3, 0, 0, 0, DateTimeKind.Local));
+			PersistCurrentTime();
+			return;
+		}
+
+		SetLocalDateTime(new DateTime(ticks, DateTimeKind.Local));
+		SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
+	}
+
 	public void AdvanceSeconds(double seconds)
 	{
 		if (seconds <= 0d)
@@ -44,5 +70,12 @@ public partial class CalendarTimeService : Node
 		}
 
 		CurrentLocalDateTime = CurrentLocalDateTime.AddSeconds(seconds);
+	}
+
+	public void PersistCurrentTime()
+	{
+		const string statePath = "user://calendar_state.json";
+		using FileAccess file = FileAccess.Open(statePath, FileAccess.ModeFlags.Write);
+		file.StoreString(CurrentLocalDateTime.Ticks.ToString());
 	}
 }

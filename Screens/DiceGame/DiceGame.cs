@@ -60,7 +60,11 @@ public partial class DiceGame : Control, IBetEventSource
 	private DateTime? _autoBetLastExecutedTimestampUtc;
 	private NetworkRoot _blockchainNetworkRoot;
 	private const string ActiveMinerNodeId = "player";
+	private const double GameSecondsPerRealSecond = 48.0d; // 10 real min -> 8 game hours
+	private const double GameSecondsPerManualBet = 48.0d; // 1 manual bet tick
 	private Label _blockchainStatusValue;
+	private Button _openBlockExplorerBtn;
+	private int _lastAnnouncedMinedBlockIndex;
 
 	// Componentes UI
 	[Export]
@@ -112,10 +116,10 @@ public partial class DiceGame : Control, IBetEventSource
 			TransactionSource.Bet,
 			() => DateTime.UtcNow
 		);
-		_calendarTimeService?.SetNow();
+		_calendarTimeService?.EnsureGameEpochInitialized();
 		if (_calendarTimeService != null)
 		{
-			_calendarTimeService.SpeedMultiplier = 1.0d;
+			_calendarTimeService.SpeedMultiplier = GameSecondsPerRealSecond;
 			_calendarTimeService.IsRunning = false;
 		}
 		_blockchainNetworkRoot = new NetworkRoot();
@@ -152,6 +156,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_depositBtn = GetNode<Button>("%DepositBtn");
 		_openCalculatorBtn = GetNode<Button>("%OpenCalculatorBtn");
 		_openCalendarNavigatorBtn = GetNode<Button>("%OpenCalendarNavigatorBtn");
+		_openBlockExplorerBtn = GetNode<Button>("%OpenBlockExplorerBtn");
 		_martingaleCalculator = GetNode<MartingaleCalculator>("%MartingaleCalculator");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_financialStats = GetNode<FinancialBettingStats>("%FinancialBettingStats");
@@ -165,6 +170,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_depositBtn.Pressed += OnDepositBtnPressed;
 		_openCalculatorBtn.Pressed += OnOpenCalculatorPressed;
 		_openCalendarNavigatorBtn.Pressed += OnOpenCalendarNavigatorPressed;
+		_openBlockExplorerBtn.Pressed += OnOpenBlockExplorerPressed;
 		_depositPopup.DepositConfirmed += OnDepositPopupDepositConfirmed;
 		_depositPopup.DepositCanceled += OnDepositCanceled;
 		_martingaleCalculator.CloseRequested += OnCalculatorCloseRequested;
@@ -334,7 +340,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_userStatsService?.SetHighFrequencyMode(true);
 		if (_calendarTimeService != null)
 		{
-			_calendarTimeService.SpeedMultiplier = 1.0d;
+			_calendarTimeService.SpeedMultiplier = GameSecondsPerRealSecond;
 			_calendarTimeService.IsRunning = true;
 		}
 		EnsureSession(true);
@@ -441,6 +447,7 @@ public partial class DiceGame : Control, IBetEventSource
 	public override void _ExitTree()
 	{
 		_userStatsService?.FlushHistory();
+		_calendarTimeService?.PersistCurrentTime();
 	}
 
 	private void EnsureSession(bool isAuto)
@@ -669,6 +676,12 @@ public partial class DiceGame : Control, IBetEventSource
 		GetTree().ChangeSceneToFile("res://Screens/CalendarsNavigator/CalendarsNavigator.tscn");
 	}
 
+	private void OnOpenBlockExplorerPressed()
+	{
+		_calendarTimeService?.PersistCurrentTime();
+		GetTree().ChangeSceneToFile("res://Screens/BlockExplorer/BlockExplorer.tscn");
+	}
+
 	private void OnCalculatorCloseRequested()
 	{
 		_martingaleCalculator.Close();
@@ -764,7 +777,8 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		_calendarTimeService?.AdvanceSeconds(1.0d);
+		_calendarTimeService?.AdvanceSeconds(GameSecondsPerManualBet);
+		_calendarTimeService?.PersistCurrentTime();
 	}
 
 	private void ProcessBlockchainAttemptForBet()
@@ -780,7 +794,24 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		_resultValue.Text = $"BLOCK MINED #{minedBlock.Index} | {BuildAutoBetResultSuffix()}";
+		AnnounceLatestMinedBlockIfAny();
+	}
+
+	private void AnnounceLatestMinedBlockIfAny()
+	{
+		BlockchainMiningAnnouncement announcement = _blockchainNetworkRoot.GetLatestMiningAnnouncement();
+		if (announcement.BlockIndex <= 0 || announcement.BlockIndex == _lastAnnouncedMinedBlockIndex)
+		{
+			return;
+		}
+
+		_lastAnnouncedMinedBlockIndex = announcement.BlockIndex;
+		string streakText = announcement.CurrentMinerStreak > 1
+			? $" | streak {announcement.CurrentMinerStreak} (best {announcement.BestMinerStreak})"
+			: $" | best streak {announcement.BestMinerStreak}";
+		_resultValue.Modulate = announcement.WasPlayer ? Colors.LimeGreen : Colors.White;
+		_resultValue.Text =
+			$"BLOCK #{announcement.BlockIndex} mined by {announcement.MinerNodeId} | nonce {announcement.Nonce}{streakText}";
 	}
 
 	private void UpdateBlockchainStatusUI()
@@ -790,7 +821,11 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		_blockchainStatusValue.Text = _blockchainNetworkRoot.BuildMiningStatusLine(ActiveMinerNodeId);
+		BlockchainMiningAnnouncement announcement = _blockchainNetworkRoot.GetLatestMiningAnnouncement();
+		string minedDetails = announcement.BlockIndex <= 0
+			? "Last mined: n/a"
+			: $"Last mined #{announcement.BlockIndex} | nonce {announcement.Nonce} | miner {announcement.MinerNodeId}\nHash: {announcement.BlockHash}\nMiner address: {announcement.MinerAddress}";
+		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(ActiveMinerNodeId)}\n{minedDetails}";
 	}
 
 
@@ -834,6 +869,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void UpdateResultUI(DiceResult result)
 	{
+		_resultValue.Modulate = Colors.White;
 		string signedProfit = Money.FormatSignedAdaptive(result.Profit);
 		if (result.IsWin)
 		{
