@@ -1,8 +1,8 @@
 [gd_scene load_steps=2 format=3 uid="uid://drs5mewqvl7kt"]
 
-[ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://GameComponents/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
+[ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://UI/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
 
-[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput")]
+[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_profitStopModeToggle")]
 layout_mode = 3
 anchor_right = 0.818
 anchor_bottom = 0.19700001
@@ -24,6 +24,8 @@ _increasePercentageInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercent
 _numberOfBetsInput = NodePath("VBoxContainer/GridContainer/NumberOfBetsContainer/NumberOfBetsInput")
 _stopOnProfitInput = NodePath("VBoxContainer/GridContainer/StopOnProfitContainer/StopOnProfitInput")
 _stopOnLossInput = NodePath("VBoxContainer/GridContainer/StopOnLossContainer/StopOnLossInput")
+_stopOnBlockMinedToggle = NodePath("VBoxContainer/GridContainer/StopOnBlockMinedContainer/StopOnBlockMinedToggle")
+_profitStopModeToggle = NodePath("VBoxContainer/GridContainer/ProfitStopModeContainer/ProfitStopModeToggle")
 
 [node name="VBoxContainer" type="VBoxContainer" parent="."]
 layout_mode = 0
@@ -173,3 +175,31 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 70
 placeholder_text = "0.00000000"
 max_length = 16
+
+[node name="StopOnBlockMinedContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
+layout_mode = 2
+
+[node name="StopOnBlockMinedText" type="Label" parent="VBoxContainer/GridContainer/StopOnBlockMinedContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 42
+text = "Stop on block"
+
+[node name="StopOnBlockMinedToggle" type="Button" parent="VBoxContainer/GridContainer/StopOnBlockMinedContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 34
+toggle_mode = true
+text = "Stop Block: OFF"
+
+[node name="ProfitStopModeContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
+layout_mode = 2
+
+[node name="ProfitStopModeText" type="Label" parent="VBoxContainer/GridContainer/ProfitStopModeContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 42
+text = "Profit/Loss mode"
+
+[node name="ProfitStopModeToggle" type="Button" parent="VBoxContainer/GridContainer/ProfitStopModeContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+toggle_mode = true
+text = "P/L Mode: Session"

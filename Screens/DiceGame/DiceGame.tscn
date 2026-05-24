@@ -35,6 +35,7 @@ theme_override_font_sizes/font_size = 50
 text = "Balance"
 
 [node name="ResultText" type="Label" parent="UiTextLabels"]
+visible = false
 layout_mode = 0
 offset_left = 6.0
 offset_top = 204.0
@@ -72,55 +73,55 @@ text = "Payout mult:"
 
 [node name="MultiplierText2" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 1391.0
-offset_top = 537.0
-offset_right = 1450.0
-offset_bottom = 572.0
+offset_left = 802.0
+offset_top = 574.0
+offset_right = 861.0
+offset_bottom = 609.0
 theme_override_font_sizes/font_size = 25
 text = "Mult"
 
 [node name="BetTimeText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 1296.0
-offset_top = 537.0
-offset_right = 1355.0
-offset_bottom = 572.0
+offset_left = 706.0
+offset_top = 574.0
+offset_right = 765.0
+offset_bottom = 609.0
 theme_override_font_sizes/font_size = 25
 text = "Time"
 
 [node name="BetAmountText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 1498.0
-offset_top = 537.0
-offset_right = 1539.0
-offset_bottom = 572.0
+offset_left = 907.0
+offset_top = 574.0
+offset_right = 948.0
+offset_bottom = 609.0
 theme_override_font_sizes/font_size = 25
 text = "Bet"
 
 [node name="ProfitAmountText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 1625.0
-offset_top = 537.0
-offset_right = 1770.0
-offset_bottom = 572.0
+offset_left = 1036.0
+offset_top = 574.0
+offset_right = 1181.0
+offset_bottom = 609.0
 theme_override_font_sizes/font_size = 25
 text = "Profit/Loss"
 
 [node name="CurrentAppTimeText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 1467.0
-offset_top = 447.0
+offset_top = 467.0
 offset_right = 1807.0
-offset_bottom = 478.0
+offset_bottom = 498.0
 theme_override_font_sizes/font_size = 22
 text = "Current app time:"
 
 [node name="BetsPerSecondText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 1370.0
-offset_top = 395.0
-offset_right = 1706.0
-offset_bottom = 426.0
+offset_left = 1300.0
+offset_top = 563.0
+offset_right = 1636.0
+offset_bottom = 594.0
 theme_override_font_sizes/font_size = 22
 text = "Auto bets per second:"
 
@@ -136,6 +137,7 @@ text = "1.00000000"
 
 [node name="ResultValue" type="Label" parent="."]
 unique_name_in_owner = true
+visible = false
 layout_mode = 0
 offset_left = 11.0
 offset_top = 294.0
@@ -189,29 +191,29 @@ text = "x 1.9804"
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 1462.0
-offset_top = 478.0
+offset_top = 498.0
 offset_right = 1812.0
-offset_bottom = 509.0
+offset_bottom = 529.0
 theme_override_font_sizes/font_size = 22
 text = "-"
 
 [node name="BlockchainStatusValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 781.0
-offset_top = 552.0
-offset_right = 1207.0
-offset_bottom = 676.0
+offset_left = 1303.0
+offset_top = 608.0
+offset_right = 1729.0
+offset_bottom = 732.0
 theme_override_font_sizes/font_size = 18
 text = "Blockchain status..."
 
 [node name="BetsPerSecondInput" type="SpinBox" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 1598.0
-offset_top = 397.0
-offset_right = 1742.0
-offset_bottom = 429.0
+offset_left = 1537.0
+offset_top = 565.0
+offset_right = 1681.0
+offset_bottom = 597.0
 min_value = 1.0
 max_value = 9.0
 value = 1.0
@@ -219,10 +221,10 @@ value = 1.0
 [node name="ApsMultiplierSelector" type="OptionButton" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 1750.0
-offset_top = 397.0
-offset_right = 1850.0
-offset_bottom = 429.0
+offset_left = 1697.0
+offset_top = 565.0
+offset_right = 1797.0
+offset_bottom = 597.0
 
 [node name="ScrollContainer" type="ScrollContainer" parent="."]
 visible = false
@@ -238,12 +240,12 @@ unique_name_in_owner = true
 layout_mode = 2
 
 [node name="ScrollContainer2" type="ScrollContainer" parent="."]
-custom_minimum_size = Vector2(550, 500)
+custom_minimum_size = Vector2(550, 300)
 layout_mode = 0
-offset_left = 1296.0
-offset_top = 580.0
-offset_right = 1846.0
-offset_bottom = 1080.0
+offset_left = 705.0
+offset_top = 610.0
+offset_right = 1255.0
+offset_bottom = 1073.0
 
 [node name="BetHistoryContainer" parent="ScrollContainer2" instance=ExtResource("3_usic0")]
 layout_mode = 2
@@ -253,9 +255,9 @@ unique_name_in_owner = true
 layout_mode = 0
 offset_left = 28.0
 offset_top = 436.0
-offset_right = 515.0
+offset_right = 265.0
 offset_bottom = 527.0
-theme_override_font_sizes/font_size = 60
+theme_override_font_sizes/font_size = 40
 toggle_mode = true
 text = "Betting Low"
 
@@ -272,10 +274,10 @@ text = "Deposit"
 [node name="OpenCalculatorBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 540.0
-offset_top = 439.0
-offset_right = 954.0
-offset_bottom = 516.0
+offset_left = 4.0
+offset_top = 204.0
+offset_right = 340.0
+offset_bottom = 281.0
 theme_override_font_sizes/font_size = 38
 text = "Martingale Calc"
 
@@ -293,10 +295,10 @@ text = "Calendar Navigator"
 [node name="OpenBlockExplorerBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 1006.0
-offset_top = 441.0
-offset_right = 1386.0
-offset_bottom = 518.0
+offset_left = 3.0
+offset_top = 289.0
+offset_right = 340.0
+offset_bottom = 366.0
 theme_override_font_sizes/font_size = 32
 text = "Block Explorer"
 

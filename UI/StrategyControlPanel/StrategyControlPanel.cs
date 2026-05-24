@@ -14,6 +14,8 @@ namespace UI.StrategyControlPanel
 		public event Action<bool> AutoPauseToggled;
 		public event Action<string> BetAmountInputChanged;
 		public event Action StrategyConfigChanged;
+		public event Action StopOnBlockMinedDoubleClicked;
+		public event Action ProfitStopModeDoubleClicked;
 
         // --- Validación decimal ---
         private static readonly Regex BetRegex =
@@ -49,6 +51,14 @@ namespace UI.StrategyControlPanel
 		private LineEdit _stopOnProfitInput;
 		[Export]
 		private LineEdit _stopOnLossInput;
+		[Export]
+		private Button _stopOnBlockMinedToggle;
+		[Export]
+		private Button _profitStopModeToggle;
+
+		private double _lastStopOnBlockMinedPressAt;
+		private double _lastProfitStopModePressAt;
+		private const double DoubleClickSeconds = 0.35d;
 
         // --- Propiedades API ---
         public decimal BetAmount
@@ -91,6 +101,9 @@ namespace UI.StrategyControlPanel
 				return 0;
 			}
 		}
+
+		public bool StopOnBlockMinedEnabled => _stopOnBlockMinedToggle?.ButtonPressed ?? false;
+		public bool UseProgressionAnchorStops => _profitStopModeToggle?.ButtonPressed ?? false;
 
 		public void SetBetAmount(decimal amount)
 		{
@@ -154,6 +167,8 @@ namespace UI.StrategyControlPanel
 			_increasePercentageInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
 			_stopOnLossInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
 			_numberOfBetsInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
+			_stopOnBlockMinedToggle.Pressed += OnStopOnBlockMinedTogglePressed;
+			_profitStopModeToggle.Pressed += OnProfitStopModeTogglePressed;
 		}
 
 		private void OnBetOncePressed()
@@ -216,6 +231,40 @@ namespace UI.StrategyControlPanel
 			BetAmountInputChanged?.Invoke(_betAmountInput.Text);
 		}
 
+		private void OnStopOnBlockMinedTogglePressed()
+		{
+			_stopOnBlockMinedToggle.Text = _stopOnBlockMinedToggle.ButtonPressed
+				? "Stop Block: ON"
+				: "Stop Block: OFF";
+			CheckDoubleClickAndEmit(
+				ref _lastStopOnBlockMinedPressAt,
+				() => StopOnBlockMinedDoubleClicked?.Invoke()
+			);
+			StrategyConfigChanged?.Invoke();
+		}
+
+		private void OnProfitStopModeTogglePressed()
+		{
+			_profitStopModeToggle.Text = _profitStopModeToggle.ButtonPressed
+				? "P/L Mode: Anchor"
+				: "P/L Mode: Session";
+			CheckDoubleClickAndEmit(
+				ref _lastProfitStopModePressAt,
+				() => ProfitStopModeDoubleClicked?.Invoke()
+			);
+			StrategyConfigChanged?.Invoke();
+		}
+
+		private void CheckDoubleClickAndEmit(ref double lastPressedAt, Action emit)
+		{
+			double now = Time.GetTicksMsec() / 1000.0d;
+			if ((now - lastPressedAt) <= DoubleClickSeconds)
+			{
+				emit();
+			}
+			lastPressedAt = now;
+		}
+
 		public BettingStrategyConfig BuildConfig()
 		{
 			return new BettingStrategyConfig
@@ -225,7 +274,9 @@ namespace UI.StrategyControlPanel
 				IncreaseOnLoss = !IncreasingOnWin,
 				IncreaseOnWin = IncreasingOnWin,
 				StopOnProfit = ParseDecimal(_stopOnProfitInput.Text),
-				StopOnLoss = ParseDecimal(_stopOnLossInput.Text)
+				StopOnLoss = ParseDecimal(_stopOnLossInput.Text),
+				StopOnBlockMined = StopOnBlockMinedEnabled,
+				UseProgressionAnchorStops = UseProgressionAnchorStops
 			};
 		}
 

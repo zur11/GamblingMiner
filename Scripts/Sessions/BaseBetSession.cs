@@ -139,15 +139,20 @@ namespace Scripts.Sessions
 
         protected virtual void ApplyStopConditions()
         {
+            decimal stopBaseline = _config.UseProgressionAnchorStops
+                ? ProgressionAnchorBalance
+                : SessionStartingBalance;
+            decimal stopProfitMetric = _wallet.Balance - stopBaseline;
+
             if (_config.StopOnProfit.HasValue &&
-                _sessionProfit >= _config.StopOnProfit.Value)
+                stopProfitMetric >= _config.StopOnProfit.Value)
             {
                 LastStopReason = IBettingStrategy.StopReason.StopOnProfit;
                 Stop(LastStopReason);
             }
 
             if (_config.StopOnLoss.HasValue &&
-                _sessionProfit <= -_config.StopOnLoss.Value)
+                stopProfitMetric <= -_config.StopOnLoss.Value)
             {
                 LastStopReason = IBettingStrategy.StopReason.StopOnLoss;
                 Stop(LastStopReason);

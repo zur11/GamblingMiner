@@ -65,6 +65,14 @@ public partial class DiceGame : Control, IBetEventSource
 	private Label _blockchainStatusValue;
 	private Button _openBlockExplorerBtn;
 	private int _lastAnnouncedMinedBlockIndex;
+	private ManualStopGate _manualStopGate = ManualStopGate.None;
+
+	private enum ManualStopGate
+	{
+		None,
+		BlockMined,
+		ProfitOrLoss
+	}
 
 	// Componentes UI
 	[Export]
@@ -186,6 +194,8 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.AutoPauseToggled += OnAutoPauseToggled;
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
+		_strategyPanel.StopOnBlockMinedDoubleClicked += OnStopOnBlockMinedDoubleClicked;
+		_strategyPanel.ProfitStopModeDoubleClicked += OnProfitStopModeDoubleClicked;
 		_betsPerSecondInput.ValueChanged += OnBetsPerSecondChanged;
 		_apsMultiplierSelector.ItemSelected += _ => OnBetsPerSecondChanged(0);
 		_session.OnStopped += OnSessionStopped;
@@ -343,7 +353,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_calendarTimeService.SpeedMultiplier = GameSecondsPerRealSecond;
 			_calendarTimeService.IsRunning = true;
 		}
-		EnsureSession(true);
+		StartOrRestartSession(true);
 
 		_autoBetAccumulatorGameSeconds = 0d;
 		_autoBetLastRateSampleMsec = 0;
@@ -415,6 +425,13 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		if (session is ManualBetSession)
 		{
+			_manualStopGate = session.LastStopReason switch
+			{
+				IBettingStrategy.StopReason.StopOnBlockMined => ManualStopGate.BlockMined,
+				IBettingStrategy.StopReason.StopOnProfit => ManualStopGate.ProfitOrLoss,
+				IBettingStrategy.StopReason.StopOnLoss => ManualStopGate.ProfitOrLoss,
+				_ => ManualStopGate.None
+			};
 			_strategyPanel.SetManualEnabled(false);
 			HandleSessionStopped(session, "Manual stopped");
 		}
@@ -461,6 +478,27 @@ public partial class DiceGame : Control, IBetEventSource
 		var config = _strategyPanel.BuildConfig();
 		_sessionStartBaseBet = config.BaseBet;
 
+		_session.Start(_strategyPanel.NumberOfBets, config);
+	}
+
+	private void StartOrRestartSession(bool isAuto)
+	{
+		if (_session != null && _session.IsRunning)
+		{
+			_session.Stop(IBettingStrategy.StopReason.ManualStop);
+		}
+
+		bool sameType =
+			(isAuto && _session is AutoBetSession) ||
+			(!isAuto && _session is ManualBetSession);
+		if (!sameType || _session == null)
+		{
+			_session = CreateSession(isAuto);
+			_session.OnStopped += OnSessionStopped;
+		}
+
+		var config = _strategyPanel.BuildConfig();
+		_sessionStartBaseBet = config.BaseBet;
 		_session.Start(_strategyPanel.NumberOfBets, config);
 	}
 
@@ -711,7 +749,9 @@ public partial class DiceGame : Control, IBetEventSource
 			IncreaseOnLoss = uiConfig.IncreaseOnLoss,
 			IncreaseOnWin = uiConfig.IncreaseOnWin,
 			StopOnProfit = uiConfig.StopOnProfit,
-			StopOnLoss = uiConfig.StopOnLoss
+			StopOnLoss = uiConfig.StopOnLoss,
+			StopOnBlockMined = uiConfig.StopOnBlockMined,
+			UseProgressionAnchorStops = uiConfig.UseProgressionAnchorStops
 		};
 		int chance = (int)_chanceSlider.Value;
 
@@ -788,13 +828,42 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		bool mined = _blockchainNetworkRoot.TryMineSingleNonceAttempt(ActiveMinerNodeId, out var minedBlock);
+		long gameUnixMs = new DateTimeOffset(_calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
+		bool mined = _blockchainNetworkRoot.TryMineSingleNonceAttempt(ActiveMinerNodeId, out var minedBlock, gameUnixMs);
 		if (!mined || minedBlock is null)
 		{
 			return;
 		}
 
 		AnnounceLatestMinedBlockIfAny();
+		if (_session != null && _session.IsRunning && _strategyPanel.StopOnBlockMinedEnabled)
+		{
+			_session.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
+		}
+	}
+
+	private void OnStopOnBlockMinedDoubleClicked()
+	{
+		if (_manualStopGate != ManualStopGate.BlockMined)
+		{
+			return;
+		}
+
+		_manualStopGate = ManualStopGate.None;
+		_strategyPanel.SetManualEnabled(true);
+		_resultValue.Text = "Manual re-enabled after Stop on Block.";
+	}
+
+	private void OnProfitStopModeDoubleClicked()
+	{
+		if (_manualStopGate != ManualStopGate.ProfitOrLoss)
+		{
+			return;
+		}
+
+		_manualStopGate = ManualStopGate.None;
+		_strategyPanel.SetManualEnabled(true);
+		_resultValue.Text = "Manual re-enabled after P/L stop.";
 	}
 
 	private void AnnounceLatestMinedBlockIfAny()

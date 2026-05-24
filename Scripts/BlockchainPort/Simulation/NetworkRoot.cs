@@ -85,7 +85,7 @@ public partial class NetworkRoot : Node
         return tx;
     }
 
-    public bool MineAndBroadcastBlock(string minerNodeId)
+    public bool MineAndBroadcastBlock(string minerNodeId, long? minedAtUnixMs = null)
     {
         EnsureInitialized();
         if (!SharedNodesById.TryGetValue(minerNodeId, out NodeAgent? miner))
@@ -95,11 +95,11 @@ public partial class NetworkRoot : Node
 
         decimal reward = GetBlockRewardForNextCandidate(miner);
         Block block = miner.MinePendingTransactions(reward);
-        HandleMinedBlock(miner, block);
+        HandleMinedBlock(miner, block, minedAtUnixMs);
         return true;
     }
 
-    public bool TryMineSingleNonceAttempt(string minerNodeId, out Block? minedBlock)
+    public bool TryMineSingleNonceAttempt(string minerNodeId, out Block? minedBlock, long? minedAtUnixMs = null)
     {
         EnsureInitialized();
         minedBlock = null;
@@ -115,12 +115,17 @@ public partial class NetworkRoot : Node
             return false;
         }
 
-        HandleMinedBlock(miner, minedBlock);
+        HandleMinedBlock(miner, minedBlock, minedAtUnixMs);
         return true;
     }
 
-    private static void HandleMinedBlock(NodeAgent miner, Block block)
+    private static void HandleMinedBlock(NodeAgent miner, Block block, long? minedAtUnixMs)
     {
+        if (minedAtUnixMs.HasValue)
+        {
+            block.Timestamp = minedAtUnixMs.Value;
+        }
+
         SharedNetwork.BroadcastBlock(miner.NodeId, block);
         Transaction? rewardTx = miner.Blockchain.PendingTransactions
             .LastOrDefault(t => t.Sender == BlockchainService.CoinbaseSender && t.Recipient == miner.WalletAddress);

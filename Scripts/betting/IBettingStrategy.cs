@@ -6,6 +6,7 @@ namespace Scripts.Betting
         {
             StopOnProfit,
             StopOnLoss,
+            StopOnBlockMined,
             InsufficientBalance,
             ManualStop,
             CounterCountReached,
