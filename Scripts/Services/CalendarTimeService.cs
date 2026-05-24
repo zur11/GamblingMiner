@@ -3,6 +3,9 @@ using System;
 
 public partial class CalendarTimeService : Node
 {
+	private static readonly DateTime GameStartLocal = new DateTime(2009, 1, 3, 18, 15, 6, DateTimeKind.Local);
+	private static readonly DateTime LegacyStartLocal = new DateTime(2009, 10, 3, 0, 0, 0, DateTimeKind.Local);
+
 	public DateTime CurrentLocalDateTime { get; private set; } = DateTime.Now;
 	public DateTime ExplorerSelectedLocalDateTime { get; private set; } = DateTime.Now;
 	public bool IsRunning { get; set; } = true;
@@ -41,9 +44,7 @@ public partial class CalendarTimeService : Node
 		const string statePath = "user://calendar_state.json";
 		if (!FileAccess.FileExists(statePath))
 		{
-			// Bitcoin genesis-era style game bootstrap date requested by design.
-			DateTime bootstrapLocal = new DateTime(2009, 10, 3, 0, 0, 0, DateTimeKind.Local);
-			SetLocalDateTime(bootstrapLocal);
+			SetLocalDateTime(GameStartLocal);
 			SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
 			PersistCurrentTime();
 			return;
@@ -53,12 +54,23 @@ public partial class CalendarTimeService : Node
 		string value = file.GetAsText();
 		if (!long.TryParse(value, out long ticks))
 		{
-			SetLocalDateTime(new DateTime(2009, 10, 3, 0, 0, 0, DateTimeKind.Local));
+			SetLocalDateTime(GameStartLocal);
 			PersistCurrentTime();
 			return;
 		}
 
-		SetLocalDateTime(new DateTime(ticks, DateTimeKind.Local));
+		DateTime loaded = new DateTime(ticks, DateTimeKind.Local);
+		// Migrate legacy bootstrap values to the updated genesis-adjacent start.
+		if (loaded == LegacyStartLocal || loaded == new DateTime(2009, 1, 3, 12, 0, 0, DateTimeKind.Local))
+		{
+			loaded = GameStartLocal;
+			SetLocalDateTime(loaded);
+			SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
+			PersistCurrentTime();
+			return;
+		}
+
+		SetLocalDateTime(loaded);
 		SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
 	}
 

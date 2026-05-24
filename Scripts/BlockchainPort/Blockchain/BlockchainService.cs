@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text;
 #nullable enable
 
 namespace GodotBlockchainPort.Blockchain;
@@ -11,8 +12,11 @@ public sealed class BlockchainService
     public const string CoinbaseSender = "00";
     public const string DifficultyPrefix = "00";
     public const char DifficultyNextHexMaxInclusive = '6';
+    public const string SatoshiAddress = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa";
+    public const string GenesisHeadline = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks.";
+    public const string BootstrapSecondBlockTxId = "bootstrap-satoshi-second-block-50btc";
     public static readonly long GenesisTimestampUnixMs =
-        new DateTimeOffset(2009, 10, 3, 4, 59, 59, TimeSpan.Zero).ToUnixTimeMilliseconds();
+        new DateTimeOffset(2009, 1, 3, 18, 15, 5, TimeSpan.Zero).ToUnixTimeMilliseconds();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -26,6 +30,26 @@ public sealed class BlockchainService
     {
         Block genesis = CreateNewBlock(100, "0", "0");
         genesis.Timestamp = GenesisTimestampUnixMs;
+        genesis.Transactions = new List<Transaction> { CreateGenesisCoinbase() };
+    }
+
+    public static string TextToHex(string text)
+    {
+        return Convert.ToHexString(Encoding.ASCII.GetBytes(text)).ToLowerInvariant();
+    }
+
+    public static Transaction CreateGenesisCoinbase()
+    {
+        return new Transaction
+        {
+            Amount = 50m,
+            Sender = CoinbaseSender,
+            Recipient = SatoshiAddress,
+            TransactionId = "genesis-coinbase",
+            InputDataText = GenesisHeadline,
+            InputDataHex = TextToHex(GenesisHeadline),
+            IsSpendable = false
+        };
     }
 
     public Block CreateNewBlock(long nonce, string previousBlockHash, string hash)
@@ -176,7 +200,8 @@ public sealed class BlockchainService
         bool correctGenesis = genesis.Nonce == 100
             && genesis.PreviousBlockHash == "0"
             && genesis.Hash == "0"
-            && genesis.Transactions.Count == 0;
+            && genesis.Transactions.Count >= 1
+            && genesis.Timestamp == GenesisTimestampUnixMs;
 
         return validChain && correctGenesis;
     }
@@ -234,6 +259,11 @@ public sealed class BlockchainService
         decimal balance = 0m;
         foreach (Transaction tx in addressTransactions)
         {
+            if (!tx.IsSpendable)
+            {
+                continue;
+            }
+
             if (tx.Recipient == address) balance += tx.Amount;
             else if (tx.Sender == address) balance -= tx.Amount;
         }

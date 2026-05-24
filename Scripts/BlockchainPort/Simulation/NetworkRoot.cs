@@ -46,6 +46,7 @@ public partial class NetworkRoot : Node
 
         LoadStateFromDisk();
         NormalizeGenesisTimestampAcrossNodes();
+        EnsureSecondBlockBootstrapPendingTx();
         PersistStateToDisk();
         _isInitialized = true;
     }
@@ -437,7 +438,40 @@ public partial class NetworkRoot : Node
             }
 
             node.Blockchain.Chain[0].Timestamp = BlockchainService.GenesisTimestampUnixMs;
+            if (node.Blockchain.Chain[0].Transactions.Count == 0)
+            {
+                node.Blockchain.Chain[0].Transactions.Add(BlockchainService.CreateGenesisCoinbase());
+            }
         }
+    }
+
+    private static void EnsureSecondBlockBootstrapPendingTx()
+    {
+        NodeAgent player = SharedNodesById[PlayerNodeId];
+        bool alreadyExists =
+            player.Blockchain.ContainsTransactionId(BlockchainService.BootstrapSecondBlockTxId);
+        if (alreadyExists || player.Blockchain.Chain.Count != 1)
+        {
+            return;
+        }
+
+        Transaction bootstrapTx = new()
+        {
+            Amount = 50m,
+            Sender = BlockchainService.CoinbaseSender,
+            Recipient = BlockchainService.SatoshiAddress,
+            TransactionId = BlockchainService.BootstrapSecondBlockTxId,
+            InputDataText = "Bootstrap payout to Satoshi address in block 2",
+            InputDataHex = BlockchainService.TextToHex("Bootstrap payout to Satoshi address in block 2"),
+            IsSpendable = true
+        };
+
+        if (!player.Blockchain.AddTransactionToPendingTransactions(bootstrapTx))
+        {
+            return;
+        }
+
+        SharedNetwork.BroadcastTransaction(player.NodeId, bootstrapTx);
     }
 
     private sealed class BlockchainStateSnapshot

@@ -11,6 +11,9 @@ public sealed class Transaction
     public string TransactionId { get; set; } = Guid.NewGuid().ToString("N");
     public string SignatureBase64 { get; set; } = string.Empty;
     public string PublicKeyBase64 { get; set; } = string.Empty;
+    public string InputDataHex { get; set; } = string.Empty;
+    public string InputDataText { get; set; } = string.Empty;
+    public bool IsSpendable { get; set; } = true;
 }
 
 public sealed class Block
