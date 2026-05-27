@@ -4,10 +4,10 @@
 
 [node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_profitStopModeToggle", "_autoRechargeToggle")]
 layout_mode = 3
-anchor_right = 0.818
-anchor_bottom = 0.19700001
-offset_right = -0.5600586
-offset_bottom = 0.23999023
+anchor_right = 0.48100004
+anchor_bottom = 0.30600002
+offset_right = 0.47991943
+offset_bottom = -0.480011
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_lmglg")
@@ -44,17 +44,17 @@ layout_mode = 2
 layout_mode = 2
 
 [node name="Control" type="Control" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer"]
-custom_minimum_size = Vector2(0, 70)
+custom_minimum_size = Vector2(0, 31)
 layout_mode = 2
 
 [node name="MaxBetAmountBtn" type="Button" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 40
+theme_override_font_sizes/font_size = 20
 text = "MAX"
 
 [node name="MinBetAmountBtn" type="Button" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 40
+theme_override_font_sizes/font_size = 20
 text = "MIN"
 
 [node name="AmountToBetContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer"]
@@ -62,12 +62,12 @@ layout_mode = 2
 
 [node name="BetText" type="Label" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/AmountToBetContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 70
+theme_override_font_sizes/font_size = 35
 text = "Amount to bet"
 
 [node name="BetInput" type="LineEdit" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/AmountToBetContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 70
+theme_override_font_sizes/font_size = 35
 placeholder_text = "0.00000000"
 max_length = 16
 
@@ -75,17 +75,17 @@ max_length = 16
 layout_mode = 2
 
 [node name="Control" type="Control" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer"]
-custom_minimum_size = Vector2(0, 70)
+custom_minimum_size = Vector2(0, 29)
 layout_mode = 2
 
 [node name="X2BetAmountBtn" type="Button" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 40
+theme_override_font_sizes/font_size = 20
 text = "X2"
 
 [node name="DivBy2BetAmountBtn" type="Button" parent="VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 40
+theme_override_font_sizes/font_size = 20
 text = "/2"
 
 [node name="IncreasePercentageContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer"]
@@ -93,7 +93,7 @@ layout_mode = 2
 
 [node name="IncreaseOnLossWinToggle" type="Button" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 70
+theme_override_font_sizes/font_size = 35
 toggle_mode = true
 text = "Increase on loss"
 
@@ -102,12 +102,12 @@ layout_mode = 2
 
 [node name="IncreaseOnLossInput" type="LineEdit" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer/HBoxContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 60
+theme_override_font_sizes/font_size = 30
 alignment = 1
 
 [node name="IncreaseOnLossText2" type="Label" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer/HBoxContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 70
+theme_override_font_sizes/font_size = 35
 text = "%"
 
 [node name="BetBtnsContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer"]
@@ -115,12 +115,12 @@ layout_mode = 2
 
 [node name="BetOnceBtn" type="Button" parent="VBoxContainer/HBoxContainer/BetBtnsContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 60
+theme_override_font_sizes/font_size = 30
 text = "Bet Once"
 
 [node name="AutoBetToggle" type="Button" parent="VBoxContainer/HBoxContainer/BetBtnsContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 60
+theme_override_font_sizes/font_size = 30
 toggle_mode = true
 text = "Auto Bet"
 
@@ -141,12 +141,12 @@ layout_mode = 2
 
 [node name="NumberOfBetsText" type="Label" parent="VBoxContainer/GridContainer/NumberOfBetsContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 70
+theme_override_font_sizes/font_size = 35
 text = "Number of bets"
 
 [node name="NumberOfBetsInput" type="LineEdit" parent="VBoxContainer/GridContainer/NumberOfBetsContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 60
+theme_override_font_sizes/font_size = 30
 alignment = 1
 
 [node name="StopOnProfitContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
@@ -154,12 +154,12 @@ layout_mode = 2
 
 [node name="StopOnProfitText" type="Label" parent="VBoxContainer/GridContainer/StopOnProfitContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 70
+theme_override_font_sizes/font_size = 35
 text = "Stop on profit"
 
 [node name="StopOnProfitInput" type="LineEdit" parent="VBoxContainer/GridContainer/StopOnProfitContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 70
+theme_override_font_sizes/font_size = 35
 placeholder_text = "0.00000000"
 max_length = 16
 
@@ -168,12 +168,12 @@ layout_mode = 2
 
 [node name="StopOnLossText" type="Label" parent="VBoxContainer/GridContainer/StopOnLossContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 70
+theme_override_font_sizes/font_size = 35
 text = "Stop on loss"
 
 [node name="StopOnLossInput" type="LineEdit" parent="VBoxContainer/GridContainer/StopOnLossContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 70
+theme_override_font_sizes/font_size = 35
 placeholder_text = "0.00000000"
 max_length = 16
 
@@ -182,12 +182,12 @@ layout_mode = 2
 
 [node name="StopOnBlockMinedText" type="Label" parent="VBoxContainer/GridContainer/StopOnBlockMinedContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 42
+theme_override_font_sizes/font_size = 35
 text = "Stop on block"
 
 [node name="StopOnBlockMinedToggle" type="Button" parent="VBoxContainer/GridContainer/StopOnBlockMinedContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 30
 toggle_mode = true
 text = "Stop Block: OFF"
 
@@ -196,7 +196,7 @@ layout_mode = 2
 
 [node name="ProfitStopModeText" type="Label" parent="VBoxContainer/GridContainer/ProfitStopModeContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 42
+theme_override_font_sizes/font_size = 35
 text = "Profit/Loss mode"
 
 [node name="ProfitStopModeToggle" type="Button" parent="VBoxContainer/GridContainer/ProfitStopModeContainer"]
@@ -210,7 +210,7 @@ layout_mode = 2
 
 [node name="AutoRechargeText" type="Label" parent="VBoxContainer/GridContainer/AutoRechargeContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 42
+theme_override_font_sizes/font_size = 35
 text = "Bankroll reload"
 
 [node name="AutoRechargeToggle" type="Button" parent="VBoxContainer/GridContainer/AutoRechargeContainer"]
