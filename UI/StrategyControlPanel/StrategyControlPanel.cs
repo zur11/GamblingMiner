@@ -16,6 +16,7 @@ namespace UI.StrategyControlPanel
 		public event Action StrategyConfigChanged;
 		public event Action StopOnBlockMinedDoubleClicked;
 		public event Action ProfitStopModeDoubleClicked;
+		public event Action<bool> AutoRechargeToggled;
 
         // --- Validación decimal ---
         private static readonly Regex BetRegex =
@@ -55,6 +56,8 @@ namespace UI.StrategyControlPanel
 		private Button _stopOnBlockMinedToggle;
 		[Export]
 		private Button _profitStopModeToggle;
+		[Export]
+		private Button _autoRechargeToggle;
 
 		private double _lastStopOnBlockMinedPressAt;
 		private double _lastProfitStopModePressAt;
@@ -104,6 +107,7 @@ namespace UI.StrategyControlPanel
 
 		public bool StopOnBlockMinedEnabled => _stopOnBlockMinedToggle?.ButtonPressed ?? false;
 		public bool UseProgressionAnchorStops => _profitStopModeToggle?.ButtonPressed ?? false;
+		public bool AutoRechargeEnabled => _autoRechargeToggle?.ButtonPressed ?? true;
 
 		public void SetBetAmount(decimal amount)
 		{
@@ -169,6 +173,7 @@ namespace UI.StrategyControlPanel
 			_numberOfBetsInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
 			_stopOnBlockMinedToggle.Pressed += OnStopOnBlockMinedTogglePressed;
 			_profitStopModeToggle.Pressed += OnProfitStopModeTogglePressed;
+			_autoRechargeToggle.Pressed += OnAutoRechargeTogglePressed;
 		}
 
 		private void OnBetOncePressed()
@@ -253,6 +258,13 @@ namespace UI.StrategyControlPanel
 				() => ProfitStopModeDoubleClicked?.Invoke()
 			);
 			StrategyConfigChanged?.Invoke();
+		}
+
+		private void OnAutoRechargeTogglePressed()
+		{
+			bool enabled = _autoRechargeToggle.ButtonPressed;
+			_autoRechargeToggle.Text = enabled ? "Auto Recharge: ON" : "Auto Recharge: OFF";
+			AutoRechargeToggled?.Invoke(enabled);
 		}
 
 		private void CheckDoubleClickAndEmit(ref double lastPressedAt, Action emit)

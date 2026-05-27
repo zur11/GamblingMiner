@@ -10,7 +10,7 @@ namespace Scripts.History
 {
 	public sealed class BetHistoryRepository
 	{
-		private const decimal DefaultInitialBalance = 1.00000000m;
+		private const decimal DefaultInitialBalance = 0m;
 		private const int FlushEveryMutations = 200;
 		private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(3);
 		private const int MaxJournalEntriesPerChunkFile = 10000;
@@ -565,6 +565,19 @@ namespace Scripts.History
 			{
 				Flush(force: false);
 			}
+		}
+
+		public void RollbackToUtc(DateTime checkpointUtc)
+		{
+			DateTime checkpoint = checkpointUtc.Kind == DateTimeKind.Utc
+				? checkpointUtc
+				: checkpointUtc.ToUniversalTime();
+
+			_records.RemoveAll(r => r != null && r.TimestampUtc > checkpoint);
+			_deposits.RemoveAll(d => d != null && d.TimestampUtc > checkpoint);
+			_pendingJournalEntries.Clear();
+			_mutationsSinceLastSave = 0;
+			RebuildJournalFromCurrentState();
 		}
 
 		private void MarkDirtyAndSaveIfNeeded()

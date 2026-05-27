@@ -5,6 +5,7 @@ using Scripts.User;
 using Scripts.Game;
 using Scripts.History;
 using System.Collections.Generic;
+using System.Linq;
 
 public partial class UserStatsService : Node
 {
@@ -110,6 +111,19 @@ public partial class UserStatsService : Node
         {
             BetHistory?.Flush();
         }
+    }
+
+    public void RollbackHistoryToUtc(DateTime checkpointUtc)
+    {
+        if (!EnableHistoryPersistence || BetHistory == null)
+        {
+            return;
+        }
+
+        BetHistory.EnsureAllChunksLoaded();
+        BetHistory.RollbackToUtc(checkpointUtc);
+        RebuildStatsFromLoadedHistory();
+        EmitStatsChangedImmediate();
     }
 
     public void EnsureFullHistoryLoaded()
@@ -233,5 +247,47 @@ public partial class UserStatsService : Node
         TimeZoneInfo tz = timezone ?? TimeZoneInfo.Local;
         DateTime utc = TimeZoneInfo.ConvertTimeToUtc(localDateTime, tz);
         return BetHistory.BuildStatsUpToUtc(utc);
+    }
+
+    private void RebuildStatsFromLoadedHistory()
+    {
+        Stats = new UserBettingStats();
+        if (BetHistory == null)
+        {
+            return;
+        }
+
+        var timeline = new List<(DateTime TimestampUtc, bool IsDeposit, DepositRecord Deposit, BetRecord Bet)>();
+        foreach (DepositRecord d in BetHistory.Deposits)
+        {
+            timeline.Add((d.TimestampUtc, true, d, null));
+        }
+        foreach (BetRecord b in BetHistory.Records)
+        {
+            timeline.Add((b.TimestampUtc, false, null, b));
+        }
+
+        foreach (var item in timeline.OrderBy(x => x.TimestampUtc))
+        {
+            if (item.IsDeposit)
+            {
+                Stats.RegisterDeposit();
+                continue;
+            }
+
+            BetRecord b = item.Bet;
+            var evt = new BetTransactionEvent(
+                BetAmount: b.BetAmount,
+                Profit: b.NetAmount,
+                CreditedProfit: b.NetAmount,
+                BalanceAfter: b.BalanceAfter,
+                IsWin: b.Outcome == BetOutcome.Win,
+                Roll: b.Roll,
+                Chance: b.Chance,
+                Multiplier: b.Multiplier,
+                IsHigh: b.IsHigh,
+                Timestamp: DateTime.SpecifyKind(b.TimestampUtc, DateTimeKind.Utc));
+            Stats.RegisterBet(b.GameId, evt);
+        }
     }
 }

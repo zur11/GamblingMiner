@@ -35,6 +35,9 @@ public partial class DiceGame : Control, IBetEventSource
 	private UserStatsService _userStatsService;
 	private CalendarTimeService _calendarTimeService;
 	private BankrollStateService _bankrollStateService;
+	private PrincipalBalanceService _principalBalanceService;
+	private BankrollProgramService _bankrollProgramService;
+	private BlockSessionCheckpointService _blockCheckpointService;
 	private FinancialBettingStats _financialStats;
 	private Timer _autoBetTimer;
 	private BaseBetSession _session;
@@ -83,6 +86,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 	// --- Nodos UI ---
 	private Label _balanceValue;
+	private Label _bankrollValue;
+	private Label _principalBalanceValue;
 	private Label _resultValue;
 
 	private Label _winnerNumbersValue;
@@ -98,6 +103,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private DepositPopup _depositPopup;
 	private Button _depositBtn;
 	private Button _openCalculatorBtn;
+	private Button _openBankrollProgrammerBtn;
 	private Button _openCalendarNavigatorBtn;
 	private MartingaleCalculator _martingaleCalculator;
 
@@ -114,8 +120,14 @@ public partial class DiceGame : Control, IBetEventSource
 		// Inicializar motor y servicios
 		_engine = new DiceEngine();
 		_bankrollStateService = GetNodeOrNull<BankrollStateService>("/root/BankrollStateService");
-		_bankrollStateService?.EnsureInitialized(1.00000000m);
-		decimal initialBalance = _bankrollStateService?.CurrentBalance ?? 1.00000000m;
+		_principalBalanceService = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
+		_principalBalanceService?.EnsureInitialized();
+		_bankrollProgramService = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");
+		_blockCheckpointService = GetNodeOrNull<BlockSessionCheckpointService>("/root/BlockSessionCheckpointService");
+		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
+		_bankrollStateService?.EnsureInitialized(0m);
+		RestoreFromBlockCheckpointIfAny();
+		decimal initialBalance = _bankrollStateService?.CurrentBalance ?? 0m;
 		_wallet = new Wallet(initialBalance);
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		_betService = new BetService(
@@ -150,6 +162,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 		// Obtener nodos
 		_balanceValue = GetNode<Label>("%BalanceValue");
+		_bankrollValue = GetNode<Label>("%BankrollValue");
+		_principalBalanceValue = GetNode<Label>("%PrincipalBalanceValue");
 		_resultValue = GetNode<Label>("%ResultValue");
 		_winnerNumbersValue = GetNode<Label>("%WinnerNumbersValue");
 		_chanceToWinValue = GetNode<Label>("%ChanceToWinValue");
@@ -163,10 +177,10 @@ public partial class DiceGame : Control, IBetEventSource
 		_depositPopup = GetNode<DepositPopup>("%DepositPopup");
 		_depositBtn = GetNode<Button>("%DepositBtn");
 		_openCalculatorBtn = GetNode<Button>("%OpenCalculatorBtn");
+		_openBankrollProgrammerBtn = GetNode<Button>("%OpenBankrollProgrammerBtn");
 		_openCalendarNavigatorBtn = GetNode<Button>("%OpenCalendarNavigatorBtn");
 		_openBlockExplorerBtn = GetNode<Button>("%OpenBlockExplorerBtn");
 		_martingaleCalculator = GetNode<MartingaleCalculator>("%MartingaleCalculator");
-		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_financialStats = GetNode<FinancialBettingStats>("%FinancialBettingStats");
 
 		// Configurar etiqueta de High/Low toggle Btn 
@@ -177,6 +191,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_chanceSlider.ValueChanged += OnChanceChanged;
 		_depositBtn.Pressed += OnDepositBtnPressed;
 		_openCalculatorBtn.Pressed += OnOpenCalculatorPressed;
+		_openBankrollProgrammerBtn.Pressed += OnOpenBankrollProgrammerPressed;
 		_openCalendarNavigatorBtn.Pressed += OnOpenCalendarNavigatorPressed;
 		_openBlockExplorerBtn.Pressed += OnOpenBlockExplorerPressed;
 		_depositPopup.DepositConfirmed += OnDepositPopupDepositConfirmed;
@@ -196,6 +211,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
 		_strategyPanel.StopOnBlockMinedDoubleClicked += OnStopOnBlockMinedDoubleClicked;
 		_strategyPanel.ProfitStopModeDoubleClicked += OnProfitStopModeDoubleClicked;
+		_strategyPanel.AutoRechargeToggled += _ => UpdateBalanceUI();
 		_betsPerSecondInput.ValueChanged += OnBetsPerSecondChanged;
 		_apsMultiplierSelector.ItemSelected += _ => OnBetsPerSecondChanged(0);
 		_session.OnStopped += OnSessionStopped;
@@ -209,6 +225,8 @@ public partial class DiceGame : Control, IBetEventSource
 		};
 
 		UpdateAllUI();
+		EnsureInitialBankrollFunded();
+		CaptureBlockCheckpointIfMissing();
 		RefreshCalculatorFromGameSettings();
 		_resultValue.Text = "Place your bet.";
 		InitializeApsMultiplierSelector();
@@ -423,6 +441,19 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnSessionStopped(BaseBetSession session)
 	{
+		if (session.LastStopReason == IBettingStrategy.StopReason.InsufficientBalance &&
+			_strategyPanel.AutoRechargeEnabled &&
+			TryAutoRechargeBankroll())
+		{
+			_resultValue.Text = "Bankroll recharged. Restarting progression from base bet.";
+			if (_sessionStartBaseBet > 0m)
+			{
+				_strategyPanel.SetBetAmount(_sessionStartBaseBet);
+			}
+			StartOrRestartSession(session is AutoBetSession);
+			return;
+		}
+
 		if (session is ManualBetSession)
 		{
 			_manualStopGate = session.LastStopReason switch
@@ -504,6 +535,17 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void ExecuteBet(DateTime? timestampUtc = null)
 	{
+		if (_session == null || !_session.IsRunning)
+		{
+			return;
+		}
+
+		if (_session.CurrentBet > _walletController.Balance)
+		{
+			_session.Stop(IBettingStrategy.StopReason.InsufficientBalance);
+			return;
+		}
+
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
 		DateTime effectiveTimestampUtc = timestampUtc
@@ -536,7 +578,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 			UpdateResultUI(result);
 		}
-		catch (Exception ex)
+		catch (InvalidOperationException ex)
 		{
 			// Prevent unhandled exceptions from crashing the game during high-frequency autobet.
 			GD.PushError($"[AutoBetError] {ex}");
@@ -549,6 +591,11 @@ public partial class DiceGame : Control, IBetEventSource
 				// Ignore secondary failures.
 			}
 
+			_resultValue.Text = $"Auto error: {ex.GetType().Name}";
+		}
+		catch (Exception ex)
+		{
+			GD.PushError($"[AutoBetError] {ex}");
 			_resultValue.Text = $"Auto error: {ex.GetType().Name}";
 		}
 	}
@@ -682,13 +729,12 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnDepositPopupDepositConfirmed(double amountDouble)
 	{
 		decimal amount = (decimal)amountDouble;
-
-		_walletController.Deposit(amount);
+		_principalBalanceService?.Deposit(amount);
 
 		DateTime timestampUtc = DateTime.UtcNow;
 		_userStatsService.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
 
-		_resultValue.Text = $"Deposited {amount:F8}";
+		_resultValue.Text = $"Balance principal +{amount:F8}";
 
 		UpdateBalanceUI();
 
@@ -707,6 +753,12 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		_martingaleCalculator.Open();
 		RefreshCalculatorFromGameSettings();
+	}
+
+	private void OnOpenBankrollProgrammerPressed()
+	{
+		_calendarTimeService?.PersistCurrentTime();
+		GetTree().ChangeSceneToFile("res://Screens/BankrollProgrammer/BankrollProgrammer.tscn");
 	}
 
 	private void OnOpenCalendarNavigatorPressed()
@@ -836,6 +888,7 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		AnnounceLatestMinedBlockIfAny();
+		CaptureBlockCheckpoint();
 		if (_session != null && _session.IsRunning && _strategyPanel.StopOnBlockMinedEnabled)
 		{
 			_session.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
@@ -900,8 +953,11 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void UpdateBalanceUI()
 	{
-		_balanceValue.Text =
-			_walletController.Balance.ToString("F8", CultureInfo.InvariantCulture);
+		string bankrollText = _walletController.Balance.ToString("F8", CultureInfo.InvariantCulture);
+		string balanceText = (_principalBalanceService?.CurrentBalance ?? 0m).ToString("F8", CultureInfo.InvariantCulture);
+		_balanceValue.Text = bankrollText;
+		_bankrollValue.Text = bankrollText;
+		_principalBalanceValue.Text = balanceText;
 	}
 
 	private void UpdateChanceAndMultiplierUIs()
@@ -1016,10 +1072,100 @@ public partial class DiceGame : Control, IBetEventSource
 
 		if (input > _walletController.Balance)
 		{
-			_resultValue.Text = "Insufficient balance.";
+			_resultValue.Text = "Insufficient bankroll.";
 			return false;
 		}
 
 		return true;
+	}
+
+	private void EnsureInitialBankrollFunded()
+	{
+		if (_walletController.Balance > 0m)
+		{
+			return;
+		}
+
+		TryProgrammedBankrollTransfer(BankrollProgramService.DefaultAutoRechargeAmount, "startup_default");
+	}
+
+	private bool TryAutoRechargeBankroll()
+	{
+		decimal amount = _bankrollProgramService?.AutoRechargeAmount ?? BankrollProgramService.DefaultAutoRechargeAmount;
+		return TryProgrammedBankrollTransfer(amount, "auto_recharge");
+	}
+
+	private bool TryProgrammedBankrollTransfer(decimal amount, string reason)
+	{
+		if (_bankrollProgramService == null || _principalBalanceService == null)
+		{
+			return false;
+		}
+
+		bool ok = _bankrollProgramService.TryTransferBalanceToBankroll(_principalBalanceService, _wallet, amount, reason);
+		if (ok)
+		{
+			DateTime timestampUtc = DateTime.UtcNow;
+			_userStatsService?.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
+			UpdateBalanceUI();
+		}
+		return ok;
+	}
+
+	private void RestoreFromBlockCheckpointIfAny()
+	{
+		if (_blockCheckpointService == null || !_blockCheckpointService.HasCheckpoint())
+		{
+			return;
+		}
+
+		var snapshot = _blockCheckpointService.CurrentSnapshot;
+		_principalBalanceService?.SetBalance(snapshot.PrincipalBalance);
+		_bankrollStateService?.SetBalance(snapshot.BankrollBalance);
+		_bankrollProgramService?.ReplaceState(snapshot.AutoRechargeAmount, snapshot.TransferRecords);
+
+		if (snapshot.HistoryCheckpointUtcTicks.HasValue)
+		{
+			DateTime checkpointUtc = new DateTime(snapshot.HistoryCheckpointUtcTicks.Value, DateTimeKind.Utc);
+			_userStatsService?.RollbackHistoryToUtc(checkpointUtc);
+		}
+
+		if (snapshot.CalendarLocalTicks.HasValue && _calendarTimeService != null)
+		{
+			DateTime local = new DateTime(snapshot.CalendarLocalTicks.Value, DateTimeKind.Local);
+			_calendarTimeService.SetLocalDateTime(local);
+			_calendarTimeService.SetExplorerSelectedLocalDateTime(local);
+			_calendarTimeService.PersistCurrentTime();
+		}
+	}
+
+	private void CaptureBlockCheckpointIfMissing()
+	{
+		if (_blockCheckpointService == null || _blockCheckpointService.HasCheckpoint())
+		{
+			return;
+		}
+
+		CaptureBlockCheckpoint();
+	}
+
+	private void CaptureBlockCheckpoint()
+	{
+		if (_blockCheckpointService == null ||
+			_principalBalanceService == null ||
+			_bankrollStateService == null ||
+			_bankrollProgramService == null)
+		{
+			return;
+		}
+
+		DateTime historyUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		DateTime calendarLocal = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
+		_blockCheckpointService.CaptureCheckpoint(
+			_principalBalanceService,
+			_bankrollStateService,
+			_bankrollProgramService,
+			historyUtc,
+			calendarLocal);
 	}
 }

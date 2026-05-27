@@ -3,10 +3,10 @@ using System;
 using System.Text.Json;
 using Scripts.Finance;
 
-public partial class BankrollStateService : Node
+public partial class PrincipalBalanceService : Node
 {
-	private const decimal DefaultInitialBalance = 0m;
-	private const string StatePath = "user://bankroll_state.json";
+	private const decimal DefaultInitialBalance = 40000.00000000m;
+	private const string StatePath = "user://principal_balance_state.json";
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 	private sealed class Snapshot
 	{
@@ -29,14 +29,41 @@ public partial class BankrollStateService : Node
 			return;
 		}
 
-		CurrentBalance = fallbackInitialBalance > 0m ? Money.Normalize(fallbackInitialBalance) : DefaultInitialBalance;
+		CurrentBalance = fallbackInitialBalance >= 0m ? Money.Normalize(fallbackInitialBalance) : DefaultInitialBalance;
 		_initialized = true;
 		SaveState();
 	}
 
-	public void SetBalance(decimal balance)
+	public bool TryWithdraw(decimal amount)
 	{
-		CurrentBalance = Money.Normalize(Math.Max(0m, balance));
+		amount = Money.Normalize(amount);
+		if (amount <= 0m || amount > CurrentBalance)
+		{
+			return false;
+		}
+
+		CurrentBalance = Money.Normalize(CurrentBalance - amount);
+		_initialized = true;
+		SaveState();
+		return true;
+	}
+
+	public void Deposit(decimal amount)
+	{
+		amount = Money.Normalize(amount);
+		if (amount <= 0m)
+		{
+			return;
+		}
+
+		CurrentBalance = Money.Normalize(CurrentBalance + amount);
+		_initialized = true;
+		SaveState();
+	}
+
+	public void SetBalance(decimal amount)
+	{
+		CurrentBalance = Money.Normalize(Math.Max(0m, amount));
 		_initialized = true;
 		SaveState();
 	}
@@ -63,7 +90,7 @@ public partial class BankrollStateService : Node
 		}
 		catch (Exception ex)
 		{
-			GD.PushWarning($"[BankrollStateService] Load failed: {ex.Message}");
+			GD.PushWarning($"[PrincipalBalanceService] Load failed: {ex.Message}");
 		}
 	}
 
@@ -81,7 +108,7 @@ public partial class BankrollStateService : Node
 		}
 		catch (Exception ex)
 		{
-			GD.PushWarning($"[BankrollStateService] Save failed: {ex.Message}");
+			GD.PushWarning($"[PrincipalBalanceService] Save failed: {ex.Message}");
 		}
 	}
 }

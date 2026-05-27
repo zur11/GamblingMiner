@@ -31,8 +31,17 @@ offset_left = 8.0
 offset_top = -5.0
 offset_right = 198.0
 offset_bottom = 64.0
-theme_override_font_sizes/font_size = 50
-text = "Balance"
+theme_override_font_sizes/font_size = 40
+text = "Bankroll"
+
+[node name="PrincipalBalanceText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 8.0
+offset_top = 120.0
+offset_right = 335.0
+offset_bottom = 164.0
+theme_override_font_sizes/font_size = 32
+text = "Balance principal"
 
 [node name="ResultText" type="Label" parent="UiTextLabels"]
 visible = false
@@ -132,8 +141,28 @@ offset_left = 7.0
 offset_top = 56.0
 offset_right = 278.0
 offset_bottom = 125.0
-theme_override_font_sizes/font_size = 50
-text = "1.00000000"
+theme_override_font_sizes/font_size = 40
+text = "0.00000000"
+
+[node name="BankrollValue" type="Label" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+offset_left = 7.0
+offset_top = 56.0
+offset_right = 278.0
+offset_bottom = 125.0
+text = "0.00000000"
+
+[node name="PrincipalBalanceValue" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 7.0
+offset_top = 162.0
+offset_right = 309.0
+offset_bottom = 208.0
+theme_override_font_sizes/font_size = 32
+text = "40000.00000000"
 
 [node name="ResultValue" type="Label" parent="."]
 unique_name_in_owner = true
@@ -265,19 +294,19 @@ text = "Betting Low"
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 6.0
-offset_top = 125.0
+offset_top = 215.0
 offset_right = 199.0
-offset_bottom = 202.0
-theme_override_font_sizes/font_size = 50
-text = "Deposit"
+offset_bottom = 277.0
+theme_override_font_sizes/font_size = 38
+text = "Deposit Balance"
 
 [node name="OpenCalculatorBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 4.0
-offset_top = 204.0
+offset_top = 281.0
 offset_right = 340.0
-offset_bottom = 281.0
+offset_bottom = 353.0
 theme_override_font_sizes/font_size = 38
 text = "Martingale Calc"
 
@@ -296,11 +325,21 @@ text = "Calendar Navigator"
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 3.0
-offset_top = 289.0
+offset_top = 359.0
 offset_right = 340.0
-offset_bottom = 366.0
+offset_bottom = 431.0
 theme_override_font_sizes/font_size = 32
 text = "Block Explorer"
+
+[node name="OpenBankrollProgrammerBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 3.0
+offset_top = 437.0
+offset_right = 340.0
+offset_bottom = 509.0
+theme_override_font_sizes/font_size = 30
+text = "Bankroll Programmer"
 
 [node name="FinancialBettingStats" parent="." instance=ExtResource("5_ne2vn")]
 unique_name_in_owner = true

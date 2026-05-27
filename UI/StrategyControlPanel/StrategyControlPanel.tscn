@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://UI/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
 
-[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_profitStopModeToggle")]
+[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_profitStopModeToggle", "_autoRechargeToggle")]
 layout_mode = 3
 anchor_right = 0.818
 anchor_bottom = 0.19700001
@@ -26,6 +26,7 @@ _stopOnProfitInput = NodePath("VBoxContainer/GridContainer/StopOnProfitContainer
 _stopOnLossInput = NodePath("VBoxContainer/GridContainer/StopOnLossContainer/StopOnLossInput")
 _stopOnBlockMinedToggle = NodePath("VBoxContainer/GridContainer/StopOnBlockMinedContainer/StopOnBlockMinedToggle")
 _profitStopModeToggle = NodePath("VBoxContainer/GridContainer/ProfitStopModeContainer/ProfitStopModeToggle")
+_autoRechargeToggle = NodePath("VBoxContainer/GridContainer/AutoRechargeContainer/AutoRechargeToggle")
 
 [node name="VBoxContainer" type="VBoxContainer" parent="."]
 layout_mode = 0
@@ -203,3 +204,18 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 30
 toggle_mode = true
 text = "P/L Mode: Session"
+
+[node name="AutoRechargeContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
+layout_mode = 2
+
+[node name="AutoRechargeText" type="Label" parent="VBoxContainer/GridContainer/AutoRechargeContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 42
+text = "Bankroll reload"
+
+[node name="AutoRechargeToggle" type="Button" parent="VBoxContainer/GridContainer/AutoRechargeContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+toggle_mode = true
+button_pressed = true
+text = "Auto Recharge: ON"
