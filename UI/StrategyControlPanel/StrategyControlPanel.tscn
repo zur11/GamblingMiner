@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://UI/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
 
-[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_profitStopModeToggle", "_autoRechargeToggle")]
+[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_profitStopModeToggle", "_autoRechargeToggle", "_insistAfterStopToggle")]
 layout_mode = 3
 anchor_right = 0.48100004
 anchor_bottom = 0.30600002
@@ -27,6 +27,7 @@ _stopOnLossInput = NodePath("VBoxContainer/GridContainer/StopOnLossContainer/Sto
 _stopOnBlockMinedToggle = NodePath("VBoxContainer/GridContainer/StopOnBlockMinedContainer/StopOnBlockMinedToggle")
 _profitStopModeToggle = NodePath("VBoxContainer/GridContainer/ProfitStopModeContainer/ProfitStopModeToggle")
 _autoRechargeToggle = NodePath("VBoxContainer/GridContainer/AutoRechargeContainer/AutoRechargeToggle")
+_insistAfterStopToggle = NodePath("VBoxContainer/GridContainer/InsistAfterStopContainer/InsistAfterStopToggle")
 
 [node name="VBoxContainer" type="VBoxContainer" parent="."]
 layout_mode = 0
@@ -219,3 +220,18 @@ theme_override_font_sizes/font_size = 30
 toggle_mode = true
 button_pressed = true
 text = "Auto Recharge: ON"
+
+[node name="InsistAfterStopContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
+layout_mode = 2
+
+[node name="InsistAfterStopText" type="Label" parent="VBoxContainer/GridContainer/InsistAfterStopContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 35
+text = "Stop behavior"
+
+[node name="InsistAfterStopToggle" type="Button" parent="VBoxContainer/GridContainer/InsistAfterStopContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+toggle_mode = true
+disabled = true
+text = "Insist After Stop: OFF"

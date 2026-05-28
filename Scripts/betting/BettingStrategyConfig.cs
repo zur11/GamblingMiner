@@ -13,5 +13,6 @@ namespace Scripts.Betting
         public decimal? StopOnLoss { get; init; }
         public bool StopOnBlockMined { get; init; }
         public bool UseProgressionAnchorStops { get; init; }
+        public bool InsistAfterStop { get; init; }
     }
 }

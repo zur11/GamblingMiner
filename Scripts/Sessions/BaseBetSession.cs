@@ -147,15 +147,17 @@ namespace Scripts.Sessions
             if (_config.StopOnProfit.HasValue &&
                 stopProfitMetric >= _config.StopOnProfit.Value)
             {
-                LastStopReason = IBettingStrategy.StopReason.StopOnProfit;
-                Stop(LastStopReason);
+                HandleProfitOrLossStop(IBettingStrategy.StopReason.StopOnProfit);
+                if (!IsRunning)
+                    return;
             }
 
             if (_config.StopOnLoss.HasValue &&
                 stopProfitMetric <= -_config.StopOnLoss.Value)
             {
-                LastStopReason = IBettingStrategy.StopReason.StopOnLoss;
-                Stop(LastStopReason);
+                HandleProfitOrLossStop(IBettingStrategy.StopReason.StopOnLoss);
+                if (!IsRunning)
+                    return;
             }
 
             if (_currentBet > _wallet.Balance)
@@ -174,6 +176,23 @@ namespace Scripts.Sessions
                     Stop(LastStopReason);
                 }
             }
+        }
+
+        private void HandleProfitOrLossStop(IBettingStrategy.StopReason reason)
+        {
+            LastStopReason = reason;
+
+            if (!_config.InsistAfterStop)
+            {
+                Stop(LastStopReason);
+                return;
+            }
+
+            _currentBet = _config.BaseBet;
+            _sessionProfit = 0m;
+            ProgressionTriggerStreak = 0;
+            SessionStartingBalance = _wallet.Balance;
+            ProgressionAnchorBalance = _wallet.Balance;
         }
 
         protected virtual void DebugAssertProgression(decimal previousBet, BetOutcome outcome, decimal nextBet)

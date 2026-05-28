@@ -803,7 +803,8 @@ public partial class DiceGame : Control, IBetEventSource
 			StopOnProfit = uiConfig.StopOnProfit,
 			StopOnLoss = uiConfig.StopOnLoss,
 			StopOnBlockMined = uiConfig.StopOnBlockMined,
-			UseProgressionAnchorStops = uiConfig.UseProgressionAnchorStops
+			UseProgressionAnchorStops = uiConfig.UseProgressionAnchorStops,
+			InsistAfterStop = uiConfig.InsistAfterStop
 		};
 		int chance = (int)_chanceSlider.Value;
 

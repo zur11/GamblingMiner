@@ -58,6 +58,8 @@ namespace UI.StrategyControlPanel
 		private Button _profitStopModeToggle;
 		[Export]
 		private Button _autoRechargeToggle;
+		[Export]
+		private Button _insistAfterStopToggle;
 
 		private double _lastStopOnBlockMinedPressAt;
 		private double _lastProfitStopModePressAt;
@@ -108,6 +110,8 @@ namespace UI.StrategyControlPanel
 		public bool StopOnBlockMinedEnabled => _stopOnBlockMinedToggle?.ButtonPressed ?? false;
 		public bool UseProgressionAnchorStops => _profitStopModeToggle?.ButtonPressed ?? false;
 		public bool AutoRechargeEnabled => _autoRechargeToggle?.ButtonPressed ?? true;
+		public bool InsistAfterStopEnabled =>
+			_insistAfterStopToggle?.ButtonPressed == true && HasProfitOrLossStopAmount();
 
 		public void SetBetAmount(decimal amount)
 		{
@@ -167,13 +171,15 @@ namespace UI.StrategyControlPanel
 			_minBetAmountBtn.Pressed += OnMinBetAmountBtnPressed;
 			_x2BetAmountBtn.Pressed += OnX2BetAmountBtnPressed;
 			_divBy2BetAmountBtn.Pressed += OnDivBy2BetAmountBtnPressed;
-			_stopOnProfitInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
+			_stopOnProfitInput.TextChanged += _ => OnProfitOrLossStopInputChanged();
 			_increasePercentageInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
-			_stopOnLossInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
+			_stopOnLossInput.TextChanged += _ => OnProfitOrLossStopInputChanged();
 			_numberOfBetsInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
 			_stopOnBlockMinedToggle.Pressed += OnStopOnBlockMinedTogglePressed;
 			_profitStopModeToggle.Pressed += OnProfitStopModeTogglePressed;
 			_autoRechargeToggle.Pressed += OnAutoRechargeTogglePressed;
+			_insistAfterStopToggle.Pressed += OnInsistAfterStopTogglePressed;
+			UpdateInsistAfterStopToggleAvailability();
 		}
 
 		private void OnBetOncePressed()
@@ -267,6 +273,53 @@ namespace UI.StrategyControlPanel
 			AutoRechargeToggled?.Invoke(enabled);
 		}
 
+		private void OnProfitOrLossStopInputChanged()
+		{
+			UpdateInsistAfterStopToggleAvailability();
+			StrategyConfigChanged?.Invoke();
+		}
+
+		private void OnInsistAfterStopTogglePressed()
+		{
+			if (!HasProfitOrLossStopAmount())
+			{
+				_insistAfterStopToggle.ButtonPressed = false;
+			}
+
+			UpdateInsistAfterStopToggleAvailability();
+			StrategyConfigChanged?.Invoke();
+		}
+
+		private void UpdateInsistAfterStopToggleAvailability()
+		{
+			if (_insistAfterStopToggle == null)
+			{
+				return;
+			}
+
+			bool canEnable = HasProfitOrLossStopAmount();
+			if (!canEnable)
+			{
+				_insistAfterStopToggle.ButtonPressed = false;
+			}
+
+			_insistAfterStopToggle.Disabled = !canEnable;
+			_insistAfterStopToggle.Text = _insistAfterStopToggle.ButtonPressed
+				? "Insist After Stop: ON"
+				: "Insist After Stop: OFF";
+		}
+
+		private bool HasProfitOrLossStopAmount()
+		{
+			return HasPositiveDecimal(_stopOnProfitInput?.Text) ||
+				HasPositiveDecimal(_stopOnLossInput?.Text);
+		}
+
+		private bool HasPositiveDecimal(string text)
+		{
+			return TryParseDecimal(text ?? string.Empty, out decimal value) && value > 0m;
+		}
+
 		private void CheckDoubleClickAndEmit(ref double lastPressedAt, Action emit)
 		{
 			double now = Time.GetTicksMsec() / 1000.0d;
@@ -288,7 +341,8 @@ namespace UI.StrategyControlPanel
 				StopOnProfit = ParseDecimal(_stopOnProfitInput.Text),
 				StopOnLoss = ParseDecimal(_stopOnLossInput.Text),
 				StopOnBlockMined = StopOnBlockMinedEnabled,
-				UseProgressionAnchorStops = UseProgressionAnchorStops
+				UseProgressionAnchorStops = UseProgressionAnchorStops,
+				InsistAfterStop = InsistAfterStopEnabled
 			};
 		}
 
