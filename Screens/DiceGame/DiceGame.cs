@@ -65,8 +65,13 @@ public partial class DiceGame : Control, IBetEventSource
 	private const string ActiveMinerNodeId = "player";
 	private const double GameSecondsPerRealSecond = 48.0d; // 10 real min -> 8 game hours
 	private const double GameSecondsPerManualBet = 48.0d; // 1 manual bet tick
+	private const string SavedStrategiesPath = "user://saved_betting_strategies.json";
 	private Label _blockchainStatusValue;
 	private Button _openBlockExplorerBtn;
+	private LineEdit _strategyNameInput;
+	private Button _saveStrategyBtn;
+	private Button _loadStrategyBtn;
+	private SavedBettingStrategyRepository _savedStrategyRepository;
 	private int _lastAnnouncedMinedBlockIndex;
 	private ManualStopGate _manualStopGate = ManualStopGate.None;
 
@@ -145,6 +150,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_blockchainNetworkRoot = new NetworkRoot();
 		_blockchainNetworkRoot.Name = "BlockchainNetworkRoot";
 		AddChild(_blockchainNetworkRoot);
+		_savedStrategyRepository = new SavedBettingStrategyRepository(SavedStrategiesPath);
 		var strategy = new ProgressiveBettingStrategy();
 
 		_session = CreateSession(false); // default manual
@@ -180,6 +186,9 @@ public partial class DiceGame : Control, IBetEventSource
 		_openBankrollProgrammerBtn = GetNode<Button>("%OpenBankrollProgrammerBtn");
 		_openCalendarNavigatorBtn = GetNode<Button>("%OpenCalendarNavigatorBtn");
 		_openBlockExplorerBtn = GetNode<Button>("%OpenBlockExplorerBtn");
+		_strategyNameInput = GetNode<LineEdit>("%StrategyNameInput");
+		_saveStrategyBtn = GetNode<Button>("%SaveStrategyBtn");
+		_loadStrategyBtn = GetNode<Button>("%LoadStrategyBtn");
 		_martingaleCalculator = GetNode<MartingaleCalculator>("%MartingaleCalculator");
 		_financialStats = GetNode<FinancialBettingStats>("%FinancialBettingStats");
 
@@ -194,6 +203,9 @@ public partial class DiceGame : Control, IBetEventSource
 		_openBankrollProgrammerBtn.Pressed += OnOpenBankrollProgrammerPressed;
 		_openCalendarNavigatorBtn.Pressed += OnOpenCalendarNavigatorPressed;
 		_openBlockExplorerBtn.Pressed += OnOpenBlockExplorerPressed;
+		_strategyNameInput.TextChanged += _ => UpdateStrategySaveLoadButtons();
+		_saveStrategyBtn.Pressed += OnSaveStrategyPressed;
+		_loadStrategyBtn.Pressed += OnLoadStrategyPressed;
 		_depositPopup.DepositConfirmed += OnDepositPopupDepositConfirmed;
 		_depositPopup.DepositCanceled += OnDepositCanceled;
 		_martingaleCalculator.CloseRequested += OnCalculatorCloseRequested;
@@ -225,6 +237,7 @@ public partial class DiceGame : Control, IBetEventSource
 		};
 
 		UpdateAllUI();
+		UpdateStrategySaveLoadButtons();
 		EnsureInitialBankrollFunded();
 		CaptureBlockCheckpointIfMissing();
 		RefreshCalculatorFromGameSettings();
@@ -276,6 +289,7 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			decimal maxBet = _walletController.Balance;
 			_strategyPanel.ManualSetBetAmount(maxBet);
+			UpdateStrategySaveLoadButtons();
 			return;
 		}
 
@@ -283,10 +297,12 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			decimal minBet = 0.00000001m;
 			_strategyPanel.ManualSetBetAmount(minBet);
+			UpdateStrategySaveLoadButtons();
 			return;
 		}
 
 		RefreshCalculatorFromGameSettings();
+		UpdateStrategySaveLoadButtons();
 	}
 
 	private void OnStrategyConfigChanged()
@@ -301,6 +317,76 @@ public partial class DiceGame : Control, IBetEventSource
 			_strategyPanel.SetManualEnabled(true);
 
 		RefreshCalculatorFromGameSettings();
+		UpdateStrategySaveLoadButtons();
+	}
+
+	private void OnSaveStrategyPressed()
+	{
+		string strategyName = _strategyNameInput.Text.Trim();
+		if (string.IsNullOrWhiteSpace(strategyName) || !_strategyPanel.TryGetValidBet(out decimal baseBet) || baseBet <= 0m)
+		{
+			UpdateStrategySaveLoadButtons();
+			return;
+		}
+
+		BettingStrategyConfig config = _strategyPanel.BuildConfig();
+		_savedStrategyRepository.Save(new SavedBettingStrategy
+		{
+			Name = strategyName,
+			GameId = GameId,
+			Config = config,
+			NumberOfBets = _strategyPanel.NumberOfBets,
+			AutoRechargeEnabled = _strategyPanel.AutoRechargeEnabled,
+			WinningChance = (int)_chanceSlider.Value,
+			BetHigh = _highLowToggleBtn.ButtonPressed
+		});
+
+		_resultValue.Modulate = Colors.White;
+		_resultValue.Text = $"Strategy saved: {strategyName}";
+		UpdateStrategySaveLoadButtons();
+	}
+
+	private void OnLoadStrategyPressed()
+	{
+		string strategyName = _strategyNameInput.Text.Trim();
+		if (!_savedStrategyRepository.TryGet(GameId, strategyName, out SavedBettingStrategy saved))
+		{
+			_resultValue.Modulate = Colors.White;
+			_resultValue.Text = string.IsNullOrWhiteSpace(strategyName)
+				? "No saved strategy found."
+				: $"Strategy not found: {strategyName}";
+			UpdateStrategySaveLoadButtons();
+			return;
+		}
+
+		if (_session != null && _session.IsRunning)
+		{
+			_session.Stop(IBettingStrategy.StopReason.ManualStop);
+		}
+
+		_strategyNameInput.Text = saved.Name;
+		_strategyPanel.ApplyStrategySettings(saved.Config, saved.NumberOfBets, saved.AutoRechargeEnabled);
+		_chanceSlider.Value = Math.Clamp(saved.WinningChance, 1, 95);
+		_highLowToggleBtn.ButtonPressed = saved.BetHigh;
+		_highLowToggleBtn.Text = saved.BetHigh ? "HIGH" : "LOW";
+		UpdateAllUI();
+		RefreshCalculatorFromGameSettings();
+		_resultValue.Modulate = Colors.White;
+		_resultValue.Text = $"Strategy loaded: {saved.Name}";
+		UpdateStrategySaveLoadButtons();
+	}
+
+	private void UpdateStrategySaveLoadButtons()
+	{
+		if (_saveStrategyBtn == null || _loadStrategyBtn == null || _strategyNameInput == null || _strategyPanel == null)
+		{
+			return;
+		}
+
+		bool hasName = !string.IsNullOrWhiteSpace(_strategyNameInput.Text);
+		bool hasValidBaseBet = _strategyPanel.TryGetValidBet(out decimal baseBet) && baseBet > 0m;
+		_saveStrategyBtn.Disabled = !hasName || !hasValidBaseBet;
+		_loadStrategyBtn.Disabled = _savedStrategyRepository == null || !_savedStrategyRepository.HasAnyForGame(GameId);
 	}
 
 	// --- Manual Bet Session

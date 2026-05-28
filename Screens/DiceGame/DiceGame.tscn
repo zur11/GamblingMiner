@@ -279,6 +279,38 @@ offset_bottom = 1073.0
 [node name="BetHistoryContainer" parent="ScrollContainer2" instance=ExtResource("3_usic0")]
 layout_mode = 2
 
+[node name="StrategySaveControls" type="HBoxContainer" parent="."]
+layout_mode = 0
+offset_left = 704.0
+offset_top = 438.0
+offset_right = 1260.0
+offset_bottom = 526.0
+theme_override_constants/separation = 10
+
+[node name="StrategyNameInput" type="LineEdit" parent="StrategySaveControls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(236, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+placeholder_text = "Strategy name"
+max_length = 32
+
+[node name="SaveStrategyBtn" type="Button" parent="StrategySaveControls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(148, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+disabled = true
+text = "Save Strategy"
+
+[node name="LoadStrategyBtn" type="Button" parent="StrategySaveControls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(148, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+disabled = true
+text = "Load Strategy"
+
 [node name="HighLowToggleBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0

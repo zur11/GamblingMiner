@@ -135,6 +135,36 @@ namespace UI.StrategyControlPanel
 			_numberOfBetsInput.Text = value.ToString();
 		}
 
+		public void ApplyStrategySettings(BettingStrategyConfig config, int numberOfBets, bool autoRechargeEnabled)
+		{
+			if (config == null)
+			{
+				return;
+			}
+
+			_internalUpdate = true;
+			_betAmountInput.Text = config.BaseBet.ToString("F8", CultureInfo.InvariantCulture);
+			_increasePercentageInput.Text = config.IncreasePercent.ToString(CultureInfo.InvariantCulture);
+			_increaseOnLossWinToggle.ButtonPressed = config.IncreaseOnWin;
+			_increaseOnLossWinToggle.Text = config.IncreaseOnWin ? "Increase on win" : "Increase on loss";
+			_numberOfBetsInput.Text = Math.Max(0, numberOfBets).ToString(CultureInfo.InvariantCulture);
+			_stopOnProfitInput.Text = FormatOptionalDecimal(config.StopOnProfit);
+			_stopOnLossInput.Text = FormatOptionalDecimal(config.StopOnLoss);
+			_stopOnBlockMinedToggle.ButtonPressed = config.StopOnBlockMined;
+			_stopOnBlockMinedToggle.Text = config.StopOnBlockMined ? "Stop Block: ON" : "Stop Block: OFF";
+			_profitStopModeToggle.ButtonPressed = config.UseProgressionAnchorStops;
+			_profitStopModeToggle.Text = config.UseProgressionAnchorStops ? "P/L Mode: Anchor" : "P/L Mode: Session";
+			_autoRechargeToggle.ButtonPressed = autoRechargeEnabled;
+			_autoRechargeToggle.Text = autoRechargeEnabled ? "Auto Recharge: ON" : "Auto Recharge: OFF";
+			_insistAfterStopToggle.ButtonPressed = config.InsistAfterStop;
+			_internalUpdate = false;
+
+			UpdateInsistAfterStopToggleAvailability();
+			StrategyConfigChanged?.Invoke();
+			BetAmountInputChanged?.Invoke(_betAmountInput.Text);
+			AutoRechargeToggled?.Invoke(autoRechargeEnabled);
+		}
+
 		public void SetManualEnabled(bool enabled)
 		{
 			_betOnceBtn.Disabled = !enabled;
@@ -172,9 +202,9 @@ namespace UI.StrategyControlPanel
 			_x2BetAmountBtn.Pressed += OnX2BetAmountBtnPressed;
 			_divBy2BetAmountBtn.Pressed += OnDivBy2BetAmountBtnPressed;
 			_stopOnProfitInput.TextChanged += _ => OnProfitOrLossStopInputChanged();
-			_increasePercentageInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
+			_increasePercentageInput.TextChanged += _ => OnStrategyInputChanged();
 			_stopOnLossInput.TextChanged += _ => OnProfitOrLossStopInputChanged();
-			_numberOfBetsInput.TextChanged += _ => StrategyConfigChanged?.Invoke();
+			_numberOfBetsInput.TextChanged += _ => OnStrategyInputChanged();
 			_stopOnBlockMinedToggle.Pressed += OnStopOnBlockMinedTogglePressed;
 			_profitStopModeToggle.Pressed += OnProfitStopModeTogglePressed;
 			_autoRechargeToggle.Pressed += OnAutoRechargeTogglePressed;
@@ -275,7 +305,22 @@ namespace UI.StrategyControlPanel
 
 		private void OnProfitOrLossStopInputChanged()
 		{
+			if (_internalUpdate)
+			{
+				return;
+			}
+
 			UpdateInsistAfterStopToggleAvailability();
+			StrategyConfigChanged?.Invoke();
+		}
+
+		private void OnStrategyInputChanged()
+		{
+			if (_internalUpdate)
+			{
+				return;
+			}
+
 			StrategyConfigChanged?.Invoke();
 		}
 
@@ -352,6 +397,13 @@ namespace UI.StrategyControlPanel
                 ? value
                 : null;
         }
+
+		private string FormatOptionalDecimal(decimal? value)
+		{
+			return value.HasValue
+				? value.Value.ToString("F8", CultureInfo.InvariantCulture)
+				: string.Empty;
+		}
 
         public bool TryGetValidBet(out decimal value)
         {
