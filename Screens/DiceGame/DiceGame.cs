@@ -2,6 +2,7 @@ using Godot;
 using System;
 using System.Globalization;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using Scripts.Dice;
 using Scripts.Finance;
@@ -62,11 +63,13 @@ public partial class DiceGame : Control, IBetEventSource
 	private bool _autoBetVirtualTimestampInitialized;
 	private DateTime? _autoBetLastExecutedTimestampUtc;
 	private NetworkRoot _blockchainNetworkRoot;
-	private const string ActiveMinerNodeId = "player";
+	private const string PlayerNodeId = "player";
+	private string _activeNodeId = PlayerNodeId;
 	private const double GameSecondsPerRealSecond = 48.0d; // 10 real min -> 8 game hours
 	private const double GameSecondsPerManualBet = 48.0d; // 1 manual bet tick
 	private const string SavedStrategiesPath = "user://saved_betting_strategies.json";
 	private Label _blockchainStatusValue;
+	private OptionButton _activeNodeSelector;
 	private Button _openBlockExplorerBtn;
 	private LineEdit _strategyNameInput;
 	private Button _saveStrategyBtn;
@@ -131,7 +134,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_blockCheckpointService = GetNodeOrNull<BlockSessionCheckpointService>("/root/BlockSessionCheckpointService");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_bankrollStateService?.EnsureInitialized(0m);
-		RestoreFromBlockCheckpointIfAny();
 		decimal initialBalance = _bankrollStateService?.CurrentBalance ?? 0m;
 		_wallet = new Wallet(initialBalance);
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
@@ -186,6 +188,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_openBankrollProgrammerBtn = GetNode<Button>("%OpenBankrollProgrammerBtn");
 		_openCalendarNavigatorBtn = GetNode<Button>("%OpenCalendarNavigatorBtn");
 		_openBlockExplorerBtn = GetNode<Button>("%OpenBlockExplorerBtn");
+		_activeNodeSelector = GetNode<OptionButton>("%ActiveNodeSelector");
 		_strategyNameInput = GetNode<LineEdit>("%StrategyNameInput");
 		_saveStrategyBtn = GetNode<Button>("%SaveStrategyBtn");
 		_loadStrategyBtn = GetNode<Button>("%LoadStrategyBtn");
@@ -203,6 +206,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_openBankrollProgrammerBtn.Pressed += OnOpenBankrollProgrammerPressed;
 		_openCalendarNavigatorBtn.Pressed += OnOpenCalendarNavigatorPressed;
 		_openBlockExplorerBtn.Pressed += OnOpenBlockExplorerPressed;
+		_activeNodeSelector.ItemSelected += OnActiveNodeSelected;
 		_strategyNameInput.TextChanged += _ => UpdateStrategySaveLoadButtons();
 		_saveStrategyBtn.Pressed += OnSaveStrategyPressed;
 		_loadStrategyBtn.Pressed += OnLoadStrategyPressed;
@@ -213,7 +217,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_wallet.BalanceDeltaChanged += (_, _) => _bankrollStateService?.SetBalance(_wallet.Balance);
 		_previousWinnerNumbersGrid.SubscribeTo(this);
 		_betHistoryContainer.SubscribeTo(this);
-		_userStatsService.RegisterSource(this);
 		_financialStats.ConnectTo(_userStatsService);
 		ApplyRealtimeBootstrapFromLoadedHistory();
 		_strategyPanel.BetOnceBtnPressed += OnManualBetFromPanel;
@@ -238,7 +241,12 @@ public partial class DiceGame : Control, IBetEventSource
 
 		UpdateAllUI();
 		UpdateStrategySaveLoadButtons();
+		InitializeActiveNodeSelector();
+		bool hadAnyNodeFinancialState = _blockchainNetworkRoot?.HasAnyNodeFinancialState() ?? false;
+		RestoreLegacyCheckpointIfNeeded();
+		LoadActiveNodeFinancialState();
 		EnsureInitialBankrollFunded();
+		EnsureMissingNodeFinancialStates(hadAnyNodeFinancialState);
 		CaptureBlockCheckpointIfMissing();
 		RefreshCalculatorFromGameSettings();
 		_resultValue.Text = "Place your bet.";
@@ -262,6 +270,152 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_apsMultiplierSelector.Select(0); // x1 default
 	}
+
+	private void InitializeActiveNodeSelector()
+	{
+		if (_activeNodeSelector == null || _blockchainNetworkRoot == null)
+		{
+			return;
+		}
+
+		_activeNodeSelector.Clear();
+		int selectedIndex = 0;
+		IReadOnlyList<string> nodeIds = _blockchainNetworkRoot.GetNodeIds();
+		for (int index = 0; index < nodeIds.Count; index++)
+		{
+			string nodeId = nodeIds[index];
+			_activeNodeSelector.AddItem(nodeId);
+			if (string.Equals(nodeId, _activeNodeId, StringComparison.Ordinal))
+			{
+				selectedIndex = index;
+			}
+		}
+
+		if (_activeNodeSelector.ItemCount > 0)
+		{
+			_activeNodeSelector.Select(selectedIndex);
+			_activeNodeId = _activeNodeSelector.GetItemText(selectedIndex);
+		}
+	}
+
+	private void OnActiveNodeSelected(long selectedIndex)
+	{
+		if (_activeNodeSelector == null || selectedIndex < 0 || selectedIndex >= _activeNodeSelector.ItemCount)
+		{
+			return;
+		}
+
+		string nextNodeId = _activeNodeSelector.GetItemText((int)selectedIndex);
+		if (string.Equals(nextNodeId, _activeNodeId, StringComparison.Ordinal))
+		{
+			return;
+		}
+
+		if (_session != null && _session.IsRunning)
+		{
+			_session.Stop(IBettingStrategy.StopReason.ManualStop);
+		}
+
+		SaveActiveNodeFinancialState(true);
+		_activeNodeId = nextNodeId;
+		LoadActiveNodeFinancialState();
+		_betHistoryContainer?.ClearEntries();
+		UpdateAllUI();
+		RefreshCalculatorFromGameSettings();
+		_resultValue.Modulate = Colors.White;
+		_resultValue.Text = $"Active node: {_activeNodeId}";
+	}
+
+	private bool IsPlayerActive() =>
+		string.Equals(_activeNodeId, PlayerNodeId, StringComparison.Ordinal);
+
+	private void LoadActiveNodeFinancialState()
+	{
+		if (_blockchainNetworkRoot == null || _wallet == null)
+		{
+			return;
+		}
+
+		decimal fallbackPrincipal = _principalBalanceService?.CurrentBalance ?? BankrollProgramService.InitialPrincipalBalanceBaseline;
+		decimal fallbackBankroll = _wallet.Balance;
+		NodeFinancialState state = _blockchainNetworkRoot.GetOrCreateNodeFinancialState(
+			_activeNodeId,
+			fallbackPrincipal,
+			fallbackBankroll);
+
+		_principalBalanceService?.SetBalance(state.PrincipalBalance);
+		_bankrollStateService?.SetBalance(state.BankrollBalance);
+		_bankrollProgramService?.ReplaceState(state.AutoRechargeAmount, state.TransferRecords);
+		_wallet.SetBalanceForTimeTravel(state.BankrollBalance);
+	}
+
+	private void SaveActiveNodeFinancialState(bool persist)
+	{
+		if (_blockchainNetworkRoot == null || string.IsNullOrWhiteSpace(_activeNodeId))
+		{
+			return;
+		}
+
+		NodeFinancialState state = new()
+		{
+			PrincipalBalance = _principalBalanceService?.CurrentBalance ?? 0m,
+			BankrollBalance = _walletController?.Balance ?? _wallet?.Balance ?? 0m,
+			AutoRechargeAmount = _bankrollProgramService?.AutoRechargeAmount ?? BankrollProgramService.DefaultAutoRechargeAmount,
+			TransferRecords = _bankrollProgramService?.Records
+				.Select(r => new BankrollProgramService.TransferRecord
+				{
+					UtcTimestamp = DateTime.SpecifyKind(r.UtcTimestamp, DateTimeKind.Utc),
+					Amount = r.Amount,
+					Direction = r.Direction,
+					Reason = r.Reason
+				})
+				.ToList() ?? new List<BankrollProgramService.TransferRecord>()
+		};
+
+		_blockchainNetworkRoot.SetNodeFinancialState(_activeNodeId, state, persist);
+	}
+
+	private void EnsureMissingNodeFinancialStates(bool useStableInitialTemplate)
+	{
+		if (_blockchainNetworkRoot == null)
+		{
+			return;
+		}
+
+		NodeFinancialState template = useStableInitialTemplate
+			? BuildStableInitialNodeFinancialState()
+			: BuildCurrentNodeFinancialState();
+
+		_blockchainNetworkRoot.EnsureMissingNodeFinancialStates(template, true);
+	}
+
+	private NodeFinancialState BuildStableInitialNodeFinancialState()
+	{
+		decimal bankroll = BankrollProgramService.DefaultAutoRechargeAmount;
+		return new NodeFinancialState
+		{
+			PrincipalBalance = Math.Max(0m, BankrollProgramService.InitialPrincipalBalanceBaseline - bankroll),
+			BankrollBalance = bankroll,
+			AutoRechargeAmount = _bankrollProgramService?.AutoRechargeAmount ?? BankrollProgramService.DefaultAutoRechargeAmount,
+			TransferRecords = new List<BankrollProgramService.TransferRecord>()
+		};
+	}
+
+	private NodeFinancialState BuildCurrentNodeFinancialState() => new()
+	{
+		PrincipalBalance = _principalBalanceService?.CurrentBalance ?? 0m,
+		BankrollBalance = _walletController?.Balance ?? _wallet?.Balance ?? 0m,
+		AutoRechargeAmount = _bankrollProgramService?.AutoRechargeAmount ?? BankrollProgramService.DefaultAutoRechargeAmount,
+		TransferRecords = _bankrollProgramService?.Records
+			.Select(r => new BankrollProgramService.TransferRecord
+			{
+				UtcTimestamp = DateTime.SpecifyKind(r.UtcTimestamp, DateTimeKind.Utc),
+				Amount = r.Amount,
+				Direction = r.Direction,
+				Reason = r.Reason
+			})
+			.ToList() ?? new List<BankrollProgramService.TransferRecord>()
+	};
 
 	public override void _Process(double delta)
 	{
@@ -676,6 +830,11 @@ public partial class DiceGame : Control, IBetEventSource
 				_session.ExecuteNext(chance, isHigh, effectiveTimestampUtc);
 
 			BetExecuted?.Invoke(GameId, betEvent);
+			if (IsPlayerActive())
+			{
+				_userStatsService?.OnBetExecutedRegisterBet(GameId, betEvent);
+			}
+			SaveActiveNodeFinancialState(false);
 			ProcessBlockchainAttemptForBet();
 			AdvanceClockForBet();
 
@@ -845,7 +1004,11 @@ public partial class DiceGame : Control, IBetEventSource
 		_principalBalanceService?.Deposit(amount);
 
 		DateTime timestampUtc = DateTime.UtcNow;
-		_userStatsService.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
+		if (IsPlayerActive())
+		{
+			_userStatsService.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
+		}
+		SaveActiveNodeFinancialState(false);
 
 		_resultValue.Text = $"Balance principal +{amount:F8}";
 
@@ -870,6 +1033,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnOpenBankrollProgrammerPressed()
 	{
+		SaveActiveNodeFinancialState(true);
 		_calendarTimeService?.PersistCurrentTime();
 		GetTree().ChangeSceneToFile("res://Screens/BankrollProgrammer/BankrollProgrammer.tscn");
 	}
@@ -881,6 +1045,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnOpenBlockExplorerPressed()
 	{
+		SaveActiveNodeFinancialState(true);
 		_calendarTimeService?.PersistCurrentTime();
 		GetTree().ChangeSceneToFile("res://Screens/BlockExplorer/BlockExplorer.tscn");
 	}
@@ -938,6 +1103,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnBalanceDeltaChanged(Guid? sessionId, decimal amount)
 	{
+		SaveActiveNodeFinancialState(false);
 		UpdateBalanceUI();
 	}
 
@@ -995,7 +1161,7 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		long gameUnixMs = new DateTimeOffset(_calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
-		bool mined = _blockchainNetworkRoot.TryMineSingleNonceAttempt(ActiveMinerNodeId, out var minedBlock, gameUnixMs);
+		bool mined = _blockchainNetworkRoot.TryMineSingleNonceAttempt(_activeNodeId, out var minedBlock, gameUnixMs);
 		if (!mined || minedBlock is null)
 		{
 			return;
@@ -1061,7 +1227,7 @@ public partial class DiceGame : Control, IBetEventSource
 		string minedDetails = announcement.BlockIndex <= 0
 			? "Last mined: n/a"
 			: $"Last mined #{announcement.BlockIndex} | nonce {announcement.Nonce} | miner {announcement.MinerNodeId}\nHash: {announcement.BlockHash}\nMiner address: {announcement.MinerAddress}";
-		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(ActiveMinerNodeId)}\n{minedDetails}";
+		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(_activeNodeId)}\n{minedDetails}";
 	}
 
 
@@ -1233,16 +1399,26 @@ public partial class DiceGame : Control, IBetEventSource
 		if (ok)
 		{
 			DateTime timestampUtc = DateTime.UtcNow;
-			_userStatsService?.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
+			if (IsPlayerActive())
+			{
+				_userStatsService?.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
+			}
+			SaveActiveNodeFinancialState(false);
 			UpdateBalanceUI();
 		}
 		return ok;
 	}
 
-	private void RestoreFromBlockCheckpointIfAny()
+	private void RestoreLegacyCheckpointIfNeeded()
 	{
 		if (_blockCheckpointService == null || !_blockCheckpointService.HasCheckpoint())
 		{
+			return;
+		}
+
+		if (_blockchainNetworkRoot != null && _blockchainNetworkRoot.HasAnyNodeFinancialState())
+		{
+			RestoreCheckpointClockAndHistoryOnly();
 			return;
 		}
 
@@ -1251,6 +1427,29 @@ public partial class DiceGame : Control, IBetEventSource
 		_bankrollStateService?.SetBalance(snapshot.BankrollBalance);
 		_bankrollProgramService?.ReplaceState(snapshot.AutoRechargeAmount, snapshot.TransferRecords);
 
+		if (snapshot.HistoryCheckpointUtcTicks.HasValue)
+		{
+			DateTime checkpointUtc = new DateTime(snapshot.HistoryCheckpointUtcTicks.Value, DateTimeKind.Utc);
+			_userStatsService?.RollbackHistoryToUtc(checkpointUtc);
+		}
+
+		if (snapshot.CalendarLocalTicks.HasValue && _calendarTimeService != null)
+		{
+			DateTime local = new DateTime(snapshot.CalendarLocalTicks.Value, DateTimeKind.Local);
+			_calendarTimeService.SetLocalDateTime(local);
+			_calendarTimeService.SetExplorerSelectedLocalDateTime(local);
+			_calendarTimeService.PersistCurrentTime();
+		}
+	}
+
+	private void RestoreCheckpointClockAndHistoryOnly()
+	{
+		if (_blockCheckpointService == null || !_blockCheckpointService.HasCheckpoint())
+		{
+			return;
+		}
+
+		var snapshot = _blockCheckpointService.CurrentSnapshot;
 		if (snapshot.HistoryCheckpointUtcTicks.HasValue)
 		{
 			DateTime checkpointUtc = new DateTime(snapshot.HistoryCheckpointUtcTicks.Value, DateTimeKind.Utc);
@@ -1278,6 +1477,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void CaptureBlockCheckpoint()
 	{
+		SaveActiveNodeFinancialState(true);
+
 		if (_blockCheckpointService == null ||
 			_principalBalanceService == null ||
 			_bankrollStateService == null ||

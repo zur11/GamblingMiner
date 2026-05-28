@@ -297,6 +297,84 @@ public partial class NetworkRoot : Node
         return node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
     }
 
+    public NodeFinancialState GetOrCreateNodeFinancialState(string nodeId, decimal defaultPrincipalBalance, decimal defaultBankrollBalance)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.ContainsKey(nodeId))
+        {
+            return new NodeFinancialState();
+        }
+
+        NodeAgent node = SharedNodesById[nodeId];
+        if (node.FinancialState is null)
+        {
+            node.FinancialState = new NodeFinancialState
+            {
+                PrincipalBalance = Scripts.Finance.Money.Normalize(Math.Max(0m, defaultPrincipalBalance)),
+                BankrollBalance = Scripts.Finance.Money.Normalize(Math.Max(0m, defaultBankrollBalance)),
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+            PersistStateToDisk();
+        }
+
+        return node.FinancialState.Clone();
+    }
+
+    public bool HasNodeFinancialState(string nodeId)
+    {
+        EnsureInitialized();
+        return SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) && node.FinancialState is not null;
+    }
+
+    public bool HasAnyNodeFinancialState()
+    {
+        EnsureInitialized();
+        return SharedNodesById.Values.Any(node => node.FinancialState is not null);
+    }
+
+    public void EnsureMissingNodeFinancialStates(NodeFinancialState template, bool persist = false)
+    {
+        EnsureInitialized();
+        if (template is null)
+        {
+            return;
+        }
+
+        bool changed = false;
+        foreach (NodeAgent node in SharedNodesById.Values)
+        {
+            if (node.FinancialState is not null)
+            {
+                continue;
+            }
+
+            node.FinancialState = template.CloneNormalized();
+            node.FinancialState.UpdatedAtUtc = DateTime.UtcNow;
+            changed = true;
+        }
+
+        if (changed && persist)
+        {
+            PersistStateToDisk();
+        }
+    }
+
+    public void SetNodeFinancialState(string nodeId, NodeFinancialState state, bool persist = false)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) || state is null)
+        {
+            return;
+        }
+
+        node.FinancialState = state.CloneNormalized();
+        node.FinancialState.UpdatedAtUtc = DateTime.UtcNow;
+        if (persist)
+        {
+            PersistStateToDisk();
+        }
+    }
+
     public string BuildMiningStatusLine(string nodeId)
     {
         EnsureInitialized();
@@ -357,6 +435,9 @@ public partial class NetworkRoot : Node
         {
             PlayerChain = player.Blockchain.Chain,
             PlayerPendingTransactions = player.Blockchain.PendingTransactions,
+            NodeFinancialStates = SharedNodesById
+                .Where(pair => pair.Value.FinancialState is not null)
+                .ToDictionary(pair => pair.Key, pair => pair.Value.FinancialState!.CloneNormalized()),
             LastMinedByNodeId = _lastMinedByNodeId,
             CurrentMinerStreak = _currentMinerStreak,
             BestMinerStreak = _bestMinerStreak
@@ -416,6 +497,14 @@ public partial class NetworkRoot : Node
         _currentMinerStreak = snapshot.CurrentMinerStreak;
         _bestMinerStreak = snapshot.BestMinerStreak;
         _lastMinedBlock = snapshot.PlayerChain.LastOrDefault();
+
+        foreach ((string nodeId, NodeFinancialState state) in snapshot.NodeFinancialStates ?? new Dictionary<string, NodeFinancialState>())
+        {
+            if (SharedNodesById.TryGetValue(nodeId, out NodeAgent? node))
+            {
+                node.FinancialState = state.CloneNormalized();
+            }
+        }
     }
 
     private static void EnsureDirectory(string path)
@@ -478,10 +567,49 @@ public partial class NetworkRoot : Node
     {
         public List<Block> PlayerChain { get; set; } = new();
         public List<Transaction> PlayerPendingTransactions { get; set; } = new();
+        public Dictionary<string, NodeFinancialState> NodeFinancialStates { get; set; } = new();
         public string LastMinedByNodeId { get; set; } = string.Empty;
         public int CurrentMinerStreak { get; set; }
         public int BestMinerStreak { get; set; }
     }
+}
+
+public sealed class NodeFinancialState
+{
+    public decimal PrincipalBalance { get; set; }
+    public decimal BankrollBalance { get; set; }
+    public decimal AutoRechargeAmount { get; set; } = BankrollProgramService.DefaultAutoRechargeAmount;
+    public List<BankrollProgramService.TransferRecord> TransferRecords { get; set; } = new();
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+
+    public NodeFinancialState Clone() => new()
+    {
+        PrincipalBalance = PrincipalBalance,
+        BankrollBalance = BankrollBalance,
+        AutoRechargeAmount = AutoRechargeAmount,
+        TransferRecords = TransferRecords?.Select(CloneTransferRecord).ToList() ?? new List<BankrollProgramService.TransferRecord>(),
+        UpdatedAtUtc = UpdatedAtUtc
+    };
+
+    public NodeFinancialState CloneNormalized()
+    {
+        NodeFinancialState clone = Clone();
+        clone.PrincipalBalance = Scripts.Finance.Money.Normalize(Math.Max(0m, clone.PrincipalBalance));
+        clone.BankrollBalance = Scripts.Finance.Money.Normalize(Math.Max(0m, clone.BankrollBalance));
+        clone.AutoRechargeAmount = clone.AutoRechargeAmount > 0m
+            ? Scripts.Finance.Money.Normalize(clone.AutoRechargeAmount)
+            : BankrollProgramService.DefaultAutoRechargeAmount;
+        clone.UpdatedAtUtc = clone.UpdatedAtUtc == default ? DateTime.UtcNow : clone.UpdatedAtUtc;
+        return clone;
+    }
+
+    private static BankrollProgramService.TransferRecord CloneTransferRecord(BankrollProgramService.TransferRecord record) => new()
+    {
+        UtcTimestamp = DateTime.SpecifyKind(record.UtcTimestamp, DateTimeKind.Utc),
+        Amount = Scripts.Finance.Money.Normalize(Math.Max(0m, record.Amount)),
+        Direction = record.Direction ?? string.Empty,
+        Reason = record.Reason ?? string.Empty
+    };
 }
 
 public sealed class BlockchainMiningAnnouncement

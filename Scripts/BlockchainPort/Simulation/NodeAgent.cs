@@ -11,6 +11,7 @@ public sealed class NodeAgent
     public string WalletPublicKey { get; }
     public string WalletPrivateKey { get; }
     public BlockchainService Blockchain { get; } = new();
+    public NodeFinancialState? FinancialState { get; set; }
     private long _candidateNonce;
     private string _candidateKey = string.Empty;
 

@@ -134,6 +134,15 @@ offset_bottom = 594.0
 theme_override_font_sizes/font_size = 22
 text = "Auto bets per second:"
 
+[node name="ActiveNodeText" type="Label" parent="UiTextLabels"]
+layout_mode = 0
+offset_left = 9.0
+offset_top = 305.0
+offset_right = 194.0
+offset_bottom = 336.0
+theme_override_font_sizes/font_size = 22
+text = "Active node:"
+
 [node name="BalanceValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
@@ -235,6 +244,15 @@ offset_right = 1729.0
 offset_bottom = 732.0
 theme_override_font_sizes/font_size = 18
 text = "Blockchain status..."
+
+[node name="ActiveNodeSelector" type="OptionButton" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 7.0
+offset_top = 338.0
+offset_right = 242.0
+offset_bottom = 381.0
+theme_override_font_sizes/font_size = 22
 
 [node name="BetsPerSecondInput" type="SpinBox" parent="."]
 unique_name_in_owner = true
