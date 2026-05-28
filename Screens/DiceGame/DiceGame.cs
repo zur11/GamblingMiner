@@ -338,7 +338,9 @@ public partial class DiceGame : Control, IBetEventSource
 			NumberOfBets = _strategyPanel.NumberOfBets,
 			AutoRechargeEnabled = _strategyPanel.AutoRechargeEnabled,
 			WinningChance = (int)_chanceSlider.Value,
-			BetHigh = _highLowToggleBtn.ButtonPressed
+			BetHigh = _highLowToggleBtn.ButtonPressed,
+			BetsPerSecond = GetAutoBetBaseAps(),
+			BetsPerSecondMultiplier = GetAutoBetApsMultiplier()
 		});
 
 		_resultValue.Modulate = Colors.White;
@@ -369,6 +371,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_chanceSlider.Value = Math.Clamp(saved.WinningChance, 1, 95);
 		_highLowToggleBtn.ButtonPressed = saved.BetHigh;
 		_highLowToggleBtn.Text = saved.BetHigh ? "HIGH" : "LOW";
+		ApplyAutoBetSpeedSettings(saved.BetsPerSecond, saved.BetsPerSecondMultiplier);
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
 		_resultValue.Modulate = Colors.White;
@@ -387,6 +390,30 @@ public partial class DiceGame : Control, IBetEventSource
 		bool hasValidBaseBet = _strategyPanel.TryGetValidBet(out decimal baseBet) && baseBet > 0m;
 		_saveStrategyBtn.Disabled = !hasName || !hasValidBaseBet;
 		_loadStrategyBtn.Disabled = _savedStrategyRepository == null || !_savedStrategyRepository.HasAnyForGame(GameId);
+	}
+
+	private void ApplyAutoBetSpeedSettings(int betsPerSecond, int multiplier)
+	{
+		if (_betsPerSecondInput != null)
+		{
+			_betsPerSecondInput.Value = Math.Clamp(betsPerSecond, 1, MaxAutoBetBaseAps);
+		}
+
+		if (_apsMultiplierSelector == null || _apsMultiplierSelector.ItemCount <= 0)
+		{
+			return;
+		}
+
+		int clampedMultiplier = Math.Clamp(multiplier, 1, MaxAutoBetApsMultiplier);
+		for (int index = 0; index < _apsMultiplierSelector.ItemCount; index++)
+		{
+			Variant meta = _apsMultiplierSelector.GetItemMetadata(index);
+			if (TryReadMultiplierMetadata(meta, out int itemMultiplier) && itemMultiplier == clampedMultiplier)
+			{
+				_apsMultiplierSelector.Select(index);
+				return;
+			}
+		}
 	}
 
 	// --- Manual Bet Session
@@ -1135,17 +1162,30 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		Variant meta = _apsMultiplierSelector.GetItemMetadata(_apsMultiplierSelector.Selected);
+		if (TryReadMultiplierMetadata(meta, out int multiplier))
+		{
+			return Math.Clamp(multiplier, 1, MaxAutoBetApsMultiplier);
+		}
+
+		return 1;
+	}
+
+	private bool TryReadMultiplierMetadata(Variant meta, out int multiplier)
+	{
+		multiplier = 1;
 		if (meta.VariantType == Variant.Type.Int)
 		{
-			return Math.Clamp(meta.AsInt32(), 1, MaxAutoBetApsMultiplier);
+			multiplier = meta.AsInt32();
+			return true;
 		}
 
 		if (meta.VariantType == Variant.Type.Float)
 		{
-			return Math.Clamp((int)Math.Round(meta.AsDouble()), 1, MaxAutoBetApsMultiplier);
+			multiplier = (int)Math.Round(meta.AsDouble());
+			return true;
 		}
 
-		return 1;
+		return false;
 	}
 
 	// Funciones auxiliares

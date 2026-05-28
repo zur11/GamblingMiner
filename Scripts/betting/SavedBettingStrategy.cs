@@ -12,5 +12,7 @@ namespace Scripts.Betting
 		public bool AutoRechargeEnabled { get; set; }
 		public int WinningChance { get; set; }
 		public bool BetHigh { get; set; }
+		public int BetsPerSecond { get; set; } = 1;
+		public int BetsPerSecondMultiplier { get; set; } = 1;
 	}
 }
