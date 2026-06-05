@@ -1,0 +1,22 @@
+# Glossary - GamblingMiner
+
+- **Autobet**: Automated betting mode that repeats bets using the current strategy.
+- **Bankroll**: Subaccount of Main Balance used for active casino bets.
+- **Block reward**: BTC paid to the miner that finds a valid block.
+- **Block template**: Candidate block assembled by a mining node before nonce attempts.
+- **Bot**: Simulated participant. Some bots are mining nodes; others may only own wallets and transact.
+- **Candidate block**: The block a miner is currently trying to solve.
+- **Cashback**: Planned return % on losses based on player level.
+- **CasinoFinances**: Planned development scene for tracking casino SC income, payouts, credit line, and debt.
+- **Coinbase transaction**: Special transaction that creates the block reward and pays fees to the miner.
+- **Difficulty**: Measure of how hard it is to mine a block.
+- **Game over**: State reached when Main Balance plus Bankroll equals zero.
+- **Halving**: Reward reduction event. Basic Mode uses a scaled interval of 4,381 blocks.
+- **Main Balance**: Player reserve outside active betting. This is the preferred user-facing term.
+- **Mempool**: Set of pending BTC transactions waiting to be included in a block.
+- **Merkle root**: Hash root derived from the ordered transactions in a block.
+- **Nonce**: Value changed by miners while attempting to find a valid block hash.
+- **RTP**: Return to Player. Dice currently targets roughly 99.02% RTP.
+- **SC**: Stable Coin, simulated USD-pegged currency.
+- **Stop on block mined**: Strategy condition that stops betting after a block is mined.
+- **Stop on loss/profit**: Strategy condition that stops betting after session loss or profit reaches a configured value.
