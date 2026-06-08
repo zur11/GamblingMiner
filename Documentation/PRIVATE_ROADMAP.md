@@ -196,6 +196,19 @@ Goal: give Basic Mode long-session structure without a hard win condition.
 
 Done when players have short-term and medium-term targets.
 
+### P9 - Unit Testing Infrastructure
+
+Goal: establish a test foundation so core logic can be verified without running the full game.
+
+- Identify a C# test framework compatible with Godot 4 projects (e.g., GdUnit4 for in-engine tests, or xUnit/NUnit for pure logic outside Godot).
+- Start with pure C# classes that have no Godot dependency: `DiceEngine`, `ProgressiveBettingStrategy`, `Money`, `BetHistoryRepository`.
+- Define a minimal test conventions doc (where tests live, how to run them).
+- Do not attempt to test autoload services or scene logic in the first pass.
+
+Done when at least the core betting and money logic has automated coverage and a new developer can run tests from the command line.
+
+---
+
 ## 6. Design Questions Still Open
 
 - What exact threshold lets the casino start repaying bank debt?
