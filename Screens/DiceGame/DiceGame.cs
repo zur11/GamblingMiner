@@ -77,12 +77,48 @@ public partial class DiceGame : Control, IBetEventSource
 	private SavedBettingStrategyRepository _savedStrategyRepository;
 	private int _lastAnnouncedMinedBlockIndex;
 	private ManualStopGate _manualStopGate = ManualStopGate.None;
+	private readonly Dictionary<string, NodeStrategyState> _nodeStrategies = new();
+	private readonly Dictionary<string, BotAutoBetRunner> _botRunners = new();
+	private bool _loadingNodeStrategy;
 
 	private enum ManualStopGate
 	{
 		None,
 		BlockMined,
 		ProfitOrLoss
+	}
+
+	private sealed class NodeStrategyState
+	{
+		public BettingStrategyConfig Config { get; set; }
+		public int NumberOfBets { get; set; }
+		public bool AutoRechargeEnabled { get; set; }
+		public int WinningChance { get; set; }
+		public bool BetHigh { get; set; }
+		public int BetsPerSecond { get; set; }
+		public int BetsPerSecondMultiplier { get; set; }
+
+		public bool IsValid => Config != null && Config.BaseBet > 0m;
+
+		public NodeStrategyState Clone() => new()
+		{
+			Config = CloneConfig(Config),
+			NumberOfBets = NumberOfBets,
+			AutoRechargeEnabled = AutoRechargeEnabled,
+			WinningChance = WinningChance,
+			BetHigh = BetHigh,
+			BetsPerSecond = BetsPerSecond,
+			BetsPerSecondMultiplier = BetsPerSecondMultiplier
+		};
+	}
+
+	private sealed class BotAutoBetRunner
+	{
+		public string NodeId { get; init; }
+		public Wallet Wallet { get; init; }
+		public AutoBetSession Session { get; init; }
+		public NodeStrategyState Strategy { get; init; }
+		public double AccumulatorSeconds { get; set; }
 	}
 
 	// Componentes UI
@@ -241,16 +277,17 @@ public partial class DiceGame : Control, IBetEventSource
 
 		UpdateAllUI();
 		UpdateStrategySaveLoadButtons();
+		InitializeApsMultiplierSelector();
 		InitializeActiveNodeSelector();
 		bool hadAnyNodeFinancialState = _blockchainNetworkRoot?.HasAnyNodeFinancialState() ?? false;
 		RestoreLegacyCheckpointIfNeeded();
 		LoadActiveNodeFinancialState();
+		LoadActiveNodeStrategySnapshot();
 		EnsureInitialBankrollFunded();
 		EnsureMissingNodeFinancialStates(hadAnyNodeFinancialState);
 		CaptureBlockCheckpointIfMissing();
 		RefreshCalculatorFromGameSettings();
 		_resultValue.Text = "Place your bet.";
-		InitializeApsMultiplierSelector();
 	}
 
 	private void InitializeApsMultiplierSelector()
@@ -315,10 +352,13 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			_session.Stop(IBettingStrategy.StopReason.ManualStop);
 		}
+		StopAllBotRunners();
 
+		SaveActiveNodeStrategySnapshot();
 		SaveActiveNodeFinancialState(true);
 		_activeNodeId = nextNodeId;
 		LoadActiveNodeFinancialState();
+		LoadActiveNodeStrategySnapshot();
 		_betHistoryContainer?.ClearEntries();
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
@@ -427,11 +467,13 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnHighLowToggled()
 	{
 		_highLowToggleBtn.Text = _highLowToggleBtn.ButtonPressed ? "HIGH" : "LOW";
+		SaveActiveNodeStrategySnapshot();
 		UpdateAllUI();
 	}
 
 	private void OnChanceChanged(double _)
 	{
+		SaveActiveNodeStrategySnapshot();
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
 	}
@@ -461,6 +503,11 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnStrategyConfigChanged()
 	{
+		if (_loadingNodeStrategy)
+		{
+			return;
+		}
+
 		// 🔥 reset inmediato en manual
 		if (_session.IsRunning)
 		{
@@ -471,6 +518,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_strategyPanel.SetManualEnabled(true);
 
 		RefreshCalculatorFromGameSettings();
+		SaveActiveNodeStrategySnapshot();
 		UpdateStrategySaveLoadButtons();
 	}
 
@@ -497,6 +545,7 @@ public partial class DiceGame : Control, IBetEventSource
 			BetsPerSecondMultiplier = GetAutoBetApsMultiplier()
 		});
 
+		SaveActiveNodeStrategySnapshot();
 		_resultValue.Modulate = Colors.White;
 		_resultValue.Text = $"Strategy saved: {strategyName}";
 		UpdateStrategySaveLoadButtons();
@@ -521,11 +570,14 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		_strategyNameInput.Text = saved.Name;
+		_loadingNodeStrategy = true;
 		_strategyPanel.ApplyStrategySettings(saved.Config, saved.NumberOfBets, saved.AutoRechargeEnabled);
 		_chanceSlider.Value = Math.Clamp(saved.WinningChance, 1, 95);
 		_highLowToggleBtn.ButtonPressed = saved.BetHigh;
 		_highLowToggleBtn.Text = saved.BetHigh ? "HIGH" : "LOW";
 		ApplyAutoBetSpeedSettings(saved.BetsPerSecond, saved.BetsPerSecondMultiplier);
+		_loadingNodeStrategy = false;
+		SaveActiveNodeStrategySnapshot();
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
 		_resultValue.Modulate = Colors.White;
@@ -570,6 +622,89 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 	}
 
+	private void SaveActiveNodeStrategySnapshot()
+	{
+		if (_loadingNodeStrategy || string.IsNullOrWhiteSpace(_activeNodeId) || _strategyPanel == null)
+		{
+			return;
+		}
+
+		if (!_strategyPanel.TryGetValidBet(out decimal baseBet) || baseBet <= 0m)
+		{
+			return;
+		}
+
+		BettingStrategyConfig config = _strategyPanel.BuildConfig();
+		if (config.BaseBet <= 0m)
+		{
+			return;
+		}
+
+		_nodeStrategies[_activeNodeId] = new NodeStrategyState
+		{
+			Config = CloneConfig(config),
+			NumberOfBets = _strategyPanel.NumberOfBets,
+			AutoRechargeEnabled = _strategyPanel.AutoRechargeEnabled,
+			WinningChance = (int)_chanceSlider.Value,
+			BetHigh = _highLowToggleBtn.ButtonPressed,
+			BetsPerSecond = GetAutoBetBaseAps(),
+			BetsPerSecondMultiplier = GetAutoBetApsMultiplier()
+		};
+	}
+
+	private void LoadActiveNodeStrategySnapshot()
+	{
+		if (_strategyPanel == null)
+		{
+			return;
+		}
+
+		_loadingNodeStrategy = true;
+		try
+		{
+			if (!_nodeStrategies.TryGetValue(_activeNodeId, out NodeStrategyState state) || !state.IsValid)
+			{
+				_strategyPanel.ClearStrategySettings();
+				ApplyAutoBetSpeedSettings(1, 1);
+			}
+			else
+			{
+				_strategyPanel.ApplyStrategySettings(state.Config, state.NumberOfBets, state.AutoRechargeEnabled);
+				_chanceSlider.Value = Math.Clamp(state.WinningChance, 1, 95);
+				_highLowToggleBtn.ButtonPressed = state.BetHigh;
+				_highLowToggleBtn.Text = state.BetHigh ? "HIGH" : "LOW";
+				ApplyAutoBetSpeedSettings(state.BetsPerSecond, state.BetsPerSecondMultiplier);
+			}
+		}
+		finally
+		{
+			_loadingNodeStrategy = false;
+		}
+
+		UpdateStrategySaveLoadButtons();
+	}
+
+	private static BettingStrategyConfig CloneConfig(BettingStrategyConfig config)
+	{
+		if (config == null)
+		{
+			return null;
+		}
+
+		return new BettingStrategyConfig
+		{
+			BaseBet = config.BaseBet,
+			IncreasePercent = config.IncreasePercent,
+			IncreaseOnLoss = config.IncreaseOnLoss,
+			IncreaseOnWin = config.IncreaseOnWin,
+			StopOnProfit = config.StopOnProfit,
+			StopOnLoss = config.StopOnLoss,
+			StopOnBlockMined = config.StopOnBlockMined,
+			UseProgressionAnchorStops = config.UseProgressionAnchorStops,
+			InsistAfterStop = config.InsistAfterStop
+		};
+	}
+
 	// --- Manual Bet Session
 	private void OnManualBetFromPanel()
 	{
@@ -584,7 +719,9 @@ public partial class DiceGame : Control, IBetEventSource
 
 		EnsureSession(false); // 🔥 manual
 
+		SaveActiveNodeStrategySnapshot();
 		ExecuteBet();
+		RunBotManualBurst();
 	}
 
 	// --- Autobet Session
@@ -627,6 +764,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_autoBetVirtualTimestampInitialized = false;
 			_autoBetLastExecutedTimestampUtc = null;
 			_userStatsService?.SetHighFrequencyMode(false);
+			StopAllBotRunners();
 			_session.Stop(IBettingStrategy.StopReason.ManualStop);
 			RefreshCalculatorFromGameSettings();
 			return;
@@ -639,6 +777,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_calendarTimeService.IsRunning = true;
 		}
 		StartOrRestartSession(true);
+		StartBotRunners();
 
 		_autoBetAccumulatorGameSeconds = 0d;
 		_autoBetLastRateSampleMsec = 0;
@@ -683,6 +822,11 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnBetsPerSecondChanged(double _)
 	{
+		if (!_loadingNodeStrategy)
+		{
+			SaveActiveNodeStrategySnapshot();
+		}
+
 		if (_session != null && _session.IsRunning && !_isAutoPaused)
 		{
 			// New speed takes effect immediately via TickAutoBet.
@@ -723,6 +867,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 		if (session is ManualBetSession)
 		{
+			StopAllBotRunners();
 			_manualStopGate = session.LastStopReason switch
 			{
 				IBettingStrategy.StopReason.StopOnBlockMined => ManualStopGate.BlockMined,
@@ -745,6 +890,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_autoBetVirtualTimestampInitialized = false;
 			_autoBetLastExecutedTimestampUtc = null;
 			_isAutoPaused = false;
+			StopAllBotRunners();
 			_strategyPanel.SetAutoPaused(false);
 			_strategyPanel.SetAutoRunning(false);
 			_userStatsService?.SetHighFrequencyMode(false);
@@ -761,6 +907,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 	public override void _ExitTree()
 	{
+		SaveActiveNodeStrategySnapshot();
+		StopAllBotRunners();
 		_userStatsService?.FlushHistory();
 		_calendarTimeService?.PersistCurrentTime();
 	}
@@ -800,6 +948,216 @@ public partial class DiceGame : Control, IBetEventSource
 		_session.Start(_strategyPanel.NumberOfBets, config);
 	}
 
+	private void StartBotRunners()
+	{
+		StopAllBotRunners();
+		if (!IsPlayerActive() || _blockchainNetworkRoot == null)
+		{
+			return;
+		}
+
+		SaveActiveNodeStrategySnapshot();
+		foreach (string nodeId in _blockchainNetworkRoot.GetNodeIds())
+		{
+			if (string.Equals(nodeId, PlayerNodeId, StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			if (!_nodeStrategies.TryGetValue(nodeId, out NodeStrategyState strategyState) || !strategyState.IsValid)
+			{
+				continue;
+			}
+
+			NodeFinancialState financialState = _blockchainNetworkRoot.GetOrCreateNodeFinancialState(
+				nodeId,
+				BankrollProgramService.InitialPrincipalBalanceBaseline - BankrollProgramService.DefaultAutoRechargeAmount,
+				BankrollProgramService.DefaultAutoRechargeAmount);
+			Wallet botWallet = new(financialState.BankrollBalance);
+			BetService botBetService = new(
+				_engine,
+				botWallet,
+				TransactionSource.Bet,
+				() => _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow);
+			AutoBetSession botSession = new(botBetService, botWallet, new ProgressiveBettingStrategy());
+			NodeStrategyState runnerStrategy = strategyState.Clone();
+			botSession.Start(runnerStrategy.NumberOfBets, runnerStrategy.Config);
+			_botRunners[nodeId] = new BotAutoBetRunner
+			{
+				NodeId = nodeId,
+				Wallet = botWallet,
+				Session = botSession,
+				Strategy = runnerStrategy
+			};
+		}
+	}
+
+	private void StopAllBotRunners()
+	{
+		foreach (BotAutoBetRunner runner in _botRunners.Values)
+		{
+			if (runner.Session.IsRunning)
+			{
+				runner.Session.Stop(IBettingStrategy.StopReason.ManualStop);
+			}
+			SaveBotFinancialState(runner);
+		}
+
+		_botRunners.Clear();
+	}
+
+	private void RunBotManualBurst()
+	{
+		if (!IsPlayerActive())
+		{
+			return;
+		}
+
+		StartBotRunners();
+		foreach (BotAutoBetRunner runner in _botRunners.Values.ToList())
+		{
+			int attempts = Math.Max(1, (int)Math.Floor(GetRunnerEffectiveBetsPerSecond(runner)));
+			attempts = Math.Min(attempts, MaxAutoBetsPerRealSecond > int.MaxValue ? int.MaxValue : (int)MaxAutoBetsPerRealSecond);
+			for (int i = 0; i < attempts && runner.Session.IsRunning; i++)
+			{
+				ExecuteBotBet(runner);
+			}
+		}
+		StopAllBotRunners();
+	}
+
+	private void TickBotAutoBets(double realDeltaSeconds)
+	{
+		if (_botRunners.Count == 0)
+		{
+			return;
+		}
+
+		foreach (BotAutoBetRunner runner in _botRunners.Values.ToList())
+		{
+			if (!runner.Session.IsRunning)
+			{
+				SaveBotFinancialState(runner);
+				_botRunners.Remove(runner.NodeId);
+				continue;
+			}
+
+			double betsPerSecond = GetRunnerEffectiveBetsPerSecond(runner);
+			double intervalSeconds = 1.0d / Math.Max(0.0001d, betsPerSecond);
+			runner.AccumulatorSeconds += Math.Max(0.0d, realDeltaSeconds);
+			runner.AccumulatorSeconds = Math.Min(runner.AccumulatorSeconds, MaxAutoBetBacklogGameSeconds);
+
+			int executedThisFrame = 0;
+			while (runner.AccumulatorSeconds >= intervalSeconds &&
+				executedThisFrame < MaxAutoBetsPerFrame &&
+				runner.Session.IsRunning)
+			{
+				runner.AccumulatorSeconds -= intervalSeconds;
+				ExecuteBotBet(runner);
+				executedThisFrame++;
+			}
+		}
+	}
+
+	private double GetRunnerEffectiveBetsPerSecond(BotAutoBetRunner runner)
+	{
+		int baseAps = Math.Clamp(runner.Strategy.BetsPerSecond, 1, MaxAutoBetBaseAps);
+		int multiplier = Math.Clamp(runner.Strategy.BetsPerSecondMultiplier, 1, MaxAutoBetApsMultiplier);
+		return baseAps * multiplier;
+	}
+
+	private void ExecuteBotBet(BotAutoBetRunner runner)
+	{
+		if (runner == null || !runner.Session.IsRunning)
+		{
+			return;
+		}
+
+		if (runner.Session.CurrentBet > runner.Wallet.Balance)
+		{
+			if (!TryAutoRechargeBot(runner) || runner.Session.CurrentBet > runner.Wallet.Balance)
+			{
+				runner.Session.Stop(IBettingStrategy.StopReason.InsufficientBalance);
+				SaveBotFinancialState(runner);
+				return;
+			}
+		}
+
+		try
+		{
+			DateTime timestampUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
+			runner.Session.ExecuteNext(
+				Math.Clamp(runner.Strategy.WinningChance, 1, 95),
+				runner.Strategy.BetHigh,
+				timestampUtc);
+			ProcessBlockchainAttemptForBet(
+				runner.NodeId,
+				runner.Strategy.Config.StopOnBlockMined,
+				runner.Session);
+			SaveBotFinancialState(runner);
+		}
+		catch (InvalidOperationException)
+		{
+			runner.Session.Stop(IBettingStrategy.StopReason.InsufficientBalance);
+			SaveBotFinancialState(runner);
+		}
+		catch (Exception ex)
+		{
+			GD.PushError($"[BotAutoBetError] node={runner.NodeId} {ex}");
+			runner.Session.Stop(IBettingStrategy.StopReason.ManualStop);
+			SaveBotFinancialState(runner);
+		}
+	}
+
+	private bool TryAutoRechargeBot(BotAutoBetRunner runner)
+	{
+		if (_blockchainNetworkRoot == null || runner?.Strategy.AutoRechargeEnabled != true)
+		{
+			return false;
+		}
+
+		NodeFinancialState state = _blockchainNetworkRoot.GetOrCreateNodeFinancialState(
+			runner.NodeId,
+			BankrollProgramService.InitialPrincipalBalanceBaseline - BankrollProgramService.DefaultAutoRechargeAmount,
+			runner.Wallet.Balance);
+		decimal amount = Money.Normalize(state.AutoRechargeAmount > 0m
+			? state.AutoRechargeAmount
+			: BankrollProgramService.DefaultAutoRechargeAmount);
+		if (amount <= 0m || state.PrincipalBalance < amount)
+		{
+			return false;
+		}
+
+		state.PrincipalBalance = Money.Normalize(state.PrincipalBalance - amount);
+		runner.Wallet.ApplyTransaction(new Scripts.Finance.Transaction(TransactionType.Deposit, TransactionSource.External, null, amount));
+		state.BankrollBalance = runner.Wallet.Balance;
+		state.TransferRecords ??= new List<BankrollProgramService.TransferRecord>();
+		state.TransferRecords.Add(new BankrollProgramService.TransferRecord
+		{
+			UtcTimestamp = DateTime.UtcNow,
+			Amount = amount,
+			Direction = "balance_to_bankroll",
+			Reason = "auto_recharge"
+		});
+		_blockchainNetworkRoot.SetNodeFinancialState(runner.NodeId, state, false);
+		return true;
+	}
+
+	private void SaveBotFinancialState(BotAutoBetRunner runner)
+	{
+		if (_blockchainNetworkRoot == null || runner == null)
+		{
+			return;
+		}
+
+		NodeFinancialState state = _blockchainNetworkRoot.GetOrCreateNodeFinancialState(
+			runner.NodeId,
+			BankrollProgramService.InitialPrincipalBalanceBaseline - BankrollProgramService.DefaultAutoRechargeAmount,
+			runner.Wallet.Balance);
+		state.BankrollBalance = runner.Wallet.Balance;
+		_blockchainNetworkRoot.SetNodeFinancialState(runner.NodeId, state, false);
+	}
+
 	private void ExecuteBet(DateTime? timestampUtc = null)
 	{
 		if (_session == null || !_session.IsRunning)
@@ -835,7 +1193,7 @@ public partial class DiceGame : Control, IBetEventSource
 				_userStatsService?.OnBetExecutedRegisterBet(GameId, betEvent);
 			}
 			SaveActiveNodeFinancialState(false);
-			ProcessBlockchainAttemptForBet();
+			ProcessBlockchainAttemptForBet(_activeNodeId, _strategyPanel.StopOnBlockMinedEnabled, _session);
 			AdvanceClockForBet();
 
 			_strategyPanel.SetNumberOfBets(
@@ -912,6 +1270,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 		UpdateAutoBetMeasuredRates(1.0d);
 		MaybePrintAutoBetTelemetry();
+		TickBotAutoBets(effectiveRealDelta);
 
 		double intervalGameSeconds = 1.0d / Math.Max(0.0001d, betsPerGameSecond);
 		int executedThisFrame = 0;
@@ -1153,7 +1512,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_calendarTimeService?.PersistCurrentTime();
 	}
 
-	private void ProcessBlockchainAttemptForBet()
+	private void ProcessBlockchainAttemptForBet(string minerNodeId, bool stopOnBlockMined, BaseBetSession sessionToStop)
 	{
 		if (_blockchainNetworkRoot is null)
 		{
@@ -1161,7 +1520,7 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		long gameUnixMs = new DateTimeOffset(_calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
-		bool mined = _blockchainNetworkRoot.TryMineSingleNonceAttempt(_activeNodeId, out var minedBlock, gameUnixMs);
+		bool mined = _blockchainNetworkRoot.TryMineSingleNonceAttempt(minerNodeId, out var minedBlock, gameUnixMs);
 		if (!mined || minedBlock is null)
 		{
 			return;
@@ -1169,9 +1528,9 @@ public partial class DiceGame : Control, IBetEventSource
 
 		AnnounceLatestMinedBlockIfAny();
 		CaptureBlockCheckpoint();
-		if (_session != null && _session.IsRunning && _strategyPanel.StopOnBlockMinedEnabled)
+		if (sessionToStop != null && sessionToStop.IsRunning && stopOnBlockMined)
 		{
-			_session.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
+			sessionToStop.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
 		}
 	}
 

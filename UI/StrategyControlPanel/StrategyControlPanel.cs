@@ -165,6 +165,28 @@ namespace UI.StrategyControlPanel
 			AutoRechargeToggled?.Invoke(autoRechargeEnabled);
 		}
 
+		public void ClearStrategySettings()
+		{
+			_internalUpdate = true;
+			_betAmountInput.Text = string.Empty;
+			_increasePercentageInput.Text = string.Empty;
+			_increaseOnLossWinToggle.ButtonPressed = false;
+			_increaseOnLossWinToggle.Text = "Increase on loss";
+			_numberOfBetsInput.Text = string.Empty;
+			_stopOnProfitInput.Text = string.Empty;
+			_stopOnLossInput.Text = string.Empty;
+			_stopOnBlockMinedToggle.ButtonPressed = false;
+			_stopOnBlockMinedToggle.Text = "Stop Block: OFF";
+			_profitStopModeToggle.ButtonPressed = false;
+			_profitStopModeToggle.Text = "P/L Mode: Session";
+			_autoRechargeToggle.ButtonPressed = true;
+			_autoRechargeToggle.Text = "Auto Recharge: ON";
+			_insistAfterStopToggle.ButtonPressed = false;
+			_internalUpdate = false;
+
+			UpdateInsistAfterStopToggleAvailability();
+		}
+
 		public void SetManualEnabled(bool enabled)
 		{
 			_betOnceBtn.Disabled = !enabled;
