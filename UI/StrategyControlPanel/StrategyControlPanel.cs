@@ -24,6 +24,7 @@ namespace UI.StrategyControlPanel
 
         // --- Flags ---
         private bool _internalUpdate = false;
+		private bool _botStrategyMode = false;
 
 		// --- Nodos UI ---
 		[Export]
@@ -111,7 +112,8 @@ namespace UI.StrategyControlPanel
 		public bool UseProgressionAnchorStops => _profitStopModeToggle?.ButtonPressed ?? false;
 		public bool AutoRechargeEnabled => _autoRechargeToggle?.ButtonPressed ?? true;
 		public bool InsistAfterStopEnabled =>
-			_insistAfterStopToggle?.ButtonPressed == true && HasProfitOrLossStopAmount();
+			_insistAfterStopToggle?.ButtonPressed == true &&
+			(_botStrategyMode || HasProfitOrLossStopAmount());
 
 		public void SetBetAmount(decimal amount)
 		{
@@ -160,6 +162,7 @@ namespace UI.StrategyControlPanel
 			_internalUpdate = false;
 
 			UpdateInsistAfterStopToggleAvailability();
+			ApplyStrategyModeRestrictions();
 			StrategyConfigChanged?.Invoke();
 			BetAmountInputChanged?.Invoke(_betAmountInput.Text);
 			AutoRechargeToggled?.Invoke(autoRechargeEnabled);
@@ -185,6 +188,13 @@ namespace UI.StrategyControlPanel
 			_internalUpdate = false;
 
 			UpdateInsistAfterStopToggleAvailability();
+			ApplyStrategyModeRestrictions();
+		}
+
+		public void SetBotStrategyMode(bool enabled)
+		{
+			_botStrategyMode = enabled;
+			ApplyStrategyModeRestrictions();
 		}
 
 		public void SetManualEnabled(bool enabled)
@@ -296,6 +306,13 @@ namespace UI.StrategyControlPanel
 
 		private void OnStopOnBlockMinedTogglePressed()
 		{
+			if (_botStrategyMode)
+			{
+				_stopOnBlockMinedToggle.ButtonPressed = false;
+				_stopOnBlockMinedToggle.Text = "Stop Block: OFF";
+				return;
+			}
+
 			_stopOnBlockMinedToggle.Text = _stopOnBlockMinedToggle.ButtonPressed
 				? "Stop Block: ON"
 				: "Stop Block: OFF";
@@ -320,6 +337,14 @@ namespace UI.StrategyControlPanel
 
 		private void OnAutoRechargeTogglePressed()
 		{
+			if (_botStrategyMode)
+			{
+				_autoRechargeToggle.ButtonPressed = true;
+				_autoRechargeToggle.Text = "Auto Recharge: ON";
+				AutoRechargeToggled?.Invoke(true);
+				return;
+			}
+
 			bool enabled = _autoRechargeToggle.ButtonPressed;
 			_autoRechargeToggle.Text = enabled ? "Auto Recharge: ON" : "Auto Recharge: OFF";
 			AutoRechargeToggled?.Invoke(enabled);
@@ -348,12 +373,13 @@ namespace UI.StrategyControlPanel
 
 		private void OnInsistAfterStopTogglePressed()
 		{
-			if (!HasProfitOrLossStopAmount())
+			if (!_botStrategyMode && !HasProfitOrLossStopAmount())
 			{
 				_insistAfterStopToggle.ButtonPressed = false;
 			}
 
 			UpdateInsistAfterStopToggleAvailability();
+			ApplyStrategyModeRestrictions();
 			StrategyConfigChanged?.Invoke();
 		}
 
@@ -365,6 +391,11 @@ namespace UI.StrategyControlPanel
 			}
 
 			bool canEnable = HasProfitOrLossStopAmount();
+			if (_botStrategyMode)
+			{
+				canEnable = true;
+			}
+
 			if (!canEnable)
 			{
 				_insistAfterStopToggle.ButtonPressed = false;
@@ -374,6 +405,39 @@ namespace UI.StrategyControlPanel
 			_insistAfterStopToggle.Text = _insistAfterStopToggle.ButtonPressed
 				? "Insist After Stop: ON"
 				: "Insist After Stop: OFF";
+		}
+
+		private void ApplyStrategyModeRestrictions()
+		{
+			if (_stopOnBlockMinedToggle != null)
+			{
+				if (_botStrategyMode)
+				{
+					_stopOnBlockMinedToggle.ButtonPressed = false;
+					_stopOnBlockMinedToggle.Text = "Stop Block: OFF";
+				}
+				_stopOnBlockMinedToggle.Disabled = _botStrategyMode;
+			}
+
+			if (_autoRechargeToggle != null)
+			{
+				if (_botStrategyMode)
+				{
+					_autoRechargeToggle.ButtonPressed = true;
+					_autoRechargeToggle.Text = "Auto Recharge: ON";
+				}
+				_autoRechargeToggle.Disabled = _botStrategyMode;
+			}
+
+			bool profitLossInputsEnabled = !_botStrategyMode || (_insistAfterStopToggle?.ButtonPressed == true);
+			if (_stopOnProfitInput != null)
+			{
+				_stopOnProfitInput.Editable = profitLossInputsEnabled;
+			}
+			if (_stopOnLossInput != null)
+			{
+				_stopOnLossInput.Editable = profitLossInputsEnabled;
+			}
 		}
 
 		private bool HasProfitOrLossStopAmount()
@@ -405,9 +469,9 @@ namespace UI.StrategyControlPanel
 				IncreasePercent = IncreasePercent,
 				IncreaseOnLoss = !IncreasingOnWin,
 				IncreaseOnWin = IncreasingOnWin,
-				StopOnProfit = ParseDecimal(_stopOnProfitInput.Text),
-				StopOnLoss = ParseDecimal(_stopOnLossInput.Text),
-				StopOnBlockMined = StopOnBlockMinedEnabled,
+				StopOnProfit = _botStrategyMode && !InsistAfterStopEnabled ? null : ParseDecimal(_stopOnProfitInput.Text),
+				StopOnLoss = _botStrategyMode && !InsistAfterStopEnabled ? null : ParseDecimal(_stopOnLossInput.Text),
+				StopOnBlockMined = !_botStrategyMode && StopOnBlockMinedEnabled,
 				UseProgressionAnchorStops = UseProgressionAnchorStops,
 				InsistAfterStop = InsistAfterStopEnabled
 			};

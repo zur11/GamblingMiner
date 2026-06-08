@@ -635,6 +635,11 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		BettingStrategyConfig config = _strategyPanel.BuildConfig();
+		if (!IsPlayerActive())
+		{
+			config = BuildBotStrategyConfig(config);
+		}
+
 		if (config.BaseBet <= 0m)
 		{
 			return;
@@ -644,7 +649,7 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			Config = CloneConfig(config),
 			NumberOfBets = _strategyPanel.NumberOfBets,
-			AutoRechargeEnabled = _strategyPanel.AutoRechargeEnabled,
+			AutoRechargeEnabled = !IsPlayerActive() || _strategyPanel.AutoRechargeEnabled,
 			WinningChance = (int)_chanceSlider.Value,
 			BetHigh = _highLowToggleBtn.ButtonPressed,
 			BetsPerSecond = GetAutoBetBaseAps(),
@@ -662,6 +667,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_loadingNodeStrategy = true;
 		try
 		{
+			_strategyPanel.SetBotStrategyMode(!IsPlayerActive());
 			if (!_nodeStrategies.TryGetValue(_activeNodeId, out NodeStrategyState state) || !state.IsValid)
 			{
 				_strategyPanel.ClearStrategySettings();
@@ -705,6 +711,34 @@ public partial class DiceGame : Control, IBetEventSource
 		};
 	}
 
+	private BettingStrategyConfig BuildBotStrategyConfig(BettingStrategyConfig config)
+	{
+		if (config == null)
+		{
+			return null;
+		}
+
+		bool allowProfitLossStops = config.InsistAfterStop;
+		return new BettingStrategyConfig
+		{
+			BaseBet = config.BaseBet,
+			IncreasePercent = config.IncreasePercent,
+			IncreaseOnLoss = config.IncreaseOnLoss,
+			IncreaseOnWin = config.IncreaseOnWin,
+			StopOnProfit = allowProfitLossStops ? config.StopOnProfit : null,
+			StopOnLoss = allowProfitLossStops ? config.StopOnLoss : null,
+			StopOnBlockMined = false,
+			UseProgressionAnchorStops = config.UseProgressionAnchorStops,
+			InsistAfterStop = config.InsistAfterStop
+		};
+	}
+
+	private int GetManualBurstAttemptCount()
+	{
+		double effective = GetEffectiveAutoBetsPerGameSecond();
+		return Math.Max(1, Math.Min((int)MaxAutoBetsPerRealSecond, (int)Math.Floor(effective)));
+	}
+
 	// --- Manual Bet Session
 	private void OnManualBetFromPanel()
 	{
@@ -720,8 +754,20 @@ public partial class DiceGame : Control, IBetEventSource
 		EnsureSession(false); // 🔥 manual
 
 		SaveActiveNodeStrategySnapshot();
-		ExecuteBet();
-		RunBotManualBurst();
+		int attempts = GetManualBurstAttemptCount();
+		for (int i = 0; i < attempts && _session.IsRunning; i++)
+		{
+			if (_session.CurrentBet > _walletController.Balance)
+			{
+				break;
+			}
+
+			ExecuteBet();
+		}
+		if (_session.IsRunning || _session.LastStopReason != IBettingStrategy.StopReason.StopOnBlockMined)
+		{
+			RunBotManualBurst();
+		}
 	}
 
 	// --- Autobet Session
@@ -1092,7 +1138,7 @@ public partial class DiceGame : Control, IBetEventSource
 				timestampUtc);
 			ProcessBlockchainAttemptForBet(
 				runner.NodeId,
-				runner.Strategy.Config.StopOnBlockMined,
+				false,
 				runner.Session);
 			SaveBotFinancialState(runner);
 		}
@@ -1528,10 +1574,25 @@ public partial class DiceGame : Control, IBetEventSource
 
 		AnnounceLatestMinedBlockIfAny();
 		CaptureBlockCheckpoint();
+		StopPlayerSessionOnExternalBlockMined(sessionToStop);
 		if (sessionToStop != null && sessionToStop.IsRunning && stopOnBlockMined)
 		{
 			sessionToStop.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
 		}
+	}
+
+	private void StopPlayerSessionOnExternalBlockMined(BaseBetSession sessionThatMined)
+	{
+		if (_session == null ||
+			!_session.IsRunning ||
+			ReferenceEquals(_session, sessionThatMined) ||
+			!IsPlayerActive() ||
+			!_strategyPanel.StopOnBlockMinedEnabled)
+		{
+			return;
+		}
+
+		_session.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
 	}
 
 	private void OnStopOnBlockMinedDoubleClicked()
