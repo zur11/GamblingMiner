@@ -13,6 +13,7 @@ using Scripts.StateMachines;
 using Scripts.Controllers;
 using Scripts.History;
 using UI.StrategyControlPanel;
+using UI.StatusBar;
 using GodotBlockchainPort.Simulation;
 using GodotBlockchainPort.Blockchain;
 
@@ -80,6 +81,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private readonly Dictionary<string, NodeStrategyState> _nodeStrategies = new();
 	private readonly Dictionary<string, BotAutoBetRunner> _botRunners = new();
 	private bool _loadingNodeStrategy;
+	private SceneManager _sceneManager;
 
 	private enum ManualStopGate
 	{
@@ -230,8 +232,9 @@ public partial class DiceGame : Control, IBetEventSource
 		_loadStrategyBtn = GetNode<Button>("%LoadStrategyBtn");
 		_martingaleCalculator = GetNode<MartingaleCalculator>("%MartingaleCalculator");
 		_financialStats = GetNode<FinancialBettingStats>("%FinancialBettingStats");
+		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
 
-		// Configurar etiqueta de High/Low toggle Btn 
+		// Configurar etiqueta de High/Low toggle Btn
 		_highLowToggleBtn.Text = "LOW";
 
 		// Conectar señales
@@ -242,6 +245,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_openBankrollProgrammerBtn.Pressed += OnOpenBankrollProgrammerPressed;
 		_openCalendarNavigatorBtn.Pressed += OnOpenCalendarNavigatorPressed;
 		_openBlockExplorerBtn.Pressed += OnOpenBlockExplorerPressed;
+		GetNode<Button>("%MainMenuBtn").Pressed += OnGoToMainMenuPressed;
 		_activeNodeSelector.ItemSelected += OnActiveNodeSelected;
 		_strategyNameInput.TextChanged += _ => UpdateStrategySaveLoadButtons();
 		_saveStrategyBtn.Pressed += OnSaveStrategyPressed;
@@ -800,6 +804,7 @@ public partial class DiceGame : Control, IBetEventSource
 			if (_calendarTimeService != null)
 			{
 				_calendarTimeService.IsRunning = false;
+				_calendarTimeService.IsAutobetActive = false;
 			}
 			_autoBetTimer.Stop();
 			_autoBetAccumulatorGameSeconds = 0d;
@@ -821,6 +826,7 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			_calendarTimeService.SpeedMultiplier = GameSecondsPerRealSecond;
 			_calendarTimeService.IsRunning = true;
+			_calendarTimeService.IsAutobetActive = true;
 		}
 		StartOrRestartSession(true);
 		StartBotRunners();
@@ -930,6 +936,7 @@ public partial class DiceGame : Control, IBetEventSource
 			if (_calendarTimeService != null)
 			{
 				_calendarTimeService.IsRunning = false;
+				_calendarTimeService.IsAutobetActive = false;
 			}
 			_autoBetTimer.Stop();
 			_autoBetAccumulatorGameSeconds = 0d;
@@ -953,6 +960,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 	public override void _ExitTree()
 	{
+		if (_calendarTimeService != null)
+			_calendarTimeService.IsAutobetActive = false;
 		SaveActiveNodeStrategySnapshot();
 		StopAllBotRunners();
 		_userStatsService?.FlushHistory();
@@ -1440,19 +1449,27 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		SaveActiveNodeFinancialState(true);
 		_calendarTimeService?.PersistCurrentTime();
-		GetTree().ChangeSceneToFile("res://Screens/BankrollProgrammer/BankrollProgrammer.tscn");
+		_sceneManager?.Go(SceneManager.SceneId.BankrollProgrammer);
 	}
 
 	private void OnOpenCalendarNavigatorPressed()
 	{
-		GetTree().ChangeSceneToFile("res://Screens/CalendarsNavigator/CalendarsNavigator.tscn");
+		_calendarTimeService?.PersistCurrentTime();
+		_sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
 	}
 
 	private void OnOpenBlockExplorerPressed()
 	{
 		SaveActiveNodeFinancialState(true);
 		_calendarTimeService?.PersistCurrentTime();
-		GetTree().ChangeSceneToFile("res://Screens/BlockExplorer/BlockExplorer.tscn");
+		_sceneManager?.Go(SceneManager.SceneId.BlockExplorer);
+	}
+
+	private void OnGoToMainMenuPressed()
+	{
+		SaveActiveNodeFinancialState(true);
+		_calendarTimeService?.PersistCurrentTime();
+		_sceneManager?.Go(SceneManager.SceneId.MainMenu);
 	}
 
 	private void OnCalculatorCloseRequested()

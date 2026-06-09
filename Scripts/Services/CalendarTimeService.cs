@@ -8,10 +8,19 @@ public partial class CalendarTimeService : Node
 
 	public DateTime CurrentLocalDateTime { get; private set; } = DateTime.Now;
 	public DateTime ExplorerSelectedLocalDateTime { get; private set; } = DateTime.Now;
-	public bool IsRunning { get; set; } = true;
+	public bool IsRunning { get; set; } = false;
+	public bool IsAutobetActive { get; set; } = false;
 	public double SpeedMultiplier { get; set; } = 1.0;
 
+	private DateTime _gamePresent = DateTime.Now;
+	public DateTime GamePresentLocalDateTime => _gamePresent;
+
 	public DateTime CurrentUtcDateTime => CurrentLocalDateTime.ToUniversalTime();
+
+	public override void _Ready()
+	{
+		EnsureGameEpochInitialized();
+	}
 
 	public override void _Process(double delta)
 	{
@@ -35,8 +44,8 @@ public partial class CalendarTimeService : Node
 
 	public void SetNow()
 	{
-		SetLocalDateTime(DateTime.Now);
-		SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
+		SetLocalDateTime(_gamePresent);
+		SetExplorerSelectedLocalDateTime(_gamePresent);
 	}
 
 	public void EnsureGameEpochInitialized()
@@ -46,6 +55,7 @@ public partial class CalendarTimeService : Node
 		{
 			SetLocalDateTime(GameStartLocal);
 			SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
+			_gamePresent = CurrentLocalDateTime;
 			PersistCurrentTime();
 			return;
 		}
@@ -55,6 +65,7 @@ public partial class CalendarTimeService : Node
 		if (!long.TryParse(value, out long ticks))
 		{
 			SetLocalDateTime(GameStartLocal);
+			_gamePresent = CurrentLocalDateTime;
 			PersistCurrentTime();
 			return;
 		}
@@ -66,12 +77,14 @@ public partial class CalendarTimeService : Node
 			loaded = GameStartLocal;
 			SetLocalDateTime(loaded);
 			SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
+			_gamePresent = CurrentLocalDateTime;
 			PersistCurrentTime();
 			return;
 		}
 
 		SetLocalDateTime(loaded);
 		SetExplorerSelectedLocalDateTime(CurrentLocalDateTime);
+		_gamePresent = CurrentLocalDateTime;
 	}
 
 	public void AdvanceSeconds(double seconds)
@@ -86,6 +99,7 @@ public partial class CalendarTimeService : Node
 
 	public void PersistCurrentTime()
 	{
+		_gamePresent = CurrentLocalDateTime;
 		const string statePath = "user://calendar_state.json";
 		using FileAccess file = FileAccess.Open(statePath, FileAccess.ModeFlags.Write);
 		file.StoreString(CurrentLocalDateTime.Ticks.ToString());

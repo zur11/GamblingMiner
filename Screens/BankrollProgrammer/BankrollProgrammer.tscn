@@ -90,4 +90,4 @@ text = "-"
 [node name="BackToDiceBtn" type="Button" parent="VBox"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Volver a Dice"
+text = "Main Menu"

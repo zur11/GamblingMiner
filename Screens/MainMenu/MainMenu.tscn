@@ -1,0 +1,78 @@
+[gd_scene load_steps=2 format=3 uid="uid://dg5kr0du5666w"]
+
+[ext_resource type="Script" uid="uid://djapxuakkrbkx" path="res://Screens/MainMenu/MainMenu.cs" id="1"]
+
+[node name="MainMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="RootMargin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 40
+theme_override_constants/margin_top = 30
+theme_override_constants/margin_right = 40
+theme_override_constants/margin_bottom = 30
+
+[node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="StatusBarPlaceholder" type="HBoxContainer" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="Title" type="Label" parent="RootMargin/RootVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 64
+text = "GamblingMiner"
+
+[node name="Subtitle" type="Label" parent="RootMargin/RootVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "Early Bitcoin Era  ·  Bet to mine  ·  Survive"
+
+[node name="Spacer" type="Control" parent="RootMargin/RootVBox"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+
+[node name="DiceGameBtn" type="Button" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 34
+text = "Dice Game"
+
+[node name="BlockExplorerBtn" type="Button" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 34
+text = "Block Explorer"
+
+[node name="BankrollProgrammerBtn" type="Button" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 34
+text = "Bankroll Programmer"
+
+[node name="MartingaleCalcBtn" type="Button" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 34
+text = "Martingale Calculator"

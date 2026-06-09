@@ -5,11 +5,13 @@ using System.Linq;
 using System.Text;
 using GodotBlockchainPort.Simulation;
 using GodotBlockchainPort.Blockchain;
+using UI.StatusBar;
 #nullable enable
 
 public partial class BlockExplorer : Control
 {
     private NetworkRoot _networkRoot = null!;
+    private SceneManager? _sceneManager;
 
     private OptionButton _fromNodeOption = null!;
     private OptionButton _toNodeOption = null!;
@@ -57,6 +59,12 @@ public partial class BlockExplorer : Control
         GetNode<Button>("%LookupAddressButton").Pressed += OnLookupAddressPressed;
         GetNode<Button>("%LookupBlockButton").Pressed += OnLookupBlockPressed;
         GetNode<Button>("%BackToDiceButton").Pressed += OnBackToDicePressed;
+        _sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+
+        var mainVBox = GetNode<VBoxContainer>("Margin/MainVBox");
+        var statusBar = new StatusBar();
+        mainVBox.AddChild(statusBar);
+        mainVBox.MoveChild(statusBar, 0);
 
         _fromNodeOption.ItemSelected += _ => RefreshTransferState();
         _toNodeOption.ItemSelected += _ => RefreshTransferState();
@@ -213,7 +221,7 @@ public partial class BlockExplorer : Control
     {
         CalendarTimeService? calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
         calendar?.PersistCurrentTime();
-        GetTree().ChangeSceneToFile("res://Screens/DiceGame/DiceGame.tscn");
+        _sceneManager?.Go(SceneManager.SceneId.MainMenu);
     }
 
     private void RefreshUi()

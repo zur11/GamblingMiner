@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="GamblingMiner"
-run/main_scene="uid://cruqrbgkuee5h"
+run/main_scene="res://Screens/MainMenu/MainMenu.tscn"
 config/features=PackedStringArray("4.5", "C#", "GL Compatibility")
 config/icon="res://icon.svg"
 
@@ -23,6 +23,7 @@ BankrollStateService="*res://Scripts/Services/BankrollStateService.cs"
 PrincipalBalanceService="*res://Scripts/Services/PrincipalBalanceService.cs"
 BankrollProgramService="*res://Scripts/Services/BankrollProgramService.cs"
 BlockSessionCheckpointService="*res://Scripts/Services/BlockSessionCheckpointService.cs"
+SceneManager="*res://Scripts/Services/SceneManager.cs"
 
 [display]
 

@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Globalization;
+using UI.StatusBar;
 
 public partial class CalendarsNavigator : Control
 {
@@ -23,6 +24,7 @@ public partial class CalendarsNavigator : Control
 
 	private GregorianCalendarModel _gregorianCalendar;
 	private CalendarTimeService _calendarTimeService;
+	private SceneManager _sceneManager;
 
 	public override void _Ready()
 	{
@@ -45,6 +47,12 @@ public partial class CalendarsNavigator : Control
 
 		_gregorianCalendar = new GregorianCalendarModel();
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+		var statusBar = new StatusBar();
+		rootVBox.AddChild(statusBar);
+		rootVBox.MoveChild(statusBar, 0);
 
 		_hourFormatToggle.Toggled += _ => UpdatePresenters();
 		_timeSpeedSelector.ItemSelected += OnTimeSpeedSelected;
@@ -62,6 +70,27 @@ public partial class CalendarsNavigator : Control
 
 	public override void _Process(double delta)
 	{
+		if (_calendarTimeService?.IsRunning == true)
+		{
+			DateTime present = _calendarTimeService.GamePresentLocalDateTime;
+			if (_calendarTimeService.CurrentLocalDateTime >= present)
+			{
+				_calendarTimeService.SetLocalDateTime(present);
+				if (_calendarTimeService.IsAutobetActive)
+				{
+					double x1Speed = _timeSpeedSelector.ItemCount > 0
+						? _timeSpeedSelector.GetItemMetadata(0).AsDouble()
+						: 48d;
+					_calendarTimeService.SpeedMultiplier = x1Speed;
+					_timeSpeedSelector.Select(0);
+				}
+				else
+				{
+					_calendarTimeService.IsRunning = false;
+				}
+				SyncInputsFromClock();
+			}
+		}
 		UpdatePresenters();
 	}
 
@@ -104,7 +133,7 @@ public partial class CalendarsNavigator : Control
 
 	private void OnBackToDiceGamePressed()
 	{
-		GetTree().ChangeSceneToFile("res://Screens/DiceGame/DiceGame.tscn");
+		_sceneManager?.Go(SceneManager.SceneId.MainMenu);
 	}
 
 	private void OnOpenHistoryExplorerPressed()
@@ -112,7 +141,7 @@ public partial class CalendarsNavigator : Control
 		DateTime selected = GetCurrentLocalDateTime();
 		_calendarTimeService?.SetExplorerSelectedLocalDateTime(selected);
 		_calendarTimeService?.SetLocalDateTime(selected);
-		GetTree().ChangeSceneToFile("res://Screens/BetsHistoryExplorer/BetsHistoryExplorer.tscn");
+		_sceneManager?.Go(SceneManager.SceneId.BetsHistoryExplorer);
 	}
 
 	private void SyncInputsFromClock()
@@ -162,10 +191,10 @@ public partial class CalendarsNavigator : Control
 	private void InitializeTimeSpeedSelector()
 	{
 		_timeSpeedSelector.Clear();
-		AddSpeedOption("x1", 1.0);
-		AddSpeedOption("x2", 2.0);
-		AddSpeedOption("x3", 3.0);
-		AddSpeedOption("x4", 4.0);
+		AddSpeedOption("x1", 48.0);
+		AddSpeedOption("x2", 96.0);
+		AddSpeedOption("x4", 192.0);
+		AddSpeedOption("x10", 480.0);
 
 		double currentSpeed = _calendarTimeService?.SpeedMultiplier ?? 1.0;
 		int selectedIndex = FindBestSpeedIndex(currentSpeed);

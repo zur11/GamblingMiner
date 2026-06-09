@@ -73,8 +73,8 @@ theme_override_constants/separation = 10
 [node name="HourFormatToggle" type="CheckButton" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Use 24-hour format"
 button_pressed = true
+text = "Use 24-hour format"
 
 [node name="TimeSpeedRow" type="HBoxContainer" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
 layout_mode = 2
@@ -102,7 +102,7 @@ custom_minimum_size = Vector2(180, 0)
 layout_mode = 2
 min_value = 1.0
 max_value = 9999.0
-value = 2026.0
+value = 2009.0
 
 [node name="MonthLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 layout_mode = 2
@@ -124,7 +124,7 @@ unique_name_in_owner = true
 layout_mode = 2
 min_value = 1.0
 max_value = 31.0
-value = 1.0
+value = 3.0
 
 [node name="HourLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 layout_mode = 2
@@ -133,8 +133,8 @@ text = "Hour"
 [node name="HourInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 unique_name_in_owner = true
 layout_mode = 2
-min_value = 0.0
 max_value = 23.0
+value = 18.0
 
 [node name="MinuteLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 layout_mode = 2
@@ -143,8 +143,8 @@ text = "Minute"
 [node name="MinuteInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 unique_name_in_owner = true
 layout_mode = 2
-min_value = 0.0
 max_value = 59.0
+value = 15.0
 
 [node name="SecondLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 layout_mode = 2
@@ -153,8 +153,8 @@ text = "Second"
 [node name="SecondInput" type="SpinBox" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox/DateGrid"]
 unique_name_in_owner = true
 layout_mode = 2
-min_value = 0.0
 max_value = 59.0
+value = 6.0
 
 [node name="ButtonsHBox" type="HBoxContainer" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
 layout_mode = 2

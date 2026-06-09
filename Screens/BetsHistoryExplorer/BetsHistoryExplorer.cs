@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
 using Scripts.History;
+using UI.StatusBar;
 
 public partial class BetsHistoryExplorer : Control
 {
@@ -24,8 +25,9 @@ public partial class BetsHistoryExplorer : Control
 
 	private CalendarTimeService _calendarTimeService;
 	private UserStatsService _userStatsService;
+	private SceneManager _sceneManager;
 	private DateTime _selectedLocal;
-	private readonly double[] _speedSteps = { 1d, 2d, 3d, 4d };
+	private readonly double[] _speedSteps = { 48d, 96d, 192d, 480d };
 	private List<BetRecord> _sortedRecords = new();
 	private long _lastRenderedSecond = long.MinValue;
 	private int _summaryCursor;
@@ -52,12 +54,21 @@ public partial class BetsHistoryExplorer : Control
 
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		_userStatsService = GetNodeOrNull<UserStatsService>("/root/UserStatsService");
+		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+		var statusBar = new StatusBar();
+		rootVBox.AddChild(statusBar);
+		rootVBox.MoveChild(statusBar, 0);
 
 		_selectedLocal = _calendarTimeService?.ExplorerSelectedLocalDateTime ?? DateTime.Now;
 		_calendarTimeService?.SetLocalDateTime(_selectedLocal);
-		if (_calendarTimeService != null)
+		if (_calendarTimeService != null && !_calendarTimeService.IsAutobetActive)
 		{
-			_calendarTimeService.IsRunning = true;
+			bool isPast = _selectedLocal < _calendarTimeService.GamePresentLocalDateTime;
+			_calendarTimeService.IsRunning = isPast;
+			if (isPast)
+				_calendarTimeService.SpeedMultiplier = _speedSteps[0];
 		}
 
 		_playPauseButton.Pressed += OnPlayPausePressed;
@@ -71,6 +82,26 @@ public partial class BetsHistoryExplorer : Control
 
 	public override void _Process(double delta)
 	{
+		if (_calendarTimeService?.IsRunning == true && !(_calendarTimeService?.IsAutobetActive ?? false))
+		{
+			DateTime present = _calendarTimeService.GamePresentLocalDateTime;
+			if (_calendarTimeService.CurrentLocalDateTime >= present)
+			{
+				_calendarTimeService.SetLocalDateTime(present);
+				_calendarTimeService.IsRunning = false;
+				RefreshControlLabels();
+			}
+		}
+		else if (_calendarTimeService?.IsRunning == true && (_calendarTimeService?.IsAutobetActive ?? false))
+		{
+			DateTime present = _calendarTimeService.GamePresentLocalDateTime;
+			if (_calendarTimeService.CurrentLocalDateTime >= present)
+			{
+				_calendarTimeService.SpeedMultiplier = _speedSteps[0];
+				RefreshControlLabels();
+			}
+		}
+
 		DateTime current = GetCurrentLocal();
 		_selectedTimeLabel.Text = $"Selected timeline: {current:yyyy-MM-dd HH:mm:ss}";
 
@@ -253,24 +284,19 @@ public partial class BetsHistoryExplorer : Control
 
 	private void OnBackToCalendarPressed()
 	{
-		if (_calendarTimeService != null)
-		{
-			_calendarTimeService.IsRunning = true;
-		}
-
-		GetTree().ChangeSceneToFile("res://Screens/CalendarsNavigator/CalendarsNavigator.tscn");
+		if (_calendarTimeService != null && !_calendarTimeService.IsAutobetActive)
+			_calendarTimeService.IsRunning = false;
+		_sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
 	}
 
 	private void OnBackToDicePressed()
 	{
-		if (_calendarTimeService != null)
+		if (_calendarTimeService != null && !_calendarTimeService.IsAutobetActive)
 		{
-			_calendarTimeService.IsRunning = true;
-			_calendarTimeService.SpeedMultiplier = 1.0d;
+			_calendarTimeService.IsRunning = false;
 			_calendarTimeService.SetNow();
 		}
-
-		GetTree().ChangeSceneToFile("res://Screens/DiceGame/DiceGame.tscn");
+		_sceneManager?.Go(SceneManager.SceneId.MainMenu);
 	}
 
 	private void RefreshControlLabels()

@@ -362,12 +362,11 @@ text = "Martingale Calc"
 
 [node name="OpenCalendarNavigatorBtn" type="Button" parent="."]
 unique_name_in_owner = true
-visible = false
 layout_mode = 0
-offset_left = 971.0
-offset_top = 439.0
-offset_right = 1456.0
-offset_bottom = 516.0
+offset_left = 1353.0
+offset_top = 371.0
+offset_right = 1694.0
+offset_bottom = 448.0
 theme_override_font_sizes/font_size = 32
 text = "Calendar Navigator"
 
@@ -390,6 +389,16 @@ offset_right = 1693.0
 offset_bottom = 270.0
 theme_override_font_sizes/font_size = 30
 text = "Bankroll Programmer"
+
+[node name="MainMenuBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 1356.0
+offset_top = 290.0
+offset_right = 1693.0
+offset_bottom = 358.0
+theme_override_font_sizes/font_size = 30
+text = "Main Menu"
 
 [node name="FinancialBettingStats" parent="." instance=ExtResource("5_ne2vn")]
 unique_name_in_owner = true

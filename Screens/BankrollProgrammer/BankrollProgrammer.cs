@@ -2,12 +2,14 @@ using System;
 using System.Globalization;
 using Godot;
 using Scripts.Finance;
+using UI.StatusBar;
 
 public partial class BankrollProgrammer : Control
 {
 	private PrincipalBalanceService _principalBalanceService;
 	private BankrollStateService _bankrollStateService;
 	private BankrollProgramService _bankrollProgramService;
+	private SceneManager _sceneManager;
 	private Wallet _bankrollMirrorWallet;
 
 	private Label _balanceValue;
@@ -24,6 +26,7 @@ public partial class BankrollProgrammer : Control
 		_principalBalanceService = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
 		_bankrollStateService = GetNodeOrNull<BankrollStateService>("/root/BankrollStateService");
 		_bankrollProgramService = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");
+		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
 		_principalBalanceService?.EnsureInitialized();
 		_bankrollStateService?.EnsureInitialized(0m);
 		_bankrollMirrorWallet = new Wallet(_bankrollStateService?.CurrentBalance ?? 0m);
@@ -40,6 +43,11 @@ public partial class BankrollProgrammer : Control
 		GetNode<Button>("%ApplyAutoRechargeAmountBtn").Pressed += OnApplyAutoRechargeAmountPressed;
 		GetNode<Button>("%TransferToBalanceBtn").Pressed += OnTransferToBalancePressed;
 		GetNode<Button>("%BackToDiceBtn").Pressed += OnBackToDicePressed;
+
+		var vbox = GetNode<VBoxContainer>("VBox");
+		var statusBar = new StatusBar();
+		vbox.AddChild(statusBar);
+		vbox.MoveChild(statusBar, 0);
 
 		if (_bankrollProgramService != null)
 		{
@@ -109,7 +117,7 @@ public partial class BankrollProgrammer : Control
 
 	private void OnBackToDicePressed()
 	{
-		GetTree().ChangeSceneToFile("res://Screens/DiceGame/DiceGame.tscn");
+		_sceneManager?.Go(SceneManager.SceneId.MainMenu);
 	}
 
 	private void RenderAll()

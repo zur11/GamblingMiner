@@ -438,11 +438,11 @@ GetTree().ChangeSceneToFile("res://Screens/DiceGame/DiceGame.tscn");
 ```
 This pattern is scattered across multiple screen files. It is fragile and should be replaced.
 
-### Target: `SceneManager` Autoload
+### `SceneManager` Autoload
 
-A single `SceneManager` autoload will centralize all scene transitions. All paths live in one place; call sites use a compile-time-safe enum.
+A `SceneManager` autoload centralizes all scene transitions. All paths live in one place; call sites use a compile-time-safe enum.
 
-**`Scripts/Services/SceneManager.cs`** (to be created and registered as autoload):
+**`Scripts/Services/SceneManager.cs`** (registered in `project.godot`):
 
 ```csharp
 public partial class SceneManager : Node
@@ -489,7 +489,38 @@ private void OnBackButtonPressed()
 }
 ```
 
-**Migration rule**: whenever a screen's navigation is touched for any other reason, replace its `GetTree().ChangeSceneToFile(...)` calls with `_sceneManager?.Go(...)` at the same time. No need for a dedicated migration pass.
+All existing main screens have been migrated. Adding a new scene: (1) add entry to `SceneId` enum, (2) add path to `Paths` dictionary, (3) call `_sceneManager?.Go(SceneId.X)` at the call site.
+
+### `StatusBar` Component
+
+**`UI/StatusBar/StatusBar.cs`** — pure C# `HBoxContainer` (no .tscn needed). Instantiated programmatically in each screen's `_Ready()`.
+
+Shows Main Balance, Bankroll, and game clock — updates every frame via `_Process`.
+
+```csharp
+// In _Ready() of any screen — insert at top of a VBoxContainer:
+var vbox = GetNode<VBoxContainer>("ContainerPath");
+var statusBar = new StatusBar();
+vbox.AddChild(statusBar);
+vbox.MoveChild(statusBar, 0);
+
+// Or for scenes that use a placeholder slot (MainMenu, MartingaleCalculatorStandalone):
+GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
+```
+
+### Navigation Map
+
+```
+MainMenu
+├── DiceGame          (also reachable directly; DiceGame has its own "Main Menu" button)
+│   ├── BankrollProgrammer  → Main Menu
+│   ├── BlockExplorer       → Main Menu
+│   └── CalendarsNavigator  → Main Menu / BetsHistoryExplorer
+│       └── BetsHistoryExplorer → Main Menu or CalendarsNavigator
+└── MartingaleCalculator (standalone, full-screen) → Main Menu
+```
+
+DiceGame's MartingaleCalc button opens the **popup version** (`Screens/MartingaleCalculator/`) inline — it does not navigate away. The standalone version (`Screens/MartingaleCalculatorStandalone/`) is a full screen reachable only from MainMenu.
 
 ---
 
