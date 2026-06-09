@@ -26,7 +26,7 @@ public partial class MartingaleCalculatorStandalone : Control
 		_multiplyOnLossInput = GetNode<LineEdit>("%MultiplyOnLossInput");
 		_rowsContainer       = GetNode<VBoxContainer>("%RowsContainer");
 		_statusLabel         = GetNode<Label>("%StatusLabel");
-		_rowScene            = GD.Load<PackedScene>("res://Screens/Shared/MartingaleCalculatorSnapshot/BetRollRow/BetRollRow.tscn");
+		_rowScene            = GD.Load<PackedScene>("res://Screens/MartingaleCalculator/BetRollRow/BetRollRow.tscn");
 
 		GetNode<Button>("%CalculateButton").Pressed += OnCalculatePressed;
 		GetNode<Button>("%ResetButton").Pressed     += OnResetPressed;
