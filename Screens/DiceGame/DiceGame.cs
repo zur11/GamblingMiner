@@ -759,6 +759,9 @@ public partial class DiceGame : Control, IBetEventSource
 
 		SaveActiveNodeStrategySnapshot();
 		int attempts = GetManualBurstAttemptCount();
+		DateTime burstBaseUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		double timePerBet = GameSecondsPerManualBet / Math.Max(1, attempts);
+		int executed = 0;
 		for (int i = 0; i < attempts && _session.IsRunning; i++)
 		{
 			if (_session.CurrentBet > _walletController.Balance)
@@ -766,8 +769,11 @@ public partial class DiceGame : Control, IBetEventSource
 				break;
 			}
 
-			ExecuteBet();
+			ExecuteBet(burstBaseUtc.AddSeconds(i * timePerBet), suppressClockAdvance: true);
+			executed++;
 		}
+		if (executed > 0)
+			AdvanceClockForBet();
 		if (_session.IsRunning || _session.LastStopReason != IBettingStrategy.StopReason.StopOnBlockMined)
 		{
 			RunBotManualBurst();
@@ -1213,7 +1219,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_blockchainNetworkRoot.SetNodeFinancialState(runner.NodeId, state, false);
 	}
 
-	private void ExecuteBet(DateTime? timestampUtc = null)
+	private void ExecuteBet(DateTime? timestampUtc = null, bool suppressClockAdvance = false)
 	{
 		if (_session == null || !_session.IsRunning)
 		{
@@ -1249,7 +1255,8 @@ public partial class DiceGame : Control, IBetEventSource
 			}
 			SaveActiveNodeFinancialState(false);
 			ProcessBlockchainAttemptForBet(_activeNodeId, _strategyPanel.StopOnBlockMinedEnabled, _session);
-			AdvanceClockForBet();
+			if (!suppressClockAdvance)
+				AdvanceClockForBet();
 
 			_strategyPanel.SetNumberOfBets(
 				_session.IsInfinite ? 0 : _session.RemainingBets
@@ -1455,7 +1462,16 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnOpenCalendarNavigatorPressed()
 	{
 		_calendarTimeService?.PersistCurrentTime();
-		_sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
+		if (_calendarTimeService?.IsAutobetActive == true && _sceneManager != null)
+		{
+			Visible = false;
+			Node overlay = _sceneManager.PushScene(SceneManager.SceneId.CalendarsNavigator);
+			overlay.TreeExited += () => { if (IsInsideTree()) Visible = true; };
+		}
+		else
+		{
+			_sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
+		}
 	}
 
 	private void OnOpenBlockExplorerPressed()
@@ -1862,6 +1878,7 @@ public partial class DiceGame : Control, IBetEventSource
 		var snapshot = _blockCheckpointService.CurrentSnapshot;
 		_principalBalanceService?.SetBalance(snapshot.PrincipalBalance);
 		_bankrollStateService?.SetBalance(snapshot.BankrollBalance);
+		_wallet?.SetBalanceForTimeTravel(snapshot.BankrollBalance);
 		_bankrollProgramService?.ReplaceState(snapshot.AutoRechargeAmount, snapshot.TransferRecords);
 
 		if (snapshot.HistoryCheckpointUtcTicks.HasValue)
@@ -1877,6 +1894,8 @@ public partial class DiceGame : Control, IBetEventSource
 			_calendarTimeService.SetExplorerSelectedLocalDateTime(local);
 			_calendarTimeService.PersistCurrentTime();
 		}
+
+		UpdateBalanceUI();
 	}
 
 	private void RestoreCheckpointClockAndHistoryOnly()

@@ -70,24 +70,14 @@ public partial class CalendarsNavigator : Control
 
 	public override void _Process(double delta)
 	{
-		if (_calendarTimeService?.IsRunning == true)
+		if (!Visible) return;
+		if (_calendarTimeService?.IsRunning == true && !(_calendarTimeService?.IsAutobetActive ?? false))
 		{
 			DateTime present = _calendarTimeService.GamePresentLocalDateTime;
 			if (_calendarTimeService.CurrentLocalDateTime >= present)
 			{
 				_calendarTimeService.SetLocalDateTime(present);
-				if (_calendarTimeService.IsAutobetActive)
-				{
-					double x1Speed = _timeSpeedSelector.ItemCount > 0
-						? _timeSpeedSelector.GetItemMetadata(0).AsDouble()
-						: 48d;
-					_calendarTimeService.SpeedMultiplier = x1Speed;
-					_timeSpeedSelector.Select(0);
-				}
-				else
-				{
-					_calendarTimeService.IsRunning = false;
-				}
+				_calendarTimeService.IsRunning = false;
 				SyncInputsFromClock();
 			}
 		}
@@ -97,14 +87,31 @@ public partial class CalendarsNavigator : Control
 	private void OnTimeSpeedSelected(long index)
 	{
 		if (_calendarTimeService == null)
-		{
 			return;
-		}
 
 		double selectedSpeed = _timeSpeedSelector.GetItemMetadata((int)index).AsDouble();
-		_calendarTimeService.SpeedMultiplier = selectedSpeed;
+		if (_calendarTimeService.IsAutobetActive)
+		{
+			double x1Speed = _timeSpeedSelector.ItemCount > 0
+				? _timeSpeedSelector.GetItemMetadata(0).AsDouble() : 48d;
+			if (selectedSpeed > x1Speed)
+			{
+				_calendarTimeService.SpeedMultiplier = x1Speed;
+				_timeSpeedSelector.Select(0);
+			}
+			else
+			{
+				_calendarTimeService.SpeedMultiplier = selectedSpeed;
+			}
+		}
+		else
+		{
+			_calendarTimeService.SpeedMultiplier = selectedSpeed;
+		}
 		UpdatePresenters();
 	}
+
+	private static readonly DateTime GameEpochLocal = new(2009, 1, 3, 18, 15, 6, DateTimeKind.Local);
 
 	private void OnApplyDateTimePressed()
 	{
@@ -116,11 +123,17 @@ public partial class CalendarsNavigator : Control
 			(int)_dayInput.Value,
 			(int)_hourInput.Value,
 			(int)_minuteInput.Value,
-			(int)_secondInput.Value
+			(int)_secondInput.Value,
+			DateTimeKind.Local
 		);
+
+		DateTime gamePresent = _calendarTimeService?.GamePresentLocalDateTime ?? selected;
+		if (selected < GameEpochLocal) selected = GameEpochLocal;
+		if (selected > gamePresent) selected = gamePresent;
 
 		_calendarTimeService?.SetLocalDateTime(selected);
 		_calendarTimeService?.SetExplorerSelectedLocalDateTime(selected);
+		SyncInputsFromClock();
 		UpdatePresenters();
 	}
 
@@ -133,7 +146,10 @@ public partial class CalendarsNavigator : Control
 
 	private void OnBackToDiceGamePressed()
 	{
-		_sceneManager?.Go(SceneManager.SceneId.MainMenu);
+		if (_calendarTimeService?.IsAutobetActive == true)
+			_sceneManager?.PopOverlay();
+		else
+			_sceneManager?.Go(SceneManager.SceneId.MainMenu);
 	}
 
 	private void OnOpenHistoryExplorerPressed()
@@ -141,7 +157,16 @@ public partial class CalendarsNavigator : Control
 		DateTime selected = GetCurrentLocalDateTime();
 		_calendarTimeService?.SetExplorerSelectedLocalDateTime(selected);
 		_calendarTimeService?.SetLocalDateTime(selected);
-		_sceneManager?.Go(SceneManager.SceneId.BetsHistoryExplorer);
+		if (_calendarTimeService?.IsAutobetActive == true && _sceneManager != null)
+		{
+			Visible = false;
+			Node overlay = _sceneManager.PushScene(SceneManager.SceneId.BetsHistoryExplorer);
+			overlay.TreeExited += () => { if (IsInsideTree()) Visible = true; };
+		}
+		else
+		{
+			_sceneManager?.Go(SceneManager.SceneId.BetsHistoryExplorer);
+		}
 	}
 
 	private void SyncInputsFromClock()

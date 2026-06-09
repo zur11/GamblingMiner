@@ -69,6 +69,14 @@ size_flags_horizontal = 0
 theme_override_font_sizes/font_size = 34
 text = "Bankroll Programmer"
 
+[node name="CalendarsNavigatorBtn" type="Button" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 34
+text = "Calendars / History"
+
 [node name="MartingaleCalcBtn" type="Button" parent="RootMargin/RootVBox"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)

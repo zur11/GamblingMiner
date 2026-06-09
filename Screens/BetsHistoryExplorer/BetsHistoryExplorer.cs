@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
 using Scripts.History;
+using Scripts.User;
 using UI.StatusBar;
 
 public partial class BetsHistoryExplorer : Control
@@ -27,6 +28,7 @@ public partial class BetsHistoryExplorer : Control
 	private UserStatsService _userStatsService;
 	private SceneManager _sceneManager;
 	private DateTime _selectedLocal;
+	private bool _liveMode;
 	private readonly double[] _speedSteps = { 48d, 96d, 192d, 480d };
 	private List<BetRecord> _sortedRecords = new();
 	private long _lastRenderedSecond = long.MinValue;
@@ -61,14 +63,24 @@ public partial class BetsHistoryExplorer : Control
 		rootVBox.AddChild(statusBar);
 		rootVBox.MoveChild(statusBar, 0);
 
-		_selectedLocal = _calendarTimeService?.ExplorerSelectedLocalDateTime ?? DateTime.Now;
-		_calendarTimeService?.SetLocalDateTime(_selectedLocal);
-		if (_calendarTimeService != null && !_calendarTimeService.IsAutobetActive)
+		_liveMode = _calendarTimeService?.IsAutobetActive ?? false;
+		if (!_liveMode)
 		{
-			bool isPast = _selectedLocal < _calendarTimeService.GamePresentLocalDateTime;
-			_calendarTimeService.IsRunning = isPast;
-			if (isPast)
-				_calendarTimeService.SpeedMultiplier = _speedSteps[0];
+			_selectedLocal = _calendarTimeService?.ExplorerSelectedLocalDateTime ?? DateTime.Now;
+			_calendarTimeService?.SetLocalDateTime(_selectedLocal);
+			if (_calendarTimeService != null)
+			{
+				bool isPast = _selectedLocal < _calendarTimeService.GamePresentLocalDateTime;
+				_calendarTimeService.IsRunning = isPast;
+				if (isPast)
+					_calendarTimeService.SpeedMultiplier = _speedSteps[0];
+			}
+		}
+		else
+		{
+			_selectedLocal = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
+			if (_userStatsService != null)
+				_userStatsService.StatsChanged += OnLiveStatsChanged;
 		}
 
 		_playPauseButton.Pressed += OnPlayPausePressed;
@@ -80,24 +92,31 @@ public partial class BetsHistoryExplorer : Control
 		_ = LoadHistoricalDataAsync();
 	}
 
+	public override void _ExitTree()
+	{
+		if (_userStatsService != null)
+			_userStatsService.StatsChanged -= OnLiveStatsChanged;
+	}
+
+	private void OnLiveStatsChanged(UserBettingStats _)
+	{
+		if (_userStatsService?.BetHistory == null) return;
+		_sortedRecords = _userStatsService.BetHistory.Records
+			.OrderBy(r => r.TimestampUtc)
+			.ToList();
+		_lastRenderedSecond = long.MinValue;
+	}
+
 	public override void _Process(double delta)
 	{
-		if (_calendarTimeService?.IsRunning == true && !(_calendarTimeService?.IsAutobetActive ?? false))
+		if (!Visible) return;
+		if (_calendarTimeService?.IsRunning == true && !_liveMode)
 		{
 			DateTime present = _calendarTimeService.GamePresentLocalDateTime;
 			if (_calendarTimeService.CurrentLocalDateTime >= present)
 			{
 				_calendarTimeService.SetLocalDateTime(present);
 				_calendarTimeService.IsRunning = false;
-				RefreshControlLabels();
-			}
-		}
-		else if (_calendarTimeService?.IsRunning == true && (_calendarTimeService?.IsAutobetActive ?? false))
-		{
-			DateTime present = _calendarTimeService.GamePresentLocalDateTime;
-			if (_calendarTimeService.CurrentLocalDateTime >= present)
-			{
-				_calendarTimeService.SpeedMultiplier = _speedSteps[0];
 				RefreshControlLabels();
 			}
 		}
@@ -259,10 +278,8 @@ public partial class BetsHistoryExplorer : Control
 
 	private void OnPlayPausePressed()
 	{
-		if (_calendarTimeService == null)
-		{
+		if (_calendarTimeService == null || _liveMode)
 			return;
-		}
 
 		_calendarTimeService.IsRunning = !_calendarTimeService.IsRunning;
 		RefreshControlLabels();
@@ -271,7 +288,12 @@ public partial class BetsHistoryExplorer : Control
 	private void OnSpeedButtonPressed()
 	{
 		if (_calendarTimeService == null)
+			return;
+
+		if (_liveMode)
 		{
+			_calendarTimeService.SpeedMultiplier = _speedSteps[0];
+			RefreshControlLabels();
 			return;
 		}
 
@@ -284,27 +306,46 @@ public partial class BetsHistoryExplorer : Control
 
 	private void OnBackToCalendarPressed()
 	{
-		if (_calendarTimeService != null && !_calendarTimeService.IsAutobetActive)
+		if (_liveMode)
+		{
+			_sceneManager?.PopOverlay();
+			return;
+		}
+		if (_calendarTimeService != null)
 			_calendarTimeService.IsRunning = false;
 		_sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
 	}
 
 	private void OnBackToDicePressed()
 	{
-		if (_calendarTimeService != null && !_calendarTimeService.IsAutobetActive)
+		if (_liveMode)
+		{
+			_sceneManager?.PopAllOverlays();
+			return;
+		}
+		if (_calendarTimeService != null)
 		{
 			_calendarTimeService.IsRunning = false;
 			_calendarTimeService.SetNow();
 		}
-		_sceneManager?.Go(SceneManager.SceneId.MainMenu);
+		_sceneManager?.Go(SceneManager.SceneId.DiceGame);
 	}
+
+	private const double GameBaseSpeed = 48.0;
 
 	private void RefreshControlLabels()
 	{
+		if (_liveMode)
+		{
+			_playPauseButton.Text = "Live";
+			_speedButton.Text = "1x (Live)";
+			return;
+		}
 		bool running = _calendarTimeService?.IsRunning ?? true;
-		double speed = _calendarTimeService?.SpeedMultiplier ?? 1.0d;
+		double speed = _calendarTimeService?.SpeedMultiplier ?? GameBaseSpeed;
+		double speedX = speed / GameBaseSpeed;
 		_playPauseButton.Text = running ? "Pause" : "Play";
-		_speedButton.Text = $"Speed {speed:0}x";
+		_speedButton.Text = $"Speed {speedX:0.##}x";
 	}
 
 	private DateTime GetCurrentLocal()

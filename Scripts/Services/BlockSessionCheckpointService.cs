@@ -25,6 +25,18 @@ public partial class BlockSessionCheckpointService : Node
 	public override void _Ready()
 	{
 		LoadState();
+		if (CurrentSnapshot != null)
+			ApplyCheckpointToServices();
+	}
+
+	// Called once on startup after all other autoloads have loaded their own files.
+	// Ensures every scene (including MainMenu) sees checkpoint values, not live transaction values.
+	private void ApplyCheckpointToServices()
+	{
+		GetNodeOrNull<BankrollStateService>("/root/BankrollStateService")
+			?.SetBalance(CurrentSnapshot.BankrollBalance);
+		GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService")
+			?.SetBalance(CurrentSnapshot.PrincipalBalance);
 	}
 
 	public void CaptureCheckpoint(
