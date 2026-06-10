@@ -6,6 +6,7 @@ public partial class BetRollRow : HBoxContainer
 	private Label _betRollNumberLabel;
 	private Label _betRollValueLabel;
 	private Label _betRollBalanceLabel;
+	private Label _failProbLabel;
 	private Label _flagsLabel;
 
 	public override void _Ready()
@@ -21,11 +22,18 @@ public partial class BetRollRow : HBoxContainer
 		_betRollBalanceLabel.Text = betRollBalance.ToString("F8", CultureInfo.InvariantCulture);
 	}
 
+	public void SetFailProbability(double percent)
+	{
+		EnsureNodes();
+		_failProbLabel.Text = $"{percent:F8}%";
+	}
+
 	private void EnsureNodes()
 	{
 		_betRollNumberLabel ??= GetNode<Label>("%BetRollNumberLabel");
 		_betRollValueLabel ??= GetNode<Label>("%BetRollValueLabel");
 		_betRollBalanceLabel ??= GetNode<Label>("%BetRollBalanceLabel");
+		_failProbLabel ??= GetNode<Label>("%FailProbLabel");
 		_flagsLabel ??= GetNode<Label>("%FlagsLabel");
 	}
 

@@ -8,6 +8,7 @@ public partial class MartingaleCalculatorStandalone : Control
 	private LineEdit _totalBankrollInput;
 	private LineEdit _initialBetInput;
 	private LineEdit _multiplyOnLossInput;
+	private LineEdit _winChanceInput;
 	private VBoxContainer _rowsContainer;
 	private Label _statusLabel;
 	private PackedScene _rowScene;
@@ -24,6 +25,7 @@ public partial class MartingaleCalculatorStandalone : Control
 		_totalBankrollInput  = GetNode<LineEdit>("%TotalBankrollInput");
 		_initialBetInput     = GetNode<LineEdit>("%InitialBetInput");
 		_multiplyOnLossInput = GetNode<LineEdit>("%MultiplyOnLossInput");
+		_winChanceInput      = GetNode<LineEdit>("%WinChanceInput");
 		_rowsContainer       = GetNode<VBoxContainer>("%RowsContainer");
 		_statusLabel         = GetNode<Label>("%StatusLabel");
 		_rowScene            = GD.Load<PackedScene>("res://Screens/MartingaleCalculator/BetRollRow/BetRollRow.tscn");
@@ -43,6 +45,12 @@ public partial class MartingaleCalculatorStandalone : Control
 			return;
 		}
 
+		if (!TryParsePercent(_winChanceInput.Text, out double winChance))
+		{
+			_statusLabel.Text = "Win Chance must be between 0 and 100 (exclusive).";
+			return;
+		}
+
 		if (initialBet > bankroll)
 		{
 			_statusLabel.Text = "Initial bet cannot exceed bankroll.";
@@ -50,7 +58,7 @@ public partial class MartingaleCalculatorStandalone : Control
 		}
 
 		OnResetPressed();
-		BuildRows(bankroll, initialBet, multiplyOnLoss);
+		BuildRows(bankroll, initialBet, multiplyOnLoss, winChance);
 	}
 
 	private void OnResetPressed()
@@ -63,11 +71,12 @@ public partial class MartingaleCalculatorStandalone : Control
 		_statusLabel.Text = "Results reset.";
 	}
 
-	private void BuildRows(double totalBankroll, double initialBet, double multiplyOnLoss)
+	private void BuildRows(double totalBankroll, double initialBet, double multiplyOnLoss, double winChance)
 	{
-		double remaining = totalBankroll;
-		double nextBet   = initialBet;
-		int roll         = 1;
+		double remaining  = totalBankroll;
+		double nextBet    = initialBet;
+		double lossProb   = 1.0 - winChance / 100.0;
+		int roll          = 1;
 
 		while (nextBet <= remaining)
 		{
@@ -76,6 +85,7 @@ public partial class MartingaleCalculatorStandalone : Control
 
 			remaining -= nextBet;
 			row.SetData(roll, nextBet, remaining);
+			row.SetFailProbability(Math.Pow(lossProb, roll) * 100.0);
 
 			nextBet *= multiplyOnLoss;
 			roll++;
@@ -94,5 +104,17 @@ public partial class MartingaleCalculatorStandalone : Control
 			out value);
 
 		return parsed && value > 0.0;
+	}
+
+	private static bool TryParsePercent(string text, out double value)
+	{
+		string normalized = text.Trim().Replace(',', '.');
+		bool parsed = double.TryParse(
+			normalized,
+			NumberStyles.AllowDecimalPoint,
+			CultureInfo.InvariantCulture,
+			out value);
+
+		return parsed && value > 0.0 && value < 100.0;
 	}
 }

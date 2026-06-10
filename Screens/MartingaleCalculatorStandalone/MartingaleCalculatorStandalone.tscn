@@ -15,14 +15,14 @@ script = ExtResource("1")
 layout_mode = 1
 anchors_preset = -1
 anchor_right = 1.0
-anchor_bottom = 0.95600003
-offset_bottom = 0.52001953
+anchor_bottom = 0.99200004
+offset_bottom = 7.6398926
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/margin_left = 32
-theme_override_constants/margin_top = 24
+theme_override_constants/margin_top = 6
 theme_override_constants/margin_right = 32
-theme_override_constants/margin_bottom = 24
+theme_override_constants/margin_bottom = 40
 
 [node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
 layout_mode = 2
@@ -87,6 +87,17 @@ custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 placeholder_text = "2"
 
+[node name="WinChanceText" type="Label" parent="RootMargin/RootVBox/InputsGrid"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Win Chance %"
+
+[node name="WinChanceInput" type="LineEdit" parent="RootMargin/RootVBox/InputsGrid"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(240, 0)
+layout_mode = 2
+placeholder_text = "49.5"
+
 [node name="Actions" type="HBoxContainer" parent="RootMargin/RootVBox"]
 layout_mode = 2
 theme_override_constants/separation = 12
@@ -126,6 +137,12 @@ custom_minimum_size = Vector2(230, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "Balance"
+
+[node name="HeaderFailProb" type="Label" parent="RootMargin/RootVBox/Headers"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Fail %"
 
 [node name="ResultsScroll" type="ScrollContainer" parent="RootMargin/RootVBox"]
 custom_minimum_size = Vector2(0, 500)
