@@ -11,6 +11,7 @@ public partial class MartingaleCalculator : Control
 	private LineEdit _totalBankrollInput;
 	private LineEdit _initialBetInput;
 	private LineEdit _multiplyOnLossInput;
+	private LineEdit _winChanceInput;
 	private VBoxContainer _rowsContainer;
 	private Label _statusLabel;
 	private Label _progressionStartingBalanceLabel;
@@ -31,6 +32,7 @@ public partial class MartingaleCalculator : Control
 		_totalBankrollInput = GetNode<LineEdit>("%TotalBankrollInput");
 		_initialBetInput = GetNode<LineEdit>("%InitialBetInput");
 		_multiplyOnLossInput = GetNode<LineEdit>("%MultiplyOnLossInput");
+		_winChanceInput = GetNode<LineEdit>("%WinChanceInput");
 		_rowsContainer = GetNode<VBoxContainer>("%RowsContainer");
 		_statusLabel = GetNode<Label>("%StatusLabel");
 		_progressionStartingBalanceLabel = GetNode<Label>("%ProgressionStartingBalanceLabel");
@@ -86,6 +88,12 @@ public partial class MartingaleCalculator : Control
 			return;
 		}
 
+		if (!TryParsePercent(_winChanceInput.Text, out double winChance))
+		{
+			_statusLabel.Text = "Win Chance must be between 0 and 100 (exclusive).";
+			return;
+		}
+
 		if (initialBet > bankroll)
 		{
 			_statusLabel.Text = "Initial bet cannot exceed bankroll.";
@@ -93,7 +101,7 @@ public partial class MartingaleCalculator : Control
 		}
 
 		OnResetPressed();
-		BuildRows(bankroll, initialBet, multiplyOnLoss);
+		BuildRows(bankroll, initialBet, multiplyOnLoss, winChance);
 	}
 
 	public void UpdateFromGameSettings(
@@ -122,6 +130,7 @@ public partial class MartingaleCalculator : Control
 		_initialBetInput.Text = config.BaseBet.ToString("F8", CultureInfo.InvariantCulture);
 		_multiplyOnLossInput.Text = (1m + (config.IncreasePercent / 100m))
 			.ToString("F8", CultureInfo.InvariantCulture);
+		_winChanceInput.Text = chance.ToString(CultureInfo.InvariantCulture);
 		_progressionStartingBalanceLabel.Text =
 			$"Progression starting balance: {bankroll.ToString("F8", CultureInfo.InvariantCulture)}";
 
@@ -149,6 +158,7 @@ public partial class MartingaleCalculator : Control
 		bool stopWinMarked = false;
 		bool truncatedByOverflow = false;
 		int currentAttemptIndex = ResolveCurrentAttemptIndex(multiplier, maxRows);
+		double lossProb = _ctxChance > 0 ? 1.0 - _ctxChance / 100.0 : 0.0;
 		decimal remaining = _ctxBankroll;
 
 		if (!_ctxShowDoneRows && _ctxStrategyStarted && _ctxProgressionStreak > 0)
@@ -234,6 +244,7 @@ public partial class MartingaleCalculator : Control
 			if (hitsStopOnProfit) stopWinMarked = true;
 
 			row.SetData(roll, (double)nextBet, (double)remaining);
+			row.SetFailProbability(Math.Pow(lossProb, roll) * 100.0);
 			row.SetFlags(isDoneAttempt, isCurrentAttempt, hitsStopOnLoss, hitsStopOnProfit);
 
 			try
@@ -337,11 +348,12 @@ public partial class MartingaleCalculator : Control
 		}
 	}
 
-	private void BuildRows(double totalBankroll, double initialBet, double multiplyOnLoss)
+	private void BuildRows(double totalBankroll, double initialBet, double multiplyOnLoss, double winChance)
 	{
 		double remaining = totalBankroll;
-		double nextBet = initialBet;
-		int roll = 1;
+		double nextBet   = initialBet;
+		double lossProb  = 1.0 - winChance / 100.0;
+		int roll         = 1;
 
 		while (nextBet <= remaining)
 		{
@@ -350,6 +362,7 @@ public partial class MartingaleCalculator : Control
 
 			remaining -= nextBet;
 			row.SetData(roll, nextBet, remaining);
+			row.SetFailProbability(Math.Pow(lossProb, roll) * 100.0);
 
 			nextBet *= multiplyOnLoss;
 			roll++;
@@ -368,5 +381,17 @@ public partial class MartingaleCalculator : Control
 			out value);
 
 		return parsed && value > 0.0;
+	}
+
+	private static bool TryParsePercent(string text, out double value)
+	{
+		string normalized = text.Trim().Replace(',', '.');
+		bool parsed = double.TryParse(
+			normalized,
+			NumberStyles.AllowDecimalPoint,
+			CultureInfo.InvariantCulture,
+			out value);
+
+		return parsed && value > 0.0 && value < 100.0;
 	}
 }

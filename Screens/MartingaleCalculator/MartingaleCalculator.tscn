@@ -29,10 +29,10 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -520.0
-offset_top = -470.0
-offset_right = 520.0
-offset_bottom = 470.0
+offset_left = -590.0
+offset_top = -490.0
+offset_right = 590.0
+offset_bottom = 490.0
 grow_horizontal = 2
 grow_vertical = 2
 
@@ -94,6 +94,16 @@ unique_name_in_owner = true
 layout_mode = 2
 placeholder_text = "2"
 
+[node name="WinChanceText" type="Label" parent="Panel/MarginContainer/VBoxContainer/InputsGrid"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Win Chance %"
+
+[node name="WinChanceInput" type="LineEdit" parent="Panel/MarginContainer/VBoxContainer/InputsGrid"]
+unique_name_in_owner = true
+layout_mode = 2
+placeholder_text = "49.5"
+
 [node name="Actions" type="HBoxContainer" parent="Panel/MarginContainer/VBoxContainer"]
 layout_mode = 2
 theme_override_constants/separation = 12
@@ -140,6 +150,12 @@ layout_mode = 2
 custom_minimum_size = Vector2(230, 0)
 theme_override_font_sizes/font_size = 24
 text = "Balance"
+
+[node name="HeaderFailProb" type="Label" parent="Panel/MarginContainer/VBoxContainer/Headers"]
+layout_mode = 2
+custom_minimum_size = Vector2(150, 0)
+theme_override_font_sizes/font_size = 24
+text = "Fail %"
 
 [node name="ResultsScroll" type="ScrollContainer" parent="Panel/MarginContainer/VBoxContainer"]
 custom_minimum_size = Vector2(0, 500)
