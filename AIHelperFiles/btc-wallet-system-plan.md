@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  —  Next: Phase 0.3 (secp256k1)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  —  Next: Phase 0.4 (CryptoUtils update)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -15,9 +15,11 @@
 
 - `Ripemd160.cs` ✓ — pure C# RIPEMD-160 (RFC spec); `Hash(byte[])` / `Hash(ReadOnlySpan<byte>)`
 - `Bech32.cs` ✓ — BIP173 encoder/decoder; `Encode("gm", 0, hash20)` → `"gm1q..."`; `TryDecode()` and `IsValidGmAddress()` helpers; `Bech32.GameHrp = "gm"` constant
+- `Secp256k1.cs` ✓ — minimal secp256k1; `GetCompressedPublicKey(byte[32])` → `byte[33]`; `IsValidPrivateKey()`; double-and-add scalar multiplication; affine coordinates; Fermat modular inverse
 - `CryptoUtils.cs` — existing P-256 `GenerateWallet()` + `Sign()` + `Verify()`; address format still old hex substring — **to be updated in Phase 0.4**
 - `NodeAgent.cs` — calls `CryptoUtils.GenerateWallet()`; address format updates automatically when 0.4 is done
 - `Scripts/BlockchainPort/BIP-0039/2048WordsList` — present (no extension); needs rename to `bip39_2048.txt`
+- `Documentation/ProjectDesignManual.md` ✓ — Chapter 1–7 covering Phases 0.1–0.3 in full detail
 
 ---
 
@@ -42,7 +44,7 @@ Bech32.IsValidGmAddress(address)           // → bool
 P2WPKH address format with HRP "gm": `gm` + `1` + `q` + 32 data chars + 6 checksum chars = 42 chars total.  
 Changing `GameHrp` to `"bc"` would produce valid Bitcoin mainnet addresses from the same private keys — the math is identical.
 
-### Task 0.3 — secp256k1 minimal implementation  TODO
+### Task 0.3 — secp256k1 minimal implementation  ✓ DONE
 
 **File**: `Scripts/BlockchainPort/Blockchain/Secp256k1.cs`  
 **Namespace**: `GodotBlockchainPort.Blockchain`  
@@ -454,28 +456,18 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 
 ---
 
-**OQ-11 — UTXO indexing performance** (new)  
-Phase 4 (BTCWallet balance) and Phase 6 (DevTransferTool) both need to query balance per address by scanning the blockchain. With many blocks and transactions, `O(n)` scan on every balance query may be slow.  
-Options:
-- (A) Build an in-memory address→UTXO index when `BlockchainService` loads, maintained incrementally as new blocks are mined
-- (B) Scan on demand (acceptable for now at low block counts; revisit at P3+)  
-Recommended: start with B, add index when the block count approaches ~1000.
+**OQ-11 — RESOLVED**: Scan on demand (Option B). Add in-memory UTXO index when block count approaches ~1000.
 
-**OQ-12 — secp256k1 private key validity**  
-A SHA256 output used as a secp256k1 private key must be in range [1, n-1] where n is the curve order. The probability of SHA256 producing a value ≥ n is negligible (~1 in 2^128) but technically possible. Should `DeriveGmAddress()` loop with a counter suffix if the key is invalid? (e.g., SHA256("w1 w2 w3" + ":0"), SHA256("w1 w2 w3" + ":1"), ...) Probably not needed in practice, but worth noting.
+**OQ-12 — RESOLVED**: Loop with counter suffix implemented in `CryptoUtils.DeriveGmAddress()`. In practice the loop always exits on the first iteration (probability of needing retry is ~1 in 2^128). The same pattern applies to `DeriveSigningKeypair()` for P-256 D parameter validity. See `Documentation/ProjectDesignManual.md` Chapter 2 for plain-language explanation.
 
-**OQ-13 — Bot non-miner signing key provisioning**  
-Non-miner bots currently have no signing keys. When we enable bot-to-bot transactions, they'll need keys. Three options:
-- (A) Provision all non-miner bots with keys at creation time (stored in registry), even if unused for now
-- (B) Derive keys on-demand when first send is triggered (lazy provisioning)
-- (C) Have bots use a deterministic key derived from their NodeId (no storage needed)  
-Option C is cleanest: `SHA256("sign:bot_" + nodeId)` → P-256 key. But requires knowing the NodeId upfront. Decision pending.
+**OQ-13 — RESOLVED**: Option A — provision all non-miner bots with signing keys at creation time, stored in registry. `BotWalletRecord` will include `SigningPrivateKeyBase64` from the start.
 
-**OQ-14 — Fee recipient**  
-When a block is mined, the miner receives the coinbase reward. Should they also collect the transaction fees from all transactions in that block? Currently fees are defined (OQ-9) but not routed to anyone. This affects Phase 6 transaction submission and Phase 5 miner bot economics.
+**OQ-14 — RESOLVED**: Yes, miner collects all transaction fees in the block. Fee amount per transaction = sender-chosen value (1–10 BTC for now). Fee collection added to coinbase reward calculation in Phase 5 / Phase 6 implementation.
 
-**OQ-15 — Historical BTC data references for bot growth cadence**  
-Need research for: wallet count growth 2009–2012, active nodes per month, transaction volume per month, dormant wallet percentage estimates. This data informs bot creation schedule in `BotScheduler` (Phase 5.2). Suggest documenting sources in `Documentation/DESIGN_OVERVIEW.md` once gathered.
+**OQ-15 — RESOLVED with scope clarification**: Historical simulation covers 2009–2026 as the long-term target. **2009–2012 is the initial design and testing window** (Basic Mode v0.1). Bot growth cadence, dormant wallet %, and whale reactivation events will be calibrated against real BTC historical data for this window first. Full dataset expansion to 2026 is a future milestone. Research and sources documented in `Documentation/DESIGN_OVERVIEW.md` once the cadence system is implemented.
+
+**OQ-16 — P-256 validity in `DeriveSigningKeypair()`**  
+When creating a P-256 key from SHA256 output via `ECParameters.D = sha256bytes`, the value must be in [1, n_P256−1] for the P-256 curve. The probability of failure is the same as OQ-12 (~1 in 2^128). `ECDsa.Create(ecParams)` will throw on an invalid D. Should be wrapped in a try/catch loop matching the `DeriveGmAddress` pattern. Implement in Phase 0.4 when `DeriveSigningKeypair()` is written.
 
 ---
 
@@ -485,7 +477,8 @@ Need research for: wallet count growth 2009–2012, active nodes per month, tran
 |---|---|---|
 | `Scripts/BlockchainPort/Blockchain/Ripemd160.cs` | 0.1 | ✓ DONE |
 | `Scripts/BlockchainPort/Blockchain/Bech32.cs` | 0.2 | ✓ DONE |
-| `Scripts/BlockchainPort/Blockchain/Secp256k1.cs` | 0.3 | TODO |
+| `Scripts/BlockchainPort/Blockchain/Secp256k1.cs` | 0.3 | ✓ DONE |
+| `Documentation/ProjectDesignManual.md` | 0.1–0.3 | ✓ DONE |
 | `Scripts/BlockchainPort/Blockchain/WalletModels.cs` | 2 | TODO |
 | `Scripts/Services/WordlistBootstrapper.cs` | 1.2 | TODO |
 | `Scripts/Services/WalletInitializationService.cs` | 3 | TODO |
@@ -506,4 +499,4 @@ Need research for: wallet count growth 2009–2012, active nodes per month, tran
 
 ---
 
-*Last updated: 2026-06-10*
+*Last updated: 2026-06-11*
