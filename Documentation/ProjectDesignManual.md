@@ -586,6 +586,132 @@ It reads all 2048 lines, Fisher-Yates shuffles them, takes the first 256, sorts 
 
 ---
 
-*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, and 1.1 of the BTC Wallet Address System.*  
+---
+
+## Chapter 11 — Phase 1.2: WordlistBootstrapper
+
+**File**: `Scripts/Services/WordlistBootstrapper.cs`  
+**Status**: Implemented (Phase 1.2)
+
+### What It Does
+
+`WordlistBootstrapper` is a static class that produces the 256-word in-game vocabulary every participant's wallet is drawn from. It runs once at startup and is idempotent — calling it a second time returns the already-saved list without regenerating.
+
+### The Two Code Paths
+
+**First launch** (no `user://wordlist_256.json` yet):
+
+```
+res://Scripts/BlockchainPort/BIP-0039/bip39_2048.txt
+    │
+    ▼  Read all 2048 lines
+    │
+    ▼  Fisher-Yates in-place shuffle (cryptographically random seed via new Random())
+    │
+    ▼  Take first 256 of the shuffled list
+    │
+    ▼  Sort alphabetically (StringComparer.Ordinal)
+    │
+    ▼  Assign indices 1..256
+    │
+    ▼  Serialize to user://wordlist_256.json (CamelCase JSON)
+    │
+    ▼  Return List<WordEntry>
+```
+
+**Subsequent launches**:
+
+```
+user://wordlist_256.json
+    │
+    ▼  Read + deserialize (via private WordEntryDto → public WordEntry)
+    │
+    ▼  Return List<WordEntry>
+```
+
+Every game installation gets a permanently different 256-word set. There is no reset mechanic — once generated, the wordlist is fixed for the life of that save. This means the "world" of each installation is subtly unique.
+
+### Word Selection for Seed Phrases
+
+`GenerateThreeWords(wordlist, rng)` draws three words independently at random. The only rejection rule is all-three-identical: if A == B == C it redraws. This allows two-of-three repeats (e.g., "oak oak river"), which are valid seed phrases. The probability of needing a redraw is ~1 in 256² — negligible.
+
+### JSON Format
+
+`user://wordlist_256.json` follows the project's CamelCase naming policy:
+
+```json
+{
+  "generatedAt": "2026-06-12T10:23:45.123Z",
+  "words": [
+    { "index": 1, "word": "abandon" },
+    { "index": 2, "word": "ability" },
+    ...
+    { "index": 256, "word": "zone" }
+  ]
+}
+```
+
+`generatedAt` records the real-world UTC timestamp of generation (not game time). It is metadata only — the game does not use it.
+
+### Serialization Architecture
+
+The internal `WordlistSnapshot` and `WordEntryDto` classes handle JSON. The public `WordEntry` record is kept separate from the JSON DTO so the public API stays clean and independent of JSON formatting concerns. Conversion is done at the boundary in `Load()`.
+
+### Startup Output (How to Verify)
+
+Open the Godot Output panel after running. You will see one of two messages:
+
+**First launch**:
+```
+[WordlistBootstrapper] Generated 256-word subset from BIP39 2048-word list — saved to user://wordlist_256.json
+[WordlistBootstrapper] First 3: <word>, <word>, <word>
+```
+
+**Subsequent launches**:
+```
+[WordlistBootstrapper] Loaded 256 words from user://wordlist_256.json — first 3: <word>, <word>, <word>
+```
+
+The word count (256) and the three sample words confirm the list is valid. If the source file is missing, `FileAccess.Open()` throws — the game will fail to start, which is the correct fail-fast behaviour.
+
+---
+
+## Chapter 12 — Phase 1.3: Wiring WordlistBootstrapper into Startup
+
+**File changed**: `Scripts/Services/CalendarTimeService.cs`  
+**Status**: Implemented (Phase 1.3)
+
+### The Change
+
+`WordlistBootstrapper.EnsureWordlist()` is now the first call in `CalendarTimeService._Ready()`:
+
+```csharp
+public override void _Ready()
+{
+    WordlistBootstrapper.EnsureWordlist();  // Phase 1.3
+    EnsureGameEpochInitialized();
+}
+```
+
+`CalendarTimeService` is the earliest autoload that does meaningful work. It was chosen as the host because wallet initialization (Phase 3) must also happen before any game logic runs, and both depend on the wordlist. Keeping the startup sequence in one place avoids ordering confusion across multiple autoloads.
+
+### Planned Insertion Point for Phase 3
+
+When `WalletInitializationService` is implemented, the call sequence becomes:
+
+```csharp
+public override void _Ready()
+{
+    WordlistBootstrapper.EnsureWordlist();           // Phase 1.3 — already done
+    WalletInitializationService.EnsureAll();         // Phase 3 — pending
+    EnsureGameEpochInitialized();
+}
+```
+
+`EnsureWordlist()` is idempotent, so `WalletInitializationService.EnsureAll()` can also call it internally if it needs the wordlist — it will load from disk on the second call rather than regenerating.
+
+---
+
+*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, and 1.3 of the BTC Wallet Address System.*  
 *See `AIHelperFiles/btc-wallet-system-plan.md` for the full implementation roadmap.*  
 *Last updated: 2026-06-12*

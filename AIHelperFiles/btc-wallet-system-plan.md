@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  —  Next: Phase 1.2 (WordlistBootstrapper)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  —  Next: Phase 2 (WalletModels)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -21,7 +21,9 @@
 - `Models.cs` ✓ — `Transaction` has new `Secp256k1PublicKeyBase64` field (address verification) alongside existing `PublicKeyBase64` (P-256 signing)
 - `BlockchainService.cs` ✓ — `ValidateTransactionSignature()` uses `tx.Secp256k1PublicKeyBase64` for address check; `tx.PublicKeyBase64` still used by `CryptoUtils.Verify()`
 - `Scripts/BlockchainPort/BIP-0039/bip39_2048.txt` ✓ — renamed from `2048WordsList`; 2048 BIP39 words one per line; read-only source for `WordlistBootstrapper`; requires `*.txt` in export preset include filter when presets are configured
-- `Documentation/ProjectDesignManual.md` ✓ — Chapter 1–7 covering Phases 0.1–0.3 in full detail
+- `Scripts/Services/WordlistBootstrapper.cs` ✓ — idempotent; `EnsureWordlist()` generates/loads 256-word subset; `GenerateThreeWords()` for 3-word seed generation; `GD.Print` output on both code paths for verification
+- `Scripts/Services/CalendarTimeService._Ready()` ✓ — `WordlistBootstrapper.EnsureWordlist()` is the first call; `WalletInitializationService.EnsureAll()` slot reserved between it and `EnsureGameEpochInitialized()`
+- `Documentation/ProjectDesignManual.md` ✓ — Chapters 1–12 covering Phases 0.1–0.5 and 1.1–1.3
 
 ---
 
@@ -149,37 +151,27 @@ Renamed the extensionless file to `bip39_2048.txt`. The `.txt` extension is requ
 
 **Export filter note**: when export presets are configured in `export_presets.cfg`, add `*.txt` to `include_filter` for each platform preset. In editor/development mode `res://` reads directly from the project directory — no filter needed.
 
-### Task 1.2 — Implement `WordlistBootstrapper`  TODO
+### Task 1.2 — Implement `WordlistBootstrapper`  ✓ DONE
 
-**File**: `Scripts/Services/WordlistBootstrapper.cs`  
-**Note on paths**: `res://` is read-only in Godot exported builds. The 2048-word source stays at `res://` (read-only). The generated 256-word subset is saved to `user://wordlist_256.json`.
+**File**: `Scripts/Services/WordlistBootstrapper.cs`
 
-**`user://wordlist_256.json` format**:
+`EnsureWordlist()` is idempotent: if `user://wordlist_256.json` exists it deserializes and returns from disk; otherwise it opens the 2048-word source at `res://`, Fisher-Yates shuffles all words, takes 256, sorts alphabetically, assigns indices 1..256, serializes to `user://wordlist_256.json`, and returns the list.
+
+JSON format (`user://wordlist_256.json`, CamelCase per project policy):
 ```json
 {
-  "GeneratedAt": "2009-01-03T18:15:06Z",
-  "Words": [
-    { "Index": 1, "Word": "abandon" },
-    { "Index": 2, "Word": "ability" }
+  "generatedAt": "2009-01-03T18:15:06.000Z",
+  "words": [
+    { "index": 1, "word": "abandon" },
+    { "index": 2, "word": "ability" }
   ]
 }
 ```
 
-**Logic** (idempotent):
-```
-if user://wordlist_256.json exists → load and return
-else:
-  1. FileAccess.Open("res://Scripts/BlockchainPort/BIP-0039/bip39_2048.txt")
-  2. Read all lines → List<string> (2048 words)
-  3. Fisher-Yates shuffle → take first 256
-  4. Sort alphabetically
-  5. Assign index 1..256
-  6. Save JSON to user://wordlist_256.json
-  7. Return List<WordEntry>
-```
+Internal serialization uses a private `WordEntryDto` class so the public `WordEntry` record is kept clean and the JSON DTO is kept isolated. The private `WordlistSnapshot` class holds the top-level structure.
 
 **Word selection rule** (for 3-word seed generation):
-- Pick A, B, C independently from the 256 words
+- Pick A, B, C independently at random from the 256 words
 - Reject and retry only if all three are identical (A == B == C)
 - One repeat within the set is allowed (e.g., "able able abandon" is valid)
 
@@ -188,15 +180,19 @@ else:
 public static class WordlistBootstrapper
 {
     public record WordEntry(int Index, string Word);
-    
+
     public static List<WordEntry> EnsureWordlist();
     public static string[] GenerateThreeWords(List<WordEntry> wordlist, Random rng);
 }
 ```
 
-### Task 1.3 — Wire into startup  TODO
+**Startup prints** (visible in Godot Output panel):
+- First launch: `[WordlistBootstrapper] Generated 256-word subset from BIP39 2048-word list — saved to user://wordlist_256.json` + `First 3: <word>, <word>, <word>`
+- Subsequent launches: `[WordlistBootstrapper] Loaded 256 words from user://wordlist_256.json — first 3: <word>, <word>, <word>`
 
-`WordlistBootstrapper.EnsureWordlist()` called in `CalendarTimeService._Ready()` before wallet initialization.
+### Task 1.3 — Wire into startup  ✓ DONE
+
+`WordlistBootstrapper.EnsureWordlist()` added as the first call in `CalendarTimeService._Ready()`, before `EnsureGameEpochInitialized()`. Phase 3 (`WalletInitializationService.EnsureAll()`) will be inserted between the two calls once implemented.
 
 ---
 
@@ -466,7 +462,7 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 | `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | 0.5 | ✓ DONE |
 | `Documentation/ProjectDesignManual.md` | 0.1–0.5 | ✓ DONE |
 | `Scripts/BlockchainPort/Blockchain/WalletModels.cs` | 2 | TODO |
-| `Scripts/Services/WordlistBootstrapper.cs` | 1.2 | TODO |
+| `Scripts/Services/WordlistBootstrapper.cs` | 1.2 | ✓ DONE |
 | `Scripts/Services/WalletInitializationService.cs` | 3 | TODO |
 | `Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs` | 5.4 | TODO |
 | `Screens/BTCWallet/BTCWallet.tscn` | 4 | TODO |
@@ -477,7 +473,7 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 | File | Phase | Change |
 |---|---|---|
 | `Scripts/BlockchainPort/BIP-0039/bip39_2048.txt` | 1.1 | ✓ DONE (renamed from `2048WordsList`) |
-| `Scripts/Services/CalendarTimeService.cs` | 1.3 + 3 | Add `WordlistBootstrapper` + `WalletInitializationService` calls in `_Ready()` |
+| `Scripts/Services/CalendarTimeService.cs` | 1.3 + 3 | 1.3 ✓ DONE (`WordlistBootstrapper.EnsureWordlist()` added); Phase 3 (`WalletInitializationService`) pending |
 | `Scripts/Services/SceneManager.cs` | 4 | Add `BTCWallet` to `SceneId` enum + `Paths` |
 | `Screens/BlockExplorer/BlockExplorer.cs` | 6 | Remove existing transfer logic |
 | `Screens/MainMenu/MainMenu.tscn` + `.cs` | 4 | Add BTCWallet navigation button |
