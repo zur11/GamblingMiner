@@ -94,16 +94,20 @@ public sealed class BlockchainService
             return true;
         }
 
-        if (string.IsNullOrWhiteSpace(tx.PublicKeyBase64) || string.IsNullOrWhiteSpace(tx.SignatureBase64))
+        if (string.IsNullOrWhiteSpace(tx.PublicKeyBase64) ||
+            string.IsNullOrWhiteSpace(tx.SignatureBase64) ||
+            string.IsNullOrWhiteSpace(tx.Secp256k1PublicKeyBase64))
         {
             return false;
         }
 
-        if (!string.Equals(tx.Sender, CryptoUtils.DeriveAddressFromPublicKey(tx.PublicKeyBase64), StringComparison.Ordinal))
+        // Address ownership check: secp256k1 public key → Hash160 → Bech32 must match Sender
+        if (!string.Equals(tx.Sender, CryptoUtils.DeriveAddressFromPublicKey(tx.Secp256k1PublicKeyBase64), StringComparison.Ordinal))
         {
             return false;
         }
 
+        // Signature check: P-256 signing key (game-internal, not visible on the address)
         return CryptoUtils.Verify(BuildTransactionPayload(tx), tx.SignatureBase64, tx.PublicKeyBase64);
     }
 

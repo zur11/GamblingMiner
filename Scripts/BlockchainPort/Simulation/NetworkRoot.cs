@@ -37,23 +37,30 @@ public partial class NetworkRoot : Node
             return;
         }
 
+        // Load saved state first so wallets can be restored before nodes are created.
+        BlockchainStateSnapshot? savedState = TryLoadSnapshot();
+
         SharedNodesById.Clear();
-        SharedNetwork.RegisterNode(CreateAndRegisterNode(PlayerNodeId));
+        SharedNetwork.RegisterNode(CreateAndRegisterNode(PlayerNodeId, savedState));
         for (int i = 1; i <= 4; i++)
         {
-            SharedNetwork.RegisterNode(CreateAndRegisterNode($"bot_{i}"));
+            SharedNetwork.RegisterNode(CreateAndRegisterNode($"bot_{i}", savedState));
         }
 
-        LoadStateFromDisk();
+        ApplyStateFromSnapshot(savedState);
         NormalizeGenesisTimestampAcrossNodes();
         EnsureSecondBlockBootstrapPendingTx();
         PersistStateToDisk();
         _isInitialized = true;
     }
 
-    private static NodeAgent CreateAndRegisterNode(string nodeId)
+    private static NodeAgent CreateAndRegisterNode(string nodeId, BlockchainStateSnapshot? savedState = null)
     {
-        NodeAgent node = new(nodeId);
+        NodeAgent node;
+        if (savedState?.NodeWallets?.TryGetValue(nodeId, out NodeWalletSnapshot? wallet) == true && wallet?.IsComplete() == true)
+            node = new(nodeId, wallet.Address, wallet.SigningPublicKeyBase64, wallet.SigningPrivateKeyBase64, wallet.Secp256k1PublicKeyBase64);
+        else
+            node = new(nodeId);
         SharedNodesById[nodeId] = node;
         return node;
     }
@@ -438,6 +445,15 @@ public partial class NetworkRoot : Node
             NodeFinancialStates = SharedNodesById
                 .Where(pair => pair.Value.FinancialState is not null)
                 .ToDictionary(pair => pair.Key, pair => pair.Value.FinancialState!.CloneNormalized()),
+            NodeWallets = SharedNodesById.ToDictionary(
+                pair => pair.Key,
+                pair => new NodeWalletSnapshot
+                {
+                    Address = pair.Value.WalletAddress,
+                    SigningPublicKeyBase64 = pair.Value.WalletPublicKey,
+                    SigningPrivateKeyBase64 = pair.Value.WalletPrivateKey,
+                    Secp256k1PublicKeyBase64 = pair.Value.WalletSecp256k1PublicKey
+                }),
             LastMinedByNodeId = _lastMinedByNodeId,
             CurrentMinerStreak = _currentMinerStreak,
             BestMinerStreak = _bestMinerStreak
@@ -473,25 +489,20 @@ public partial class NetworkRoot : Node
         }
     }
 
-    private static void LoadStateFromDisk()
+    private static BlockchainStateSnapshot? TryLoadSnapshot()
     {
-        if (!FileAccess.FileExists(StatePath))
-        {
-            return;
-        }
-
+        if (!FileAccess.FileExists(StatePath)) return null;
         using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Read);
         string json = file.GetAsText();
-        BlockchainStateSnapshot? snapshot = JsonSerializer.Deserialize<BlockchainStateSnapshot>(json);
-        if (snapshot is null || snapshot.PlayerChain.Count == 0)
-        {
-            return;
-        }
+        return JsonSerializer.Deserialize<BlockchainStateSnapshot>(json);
+    }
+
+    private static void ApplyStateFromSnapshot(BlockchainStateSnapshot? snapshot)
+    {
+        if (snapshot is null || snapshot.PlayerChain.Count == 0) return;
 
         foreach (NodeAgent node in SharedNodesById.Values)
-        {
             node.Blockchain.TryReplaceChain(snapshot.PlayerChain, snapshot.PlayerPendingTransactions);
-        }
 
         _lastMinedByNodeId = snapshot.LastMinedByNodeId;
         _currentMinerStreak = snapshot.CurrentMinerStreak;
@@ -501,9 +512,7 @@ public partial class NetworkRoot : Node
         foreach ((string nodeId, NodeFinancialState state) in snapshot.NodeFinancialStates ?? new Dictionary<string, NodeFinancialState>())
         {
             if (SharedNodesById.TryGetValue(nodeId, out NodeAgent? node))
-            {
                 node.FinancialState = state.CloneNormalized();
-            }
         }
     }
 
@@ -568,9 +577,24 @@ public partial class NetworkRoot : Node
         public List<Block> PlayerChain { get; set; } = new();
         public List<Transaction> PlayerPendingTransactions { get; set; } = new();
         public Dictionary<string, NodeFinancialState> NodeFinancialStates { get; set; } = new();
+        public Dictionary<string, NodeWalletSnapshot> NodeWallets { get; set; } = new();
         public string LastMinedByNodeId { get; set; } = string.Empty;
         public int CurrentMinerStreak { get; set; }
         public int BestMinerStreak { get; set; }
+    }
+
+    private sealed class NodeWalletSnapshot
+    {
+        public string Address { get; set; } = string.Empty;
+        public string SigningPublicKeyBase64 { get; set; } = string.Empty;
+        public string SigningPrivateKeyBase64 { get; set; } = string.Empty;
+        public string Secp256k1PublicKeyBase64 { get; set; } = string.Empty;
+
+        public bool IsComplete() =>
+            !string.IsNullOrWhiteSpace(Address) &&
+            !string.IsNullOrWhiteSpace(SigningPublicKeyBase64) &&
+            !string.IsNullOrWhiteSpace(SigningPrivateKeyBase64) &&
+            !string.IsNullOrWhiteSpace(Secp256k1PublicKeyBase64);
     }
 }
 

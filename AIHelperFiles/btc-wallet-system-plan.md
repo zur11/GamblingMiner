@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  —  Next: Phase 0.4 (CryptoUtils update)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  —  Next: Phase 1 (Wordlist System)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -16,8 +16,10 @@
 - `Ripemd160.cs` ✓ — pure C# RIPEMD-160 (RFC spec); `Hash(byte[])` / `Hash(ReadOnlySpan<byte>)`
 - `Bech32.cs` ✓ — BIP173 encoder/decoder; `Encode("gm", 0, hash20)` → `"gm1q..."`; `TryDecode()` and `IsValidGmAddress()` helpers; `Bech32.GameHrp = "gm"` constant
 - `Secp256k1.cs` ✓ — minimal secp256k1; `GetCompressedPublicKey(byte[32])` → `byte[33]`; `IsValidPrivateKey()`; double-and-add scalar multiplication; affine coordinates; Fermat modular inverse
-- `CryptoUtils.cs` — existing P-256 `GenerateWallet()` + `Sign()` + `Verify()`; address format still old hex substring — **to be updated in Phase 0.4**
-- `NodeAgent.cs` — calls `CryptoUtils.GenerateWallet()`; address format updates automatically when 0.4 is done
+- `CryptoUtils.cs` ✓ — `DeriveGmAddress()`, `DeriveSigningKeypair()`, updated `GenerateWallet()` (4-tuple), updated `DeriveAddressFromPublicKey()` (now takes secp256k1 compressed pubkey base64)
+- `NodeAgent.cs` ✓ — `WalletSecp256k1PublicKey` property; constructor uses 4-tuple; `CreateSignedTransaction()` sets `tx.Secp256k1PublicKeyBase64`
+- `Models.cs` ✓ — `Transaction` has new `Secp256k1PublicKeyBase64` field (address verification) alongside existing `PublicKeyBase64` (P-256 signing)
+- `BlockchainService.cs` ✓ — `ValidateTransactionSignature()` uses `tx.Secp256k1PublicKeyBase64` for address check; `tx.PublicKeyBase64` still used by `CryptoUtils.Verify()`
 - `Scripts/BlockchainPort/BIP-0039/2048WordsList` — present (no extension); needs rename to `bip39_2048.txt`
 - `Documentation/ProjectDesignManual.md` ✓ — Chapter 1–7 covering Phases 0.1–0.3 in full detail
 
@@ -87,77 +89,53 @@ public static class Secp256k1
 - Compressed pubkey: `0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798`
   (This is just G itself — the generator point, since 1 × G = G)
 
-### Task 0.4 — Add `DeriveGmAddress()` to CryptoUtils  TODO
+### Task 0.4 — Wire secp256k1 into CryptoUtils and dependent files  ✓ DONE
 
-Extend `Scripts/BlockchainPort/Blockchain/CryptoUtils.cs` with new methods. Do NOT break existing `GenerateWallet()` / `Sign()` / `Verify()` — they are still used for mining/signing throughout.
+**Files changed**: `CryptoUtils.cs`, `Models.cs`, `NodeAgent.cs`, `BlockchainService.cs`
 
-```csharp
-// New methods to add:
+**The double-duty problem (why 4 files needed updating)**:
 
-// Full pipeline: seed phrase → secp256k1 → RIPEMD160(SHA256) → Bech32
-public static string DeriveGmAddress(string seedPhrase)
-{
-    byte[] privateKey  = SHA256.HashData(Encoding.UTF8.GetBytes(seedPhrase));
-    byte[] compPubKey  = Secp256k1.GetCompressedPublicKey(privateKey);
-    byte[] pubKeyHash  = Ripemd160.Hash(SHA256.HashData(compPubKey));
-    return Bech32.Encode(Bech32.GameHrp, 0x00, pubKeyHash);
-}
+Before Phase 0.4, `tx.PublicKeyBase64` served two purposes in `ValidateTransactionSignature()`:
+1. Address verification: `CryptoUtils.DeriveAddressFromPublicKey(tx.PublicKeyBase64)` compared against `tx.Sender`
+2. Signature verification: `CryptoUtils.Verify(payload, tx.SignatureBase64, tx.PublicKeyBase64)`
 
-// For generating a P-256 signing key deterministically from a seed phrase
-// (used when player/casino needs to sign a transaction in-game)
-public static (string signingPublicKeyBase64, string signingPrivateKeyBase64)
-    DeriveSigningKeypair(string seedPhrase)
-{
-    // "sign:" prefix ensures a different 32 bytes than the address key
-    byte[] seed = SHA256.HashData(Encoding.UTF8.GetBytes("sign:" + seedPhrase));
-    var ecParams = new ECParameters
-    {
-        Curve = ECCurve.NamedCurves.nistP256,
-        D = seed
-    };
-    using ECDsa ecdsa = ECDsa.Create(ecParams);
-    return (
-        Convert.ToBase64String(ecdsa.ExportSubjectPublicKeyInfo()),
-        Convert.ToBase64String(ecdsa.ExportPkcs8PrivateKey())
-    );
-}
-```
+In the new system these require different key types:
+- Address verification needs the **secp256k1 compressed public key** (33 bytes)
+- Signature verification needs the **P-256 SubjectPublicKeyInfo** (used by `ECDsa.ImportSubjectPublicKeyInfo`)
 
-**Update `GenerateWallet()`** to use secp256k1 address derivation (affecting all `NodeAgent` bots automatically):
-```csharp
-public static (string address, string publicKeyBase64, string privateKeyBase64) GenerateWallet()
-{
-    using ECDsa ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-    byte[] pubKeyBytes     = ecdsa.ExportSubjectPublicKeyInfo();
-    byte[] compPubKey      = Secp256k1.GetCompressedPublicKey(ecdsa.ExportParameters(false).Q); // see note
-    byte[] pubKeyHash      = Ripemd160.Hash(SHA256.HashData(compPubKey));
-    string address         = Bech32.Encode(Bech32.GameHrp, 0x00, pubKeyHash);
-    return (address, Convert.ToBase64String(pubKeyBytes), Convert.ToBase64String(ecdsa.ExportPkcs8PrivateKey()));
-}
-// Note: ExportParameters gives ECPoint Q with X and Y — use Y parity to pick 02/03 prefix in secp256k1 step.
-// Alternatively: derive a random 32-byte key, use it for both secp256k1 address AND P-256 key.
-// Simpler approach: generate random 32 bytes → secp256k1 address + P-256 signing key both derived from same bytes.
-```
+A single field can no longer serve both. Solution: add `Transaction.Secp256k1PublicKeyBase64` for address verification, keep `PublicKeyBase64` for P-256 signing.
 
-**Simpler unified approach for `GenerateWallet()`**:
-```csharp
-public static (string address, string publicKeyBase64, string privateKeyBase64) GenerateWallet()
-{
-    // 32 random bytes = source of truth for this wallet
-    byte[] keyMaterial = RandomNumberGenerator.GetBytes(32);
-    
-    // Address: secp256k1 path (Bitcoin-authentic)
-    byte[] compPubKey = Secp256k1.GetCompressedPublicKey(keyMaterial);
-    byte[] pubKeyHash = Ripemd160.Hash(SHA256.HashData(compPubKey));
-    string address    = Bech32.Encode(Bech32.GameHrp, 0x00, pubKeyHash);
-    
-    // Signing: P-256 path (game-internal only)
-    var ecParams = new ECParameters { Curve = ECCurve.NamedCurves.nistP256, D = keyMaterial };
-    using ECDsa ecdsa = ECDsa.Create(ecParams);
-    return (address, Convert.ToBase64String(ecdsa.ExportSubjectPublicKeyInfo()),
-                     Convert.ToBase64String(ecdsa.ExportPkcs8PrivateKey()));
-}
-```
+**`CryptoUtils.cs` changes**:
+- `GenerateWallet()` → now a 4-tuple: `(address, signingPublicKeyBase64, signingPrivateKeyBase64, secp256k1PublicKeyBase64)`
+- `DeriveAddressFromPublicKey(secp256k1CompressedPubKeyBase64)` → takes secp256k1 33-byte compressed pubkey (base64), produces `gm1q...` via Hash160 + Bech32
+- `DeriveGmAddress(seedPhrase)` → full pipeline with OQ-12 safety loop (see OQ-12)
+- `DeriveSigningKeypair(seedPhrase)` → deterministic P-256 keypair with OQ-16 try/catch loop (see OQ-16)
+- `Sign()`, `Verify()`, `Sha256Hex()` → unchanged
+
+**`GenerateWallet()` key material design**: 32 random bytes drive both derivations. secp256k1 validity is checked first (OQ-12 probability); then P-256 key is created via `ECParameters.D = keyMaterial` inside a try/catch (OQ-16). The loop retries on either failure — in practice always exits on first attempt.
+
+**`Models.cs`**: `Transaction` gains `Secp256k1PublicKeyBase64 { get; set; } = string.Empty`. Existing field `PublicKeyBase64` retains its role as the P-256 SubjectPublicKeyInfo for `Verify()`.
+
+**`NodeAgent.cs`**: Constructor destructures the 4-tuple into a new `WalletSecp256k1PublicKey` property. `CreateSignedTransaction()` sets `tx.Secp256k1PublicKeyBase64 = WalletSecp256k1PublicKey`.
+
+**`BlockchainService.ValidateTransactionSignature()`**: Now checks `Secp256k1PublicKeyBase64` for address ownership and `PublicKeyBase64` for the P-256 signature. Transactions missing either field are rejected.
+
+### Task 0.5 — Wallet address persistence  ✓ DONE
+
+**Files changed**: `NodeAgent.cs`, `NetworkRoot.cs`
+
+**Problem**: `NodeAgent` always called `CryptoUtils.GenerateWallet()` with `RandomNumberGenerator.GetBytes(32)` in its constructor, producing a different random address on every game launch. `BlockchainStateSnapshot` saved the blockchain chain and financial states but never the wallet addresses or keys. Each session's coinbase rewards were recorded against the addresses generated in that session; restarting the game created a new set of addresses, making all previous blockchain records orphaned. The bug also appeared within a session: if pending transactions from the previous session (loaded from disk) contained coinbases addressed to the old session's addresses, mining a block would include those old-address coinbases, making it look as if the address changed mid-session without navigation.
+
+**Fix in `NodeAgent.cs`**: Added a second constructor that accepts pre-existing wallet credentials `(nodeId, address, signingPublicKey, signingPrivateKey, secp256k1PublicKey)` directly, bypassing `GenerateWallet()`. The original random-generation constructor is untouched and is still used for first-launch wallet creation.
+
+**Fix in `NetworkRoot.cs`**:
+- `EnsureInitialized()` now calls `TryLoadSnapshot()` **before** creating nodes, so saved wallet data is available at construction time.
+- `CreateAndRegisterNode(nodeId, savedState)` checks `savedState.NodeWallets` for a complete wallet snapshot; uses it if present, falls back to random generation otherwise.
+- `PersistStateToDisk()` now writes a `NodeWallets` dictionary (all node IDs → address + signing keys + secp256k1 pubkey) into the snapshot.
+- `LoadStateFromDisk()` was refactored into two cleaner methods: `TryLoadSnapshot()` (reads and deserializes JSON) and `ApplyStateFromSnapshot()` (applies chain + financial state to live nodes). Wallet restoration happens earlier, in `EnsureInitialized()`, before node construction.
+- `BlockchainStateSnapshot` gains a `NodeWallets` property; a new private `NodeWalletSnapshot` class holds the four persisted fields and an `IsComplete()` guard that rejects partially-saved records.
+
+**Migration note**: existing `user://blockchain/state.json` saved before this fix has no `NodeWallets` entry. On the first launch after the fix, all nodes receive freshly-generated addresses, so any previous blockchain history (coinbases to old addresses) becomes inaccessible. Clear `user://blockchain/` for a clean start.
 
 ---
 
@@ -418,6 +396,7 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 ```
 0.3 Secp256k1.cs
 → 0.4 CryptoUtils updates + test vectors verified
+→ 0.5 Wallet address persistence (NodeAgent + NetworkRoot)
 → 1.1 Rename wordlist file
 → 1.2 WordlistBootstrapper
 → 2   WalletModels.cs
@@ -466,8 +445,7 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 
 **OQ-15 — RESOLVED with scope clarification**: Historical simulation covers 2009–2026 as the long-term target. **2009–2012 is the initial design and testing window** (Basic Mode v0.1). Bot growth cadence, dormant wallet %, and whale reactivation events will be calibrated against real BTC historical data for this window first. Full dataset expansion to 2026 is a future milestone. Research and sources documented in `Documentation/DESIGN_OVERVIEW.md` once the cadence system is implemented.
 
-**OQ-16 — P-256 validity in `DeriveSigningKeypair()`**  
-When creating a P-256 key from SHA256 output via `ECParameters.D = sha256bytes`, the value must be in [1, n_P256−1] for the P-256 curve. The probability of failure is the same as OQ-12 (~1 in 2^128). `ECDsa.Create(ecParams)` will throw on an invalid D. Should be wrapped in a try/catch loop matching the `DeriveGmAddress` pattern. Implement in Phase 0.4 when `DeriveSigningKeypair()` is written.
+**OQ-16 — RESOLVED**: `DeriveSigningKeypair()` wraps `ECDsa.Create(ecParams)` in a try/catch loop. If `CryptographicException` is thrown (D outside P-256 valid range), the attempt counter increments and the next seed is `SHA256("sign:" + seedPhrase + ":N")`. Same suffix convention as OQ-12, applied to the "sign:" prefix path. Both `GenerateWallet()` (random bytes path) and `DeriveSigningKeypair()` (seed phrase path) use the same safety loop pattern. See `Documentation/ProjectDesignManual.md` Chapter 8 for the plain-language explanation.
 
 ---
 
@@ -478,7 +456,12 @@ When creating a P-256 key from SHA256 output via `ECParameters.D = sha256bytes`,
 | `Scripts/BlockchainPort/Blockchain/Ripemd160.cs` | 0.1 | ✓ DONE |
 | `Scripts/BlockchainPort/Blockchain/Bech32.cs` | 0.2 | ✓ DONE |
 | `Scripts/BlockchainPort/Blockchain/Secp256k1.cs` | 0.3 | ✓ DONE |
-| `Documentation/ProjectDesignManual.md` | 0.1–0.3 | ✓ DONE |
+| `Scripts/BlockchainPort/Blockchain/CryptoUtils.cs` | 0.4 | ✓ DONE |
+| `Scripts/BlockchainPort/Blockchain/Models.cs` | 0.4 | ✓ DONE |
+| `Scripts/BlockchainPort/Simulation/NodeAgent.cs` | 0.4 + 0.5 | ✓ DONE |
+| `Scripts/BlockchainPort/Blockchain/BlockchainService.cs` | 0.4 | ✓ DONE |
+| `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | 0.5 | ✓ DONE |
+| `Documentation/ProjectDesignManual.md` | 0.1–0.5 | ✓ DONE |
 | `Scripts/BlockchainPort/Blockchain/WalletModels.cs` | 2 | TODO |
 | `Scripts/Services/WordlistBootstrapper.cs` | 1.2 | TODO |
 | `Scripts/Services/WalletInitializationService.cs` | 3 | TODO |
@@ -490,7 +473,6 @@ When creating a P-256 key from SHA256 output via `ECParameters.D = sha256bytes`,
 
 | File | Phase | Change |
 |---|---|---|
-| `Scripts/BlockchainPort/Blockchain/CryptoUtils.cs` | 0.4 + 5.1 | Add `DeriveGmAddress()`, `DeriveSigningKeypair()`; update `GenerateWallet()` |
 | `Scripts/BlockchainPort/BIP-0039/2048WordsList` | 1.1 | Rename to `bip39_2048.txt` |
 | `Scripts/Services/CalendarTimeService.cs` | 1.3 + 3 | Add `WordlistBootstrapper` + `WalletInitializationService` calls in `_Ready()` |
 | `Scripts/Services/SceneManager.cs` | 4 | Add `BTCWallet` to `SceneId` enum + `Paths` |
@@ -499,4 +481,4 @@ When creating a P-256 key from SHA256 output via `ECParameters.D = sha256bytes`,
 
 ---
 
-*Last updated: 2026-06-11*
+*Last updated: 2026-06-12*

@@ -10,6 +10,7 @@ public sealed class NodeAgent
     public string WalletAddress { get; }
     public string WalletPublicKey { get; }
     public string WalletPrivateKey { get; }
+    public string WalletSecp256k1PublicKey { get; }
     public BlockchainService Blockchain { get; } = new();
     public NodeFinancialState? FinancialState { get; set; }
     private long _candidateNonce;
@@ -18,7 +19,16 @@ public sealed class NodeAgent
     public NodeAgent(string nodeId)
     {
         NodeId = nodeId;
-        (WalletAddress, WalletPublicKey, WalletPrivateKey) = CryptoUtils.GenerateWallet();
+        (WalletAddress, WalletPublicKey, WalletPrivateKey, WalletSecp256k1PublicKey) = CryptoUtils.GenerateWallet();
+    }
+
+    public NodeAgent(string nodeId, string address, string signingPublicKey, string signingPrivateKey, string secp256k1PublicKey)
+    {
+        NodeId = nodeId;
+        WalletAddress = address;
+        WalletPublicKey = signingPublicKey;
+        WalletPrivateKey = signingPrivateKey;
+        WalletSecp256k1PublicKey = secp256k1PublicKey;
     }
 
     public Transaction CreateSignedTransaction(decimal amount, string recipientAddress)
@@ -27,6 +37,7 @@ public sealed class NodeAgent
         string payload = BlockchainService.BuildTransactionPayload(tx);
         tx.SignatureBase64 = CryptoUtils.Sign(payload, WalletPrivateKey);
         tx.PublicKeyBase64 = WalletPublicKey;
+        tx.Secp256k1PublicKeyBase64 = WalletSecp256k1PublicKey;
         return tx;
     }
 

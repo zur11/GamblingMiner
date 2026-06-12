@@ -340,6 +340,205 @@ The `"sign:"` prefix ensures the signing key is a different 32 bytes than the se
 
 ---
 
-*This document covers Phases 0.1, 0.2, and 0.3 of the BTC Wallet Address System.*  
+## Chapter 8 — Phase 0.4: Wiring the Pipeline into the Game
+
+**Files changed**: `CryptoUtils.cs`, `Models.cs`, `NodeAgent.cs`, `BlockchainService.cs`  
+**Status**: Implemented (Phase 0.4)
+
+### The Problem Phase 0.4 Solved
+
+Before this phase, `CryptoUtils.DeriveAddressFromPublicKey()` accepted a P-256 SubjectPublicKeyInfo blob and produced a 40-character hex string (old address format). The same field — `Transaction.PublicKeyBase64` — was used in `BlockchainService.ValidateTransactionSignature()` for two unrelated purposes:
+
+1. **Address verification**: `DeriveAddressFromPublicKey(tx.PublicKeyBase64) == tx.Sender`
+2. **Signature verification**: `CryptoUtils.Verify(payload, tx.SignatureBase64, tx.PublicKeyBase64)`
+
+In the new system these require incompatible key types:
+- Address verification needs the **secp256k1 compressed public key** (33 bytes, Bitcoin format)
+- Signature verification needs the **P-256 SubjectPublicKeyInfo** (.NET ECDSA format)
+
+The same field cannot hold both. This chapter describes how the split was made.
+
+### The Solution: Two Fields for Two Roles
+
+A new field was added to `Transaction`:
+
+```csharp
+// Models.cs
+public string Secp256k1PublicKeyBase64 { get; set; } = string.Empty;  // for address ownership check
+public string PublicKeyBase64 { get; set; } = string.Empty;           // for P-256 signature check (unchanged)
+```
+
+The validation method in `BlockchainService` was updated to use each field for its correct purpose:
+
+```csharp
+// BlockchainService.ValidateTransactionSignature() — simplified
+if (/* coinbase */) return true;
+
+if (any field is empty) return false;
+
+// Address ownership: secp256k1 public key → Hash160 → Bech32 must match Sender
+if (!Equals(tx.Sender, CryptoUtils.DeriveAddressFromPublicKey(tx.Secp256k1PublicKeyBase64)))
+    return false;
+
+// Signature: P-256 signing key verifies the transaction payload
+return CryptoUtils.Verify(payload, tx.SignatureBase64, tx.PublicKeyBase64);
+```
+
+### Updated `GenerateWallet()` — Now a 4-Tuple
+
+`CryptoUtils.GenerateWallet()` now returns four values:
+
+```csharp
+(string address,
+ string signingPublicKeyBase64,    // P-256, used by Verify()
+ string signingPrivateKeyBase64,   // P-256 PKCS8, used by Sign()
+ string secp256k1PublicKeyBase64)  // secp256k1 compressed pubkey, used by DeriveAddressFromPublicKey()
+```
+
+Internally, 32 random bytes serve as the **source of truth** for the wallet. Those bytes are used for:
+- The secp256k1 scalar (→ compressed pubkey → address)
+- The P-256 `ECParameters.D` (→ signing keypair)
+
+Both derivations from the same key material are independent: secp256k1 and P-256 are different curves with different orders, so the same 32 bytes produce entirely different public keys on each curve.
+
+`NodeAgent` was updated to destructure the 4-tuple and store `WalletSecp256k1PublicKey`. `CreateSignedTransaction()` now sets both `tx.PublicKeyBase64` and `tx.Secp256k1PublicKeyBase64`.
+
+### The P-256 Validity Edge Case (OQ-16)
+
+When creating a P-256 key via `ECParameters.D = someBytes`, the bytes must be in the valid range for the P-256 curve's scalar field. If they are not, `ECDsa.Create(ecParams)` throws a `CryptographicException`. This is the P-256 equivalent of the secp256k1 OQ-12 edge case described in Chapter 2.
+
+The fix uses the same retry-with-suffix counter pattern:
+
+```csharp
+// DeriveSigningKeypair() — simplified
+int attempt = 0;
+while (true)
+{
+    string input = attempt == 0 ? ("sign:" + seedPhrase) : ("sign:" + seedPhrase + ":" + attempt);
+    byte[] seed  = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+    try
+    {
+        using ECDsa ecdsa = ECDsa.Create(new ECParameters { Curve = nistP256, D = seed });
+        return (base64PubKey, base64PrivKey);
+    }
+    catch (CryptographicException) { attempt++; }
+}
+```
+
+The same suffix convention (`":1"`, `":2"`) is used for both OQ-12 (secp256k1) and OQ-16 (P-256), in their respective derivation paths (`DeriveGmAddress` uses the bare seed phrase; `DeriveSigningKeypair` uses the `"sign:"` prefix). This ensures that:
+- Both methods are deterministic: the same input always produces the same output
+- The two derivations never interfere with each other
+
+The probability of needing even one retry is approximately 1 in 2¹²⁸ — effectively zero. The loop exists purely as a correctness guarantee, not as a practical concern.
+
+### Updated `DeriveAddressFromPublicKey()`
+
+The signature changed:
+
+```
+Old: DeriveAddressFromPublicKey(string p256SubjectPublicKeyInfoBase64) → string (40-char hex)
+New: DeriveAddressFromPublicKey(string secp256k1CompressedPubKeyBase64) → string (gm1q...)
+```
+
+Internally: `base64 → 33 bytes → RIPEMD160(SHA256) → Bech32.Encode("gm", 0, hash20) → gm1q...`
+
+This method is used in `ValidateTransactionSignature()` at runtime (checking that the transaction's secp256k1 pubkey hashes to the claimed sender address) and can also be used to verify any address independently.
+
+---
+
+---
+
+## Chapter 9 — Phase 0.5: Wallet Address Persistence
+
+**Files changed**: `NodeAgent.cs`, `NetworkRoot.cs`  
+**Status**: Implemented (Phase 0.5)
+
+### The Problem
+
+After Phase 0.4 introduced `gm1q...` addresses, a session-persistence bug became clearly visible: every game launch produced different wallet addresses for the player and all bots. The blockchain data (coinbase recipients, transaction senders and recipients) recorded addresses from the session that mined those blocks, but the live game showed freshly-generated addresses. The blockchain and the live wallet were perpetually out of sync.
+
+The bug had two visible symptoms:
+
+1. **Across sessions**: restarting the game lost all address continuity. A player who mined a block in session 1 would see zero balance in session 2 — the rewards had gone to an address that no longer matched any live node.
+
+2. **Within a session**: if the previous session ended mid-block-cycle (with a pending coinbase for the next block), reloading that pending transaction would include a coinbase addressed to the *previous* session's player address. When the player mined the next block, the block's coinbase pointed to the old address while the UI showed the new (current session's) address. This made it appear as if the player's address changed without any navigation or restart.
+
+### Root Cause
+
+`NodeAgent` always derived wallet credentials in its constructor:
+
+```csharp
+// Old — called on every construction with fresh random bytes
+(WalletAddress, WalletPublicKey, WalletPrivateKey, WalletSecp256k1PublicKey) = CryptoUtils.GenerateWallet();
+```
+
+`BlockchainStateSnapshot` saved the blockchain chain, pending transactions, and financial states — but never the wallet addresses or signing keys. Nothing survived game restart.
+
+### The Fix
+
+**`NodeAgent.cs`** — A second constructor was added that accepts all four wallet fields directly:
+
+```csharp
+public NodeAgent(string nodeId, string address, string signingPublicKey,
+                  string signingPrivateKey, string secp256k1PublicKey)
+{
+    NodeId = nodeId;
+    WalletAddress = address;
+    WalletPublicKey = signingPublicKey;
+    WalletPrivateKey = signingPrivateKey;
+    WalletSecp256k1PublicKey = secp256k1PublicKey;
+}
+```
+
+The original constructor (random generation) is untouched — it is still the code path for first-launch wallet creation.
+
+**`NetworkRoot.cs`** — The initialization sequence was restructured so wallet data is loaded *before* nodes are constructed:
+
+```
+Old order:
+  create nodes (random wallets) → load chain state from disk → done
+
+New order:
+  read snapshot from disk → create nodes (use saved wallets if present) → apply chain state → done
+```
+
+`BlockchainStateSnapshot` now includes a `NodeWallets` dictionary. On every save, each node's four wallet fields are written to this dictionary keyed by node ID. A `NodeWalletSnapshot.IsComplete()` guard ensures a partially-written record (e.g., from an old save file) is treated as absent rather than partially applied.
+
+```csharp
+// Saved per node in every PersistStateToDisk() call
+NodeWallets = SharedNodesById.ToDictionary(
+    pair => pair.Key,
+    pair => new NodeWalletSnapshot
+    {
+        Address                  = pair.Value.WalletAddress,
+        SigningPublicKeyBase64    = pair.Value.WalletPublicKey,
+        SigningPrivateKeyBase64   = pair.Value.WalletPrivateKey,
+        Secp256k1PublicKeyBase64 = pair.Value.WalletSecp256k1PublicKey
+    })
+```
+
+On startup, `CreateAndRegisterNode()` checks the saved snapshot:
+
+```csharp
+if (savedState?.NodeWallets?.TryGetValue(nodeId, out wallet) == true && wallet.IsComplete())
+    node = new NodeAgent(nodeId, wallet.Address, wallet.SigningPublicKeyBase64,
+                         wallet.SigningPrivateKeyBase64, wallet.Secp256k1PublicKeyBase64);
+else
+    node = new NodeAgent(nodeId);  // first launch: generate fresh
+```
+
+### Invariant After This Fix
+
+Once a `user://blockchain/state.json` exists:
+- The player's `gm1q...` address is the same in every session.
+- All bot addresses are the same in every session.
+- Coinbase recipients in the blockchain always match the live node addresses.
+- Pending coinbase transactions from the previous session resolve to the same address as the current session's player.
+
+The first launch (no saved state) generates fresh random wallets, writes them, and all subsequent launches restore those exact credentials.
+
+---
+
+*This document covers Phases 0.1, 0.2, 0.3, 0.4, and 0.5 of the BTC Wallet Address System.*  
 *See `AIHelperFiles/btc-wallet-system-plan.md` for the full implementation roadmap.*  
-*Last updated: 2026-06-11*
+*Last updated: 2026-06-12*
