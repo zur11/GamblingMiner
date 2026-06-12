@@ -539,6 +539,53 @@ The first launch (no saved state) generates fresh random wallets, writes them, a
 
 ---
 
-*This document covers Phases 0.1, 0.2, 0.3, 0.4, and 0.5 of the BTC Wallet Address System.*  
+---
+
+## Chapter 10 — Phase 1.1: Wordlist File Rename
+
+**File changed**: `Scripts/BlockchainPort/BIP-0039/bip39_2048.txt` (renamed from `2048WordsList`)  
+**Status**: Implemented (Phase 1.1)
+
+### What Is This File?
+
+`bip39_2048.txt` is the standard BIP39 English wordlist — exactly 2048 common English words, one per line. BIP39 (Bitcoin Improvement Proposal 39) defines the vocabulary used for human-readable wallet seed phrases across the Bitcoin ecosystem.
+
+GamblingMiner uses this list as the source from which a 256-word in-game subset is randomly selected on first launch (Phase 1.2). That subset is what the player's seed phrase, the casino's seed phrase, and all bot wallets draw from.
+
+### Why `.txt`?
+
+The original file had no extension (`2048WordsList`). This caused two problems:
+
+1. **Tools ignore it**: Godot's asset pipeline, export tooling, and external editors do not track extensionless files as text resources. They cannot include the file in an exported PCK automatically.
+2. **Export is undefined**: `FileAccess.Open("res://...")` on an extensionless file works in the editor (which reads directly from the project directory) but is undefined in exported builds where the PCK builder may silently skip the file.
+
+Renaming to `.txt` fixes both: the file is unambiguously a text resource, and Godot's export system can be told to include `*.txt` files via the export preset's include filter.
+
+### Export Filter Requirement
+
+Export presets live in `export_presets.cfg` (per-platform). When a preset is configured, add `*.txt` to its `include_filter` so the file lands in the PCK:
+
+```ini
+# export_presets.cfg — relevant field per platform preset
+include_filter="*.txt"
+```
+
+In editor/development mode this is not required — `res://` maps directly to the project directory on disk.
+
+### Runtime Access
+
+`WordlistBootstrapper.EnsureWordlist()` (Phase 1.2) opens the file as:
+
+```csharp
+using var file = FileAccess.Open(
+    "res://Scripts/BlockchainPort/BIP-0039/bip39_2048.txt",
+    FileAccess.ModeFlags.Read);
+```
+
+It reads all 2048 lines, Fisher-Yates shuffles them, takes the first 256, sorts them alphabetically, and saves the result to `user://wordlist_256.json`. After that first run the source file is never opened again — `user://wordlist_256.json` is the live wordlist for all subsequent sessions.
+
+---
+
+*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, and 1.1 of the BTC Wallet Address System.*  
 *See `AIHelperFiles/btc-wallet-system-plan.md` for the full implementation roadmap.*  
 *Last updated: 2026-06-12*

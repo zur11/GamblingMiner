@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  —  Next: Phase 1 (Wordlist System)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  —  Next: Phase 1.2 (WordlistBootstrapper)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -20,7 +20,7 @@
 - `NodeAgent.cs` ✓ — `WalletSecp256k1PublicKey` property; constructor uses 4-tuple; `CreateSignedTransaction()` sets `tx.Secp256k1PublicKeyBase64`
 - `Models.cs` ✓ — `Transaction` has new `Secp256k1PublicKeyBase64` field (address verification) alongside existing `PublicKeyBase64` (P-256 signing)
 - `BlockchainService.cs` ✓ — `ValidateTransactionSignature()` uses `tx.Secp256k1PublicKeyBase64` for address check; `tx.PublicKeyBase64` still used by `CryptoUtils.Verify()`
-- `Scripts/BlockchainPort/BIP-0039/2048WordsList` — present (no extension); needs rename to `bip39_2048.txt`
+- `Scripts/BlockchainPort/BIP-0039/bip39_2048.txt` ✓ — renamed from `2048WordsList`; 2048 BIP39 words one per line; read-only source for `WordlistBootstrapper`; requires `*.txt` in export preset include filter when presets are configured
 - `Documentation/ProjectDesignManual.md` ✓ — Chapter 1–7 covering Phases 0.1–0.3 in full detail
 
 ---
@@ -141,10 +141,13 @@ A single field can no longer serve both. Solution: add `Transaction.Secp256k1Pub
 
 ## Phase 1 — Wordlist System
 
-### Task 1.1 — Rename wordlist file  TODO
-**Current**: `Scripts/BlockchainPort/BIP-0039/2048WordsList` (no extension)  
-**Action**: Rename to `Scripts/BlockchainPort/BIP-0039/bip39_2048.txt`  
-Add to `project.godot` export filters to ensure inclusion in PCK: `*.txt` files under Scripts must be included.
+### Task 1.1 — Rename wordlist file  ✓ DONE
+
+**File**: `Scripts/BlockchainPort/BIP-0039/bip39_2048.txt` (renamed from `2048WordsList`)
+
+Renamed the extensionless file to `bip39_2048.txt`. The `.txt` extension is required for Godot's export pipeline to recognize and include the file in PCK builds. At runtime, `WordlistBootstrapper.EnsureWordlist()` (Phase 1.2) opens it via `FileAccess.Open("res://Scripts/BlockchainPort/BIP-0039/bip39_2048.txt")`. The file contains exactly 2048 BIP39 English words, one per line.
+
+**Export filter note**: when export presets are configured in `export_presets.cfg`, add `*.txt` to `include_filter` for each platform preset. In editor/development mode `res://` reads directly from the project directory — no filter needed.
 
 ### Task 1.2 — Implement `WordlistBootstrapper`  TODO
 
@@ -473,7 +476,7 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 
 | File | Phase | Change |
 |---|---|---|
-| `Scripts/BlockchainPort/BIP-0039/2048WordsList` | 1.1 | Rename to `bip39_2048.txt` |
+| `Scripts/BlockchainPort/BIP-0039/bip39_2048.txt` | 1.1 | ✓ DONE (renamed from `2048WordsList`) |
 | `Scripts/Services/CalendarTimeService.cs` | 1.3 + 3 | Add `WordlistBootstrapper` + `WalletInitializationService` calls in `_Ready()` |
 | `Scripts/Services/SceneManager.cs` | 4 | Add `BTCWallet` to `SceneId` enum + `Paths` |
 | `Screens/BlockExplorer/BlockExplorer.cs` | 6 | Remove existing transfer logic |
