@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  —  Next: Phase 3 (WalletInitializationService)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  —  Next: Phase 4 (BTCWallet scene)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -24,7 +24,9 @@
 - `Scripts/Services/WordlistBootstrapper.cs` ✓ — idempotent; `EnsureWordlist()` generates/loads 256-word subset; `GenerateThreeWords()` for 3-word seed generation; `GD.Print` output on both code paths for verification
 - `Scripts/Services/CalendarTimeService._Ready()` ✓ — `WordlistBootstrapper.EnsureWordlist()` is the first call; `WalletInitializationService.EnsureAll()` slot reserved between it and `EnsureGameEpochInitialized()`
 - `Scripts/BlockchainPort/Blockchain/WalletModels.cs` ✓ — `PlayerWalletState`, `CasinoWalletState`, `BotWalletRecord` records; namespace `GodotBlockchainPort.Blockchain`; `SigningPrivateKeyBase64` on `BotWalletRecord` per OQ-13
-- `Documentation/ProjectDesignManual.md` ✓ — Chapters 1–13 covering Phases 0.1–0.5, 1.1–1.3, and 2
+- `Scripts/Services/WalletInitializationService.cs` ✓ — static class; `EnsureAll()` creates/loads player + casino wallets from `user://`; `MarkSeedPopupSeen()` for Phase 4 popup; DTO-based JSON serialization; `GD.Print` output on both code paths
+- `Scripts/Services/CalendarTimeService._Ready()` ✓ — `WalletInitializationService.EnsureAll()` wired between `EnsureWordlist()` and `EnsureGameEpochInitialized()`
+- `Documentation/ProjectDesignManual.md` ✓ — Chapters 1–14 covering Phases 0.1–0.5, 1.1–1.3, 2, and 3
 
 ---
 
@@ -231,9 +233,11 @@ public record BotWalletRecord(
 
 ---
 
-## Phase 3 — Game Startup Wallet Initialization  TODO
+## Phase 3 — Game Startup Wallet Initialization  ✓ DONE
 
-**File**: `Scripts/Services/WalletInitializationService.cs`  
+**File**: `Scripts/Services/WalletInitializationService.cs`
+
+Static class. `EnsureAll()` is the single entry point — called once at startup from `CalendarTimeService._Ready()`.
 
 **Startup sequence** (ordering matters):
 ```
@@ -242,11 +246,22 @@ CalendarTimeService._Ready()
   → WalletInitializationService.EnsureAll()      [Phase 3]
      → EnsurePlayerWallet()
      → EnsureCasinoWallet()
+  → EnsureGameEpochInitialized()
 ```
 
-**Player wallet**: if `user://wallet_state.json` missing → generate 3 words → derive address → save → set `HasSeenSeedPopup = false`.  
-**Casino wallet**: if `user://casino_wallet_state.json` missing → generate 3 words (separate RNG call) → derive address → save.  
-Block mining rewards (coinbase) are automatically sent to `PlayerWalletState.BaseAddress`. Player cannot change this address in Basic Mode.
+**Player wallet**: if `user://wallet_state.json` missing → `GenerateThreeWords()` → `DeriveGmAddress()` → save `PlayerWalletState` with `HasSeenSeedPopup = false` → print address + seed words.  
+**Casino wallet**: if `user://casino_wallet_state.json` missing → same pipeline with separate `new Random()` call → save `CasinoWalletState`.  
+Both paths load from disk on subsequent launches (DTO-based deserialization, CamelCase JSON).
+
+**Public API**:
+```csharp
+public static PlayerWalletState? PlayerWallet { get; }   // non-null after EnsureAll()
+public static CasinoWalletState? CasinoWallet { get; }  // non-null after EnsureAll()
+public static void EnsureAll();
+public static void MarkSeedPopupSeen();  // updates HasSeenSeedPopup = true, re-saves wallet_state.json
+```
+
+Block mining coinbase rewards are automatically sent to `PlayerWalletState.BaseAddress`. Player cannot change this address in Basic Mode.
 
 ---
 
@@ -474,7 +489,7 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 | `Documentation/ProjectDesignManual.md` | 0.1–0.5 | ✓ DONE |
 | `Scripts/BlockchainPort/Blockchain/WalletModels.cs` | 2 | ✓ DONE |
 | `Scripts/Services/WordlistBootstrapper.cs` | 1.2 | ✓ DONE |
-| `Scripts/Services/WalletInitializationService.cs` | 3 | TODO |
+| `Scripts/Services/WalletInitializationService.cs` | 3 | ✓ DONE |
 | `Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs` | 5.4 | TODO |
 | `Screens/BTCWallet/BTCWallet.tscn` | 4 | TODO |
 | `Screens/BTCWallet/BTCWallet.cs` | 4 | TODO |
@@ -484,7 +499,7 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 | File | Phase | Change |
 |---|---|---|
 | `Scripts/BlockchainPort/BIP-0039/bip39_2048.txt` | 1.1 | ✓ DONE (renamed from `2048WordsList`) |
-| `Scripts/Services/CalendarTimeService.cs` | 1.3 + 3 | 1.3 ✓ DONE (`WordlistBootstrapper.EnsureWordlist()` added); Phase 3 (`WalletInitializationService`) pending |
+| `Scripts/Services/CalendarTimeService.cs` | 1.3 + 3 | ✓ DONE — `EnsureWordlist()` + `WalletInitializationService.EnsureAll()` + `EnsureGameEpochInitialized()` |
 | `Scripts/Services/SceneManager.cs` | 4 | Add `BTCWallet` to `SceneId` enum + `Paths` |
 | `Screens/BlockExplorer/BlockExplorer.cs` | 6 | Remove existing transfer logic |
 | `Screens/MainMenu/MainMenu.tscn` + `.cs` | 4 | Add BTCWallet navigation button |

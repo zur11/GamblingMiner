@@ -781,6 +781,108 @@ All files follow the project's CamelCase JSON naming policy.
 
 ---
 
-*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, and 2 of the BTC Wallet Address System.*  
+---
+
+## Chapter 14 — Phase 3: Game Startup Wallet Initialization
+
+### The Short Version (for everyone)
+
+When the game launches for the first time, it automatically creates a Bitcoin-style wallet for the player and a separate one for the casino. Each wallet is three randomly chosen words that, together, determine a unique address where BTC can be received. After the first launch, the wallets are loaded from disk — no new words are generated. The player's seed words are shown once in a popup when they first visit the BTCWallet screen (Phase 4); after that, they are no longer shown automatically.
+
+---
+
+### 14.1 — Startup Sequence
+
+`WalletInitializationService.EnsureAll()` is called from `CalendarTimeService._Ready()`, after `WordlistBootstrapper.EnsureWordlist()` and before `EnsureGameEpochInitialized()`:
+
+```csharp
+public override void _Ready()
+{
+    WordlistBootstrapper.EnsureWordlist();       // Phase 1.3 — loads or generates 256-word subset
+    WalletInitializationService.EnsureAll();     // Phase 3 — creates or loads player + casino wallets
+    EnsureGameEpochInitialized();
+}
+```
+
+`EnsureAll()` calls `WordlistBootstrapper.EnsureWordlist()` internally as well. Since the wordlist is already on disk after Phase 1.3 runs, the second call is a fast disk read — no regeneration happens.
+
+---
+
+### 14.2 — Two Code Paths per Wallet
+
+Each wallet (`EnsurePlayerWallet`, `EnsureCasinoWallet`) follows the same pattern:
+
+**First launch** — `user://wallet_state.json` (or `casino_wallet_state.json`) does not exist:
+1. Call `WordlistBootstrapper.GenerateThreeWords()` to pick 3 words from the 256-word subset.
+2. Call `CryptoUtils.DeriveGmAddress(string.Join(" ", words))` to produce the `gm1q...` address.
+3. Create the record (`PlayerWalletState` / `CasinoWalletState`) and save to disk.
+4. Print address (and seed words for the player wallet) to Godot Output for verification.
+
+**Subsequent launches** — file exists:
+1. Load from disk via internal DTO, convert to the public record type.
+2. Print address to Output.
+
+---
+
+### 14.3 — Public API
+
+```csharp
+public static class WalletInitializationService
+{
+    public static PlayerWalletState? PlayerWallet { get; }   // set after EnsureAll()
+    public static CasinoWalletState? CasinoWallet { get; }  // set after EnsureAll()
+
+    public static void EnsureAll();          // called once at startup from CalendarTimeService._Ready()
+    public static void MarkSeedPopupSeen();  // called from BTCWallet after player confirms seed words
+}
+```
+
+`PlayerWallet` and `CasinoWallet` are `null` only before `EnsureAll()` has run. All game screens that need wallet data access them via these static properties after startup completes.
+
+`MarkSeedPopupSeen()` updates `PlayerWalletState.HasSeenSeedPopup` to `true` and re-saves `user://wallet_state.json`. Called by `BTCWallet` (Phase 4) when the player taps "I have saved my words."
+
+---
+
+### 14.4 — JSON Format
+
+`user://wallet_state.json` (CamelCase per project policy):
+```json
+{
+  "seedWords": ["oak", "river", "flash"],
+  "baseAddress": "gm1q...",
+  "hasSeenSeedPopup": false
+}
+```
+
+`user://casino_wallet_state.json`:
+```json
+{
+  "seedWords": ["amber", "north", "climb"],
+  "baseAddress": "gm1q..."
+}
+```
+
+Serialization uses internal DTO classes (`PlayerWalletDto`, `CasinoWalletDto`) — same pattern as `WordlistBootstrapper` — so the public `PlayerWalletState` / `CasinoWalletState` records stay clean and decoupled from JSON concerns.
+
+---
+
+### 14.5 — Startup Output (Godot Output Panel)
+
+First launch:
+```
+[WalletInitializationService] Player wallet created — gm1q...
+[WalletInitializationService] Player seed words: oak river flash
+[WalletInitializationService] Casino wallet created — gm1q...
+```
+
+Subsequent launches:
+```
+[WalletInitializationService] Player wallet loaded — gm1q...
+[WalletInitializationService] Casino wallet loaded — gm1q...
+```
+
+---
+
+*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, and 3 of the BTC Wallet Address System.*  
 *See `AIHelperFiles/btc-wallet-system-plan.md` for the full implementation roadmap.*  
 *Last updated: 2026-06-12*

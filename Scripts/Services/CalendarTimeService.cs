@@ -20,6 +20,7 @@ public partial class CalendarTimeService : Node
 	public override void _Ready()
 	{
 		WordlistBootstrapper.EnsureWordlist();
+		WalletInitializationService.EnsureAll();
 		EnsureGameEpochInitialized();
 	}
 
