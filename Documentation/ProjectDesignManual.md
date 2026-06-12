@@ -712,6 +712,75 @@ public override void _Ready()
 
 ---
 
-*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, and 1.3 of the BTC Wallet Address System.*  
+## Chapter 13 — Phase 2: Wallet Persistence Models
+
+### The Short Version (for everyone)
+
+Every wallet that matters in the game has a small data record describing it: the player's wallet, the casino's wallet, and the bots' wallets. Phase 2 defines what those records look like and where they will be stored. Nothing is saved to disk yet — that happens in Phase 3 — but the data shapes are established here so all future code agrees on the structure.
+
+---
+
+### 13.1 — Why a Separate Models File
+
+The three wallet types are used by different systems: `WalletInitializationService` (Phase 3) creates and loads them, `BTCWallet` (Phase 4) displays the player's, the `BotWalletRegistry` (Phase 5.4) manages bot entries, and the casino dev scene (Phase 7) reads the casino's. Defining them in one file (`WalletModels.cs`) gives every system a single import source and avoids duplication.
+
+---
+
+### 13.2 — The Three Records
+
+**File**: `Scripts/BlockchainPort/Blockchain/WalletModels.cs`  
+**Namespace**: `GodotBlockchainPort.Blockchain`
+
+```csharp
+public record PlayerWalletState(
+    string[] SeedWords,        // 3 words; passphrase wallets are not persisted
+    string BaseAddress,        // gm1q... derived at save time for quick reads
+    bool HasSeenSeedPopup      // true after user dismisses the first-launch popup
+);
+
+public record CasinoWalletState(
+    string[] SeedWords,
+    string BaseAddress         // gm1q...
+);
+
+public record BotWalletRecord(
+    string NodeId,
+    string Address,            // gm1q... only; no seed words stored
+    string? SigningPrivateKeyBase64 = null
+);
+```
+
+#### `PlayerWalletState`
+
+- `SeedWords`: always exactly 3 words from the 256-word game subset. Passphrase wallets (4-word derivations) are ephemeral — they exist only while the user has typed the passphrase into the UI and are never written to disk.
+- `BaseAddress`: the `gm1q...` address derived from the 3 seed words at wallet creation. Stored so the app can display the address instantly without re-running the full derivation pipeline on every launch.
+- `HasSeenSeedPopup`: starts `false`. Set to `true` when the player confirms they have saved their seed words. The first-launch popup in `BTCWallet` checks this flag.
+
+#### `CasinoWalletState`
+
+Identical structure to `PlayerWalletState` without the popup flag. The casino wallet is created at game start alongside the player wallet (Phase 3). Its seed words are accessible from the dev-only CasinoFinances scene (Phase 7), not from the player-facing BTCWallet.
+
+#### `BotWalletRecord`
+
+- `Address`: the only persistent credential for bots. Bot private keys are not stored in `BotWalletRecord` — instead, the signing key is provisioned at creation and stored separately in the `BotWalletRegistry` (Phase 5.4).
+- `SigningPrivateKeyBase64`: per OQ-13 (Option A resolved), all bots — miner and non-miner alike — receive a P-256 signing key at creation time. This field is nullable only for forward-compatibility; in practice it is always populated when a bot is registered.
+
+---
+
+### 13.3 — Persistence Locations (Phase 3 responsibility)
+
+These records are defined here but not persisted yet. Phase 3 (`WalletInitializationService`) will read and write:
+
+| Record | File |
+|---|---|
+| `PlayerWalletState` | `user://wallet_state.json` |
+| `CasinoWalletState` | `user://casino_wallet_state.json` |
+| `BotWalletRecord[]` | `user://bot_wallet_registry.json` (Phase 5.4) |
+
+All files follow the project's CamelCase JSON naming policy.
+
+---
+
+*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, and 2 of the BTC Wallet Address System.*  
 *See `AIHelperFiles/btc-wallet-system-plan.md` for the full implementation roadmap.*  
 *Last updated: 2026-06-12*

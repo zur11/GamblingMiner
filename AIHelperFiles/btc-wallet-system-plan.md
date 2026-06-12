@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  —  Next: Phase 2 (WalletModels)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  —  Next: Phase 3 (WalletInitializationService)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -23,7 +23,8 @@
 - `Scripts/BlockchainPort/BIP-0039/bip39_2048.txt` ✓ — renamed from `2048WordsList`; 2048 BIP39 words one per line; read-only source for `WordlistBootstrapper`; requires `*.txt` in export preset include filter when presets are configured
 - `Scripts/Services/WordlistBootstrapper.cs` ✓ — idempotent; `EnsureWordlist()` generates/loads 256-word subset; `GenerateThreeWords()` for 3-word seed generation; `GD.Print` output on both code paths for verification
 - `Scripts/Services/CalendarTimeService._Ready()` ✓ — `WordlistBootstrapper.EnsureWordlist()` is the first call; `WalletInitializationService.EnsureAll()` slot reserved between it and `EnsureGameEpochInitialized()`
-- `Documentation/ProjectDesignManual.md` ✓ — Chapters 1–12 covering Phases 0.1–0.5 and 1.1–1.3
+- `Scripts/BlockchainPort/Blockchain/WalletModels.cs` ✓ — `PlayerWalletState`, `CasinoWalletState`, `BotWalletRecord` records; namespace `GodotBlockchainPort.Blockchain`; `SigningPrivateKeyBase64` on `BotWalletRecord` per OQ-13
+- `Documentation/ProjectDesignManual.md` ✓ — Chapters 1–13 covering Phases 0.1–0.5, 1.1–1.3, and 2
 
 ---
 
@@ -196,27 +197,37 @@ public static class WordlistBootstrapper
 
 ---
 
-## Phase 2 — Wallet Persistence Models  TODO
+## Phase 2 — Wallet Persistence Models  ✓ DONE
 
 **File**: `Scripts/BlockchainPort/Blockchain/WalletModels.cs`
 
+Three records in namespace `GodotBlockchainPort.Blockchain`. No persistence logic here — reading/writing happens in Phase 3 (`WalletInitializationService`) and Phase 5.4 (`BotWalletRegistry`).
+
 ```csharp
 public record PlayerWalletState(
-    string[] SeedWords,   // 3 words; never 4 (passphrase wallets not persisted)
-    string BaseAddress,   // gm1q... derived at save time for quick read without re-deriving
-    bool HasSeenSeedPopup // true after user dismisses the first-launch popup
+    string[] SeedWords,        // 3 words; passphrase wallets are not persisted
+    string BaseAddress,        // gm1q... derived at save time for quick reads
+    bool HasSeenSeedPopup      // true after user dismisses the first-launch popup
 );
 
 public record CasinoWalletState(
     string[] SeedWords,
-    string BaseAddress
+    string BaseAddress         // gm1q...
 );
 
+// SigningPrivateKeyBase64 provisioned at creation per OQ-13 (Option A).
+// Nullable only for forward-compatibility; always populated when a bot is registered.
 public record BotWalletRecord(
     string NodeId,
-    string Address        // gm1q... only; no seed words; private key not stored
+    string Address,            // gm1q... only; no seed words stored
+    string? SigningPrivateKeyBase64 = null
 );
 ```
+
+**Persistence locations** (Phase 3 responsibility):
+- `PlayerWalletState` → `user://wallet_state.json`
+- `CasinoWalletState` → `user://casino_wallet_state.json`
+- `BotWalletRecord[]` → `user://bot_wallet_registry.json` (Phase 5.4)
 
 ---
 
@@ -461,7 +472,7 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 | `Scripts/BlockchainPort/Blockchain/BlockchainService.cs` | 0.4 | ✓ DONE |
 | `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | 0.5 | ✓ DONE |
 | `Documentation/ProjectDesignManual.md` | 0.1–0.5 | ✓ DONE |
-| `Scripts/BlockchainPort/Blockchain/WalletModels.cs` | 2 | TODO |
+| `Scripts/BlockchainPort/Blockchain/WalletModels.cs` | 2 | ✓ DONE |
 | `Scripts/Services/WordlistBootstrapper.cs` | 1.2 | ✓ DONE |
 | `Scripts/Services/WalletInitializationService.cs` | 3 | TODO |
 | `Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs` | 5.4 | TODO |
