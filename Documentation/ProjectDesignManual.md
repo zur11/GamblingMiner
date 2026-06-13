@@ -983,6 +983,435 @@ After this fix, the player node's `WalletAddress` matches `PlayerWalletState.Bas
 
 ---
 
-*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, 3, and 4 of the BTC Wallet Address System.*  
+---
+
+---
+
+## Chapter 16 — Phase 5: Bot Wallet Registry
+
+**Files changed**: `WalletModels.cs`, `BotWalletRegistry.cs` (new), `WalletInitializationService.cs`, `NetworkRoot.cs`  
+**Status**: Implemented (Phases 5.1, 5.2, 5.4)
+
+### The Short Version (for everyone)
+
+Before Phase 5, each bot node had a randomly-generated wallet that changed every session. Phase 5 introduces a persistent registry that assigns permanent, stable addresses to all 14 bot participants: four miner bots (who can sign and send transactions) and ten non-miner bots (holder wallets — address only, no signing keys). The registry is created once and loaded on every subsequent launch, so bot addresses never change.
+
+---
+
+### 16.1 — Phase 5.1: Bot Addresses Already Use gm1q Format
+
+Phase 5.1 was a verification step, not a code change. The plan required confirming that bots receive `gm1q...` addresses — not the old 40-character hex format. This was already true since Phase 0.4/0.5: `CryptoUtils.GenerateWallet()` always calls `DeriveGmAddress()` → `Bech32.Encode("gm", ...)`. No code change was needed; only the plan status was updated.
+
+---
+
+### 16.2 — Extended `BotWalletRecord`
+
+**File**: `Scripts/BlockchainPort/Blockchain/WalletModels.cs`
+
+The `BotWalletRecord` introduced in Phase 2 was extended with three key fields, two lifecycle fields, a node-type flag, and a computed property:
+
+```csharp
+public record BotWalletRecord(
+    string NodeId,
+    string Address,                          // gm1q..., always present
+    string? SigningPublicKeyBase64 = null,   // P-256 SubjectPublicKeyInfo
+    string? SigningPrivateKeyBase64 = null,  // P-256 PKCS8
+    string? Secp256k1PublicKeyBase64 = null, // secp256k1 compressed pubkey
+    bool IsActive = true,
+    int? ReactivationBlockHeight = null,     // non-null → "sleeping whale" reactivation trigger
+    bool IsMinerNode = false
+)
+{
+    public bool HasFullWallet =>
+        SigningPublicKeyBase64 is not null &&
+        SigningPrivateKeyBase64 is not null &&
+        Secp256k1PublicKeyBase64 is not null;
+}
+```
+
+**`HasFullWallet`**: computed property — `true` when all three key fields are populated. All bots (miners and non-miners alike) are created with full wallets, so `HasFullWallet` is always `true` for records loaded from a current registry file. It is `false` only for non-miners loaded from an old registry file (written before this change) that did not store non-miner keys.
+
+**`IsMinerNode`**: `true` for the four miner bots (`bot_1`–`bot_4`), `false` for non-miner holder wallets. Used to decide which detail panel sections to show (Mining Stats vs. Wallet Status) and whether the Send section appears unconditionally (miners) or conditionally on balance (non-miners).
+
+**`IsActive` / `ReactivationBlockHeight`**: lifecycle fields for the planned "sleeping whale" simulation (Phase 5.3). A non-miner bot can be deactivated, optionally tagged with a block height at which it should reactivate. Both fields are persisted in the registry JSON and are mutable via `BotWalletRegistry.SetBotStatus()`.
+
+---
+
+### 16.3 — `BotWalletRegistry` Static Class
+
+**File**: `Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs`  
+**Namespace**: `GodotBlockchainPort.Simulation`  
+**Persistence**: `user://bot_wallet_registry.json`
+
+`BotWalletRegistry` is a static class (not a Godot Node) that owns the authoritative list of all bot wallet records.
+
+#### Public API
+
+```csharp
+public static IReadOnlyList<BotWalletRecord> MinerBots { get; }    // bot_1 … bot_4
+public static IReadOnlyList<BotWalletRecord> NonMinerBots { get; } // non_miner_1 … non_miner_10
+public static IReadOnlyList<BotWalletRecord> AllBots { get; }      // MinerBots ++ NonMinerBots
+
+public static void EnsureAll();
+public static BotWalletRecord? GetBot(string nodeId);
+public static void SetBotStatus(string nodeId, bool isActive, int? reactivationBlockHeight);
+```
+
+#### `EnsureAll()` — Create or Load
+
+If `user://bot_wallet_registry.json` does not exist, `CreateRegistry()` runs:
+
+- **4 miner bots** (`bot_1`–`bot_4`): each calls `CryptoUtils.GenerateWallet()` (32 random bytes → full 4-tuple). All four fields are stored, and `IsMinerNode: true` is set.
+- **10 non-miner bots** (`non_miner_1`–`non_miner_10`): each also calls `CryptoUtils.GenerateWallet()`. All four fields are stored (including signing keys), and `IsMinerNode: false` is set. Non-miners have full wallets so they can sign and send transactions once they have a balance.
+
+After creation, the registry is saved to disk and each address is printed to Godot Output.
+
+On subsequent launches, `LoadRegistry()` deserializes `user://bot_wallet_registry.json`. All key fields are restored from JSON for both miners and non-miners. `IsMinerNode` is set at load time based on which JSON array the entry came from (`miners` → `true`, `nonMiners` → `false`).
+
+#### `SetBotStatus()` — Mutating Lifecycle Fields
+
+```csharp
+public static void SetBotStatus(string nodeId, bool isActive, int? reactivationBlockHeight)
+{
+    var list = NonMinerBots.ToList();
+    int idx = list.FindIndex(b => b.NodeId == nodeId);
+    if (idx < 0) return;
+    list[idx] = list[idx] with { IsActive = isActive, ReactivationBlockHeight = reactivationBlockHeight };
+    NonMinerBots = list;
+    SaveRegistry();
+}
+```
+
+Because `BotWalletRecord` is an immutable record, mutations use `with {}` syntax to produce a new record. `SaveRegistry()` is called immediately — changes are durable after this method returns. Only non-miner bots can be toggled; miner bots are always active.
+
+#### JSON Format
+
+`user://bot_wallet_registry.json` (CamelCase, `WhenWritingNull` omits key fields for non-miners):
+
+```json
+{
+  "miners": [
+    {
+      "nodeId": "bot_1",
+      "address": "gm1q...",
+      "signingPublicKeyBase64": "...",
+      "signingPrivateKeyBase64": "...",
+      "secp256k1PublicKeyBase64": "...",
+      "isActive": true
+    }
+  ],
+  "nonMiners": [
+    {
+      "nodeId": "non_miner_1",
+      "address": "gm1q...",
+      "signingPublicKeyBase64": "...",
+      "signingPrivateKeyBase64": "...",
+      "secp256k1PublicKeyBase64": "...",
+      "isActive": true
+    },
+    {
+      "nodeId": "non_miner_3",
+      "address": "gm1q...",
+      "signingPublicKeyBase64": "...",
+      "signingPrivateKeyBase64": "...",
+      "secp256k1PublicKeyBase64": "...",
+      "isActive": false,
+      "reactivationBlockHeight": 500
+    }
+  ]
+}
+```
+
+`DefaultIgnoreCondition = WhenWritingNull` omits `reactivationBlockHeight` when null, keeping the file compact. Key fields are present for all bots.
+
+---
+
+### 16.4 — `WalletInitializationService.EnsureAll()` Updated
+
+**File**: `Scripts/Services/WalletInitializationService.cs`
+
+`BotWalletRegistry.EnsureAll()` is now called at the end of `WalletInitializationService.EnsureAll()`, after the player and casino wallets are ready:
+
+```csharp
+public static void EnsureAll()
+{
+    List<WordlistBootstrapper.WordEntry> wordlist = WordlistBootstrapper.EnsureWordlist();
+    PlayerWallet = EnsurePlayerWallet(wordlist);
+    CasinoWallet = EnsureCasinoWallet(wordlist);
+    BotWalletRegistry.EnsureAll();   // Phase 5.2 addition
+}
+```
+
+The full startup sequence in `CalendarTimeService._Ready()` is therefore:
+
+```
+WordlistBootstrapper.EnsureWordlist()          // Phase 1.3
+    → WalletInitializationService.EnsureAll()  // Phase 3
+        → EnsurePlayerWallet()
+        → EnsureCasinoWallet()
+        → BotWalletRegistry.EnsureAll()        // Phase 5.2
+    → EnsureGameEpochInitialized()
+```
+
+`NetworkRoot._Ready()` runs after all autoloads complete, so `BotWalletRegistry.MinerBots` is fully populated before any node is constructed.
+
+---
+
+### 16.5 — `NetworkRoot` Bot Branch: Registry as Primary Source
+
+**File**: `Scripts/BlockchainPort/Simulation/NetworkRoot.cs`
+
+`CreateAndRegisterNode()` now uses `BotWalletRegistry` as the authoritative source for bot wallet credentials, falling back to the blockchain snapshot only as a migration path:
+
+```csharp
+// Bot branch (nodeId != "player")
+BotWalletRecord? botRecord = BotWalletRegistry.GetBot(nodeId);
+if (botRecord?.HasFullWallet == true)
+    node = new(nodeId, botRecord.Address, botRecord.SigningPublicKeyBase64!,
+               botRecord.SigningPrivateKeyBase64!, botRecord.Secp256k1PublicKeyBase64!);
+else if (savedState?.NodeWallets?.TryGetValue(nodeId, out NodeWalletSnapshot? wallet) == true
+         && wallet?.IsComplete() == true)
+    node = new(nodeId, wallet.Address, wallet.SigningPublicKeyBase64,
+               wallet.SigningPrivateKeyBase64, wallet.Secp256k1PublicKeyBase64);
+else
+    node = new(nodeId);  // fresh random wallet (unexpected fallback)
+```
+
+**Priority**: `BotWalletRegistry` → blockchain snapshot → fresh random.
+
+All bots in a current registry file have `HasFullWallet == true` and take the first branch. Non-miner bots are also registered as NodeAgents in `EnsureInitialized()` (see below), so they appear in `SharedNodesById` and can broadcast signed transactions.
+
+`EnsureInitialized()` registers non-miners conditionally:
+
+```csharp
+foreach (BotWalletRecord nonMiner in BotWalletRegistry.NonMinerBots)
+{
+    if (nonMiner.HasFullWallet)
+        SharedNetwork.RegisterNode(CreateAndRegisterNode(nonMiner.NodeId, savedState));
+}
+```
+
+The `HasFullWallet` guard is a migration safety net: old registry files written before non-miner keys were stored will load with `HasFullWallet == false` for non-miners, and those bots simply skip registration. After deleting `user://bot_wallet_registry.json` and restarting, a fresh registry is created with full keys and non-miners are registered normally.
+
+---
+
+### 16.6 — Migration Note
+
+If `user://blockchain/state.json` contains blocks with coinbase outputs addressed to old random bot addresses (generated before the registry existed), those blocks remain unchanged. After the registry is created, bot nodes use the new registry addresses going forward. To start with a clean slate, clear `user://blockchain/`. This is the accepted migration pattern for this prototype.
+
+---
+
+---
+
+## Chapter 17 — Phase 6: BotsBtcWallets Dev Scene + BlockExplorer Cleanup
+
+**Files changed**: `BlockExplorer.cs`, `BlockExplorer.tscn`, `NetworkRoot.cs`, `SceneManager.cs`, `MainMenu.cs`, `MainMenu.tscn`  
+**Files added**: `Screens/BotsBtcWallets/BotsBtcWallets.cs`, `Screens/BotsBtcWallets/BotsBtcWallets.tscn`  
+**Status**: Implemented (Phase 6)
+
+### The Short Version (for everyone)
+
+Phase 6 adds a developer-facing scene — **Bot Wallets [DEV]** — where all 14 bot participants can be inspected: their addresses, BTC balances, confirmed transactions, and (for miner bots) mining history and outbound send capability. At the same time, the BlockExplorer is simplified to a read-only inspector by removing the transaction-creation controls that were never used in normal play.
+
+---
+
+### 17.1 — BlockExplorer: Transfer Controls Removed
+
+**Files**: `Screens/BlockExplorer/BlockExplorer.cs`, `Screens/BlockExplorer/BlockExplorer.tscn`
+
+The BlockExplorer previously contained a transfer section (sender dropdown, recipient dropdown, amount input, "Create Transaction" button). This was a convenience tool that belonged in a dedicated dev scene, not in the player-facing blockchain inspector.
+
+**Removed from `BlockExplorer.cs`**:
+- Fields: `_fromNodeOption`, `_toNodeOption`, `_amountInput`, `_createTxButton`
+- Methods: `OnCreateTransactionPressed()`, `RefreshTransferState()`, `TryGetTransferContext()`
+- `using System.Globalization` (no longer needed)
+
+**Removed from `BlockExplorer.tscn`**:
+- `TxTitle` Label node
+- `TxControls` HBoxContainer with its four children (`FromNodeOption`, `ToNodeOption`, `AmountInput`, `CreateTxButton`)
+
+**What remains**: The `_minerNodeOption` dropdown (formerly `_fromNodeOption`) now serves only the mining action and lookup queries. `_actionFeedbackLabel` is kept for mine / consensus / refresh feedback. The BlockExplorer is fully read-only from the player's perspective.
+
+---
+
+### 17.2 — Two New `NetworkRoot` Helpers
+
+**File**: `Scripts/BlockchainPort/Simulation/NetworkRoot.cs`
+
+Two methods were added to support BotsBtcWallets without duplicating blockchain traversal logic.
+
+#### `GetAddressConfirmedTransactions(string address)`
+
+```csharp
+public IReadOnlyList<(Transaction tx, int blockIndex)> GetAddressConfirmedTransactions(string address)
+```
+
+Scans the full player node's confirmed chain, collects every transaction where `tx.Sender == address || tx.Recipient == address`, and returns the list sorted by `blockIndex` descending (most recent first).
+
+Used in BotsBtcWallets to build the transaction history list and to compute mining stats (filtered by `tx.Sender == BlockchainService.CoinbaseSender`).
+
+#### `CreateAndBroadcastTransactionToAddress(string fromNodeId, string recipientAddress, decimal amount)`
+
+```csharp
+public Transaction? CreateAndBroadcastTransactionToAddress(
+    string fromNodeId, string recipientAddress, decimal amount)
+```
+
+The existing `CreateAndBroadcastTransaction(fromNodeId, recipientNodeId, ...)` requires both sender and recipient to be registered `NodeAgent` instances. Non-miner bots and passphrase wallets are never registered as nodes. This overload takes the sender by `nodeId` (must be registered) and the recipient by raw `gm1q...` address, allowing sends to any participant regardless of whether they have a `NodeAgent`.
+
+Self-send (sender address == recipient address) returns `null`. Calls `sender.CreateSignedTransaction(amount, recipientAddress)` directly, then broadcasts and persists.
+
+---
+
+### 17.3 — BotsBtcWallets Scene Architecture
+
+**Scene**: `Screens/BotsBtcWallets/BotsBtcWallets.tscn`  
+**Controller**: `Screens/BotsBtcWallets/BotsBtcWallets.cs`
+
+The scene has two structural elements at the root `Control`:
+- `NetworkRoot` child node (script attached) — initializes the blockchain network
+- `RootMargin` (40/30 px margins) → `RootVBox` — layout container for all UI
+
+Layout:
+
+```
+TopBar (HBoxContainer)
+  BackBtn             (→ MainMenu)
+  StatusBarPlaceholder (StatusBar inserted here in _Ready)
+
+ContentSplit (HSplitContainer, split_offset=320)
+  BotListScrollContainer (min_size=280, no horizontal scroll)
+    BotListVBox
+      MinersSectionLabel
+      MinersList (unique)
+      HoldersSectionHeader
+        HoldersSectionLabel (ExpandFill)
+        ShowInactiveCheck (unique)
+      HoldersList (unique)
+
+  BotDetailScrollContainer (ExpandFill, no horizontal scroll)
+    BotDetailVBox (unique)
+```
+
+---
+
+### 17.4 — Bot List Panel
+
+`BuildBotList()` runs in `_Ready()` and creates all bot list rows dynamically from registry data.
+
+**Miner bots**: a `Button` per bot added to `MinersList`. Each button shows `nodeId`, truncated address, and confirmed balance (`F8` BTC). Pressing a button calls `SelectBot(bot)`.
+
+**Non-miner (holder) bots**: an `HBoxContainer` per bot containing a `Button` and a `Label` indicator (`●` active, `○` inactive). Inactive rows are grayed (`Modulate = (1,1,1,0.45)`) and hidden by default. The `ShowInactiveCheck` checkbox toggles their visibility via `RefreshHoldersVisibility()`.
+
+Internal caches:
+```csharp
+private readonly List<(Button btn, BotWalletRecord bot)> _minerButtons;
+private readonly List<(HBoxContainer row, Button btn, Label indicator, BotWalletRecord bot)> _holderRows;
+```
+
+Both caches are iterated in `RefreshBotListBalances()` (called every 3 seconds) to update balance display without rebuilding the node tree.
+
+---
+
+### 17.5 — Detail Panel
+
+`BuildDetailPanel()` creates all detail nodes programmatically once in `_Ready()`. `RefreshDetailPanel(bot)` populates and shows/hides sections based on `bot.IsMinerNode` and runtime balance.
+
+**Always visible** (any bot selected):
+- Badge label: `"Miner Node · bot_1"` or `"Holder Wallet"`
+- Address + Copy button (copies full address to clipboard)
+- Confirmed balance label
+- Pending outgoing label (hidden when zero)
+- All Transactions (`RichTextLabel`, BBCode, `FitContent=true`, color-coded `+`/`-`)
+
+**Visible for miner bots only** (`bot.IsMinerNode == true`):
+- Mining Stats section: blocks mined count and total BTC mined (derived from `GetAddressConfirmedTransactions` filtered to `tx.Sender == CoinbaseSender`)
+
+**Visible for non-miner bots only** (`bot.IsMinerNode == false`):
+- Wallet Status section: active/inactive text; reactivation block and blocks-remaining labels (hidden when no reactivation height is set)
+- Dev Controls section (see 17.7)
+
+**Send BTC section** — visible when `bot.HasFullWallet` and either:
+- `bot.IsMinerNode` (miners can always send), or
+- `!bot.IsMinerNode && bot.IsActive && confirmedBalance > 0` (non-miners can send once they have received BTC and are not inactive)
+
+This means the Send section appears and disappears dynamically for non-miners as their balance and active status change. The 3-second refresh loop (see 17.8) handles this automatically.
+
+When no bot is selected, a `"Select a bot from the list."` placeholder label is shown and the detail VBox is hidden.
+
+---
+
+### 17.6 — Send BTC
+
+All bots that have a full wallet can potentially send. The send form visibility is gated by the conditions described in 17.5. The form contains:
+- A recipient `OptionButton` populated by `PopulateToDropdown()`: all 14 bots + Player + Casino — 16 entries total. A parallel `List<string> _toAddresses` stores the corresponding `gm1q...` addresses.
+- An amount `LineEdit` (decimal, invariant culture)
+- A `Send` button wired to `OnSendPressed()`
+
+`OnSendPressed()` validates the amount, retrieves `recipientAddress = _toAddresses[_toDropdown.Selected]`, guards against self-send, then calls `_networkRoot.CreateAndBroadcastTransactionToAddress(_selectedBot.NodeId, recipientAddress, amount)`. Success shows a truncated tx ID; failure shows a feedback string.
+
+**Non-miner send requirement**: All bots have full wallets (signing keys) generated at registry creation time. Non-miner bots are also registered as NodeAgents in `NetworkRoot.EnsureInitialized()` (conditional on `HasFullWallet`, so old registry files without non-miner keys skip registration gracefully). This makes them first-class senders — they add the transaction to their own pending pool and broadcast it via `SharedNetwork`. A miner must include it in the next block for it to confirm.
+
+---
+
+### 17.7 — Dev Controls (Non-Miner Bots Only)
+
+**Toggle Active button**: calls `BotWalletRegistry.SetBotStatus(nodeId, !bot.IsActive, bot.ReactivationBlockHeight)`. After the call, `RefreshSelectedBotFromRegistry()` reloads the bot record from the registry (the local reference is stale because `BotWalletRecord` is immutable), updates the `_holderRows` cache via `UpdateHolderListRow()`, and re-renders the detail panel.
+
+**Reactivation block input + Set button**: reads a positive integer from `_reactivationBlockInput`, calls `SetBotStatus(nodeId, bot.IsActive, blockHeight)`. An empty field passes `null`, clearing the reactivation trigger. The same refresh sequence runs after the call.
+
+`UpdateHolderListRow(nodeId)` keeps the `_holderRows` tuple cache in sync: replaces the `BotWalletRecord` entry in the tuple, updates the indicator label text, and updates `Modulate` and `Visible` to match the new active state.
+
+---
+
+### 17.8 — 3-Second Refresh Loop
+
+```csharp
+private const double RefreshInterval = 3.0;
+
+public override void _Process(double delta)
+{
+    _refreshTimer += delta;
+    if (_refreshTimer < RefreshInterval) return;
+    _refreshTimer = 0d;
+    RefreshBotListBalances();
+    if (_selectedBot != null) RefreshDetailPanel(_selectedBot);
+}
+```
+
+Every 3 real seconds the balance column in all bot list rows is updated, and the full detail panel for the selected bot is re-rendered. This keeps balances and transaction lists current during a dev session without manual refresh.
+
+---
+
+### 17.9 — Navigation
+
+**`SceneManager.cs`**: `BotsBtcWallets` added to the `SceneId` enum and `Paths` dictionary:
+
+```csharp
+[SceneId.BotsBtcWallets] = "res://Screens/BotsBtcWallets/BotsBtcWallets.tscn"
+```
+
+**`MainMenu.tscn`**: A `BotsBtcWalletsBtn` button (`text="Bot Wallets [DEV]"`, `font_size=34`, `min_size=(420,0)`) placed after the `BTCWalletBtn`.
+
+**`MainMenu.cs`**:
+
+```csharp
+GetNode<Button>("%BotsBtcWalletsBtn").Pressed +=
+    () => _sceneManager?.Go(SceneManager.SceneId.BotsBtcWallets);
+```
+
+Back navigation from BotsBtcWallets goes to `MainMenu` (not DiceGame).
+
+The `[DEV]` label marks this as a developer tool. A player-facing equivalent would require gameplay rationale (e.g., unlock after the first block mined) and is deferred to a later phase.
+
+---
+
+### 17.10 — Transactions Display (> 1000 Blocks — Deferred)
+
+`BuildTransactionsList()` renders all confirmed transactions inline in the `RichTextLabel`. For very long play sessions (> 1000 mined blocks), the list could become impractically long. An abbreviation strategy (e.g., show last 50, summarize older) is planned for that point but not yet implemented.
+
+---
+
+*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, 3, 4, 5, and 6 of the BTC Wallet Address System.*  
 *See `AIHelperFiles/btc-wallet-system-plan.md` for the full implementation roadmap.*  
-*Last updated: 2026-06-12*
+*Last updated: 2026-06-13*

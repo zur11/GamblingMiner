@@ -42,6 +42,18 @@ public static class BotWalletRegistry
 	public static BotWalletRecord? GetBot(string nodeId) =>
 		AllBots.FirstOrDefault(b => b.NodeId == nodeId);
 
+	// Updates IsActive and ReactivationBlockHeight for a non-miner bot and re-saves the registry.
+	public static void SetBotStatus(string nodeId, bool isActive, int? reactivationBlockHeight)
+	{
+		var list = NonMinerBots.ToList();
+		int idx = list.FindIndex(b => b.NodeId == nodeId);
+		if (idx < 0) return;
+		list[idx] = list[idx] with { IsActive = isActive, ReactivationBlockHeight = reactivationBlockHeight };
+		NonMinerBots = list;
+		SaveRegistry();
+		GD.Print($"[BotWalletRegistry] {nodeId} — IsActive={isActive}, ReactivationBlockHeight={reactivationBlockHeight}");
+	}
+
 	private static void CreateRegistry()
 	{
 		var miners = new List<BotWalletRecord>(MinerBotCount);
@@ -53,7 +65,8 @@ public static class BotWalletRegistry
 				Address: address,
 				SigningPublicKeyBase64: sigPub,
 				SigningPrivateKeyBase64: sigPriv,
-				Secp256k1PublicKeyBase64: secp256k1Pub
+				Secp256k1PublicKeyBase64: secp256k1Pub,
+				IsMinerNode: true
 			));
 			GD.Print($"[BotWalletRegistry] Miner bot_{i} — {address}");
 		}
@@ -61,10 +74,14 @@ public static class BotWalletRegistry
 		var nonMiners = new List<BotWalletRecord>(NonMinerBotCount);
 		for (int i = 1; i <= NonMinerBotCount; i++)
 		{
-			var (address, _, _, _) = CryptoUtils.GenerateWallet();
+			var (address, sigPub, sigPriv, secp256k1Pub) = CryptoUtils.GenerateWallet();
 			nonMiners.Add(new BotWalletRecord(
 				NodeId: $"non_miner_{i}",
-				Address: address
+				Address: address,
+				SigningPublicKeyBase64: sigPub,
+				SigningPrivateKeyBase64: sigPriv,
+				Secp256k1PublicKeyBase64: secp256k1Pub,
+				IsMinerNode: false
 			));
 			GD.Print($"[BotWalletRegistry] Non-miner non_miner_{i} — {address}");
 		}
@@ -83,14 +100,14 @@ public static class BotWalletRegistry
 			.Select(d => new BotWalletRecord(
 				d.NodeId, d.Address,
 				d.SigningPublicKeyBase64, d.SigningPrivateKeyBase64, d.Secp256k1PublicKeyBase64,
-				d.IsActive, d.ReactivationBlockHeight))
+				d.IsActive, d.ReactivationBlockHeight, IsMinerNode: true))
 			.ToList();
 
 		NonMinerBots = dto.NonMiners
 			.Select(d => new BotWalletRecord(
 				d.NodeId, d.Address,
-				SigningPublicKeyBase64: null, SigningPrivateKeyBase64: null, Secp256k1PublicKeyBase64: null,
-				d.IsActive, d.ReactivationBlockHeight))
+				d.SigningPublicKeyBase64, d.SigningPrivateKeyBase64, d.Secp256k1PublicKeyBase64,
+				d.IsActive, d.ReactivationBlockHeight, IsMinerNode: false))
 			.ToList();
 	}
 
@@ -112,6 +129,9 @@ public static class BotWalletRegistry
 			{
 				NodeId = b.NodeId,
 				Address = b.Address,
+				SigningPublicKeyBase64 = b.SigningPublicKeyBase64,
+				SigningPrivateKeyBase64 = b.SigningPrivateKeyBase64,
+				Secp256k1PublicKeyBase64 = b.Secp256k1PublicKeyBase64,
 				IsActive = b.IsActive,
 				ReactivationBlockHeight = b.ReactivationBlockHeight
 			}).ToList()

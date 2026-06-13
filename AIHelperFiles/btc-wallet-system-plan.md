@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  Phase 4 ✓  Phase 5.1 ✓  Phase 5.2 ✓  Phase 5.4 ✓  —  Next: Phase 6 (BlockExplorer Transfer Refactor)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  Phase 4 ✓  Phase 5.1 ✓  Phase 5.2 ✓  Phase 5.4 ✓  Phase 6 ✓  —  Next: Phase 7 (Casino Wallet Dev Scene)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -35,6 +35,14 @@
 - `Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs` ✓ (Phase 5.2 + 5.4) — static registry; `EnsureAll()` generates/loads 4 miner bots (full keys via `CryptoUtils.GenerateWallet()`) + 10 non-miner bots (address only); `GetBot(nodeId)` lookup; `user://bot_wallet_registry.json` with CamelCase JSON; separate `Miners`/`NonMiners` arrays in JSON
 - `Scripts/Services/WalletInitializationService.cs` ✓ (Phase 5.2) — `EnsureAll()` now calls `BotWalletRegistry.EnsureAll()` after player + casino wallets
 - `Documentation/ProjectDesignManual.md` ✓ — Chapters 1–15 covering Phases 0.1–0.5, 1.1–1.3, 2, 3, and 4
+- `Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs` ✓ (Phase 6) — `SetBotStatus(nodeId, isActive, reactivationBlockHeight?)` added; updates in-memory `NonMinerBots` list with `with {}` and re-saves registry
+- `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` ✓ (Phase 6) — `GetAddressConfirmedTransactions(address)` returns all confirmed txs involving address sorted by block index desc; `CreateAndBroadcastTransactionToAddress(fromNodeId, recipientAddress, amount)` sends from any registered nodeId to any gm1q... address
+- `Scripts/Services/SceneManager.cs` ✓ (Phase 6) — `BotsBtcWallets` added to enum + Paths
+- `Screens/MainMenu/MainMenu.tscn` + `.cs` ✓ (Phase 6) — `BotsBtcWalletsBtn` added ("Bot Wallets [DEV]")
+- `Screens/BlockExplorer/BlockExplorer.cs` ✓ (Phase 6) — transfer logic removed (`_fromNodeOption`, `_toNodeOption`, `_amountInput`, `_createTxButton`, `OnCreateTransactionPressed`, `RefreshTransferState`, `TryGetTransferContext`); lookup methods now use `_minerNodeOption`
+- `Screens/BlockExplorer/BlockExplorer.tscn` ✓ (Phase 6) — `TxTitle` and `TxControls` nodes removed
+- `Screens/BotsBtcWallets/BotsBtcWallets.tscn` ✓ — structural skeleton (HSplitContainer: list left, detail ScrollContainer right); all detail content built programmatically
+- `Screens/BotsBtcWallets/BotsBtcWallets.cs` ✓ — full controller; miner vs non-miner sections; mining stats (block scan); wallet status + dev controls (toggle IsActive, set reactivation block); all transactions list; Send BTC (miner-only, any gm1q... recipient); 3s balance refresh
 
 ---
 
@@ -393,7 +401,7 @@ Design notes:
 
 ---
 
-## Phase 6 — BotsBtcWallets Dev Scene + BlockExplorer Cleanup  TODO
+## Phase 6 — BotsBtcWallets Dev Scene + BlockExplorer Cleanup  ✓ DONE
 
 ### Decision change from original plan
 

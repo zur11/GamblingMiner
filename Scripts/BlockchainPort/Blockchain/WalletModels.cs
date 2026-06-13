@@ -12,18 +12,19 @@ public record CasinoWalletState(
 	string BaseAddress         // gm1q...
 );
 
-// Wallet entry for bot participants. Miner bots have all three key fields populated
-// (OQ-13 Option A) so they can sign transactions immediately. Non-miner bots have null
-// key fields until sending is enabled. IsActive/ReactivationBlockHeight support the
-// Phase 5.3 "lost BTC" simulation design.
+// Wallet entry for bot participants. All bots have a full wallet (address + signing keys)
+// so they can send BTC once they have a balance. IsMinerNode distinguishes the four miner
+// bots (bot_1..4) from the ten non-miner holder wallets.
+// IsActive/ReactivationBlockHeight support the Phase 5.3 "lost BTC" simulation design.
 public record BotWalletRecord(
 	string NodeId,
 	string Address,                          // gm1q... only; no seed words stored
-	string? SigningPublicKeyBase64 = null,   // P-256 SubjectPublicKeyInfo (miner bots only)
-	string? SigningPrivateKeyBase64 = null,  // P-256 PKCS8 (miner bots only)
-	string? Secp256k1PublicKeyBase64 = null, // secp256k1 compressed pubkey (miner bots only)
+	string? SigningPublicKeyBase64 = null,   // P-256 SubjectPublicKeyInfo
+	string? SigningPrivateKeyBase64 = null,  // P-256 PKCS8
+	string? Secp256k1PublicKeyBase64 = null, // secp256k1 compressed pubkey
 	bool IsActive = true,
-	int? ReactivationBlockHeight = null      // non-null → "sleeping whale" reactivation trigger
+	int? ReactivationBlockHeight = null,     // non-null → "sleeping whale" reactivation trigger
+	bool IsMinerNode = false
 )
 {
 	public bool HasFullWallet =>

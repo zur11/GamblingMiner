@@ -47,6 +47,15 @@ public partial class NetworkRoot : Node
             SharedNetwork.RegisterNode(CreateAndRegisterNode($"bot_{i}", savedState));
         }
 
+        // Non-miner bots: register as NodeAgents so they can sign and broadcast
+        // transactions once they hold a balance. Conditional on HasFullWallet so
+        // old registry files (without non-miner keys) skip registration gracefully.
+        foreach (BotWalletRecord nonMiner in BotWalletRegistry.NonMinerBots)
+        {
+            if (nonMiner.HasFullWallet)
+                SharedNetwork.RegisterNode(CreateAndRegisterNode(nonMiner.NodeId, savedState));
+        }
+
         ApplyStateFromSnapshot(savedState);
         NormalizeGenesisTimestampAcrossNodes();
         EnsureSecondBlockBootstrapPendingTx();
@@ -328,6 +337,48 @@ public partial class NetworkRoot : Node
         }
 
         return node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
+    }
+
+    // Returns all confirmed transactions involving address (as sender or recipient),
+    // ordered by block index descending. Scans the full player chain.
+    public IReadOnlyList<(Transaction tx, int blockIndex)> GetAddressConfirmedTransactions(string address)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? node))
+            return [];
+        var result = new List<(Transaction tx, int blockIndex)>();
+        foreach (Block block in node.Blockchain.Chain)
+        {
+            foreach (Transaction tx in block.Transactions)
+            {
+                if (tx.Sender == address || tx.Recipient == address)
+                    result.Add((tx, block.Index));
+            }
+        }
+        result.Sort((a, b) => b.blockIndex.CompareTo(a.blockIndex));
+        return result;
+    }
+
+    // Creates a signed transaction from a registered node (by nodeId) to any gm1q... address.
+    // Used by BotsBtcWallets where the recipient may not be a registered NodeAgent.
+    public Transaction? CreateAndBroadcastTransactionToAddress(string fromNodeId, string recipientAddress, decimal amount)
+    {
+        EnsureInitialized();
+        if (amount <= 0m || string.IsNullOrEmpty(recipientAddress))
+            return null;
+        if (!SharedNodesById.TryGetValue(fromNodeId, out NodeAgent? sender))
+        {
+            GD.PrintErr($"[NetworkRoot] Unknown sender nodeId: {fromNodeId}");
+            return null;
+        }
+        if (sender.WalletAddress == recipientAddress)
+            return null;
+        Transaction tx = sender.CreateSignedTransaction(amount, recipientAddress);
+        if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
+            return null;
+        SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
+        PersistStateToDisk();
+        return tx;
     }
 
     // Returns confirmed balance and total pending-outgoing for any gm1q... address,

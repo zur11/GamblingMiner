@@ -63,35 +63,6 @@ split_offset = 580
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="TxTitle" type="Label" parent="Margin/MainVBox/Panels/Left"]
-layout_mode = 2
-text = "Transactions"
-
-[node name="TxControls" type="HBoxContainer" parent="Margin/MainVBox/Panels/Left"]
-layout_mode = 2
-theme_override_constants/separation = 6
-
-[node name="FromNodeOption" type="OptionButton" parent="Margin/MainVBox/Panels/Left/TxControls"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(110, 0)
-layout_mode = 2
-
-[node name="ToNodeOption" type="OptionButton" parent="Margin/MainVBox/Panels/Left/TxControls"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(110, 0)
-layout_mode = 2
-
-[node name="AmountInput" type="LineEdit" parent="Margin/MainVBox/Panels/Left/TxControls"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(120, 0)
-layout_mode = 2
-placeholder_text = "Amount"
-text = "1.00"
-
-[node name="CreateTxButton" type="Button" parent="Margin/MainVBox/Panels/Left/TxControls"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Create Tx"
 
 [node name="MiningTitle" type="Label" parent="Margin/MainVBox/Panels/Left"]
 layout_mode = 2
