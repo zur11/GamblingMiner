@@ -164,6 +164,8 @@ public partial class BotsBtcWallets : Control
 		_selectedBot = bot;
 		_noSelectionLabel.Visible = false;
 		_detailVBox.Visible = true;
+		_amountInput.Text = string.Empty;
+		_sendFeedbackLabel.Text = string.Empty;
 		RefreshDetailPanel(bot);
 	}
 
@@ -341,13 +343,7 @@ public partial class BotsBtcWallets : Control
 		BuildTransactionsList(bot.Address);
 
 		// Send section: miners always; non-miners only when active and have a balance to send
-		bool canSend = bot.HasFullWallet && (isMiner || (bot.IsActive && confirmed > 0m));
-		_sendSection.Visible = canSend;
-		if (canSend)
-		{
-			_sendFeedbackLabel.Text = string.Empty;
-			_amountInput.Text = string.Empty;
-		}
+		_sendSection.Visible = bot.HasFullWallet && (isMiner || (bot.IsActive && confirmed > 0m));
 	}
 
 	private (int blocksMined, decimal totalBtc) GetMiningStats(string address)

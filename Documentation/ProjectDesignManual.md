@@ -1381,6 +1381,8 @@ public override void _Process(double delta)
 
 Every 3 real seconds the balance column in all bot list rows is updated, and the full detail panel for the selected bot is re-rendered. This keeps balances and transaction lists current during a dev session without manual refresh.
 
+**Input preservation**: `RefreshDetailPanel` deliberately does not clear `_amountInput` or `_sendFeedbackLabel`. Those fields are only reset in two places: `SelectBot()` (when the user picks a different bot) and `OnSendPressed()` (after a successful send). Without this rule the periodic refresh would wipe whatever the user was typing into the amount field every 3 seconds.
+
 ---
 
 ### 17.9 — Navigation
