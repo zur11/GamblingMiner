@@ -57,10 +57,33 @@ public partial class NetworkRoot : Node
     private static NodeAgent CreateAndRegisterNode(string nodeId, BlockchainStateSnapshot? savedState = null)
     {
         NodeAgent node;
-        if (savedState?.NodeWallets?.TryGetValue(nodeId, out NodeWalletSnapshot? wallet) == true && wallet?.IsComplete() == true)
-            node = new(nodeId, wallet.Address, wallet.SigningPublicKeyBase64, wallet.SigningPrivateKeyBase64, wallet.Secp256k1PublicKeyBase64);
+
+        if (nodeId == PlayerNodeId)
+        {
+            // Player node always uses the seed-phrase wallet so mining coinbase rewards
+            // go to the same address shown in BTCWallet. The persisted random wallet is ignored.
+            var playerWallet = WalletInitializationService.PlayerWallet;
+            if (playerWallet != null)
+            {
+                string seedPhrase = string.Join(" ", playerWallet.SeedWords);
+                var (sigPub, sigPriv) = CryptoUtils.DeriveSigningKeypair(seedPhrase);
+                string secp256k1Pub  = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seedPhrase);
+                node = new(nodeId, playerWallet.BaseAddress, sigPub, sigPriv, secp256k1Pub);
+            }
+            else if (savedState?.NodeWallets?.TryGetValue(nodeId, out NodeWalletSnapshot? pw) == true && pw?.IsComplete() == true)
+                node = new(nodeId, pw.Address, pw.SigningPublicKeyBase64, pw.SigningPrivateKeyBase64, pw.Secp256k1PublicKeyBase64);
+            else
+                node = new(nodeId);
+        }
         else
-            node = new(nodeId);
+        {
+            // Bot nodes: restore from saved snapshot or generate a fresh wallet.
+            if (savedState?.NodeWallets?.TryGetValue(nodeId, out NodeWalletSnapshot? wallet) == true && wallet?.IsComplete() == true)
+                node = new(nodeId, wallet.Address, wallet.SigningPublicKeyBase64, wallet.SigningPrivateKeyBase64, wallet.Secp256k1PublicKeyBase64);
+            else
+                node = new(nodeId);
+        }
+
         SharedNodesById[nodeId] = node;
         return node;
     }
@@ -302,6 +325,20 @@ public partial class NetworkRoot : Node
         }
 
         return node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
+    }
+
+    // Returns confirmed balance and total pending-outgoing for any gm1q... address,
+    // queried against the player node's blockchain (the authoritative chain after consensus).
+    public (decimal confirmedBalance, decimal pendingOutgoing) GetAddressBalanceDetails(string address)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? node))
+            return (0m, 0m);
+        AddressData data = node.Blockchain.GetAddressData(address);
+        decimal pendingOut = node.Blockchain.PendingTransactions
+            .Where(t => t.Sender == address)
+            .Sum(t => t.Amount);
+        return (data.AddressBalance, pendingOut);
     }
 
     public NodeFinancialState GetOrCreateNodeFinancialState(string nodeId, decimal defaultPrincipalBalance, decimal defaultBankrollBalance)

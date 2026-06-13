@@ -84,3 +84,11 @@ layout_mode = 2
 size_flags_horizontal = 0
 theme_override_font_sizes/font_size = 34
 text = "Martingale Calculator"
+
+[node name="BTCWalletBtn" type="Button" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 34
+text = "Bitcoin Wallet"

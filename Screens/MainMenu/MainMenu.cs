@@ -17,5 +17,6 @@ public partial class MainMenu : Control
 		GetNode<Button>("%BankrollProgrammerBtn").Pressed     += () => _sceneManager?.Go(SceneManager.SceneId.BankrollProgrammer);
 		GetNode<Button>("%CalendarsNavigatorBtn").Pressed  += () => _sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
 		GetNode<Button>("%MartingaleCalcBtn").Pressed       += () => _sceneManager?.Go(SceneManager.SceneId.MartingaleCalculator);
+		GetNode<Button>("%BTCWalletBtn").Pressed            += () => _sceneManager?.Go(SceneManager.SceneId.BTCWallet);
 	}
 }

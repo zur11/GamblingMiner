@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  —  Next: Phase 4 (BTCWallet scene)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  Phase 4 ✓  —  Next: Phase 5 (NodeAgent & Bot Wallets)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -16,7 +16,7 @@
 - `Ripemd160.cs` ✓ — pure C# RIPEMD-160 (RFC spec); `Hash(byte[])` / `Hash(ReadOnlySpan<byte>)`
 - `Bech32.cs` ✓ — BIP173 encoder/decoder; `Encode("gm", 0, hash20)` → `"gm1q..."`; `TryDecode()` and `IsValidGmAddress()` helpers; `Bech32.GameHrp = "gm"` constant
 - `Secp256k1.cs` ✓ — minimal secp256k1; `GetCompressedPublicKey(byte[32])` → `byte[33]`; `IsValidPrivateKey()`; double-and-add scalar multiplication; affine coordinates; Fermat modular inverse
-- `CryptoUtils.cs` ✓ — `DeriveGmAddress()`, `DeriveSigningKeypair()`, updated `GenerateWallet()` (4-tuple), updated `DeriveAddressFromPublicKey()` (now takes secp256k1 compressed pubkey base64)
+- `CryptoUtils.cs` ✓ — `DeriveGmAddress()`, `DeriveSigningKeypair()`, `DeriveSecp256k1CompressedPublicKeyBase64()` (same derivation path as `DeriveGmAddress` but returns the compressed pubkey instead of the address — used to populate `NodeAgent.WalletSecp256k1PublicKey` for the player node), updated `GenerateWallet()` (4-tuple), updated `DeriveAddressFromPublicKey()` (now takes secp256k1 compressed pubkey base64)
 - `NodeAgent.cs` ✓ — `WalletSecp256k1PublicKey` property; constructor uses 4-tuple; `CreateSignedTransaction()` sets `tx.Secp256k1PublicKeyBase64`
 - `Models.cs` ✓ — `Transaction` has new `Secp256k1PublicKeyBase64` field (address verification) alongside existing `PublicKeyBase64` (P-256 signing)
 - `BlockchainService.cs` ✓ — `ValidateTransactionSignature()` uses `tx.Secp256k1PublicKeyBase64` for address check; `tx.PublicKeyBase64` still used by `CryptoUtils.Verify()`
@@ -26,7 +26,12 @@
 - `Scripts/BlockchainPort/Blockchain/WalletModels.cs` ✓ — `PlayerWalletState`, `CasinoWalletState`, `BotWalletRecord` records; namespace `GodotBlockchainPort.Blockchain`; `SigningPrivateKeyBase64` on `BotWalletRecord` per OQ-13
 - `Scripts/Services/WalletInitializationService.cs` ✓ — static class; `EnsureAll()` creates/loads player + casino wallets from `user://`; `MarkSeedPopupSeen()` for Phase 4 popup; DTO-based JSON serialization; `GD.Print` output on both code paths
 - `Scripts/Services/CalendarTimeService._Ready()` ✓ — `WalletInitializationService.EnsureAll()` wired between `EnsureWordlist()` and `EnsureGameEpochInitialized()`
-- `Documentation/ProjectDesignManual.md` ✓ — Chapters 1–14 covering Phases 0.1–0.5, 1.1–1.3, 2, and 3
+- `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` ✓ — `GetAddressBalanceDetails(address)` → `(confirmedBalance, pendingOutgoing)` (Phase 4); `CreateAndRegisterNode` for `"player"` always derives wallet from `WalletInitializationService.PlayerWallet` seed phrase — mining coinbase rewards go to the BTCWallet address (Phase 4 post-test fix); bot nodes unchanged
+- `Scripts/Services/SceneManager.cs` ✓ (Phase 4) — `BTCWallet` in enum + Paths
+- `Screens/MainMenu/MainMenu.tscn` + `.cs` ✓ (Phase 4) — `BTCWalletBtn` added and wired
+- `Screens/BTCWallet/BTCWallet.tscn` ✓ — three mode panels (Base, PassphraseLocked, PassphraseUnlocked) + SeedPopup overlay + NetworkRoot child
+- `Screens/BTCWallet/BTCWallet.cs` ✓ — full controller; 2s balance refresh; passphrase derive-on-unlock; clipboard copy; seed popup flow
+- `Documentation/ProjectDesignManual.md` ✓ — Chapters 1–15 covering Phases 0.1–0.5, 1.1–1.3, 2, 3, and 4
 
 ---
 
@@ -265,13 +270,13 @@ Block mining coinbase rewards are automatically sent to `PlayerWalletState.BaseA
 
 ---
 
-## Phase 4 — BTCWallet Scene  TODO
+## Phase 4 — BTCWallet Scene  ✓ DONE
 
 **Path**: `Screens/BTCWallet/BTCWallet.tscn` + `BTCWallet.cs`  
-**Navigation**: MainMenu → BTCWallet (add to `SceneManager.SceneId` + `Paths`)  
+**Navigation**: MainMenu → BTCWallet (wired via `SceneManager.SceneId.BTCWallet`)  
 **Player-facing from day one**: full polish required.
 
-### Scene layout
+### Scene layout (implemented)
 
 ```
 [TopBar: < Main Menu | StatusBar]
@@ -280,50 +285,62 @@ Block mining coinbase rewards are automatically sent to `PlayerWalletState.BaseA
   "Base Wallet"
   "Deposit Address"
   [gm1q...address]  [Copy]
-  "Balance: X.XXXXXXXX BTC"  (confirmed only — see OQ-3)
-  "Pending outgoing: Y.XXXXXXXX BTC"  (if any unconfirmed sends)
-  [Send BTC]   [Open Passphrase Wallet →]
+  "Balance: X.XXXXXXXX BTC"  (confirmed only)
+  "Pending outgoing: Y.XXXXXXXX BTC"  (only shown when pendingOut > 0)
+  [Send BTC — disabled]   [Open Passphrase Wallet →]
 
 === PASSPHRASE WALLET MODE ===
   [IF locked]
     "Enter your passphrase word"
-    [LineEdit]  [Unlock]
+    [LineEdit]  [Unlock]  (Enter key also triggers Unlock)
     ⚠ "Save your passphrase offline. It cannot be recovered from this app."
+    [← Base Wallet]
   [IF unlocked]
     "Passphrase Wallet"
     "Deposit Address"
     [gm1q...passphrase-address]  [Copy]
     "Balance: X.XXXXXXXX BTC"
-    "Pending outgoing: Y.XXXXXXXX BTC"
-    [Send BTC]   [← Base Wallet]
+    "Pending outgoing: Y.XXXXXXXX BTC"  (only shown when > 0)
+    [Send BTC — disabled]   [← Base Wallet]
     ⚠ "Save your passphrase. This reminder always appears when using a passphrase wallet."
 ```
 
-### First-launch popup (shown when `HasSeenSeedPopup == false`)
+### First-launch popup (implemented)
 
-- Shown even if the player has already been betting for hours — wallets are created at game start
-- Displays 3 words clearly (large font, separated)
-- [Copy to clipboard]
-- Bold warning: "Write these words down. This is the only time they will be shown automatically."
-- [I have saved my words] → sets `HasSeenSeedPopup = true`, saves state, dismisses popup
+- `SeedPopup` Panel overlays full screen (last child of root Control)
+- Shown when `WalletInitializationService.PlayerWallet.HasSeenSeedPopup == false`
+- Displays 3 words at 44pt font, separated
+- [Copy to clipboard] — copies space-joined words to clipboard
+- Warning: "Write these words down. This is the only time they will be shown automatically."
+- [I have saved my words] → calls `WalletInitializationService.MarkSeedPopupSeen()`, hides popup
 
-### Passphrase wallet mechanics
+### Passphrase wallet mechanics (implemented)
 
-- Any word from the 256-word list (or any string, actually — not validated against wordlist) can be a passphrase
-- `CryptoUtils.DeriveGmAddress("word1 word2 word3 passphrase")` → always the same address for the same 4 inputs
-- No storage, no validation of "correct" passphrase — any input generates a valid wallet
-- To confirm you're accessing the same passphrase wallet: copy the address, log out, log in again, compare addresses
-- This mechanic is explained in a small help tooltip on the passphrase input field
-- Passphrase is cleared from memory (field emptied) when returning to base wallet
-- Sign to send: derive signing keypair from `"sign:word1 word2 word3 passphrase"` on the fly, sign, discard
+- Any string can be a passphrase — not validated against wordlist
+- Seed phrase passed to `CryptoUtils.DeriveGmAddress("word1 word2 word3 passphrase")`
+- Passphrase field emptied immediately after Unlock and on back navigation
+- `_currentPassphraseAddress` cleared on back navigation
 
-### UTXO balance display (OQ-2 decision: UTXO scan)
+### Balance display (implemented)
 
-- Balance = sum of all unspent transaction outputs to this address in the blockchain
-- "UTXO" tooltip/label visible (educational — see Notes below)
-- Didactic note near balance: "Your balance is made up of X unspent outputs (UTXOs)"
-- Confirmed balance: only outputs in mined blocks count
-- Pending outgoing: transactions in mempool from this address reduce "available to send"
+- `NetworkRoot.GetAddressBalanceDetails(address)` returns `(confirmedBalance, pendingOutgoing)`
+  - `confirmedBalance` = `BlockchainService.GetAddressData(address).AddressBalance`
+  - `pendingOutgoing` = sum of `PendingTransactions` where `Sender == address`
+- Refreshed every 2 seconds via `_Process()` timer
+- "Pending outgoing" label hidden when `pendingOutgoing == 0`
+- [Send BTC] is disabled (placeholder for Phase 6 send flow)
+
+### Files changed for Phase 4
+
+- `Scripts/BlockchainPort/Blockchain/CryptoUtils.cs` — added `DeriveSecp256k1CompressedPublicKeyBase64(seedPhrase)`: same derivation path as `DeriveGmAddress` (SHA256 → secp256k1 private key → compressed pubkey), returns the base64 pubkey needed to populate `NodeAgent.WalletSecp256k1PublicKey`
+- `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` — added `GetAddressBalanceDetails(string address)` → `(decimal, decimal)`; `CreateAndRegisterNode` for `"player"` now always uses `WalletInitializationService.PlayerWallet` (address + `DeriveSigningKeypair` + `DeriveSecp256k1CompressedPublicKeyBase64`) — persisted random wallet for the player is ignored going forward
+- `Scripts/Services/SceneManager.cs` — added `BTCWallet` to `SceneId` enum + `Paths`
+- `Screens/MainMenu/MainMenu.tscn` — added `BTCWalletBtn`
+- `Screens/MainMenu/MainMenu.cs` — wired `BTCWalletBtn` → `SceneManager.SceneId.BTCWallet`
+- `Screens/BTCWallet/BTCWallet.tscn` — new scene (NetworkRoot child + three mode panels + SeedPopup overlay)
+- `Screens/BTCWallet/BTCWallet.cs` — new controller
+
+**Tested**: clean blockchain run confirmed — BTCWallet address and BlockExplorer player address match; coinbase rewards accrue to the correct address.
 
 ---
 
@@ -491,8 +508,8 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 | `Scripts/Services/WordlistBootstrapper.cs` | 1.2 | ✓ DONE |
 | `Scripts/Services/WalletInitializationService.cs` | 3 | ✓ DONE |
 | `Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs` | 5.4 | TODO |
-| `Screens/BTCWallet/BTCWallet.tscn` | 4 | TODO |
-| `Screens/BTCWallet/BTCWallet.cs` | 4 | TODO |
+| `Screens/BTCWallet/BTCWallet.tscn` | 4 | ✓ DONE |
+| `Screens/BTCWallet/BTCWallet.cs` | 4 | ✓ DONE |
 | `Screens/DevTransferTool/DevTransferTool.tscn` | 6 | TODO |
 | `Screens/DevTransferTool/DevTransferTool.cs` | 6 | TODO |
 
@@ -500,9 +517,9 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 |---|---|---|
 | `Scripts/BlockchainPort/BIP-0039/bip39_2048.txt` | 1.1 | ✓ DONE (renamed from `2048WordsList`) |
 | `Scripts/Services/CalendarTimeService.cs` | 1.3 + 3 | ✓ DONE — `EnsureWordlist()` + `WalletInitializationService.EnsureAll()` + `EnsureGameEpochInitialized()` |
-| `Scripts/Services/SceneManager.cs` | 4 | Add `BTCWallet` to `SceneId` enum + `Paths` |
+| `Scripts/Services/SceneManager.cs` | 4 | ✓ DONE — `BTCWallet` added to `SceneId` + `Paths` |
 | `Screens/BlockExplorer/BlockExplorer.cs` | 6 | Remove existing transfer logic |
-| `Screens/MainMenu/MainMenu.tscn` + `.cs` | 4 | Add BTCWallet navigation button |
+| `Screens/MainMenu/MainMenu.tscn` + `.cs` | 4 | ✓ DONE — `BTCWalletBtn` added and wired |
 
 ---
 

@@ -883,6 +883,106 @@ Subsequent launches:
 
 ---
 
-*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, and 3 of the BTC Wallet Address System.*  
+---
+
+## Chapter 15 — Phase 4: BTCWallet Scene
+
+### The Short Version (for everyone)
+
+The Bitcoin Wallet screen is the player's window into their on-chain BTC holdings. From here they can see their deposit address (share it to receive mining rewards), check their confirmed balance, and — once the passphrase feature is unlocked — access a second hidden wallet derived from a fourth word. On first visit, a popup shows the three seed words that control the base wallet. These words appear only once automatically; after that, the player is responsible for keeping them safe.
+
+---
+
+### 15.1 — Navigation and Entry Point
+
+`MainMenu` → `Bitcoin Wallet` button → `BTCWallet` scene (`res://Screens/BTCWallet/BTCWallet.tscn`).
+
+`SceneManager.SceneId.BTCWallet` added to the enum and `Paths` dictionary. `MainMenu.tscn` has a `BTCWalletBtn` button wired in `MainMenu.cs`.
+
+---
+
+### 15.2 — Three-Mode Panel Architecture
+
+The scene contains three `VBoxContainer` panels that never overlap — only one is visible at a time, controlled by `SetMode(WalletMode)`:
+
+| Mode | Panel visible | Description |
+|---|---|---|
+| `Base` | `BaseWalletPanel` | Default. Shows base wallet address + balance. |
+| `PassphraseLocked` | `PassphraseLockedPanel` | User entering their passphrase word. |
+| `PassphraseUnlocked` | `PassphraseUnlockedPanel` | Passphrase wallet open with its own address + balance. |
+
+---
+
+### 15.3 — Balance Display
+
+Balance is queried via `NetworkRoot.GetAddressBalanceDetails(address)`, which scans the player node's `BlockchainService`:
+
+```csharp
+public (decimal confirmedBalance, decimal pendingOutgoing) GetAddressBalanceDetails(string address)
+{
+    AddressData data = node.Blockchain.GetAddressData(address);
+    decimal pendingOut = node.Blockchain.PendingTransactions
+        .Where(t => t.Sender == address).Sum(t => t.Amount);
+    return (data.AddressBalance, pendingOut);
+}
+```
+
+`BTCWallet._Process()` refreshes balances every 2 seconds. "Pending outgoing" label is hidden when there are no pending sends (`pendingOutgoing == 0`).
+
+---
+
+### 15.4 — Seed Popup
+
+`SeedPopup` is a `Panel` node that is the last child of the root `Control`, so it renders on top of everything. It is initially `visible = false` in the .tscn. On `_Ready()`, if `PlayerWalletState.HasSeenSeedPopup == false`, the popup is shown with the three seed words at 44pt font.
+
+The player has two options:
+- **[Copy to clipboard]** — copies `"word1 word2 word3"` to the system clipboard via `DisplayServer.ClipboardSet()`.
+- **[I have saved my words]** — calls `WalletInitializationService.MarkSeedPopupSeen()` (sets `HasSeenSeedPopup = true`, re-saves `user://wallet_state.json`), then hides the popup.
+
+After this popup is dismissed it never appears automatically again. The seed words remain derivable from a future "show seed words" button (not yet implemented).
+
+---
+
+### 15.5 — Passphrase Wallet Mechanics
+
+Entering the passphrase locked panel clears the `LineEdit`. Clicking **Unlock** (or pressing Enter):
+
+1. Takes `passphrase = PassphraseInput.Text.Trim()`
+2. Derives `seedPhrase = "word1 word2 word3 passphrase"`
+3. Calls `CryptoUtils.DeriveGmAddress(seedPhrase)` — deterministic, no storage
+4. Clears the `LineEdit` immediately
+5. Shows the unlocked panel with the derived address
+
+The passphrase address is cleared from `_currentPassphraseAddress` when the player navigates back. No passphrase-derived key material is retained in memory after leaving the unlocked panel.
+
+---
+
+### 15.6 — Send BTC Placeholder
+
+Both `SendBtcBtn` (base wallet) and `SendBtcPassphraseBtn` (passphrase wallet) are `disabled = true` in the .tscn with a tooltip "Send BTC (not yet available)". The full send flow is planned for Phase 6 (DevTransferTool) and will be surfaced directly in BTCWallet in a later update.
+
+---
+
+### 15.7 — Connecting Mining Rewards to the BTCWallet Address
+
+After Phase 4 was tested, it became clear that the player's `NodeAgent` (the mining node that collects coinbase rewards) was still using a randomly-generated address from Phase 0.5, while BTCWallet showed the seed-phrase address. These were two different addresses, so the wallet always showed 0 BTC regardless of how many blocks were mined.
+
+**Fix**: `NetworkRoot.CreateAndRegisterNode` was updated to give the player node its credentials from `WalletInitializationService.PlayerWallet` instead of the saved random wallet or a fresh random generation.
+
+Two components are derived from the seed phrase on every launch:
+
+1. **Signing keypair** (P-256, game-internal): `CryptoUtils.DeriveSigningKeypair("word1 word2 word3")` → deterministic `signingPublicKeyBase64` + `signingPrivateKeyBase64`
+
+2. **secp256k1 compressed public key**: `CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64("word1 word2 word3")` — a new helper that shares the identical derivation path with `DeriveGmAddress` (`SHA256(phrase)` → `Secp256k1.GetCompressedPublicKey()`) but returns the raw 33-byte compressed pubkey as base64 instead of the Bech32-encoded address. This is stored in `NodeAgent.WalletSecp256k1PublicKey` and attached to every coinbase transaction as `tx.Secp256k1PublicKeyBase64`, which `BlockchainService.ValidateTransactionSignature()` uses to verify sender ownership.
+
+After this fix, the player node's `WalletAddress` matches `PlayerWalletState.BaseAddress` exactly. Every mined block's coinbase reward is credited to the address shown in BTCWallet.
+
+**Migration note**: blocks mined before this change remain in the blockchain with coinbase outputs addressed to the old random address. Those outputs are not retroactively reassigned. The balance in BTCWallet starts accumulating from the first block mined after the fix. Clearing `user://blockchain/` starts with a clean slate.
+
+**Tested**: clean blockchain run confirmed — BTCWallet address, BlockExplorer player address, and coinbase recipient all show the same `gm1q...` address.
+
+---
+
+*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, 3, and 4 of the BTC Wallet Address System.*  
 *See `AIHelperFiles/btc-wallet-system-plan.md` for the full implementation roadmap.*  
 *Last updated: 2026-06-12*

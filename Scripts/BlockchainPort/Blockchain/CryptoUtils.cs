@@ -48,6 +48,22 @@ public static class CryptoUtils
 		}
 	}
 
+	// Returns the secp256k1 compressed public key (base64) for a seed phrase.
+	// Uses the identical private-key derivation path as DeriveGmAddress, so the returned
+	// pubkey always corresponds to the address that method produces for the same input.
+	public static string DeriveSecp256k1CompressedPublicKeyBase64(string seedPhrase)
+	{
+		int attempt = 0;
+		while (true)
+		{
+			string input      = attempt == 0 ? seedPhrase : seedPhrase + ":" + attempt;
+			byte[] privateKey = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+			if (Secp256k1.IsValidPrivateKey(privateKey))
+				return Convert.ToBase64String(Secp256k1.GetCompressedPublicKey(privateKey));
+			attempt++;
+		}
+	}
+
 	// --- Wallet creation ---
 
 	// Generates a new random wallet for bots and mining nodes.

@@ -1,0 +1,302 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Screens/BTCWallet/BTCWallet.cs" id="1"]
+[ext_resource type="Script" path="res://Scripts/BlockchainPort/Simulation/NetworkRoot.cs" id="2"]
+
+[node name="BTCWallet" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="NetworkRoot" type="Node" parent="."]
+script = ExtResource("2")
+
+[node name="RootMargin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 40
+theme_override_constants/margin_top = 30
+theme_override_constants/margin_right = 40
+theme_override_constants/margin_bottom = 30
+
+[node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="TopBar" type="HBoxContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="BackBtn" type="Button" parent="RootMargin/RootVBox/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "< Main Menu"
+
+[node name="StatusBarPlaceholder" type="HBoxContainer" parent="RootMargin/RootVBox/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ScreenTitle" type="Label" parent="RootMargin/RootVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 52
+text = "Bitcoin Wallet"
+
+[node name="BaseWalletPanel" type="VBoxContainer" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="BaseWalletTitle" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "Base Wallet"
+
+[node name="BaseAddressHeader" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Deposit Address"
+
+[node name="AddressRow" type="HBoxContainer" parent="RootMargin/RootVBox/BaseWalletPanel"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="BaseAddressLabel" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel/AddressRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+size_flags_horizontal = 3
+
+[node name="CopyBaseAddressBtn" type="Button" parent="RootMargin/RootVBox/BaseWalletPanel/AddressRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Copy"
+
+[node name="BaseBalanceLabel" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "Balance: 0.00000000 BTC"
+
+[node name="BasePendingLabel" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+visible = false
+
+[node name="BaseActionRow" type="HBoxContainer" parent="RootMargin/RootVBox/BaseWalletPanel"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="SendBtcBtn" type="Button" parent="RootMargin/RootVBox/BaseWalletPanel/BaseActionRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Send BTC"
+disabled = true
+tooltip_text = "Send BTC (not yet available)"
+
+[node name="OpenPassphraseBtn" type="Button" parent="RootMargin/RootVBox/BaseWalletPanel/BaseActionRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Open Passphrase Wallet →"
+
+[node name="PassphraseLockedPanel" type="VBoxContainer" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 16
+visible = false
+
+[node name="PassphraseHeader" type="Label" parent="RootMargin/RootVBox/PassphraseLockedPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "Passphrase Wallet"
+
+[node name="PassphraseInputLabel" type="Label" parent="RootMargin/RootVBox/PassphraseLockedPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Enter your passphrase word"
+
+[node name="PassphraseInputRow" type="HBoxContainer" parent="RootMargin/RootVBox/PassphraseLockedPanel"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="PassphraseInput" type="LineEdit" parent="RootMargin/RootVBox/PassphraseLockedPanel/PassphraseInputRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+size_flags_horizontal = 3
+placeholder_text = "passphrase word"
+
+[node name="UnlockPassphraseBtn" type="Button" parent="RootMargin/RootVBox/PassphraseLockedPanel/PassphraseInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "Unlock"
+
+[node name="PassphraseLockedWarning" type="Label" parent="RootMargin/RootVBox/PassphraseLockedPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "⚠ Save your passphrase offline. It cannot be recovered from this app."
+autowrap_mode = 2
+
+[node name="BackFromPassphraseLockedBtn" type="Button" parent="RootMargin/RootVBox/PassphraseLockedPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "← Base Wallet"
+
+[node name="PassphraseUnlockedPanel" type="VBoxContainer" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 14
+visible = false
+
+[node name="PassphraseUnlockedTitle" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "Passphrase Wallet"
+
+[node name="PassphraseAddressHeader" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Deposit Address"
+
+[node name="PassphraseAddressRow" type="HBoxContainer" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="PassphraseAddressLabel" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel/PassphraseAddressRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+size_flags_horizontal = 3
+
+[node name="CopyPassphraseAddressBtn" type="Button" parent="RootMargin/RootVBox/PassphraseUnlockedPanel/PassphraseAddressRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Copy"
+
+[node name="PassphraseBalanceLabel" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+text = "Balance: 0.00000000 BTC"
+
+[node name="PassphrasePendingLabel" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+visible = false
+
+[node name="PassphraseActionRow" type="HBoxContainer" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="SendBtcPassphraseBtn" type="Button" parent="RootMargin/RootVBox/PassphraseUnlockedPanel/PassphraseActionRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Send BTC"
+disabled = true
+tooltip_text = "Send BTC (not yet available)"
+
+[node name="BackToBaseWalletBtn" type="Button" parent="RootMargin/RootVBox/PassphraseUnlockedPanel/PassphraseActionRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "← Base Wallet"
+
+[node name="PassphraseActiveWarning" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "⚠ Save your passphrase. This reminder always appears when using a passphrase wallet."
+autowrap_mode = 2
+
+[node name="SeedPopup" type="Panel" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+visible = false
+
+[node name="SeedPopupMargin" type="MarginContainer" parent="SeedPopup"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 80
+theme_override_constants/margin_top = 80
+theme_override_constants/margin_right = 80
+theme_override_constants/margin_bottom = 80
+
+[node name="SeedPopupVBox" type="VBoxContainer" parent="SeedPopup/SeedPopupMargin"]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="SeedPopupTitle" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 36
+text = "Your Bitcoin wallet seed words"
+
+[node name="SeedWordsRow" type="HBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox"]
+layout_mode = 2
+theme_override_constants/separation = 30
+
+[node name="SeedWord1Label" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedWordsRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+text = "---"
+
+[node name="SeedWord2Label" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedWordsRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+text = "---"
+
+[node name="SeedWord3Label" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedWordsRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+text = "---"
+
+[node name="SeedPopupWarning" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Write these words down. This is the only time they will be shown automatically."
+autowrap_mode = 2
+
+[node name="SeedPopupActions" type="HBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="CopySeedBtn" type="Button" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedPopupActions"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Copy to clipboard"
+
+[node name="ConfirmSeedBtn" type="Button" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedPopupActions"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "I have saved my words"
