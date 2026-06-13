@@ -393,25 +393,172 @@ Design notes:
 
 ---
 
-## Phase 6 — BlockExplorer Transfer Refactor  TODO
+## Phase 6 — BotsBtcWallets Dev Scene + BlockExplorer Cleanup  TODO
 
-**Decision**: Option B confirmed — `BTCWallet` owns all send functionality. BlockExplorer remains read-only for the player.
+### Decision change from original plan
 
-**Existing transfer logic in BlockExplorer**: remove it entirely.
+Original plan: remove transfers from BlockExplorer + create a generic `DevTransferTool`.  
+**New plan**: remove transfers from BlockExplorer + create a `BotsBtcWallets` scene — a dev testing hub that combines bot wallet observation with outbound transfer capabilities. Accessible from MainMenu during the testing phase. No instant-mine button (dice-driven mining is sufficient). Dev-flagged; a future player-facing variant requires its own gameplay logic and incentive design.
 
-**New dev-only transfer scene**:  
-**Path**: `Screens/DevTransferTool/DevTransferTool.tscn` + `.cs`  
-**Purpose**: developer testing tool for simulating BTC transfers between any participants (bots, player, casino). Not accessible from MainMenu in player build.  
-**Features**:
-- Dropdown: select sender (all registered wallets: player base, casino, all bots)
-- Text field: recipient address (or dropdown select)
-- Amount field
-- Fee field (1–10 BTC range per OQ-9)
-- [Submit Transaction] → adds to mempool, signed with sender's key
-- Shows pending mempool transactions
-- "Mine Next Block" button (dev shortcut — mines immediately)
+---
 
-**Navigation**: accessible from a hidden dev launcher or MainMenu dev mode only.
+### Task 6.1 — Remove transfer logic from BlockExplorer
+
+**File**: `Screens/BlockExplorer/BlockExplorer.cs`
+
+Remove: `_fromNodeOption`, `_toNodeOption`, `_amountInput`, `_createTxButton`, `_actionFeedbackLabel`, `OnCreateTransactionPressed()`, `RefreshTransferState()`, `TryGetTransferContext()`, and all wiring in `_Ready()`. BlockExplorer becomes strictly read-only for the player.
+
+Also remove the corresponding nodes from `BlockExplorer.tscn`.
+
+**Forward note — chain > 1000 blocks**: BlockExplorer currently scans the full chain to build address and block details. Beyond 1000 blocks, this will need abbreviation (pagination, index, or a caching layer). Design deferred — flag when chain first exceeds 1000 blocks.
+
+---
+
+### Task 6.2 — BotsBtcWallets Scene
+
+**Path**: `Screens/BotsBtcWallets/BotsBtcWallets.tscn` + `.cs`  
+**SceneManager**: add `BotsBtcWallets` to enum + Paths dictionary  
+**Navigation**: `MainMenu` → `BotsBtcWallets` → `MainMenu`  
+**Visibility**: dev-only for now — button present on MainMenu but gated (label or conditional). Player-facing design is future work requiring gameplay reasons and incentive logic.
+
+**Purpose**: dev testing hub for observing and interacting with all bot wallets (4 miners + 10 non-miners). Simplified vs BTCWallet — no seed words, no passphrase wallets.
+
+---
+
+#### Layout
+
+```
+[BackBtn]  [StatusBarPlaceholder]
+────────────────────────────────────────────
+[BotListPanel]   |  [BotDetailPanel]
+(left, fixed w)  |  (right, fills rest)
+```
+
+**BotListPanel** — scrollable `VBoxContainer`, two labeled sections:
+
+```
+── Miner Nodes (4) ───────────────────────────
+  [bot_1]   gm1q...xyz   0.00000000 BTC
+  [bot_2]   gm1q...abc  50.00000000 BTC
+  ...
+
+── Holder Wallets (10)  [Show inactive ☐] ───
+  [non_miner_1]  gm1q...def   0.00000000 BTC  ● Active
+  [non_miner_2]  gm1q...ghi   0.00000000 BTC  ○ Inactive  ← grayed out
+  ...
+```
+
+- Inactive bots are **grayed out** (modulate color or lower alpha).
+- A **"Show inactive" CheckBox** in the Holder Wallets section header toggles visibility of inactive entries. When unchecked, inactive rows are hidden (`Visible = false`); grayed but still visible when checked.
+- Clicking any row (active or inactive) populates `BotDetailPanel`.
+
+---
+
+**BotDetailPanel** — right side, shown when a bot is selected:
+
+```
+── Miner Node / bot_2 ───────────────────────  ← miners
+── Holder Wallet ────────────────────────────  ← non-miners
+
+Address: gm1q...abc  [Copy]
+Confirmed balance:  50.00000000 BTC
+Pending incoming:    0.00000000 BTC   (hidden if 0)
+
+── Mining Stats ─────────────────────────────  (miners only)
+Blocks mined:        3
+Total BTC mined:   150.00000000 BTC
+
+── Wallet Status ────────────────────────────  (non-miners only)
+Status: ● Active  /  ○ Inactive
+Reactivates at block: 4381            (only if ReactivationBlockHeight set)
+Blocks remaining:  4378               (currentChainLength subtracted live)
+
+── Dev Controls ─────────────────────────────  (non-miners only)
+[Toggle IsActive]
+Reactivation block: [LineEdit]  [Set]
+
+── All Transactions ─────────────────────────
+  +50.00000000 BTC  coinbase  block #5
+  +50.00000000 BTC  coinbase  block #12
+  ...  (all confirmed; "No transactions yet" while empty)
+      Note: if chain > 1000 blocks, abbreviation strategy needed (TBD)
+
+── Send BTC ─────────────────────────────────  (miner bots only — non-miners: section hidden)
+  To: [OptionButton — all 14 bots + Player + Casino]
+  Amount: [LineEdit]
+  [Send]   [status / feedback label]
+```
+
+---
+
+#### Miner vs Non-Miner differentiation
+
+| Property | Miner bot | Non-miner bot |
+|---|---|---|
+| `NodeId` | `bot_1` … `bot_4` (shown in header) | — (not shown) |
+| Badge | "Miner Node" | "Holder Wallet" |
+| Active in NetworkRoot | Yes — `NodeAgent` instance | No |
+| Has signing keys | Yes (in `BotWalletRegistry`) | No (null keys) |
+| Mining Stats section | ✓ blocks mined + total BTC mined | — |
+| `IsActive` flag | Always `true` | `true` or `false` (toggleable) |
+| `ReactivationBlockHeight` | — | Shown + editable if non-null |
+| Dev Controls section | — | ✓ |
+| Send BTC section | ✓ | Hidden (no keys) |
+| List entry style | Normal | Grayed if inactive |
+
+"Total blocks mined" and "total BTC mined": scan `player.Blockchain.Chain` for blocks where `MinedByNodeId == nodeId`. Cheap while chain < 1000 blocks; add a cache layer when needed.
+
+---
+
+#### Transfer scope — outbound from miner bots only
+
+Sender is always the **currently selected miner bot**. The Send BTC section is fully hidden for non-miner bots (they have no signing keys).
+
+"To" `OptionButton` lists:
+- All other 13 bots (label: `bot_2 — gm1q...abc` or `non_miner_3 — gm1q...ghi`)
+- `Player — gm1q...` (from `WalletInitializationService.PlayerWallet.BaseAddress`)
+- `Casino — gm1q...` (from `WalletInitializationService.CasinoWallet.BaseAddress`)
+
+Player and casino appear as **destinations only** — no player/casino signing keys are needed in this scene.
+
+---
+
+#### Dev Controls — `BotWalletRegistry.SetBotStatus()`
+
+Toggling `IsActive` or setting `ReactivationBlockHeight` for a non-miner calls:
+
+```csharp
+// New method in BotWalletRegistry:
+public static void SetBotStatus(string nodeId, bool isActive, int? reactivationBlockHeight)
+```
+
+This finds the bot in `NonMinerBots`, replaces its record (records are immutable — use `with {}`), updates `NonMinerBots`, and re-saves the registry to disk.
+
+---
+
+#### Helper needed in `NetworkRoot`
+
+```csharp
+// Returns all confirmed transactions involving address (sender or recipient),
+// sorted by block index descending. Scans the full player chain.
+public IReadOnlyList<(Transaction tx, int blockIndex)> GetAddressConfirmedTransactions(string address)
+```
+
+Used by `BotDetailPanel` for the All Transactions list and for computing "Total BTC mined" for miners (filter by `tx.Sender == CoinbaseSender && tx.Recipient == address`).
+
+---
+
+### Resolved decisions
+
+| Question | Decision |
+|---|---|
+| Inactive bots in list | Grayed out + "Show inactive" CheckBox toggle in section header |
+| Inactive bots viewable | Yes — balance, incoming, all transactions visible; Send hidden (no keys) |
+| Dev status toggle | Yes — `[Toggle IsActive]` + reactivation block field per non-miner in detail panel |
+| Transfer sender scope | Outbound from miner bots only; no player/casino signing keys in this scene |
+| Transfer "To" includes player/casino | Yes — as destinations only |
+| Transaction history limit | All transactions while chain ≤ 1000 blocks; abbreviation strategy TBD beyond that |
+| Scene visibility | Dev-flagged; player-facing variant needs gameplay logic design (future) |
 
 ---
 
