@@ -77,8 +77,11 @@ public partial class NetworkRoot : Node
         }
         else
         {
-            // Bot nodes: restore from saved snapshot or generate a fresh wallet.
-            if (savedState?.NodeWallets?.TryGetValue(nodeId, out NodeWalletSnapshot? wallet) == true && wallet?.IsComplete() == true)
+            // Bot nodes: registry (authoritative) → saved snapshot (migration fallback) → fresh random wallet.
+            BotWalletRecord? botRecord = BotWalletRegistry.GetBot(nodeId);
+            if (botRecord?.HasFullWallet == true)
+                node = new(nodeId, botRecord.Address, botRecord.SigningPublicKeyBase64!, botRecord.SigningPrivateKeyBase64!, botRecord.Secp256k1PublicKeyBase64!);
+            else if (savedState?.NodeWallets?.TryGetValue(nodeId, out NodeWalletSnapshot? wallet) == true && wallet?.IsComplete() == true)
                 node = new(nodeId, wallet.Address, wallet.SigningPublicKeyBase64, wallet.SigningPrivateKeyBase64, wallet.Secp256k1PublicKeyBase64);
             else
                 node = new(nodeId);

@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  Phase 4 ✓  —  Next: Phase 5 (NodeAgent & Bot Wallets)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  Phase 4 ✓  Phase 5.1 ✓  Phase 5.2 ✓  Phase 5.4 ✓  —  Next: Phase 6 (BlockExplorer Transfer Refactor)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -26,11 +26,14 @@
 - `Scripts/BlockchainPort/Blockchain/WalletModels.cs` ✓ — `PlayerWalletState`, `CasinoWalletState`, `BotWalletRecord` records; namespace `GodotBlockchainPort.Blockchain`; `SigningPrivateKeyBase64` on `BotWalletRecord` per OQ-13
 - `Scripts/Services/WalletInitializationService.cs` ✓ — static class; `EnsureAll()` creates/loads player + casino wallets from `user://`; `MarkSeedPopupSeen()` for Phase 4 popup; DTO-based JSON serialization; `GD.Print` output on both code paths
 - `Scripts/Services/CalendarTimeService._Ready()` ✓ — `WalletInitializationService.EnsureAll()` wired between `EnsureWordlist()` and `EnsureGameEpochInitialized()`
-- `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` ✓ — `GetAddressBalanceDetails(address)` → `(confirmedBalance, pendingOutgoing)` (Phase 4); `CreateAndRegisterNode` for `"player"` always derives wallet from `WalletInitializationService.PlayerWallet` seed phrase — mining coinbase rewards go to the BTCWallet address (Phase 4 post-test fix); bot nodes unchanged
+- `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` ✓ — `GetAddressBalanceDetails(address)` → `(confirmedBalance, pendingOutgoing)` (Phase 4); `CreateAndRegisterNode` for `"player"` always derives wallet from `WalletInitializationService.PlayerWallet` seed phrase (Phase 4 post-test fix); bot branch now uses `BotWalletRegistry.GetBot(nodeId)` as primary source → snapshot fallback → fresh random wallet (Phase 5.2)
 - `Scripts/Services/SceneManager.cs` ✓ (Phase 4) — `BTCWallet` in enum + Paths
 - `Screens/MainMenu/MainMenu.tscn` + `.cs` ✓ (Phase 4) — `BTCWalletBtn` added and wired
 - `Screens/BTCWallet/BTCWallet.tscn` ✓ — three mode panels (Base, PassphraseLocked, PassphraseUnlocked) + SeedPopup overlay + NetworkRoot child
 - `Screens/BTCWallet/BTCWallet.cs` ✓ — full controller; 2s balance refresh; passphrase derive-on-unlock; clipboard copy; seed popup flow
+- `Scripts/BlockchainPort/Blockchain/WalletModels.cs` ✓ (Phase 5.2) — `BotWalletRecord` extended: added `SigningPublicKeyBase64?`, `Secp256k1PublicKeyBase64?`, `IsActive`, `ReactivationBlockHeight?`; `HasFullWallet` property checks all three keys non-null
+- `Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs` ✓ (Phase 5.2 + 5.4) — static registry; `EnsureAll()` generates/loads 4 miner bots (full keys via `CryptoUtils.GenerateWallet()`) + 10 non-miner bots (address only); `GetBot(nodeId)` lookup; `user://bot_wallet_registry.json` with CamelCase JSON; separate `Miners`/`NonMiners` arrays in JSON
+- `Scripts/Services/WalletInitializationService.cs` ✓ (Phase 5.2) — `EnsureAll()` now calls `BotWalletRegistry.EnsureAll()` after player + casino wallets
 - `Documentation/ProjectDesignManual.md` ✓ — Chapters 1–15 covering Phases 0.1–0.5, 1.1–1.3, 2, 3, and 4
 
 ---
@@ -344,41 +347,46 @@ Block mining coinbase rewards are automatically sent to `PlayerWalletState.BaseA
 
 ---
 
-## Phase 5 — NodeAgent & Bot Wallet Update  TODO
+## Phase 5 — NodeAgent & Bot Wallet Update
 
-### Task 5.1 — Update `CryptoUtils.GenerateWallet()`
+### Task 5.1 — Update `CryptoUtils.GenerateWallet()`  ✓ DONE (completed during Phase 0.5)
 
-All `NodeAgent` mining bots call `GenerateWallet()`. After update: address becomes `gm1q...` automatically. No changes to `NodeAgent.cs` needed.
+`GenerateWallet()` already calls `DeriveAddressFromPublicKey()` → `Bech32.Encode(Bech32.GameHrp, 0x00, pubKeyHash)` → `gm1q...`. The 4-tuple return `(address, signingPublicKeyBase64, signingPrivateKeyBase64, secp256k1PublicKeyBase64)` was added in Phase 0.5. All `NodeAgent` mining bots created fresh (no saved snapshot) automatically receive `gm1q...` addresses via the `NodeAgent(string nodeId)` constructor. No code changes needed.
 
-### Task 5.2 — Bot wallet creation timeline (OQ-8 resolved)
+### Task 5.2 — Bot wallet creation timeline (OQ-8 resolved)  ✓ DONE
 
 **Initial population** (at game start, `WalletInitializationService.EnsureAll()`):
-- 4 miner bots (`NodeAgent`, already have keys for signing)
-- 10 non-miner bots (`BotWalletRecord`, address only for now)
+- 4 miner bots (`NodeAgent` IDs `bot_1`–`bot_4`, full keys stored in registry)
+- 10 non-miner bots (IDs `non_miner_1`–`non_miner_10`, address only for now)
+
+`BotWalletRegistry.EnsureAll()` is called after player + casino wallets, before `NetworkRoot.EnsureInitialized()`. This guarantees bot addresses are stable before `NodeAgent` instances are created.
+
+**Migration note**: upgrading an existing save requires clearing `user://blockchain/` (delete the folder). This is the same procedure as for the Phase 4 post-test fix.
 
 **Growth cadence**: historically-proportional expansion tracked in a future `BotScheduler` service.  
 Reference data to research: BTC wallet count growth 2009–2012, mining node count, transaction volume.
-
-**Non-miner bots will eventually send** — `BotWalletRecord` needs a signing key added when sending is enabled. Design now: add optional `string SigningPrivateKeyBase64` field (null until bot needs to send).
 
 ### Task 5.3 — Historically-inspired "lost BTC" simulation  (Design — not yet implemented)
 
 Some non-miner bots are marked permanently inactive — they hold BTC forever (simulating early wallets lost to hardware failure, discarded drives, forgotten keys). Inspired by Chainalysis estimates of ~20% of total BTC supply lost.
 
 Design notes:
-- Inactive bots: `IsActive = false`, `WalletAddress` still receives mining rewards proportionally (simulated)
+- Inactive bots: `IsActive = false`, address still receives mining rewards proportionally (simulated)
 - Some "sleeping whales": `ReactivationBlockHeight` set to a future block number — they "come back" when that block is mined, simulating someone who found their old wallet/keys
-- The number of lost/inactive bots should track historical % of supply in dormant wallets
+- Both fields are already present in `BotWalletRecord` and persisted in `bot_wallet_registry.json`
 
-### Task 5.4 — Bot wallet registry  TODO
+### Task 5.4 — Bot wallet registry  ✓ DONE
 
 **File**: `Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs`  
 **Persistence**: `user://bot_wallet_registry.json`  
 ```json
 {
-  "Bots": [
-    { "NodeId": "bot_001", "Address": "gm1q...", "IsActive": true, "ReactivationBlockHeight": null },
-    { "NodeId": "bot_002", "Address": "gm1q...", "IsActive": false, "ReactivationBlockHeight": 4381 }
+  "miners": [
+    { "nodeId": "bot_1", "address": "gm1q...", "signingPublicKeyBase64": "...", "signingPrivateKeyBase64": "...", "secp256k1PublicKeyBase64": "...", "isActive": true }
+  ],
+  "nonMiners": [
+    { "nodeId": "non_miner_1", "address": "gm1q...", "isActive": true },
+    { "nodeId": "non_miner_2", "address": "gm1q...", "isActive": false, "reactivationBlockHeight": 4381 }
   ]
 }
 ```

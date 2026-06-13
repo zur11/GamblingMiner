@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using GodotBlockchainPort.Blockchain;
+using GodotBlockchainPort.Simulation;
 #nullable enable
 
 public static class WalletInitializationService
@@ -24,6 +25,7 @@ public static class WalletInitializationService
 		List<WordlistBootstrapper.WordEntry> wordlist = WordlistBootstrapper.EnsureWordlist();
 		PlayerWallet = EnsurePlayerWallet(wordlist);
 		CasinoWallet = EnsureCasinoWallet(wordlist);
+		BotWalletRegistry.EnsureAll();
 	}
 
 	public static void MarkSeedPopupSeen()
