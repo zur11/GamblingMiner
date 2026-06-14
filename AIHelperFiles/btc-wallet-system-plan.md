@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  Phase 4 ✓  Phase 5.1 ✓  Phase 5.2 ✓  Phase 5.4 ✓  Phase 6 ✓  —  Next: Phase 7 (Casino Wallet Dev Scene)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  Phase 4 ✓  Phase 5.1 ✓  Phase 5.2 ✓  Phase 5.4 ✓  Phase 6 ✓  Phase 7 ✓  —  Next: Phase 8 (In-Game Notepad)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -42,7 +42,11 @@
 - `Screens/BlockExplorer/BlockExplorer.cs` ✓ (Phase 6) — transfer logic removed (`_fromNodeOption`, `_toNodeOption`, `_amountInput`, `_createTxButton`, `OnCreateTransactionPressed`, `RefreshTransferState`, `TryGetTransferContext`); lookup methods now use `_minerNodeOption`
 - `Screens/BlockExplorer/BlockExplorer.tscn` ✓ (Phase 6) — `TxTitle` and `TxControls` nodes removed
 - `Screens/BotsBtcWallets/BotsBtcWallets.tscn` ✓ — structural skeleton (HSplitContainer: list left, detail ScrollContainer right); all detail content built programmatically
-- `Screens/BotsBtcWallets/BotsBtcWallets.cs` ✓ — full controller; miner vs non-miner sections; mining stats (block scan); wallet status + dev controls (toggle IsActive, set reactivation block); all transactions list; Send BTC (miner-only, any gm1q... recipient); 3s balance refresh
+- `Screens/BotsBtcWallets/BotsBtcWallets.cs` ✓ — full controller; miner vs non-miner sections; mining stats (block scan); wallet status + dev controls (toggle IsActive, set reactivation block); all transactions list; Send BTC (all bots with HasFullWallet + IsActive; non-miners shown when balance > 0); 3s balance refresh
+- `Scripts/Services/SceneManager.cs` ✓ (Phase 7) — `CasinoFinances` added to enum + Paths
+- `Screens/MainMenu/MainMenu.tscn` + `.cs` ✓ (Phase 7) — `CasinoFinancesBtn` added and wired
+- `Screens/CasinoFinances/CasinoFinances.tscn` ✓ (Phase 7) — three-mode panels (Base, PassphraseLocked, PassphraseUnlocked) + SeedWordsPopup overlay + NetworkRoot child
+- `Screens/CasinoFinances/CasinoFinances.cs` ✓ (Phase 7) — full controller; base address + balance; seed words popup always accessible; passphrase wallet derive-on-unlock; 2s balance refresh
 
 ---
 
@@ -570,17 +574,35 @@ Used by `BotDetailPanel` for the All Transactions list and for computing "Total 
 
 ---
 
-## Phase 7 — Casino Wallet (Dev Scene)  TODO
+## Phase 7 — Casino Wallet Dev Scene  ✓ DONE
 
-Casino wallet is created at game startup (Phase 3). It is able to participate in the blockchain immediately but it will not be required until BTC/SC trading (october 3rd 2009) in planned basic mode.
+Casino wallet is created at game startup (Phase 3). It is able to participate in the blockchain immediately but it will not be required until BTC/SC trading (October 3rd 2009) in planned basic mode.
 
-### CasinoFinances scene integration (planned)
+### CasinoFinances scene  ✓ DONE
 
-- Label: casino base address (`gm1q...`)
-- [Show/Copy Seed Words] button → popup with 3 words + copy button (no "first time only" restriction — dev access)
-- [Open Passphrase Wallet] → enter passphrase word → show derived address → copy
-- Note: "Save this passphrase in the in-game notepad" reminder (notepad feature — future, Phase 8+)
-- Casino's `gm1q...` address is pre-registered in the blockchain address registry for SC↔BTC trades (future P7)
+**Path**: `Screens/CasinoFinances/CasinoFinances.tscn` + `CasinoFinances.cs`  
+**Navigation**: MainMenu → "Casino Finances [DEV]" → MainMenu  
+**SceneManager**: `CasinoFinances` added to enum + Paths
+
+**Features implemented**:
+- Casino base address display + Copy button
+- Confirmed balance label (2s refresh)
+- Pending outgoing label (hidden when zero)
+- [Show Seed Words] button → full-screen popup with 3 words at 44pt + Copy to clipboard + Close (no "first time only" restriction — always accessible)
+- [Open Passphrase Wallet →] → PassphraseLockedPanel with LineEdit (secret=true) + Unlock (Enter key also triggers) → PassphraseUnlockedPanel with derived `gm1q...` address + Copy + balance
+- Back navigation clears passphrase input and derived address from memory
+- NetworkRoot child for balance queries
+- StatusBar in TopBar
+
+**Three-mode panel architecture** (same pattern as BTCWallet):
+
+| Mode | Panel | Trigger |
+|---|---|---|
+| `Base` | `BaseWalletPanel` | Default / back navigation |
+| `PassphraseLocked` | `PassphraseLockedPanel` | "Open Passphrase Wallet →" |
+| `PassphraseUnlocked` | `PassphraseUnlockedPanel` | Unlock button / Enter key |
+
+**Key difference from BTCWallet**: seed popup has no `HasSeenSeedPopup` gate — words can be shown any time. Popup has a "Close" button instead of "I have saved my words".
 
 ---
 

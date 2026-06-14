@@ -14,6 +14,7 @@ public partial class SceneManager : Node
 		MartingaleCalculator,
 		BTCWallet,
 		BotsBtcWallets,
+		CasinoFinances,
 	}
 
 	private static readonly Dictionary<SceneId, string> Paths = new()
@@ -27,6 +28,7 @@ public partial class SceneManager : Node
 		[SceneId.MartingaleCalculator] = "res://Screens/MartingaleCalculatorStandalone/MartingaleCalculatorStandalone.tscn",
 		[SceneId.BTCWallet]            = "res://Screens/BTCWallet/BTCWallet.tscn",
 		[SceneId.BotsBtcWallets]       = "res://Screens/BotsBtcWallets/BotsBtcWallets.tscn",
+		[SceneId.CasinoFinances]       = "res://Screens/CasinoFinances/CasinoFinances.tscn",
 	};
 
 	// Overlay stack: scenes added on top without replacing the current scene.
