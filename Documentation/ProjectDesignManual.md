@@ -1521,32 +1521,114 @@ The `[DEV]` label marks this as a developer tool pending player-facing integrati
 
 ---
 
-## Chapter 19 — Phase 8: Player and Casino BTC Wallet Send (Pending)
+## Chapter 19 — Phase 8: Player and Casino BTC Wallet Send
 
-**Status**: Not yet implemented
+**Files changed**: `NetworkRoot.cs`, `BTCWallet.tscn`, `BTCWallet.cs`, `CasinoFinances.tscn`, `CasinoFinances.cs`  
+**Status**: Implemented (Phase 8)
 
 ### The Short Version (for everyone)
 
-Both the `BTCWallet` (player) and `CasinoFinances` (casino) scenes display correct balances, but their "Send BTC" buttons are disabled. Phase 8 enables full outbound BTC transfers from these wallets — including passphrase-derived addresses.
+Both the `BTCWallet` (player) and `CasinoFinances` (casino) scenes now support full outbound BTC transfers. The player can send from their base wallet or any passphrase-derived wallet; the casino can do the same. Both scenes share the same four-mode architecture and the same `"── BTC Address ──"` manual entry pattern from Phase 6.1.
 
 ---
 
-### 19.1 — What Is Pending
+### 19.1 — Four-Mode Architecture
 
-**`BTCWallet` — player base wallet**: The player's `NodeAgent` is already registered in `SharedNetwork`. Enabling send requires wiring the "Send BTC" button to `_networkRoot.CreateAndBroadcastTransactionToAddress(playerNodeId, recipientAddress, amount)`. The recipient dropdown should follow the same 17-entry pattern from Phase 6.1 (all participants + `"── BTC Address ──"`).
+Each scene gains a fourth `WalletMode.Send` that renders a programmatic send panel (`_sendPanel`, a `VBoxContainer`) appended to `RootMargin/RootVBox` in `_Ready()`. Only one panel is visible at a time:
 
-**`BTCWallet` — player passphrase wallet**: A passphrase-derived address has no registered `NodeAgent`. On Unlock, the full keypair can be derived (`CryptoUtils.DeriveSigningKeypair` + `DeriveSecp256k1CompressedPublicKeyBase64`) and a temporary `NodeAgent` registered for the session. The send call then proceeds identically to the base wallet.
+| Mode | Panel visible |
+|---|---|
+| `Base` | `BaseWalletPanel` |
+| `PassphraseLocked` | `PassphraseLockedPanel` |
+| `PassphraseUnlocked` | `PassphraseUnlockedPanel` |
+| `Send` | `_sendPanel` (programmatic) |
 
-**`CasinoFinances`**: Same mechanics as BTCWallet applied to `CasinoWallet` credentials.
+`EnterSendMode(senderNodeId, senderAddress, returnTo)` is the shared entry point. It stores who is sending (`_sendFromNodeId`), which mode to return to on Cancel (`_modeBeforeSend`), populates the recipient dropdown, clears the amount and feedback fields, and calls `SetMode(WalletMode.Send)`.
 
 ---
 
-### 19.2 — Why It Is Deferred
+### 19.2 — Recipient Dropdown
 
-Player and casino sending BTC has no gameplay purpose until BTC/SC trading unlocks (planned for October 3, 2009 in-game, per the core roadmap P7). Implementing the UI before that milestone would add surface area with no testable game loop. The full send flow was validated at the bot level (Phase 6 + 6.1) and will be lifted into these scenes when the trading mechanic lands.
+`PopulateToDropdown(excludeAddress)` builds the same dropdown pattern used in Phase 6.1:
+
+- Player base wallet (excluded when player is the sender)
+- Casino base wallet (excluded when casino is the sender)
+- All 14 bots from `BotWalletRegistry.AllBots`
+- `"── BTC Address ──"` sentinel (last entry, `string.Empty` in `_toAddresses`)
+
+When the sentinel is selected, `_manualAddressInput` (`LineEdit`, hidden by default) is revealed via the `_toDropdown.ItemSelected` lambda. `OnSendConfirmed()` reads the manual input and validates it with `Bech32.IsValidGmAddress()` before proceeding.
 
 ---
 
-*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, 3, 4, 5, 6, 6.1, and 7 of the BTC Wallet Address System.*  
+### 19.3 — Casino NodeAgent Registration
+
+Before Phase 8, the casino had no registered `NodeAgent`, so `CreateAndBroadcastTransactionToAddress("casino", ...)` would always return `null`.
+
+**Fix in `NetworkRoot.EnsureInitialized()`**: after the non-miner bot registration loop and before `ApplyStateFromSnapshot`, a `"casino"` `NodeAgent` is created from `WalletInitializationService.CasinoWallet.SeedWords`:
+
+```csharp
+string casinoSeed = string.Join(" ", casinoWalletState.SeedWords);
+(string signPub, string signPriv) = CryptoUtils.DeriveSigningKeypair(casinoSeed);
+string secp256k1Pub = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(casinoSeed);
+var casinoNode = new NodeAgent("casino", casinoWalletState.BaseAddress,
+                               signPub, signPriv, secp256k1Pub);
+SharedNetwork.RegisterNode(casinoNode);
+SharedNodesById["casino"] = casinoNode;
+```
+
+Registration before `ApplyStateFromSnapshot` ensures the casino node receives the same synced chain state as the player and miner nodes, giving it accurate UTXO awareness from the start of every session.
+
+---
+
+### 19.4 — Passphrase Wallet NodeAgent Registration
+
+Passphrase-derived addresses are ephemeral — keys are derived on demand and no `NodeAgent` is persisted for them. Without a registered `NodeAgent`, sending from a passphrase wallet is impossible.
+
+**`NetworkRoot.RegisterPassphraseWallet(string seedPhrase, string walletAddress) → string nodeId`**:
+
+```csharp
+public string RegisterPassphraseWallet(string seedPhrase, string walletAddress)
+{
+    EnsureInitialized();
+    string nodeId = $"pass_{walletAddress[4..12]}";
+    if (!SharedNodesById.ContainsKey(nodeId))
+    {
+        (string signPub, string signPriv) = CryptoUtils.DeriveSigningKeypair(seedPhrase);
+        string secp256k1Pub = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seedPhrase);
+        var node = new NodeAgent(nodeId, walletAddress, signPub, signPriv, secp256k1Pub);
+        if (SharedNodesById.TryGetValue("player", out NodeAgent? player))
+            node.Blockchain.TryReplaceChain(player.Blockchain.Chain,
+                                             player.Blockchain.PendingTransactions);
+        SharedNetwork.RegisterNode(node);
+        SharedNodesById[nodeId] = node;
+    }
+    return nodeId;
+}
+```
+
+- `nodeId` is `"pass_"` + 8 characters from the address — deterministic per address, no collisions with other node IDs.
+- The player chain is synced via `TryReplaceChain` so the passphrase wallet has correct UTXO awareness.
+- `!SharedNodesById.ContainsKey(nodeId)` makes the method idempotent — re-entering the same passphrase in the same session does not register a second node.
+
+**Integration**: `BTCWallet.OnUnlockPassphrasePressed()` and `CasinoFinances.OnUnlockPressed()` both call `RegisterPassphraseWallet(seedPhrase, address)` after deriving the passphrase address, storing the returned nodeId in `_currentPassphraseNodeId`. The Send Passphrase button then calls `EnterSendMode(_currentPassphraseNodeId, _currentPassphraseAddress, WalletMode.PassphraseUnlocked)`.
+
+---
+
+### 19.5 — Send Flow
+
+`OnSendConfirmed()` is identical in both scenes:
+
+1. Guard: `_sendFromNodeId` must be non-empty.
+2. Resolve recipient address: if last dropdown entry selected, read `_manualAddressInput.Text.Trim()` and validate with `Bech32.IsValidGmAddress()`. Otherwise, `_toAddresses[selected]`.
+3. Parse `_amountInput.Text` with `CultureInfo.InvariantCulture` — must be a positive decimal.
+4. Call `_networkRoot.CreateAndBroadcastTransactionToAddress(_sendFromNodeId, recipientAddress, amount)`.
+5. On success: show `"Sent! [txId8chars...]"`; clear amount and manual address inputs.
+6. On failure (`null` returned): show `"Rejected — insufficient balance or invalid route."`.
+
+Cancel (`OnSendCancelled`) calls `SetMode(_modeBeforeSend)` — returning to whichever mode was active before entering Send.
+
+---
+
+*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, 3, 4, 5, 6, 6.1, 7, and 8 of the BTC Wallet Address System.*  
 *See `AIHelperFiles/btc-wallet-system-plan.md` for the full implementation roadmap.*  
 *Last updated: 2026-06-13*
