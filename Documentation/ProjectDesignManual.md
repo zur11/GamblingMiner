@@ -1344,11 +1344,18 @@ When no bot is selected, a `"Select a bot from the list."` placeholder label is 
 ### 17.6 — Send BTC
 
 All bots that have a full wallet can potentially send. The send form visibility is gated by the conditions described in 17.5. The form contains:
-- A recipient `OptionButton` populated by `PopulateToDropdown()`: all 14 bots + Player + Casino — 16 entries total. A parallel `List<string> _toAddresses` stores the corresponding `gm1q...` addresses.
+- A recipient `OptionButton` populated by `PopulateToDropdown()`: all 14 bots + Player + Casino + `"── BTC Address ──"` — 17 entries total. A parallel `List<string> _toAddresses` stores the corresponding `gm1q...` addresses, with `string.Empty` as a sentinel value for the last entry.
+- A `_manualAddressInput` `LineEdit` (hidden by default, placeholder `"Paste gm1q... address"`) inserted directly below the dropdown. The `_toDropdown.ItemSelected` lambda reveals it when the `"── BTC Address ──"` entry is selected: `idx => _manualAddressInput.Visible = (idx == _toAddresses.Count - 1)`.
 - An amount `LineEdit` (decimal, invariant culture)
 - A `Send` button wired to `OnSendPressed()`
 
-`OnSendPressed()` validates the amount, retrieves `recipientAddress = _toAddresses[_toDropdown.Selected]`, guards against self-send, then calls `_networkRoot.CreateAndBroadcastTransactionToAddress(_selectedBot.NodeId, recipientAddress, amount)`. Success shows a truncated tx ID; failure shows a feedback string.
+`OnSendPressed()` validates the amount, then resolves the recipient address:
+- If the last dropdown entry (`"── BTC Address ──"`) is selected, it reads `_manualAddressInput.Text.Trim()` and validates with `Bech32.IsValidGmAddress()`. An invalid or empty value shows `"Invalid address — must be a valid gm1q... address."` and returns.
+- Otherwise, `recipientAddress = _toAddresses[_toDropdown.Selected]` (a pre-populated `gm1q...` address).
+
+After address resolution it guards against self-send, then calls `_networkRoot.CreateAndBroadcastTransactionToAddress(_selectedBot.NodeId, recipientAddress, amount)`. Success shows a truncated tx ID; failure shows a feedback string. On success, `_manualAddressInput.Text` is also cleared (visibility is retained so the user can immediately paste another address).
+
+The `"── BTC Address ──"` option is the primary way to target passphrase-derived addresses (obtained from BTCWallet or CasinoFinances via the copy button) and any other `gm1q...` address that has no registered `NodeAgent`.
 
 **Non-miner send requirement**: All bots have full wallets (signing keys) generated at registry creation time. Non-miner bots are also registered as NodeAgents in `NetworkRoot.EnsureInitialized()` (conditional on `HasFullWallet`, so old registry files without non-miner keys skip registration gracefully). This makes them first-class senders — they add the transaction to their own pending pool and broadcast it via `SharedNetwork`. A miner must include it in the next block for it to confirm.
 
@@ -1414,6 +1421,132 @@ The `[DEV]` label marks this as a developer tool. A player-facing equivalent wou
 
 ---
 
-*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, 3, 4, 5, and 6 of the BTC Wallet Address System.*  
+---
+
+## Chapter 18 — Phase 7: CasinoFinances Dev Scene
+
+**Files added**: `Screens/CasinoFinances/CasinoFinances.tscn`, `Screens/CasinoFinances/CasinoFinances.cs`  
+**Files changed**: `SceneManager.cs`, `MainMenu.tscn`, `MainMenu.cs`  
+**Status**: Implemented (Phase 7)
+
+### The Short Version (for everyone)
+
+Phase 7 adds the **Casino Finances [DEV]** screen — a developer tool for inspecting the casino's own BTC wallet. The casino has held a `gm1q...` address since Phase 3 (WalletInitializationService). This scene makes its seed words, base wallet balance, and passphrase wallet accessible via a UI that mirrors the player-facing BTCWallet scene, with one key difference: seed words can be shown at any time without a first-launch gate.
+
+---
+
+### 18.1 — Scene Architecture
+
+The scene follows the same three-mode panel pattern as `BTCWallet`:
+
+| Mode | Panel | Trigger |
+|---|---|---|
+| `Base` | `BaseWalletPanel` | Default / back navigation |
+| `PassphraseLocked` | `PassphraseLockedPanel` | "Open Passphrase Wallet →" button |
+| `PassphraseUnlocked` | `PassphraseUnlockedPanel` | Unlock button / Enter key |
+
+`SetMode(WalletMode)` shows the active panel and hides the other two. On leaving `PassphraseUnlocked` mode, `_passphraseInput.Text` is cleared and `_currentPassphraseAddress` is nulled.
+
+---
+
+### 18.2 — Seed Words Popup
+
+`SeedWordsPopup` is a full-screen `Panel` node (last child of the root `Control`, renders on top) initially `visible = false`. It is opened by the **[Show Seed Words]** button — which is always present, with no `HasSeenSeedPopup` gate. This is the key difference from `BTCWallet`: the casino's seed words are never "seen and dismissed" — they are always accessible for dev inspection.
+
+The popup shows the three seed words at 44pt font, a **[Copy to Clipboard]** button (`DisplayServer.ClipboardSet(string.Join(" ", SeedWords))`), and a **[Close]** button that simply hides the popup.
+
+---
+
+### 18.3 — Balance Refresh
+
+`_refreshTimer` in `_Process()` triggers `RefreshBalances()` every 2 seconds:
+
+```csharp
+private const double RefreshInterval = 2.0;
+
+private void RefreshBalances()
+{
+    var (confirmed, pending) = _networkRoot.GetAddressBalanceDetails(_casinoWallet.BaseAddress);
+    _balanceLabel.Text = $"Balance: {confirmed:F8} BTC";
+    _pendingLabel.Visible = pending > 0m;
+    _pendingLabel.Text    = $"Pending outgoing: {pending:F8} BTC";
+
+    if (_currentPassphraseAddress is not null)
+    {
+        var (pc, pp) = _networkRoot.GetAddressBalanceDetails(_currentPassphraseAddress);
+        _passBalanceLabel.Text  = $"Balance: {pc:F8} BTC";
+        _passPendingLabel.Visible = pp > 0m;
+        _passPendingLabel.Text    = $"Pending outgoing: {pp:F8} BTC";
+    }
+}
+```
+
+Passphrase wallet balance is only queried when `_currentPassphraseAddress` is non-null (i.e., when the wallet is unlocked).
+
+---
+
+### 18.4 — Passphrase Wallet Mechanics
+
+Identical to `BTCWallet` (Chapter 15.5). Clicking **Unlock** (or pressing Enter):
+
+1. `passphrase = _passphraseInput.Text.Trim()`
+2. `seedPhrase = string.Join(" ", SeedWords) + " " + passphrase`
+3. `_currentPassphraseAddress = CryptoUtils.DeriveGmAddress(seedPhrase)`
+4. Clears `_passphraseInput.Text` immediately
+5. Shows the unlocked panel with the derived address and its balance
+
+**Send BTC** buttons in both base and passphrase panels are `disabled = true` placeholders. Full send capability for the casino wallet is deferred to Phase 8.
+
+---
+
+### 18.5 — Navigation
+
+**`SceneManager.cs`**: `CasinoFinances` added to `SceneId` enum and `Paths`:
+
+```csharp
+[SceneId.CasinoFinances] = "res://Screens/CasinoFinances/CasinoFinances.tscn"
+```
+
+**`MainMenu.tscn`**: `CasinoFinancesBtn` button (`text="Casino Finances [DEV]"`, `font_size=34`, `min_size=(420,0)`) added after `BotsBtcWalletsBtn`.
+
+**`MainMenu.cs`**:
+```csharp
+GetNode<Button>("%CasinoFinancesBtn").Pressed +=
+    () => _sceneManager?.Go(SceneManager.SceneId.CasinoFinances);
+```
+
+The `[DEV]` label marks this as a developer tool pending player-facing integration with the BTC/SC trading mechanic.
+
+---
+
+---
+
+## Chapter 19 — Phase 8: Player and Casino BTC Wallet Send (Pending)
+
+**Status**: Not yet implemented
+
+### The Short Version (for everyone)
+
+Both the `BTCWallet` (player) and `CasinoFinances` (casino) scenes display correct balances, but their "Send BTC" buttons are disabled. Phase 8 enables full outbound BTC transfers from these wallets — including passphrase-derived addresses.
+
+---
+
+### 19.1 — What Is Pending
+
+**`BTCWallet` — player base wallet**: The player's `NodeAgent` is already registered in `SharedNetwork`. Enabling send requires wiring the "Send BTC" button to `_networkRoot.CreateAndBroadcastTransactionToAddress(playerNodeId, recipientAddress, amount)`. The recipient dropdown should follow the same 17-entry pattern from Phase 6.1 (all participants + `"── BTC Address ──"`).
+
+**`BTCWallet` — player passphrase wallet**: A passphrase-derived address has no registered `NodeAgent`. On Unlock, the full keypair can be derived (`CryptoUtils.DeriveSigningKeypair` + `DeriveSecp256k1CompressedPublicKeyBase64`) and a temporary `NodeAgent` registered for the session. The send call then proceeds identically to the base wallet.
+
+**`CasinoFinances`**: Same mechanics as BTCWallet applied to `CasinoWallet` credentials.
+
+---
+
+### 19.2 — Why It Is Deferred
+
+Player and casino sending BTC has no gameplay purpose until BTC/SC trading unlocks (planned for October 3, 2009 in-game, per the core roadmap P7). Implementing the UI before that milestone would add surface area with no testable game loop. The full send flow was validated at the bot level (Phase 6 + 6.1) and will be lifted into these scenes when the trading mechanic lands.
+
+---
+
+*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, 3, 4, 5, 6, 6.1, and 7 of the BTC Wallet Address System.*  
 *See `AIHelperFiles/btc-wallet-system-plan.md` for the full implementation roadmap.*  
 *Last updated: 2026-06-13*

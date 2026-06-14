@@ -61,6 +61,7 @@ public partial class BotsBtcWallets : Control
 	// Send section (miners only)
 	private VBoxContainer _sendSection = null!;
 	private OptionButton _toDropdown = null!;
+	private LineEdit _manualAddressInput = null!;
 	private LineEdit _amountInput = null!;
 	private Label _sendFeedbackLabel = null!;
 	private readonly List<string> _toAddresses = new();
@@ -166,6 +167,9 @@ public partial class BotsBtcWallets : Control
 		_detailVBox.Visible = true;
 		_amountInput.Text = string.Empty;
 		_sendFeedbackLabel.Text = string.Empty;
+		_manualAddressInput.Text = string.Empty;
+		_manualAddressInput.Visible = false;
+		if (_toDropdown.ItemCount > 0) _toDropdown.Select(0);
 		RefreshDetailPanel(bot);
 	}
 
@@ -273,6 +277,16 @@ public partial class BotsBtcWallets : Control
 		PopulateToDropdown();
 		toRow.AddChild(_toDropdown);
 		_sendSection.AddChild(toRow);
+
+		_manualAddressInput = new LineEdit
+		{
+			PlaceholderText = "Paste gm1q... address",
+			CustomMinimumSize = new Vector2(380, 0),
+			Visible = false
+		};
+		_sendSection.AddChild(_manualAddressInput);
+		_toDropdown.ItemSelected += idx =>
+			_manualAddressInput.Visible = (idx == _toAddresses.Count - 1);
 
 		var amountRow = new HBoxContainer();
 		amountRow.AddChild(new Label { Text = "Amount:" });
@@ -444,7 +458,21 @@ public partial class BotsBtcWallets : Control
 			return;
 		}
 
-		string recipientAddress = _toAddresses[selected];
+		string recipientAddress;
+		if (selected == _toAddresses.Count - 1) // "── BTC Address ──" option
+		{
+			recipientAddress = _manualAddressInput.Text.Trim();
+			if (!Bech32.IsValidGmAddress(recipientAddress))
+			{
+				_sendFeedbackLabel.Text = "Invalid address — must be a valid gm1q... address.";
+				return;
+			}
+		}
+		else
+		{
+			recipientAddress = _toAddresses[selected];
+		}
+
 		if (recipientAddress == _selectedBot.Address)
 		{
 			_sendFeedbackLabel.Text = "Cannot send to self.";
@@ -467,6 +495,7 @@ public partial class BotsBtcWallets : Control
 			string shortId = tx.TransactionId.Length > 8 ? tx.TransactionId[..8] + "..." : tx.TransactionId;
 			_sendFeedbackLabel.Text = $"Sent! [{shortId}]";
 			_amountInput.Text = string.Empty;
+			_manualAddressInput.Text = string.Empty;
 			RefreshDetailPanel(_selectedBot);
 		}
 	}
@@ -497,6 +526,9 @@ public partial class BotsBtcWallets : Control
 			_toDropdown.AddItem($"Casino  {TruncateAddress(casinoWallet.BaseAddress)}");
 			_toAddresses.Add(casinoWallet.BaseAddress);
 		}
+
+		_toDropdown.AddItem("── BTC Address ──");
+		_toAddresses.Add(string.Empty); // address is read from _manualAddressInput at send time
 	}
 
 	// ── Utilities ─────────────────────────────────────────────────────────────

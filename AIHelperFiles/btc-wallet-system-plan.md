@@ -1,6 +1,6 @@
 # BTC Wallet Address System — Implementation Plan
 
-**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  Phase 4 ✓  Phase 5.1 ✓  Phase 5.2 ✓  Phase 5.4 ✓  Phase 6 ✓  Phase 7 ✓  —  Next: Phase 8 (In-Game Notepad)
+**Status**: Phase 0.1 ✓  Phase 0.2 ✓  Phase 0.3 ✓  Phase 0.4 ✓  Phase 0.5 ✓  Phase 1.1 ✓  Phase 1.2 ✓  Phase 1.3 ✓  Phase 2 ✓  Phase 3 ✓  Phase 4 ✓  Phase 5.1 ✓  Phase 5.2 ✓  Phase 5.4 ✓  Phase 6 ✓  Phase 6.1 ✓  Phase 7 ✓  —  Next: Phase 8 (Player/Casino BTC Wallet Send)
 **HRP**: `gm` → addresses like `gm1q...`  
 **Curve**: secp256k1 for address derivation (all participants); P-256 for transaction signing (existing pipeline)  
 **Passphrase model**: `SHA256("w1 w2 w3 [w4]")` → 32-byte private key → secp256k1 → gm1q... address  
@@ -43,6 +43,7 @@
 - `Screens/BlockExplorer/BlockExplorer.tscn` ✓ (Phase 6) — `TxTitle` and `TxControls` nodes removed
 - `Screens/BotsBtcWallets/BotsBtcWallets.tscn` ✓ — structural skeleton (HSplitContainer: list left, detail ScrollContainer right); all detail content built programmatically
 - `Screens/BotsBtcWallets/BotsBtcWallets.cs` ✓ — full controller; miner vs non-miner sections; mining stats (block scan); wallet status + dev controls (toggle IsActive, set reactivation block); all transactions list; Send BTC (all bots with HasFullWallet + IsActive; non-miners shown when balance > 0); 3s balance refresh
+- `Screens/BotsBtcWallets/BotsBtcWallets.cs` ✓ (Phase 6.1) — recipient dropdown enhanced: `"── BTC Address ──"` added as last entry; `_manualAddressInput` LineEdit shown when selected; `Bech32.IsValidGmAddress()` validates before send; sentinel `string.Empty` in `_toAddresses` identifies the option at send time; `SelectBot()` resets manual input on bot switch; post-send clears manual input
 - `Scripts/Services/SceneManager.cs` ✓ (Phase 7) — `CasinoFinances` added to enum + Paths
 - `Screens/MainMenu/MainMenu.tscn` + `.cs` ✓ (Phase 7) — `CasinoFinancesBtn` added and wired
 - `Screens/CasinoFinances/CasinoFinances.tscn` ✓ (Phase 7) — three-mode panels (Base, PassphraseLocked, PassphraseUnlocked) + SeedWordsPopup overlay + NetworkRoot child
@@ -574,6 +575,24 @@ Used by `BotDetailPanel` for the All Transactions list and for computing "Total 
 
 ---
 
+### Task 6.3 — "BTC Address" Manual Entry in Recipient Dropdown  ✓ DONE
+
+**File**: `Screens/BotsBtcWallets/BotsBtcWallets.cs`
+
+The recipient `OptionButton` in the Send BTC form now includes a `"── BTC Address ──"` entry as its last item, alongside the pre-listed bots, player, and casino. This allows sending to any valid `gm1q...` address — particularly passphrase-derived addresses from BTCWallet or CasinoFinances that are never registered as bot nodes.
+
+**Implementation**:
+- `_manualAddressInput` (`LineEdit`, `Visible = false`, placeholder `"Paste gm1q... address"`) is added to the send section immediately after the dropdown row
+- `_toAddresses` parallel list stores `string.Empty` as a sentinel for the "BTC Address" option
+- `_toDropdown.ItemSelected` lambda: `idx => _manualAddressInput.Visible = (idx == _toAddresses.Count - 1)`
+- `OnSendPressed()` detects the sentinel, reads `_manualAddressInput.Text.Trim()`, validates with `Bech32.IsValidGmAddress()` — invalid input shows `"Invalid address — must be a valid gm1q... address."` and returns
+- `SelectBot()` clears and hides `_manualAddressInput` + resets the dropdown on every bot switch
+- After a successful send, `_manualAddressInput.Text` is cleared (visibility retained so the user can immediately paste another address)
+
+**Tested**: verified end-to-end — pasting a passphrase-derived `gm1q...` address from CasinoFinances and sending from a miner bot creates a valid pending transaction that confirms on the next mined block.
+
+---
+
 ## Phase 7 — Casino Wallet Dev Scene  ✓ DONE
 
 Casino wallet is created at game startup (Phase 3). It is able to participate in the blockchain immediately but it will not be required until BTC/SC trading (October 3rd 2009) in planned basic mode.
@@ -606,7 +625,27 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 
 ---
 
-## Phase 8 — In-Game Notepad  (Future, not yet designed)
+## Phase 8 — Player and Casino BTC Wallet Send Capabilities  (Pending)
+
+Both `BTCWallet` (player) and `CasinoFinances` (casino) display confirmed balances and pending outgoing totals, but their "Send BTC" buttons are currently `disabled = true` placeholders. Full send capability requires wiring these scenes into the same send flow already implemented in `BotsBtcWallets`.
+
+### What is pending
+
+**BTCWallet** — player can send from the base wallet and any passphrase-derived wallet:
+- Base wallet: the player's `NodeAgent` is already registered in `SharedNetwork` — call `CreateAndBroadcastTransactionToAddress` directly.
+- Passphrase wallet: the derived `gm1q...` address has no registered `NodeAgent`. Approach: on Unlock, derive the full keypair (`DeriveSigningKeypair` + `DeriveSecp256k1CompressedPublicKeyBase64`), create a temporary `NodeAgent`, register it for the session, then send.
+
+**CasinoFinances** — same mechanics as BTCWallet using `CasinoWallet` credentials.
+
+**Recipient dropdown**: both scenes should include the same `"── BTC Address ──"` manual entry pattern implemented in Phase 6.1, plus the standard list of all participants.
+
+### Why it is deferred
+
+BTC/SC trading — the primary use case for player and casino sending BTC — is not yet available in Basic Mode. The send flow exists in `BotsBtcWallets` for dev/testing only; player-facing send will ship alongside the trading mechanic (P7 in PRIVATE_ROADMAP.md).
+
+---
+
+## Phase 9 — In-Game Notepad  (Future, not yet designed)
 
 **Trigger**: Player needs a place to record passphrase words and wallet addresses. Currently the only guidance is "save it offline."
 
@@ -633,7 +672,8 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 → 5.4 BotWalletRegistry
 → 6   BlockExplorer cleanup + DevTransferTool
 → 7   Casino wallet CasinoFinances scene hooks
-→ 8   Notepad (design TBD)
+→ 8   Player/Casino wallet send capabilities
+→ 9   Notepad (design TBD)
 ```
 
 ---
@@ -708,4 +748,4 @@ Casino wallet is created at game startup (Phase 3). It is able to participate in
 
 ---
 
-*Last updated: 2026-06-12*
+*Last updated: 2026-06-13*
