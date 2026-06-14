@@ -20,6 +20,7 @@ public partial class NetworkRoot : Node
     private static int _bestMinerStreak;
 
     private const string PlayerNodeId = "player";
+    private const string CasinoNodeId = "casino";
     private const decimal GenesisRewardBtc = 50m;
     private const int HalvingIntervalBlocks = 210000;
     private const string BlockchainDir = "user://blockchain";
@@ -54,6 +55,20 @@ public partial class NetworkRoot : Node
         {
             if (nonMiner.HasFullWallet)
                 SharedNetwork.RegisterNode(CreateAndRegisterNode(nonMiner.NodeId, savedState));
+        }
+
+        // Casino wallet node — keys derived deterministically from seed phrase each launch.
+        // Registered here so CasinoFinances can call CreateAndBroadcastTransactionToAddress("casino", ...).
+        CasinoWalletState? casinoWalletState = WalletInitializationService.CasinoWallet;
+        if (casinoWalletState != null)
+        {
+            string casinoSeed = string.Join(" ", casinoWalletState.SeedWords);
+            (string casinoSignPub, string casinoSignPriv) = CryptoUtils.DeriveSigningKeypair(casinoSeed);
+            string casinoSecp256k1 = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(casinoSeed);
+            var casinoNode = new NodeAgent(CasinoNodeId, casinoWalletState.BaseAddress,
+                                          casinoSignPub, casinoSignPriv, casinoSecp256k1);
+            SharedNetwork.RegisterNode(casinoNode);
+            SharedNodesById[CasinoNodeId] = casinoNode;
         }
 
         ApplyStateFromSnapshot(savedState);
@@ -379,6 +394,26 @@ public partial class NetworkRoot : Node
         SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
         PersistStateToDisk();
         return tx;
+    }
+
+    // Derives a NodeAgent for a passphrase wallet on demand and registers it in SharedNetwork
+    // for the session so it can sign and broadcast transactions. Syncs the player chain so UTXO
+    // checks see existing confirmed balance. Returns the nodeId for CreateAndBroadcastTransactionToAddress.
+    public string RegisterPassphraseWallet(string seedPhrase, string walletAddress)
+    {
+        EnsureInitialized();
+        string nodeId = $"pass_{walletAddress[4..12]}";
+        if (!SharedNodesById.ContainsKey(nodeId))
+        {
+            (string signPub, string signPriv) = CryptoUtils.DeriveSigningKeypair(seedPhrase);
+            string secp256k1Pub = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seedPhrase);
+            var node = new NodeAgent(nodeId, walletAddress, signPub, signPriv, secp256k1Pub);
+            if (SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+                node.Blockchain.TryReplaceChain(player.Blockchain.Chain, player.Blockchain.PendingTransactions);
+            SharedNetwork.RegisterNode(node);
+            SharedNodesById[nodeId] = node;
+        }
+        return nodeId;
     }
 
     // Returns confirmed balance and total pending-outgoing for any gm1q... address,

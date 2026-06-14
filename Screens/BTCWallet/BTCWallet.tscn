@@ -103,8 +103,6 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 28
 text = "Send BTC"
-disabled = true
-tooltip_text = "Send BTC (not yet available)"
 
 [node name="OpenPassphraseBtn" type="Button" parent="RootMargin/RootVBox/BaseWalletPanel/BaseActionRow"]
 unique_name_in_owner = true
@@ -211,8 +209,6 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 28
 text = "Send BTC"
-disabled = true
-tooltip_text = "Send BTC (not yet available)"
 
 [node name="BackToBaseWalletBtn" type="Button" parent="RootMargin/RootVBox/PassphraseUnlockedPanel/PassphraseActionRow"]
 unique_name_in_owner = true

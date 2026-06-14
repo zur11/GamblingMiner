@@ -95,6 +95,11 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Open Passphrase Wallet →"
 
+[node name="SendBtcBtn" type="Button" parent="RootMargin/RootVBox/BaseWalletPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Send BTC"
+
 [node name="PassphraseLockedPanel" type="VBoxContainer" parent="RootMargin/RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -175,6 +180,11 @@ text = "Pending outgoing:   —"
 [node name="PassWarning2" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
 layout_mode = 2
 text = "⚠ Save your passphrase offline. It cannot be recovered from this app."
+
+[node name="SendBtcPassphraseBtn" type="Button" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Send BTC"
 
 [node name="BackToBaseBtn2" type="Button" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
 unique_name_in_owner = true
