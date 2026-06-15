@@ -232,13 +232,14 @@ Done when at least the core betting and money logic has automated coverage and a
 - [x] Saved strategies work as development/player-owned strategies.
 - [x] User-facing DiceGame label uses `Main Balance`.
 - [ ] Clarify auto-recharge behavior in UI and docs.
-- [ ] Add bot/non-node wallet address model.
-- [ ] Add casino BTC addresses.
+- [x] Add player BTC wallet and addresses.
+- [x] Add bot/non-node wallet address model.
+- [x] Add casino BTC addresses.
+- [x] Add `CasinoFinances` development scene.
 - [ ] Add scheduled bot transactions.
 - [ ] Add public mempool with 48 transaction block cap.
 - [ ] Add simplified block template builder.
 - [ ] Add bot mining that can beat the player.
-- [ ] Add `CasinoFinances` development scene.
 - [x] Update README so future features are not presented as current.
 - [x] Update Player Guide so it describes the actual playable state.
 - [ ] Run longer Basic Mode manual/autobet tests after transaction circulation exists.
