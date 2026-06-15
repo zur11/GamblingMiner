@@ -671,20 +671,47 @@ Both `BTCWallet` (player) and `CasinoFinances` (casino) now support full outboun
 
 ---
 
-## Phase 9 — In-Game Notepad  (Future, not yet designed)
+## Phase 9 — In-Game Notepad  ✓ DONE
 
 **Trigger**: Player needs a place to record passphrase hints and wallet address labels. Currently the only guidance is "save it offline."
 
-**Design placeholder**:
-- Simple persistent text area per-address or global
-- Can save custom labels ("My passphrase wallet #1 = gm1q...", "passphrase = oak")
-- Stored in `user://notepad.json`
-- Accessible from BTCWallet and any address-related screen
+### Architecture
+
+**`Scripts/Services/NotepadService.cs`** (autoload, registered in `project.godot`):
+- Persists to `user://notepad_notes.json` as a flat `Dictionary<string, string>` (note name → content)
+- `GetAllNames() → IReadOnlyList<string>` — sorted alphabetically
+- `LoadNote(string name) → string`
+- `SaveNote(string name, string content)` — creates or overwrites; persists immediately
+- `DeleteNote(string name)` — removes entry; persists immediately
+
+**`UI/NotepadPopup/NotepadPopup.cs`** (namespace `UI.NotepadPopup`, extends `Panel`):
+- Full-screen overlay added programmatically as a child of the screen's root Control node
+- Call `Open()` to show; `✕ Close` button (and only that) hides it
+- Always-visible warning: "⚠ Never store your seed words in the In-Game Notepad or any digital document — not even this app. If your paper is lost, your BTC cannot be recovered."
+- Saved notes dropdown (`OptionButton`): placeholder first, then alphabetical list of saved names; selecting a note loads its content into the TextEdit and its name into the LineEdit
+- TextEdit (multiline, min height 260px, vertically expands) for note content
+- LineEdit for note name + Save button (disabled until both inputs have ≥1 character)
+- Delete button (disabled until a saved note is selected in the dropdown); deleting clears both inputs and refreshes dropdown
+
+### Screens with Notepad button
+
+A `NotepadBtn` (`Button`, `unique_name_in_owner = true`) has been added to the TopBar of each address-related screen:
+- `Screens/BTCWallet/BTCWallet.tscn` — in `RootMargin/RootVBox/TopBar`, between BackBtn and StatusBarPlaceholder
+- `Screens/BotsBtcWallets/BotsBtcWallets.tscn` — same position
+- `Screens/CasinoFinances/CasinoFinances.tscn` — same position
+- `Screens/BlockExplorer/BlockExplorer.tscn` — in `Margin/MainVBox/TopActions`, after BackToDiceButton
+
+Each screen's `.cs` file adds in `_Ready()`:
+```csharp
+_notepadPopup = new NotepadPopup();
+AddChild(_notepadPopup);
+GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
+```
 
 **Hard constraint — seed words must never go here**: The BTCWallet seed reveal popup already warns the player:
 > "⚠ Never store your seed words in the In-Game Notepad or any digital document — not even this app."
 
-The Notepad UI must carry this same warning prominently. It must never be presented as a place to store seed words — its legitimate use is passphrase memory hints and address labels only.
+The Notepad carries this same warning on every open. Its legitimate use is passphrase memory hints and address labels only.
 
 ---
 

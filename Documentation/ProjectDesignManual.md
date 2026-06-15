@@ -1661,6 +1661,114 @@ Cancel (`OnSendCancelled`) calls `SetMode(_modeBeforeSend)` — returning to whi
 
 ---
 
-*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, 3, 4, 5, 6, 6.1, 7, and 8 of the BTC Wallet Address System.*  
+*This document covers Phases 0.1, 0.2, 0.3, 0.4, 0.5, 1.1, 1.2, 1.3, 2, 3, 4, 5, 6, 6.1, 7, 8, and 9 of the BTC Wallet Address System.*  
 *See `AIHelperFiles/btc-wallet-system-plan.md` for the full implementation roadmap.*  
-*Last updated: 2026-06-13*
+*Last updated: 2026-06-14*
+
+---
+
+## Chapter 20 — Phase 9: In-Game Notepad
+
+**Files changed**: `NotepadService.cs` (new), `NotepadPopup.cs` (new), `project.godot`, `BTCWallet.tscn`, `BTCWallet.cs`, `BotsBtcWallets.tscn`, `BotsBtcWallets.cs`, `BlockExplorer.tscn`, `BlockExplorer.cs`, `CasinoFinances.tscn`, `CasinoFinances.cs`  
+**Status**: Implemented (Phase 9)
+
+### The Short Version (for everyone)
+
+The Notepad is a simple in-game text editor that lets the player save private notes — passphrase hints, wallet address labels, anything they want to remember. It is accessible as a popup from every BTC wallet-related screen. It is **not** a place to store seed words; that warning appears every time the notepad opens.
+
+---
+
+### 20.1 — NotepadService (Autoload)
+
+`Scripts/Services/NotepadService.cs` is registered in `project.godot` as a global autoload. It owns all persistence for the notepad feature.
+
+**Save file**: `user://notepad_notes.json` — a flat JSON object where each key is a note name and each value is the note content:
+
+```json
+{
+  "My passphrase hint": "oak → wallet 1",
+  "Casino address": "gm1q..."
+}
+```
+
+**API**:
+
+| Method | Description |
+|---|---|
+| `GetAllNames() → IReadOnlyList<string>` | All saved note names, sorted alphabetically |
+| `LoadNote(string name) → string` | Returns content for name, or empty string |
+| `SaveNote(string name, string content)` | Creates or overwrites; persists immediately |
+| `DeleteNote(string name)` | Removes entry; persists immediately |
+
+Dictionary keys are user-provided note names and are stored verbatim (not camelCased). Both load and persist use `System.Text.Json.JsonSerializer` via Godot `FileAccess`.
+
+---
+
+### 20.2 — NotepadPopup Component
+
+`UI/NotepadPopup/NotepadPopup.cs` (namespace `UI.NotepadPopup`) is a fully programmatic `Panel` component — no `.tscn` needed. Any screen that needs the notepad calls `AddChild(new NotepadPopup())` and keeps a reference to call `Open()`.
+
+**Layout** (all built in `_Ready()`):
+
+```
+Panel (full-screen anchor, Visible = false)
+└── MarginContainer (80px horizontal, 60px vertical)
+    └── VBoxContainer
+        ├── HBoxContainer
+        │   ├── Label "Notepad" (36pt, expand)
+        │   └── Button "✕ Close"
+        ├── Label (warning, 18pt, word-wrap)
+        ├── HBoxContainer (load row)
+        │   ├── Label "Saved notes:"
+        │   ├── OptionButton _loadDropdown (expand)
+        │   └── Button _deleteBtn (disabled until note selected)
+        ├── Label "Note content:"
+        ├── TextEdit _contentInput (min 260px height, vertically expands)
+        └── HBoxContainer (save row)
+            ├── Label "Save as:"
+            ├── LineEdit _nameInput (expand)
+            └── Button _saveBtn (disabled until both inputs non-empty)
+```
+
+**Overlay behavior**: `SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect)` makes the Panel fill the parent scene's root Control. Since it is added as the last child of the scene root, it renders on top of all other UI. `Visible = false` hides it until `Open()` is called.
+
+**Warning**: Always visible at the top of the popup (below the title bar):
+> ⚠ Never store your seed words in the In-Game Notepad or any digital document — not even this app. If your paper is lost, your BTC cannot be recovered.
+
+---
+
+### 20.3 — Interaction Flow
+
+**Load a note**: Select a name from the dropdown. Content loads into the TextEdit; the name pre-fills the LineEdit; the Delete button enables.
+
+**Write a new note**: Type content into the TextEdit; type a name into the LineEdit. The Save button enables when both have at least one character. Press Save → note is stored; the dropdown refreshes with the saved name selected.
+
+**Overwrite an existing note**: Select from the dropdown (name loads into LineEdit), edit the TextEdit, press Save. The existing entry is overwritten in place.
+
+**Delete a note**: Select from the dropdown, press Delete. Both inputs clear and the dropdown returns to the placeholder.
+
+**Save button enable rule**: `_saveBtn.Disabled = string.IsNullOrEmpty(_nameInput.Text.Trim()) || _contentInput.Text.Length == 0`. The check fires on every keystroke in either input via `TextChanged` signals.
+
+---
+
+### 20.4 — Where the Notepad Button Lives
+
+A `NotepadBtn` button (`unique_name_in_owner = true`) is added to the navigation bar of each address-related screen:
+
+| Screen | Button parent node |
+|---|---|
+| `BTCWallet` | `RootMargin/RootVBox/TopBar` (between BackBtn and StatusBarPlaceholder) |
+| `BotsBtcWallets` | `RootMargin/RootVBox/TopBar` (same position) |
+| `CasinoFinances` | `RootMargin/RootVBox/TopBar` (same position) |
+| `BlockExplorer` | `Margin/MainVBox/TopActions` (after BackToDiceButton) |
+
+Each screen's `.cs` file adds `using UI.NotepadPopup;` and wires up the popup in `_Ready()`:
+
+```csharp
+private NotepadPopup _notepadPopup = null!;
+
+// in _Ready():
+_notepadPopup = new NotepadPopup();
+AddChild(_notepadPopup);
+GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
+```

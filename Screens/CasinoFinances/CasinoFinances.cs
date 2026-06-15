@@ -4,6 +4,7 @@ using System.Globalization;
 using GodotBlockchainPort.Blockchain;
 using GodotBlockchainPort.Simulation;
 using UI.StatusBar;
+using UI.NotepadPopup;
 #nullable enable
 
 public partial class CasinoFinances : Control
@@ -36,6 +37,9 @@ public partial class CasinoFinances : Control
 	// Seed words popup
 	private Panel _seedWordsPopup = null!;
 	private Label _seedWordsLabel = null!;
+
+	// Notepad
+	private NotepadPopup _notepadPopup = null!;
 
 	// Send panel controls (built programmatically)
 	private Label _sendFromLabel = null!;
@@ -100,6 +104,10 @@ public partial class CasinoFinances : Control
 		_seedWordsLabel = GetNode<Label>("%SeedWordsLabel");
 		GetNode<Button>("%CopySeedWordsBtn").Pressed += OnCopySeedWordsPressed;
 		GetNode<Button>("%ClosePopupBtn").Pressed    += () => _seedWordsPopup.Visible = false;
+
+		_notepadPopup = new NotepadPopup();
+		AddChild(_notepadPopup);
+		GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
 		BuildSendPanel();
 		SetMode(WalletMode.Base);

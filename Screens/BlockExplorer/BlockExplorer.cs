@@ -5,6 +5,7 @@ using System.Text;
 using GodotBlockchainPort.Simulation;
 using GodotBlockchainPort.Blockchain;
 using UI.StatusBar;
+using UI.NotepadPopup;
 #nullable enable
 
 public partial class BlockExplorer : Control
@@ -23,6 +24,9 @@ public partial class BlockExplorer : Control
     private LineEdit _addressLookupInput = null!;
     private LineEdit _blockLookupInput = null!;
     private RichTextLabel _lookupResultLabel = null!;
+
+    // Notepad
+    private NotepadPopup _notepadPopup = null!;
 
     public override void _Ready()
     {
@@ -53,6 +57,10 @@ public partial class BlockExplorer : Control
         var statusBar = new StatusBar();
         mainVBox.AddChild(statusBar);
         mainVBox.MoveChild(statusBar, 0);
+
+        _notepadPopup = new NotepadPopup();
+        AddChild(_notepadPopup);
+        GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
         PopulateNodeSelectors();
         PopulateAddressDirectory();

@@ -7,6 +7,7 @@ using System.Text;
 using GodotBlockchainPort.Blockchain;
 using GodotBlockchainPort.Simulation;
 using UI.StatusBar;
+using UI.NotepadPopup;
 #nullable enable
 
 public partial class BotsBtcWallets : Control
@@ -66,6 +67,9 @@ public partial class BotsBtcWallets : Control
 	private Label _sendFeedbackLabel = null!;
 	private readonly List<string> _toAddresses = new();
 
+	// Notepad
+	private NotepadPopup _notepadPopup = null!;
+
 	private BotWalletRecord? _selectedBot;
 	private double _refreshTimer;
 	private const double RefreshInterval = 3.0;
@@ -84,6 +88,10 @@ public partial class BotsBtcWallets : Control
 		_showInactiveCheck.Toggled += _ => RefreshHoldersVisibility();
 
 		_botDetailVBox = GetNode<VBoxContainer>("%BotDetailVBox");
+
+		_notepadPopup = new NotepadPopup();
+		AddChild(_notepadPopup);
+		GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
 		BuildDetailPanel();
 		BuildBotList();

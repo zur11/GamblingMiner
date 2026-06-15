@@ -4,6 +4,7 @@ using System.Globalization;
 using GodotBlockchainPort.Blockchain;
 using GodotBlockchainPort.Simulation;
 using UI.StatusBar;
+using UI.NotepadPopup;
 #nullable enable
 
 public partial class BTCWallet : Control
@@ -55,6 +56,9 @@ public partial class BTCWallet : Control
 	private LineEdit _amountInput = null!;
 	private Label _sendFeedback = null!;
 	private readonly List<string> _toAddresses = new();
+
+	// Notepad
+	private NotepadPopup _notepadPopup = null!;
 
 	// Runtime state
 	private WalletMode _currentMode = WalletMode.Base;
@@ -113,6 +117,10 @@ public partial class BTCWallet : Control
 		GetNode<Button>("%SeedVerifySubmitBtn").Pressed += OnVerifySubmit;
 
 		_passphraseInput.TextSubmitted += _ => OnUnlockPassphrasePressed();
+
+		_notepadPopup = new NotepadPopup();
+		AddChild(_notepadPopup);
+		GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
 		BuildSendPanel();
 		InitializeBaseWallet();
