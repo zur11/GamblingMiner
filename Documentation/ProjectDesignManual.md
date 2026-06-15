@@ -931,15 +931,47 @@ public (decimal confirmedBalance, decimal pendingOutgoing) GetAddressBalanceDeta
 
 ---
 
-### 15.4 — Seed Popup
+### 15.4 — Seed Backup Popup
 
-`SeedPopup` is a `Panel` node that is the last child of the root `Control`, so it renders on top of everything. It is initially `visible = false` in the .tscn. On `_Ready()`, if `PlayerWalletState.HasSeenSeedPopup == false`, the popup is shown with the three seed words at 44pt font.
+`SeedPopup` is a `Panel` node that is the last child of the root `Control`, so it renders on top of everything. It is initially `visible = false` in the .tscn. On `_Ready()`, if `PlayerWalletState.HasSeenSeedPopup == false`, the popup opens and `ShowSeedRevealPhase()` is called. The flow is mandatory and has two phases — neither can be skipped.
 
-The player has two options:
-- **[Copy to clipboard]** — copies `"word1 word2 word3"` to the system clipboard via `DisplayServer.ClipboardSet()`.
-- **[I have saved my words]** — calls `WalletInitializationService.MarkSeedPopupSeen()` (sets `HasSeenSeedPopup = true`, re-saves `user://wallet_state.json`), then hides the popup.
+---
 
-After this popup is dismissed it never appears automatically again. The seed words remain derivable from a future "show seed words" button (not yet implemented).
+**Phase 1 — Reveal** (`SeedRevealPanel` is visible; `SeedVerifyPanel` is hidden):
+
+The panel shows:
+1. Title: "Your Seed Words"
+2. Instruction label: *"Write these 3 words on paper, in this exact order. This is the only time they will appear automatically."*
+3. Notepad warning label: *"⚠ Never store your seed words in the In-Game Notepad or any digital document — not even this app. If your paper is lost, your BTC cannot be recovered."*
+4. The three words displayed in a numbered vertical list (`1.` / `2.` / `3.`) at 44pt font.
+5. Button: **[I have written them down offline →]**
+
+There is no copy-to-clipboard option. The design intent is to force a physical write-down. Pressing the button calls `ShowVerifyPhase()`.
+
+---
+
+**Phase 2 — Verify** (`SeedVerifyPanel` is visible; `SeedRevealPanel` is hidden):
+
+`ShowVerifyPhase()` generates a randomized test order via Fisher-Yates shuffle of `[0, 1, 2]` and sets `_verifyStep = 0`. Each step is rendered by `ShowVerifyStep()`:
+
+- Progress label: "Step X / 3"
+- Prompt label: "Enter word #N:" (where N is the 1-based word number at this step in the shuffled order)
+- `LineEdit` for the player to type the word
+- **[Confirm]** button
+
+The **Enter key also submits** — handled via a `_Input` override rather than `TextSubmitted`. When Enter is detected while `_seedVerifyPanel` is visible, `GetViewport().SetInputAsHandled()` consumes the event before Godot's `ui_accept` system can process it further (preventing focus from being stolen), `OnVerifySubmit()` runs, and `GrabFocus()` is called synchronously on the input while nothing else can interfere. `TextSubmitted` is intentionally not wired — `CallDeferred` and `_Process`-flag approaches were tried first but Godot's `ui_accept` handling can still run after them and take focus back.
+
+**Initial focus**: `ShowVerifyStep()` also calls `_seedVerifyInput.GrabFocus()` directly so focus lands on the input as soon as the verify panel opens — the first step is triggered by a button click, which has no `ui_accept` conflict, so a synchronous call is sufficient.
+
+`OnVerifySubmit()` compares the entered string (trimmed, `OrdinalIgnoreCase`) against the expected word:
+
+- **Correct, step not finished**: `_verifyStep++` → `ShowVerifyStep()` for the next word.
+- **Correct, all 3 done**: calls `WalletInitializationService.MarkSeedPopupSeen()` (sets `HasSeenSeedPopup = true`, re-saves `user://wallet_state.json`), then hides the popup.
+- **Incorrect**: shows *"Incorrect — review your words carefully and try again."* and calls `ShowSeedRevealPhase()`, returning to Phase 1 so the player can re-read the full seed phrase before retrying.
+
+On re-entry to Phase 2 (`ShowVerifyPhase()` is called again), a new shuffled order is generated — the player will not necessarily be asked the same word that failed. The loop continues until all 3 words are entered correctly in a single attempt. `MarkSeedPopupSeen()` is never called on a partial run.
+
+After the popup is dismissed it never appears automatically again. The seed words remain derivable from a future "show seed words" button (not yet implemented).
 
 ---
 

@@ -248,51 +248,126 @@ theme_override_constants/margin_bottom = 80
 layout_mode = 2
 theme_override_constants/separation = 24
 
-[node name="SeedPopupTitle" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 36
-text = "Your Bitcoin wallet seed words"
-
-[node name="SeedWordsRow" type="HBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox"]
-layout_mode = 2
-theme_override_constants/separation = 30
-
-[node name="SeedWord1Label" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedWordsRow"]
+[node name="SeedRevealPanel" type="VBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox"]
 unique_name_in_owner = true
-layout_mode = 2
-theme_override_font_sizes/font_size = 44
-text = "---"
-
-[node name="SeedWord2Label" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedWordsRow"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_font_sizes/font_size = 44
-text = "---"
-
-[node name="SeedWord3Label" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedWordsRow"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_font_sizes/font_size = 44
-text = "---"
-
-[node name="SeedPopupWarning" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 24
-text = "Write these words down. This is the only time they will be shown automatically."
-autowrap_mode = 2
-
-[node name="SeedPopupActions" type="HBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox"]
 layout_mode = 2
 theme_override_constants/separation = 20
 
-[node name="CopySeedBtn" type="Button" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedPopupActions"]
-unique_name_in_owner = true
+[node name="SeedPopupTitle" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 28
-text = "Copy to clipboard"
+theme_override_font_sizes/font_size = 36
+text = "Your Seed Words"
 
-[node name="ConfirmSeedBtn" type="Button" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedPopupActions"]
+[node name="SeedInstructions" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Write these 3 words on paper, in this exact order. This is the only time they will appear automatically."
+autowrap_mode = 2
+
+[node name="SeedNotepadWarning" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "⚠ Never store your seed words in the In-Game Notepad or any digital document — not even this app. If your paper is lost, your BTC cannot be recovered."
+autowrap_mode = 2
+
+[node name="SeedWordsContainer" type="VBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Word1Row" type="HBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel/SeedWordsContainer"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Word1NumLabel" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel/SeedWordsContainer/Word1Row"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+text = "1."
+
+[node name="SeedWord1Label" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel/SeedWordsContainer/Word1Row"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+text = "---"
+
+[node name="Word2Row" type="HBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel/SeedWordsContainer"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Word2NumLabel" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel/SeedWordsContainer/Word2Row"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+text = "2."
+
+[node name="SeedWord2Label" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel/SeedWordsContainer/Word2Row"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+text = "---"
+
+[node name="Word3Row" type="HBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel/SeedWordsContainer"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Word3NumLabel" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel/SeedWordsContainer/Word3Row"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+text = "3."
+
+[node name="SeedWord3Label" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel/SeedWordsContainer/Word3Row"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+text = "---"
+
+[node name="SeedWrittenBtn" type="Button" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedRevealPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 28
-text = "I have saved my words"
+text = "I have written them down offline →"
+
+[node name="SeedVerifyPanel" type="VBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 20
+visible = false
+
+[node name="SeedVerifyTitle" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedVerifyPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 36
+text = "Verify Your Backup"
+
+[node name="SeedVerifyProgress" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedVerifyPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Step 1 / 3"
+
+[node name="SeedVerifyPrompt" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedVerifyPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "Enter word #1:"
+
+[node name="SeedVerifyInputRow" type="HBoxContainer" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedVerifyPanel"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="SeedVerifyInput" type="LineEdit" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedVerifyPanel/SeedVerifyInputRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+size_flags_horizontal = 3
+placeholder_text = "type the word..."
+
+[node name="SeedVerifySubmitBtn" type="Button" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedVerifyPanel/SeedVerifyInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Confirm"
+
+[node name="SeedVerifyFeedback" type="Label" parent="SeedPopup/SeedPopupMargin/SeedPopupVBox/SeedVerifyPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = ""

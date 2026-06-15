@@ -32,11 +32,21 @@ public partial class BTCWallet : Control
 	private Label _passphraseBalanceLabel = null!;
 	private Label _passphrasePendingLabel = null!;
 
-	// Seed popup
+	// Seed popup - reveal phase
 	private Panel _seedPopup = null!;
+	private VBoxContainer _seedRevealPanel = null!;
+	private VBoxContainer _seedVerifyPanel = null!;
 	private Label _seedWord1Label = null!;
 	private Label _seedWord2Label = null!;
 	private Label _seedWord3Label = null!;
+
+	// Seed popup - verify phase
+	private Label _seedVerifyProgress = null!;
+	private Label _seedVerifyPrompt = null!;
+	private LineEdit _seedVerifyInput = null!;
+	private Label _seedVerifyFeedback = null!;
+	private int[] _verifyOrder = new int[3];
+	private int _verifyStep;
 
 	// Send panel controls (built programmatically)
 	private Label _sendFromLabel = null!;
@@ -76,10 +86,16 @@ public partial class BTCWallet : Control
 		_passphraseBalanceLabel = GetNode<Label>("%PassphraseBalanceLabel");
 		_passphrasePendingLabel = GetNode<Label>("%PassphrasePendingLabel");
 
-		_seedPopup      = GetNode<Panel>("%SeedPopup");
-		_seedWord1Label = GetNode<Label>("%SeedWord1Label");
-		_seedWord2Label = GetNode<Label>("%SeedWord2Label");
-		_seedWord3Label = GetNode<Label>("%SeedWord3Label");
+		_seedPopup          = GetNode<Panel>("%SeedPopup");
+		_seedRevealPanel    = GetNode<VBoxContainer>("%SeedRevealPanel");
+		_seedVerifyPanel    = GetNode<VBoxContainer>("%SeedVerifyPanel");
+		_seedWord1Label     = GetNode<Label>("%SeedWord1Label");
+		_seedWord2Label     = GetNode<Label>("%SeedWord2Label");
+		_seedWord3Label     = GetNode<Label>("%SeedWord3Label");
+		_seedVerifyProgress = GetNode<Label>("%SeedVerifyProgress");
+		_seedVerifyPrompt   = GetNode<Label>("%SeedVerifyPrompt");
+		_seedVerifyInput    = GetNode<LineEdit>("%SeedVerifyInput");
+		_seedVerifyFeedback = GetNode<Label>("%SeedVerifyFeedback");
 
 		GetNode<Button>("%BackBtn").Pressed             += () => _sceneManager?.Go(SceneManager.SceneId.MainMenu);
 		GetNode<Button>("%CopyBaseAddressBtn").Pressed  += OnCopyBaseAddressPressed;
@@ -89,12 +105,12 @@ public partial class BTCWallet : Control
 		GetNode<Button>("%UnlockPassphraseBtn").Pressed         += OnUnlockPassphrasePressed;
 		GetNode<Button>("%BackFromPassphraseLockedBtn").Pressed += OnBackToBaseWalletPressed;
 
-		GetNode<Button>("%SendBtcPassphraseBtn").Pressed    += OnSendBtcPassphrasePressed;
-		GetNode<Button>("%BackToBaseWalletBtn").Pressed     += OnBackToBaseWalletPressed;
+		GetNode<Button>("%SendBtcPassphraseBtn").Pressed     += OnSendBtcPassphrasePressed;
+		GetNode<Button>("%BackToBaseWalletBtn").Pressed      += OnBackToBaseWalletPressed;
 		GetNode<Button>("%CopyPassphraseAddressBtn").Pressed += OnCopyPassphraseAddressPressed;
 
-		GetNode<Button>("%CopySeedBtn").Pressed    += OnCopySeedPressed;
-		GetNode<Button>("%ConfirmSeedBtn").Pressed += OnConfirmSeedPressed;
+		GetNode<Button>("%SeedWrittenBtn").Pressed      += ShowVerifyPhase;
+		GetNode<Button>("%SeedVerifySubmitBtn").Pressed += OnVerifySubmit;
 
 		_passphraseInput.TextSubmitted += _ => OnUnlockPassphrasePressed();
 
@@ -111,6 +127,27 @@ public partial class BTCWallet : Control
 		{
 			_balanceRefreshTimer = 0d;
 			RefreshBalances();
+		}
+	}
+
+	public override void _Input(InputEvent @event)
+	{
+		if (@event is not InputEventKey { Pressed: true, Echo: false } key) return;
+		if (key.Keycode != Key.Enter && key.Keycode != Key.KpEnter) return;
+
+		if (_seedRevealPanel is not null && _seedRevealPanel.Visible)
+		{
+			GetViewport().SetInputAsHandled();
+			ShowVerifyPhase();
+			return;
+		}
+
+		if (_seedVerifyPanel is not null && _seedVerifyPanel.Visible)
+		{
+			GetViewport().SetInputAsHandled();
+			OnVerifySubmit();
+			if (_seedVerifyPanel.Visible)
+				_seedVerifyInput.GrabFocus();
 		}
 	}
 
@@ -279,6 +316,68 @@ public partial class BTCWallet : Control
 		_seedWord2Label.Text = wallet.SeedWords.Length > 1 ? wallet.SeedWords[1] : "---";
 		_seedWord3Label.Text = wallet.SeedWords.Length > 2 ? wallet.SeedWords[2] : "---";
 		_seedPopup.Visible = true;
+		ShowSeedRevealPhase();
+	}
+
+	// ── Seed backup flow ──────────────────────────────────────────────────────
+
+	private void ShowSeedRevealPhase()
+	{
+		_seedRevealPanel.Visible = true;
+		_seedVerifyPanel.Visible = false;
+		_seedVerifyInput.Text    = string.Empty;
+		_seedVerifyFeedback.Text = string.Empty;
+	}
+
+	private void ShowVerifyPhase()
+	{
+		_verifyOrder = new[] { 0, 1, 2 };
+		var rng = new System.Random();
+		for (int i = 2; i > 0; i--)
+		{
+			int j = rng.Next(i + 1);
+			(_verifyOrder[i], _verifyOrder[j]) = (_verifyOrder[j], _verifyOrder[i]);
+		}
+		_verifyStep = 0;
+		_seedRevealPanel.Visible = false;
+		_seedVerifyPanel.Visible = true;
+		ShowVerifyStep();
+	}
+
+	private void ShowVerifyStep()
+	{
+		int wordNumber = _verifyOrder[_verifyStep] + 1;
+		_seedVerifyProgress.Text = $"Step {_verifyStep + 1} / 3";
+		_seedVerifyPrompt.Text   = $"Enter word #{wordNumber}:";
+		_seedVerifyInput.Text    = string.Empty;
+		_seedVerifyFeedback.Text = string.Empty;
+		_seedVerifyInput.GrabFocus();
+	}
+
+	private void OnVerifySubmit()
+	{
+		var wallet = WalletInitializationService.PlayerWallet;
+		if (wallet == null) return;
+
+		string entered  = _seedVerifyInput.Text.Trim();
+		string expected = wallet.SeedWords[_verifyOrder[_verifyStep]];
+
+		if (!entered.Equals(expected, System.StringComparison.OrdinalIgnoreCase))
+		{
+			_seedVerifyFeedback.Text = "Incorrect — review your words carefully and try again.";
+			ShowSeedRevealPhase();
+			return;
+		}
+
+		_verifyStep++;
+		if (_verifyStep >= 3)
+		{
+			WalletInitializationService.MarkSeedPopupSeen();
+			_seedPopup.Visible = false;
+			return;
+		}
+
+		ShowVerifyStep();
 	}
 
 	// ── Button handlers ───────────────────────────────────────────────────────
@@ -386,17 +485,5 @@ public partial class BTCWallet : Control
 	{
 		if (!string.IsNullOrEmpty(_currentPassphraseAddress))
 			DisplayServer.ClipboardSet(_currentPassphraseAddress);
-	}
-
-	private void OnCopySeedPressed()
-	{
-		var wallet = WalletInitializationService.PlayerWallet;
-		if (wallet != null) DisplayServer.ClipboardSet(string.Join(" ", wallet.SeedWords));
-	}
-
-	private void OnConfirmSeedPressed()
-	{
-		WalletInitializationService.MarkSeedPopupSeen();
-		_seedPopup.Visible = false;
 	}
 }

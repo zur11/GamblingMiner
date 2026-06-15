@@ -29,8 +29,8 @@
 - `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` ✓ — `GetAddressBalanceDetails(address)` → `(confirmedBalance, pendingOutgoing)` (Phase 4); `CreateAndRegisterNode` for `"player"` always derives wallet from `WalletInitializationService.PlayerWallet` seed phrase (Phase 4 post-test fix); bot branch now uses `BotWalletRegistry.GetBot(nodeId)` as primary source → snapshot fallback → fresh random wallet (Phase 5.2)
 - `Scripts/Services/SceneManager.cs` ✓ (Phase 4) — `BTCWallet` in enum + Paths
 - `Screens/MainMenu/MainMenu.tscn` + `.cs` ✓ (Phase 4) — `BTCWalletBtn` added and wired
-- `Screens/BTCWallet/BTCWallet.tscn` ✓ — three mode panels (Base, PassphraseLocked, PassphraseUnlocked) + SeedPopup overlay + NetworkRoot child
-- `Screens/BTCWallet/BTCWallet.cs` ✓ — full controller; 2s balance refresh; passphrase derive-on-unlock; clipboard copy; seed popup flow
+- `Screens/BTCWallet/BTCWallet.tscn` ✓ — three mode panels (Base, PassphraseLocked, PassphraseUnlocked) + SeedPopup overlay (two-panel: `SeedRevealPanel` + `SeedVerifyPanel`) + NetworkRoot child
+- `Screens/BTCWallet/BTCWallet.cs` ✓ — full controller; 2s balance refresh; passphrase derive-on-unlock; two-phase seed backup flow (reveal → verify); `_Input` override intercepts Enter + `SetInputAsHandled()` to prevent focus theft; `ShowVerifyStep()` calls `GrabFocus()` directly for initial focus on panel entry
 - `Scripts/BlockchainPort/Blockchain/WalletModels.cs` ✓ (Phase 5.2) — `BotWalletRecord` extended: added `SigningPublicKeyBase64?`, `Secp256k1PublicKeyBase64?`, `IsActive`, `ReactivationBlockHeight?`; `HasFullWallet` property checks all three keys non-null
 - `Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs` ✓ (Phase 5.2 + 5.4) — static registry; `EnsureAll()` generates/loads 4 miner bots (full keys via `CryptoUtils.GenerateWallet()`) + 10 non-miner bots (address only); `GetBot(nodeId)` lookup; `user://bot_wallet_registry.json` with CamelCase JSON; separate `Miners`/`NonMiners` arrays in JSON
 - `Scripts/Services/WalletInitializationService.cs` ✓ (Phase 5.2) — `EnsureAll()` now calls `BotWalletRegistry.EnsureAll()` after player + casino wallets
@@ -328,12 +328,22 @@ Block mining coinbase rewards are automatically sent to `PlayerWalletState.BaseA
 
 ### First-launch popup (implemented)
 
-- `SeedPopup` Panel overlays full screen (last child of root Control)
-- Shown when `WalletInitializationService.PlayerWallet.HasSeenSeedPopup == false`
-- Displays 3 words at 44pt font, separated
-- [Copy to clipboard] — copies space-joined words to clipboard
-- Warning: "Write these words down. This is the only time they will be shown automatically."
-- [I have saved my words] → calls `WalletInitializationService.MarkSeedPopupSeen()`, hides popup
+`SeedPopup` Panel overlays full screen (last child of root Control). Shown when `WalletInitializationService.PlayerWallet.HasSeenSeedPopup == false`. Two-phase flow — the player cannot bypass it:
+
+**Phase 1 — Reveal** (`SeedRevealPanel`):
+- Title "Your Seed Words" at 36pt
+- Instruction: "Write these 3 words on paper, in this exact order. This is the only time they will appear automatically."
+- Notepad warning: "⚠ Never store your seed words in the In-Game Notepad or any digital document — not even this app. If your paper is lost, your BTC cannot be recovered."
+- 3 words displayed with numbered labels (`1.`, `2.`, `3.`) at 44pt, vertically stacked
+- `[I have written them down offline →]` — no copy-to-clipboard; requires physical write-down
+
+**Phase 2 — Verify** (`SeedVerifyPanel`):
+- `ShowVerifyPhase()` Fisher-Yates shuffles `[0,1,2]` into a random word-position order
+- Each step: "Step X / 3" progress + "Enter word #N:" prompt + LineEdit + [Confirm] button
+- Enter key handled via `_Input` override: `SetInputAsHandled()` consumes the event before Godot can steal focus, then `OnVerifySubmit()` runs and `GrabFocus()` is called synchronously; `ShowVerifyStep()` also calls `GrabFocus()` directly so focus lands on the input when the panel first opens
+- Correct word → advance step; all 3 correct → `WalletInitializationService.MarkSeedPopupSeen()` + hide popup
+- Wrong word → `"Incorrect — review your words carefully and try again."` → returns to Phase 1 for review before retry
+- Loop repeats until all 3 words pass; `MarkSeedPopupSeen()` never called on partial success
 
 ### Passphrase wallet mechanics (implemented)
 
@@ -663,13 +673,18 @@ Both `BTCWallet` (player) and `CasinoFinances` (casino) now support full outboun
 
 ## Phase 9 — In-Game Notepad  (Future, not yet designed)
 
-**Trigger**: Player needs a place to record passphrase words and wallet addresses. Currently the only guidance is "save it offline."
+**Trigger**: Player needs a place to record passphrase hints and wallet address labels. Currently the only guidance is "save it offline."
 
 **Design placeholder**:
 - Simple persistent text area per-address or global
 - Can save custom labels ("My passphrase wallet #1 = gm1q...", "passphrase = oak")
 - Stored in `user://notepad.json`
 - Accessible from BTCWallet and any address-related screen
+
+**Hard constraint — seed words must never go here**: The BTCWallet seed reveal popup already warns the player:
+> "⚠ Never store your seed words in the In-Game Notepad or any digital document — not even this app."
+
+The Notepad UI must carry this same warning prominently. It must never be presented as a place to store seed words — its legitimate use is passphrase memory hints and address labels only.
 
 ---
 
