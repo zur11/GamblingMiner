@@ -160,8 +160,7 @@ namespace Scripts.Betting
 				AutoRechargeEnabled = strategy.AutoRechargeEnabled,
 				WinningChance = Math.Clamp(strategy.WinningChance, 1, 95),
 				BetHigh = strategy.BetHigh,
-				BetsPerSecond = Math.Max(1, strategy.BetsPerSecond),
-				BetsPerSecondMultiplier = Math.Max(1, strategy.BetsPerSecondMultiplier)
+				BetsPerSecond = Math.Max(1, strategy.BetsPerSecond)
 			};
 		}
 	}

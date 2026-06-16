@@ -1772,3 +1772,119 @@ _notepadPopup = new NotepadPopup();
 AddChild(_notepadPopup);
 GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 ```
+
+---
+
+---
+
+## Engineering Note — Autobet Speed Selector Redesign
+
+**Files changed**: `DiceGame.cs`, `DiceGame.tscn`, `BetHistoryContainer.cs`, `PreviousWinnerNumbersGrid.cs`, `SavedBettingStrategyRepository.cs`  
+**Date**: 2026-06-15
+
+### Background
+
+The autobet system executes bets at a configurable rate measured in bets per real second (APS — Attempts Per Second). Each bet is simultaneously one mining nonce attempt, so APS is also the mining throughput. The original design used two separate controls:
+
+- **SpinBox** (`BetsPerSecondInput`): range 1–9, the base APS
+- **OptionButton** (`ApsMultiplierSelector`): options x1–x5, a multiplier applied to the base
+
+Effective APS = SpinBox × OptionButton → range 1–45.
+
+This two-control system worked reliably but imposed unnecessary cognitive overhead: selecting "18 APS" required thinking "9 base × 2 multiplier." The goal was to replace both controls with a single selector offering precise values from 1 to 99.
+
+---
+
+### Why This Proved Difficult
+
+Three separate issues were encountered across multiple attempts. Each is documented here because understanding them is necessary to avoid reintroducing them.
+
+---
+
+### Issue 1 — SpinBox Intermediate `value_changed` Signals
+
+**First attempt**: Replace both controls with a single SpinBox (range 1–99). The SpinBox already existed; changing `max_value` from 9 to 99 seemed sufficient.
+
+**What happened**: When the SpinBox value was set to any two-digit number (≥ 10), the autobet speed locked at 1 APS instead of the selected value. The behavior persisted until the value was reduced back to ≤ 9.
+
+**Root cause**: Godot 4's `SpinBox` processes its internal `LineEdit` text on each keystroke via `_text_changed`. When a user types "10":
+
+1. The digit "1" is entered → `value_changed(1.0)` fires immediately
+2. The digit "0" completes to "10" → `value_changed(10.0)` fires
+
+The first signal fires `OnBetsPerSecondChanged(1.0)`, which calls `SaveActiveNodeStrategySnapshot()`. At that exact moment `GetAutoBetBaseAps()` reads `_betsPerSecondInput.Value = 1.0` (the confirmed value has not advanced to 10 yet) and saves `BetsPerSecond = 1` to `_nodeStrategies[_activeNodeId]`. The second signal fires correctly with value 10, but depending on frame timing the session can end up with the stale APS = 1 snapshot as the operative value.
+
+The original two-control design was immune because the SpinBox max was 9 — the digit "1" alone equalled a valid, stable value, so the intermediate signal was harmless. As soon as the cap was raised to 99, any two-digit entry exposed the race.
+
+---
+
+### Issue 2 — OptionButton Crash from `GetItemMetadata(-1)`
+
+A prior implementation attempt used a single `OptionButton` with items "1X" through "99X" and stored the APS integer as Godot `Variant` **metadata** on each item. The APS was read via:
+
+```csharp
+Variant meta = _apsSelector.GetItemMetadata(_apsSelector.Selected);
+```
+
+**What crashed**: When `_apsSelector.Selected == -1` (the OptionButton has no items, or has been cleared mid-initialization), `GetItemMetadata(-1)` throws an index-out-of-range exception in the Godot engine layer. This can be triggered if any signal fires `OnBetsPerSecondChanged` before `InitializeApsSelector()` finishes populating items, or if the OptionButton is cleared via `Clear()` and a downstream callback reads the selector before `AddItem()` runs.
+
+---
+
+### The Solution — Index-Based OptionButton, No Metadata
+
+Both issues are solved by a single design change: use an `OptionButton` where the **item index directly encodes the APS value**.
+
+```
+index 0  → "1X"  (1 APS)
+index 1  → "2X"  (2 APS)
+...
+index 98 → "99X" (99 APS)
+```
+
+Reading APS:
+
+```csharp
+private int GetAutoBetBaseAps()
+{
+    if (_apsSelector == null || _apsSelector.Selected < 0)
+        return 1;
+    return Math.Clamp(_apsSelector.Selected + 1, 1, MaxAutoBetBaseAps);
+}
+```
+
+This eliminates Issue 1 because `OptionButton` emits `item_selected` only when the user explicitly clicks a finished choice — never on intermediate keystroke states. There is no typing, no transient value, no race condition.
+
+This eliminates Issue 2 because `GetItemMetadata` is never called. The `Selected < 0` guard handles any empty-selector edge case by returning the safe default of 1 APS.
+
+`InitializeApsSelector()` runs and populates all 99 items before the `ItemSelected` signal is connected in `_Ready()`. Even if `Select(0)` triggered a signal (it does not in Godot 4), the handler would see `Selected = 0`, which maps cleanly to 1 APS.
+
+---
+
+### Issue 3 — Display Throttling Plateau at APS = 20
+
+After the OptionButton fix, actual bet execution scaled correctly across the full 1–99 range. However, the visual display in `BetHistoryContainer` and `PreviousWinnerNumbersGrid` appeared to plateau at approximately 20 APS.
+
+**Root cause**: `IsHighFrequencyAutoMode()` returned `true` when `GetAutoBetBaseAps() >= 10`. Both UI components used this flag to skip 3 out of every 4 bet events (`HighFrequencySampleEvery = 4`), showing only 1-in-4 updates. In the original two-control system, the SpinBox was structurally capped at 9, making `IsHighFrequencyAutoMode()` permanently `false` — every bet was displayed regardless of effective APS. With the new system, the threshold activated at APS = 10, cutting the visible update rate from 9/s (at APS = 9) to 2.5/s (at APS = 10): a sudden 3.5× regression in perceived speed.
+
+A dynamic-interval fix was then attempted (`interval = Max(1, APS / 10)`) to normalize visible updates to ~10/s at all APS values. This created a new problem: all APS values from 20 to 29 produced `interval = 2`, making the display appear unchanged across that entire 10-unit range. The user perceived it as a hard ceiling at 20.
+
+**Final fix**: All display throttling was removed from both components. `BetHistoryContainer` and `PreviousWinnerNumbersGrid` register every bet event directly:
+
+```csharp
+private void OnBetExecuted(string _, BetTransactionEvent betEvent)
+{
+    AddEntry(betEvent);  // no sampling, no skip counter
+}
+```
+
+Both components use pre-allocated object pools (260 items, `MoveChild` only — no node creation or destruction). At 99 APS / 60 fps, this produces 1–2 pool operations per frame, well within Godot's render budget. `IsHighFrequencyAutoMode()` is retained in `DiceGame.cs` as a permanent `false` stub — a placeholder for future throttling if APS ranges increase significantly beyond 99.
+
+---
+
+### Key Rules to Preserve
+
+1. **Never read `SpinBox.Value` as a proxy for a user-selected integer in any path triggered by `value_changed`.** Godot SpinBox fires intermediate values while the user types. For integer-selection menus, use `OptionButton` with index encoding instead.
+
+2. **Never call `OptionButton.GetItemMetadata(Selected)` without first confirming `Selected >= 0` and `ItemCount > 0`.** During startup signal wiring the selector may be empty. Prefer index-only encoding — it requires no metadata at all.
+
+3. **Connect the `ItemSelected` signal after `InitializeApsSelector()` finishes.** Connecting before population creates a window in which any signal dispatch finds `Selected == -1` and would crash a metadata read or produce a default that overwrites a valid session state.

@@ -13,6 +13,5 @@ namespace Scripts.Betting
 		public int WinningChance { get; set; }
 		public bool BetHigh { get; set; }
 		public int BetsPerSecond { get; set; } = 1;
-		public int BetsPerSecondMultiplier { get; set; } = 1;
 	}
 }

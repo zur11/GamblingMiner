@@ -254,23 +254,12 @@ offset_right = 242.0
 offset_bottom = 381.0
 theme_override_font_sizes/font_size = 22
 
-[node name="BetsPerSecondInput" type="SpinBox" parent="."]
+[node name="ApsSelector" type="OptionButton" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 1537.0
 offset_top = 565.0
-offset_right = 1681.0
-offset_bottom = 597.0
-min_value = 1.0
-max_value = 9.0
-value = 1.0
-
-[node name="ApsMultiplierSelector" type="OptionButton" parent="."]
-unique_name_in_owner = true
-layout_mode = 0
-offset_left = 1697.0
-offset_top = 565.0
-offset_right = 1797.0
+offset_right = 1741.0
 offset_bottom = 597.0
 
 [node name="ScrollContainer" type="ScrollContainer" parent="."]

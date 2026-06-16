@@ -7,9 +7,7 @@ using System.Linq;
 public partial class BetHistoryContainer : VBoxContainer
 {
 	private const int MaxRecentEntries = 260;
-	private const int HighFrequencySampleEvery = 4;
 	private DiceGame _game;
-	private int _highFrequencySkipCounter;
 	private BetHistoryItem[] _pool;
 	private int _poolIndex;
 	private bool _poolReady;
@@ -25,21 +23,6 @@ public partial class BetHistoryContainer : VBoxContainer
 
 	private void OnBetExecuted(string _, BetTransactionEvent betEvent)
 	{
-		if (_game != null && _game.IsHighFrequencyAutoMode())
-		{
-			_highFrequencySkipCounter++;
-			if (_highFrequencySkipCounter < HighFrequencySampleEvery)
-			{
-				return;
-			}
-
-			_highFrequencySkipCounter = 0;
-		}
-		else
-		{
-			_highFrequencySkipCounter = 0;
-		}
-
 		AddEntry(betEvent);
 	}
 

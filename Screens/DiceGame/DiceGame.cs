@@ -52,8 +52,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private const double MaxAutoBetGameDeltaPerFrameSeconds = 0.25d;
 	private const double MaxAutoBetBacklogGameSeconds = 2.0d;
 	private const double MaxAutoBetsPerRealSecond = 500.0d;
-	private const int MaxAutoBetBaseAps = 9;
-	private const int MaxAutoBetApsMultiplier = 5;
+	private const int MaxAutoBetBaseAps = 99;
 	private long _autoBetLastRateSampleMsec;
 	private int _autoBetBetsSinceSample;
 	private double _autoBetLastMeasuredRealPerSec;
@@ -98,7 +97,6 @@ public partial class DiceGame : Control, IBetEventSource
 		public int WinningChance { get; set; }
 		public bool BetHigh { get; set; }
 		public int BetsPerSecond { get; set; }
-		public int BetsPerSecondMultiplier { get; set; }
 
 		public bool IsValid => Config != null && Config.BaseBet > 0m;
 
@@ -109,8 +107,7 @@ public partial class DiceGame : Control, IBetEventSource
 			AutoRechargeEnabled = AutoRechargeEnabled,
 			WinningChance = WinningChance,
 			BetHigh = BetHigh,
-			BetsPerSecond = BetsPerSecond,
-			BetsPerSecondMultiplier = BetsPerSecondMultiplier
+			BetsPerSecond = BetsPerSecond
 		};
 	}
 
@@ -140,8 +137,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private Label _chanceToWinValue;
 	private Label _multiplierValue;
 	private Label _currentAppTimeValue;
-	private SpinBox _betsPerSecondInput;
-	private OptionButton _apsMultiplierSelector;
+	private OptionButton _apsSelector;
 
 	private Slider _chanceSlider;
 	private Button _highLowToggleBtn;
@@ -216,8 +212,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_multiplierValue = GetNode<Label>("%MultiplierValue");
 		_currentAppTimeValue = GetNode<Label>("%CurrentAppTimeValue");
 		_blockchainStatusValue = GetNode<Label>("%BlockchainStatusValue");
-		_betsPerSecondInput = GetNode<SpinBox>("%BetsPerSecondInput");
-		_apsMultiplierSelector = GetNode<OptionButton>("%ApsMultiplierSelector");
+		_apsSelector = GetNode<OptionButton>("%ApsSelector");
 		_chanceSlider = GetNode<Slider>("%ChanceSlider");
 		_highLowToggleBtn = GetNode<Button>("%HighLowToggleBtn");
 		_depositPopup = GetNode<DepositPopup>("%DepositPopup");
@@ -267,8 +262,8 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.StopOnBlockMinedDoubleClicked += OnStopOnBlockMinedDoubleClicked;
 		_strategyPanel.ProfitStopModeDoubleClicked += OnProfitStopModeDoubleClicked;
 		_strategyPanel.AutoRechargeToggled += _ => UpdateBalanceUI();
-		_betsPerSecondInput.ValueChanged += OnBetsPerSecondChanged;
-		_apsMultiplierSelector.ItemSelected += _ => OnBetsPerSecondChanged(0);
+		InitializeApsSelector();
+		_apsSelector.ItemSelected += _ => OnBetsPerSecondChanged(0d);
 		_session.OnStopped += OnSessionStopped;
 
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>
@@ -281,7 +276,6 @@ public partial class DiceGame : Control, IBetEventSource
 
 		UpdateAllUI();
 		UpdateStrategySaveLoadButtons();
-		InitializeApsMultiplierSelector();
 		InitializeActiveNodeSelector();
 		bool hadAnyNodeFinancialState = _blockchainNetworkRoot?.HasAnyNodeFinancialState() ?? false;
 		RestoreLegacyCheckpointIfNeeded();
@@ -294,22 +288,20 @@ public partial class DiceGame : Control, IBetEventSource
 		_resultValue.Text = "Place your bet.";
 	}
 
-	private void InitializeApsMultiplierSelector()
+	private void InitializeApsSelector()
 	{
-		if (_apsMultiplierSelector == null)
+		if (_apsSelector == null)
 		{
 			return;
 		}
 
-		_apsMultiplierSelector.Clear();
-		for (int mult = 1; mult <= MaxAutoBetApsMultiplier; mult++)
+		_apsSelector.Clear();
+		for (int aps = 1; aps <= MaxAutoBetBaseAps; aps++)
 		{
-			int index = _apsMultiplierSelector.ItemCount;
-			_apsMultiplierSelector.AddItem($"x{mult}");
-			_apsMultiplierSelector.SetItemMetadata(index, mult);
+			_apsSelector.AddItem($"{aps}X");
 		}
 
-		_apsMultiplierSelector.Select(0); // x1 default
+		_apsSelector.Select(0); // 1X default
 	}
 
 	private void InitializeActiveNodeSelector()
@@ -545,8 +537,7 @@ public partial class DiceGame : Control, IBetEventSource
 			AutoRechargeEnabled = _strategyPanel.AutoRechargeEnabled,
 			WinningChance = (int)_chanceSlider.Value,
 			BetHigh = _highLowToggleBtn.ButtonPressed,
-			BetsPerSecond = GetAutoBetBaseAps(),
-			BetsPerSecondMultiplier = GetAutoBetApsMultiplier()
+			BetsPerSecond = GetAutoBetBaseAps()
 		});
 
 		SaveActiveNodeStrategySnapshot();
@@ -579,7 +570,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_chanceSlider.Value = Math.Clamp(saved.WinningChance, 1, 95);
 		_highLowToggleBtn.ButtonPressed = saved.BetHigh;
 		_highLowToggleBtn.Text = saved.BetHigh ? "HIGH" : "LOW";
-		ApplyAutoBetSpeedSettings(saved.BetsPerSecond, saved.BetsPerSecondMultiplier);
+		ApplyAutoBetSpeedSettings(saved.BetsPerSecond);
 		_loadingNodeStrategy = false;
 		SaveActiveNodeStrategySnapshot();
 		UpdateAllUI();
@@ -602,28 +593,14 @@ public partial class DiceGame : Control, IBetEventSource
 		_loadStrategyBtn.Disabled = _savedStrategyRepository == null || !_savedStrategyRepository.HasAnyForGame(GameId);
 	}
 
-	private void ApplyAutoBetSpeedSettings(int betsPerSecond, int multiplier)
+	private void ApplyAutoBetSpeedSettings(int betsPerSecond)
 	{
-		if (_betsPerSecondInput != null)
-		{
-			_betsPerSecondInput.Value = Math.Clamp(betsPerSecond, 1, MaxAutoBetBaseAps);
-		}
-
-		if (_apsMultiplierSelector == null || _apsMultiplierSelector.ItemCount <= 0)
+		if (_apsSelector == null || _apsSelector.ItemCount <= 0)
 		{
 			return;
 		}
 
-		int clampedMultiplier = Math.Clamp(multiplier, 1, MaxAutoBetApsMultiplier);
-		for (int index = 0; index < _apsMultiplierSelector.ItemCount; index++)
-		{
-			Variant meta = _apsMultiplierSelector.GetItemMetadata(index);
-			if (TryReadMultiplierMetadata(meta, out int itemMultiplier) && itemMultiplier == clampedMultiplier)
-			{
-				_apsMultiplierSelector.Select(index);
-				return;
-			}
-		}
+		_apsSelector.Select(Math.Clamp(betsPerSecond, 1, MaxAutoBetBaseAps) - 1);
 	}
 
 	private void SaveActiveNodeStrategySnapshot()
@@ -656,8 +633,7 @@ public partial class DiceGame : Control, IBetEventSource
 			AutoRechargeEnabled = !IsPlayerActive() || _strategyPanel.AutoRechargeEnabled,
 			WinningChance = (int)_chanceSlider.Value,
 			BetHigh = _highLowToggleBtn.ButtonPressed,
-			BetsPerSecond = GetAutoBetBaseAps(),
-			BetsPerSecondMultiplier = GetAutoBetApsMultiplier()
+			BetsPerSecond = GetAutoBetBaseAps()
 		};
 	}
 
@@ -675,7 +651,7 @@ public partial class DiceGame : Control, IBetEventSource
 			if (!_nodeStrategies.TryGetValue(_activeNodeId, out NodeStrategyState state) || !state.IsValid)
 			{
 				_strategyPanel.ClearStrategySettings();
-				ApplyAutoBetSpeedSettings(1, 1);
+				ApplyAutoBetSpeedSettings(1);
 			}
 			else
 			{
@@ -683,7 +659,7 @@ public partial class DiceGame : Control, IBetEventSource
 				_chanceSlider.Value = Math.Clamp(state.WinningChance, 1, 95);
 				_highLowToggleBtn.ButtonPressed = state.BetHigh;
 				_highLowToggleBtn.Text = state.BetHigh ? "HIGH" : "LOW";
-				ApplyAutoBetSpeedSettings(state.BetsPerSecond, state.BetsPerSecondMultiplier);
+				ApplyAutoBetSpeedSettings(state.BetsPerSecond);
 			}
 		}
 		finally
@@ -847,7 +823,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_autoBetLastExecutedTimestampUtc = null;
 		_lastPrintedMeasuredRealPerSec = 0d;
 		_lastAutoBetTelemetryPrintMsec = 0;
-		GD.Print($"[AutoBet] Start aps_base={GetAutoBetBaseAps()} mult=x{GetAutoBetApsMultiplier()} effective_game_aps={GetEffectiveAutoBetsPerGameSecond()}");
+		GD.Print($"[AutoBet] Start aps={GetAutoBetBaseAps()}");
 		_resultValue.Text = $"Auto running | {GetAutoBetApsText()}";
 		RefreshCalculatorFromGameSettings();
 	}
@@ -1122,9 +1098,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private double GetRunnerEffectiveBetsPerSecond(BotAutoBetRunner runner)
 	{
-		int baseAps = Math.Clamp(runner.Strategy.BetsPerSecond, 1, MaxAutoBetBaseAps);
-		int multiplier = Math.Clamp(runner.Strategy.BetsPerSecondMultiplier, 1, MaxAutoBetApsMultiplier);
-		return baseAps * multiplier;
+		return Math.Clamp(runner.Strategy.BetsPerSecond, 1, MaxAutoBetBaseAps);
 	}
 
 	private void ExecuteBotBet(BotAutoBetRunner runner)
@@ -1385,7 +1359,7 @@ public partial class DiceGame : Control, IBetEventSource
 		if (Math.Abs(_autoBetLastMeasuredRealPerSec - _lastPrintedMeasuredRealPerSec) >= 5.0d)
 		{
 			_lastPrintedMeasuredRealPerSec = _autoBetLastMeasuredRealPerSec;
-			GD.Print($"[AutoBet] actual_real={_autoBetLastMeasuredRealPerSec:0.#}/s aps_base={GetAutoBetBaseAps()} mult=x{GetAutoBetApsMultiplier()} effective_game_aps={GetEffectiveAutoBetsPerGameSecond()}");
+			GD.Print($"[AutoBet] actual_real={_autoBetLastMeasuredRealPerSec:0.#}/s aps={GetAutoBetBaseAps()}");
 		}
 	}
 
@@ -1406,12 +1380,7 @@ public partial class DiceGame : Control, IBetEventSource
 		RefreshCalculatorFromGameSettings();
 	}
 
-	public bool IsHighFrequencyAutoMode()
-	{
-		return _session is AutoBetSession &&
-			_session.IsRunning &&
-			(_betsPerSecondInput != null && (int)Math.Round(_betsPerSecondInput.Value) >= 10);
-	}
+	public bool IsHighFrequencyAutoMode() => false;
 
 	// --- Depositos ---
 	private void OnDepositBtnPressed()
@@ -1748,63 +1717,22 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private string GetAutoBetApsText()
 	{
-		int baseAps = GetAutoBetBaseAps();
-		int multiplier = GetAutoBetApsMultiplier();
-		double effective = GetEffectiveAutoBetsPerGameSecond();
-		return multiplier == 1
-			? $"APS: {baseAps}"
-			: $"APS: {baseAps} x{multiplier} (= {effective:0.##})";
+		return $"APS: {GetAutoBetBaseAps()}";
 	}
 
 	private double GetEffectiveAutoBetsPerGameSecond()
 	{
-		int baseAps = GetAutoBetBaseAps();
-		int multiplier = GetAutoBetApsMultiplier();
-		return baseAps * multiplier;
+		return GetAutoBetBaseAps();
 	}
 
 	private int GetAutoBetBaseAps()
 	{
-		if (_betsPerSecondInput == null)
+		if (_apsSelector == null || _apsSelector.Selected < 0)
 		{
 			return 1;
 		}
 
-		return Math.Clamp((int)Math.Round(_betsPerSecondInput.Value), 1, MaxAutoBetBaseAps);
-	}
-
-	private int GetAutoBetApsMultiplier()
-	{
-		if (_apsMultiplierSelector == null)
-		{
-			return 1;
-		}
-
-		Variant meta = _apsMultiplierSelector.GetItemMetadata(_apsMultiplierSelector.Selected);
-		if (TryReadMultiplierMetadata(meta, out int multiplier))
-		{
-			return Math.Clamp(multiplier, 1, MaxAutoBetApsMultiplier);
-		}
-
-		return 1;
-	}
-
-	private bool TryReadMultiplierMetadata(Variant meta, out int multiplier)
-	{
-		multiplier = 1;
-		if (meta.VariantType == Variant.Type.Int)
-		{
-			multiplier = meta.AsInt32();
-			return true;
-		}
-
-		if (meta.VariantType == Variant.Type.Float)
-		{
-			multiplier = (int)Math.Round(meta.AsDouble());
-			return true;
-		}
-
-		return false;
+		return Math.Clamp(_apsSelector.Selected + 1, 1, MaxAutoBetBaseAps);
 	}
 
 	// Funciones auxiliares
