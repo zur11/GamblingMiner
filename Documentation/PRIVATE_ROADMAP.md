@@ -69,6 +69,9 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 - Auto-recharge: optional player automation, required infrastructure for continuously betting bots.
 - Basic Mode halving: `4,381 blocks`, not Bitcoin's real `210,000` blocks.
 - Hardware: increases bets/nonce attempts per real second; it does not alter game-time speed.
+- Hardware credits: each credit = 1 nonce attempt per bet; betting speed in DiceGame is locked to total credits owned across all pool assignments.
+- Mining pools: hardware credits are assigned to either a node's individual pool (solo mining, full reward) or the casino community pool (shared mining, proportional reward minus casino fee).
+- Casino community pool fee: dynamic; 30% at balanced power, up to 50% when casino pool dominates, down to 10% when individual pools dominate.
 - Mining rule for now: `1 bet = 1 nonce attempt`.
 - Bot mining: required in Basic Mode.
 - BTC cannot be used directly for betting.
@@ -154,6 +157,8 @@ Goal: make speed upgrades meaningful without breaking the learned rule.
 - Basic Mode can expose only Dice allocation until more games exist.
 - Cap current cycle throughput at `100 attempts` per time cycle.
 
+**Foundation (precursor to P5)**: the hardware credit model, pool assignment UI, and casino community pool are defined and implemented first in `AIHelperFiles/btc-pools-hardware-plan.md`. P5's economic layer (hardware pricing, variety, upgrade decisions) builds on top of that foundation.
+
 Done when buying hardware feels like an economic decision, not just a UI speed setting.
 
 ### P6 - Casino Finances
@@ -237,6 +242,7 @@ Done when at least the core betting and money logic has automated coverage and a
 - [x] Add casino BTC addresses.
 - [x] Add `CasinoFinances` development scene.
 - [ ] Add scheduled bot transactions.
+- [ ] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`).
 - [ ] Add public mempool with 48 transaction block cap.
 - [ ] Add simplified block template builder.
 - [ ] Add bot mining that can beat the player.
