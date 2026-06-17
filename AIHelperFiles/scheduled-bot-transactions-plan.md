@@ -1,6 +1,6 @@
 # Scheduled Bot Transactions — Implementation Plan
 
-Goal: make bots automatically send BTC to each other, to the player, and to the casino after each mined block, creating organic BTC circulation that the player can observe in BlockExplorer and their own BTCWallet.
+Goal: make miner bots automatically send BTC to the non-miner holder bot pool after each mined block, creating organic BTC circulation that the player can observe in BlockExplorer. The recipient pool is exclusively non-miner bot addresses — this keeps early circulation contained, makes non-miner bot addresses publicly interesting, and sets the foundation for the bot referral system designed in the future section below.
 
 This is the next item after the BTC wallet system (Phase 1–9 of `btc-wallet-system-plan.md`).
 
@@ -13,7 +13,7 @@ This is the next item after the BTC wallet system (Phase 1–9 of `btc-wallet-sy
 **`Scripts/BlockchainPort/Blockchain/Models.cs`**
 - `Transaction` — has `TransactionId`, `Sender`, `Recipient`, `Amount`, `SignatureBase64`, `PublicKeyBase64`, `Secp256k1PublicKeyBase64`, `IsSpendable`
 - `Block` — has `Transactions` list, `Index`, `Timestamp`, `MinedByNodeId`, `MinedByAddress`
-- No `Fee` field yet on `Transaction` (deferred to Phase 4 block template builder)
+- No `Fee` field yet on `Transaction` (see Phase 4 — implementable now or deferred)
 
 **`Scripts/BlockchainPort/Blockchain/BlockchainService.cs`**
 - `GetAddressSpendableBalance(address)` — confirmed balance minus pending outgoing; prevents double-spend
@@ -26,26 +26,26 @@ This is the next item after the BTC wallet system (Phase 1–9 of `btc-wallet-sy
 - `WalletAddress` is the node's receiving `gm1q...` address
 
 **`Scripts/BlockchainPort/Simulation/NetworkRoot.cs`**
-- `SharedNodesById: Dictionary<string, NodeAgent>` — all registered nodes (player, bot_1..bot_4, non-miner bots, casino, session pass_* wallets)
+- `SharedNodesById: Dictionary<string, NodeAgent>` — all registered nodes
 - `SharedNetwork: NetworkSimulator` — propagates transactions and blocks to all registered nodes
 - `HandleMinedBlock(miner, block, minedAtUnixMs)` — fires every time any block is mined; **this is the correct hook for the scheduler**
 - `CreateAndBroadcastTransactionToAddress(fromNodeId, recipientAddress, amount)` — full pipeline: sign → validate → add to pending → broadcast
-- `PersistStateToDisk()` — serializes chain + pending txs + node wallets; already handles persistence correctly
+- `PersistStateToDisk()` — serializes chain + pending txs + node wallets
 
 **`Scripts/BlockchainPort/Simulation/BotWalletRegistry.cs`**
-- 4 miner bots (`bot_1`..`bot_4`) and 10 non-miner holder bots — all registered with full ECDSA keypairs
-- All are registered as `NodeAgent`s in `EnsureInitialized()` so they can sign transactions
+- Miner bots: `bot_1`..`bot_4` — `BotWalletRegistry.MinerBots` IReadOnlyList
+- Non-miner holder bots: `non_miner_1`..`non_miner_10` — `BotWalletRegistry.NonMinerBots` IReadOnlyList
+- Both lists expose `NodeId`, `Address`, `IsMinerNode` per record
+- `AllBots` property combines both lists
 
 ### What is missing
 
 - No automatic transaction scheduling — all bot-to-bot sends are currently manual (BotsBtcWallets screen)
 - No circulation start rule
 - No per-block hook that evaluates bot balances and queues outgoing transactions
-- `Transaction` has no `Fee` field (deferred; block template builder will handle fee logic)
+- `Transaction` has no `Fee` field (optionally added in Phase 4)
 
 ### How block rewards flow (timing)
-
-Understanding this is critical for the scheduler's balance checks:
 
 | Event | Chain state after event |
 |---|---|
@@ -56,13 +56,43 @@ So the miner of block N can only spend their reward starting from block N+1. `Ge
 
 ---
 
+## Roles and Participation Model
+
+### Automatic Recirculation — Basic Mode
+
+| Node type | Sends (auto) | Receives (auto) | Reason |
+|---|---|---|---|
+| `bot_1`..`bot_4` (miners) | **Yes** | **No** | Main source of circulated BTC; already accumulates via coinbase |
+| `non_miner_1`..`non_miner_10` | **No** | **Yes — only** | The entire recipient pool; receive from miners |
+| `casino` | **No** | **No** | No BTC until P7 BTC/SC trading; excluded from both roles in Basic Mode |
+| `player` | **No** | **No** | Player manages their own wallet manually; not part of automatic recirculation |
+| `pass_*` | **No** | **No** | Session-scoped passphrase wallets excluded in Basic Mode |
+
+**Recipient pool** = `BotWalletRegistry.NonMinerBots.Select(b => b.Address).ToList()`
+
+Derived from the registry each call. No hardcoded addresses or ID-prefix string filters needed.
+
+### Infrastructure Readiness for Future Scenarios
+
+The scheduler and transaction pipeline must be designed so the following future patterns require only lifted exclusions or new call sites — no architectural changes:
+
+| Scenario | Direction | When |
+|---|---|---|
+| Player manually programs automatic payment to any address | player → any | Needs UI design (post-Basic Mode) |
+| Casino sends BTC once P7 BTC/SC trading is active | casino → any | P7 |
+| Non-miner bots begin spending (post-casino player simulation) | non-miner → any | Post-Basic Mode |
+| `pass_*` wallet automatic sends | pass_* → any | Post-Basic Mode |
+| Referral reward transactions | any → non-miner | Post-Basic Mode (see Future section below) |
+
+---
+
 ## Phase 1 — Scheduler Core in NetworkRoot
 
 **File to modify**: `Scripts/BlockchainPort/Simulation/NetworkRoot.cs`
 
 ### 1.1 — Constants
 
-Add to the top of `NetworkRoot`, alongside the existing `PlayerNodeId` / `CasinoNodeId` constants:
+Add alongside existing `PlayerNodeId` / `CasinoNodeId` constants:
 
 ```csharp
 private const int TransactionCirculationStartBlock = 5;
@@ -72,30 +102,27 @@ private const decimal MinSendFractionDecimal = 0.10m;
 private const decimal MaxSendFractionDecimal = 0.40m;
 ```
 
-- `TransactionCirculationStartBlock = 5` — no scheduled sends before block 5; lets early mining rewards accumulate first
-- `MinBotSpendableBalanceBtc = 1.0m` — bot must have at least 1 BTC confirmed and unencumbered before scheduling
-- `BotSendProbabilityPerBlock = 0.5` — each eligible bot has a 50% chance per block of scheduling a send; statistically produces ~1–3 scheduled transactions per block once circulation is active
-- `MinSendFractionDecimal / MaxSendFractionDecimal` — amount range: 10% to 40% of spendable balance per scheduled send; prevents bots from depleting their balance instantly
+- `TransactionCirculationStartBlock = 5` — lets early mining rewards accumulate before circulation begins
+- `MinBotSpendableBalanceBtc = 1.0m` — with 50 BTC coinbase per block, allows sends after just one confirmation; revisit if too frequent
+- `BotSendProbabilityPerBlock = 0.5` — ~2 of 4 eligible miners send per block; produces 2–4 non-coinbase txs per block during active circulation
+- `MinSendFractionDecimal / MaxSendFractionDecimal` — bots send 10–40% of spendable balance per send; prevents rapid depletion
 
 ### 1.2 — Scheduler Method
-
-Add as a new private static method in `NetworkRoot`:
 
 ```csharp
 private static void ScheduleBotTransactionsAfterBlock(Block block)
 {
     if (block.Index < TransactionCirculationStartBlock) return;
 
-    List<string> allAddresses = SharedNodesById.Values
-        .Select(n => n.WalletAddress)
-        .Distinct()
+    List<string> recipientPool = BotWalletRegistry.NonMinerBots
+        .Select(b => b.Address)
         .ToList();
 
-    foreach ((string nodeId, NodeAgent node) in SharedNodesById)
+    if (recipientPool.Count == 0) return;
+
+    foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
     {
-        // Player manages their own wallet; passphrase wallets are session-scoped
-        if (nodeId == PlayerNodeId) continue;
-        if (nodeId.StartsWith("pass_", StringComparison.Ordinal)) continue;
+        if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? node)) continue;
 
         decimal spendable = node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
         if (spendable < MinBotSpendableBalanceBtc) continue;
@@ -106,12 +133,7 @@ private static void ScheduleBotTransactionsAfterBlock(Block block)
         decimal sendAmount = Math.Round(spendable * fraction, 8);
         if (sendAmount <= 0m) continue;
 
-        List<string> eligible = allAddresses
-            .Where(a => a != node.WalletAddress)
-            .ToList();
-        if (eligible.Count == 0) continue;
-
-        string recipientAddress = eligible[Random.Shared.Next(eligible.Count)];
+        string recipientAddress = recipientPool[Random.Shared.Next(recipientPool.Count)];
         Transaction tx = node.CreateSignedTransaction(sendAmount, recipientAddress);
         if (node.Blockchain.AddTransactionToPendingTransactions(tx))
             SharedNetwork.BroadcastTransaction(node.NodeId, tx);
@@ -120,63 +142,41 @@ private static void ScheduleBotTransactionsAfterBlock(Block block)
 ```
 
 Notes:
-- Uses `Random.Shared` (.NET 8 built-in thread-safe shared instance) — never `new Random()` which risks identical seeds under rapid calls
-- The balance check is on `node.Blockchain` (the bot's local chain copy), which is kept in sync via `SharedNetwork.BroadcastBlock` — no separate chain query needed
-- `AddTransactionToPendingTransactions` re-validates signature and balance internally; calling it here is intentional double-validation (defense in depth)
-- Only the tx data is broadcast, not a new block; the scheduled transactions go into the pending pool for the next block
+- Iterates `BotWalletRegistry.MinerBots` directly — no ID-prefix checks, no leaking through the full `SharedNodesById` dictionary
+- Recipient pool built from `BotWalletRegistry.NonMinerBots` each call — picks up any future registry additions automatically
+- Uses `Random.Shared` (.NET 8 thread-safe shared instance) — never `new Random()` which risks identical seeds under rapid calls
+- `AddTransactionToPendingTransactions` re-validates signature and balance internally; intentional double-validation (defense in depth)
+- If Phase 4 fee model is implemented, `CreateSignedTransaction` receives an additional fee argument (see Phase 4)
 
 ### 1.3 — Wire Into HandleMinedBlock
-
-Modify `HandleMinedBlock` to call the scheduler before persisting:
 
 ```csharp
 private static void HandleMinedBlock(NodeAgent miner, Block block, long? minedAtUnixMs)
 {
-    if (minedAtUnixMs.HasValue)
-        block.Timestamp = minedAtUnixMs.Value;
+    // ... existing broadcast and streak logic (unchanged) ...
 
-    SharedNetwork.BroadcastBlock(miner.NodeId, block);
-    Transaction? rewardTx = miner.Blockchain.PendingTransactions
-        .LastOrDefault(t => t.Sender == BlockchainService.CoinbaseSender && t.Recipient == miner.WalletAddress);
-    if (rewardTx is not null)
-        SharedNetwork.BroadcastTransaction(miner.NodeId, rewardTx);
-
-    _lastMinedBlock = block;
-    // ... streak tracking (unchanged) ...
-
-    ScheduleBotTransactionsAfterBlock(block);  // ← add here, before PersistStateToDisk
+    ScheduleBotTransactionsAfterBlock(block);  // ← add before PersistStateToDisk
     PersistStateToDisk();
 }
 ```
 
-The scheduler fires after the block is broadcast to all nodes, so `GetAddressSpendableBalance` sees the finalized chain state for block N when scheduling transactions that will land in block N+1.
+The scheduler fires after the block is broadcast to all nodes. `GetAddressSpendableBalance` sees the finalized chain state for block N, so scheduled transactions correctly land in block N+1.
 
 ---
 
-## Phase 2 — Participant Roles
+## Phase 2 — Expected Circulation Pattern
 
-### Who sends
+With recipient pool = 10 non-miner bots, sender pool = 4 miner bots, 50% probability per miner per block:
 
-| Node type | Eligible to send | Condition |
-|---|---|---|
-| `bot_1`..`bot_4` (miners) | Yes | spendable ≥ 1 BTC and block.Index ≥ 5 |
-| Non-miner holder bots | Yes | same; starts with 0 BTC so ineligible until they receive from miners |
-| `casino` | Yes | ineligible until it receives BTC (currently has 0 from mining); will become active once BTC/SC trading (P7) seeds it |
-| `player` | **No** | always excluded — player owns their wallet |
-| `pass_*` | **No** | session-scoped passphrase wallets excluded |
+| Block range | Expected state |
+|---|---|
+| 1–4 | Only coinbase rewards flow; miners accumulate |
+| 5 | First scheduler run; ~2 of 4 miners send to random non-miner addresses |
+| 6–7 | ~4 non-miner bots have received at least one send (uniform random over 10 addresses) |
+| 10 | Statistical expectation: all 10 non-miner bots have received BTC at least once |
+| 15+ | BTC distributed across full non-miner pool; some non-miners have received multiple sends |
 
-### Who receives
-
-Any registered address can receive: `bot_1`..`bot_4`, non-miner bots, `casino`, `player`. All addresses are pulled from `SharedNodesById.Values` each call so new session registrations (passphrase wallets) also get into the pool.
-
-The recipient selection is uniform random among all addresses except the sender. This gives the player and casino equal probability of receiving BTC as any other bot. If the game design later requires the player to receive BTC more reliably, add a weighted selection (e.g., player address appears 3× in the pool).
-
-### Expected circulation pattern
-
-- Blocks 1–4: only coinbase rewards flow (miners accumulate BTC)
-- Block 5+: scheduler activates; miner bots start distributing
-- By block 10: non-miner bots begin receiving; casino may receive its first BTC
-- By block 20: BTC is spread across the full address pool; player's BTCWallet shows incoming transactions
+Non-miner bots do not send in Basic Mode, so their balances only grow. This makes them observable accumulation targets and the basis for the referral mechanic described below.
 
 ---
 
@@ -185,45 +185,74 @@ The recipient selection is uniform random among all addresses except the sender.
 No new persistence code is needed. The scheduled transactions flow through the existing pipeline:
 
 1. `node.Blockchain.AddTransactionToPendingTransactions(tx)` — adds to the bot's local pending list
-2. `SharedNetwork.BroadcastTransaction(node.NodeId, tx)` — propagates to all nodes including the player's chain
+2. `SharedNetwork.BroadcastTransaction(node.NodeId, tx)` — propagates to all nodes
 3. Next block mine: `CreateNewBlock()` in `BlockchainService` moves all pending txs into the block
-4. `PersistStateToDisk()` — serializes `PlayerPendingTransactions` and chain to `user://blockchain/state.json`
+4. `PersistStateToDisk()` — serializes chain + pending txs to `user://blockchain/state.json`
 
-Scheduled transactions will be visible in `BlockExplorer` immediately (in pending), and confirmed in the next mined block. They survive save/reload because they are part of the standard chain state snapshot.
+Scheduled transactions are visible in `BlockExplorer` immediately (in pending) and confirmed in the next mined block. They survive save/reload as part of the standard chain state snapshot.
 
 ---
 
-## Phase 4 — Fee Model (Deferred)
+## Phase 4 — Fee Model
 
-`Transaction` currently has no `Fee` field. When Phase 4 (block template builder) is implemented:
+**Decision**: implement now (preferred) or defer to block template builder phase (safe fallback).
 
-1. Add `Fee` property to `Transaction` (default `0m` for backward compatibility)
-2. Update `CreateSignedTransaction` on `NodeAgent` to accept an optional fee parameter
-3. Update `ScheduleBotTransactionsAfterBlock` to subtract fee from `sendAmount` and set `tx.Fee`
-4. Update block assembly to add included fees to the miner's coinbase
+The simple fee model: bots pick a fee from a fixed list `[0.1, 0.2, ..., 1.0 BTC]` randomly. The fee is subtracted from `sendAmount` before the transaction is created; the block assembler adds all included fees to the miner's coinbase reward.
 
-Until then, scheduled transactions carry `Fee = 0` implicitly and the full `Amount` goes to the recipient.
+### 4.1 — Changes Required
+
+**`Scripts/BlockchainPort/Blockchain/Models.cs`** — add to `Transaction`:
+```csharp
+public decimal Fee { get; set; } = 0m;
+```
+Default `0m` ensures backward compatibility with existing persisted blocks.
+
+**`Scripts/BlockchainPort/Simulation/NodeAgent.cs`** — update signature:
+```csharp
+public Transaction CreateSignedTransaction(decimal amount, string recipientAddress, decimal fee = 0m)
+```
+Set `tx.Fee = fee` inside the method before signing. Include the fee value in the signed data hash (alongside Amount and Recipient) to prevent tampering.
+
+**`Scripts/BlockchainPort/Simulation/NetworkRoot.cs`** — add fee list constant and update scheduler:
+```csharp
+private static readonly decimal[] BotFeeOptions =
+    { 0.1m, 0.2m, 0.3m, 0.4m, 0.5m, 0.6m, 0.7m, 0.8m, 0.9m, 1.0m };
+```
+
+Inside `ScheduleBotTransactionsAfterBlock`, before creating the transaction:
+```csharp
+decimal fee = BotFeeOptions[Random.Shared.Next(BotFeeOptions.Length)];
+decimal netSend = Math.Round(spendable * fraction, 8);
+if (netSend - fee <= 0m) continue;  // fee would consume the entire send
+Transaction tx = node.CreateSignedTransaction(netSend - fee, recipientAddress, fee);
+```
+
+**`Scripts/BlockchainPort/Blockchain/BlockchainService.cs`** — update `CreateNewBlock()` coinbase:
+```csharp
+decimal totalFees = pendingTxsInBlock.Sum(tx => tx.Fee);
+// add totalFees to the coinbase Amount alongside the block reward
+```
+
+### 4.2 — If Deferring
+
+Leave `Transaction.Fee = 0m` as a planned field (add default property now for forward compatibility), mark the `CreateSignedTransaction`, scheduler, and `CreateNewBlock` change sites as `// TODO: Phase 4 fee model` comments, and implement during the block template builder phase. Until then, all scheduled transactions carry zero fee and the full amount goes to the recipient.
 
 ---
 
 ## Phase 5 — Development Visibility
 
-After implementation, verify circulation is working through existing UI:
+After implementation, verify circulation through existing screens:
 
 **BlockExplorer** (`Screens/BlockExplorer/BlockExplorer.tscn`)
-- Pending transactions panel shows bot-scheduled txs appear after block 5
-- Confirmed blocks (from block 6 onward) contain non-coinbase transactions
-- Address lookup: player's address shows incoming transactions from bot addresses
+- Pending transactions panel: bot-scheduled txs appear after block 5
+- Confirmed blocks (from block 6 onward): non-coinbase transactions visible
+- Address lookup on any non-miner bot address: shows incoming sends from miner bot addresses
 
 **BotsBtcWallets** (`Screens/BotsBtcWallets/BotsBtcWallets.tscn`)
-- Non-miner bots begin receiving BTC from miner bots once circulation starts
-- Their confirmed balance label updates every 3 seconds (the screen's refresh interval)
+- Non-miner bots (`non_miner_1`..`non_miner_10`) show increasing confirmed balances
+- Balance label refreshes every 3 seconds (screen's existing refresh interval)
 
-**BTCWallet** (`Screens/BTCWallet/BTCWallet.tscn`)
-- Player's base address balance increases when a bot sends to the player address
-- Balance refreshes every 2 seconds
-
-No new dev scenes are needed for this phase.
+No new dev scenes needed.
 
 ---
 
@@ -231,27 +260,78 @@ No new dev scenes are needed for this phase.
 
 ```
 1. Add constants (TransactionCirculationStartBlock, MinBotSpendableBalanceBtc, etc.) to NetworkRoot
-2. Add ScheduleBotTransactionsAfterBlock() static method to NetworkRoot
-3. Wire call into HandleMinedBlock() before PersistStateToDisk()
-4. Run game: autobet until block 5 — verify no scheduled txs appear in BlockExplorer
-5. Continue autobet to block 6+ — verify pending transactions appear after each block
-6. Verify at least one miner bot balance decreases and a target address increases
-7. Verify player BTCWallet occasionally receives BTC from bot addresses
-8. Verify BlockExplorer confirmed blocks from block 6+ contain non-coinbase transactions
+2. (Optional) Phase 4: add Fee field to Transaction, update CreateSignedTransaction, add BotFeeOptions, update CreateNewBlock
+3. Add ScheduleBotTransactionsAfterBlock() to NetworkRoot
+4. Wire call into HandleMinedBlock() before PersistStateToDisk()
+5. Run game: autobet until block 5 — verify no scheduled txs appear in BlockExplorer pending panel
+6. Continue autobet to block 6+ — verify pending transactions appear (sender = miner bot address, recipient = non_miner_* address)
+7. Verify miner bot balances decrease in BotsBtcWallets
+8. Verify non-miner bot balances accumulate in BotsBtcWallets
+9. Verify BlockExplorer confirmed blocks from block 6+ contain non-coinbase transactions
+10. If Phase 4 implemented: verify fee amounts appear in tx detail and miner coinbase reflects the fee bonus
 ```
+
+---
+
+## Future — Non-Miner Bot Referral System
+
+This section captures design intent for a post-Basic-Mode feature. No implementation is planned here — it informs what data the Phase 1 scheduler should eventually track and how the non-miner bot pool grows in meaning over time.
+
+### Core Concept
+
+Non-miner bot addresses (`non_miner_1`..`non_miner_10`) are visible in BlockExplorer. Any participant can send BTC to them:
+- Miner bots send automatically via the scheduler (see Phase 1)
+- The player can send manually from BTCWallet at any time
+
+Each non-miner bot tracks a **donation ledger**: total BTC sent to it by each unique sender address. If the player's address is the top donor to a given non-miner bot for a defined number of consecutive blocks (threshold TBD), that bot becomes the player's **casino referral** — providing small but persistent advantages in the casino.
+
+This creates a natural incentive for players to donate BTC to non-miner bots, competing with the miner bot automatic scheduler for "top donor" status on each bot.
+
+### Donation Ledger Model (future data structure)
+
+```
+NonMinerBotDonorRecord:
+  botNodeId: string
+  senderAddress: string
+  totalDonatedBtc: decimal
+  lastDonationBlock: int
+  isTopDonorSince: int?   // block index when this sender became top donor; null if not top donor
+```
+
+Persisted alongside or inside the bot wallet registry. Updated whenever a transaction to a non-miner address is confirmed in a block (not at broadcast — only at confirmation to avoid counting dropped transactions).
+
+### Referral Auction Mechanic (to be designed)
+
+- Player inspects non-miner bot addresses in BlockExplorer to see donation rankings
+- If player becomes and remains top donor for X consecutive blocks → bot becomes their casino referral
+- Referral tier depends on total donated amount (bots with higher received totals = better referrals with more valuable perks)
+- Future: non-miner bots simulate casino players (background betting, no gameplay required), giving them income streams that determine their referral quality
+- Future: referral system supports human referrals, tiered rewards, and revenue sharing — non-miner bots are the entry point
+
+### Referral Perk Design Space (all TBD)
+
+- SC cashback percentage on wins
+- Reduced BTC/SC conversion fee (P7)
+- Tournament entry tickets
+- Extended bankroll auto-recharge grace periods
+- Priority informational notifications (next block ETA, etc.)
+
+### No New Scene Required
+
+The "public pool" of non-miner bot addresses needs no new UI scene. All addresses are already visible and searchable in BlockExplorer. The player discovers which bots are interesting by browsing the existing address list — the referral potential emerges from observation and experimentation, not from a dedicated screen.
 
 ---
 
 ## Open Questions
 
-**OQ-1 — Player as recipient probability**: Should the player's address be more likely as a recipient to ensure early BTC income? Or keep it uniform for simulation realism?
+**OQ-1 — Referral top-donor threshold**: How many consecutive blocks must the player be top donor to earn a referral? Should the threshold scale with the bot's referral quality (better bots require longer commitment)?
 
-**OQ-2 — Casino eligibility**: Should the casino be excluded from scheduled sends until P7 (BTC/SC trading) seeds it with BTC, or allow it to receive and hold BTC from bots naturally?
+**OQ-2 — Donation ledger persistence timing**: Confirmed at broadcast (pending) or only at block confirmation? Confirmation is safer — avoids counting transactions that never make it into a block.
 
-**OQ-3 — `MinBotSpendableBalanceBtc` threshold**: Is 1.0 BTC the right minimum? With 50 BTC coinbase rewards per block, this allows sends after the first confirmation. Lower = more frequent tiny sends; higher = larger but less frequent sends.
+**OQ-3 — Referral perk priority**: Which perk type should be implemented first to have the most impact on Basic Mode survival decisions?
 
-**OQ-4 — `BotSendProbabilityPerBlock`**: At 0.5, all 4 miner bots are eligible by block 5 and statistically 2 send per block. This means blocks 6–20 will have 2–4 non-coinbase transactions each. Is that realistic enough for the game's early Bitcoin feel?
+**OQ-4 — Miner bot referral eligibility**: Can miner bots also become referrals, or only non-miner bots? Mixing roles may dilute the mechanic but miner bots accumulate more BTC and could be more valuable referrals.
 
-**OQ-5 — Fee field timing**: Should `Fee` be added to `Transaction` now (with default `0m`) to front-load the migration, or wait until Phase 4?
+**OQ-5 — Minimum donation threshold**: Should any BTC transfer of any size count toward donor ranking, or should there be a minimum per-tx floor to prevent ranking manipulation via many tiny sends?
 
-**OQ-6 — Non-miner bot seeding**: Non-miner bots start with 0 BTC and only receive from miner bots' random sends. Should we seed them with small amounts at circulation start (e.g., one small coinbase-like grant at block 5) or let the natural random sends fill them over time?
+**OQ-6 — Non-miner bot graduation timing**: When do non-miner bots graduate to simulated casino players? Tied to P8 Achievements, a block milestone, or a separate post-Basic-Mode phase?

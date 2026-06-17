@@ -212,6 +212,22 @@ Goal: establish a test foundation so core logic can be verified without running 
 
 Done when at least the core betting and money logic has automated coverage and a new developer can run tests from the command line.
 
+### Post-Basic Mode — Casino Referral System
+
+Goal: give non-miner holder bots (`non_miner_1`..`non_miner_10`) a social and economic role in the casino ecosystem, and give the player an organic reason to donate BTC to them.
+
+- Non-miner bots each maintain a donation ledger: total BTC received per unique sender address.
+- If the player's address is the **top donor** to a given non-miner bot for a defined number of consecutive blocks, that bot becomes the player's **casino referral**.
+- Referral perks are small but persistent: cashback, reduced BTC/SC conversion fees, tournament entries, etc. (to be specified).
+- Referral tier is determined by the bot's total BTC received (bots with more accumulated BTC are better referrals).
+- Long-term: non-miner bots graduate to simulated casino players, enabling background betting simulations and referral revenue mechanics.
+- The non-miner bot donation ledger is the schema foundation for the full casino referral system (which will eventually support human referrals, tiered rewards, and revenue sharing).
+- No dedicated UI scene needed: addresses are already visible in BlockExplorer; discovery happens through observation.
+
+See `AIHelperFiles/scheduled-bot-transactions-plan.md` → Future section for full design notes.
+
+Done when a player can earn a casino referral by donating BTC to a non-miner bot and observe at least one referral perk in active gameplay.
+
 ---
 
 ## 6. Design Questions Still Open
@@ -242,6 +258,7 @@ Done when at least the core betting and money logic has automated coverage and a
 - [x] Add casino BTC addresses.
 - [x] Add `CasinoFinances` development scene.
 - [ ] Add scheduled bot transactions.
+- [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
 - [ ] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`).
 - [ ] Add public mempool with 48 transaction block cap.
 - [ ] Add simplified block template builder.
