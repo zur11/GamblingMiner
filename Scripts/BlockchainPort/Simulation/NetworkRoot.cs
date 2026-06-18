@@ -26,6 +26,12 @@ public partial class NetworkRoot : Node
     private const string BlockchainDir = "user://blockchain";
     private const string StatePath = "user://blockchain/state.json";
 
+    private const int TransactionCirculationStartBlock = 5;
+    private const decimal MinBotSpendableBalanceBtc = 1.0m;
+    private const double BotSendProbabilityPerBlock = 0.5;
+    private const decimal MinSendFractionDecimal = 0.10m;
+    private const decimal MaxSendFractionDecimal = 0.40m;
+
     public override void _Ready()
     {
         EnsureInitialized();
@@ -210,7 +216,38 @@ public partial class NetworkRoot : Node
             _bestMinerStreak = _currentMinerStreak;
         }
 
+        ScheduleBotTransactionsAfterBlock(block);
         PersistStateToDisk();
+    }
+
+    private static void ScheduleBotTransactionsAfterBlock(Block block)
+    {
+        if (block.Index < TransactionCirculationStartBlock) return;
+
+        List<string> recipientPool = BotWalletRegistry.NonMinerBots
+            .Select(b => b.Address)
+            .ToList();
+
+        if (recipientPool.Count == 0) return;
+
+        foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
+        {
+            if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? node)) continue;
+
+            decimal spendable = node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
+            if (spendable < MinBotSpendableBalanceBtc) continue;
+            if (Random.Shared.NextDouble() >= BotSendProbabilityPerBlock) continue;
+
+            decimal fraction = MinSendFractionDecimal
+                + (decimal)Random.Shared.NextDouble() * (MaxSendFractionDecimal - MinSendFractionDecimal);
+            decimal sendAmount = Math.Round(spendable * fraction, 8);
+            if (sendAmount <= 0m) continue;
+
+            string recipientAddress = recipientPool[Random.Shared.Next(recipientPool.Count)];
+            Transaction tx = node.CreateSignedTransaction(sendAmount, recipientAddress);
+            if (node.Blockchain.AddTransactionToPendingTransactions(tx))
+                SharedNetwork.BroadcastTransaction(node.NodeId, tx);
+        }
     }
 
     private static decimal GetBlockRewardForNextCandidate(NodeAgent miner)

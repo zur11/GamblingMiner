@@ -216,17 +216,28 @@ Done when at least the core betting and money logic has automated coverage and a
 
 Goal: give non-miner holder bots (`non_miner_1`..`non_miner_10`) a social and economic role in the casino ecosystem, and give the player an organic reason to donate BTC to them.
 
-- Non-miner bots each maintain a donation ledger: total BTC received per unique sender address.
-- If the player's address is the **top donor** to a given non-miner bot for a defined number of consecutive blocks, that bot becomes the player's **casino referral**.
-- Referral perks are small but persistent: cashback, reduced BTC/SC conversion fees, tournament entries, etc. (to be specified).
-- Referral tier is determined by the bot's total BTC received (bots with more accumulated BTC are better referrals).
-- Long-term: non-miner bots graduate to simulated casino players, enabling background betting simulations and referral revenue mechanics.
-- The non-miner bot donation ledger is the schema foundation for the full casino referral system (which will eventually support human referrals, tiered rewards, and revenue sharing).
-- No dedicated UI scene needed: addresses are already visible in BlockExplorer; discovery happens through observation.
+**Referral auction mechanic**:
+- Each non-miner bot runs a **7-day in-game auction window** (starting from the bot's creation block timestamp; genesis timestamp for the initial 10 bots).
+- Non-miner bot addresses are visible in BlockExplorer — no dedicated UI scene needed for discovery.
+- The player with the highest total confirmed BTC donation to a bot when the window closes becomes that bot's **casino referral**.
+- Miner bots also compete for referrals independently (not player-controlled); miner bots can also earn their own referrals.
 
-See `AIHelperFiles/scheduled-bot-transactions-plan.md` → Future section for full design notes.
+**Winning Referral Commission** (primary perk):
+- 1% of the referred bot's SC winnings, claimable by the player at any time.
+- A new **Referral Commission scene** lists all active referrals and per-referral claimable amounts; claim button enabled when amount > 0.
+- Bot SC winnings come from simulated betting (MartingaleCalculator-derived logic, designed in a later phase).
 
-Done when a player can earn a casino referral by donating BTC to a non-miner bot and observe at least one referral perk in active gameplay.
+**Minimum donation rule**: Send amount must be ≥ fee amount (at 0.1 BTC fee, minimum donation is 0.1 BTC).
+
+**Donation ledger**: Updated at block confirmation only — never at broadcast. Schema: `botNodeId`, `senderAddress`, `totalDonatedBtc`, `confirmedAtBlockIndex`, referral award block.
+
+**Miner Referral conversion**: Every 10 referrals earned, the player may convert one non-miner referral into a **Miner Referral Node** by donating 2 hardware pieces. Miner Referrals are player-controlled: the player manages their mining pool shares, autobet strategies, hardware purchases (from Miner Referral's MainBalance), and BTC→SC conversions. Miner Referral BTC cannot be sent to external wallets. SC from conversions goes to Miner Referral's MainBalance and can only be spent on hardware. Chain sync simulation: new nodes simulate downloading the full chain before mining begins (`blockCount × 0.5 in-game seconds` delay).
+
+**BTC/SC trade scene** (planned): wallet selector must include all active Miner Referral wallets alongside player wallets, so the player can manage referral BTC conversions in the same flow as personal conversions. BTCPoolsAndHardwareShop scene must also include Miner Referral selectors for hardware purchases.
+
+See `AIHelperFiles/scheduled-bot-transactions-plan.md` → Future sections for full design notes.
+
+Done when a player can earn a casino referral by donating BTC to a non-miner bot and observe at least one Winning Referral Commission claimable in the Referral Commission scene.
 
 ---
 
@@ -257,8 +268,9 @@ Done when a player can earn a casino referral by donating BTC to a non-miner bot
 - [x] Add bot/non-node wallet address model.
 - [x] Add casino BTC addresses.
 - [x] Add `CasinoFinances` development scene.
-- [ ] Add scheduled bot transactions.
+- [x] Add scheduled bot transactions.
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
+- [ ] Add Winning Referral Commission scene (list referrals, claimable 1% SC commission per bot, claim button).
 - [ ] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`).
 - [ ] Add public mempool with 48 transaction block cap.
 - [ ] Add simplified block template builder.
