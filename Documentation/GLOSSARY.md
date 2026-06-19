@@ -11,7 +11,7 @@
 - **Coinbase transaction**: Special transaction that creates the block reward and pays fees to the miner.
 - **Difficulty**: Measure of how hard it is to mine a block.
 - **Game over**: State reached when Main Balance plus Bankroll equals zero.
-- **Halving**: Reward reduction event. Basic Mode uses a scaled interval of 4,381 blocks.
+- **Halving**: Reward reduction event. Basic Mode uses a scaled interval of 2,100 blocks (≈ 4 in-game years at 100X scale; initial reward 50 BTC; total supply 210,000 BTC).
 - **Main Balance**: Player reserve outside active betting. This is the preferred user-facing term.
 - **Mempool**: Set of pending BTC transactions waiting to be included in a block.
 - **Merkle root**: Hash root derived from the ordered transactions in a block.

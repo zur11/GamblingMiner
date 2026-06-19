@@ -19,7 +19,7 @@ All project files, public documentation, UI text, code names, and backend termin
 - Some numbers must be made canonical everywhere:
   - Initial funds: `40,000 SC` total in general docs.
   - Specific docs may explain this as `39,900 SC Main Balance + 100 SC Bankroll`.
-  - Basic Mode halving interval: `4,381 blocks`, intentionally scaled to about four in-game years at roughly three blocks per in-game day.
+  - Basic Mode halving interval: `2,100 blocks`, intentionally scaled to about four in-game years at roughly 1.5 blocks per in-game day (100X time scale).
 - Legacy `Principal Balance` code-facing names should move toward `Main Balance` where reasonable.
 - Bots must matter in Basic Mode, but the bot/non-node wallet and transaction system needs a coherent model before long-session testing.
 - Casino finances are part of the simulation and need their own internal scene, even if the player should not have access to it later.
@@ -67,7 +67,7 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 - Game over: total SC depletion across Main Balance and Bankroll.
 - Bankroll: subaccount of Main Balance, used for active betting risk.
 - Auto-recharge: optional player automation, required infrastructure for continuously betting bots.
-- Basic Mode halving: `4,381 blocks`, not Bitcoin's real `210,000` blocks.
+- Basic Mode halving: `2,100 blocks`, not Bitcoin's real `210,000` blocks. Total supply: `210,000 BTC` (50 BTC initial reward; converges to in-game year ~2141).
 - Hardware: increases bets/nonce attempts per real second; it does not alter game-time speed.
 - Hardware credits: each credit = 1 nonce attempt per bet; betting speed in DiceGame is locked to total credits owned across all pool assignments.
 - Mining pools: hardware credits are assigned to either a node's individual pool (solo mining, full reward) or the casino community pool (shared mining, proportional reward minus casino fee).
@@ -128,7 +128,7 @@ Goal: make bot mining and block contents meaningful.
 - Generate scheduled transactions between wallets.
 - Start BTC circulation around block 4 or 5.
 - Build a public mempool shared by mining nodes.
-- Limit Basic Mode blocks to `48 transactions` for now.
+- Limit Basic Mode blocks to `24 transactions` for now.
 - Include transaction fees in block rewards.
 - Let bots mine competing blocks using their own candidate blocks.
 
@@ -258,7 +258,7 @@ Done when a player can earn a casino referral by donating BTC to a non-miner bot
 - [x] Specific starting split defined: `39,900 SC Main Balance + 100 SC Bankroll`.
 - [x] Game over condition defined: `Main Balance + Bankroll = 0`.
 - [x] Current rule defined: `1 bet = 1 nonce attempt`.
-- [x] Basic halving scale defined: `4,381 blocks`.
+- [x] Basic halving scale defined: `2,100 blocks` (updated from 4,381 in 100X migration; total supply 210,000 BTC).
 - [x] Last block and next reward are visible in DiceGame.
 - [x] Block checkpoints restore financial state.
 - [x] Saved strategies work as development/player-owned strategies.
@@ -272,7 +272,7 @@ Done when a player can earn a casino referral by donating BTC to a non-miner bot
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
 - [ ] Add Winning Referral Commission scene (list referrals, claimable 1% SC commission per bot, claim button).
 - [ ] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`).
-- [ ] Add public mempool with 48 transaction block cap.
+- [ ] Add public mempool with 24 transaction block cap.
 - [ ] Add simplified block template builder.
 - [ ] Add bot mining that can beat the player.
 - [x] Update README so future features are not presented as current.

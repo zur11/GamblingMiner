@@ -12,7 +12,7 @@ This project is in active prototyping. The current goal is to stabilize **Basic 
 | --- | --- | --- |
 | Dice game | Implemented | Manual betting and autobet exist. |
 | Betting strategies | Implemented | Strategies can be saved and loaded during development. |
-| Time progression | Implemented | Bets advance game time. Current scale: 1 bet tick = 48 in-game seconds. |
+| Time progression | Implemented | Bets advance game time. Current scale: 1 bet tick = 100 in-game seconds. |
 | Mining attempt per bet | Implemented | Current rule: 1 bet = 1 nonce attempt. |
 | Blockchain explorer | Implemented | Blocks, transactions, addresses, and latest block data can be inspected. |
 | Block checkpoints | Implemented | Financial state is checkpointed around mined blocks. |
@@ -50,11 +50,12 @@ General documentation should describe the start as `40,000 SC`. More specific ec
 
 GamblingMiner intentionally uses a compressed mining scale for gameplay.
 
-- Current time scale: 1 bet tick = 48 in-game seconds.
-- Autobet target scale: 10 real minutes = 8 in-game hours.
-- Basic Mode halving interval: `4,381 blocks`.
+- Current time scale: 1 bet tick = 100 in-game seconds.
+- Autobet target scale: 10 real minutes = 16 in-game hours 40 in-game minutes.
+- Basic Mode halving interval: `2,100 blocks` (≈ 4 in-game years; ~1.5 blocks per in-game day).
+- Total BTC supply: `210,000 BTC` (converges to in-game year ~2141).
 
-The `4,381` block interval is intentional. At roughly three blocks per in-game day, it represents about four in-game years, including one leap day. The game is not trying to use Bitcoin's real `210,000` block halving interval during Basic Mode nor any other mode.
+The `2,100` block interval is intentional. At roughly 1.5 blocks per in-game day, it represents about four in-game years. The game runs at 100X time scale (1 real second = 100 in-game seconds) and targets a total supply of 210,000 BTC — the same reward curve as real Bitcoin (50 → 25 → 12.5 → ...) compressed to a game-world scale. Bitcoin's real `210,000` block halving interval is not used in any game mode.
 
 ## Development Notes
 

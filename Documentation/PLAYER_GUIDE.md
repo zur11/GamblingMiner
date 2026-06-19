@@ -41,8 +41,8 @@ Use autobet when you want time, betting, and mining attempts to continue without
 
 Current time scale target:
 
-- 10 real minutes = 8 in-game hours.
-- 1 auto-bet tick = 48 in-game seconds.
+- 10 real minutes = 16 in-game hours 40 in-game minutes.
+- 1 auto-bet tick = 100 in-game seconds.
 
 Hardware will later increase the number of bets/attempts per real second, but hardware will not directly accelerate game time.
 
@@ -74,7 +74,7 @@ When a block is mined:
 - A checkpoint can preserve financial state.
 - The block can be inspected in the Blockchain Explorer.
 
-Basic Mode uses a scaled halving interval of `4,381 blocks`, not Bitcoin's real `210,000` blocks.
+Basic Mode uses a scaled halving interval of `2,100 blocks`, not Bitcoin's real `210,000` blocks. The initial block reward is 50 BTC and the total supply converges to 210,000 BTC by approximately in-game year 2141.
 
 ## Bots
 
@@ -87,7 +87,7 @@ The fuller bot system is still being designed. The target design includes:
 - Casino BTC addresses.
 - Scheduled transactions between wallets.
 - A shared public mempool.
-- A simplified 48-transaction block cap.
+- A simplified 24-transaction block cap.
 
 The player should eventually be able to inspect recent bot bets and infer their strategy parameters. Full strategy visibility is not planned; the player learns by observing recent behavior.
 

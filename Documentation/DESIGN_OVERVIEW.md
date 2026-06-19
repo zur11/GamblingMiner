@@ -15,8 +15,8 @@ This document describes the target design for GamblingMiner and marks which part
 Status: Implemented / Prototype.
 
 - Manual bet tick: one bet advances the game clock.
-- Current tick scale: `48 in-game seconds`.
-- Autobet target: `10 real minutes = 8 in-game hours`.
+- Current tick scale: `100 in-game seconds`.
+- Autobet target: `10 real minutes = 16 in-game hours 40 minutes`.
 - Hardware does not directly accelerate time.
 - Hardware will increase bets/attempts per real second.
 
@@ -86,9 +86,10 @@ Current implemented behavior includes:
 
 Basic Mode halving:
 
-- `4,381 blocks`.
-- This is intentionally scaled for the current time model.
-- It approximates four in-game years at roughly three blocks per in-game day, including one leap day.
+- `2,100 blocks`.
+- Intentionally scaled for the 100X time model (1 real second = 100 in-game seconds).
+- Approximates four in-game years at roughly 1.5 blocks per in-game day.
+- Total supply converges to `210,000 BTC` (in-game year ~2141). Same reward curve as real Bitcoin (50 → 25 → 12.5 → ...).
 
 Real Bitcoin's `210,000` block halving interval is not the Basic Mode nor any other mode target.
 
@@ -106,7 +107,7 @@ Target model:
 - Bots and casino can send transactions.
 - Public mempool receives pending transactions.
 - BTC circulation should begin around block 4 or 5.
-- Basic Mode block cap: `48 transactions`.
+- Basic Mode block cap: `24 transactions`.
 
 The player should see recent bot bets, not full bot strategies. The player can infer strategy parameters from visible behavior.
 
@@ -118,7 +119,7 @@ The target is a simplified Bitcoin-like block assembly process:
 
 1. Read pending transactions from the public mempool.
 2. Score transactions by simplified ancestor feerate.
-3. Select transactions greedily until the 48-transaction cap is reached.
+3. Select transactions greedily until the 24-transaction cap is reached.
 4. Tie-break equal fee rates by mempool age.
 5. Build coinbase transaction from block reward plus included fees.
 6. Compute the Merkle root from the selected transaction order.
