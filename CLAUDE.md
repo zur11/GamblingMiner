@@ -69,7 +69,7 @@ Block Mined? → BTC Reward + Checkpoint → Manage Bankroll / Strategies → Re
 - `DateTime.Utc` for storage, persistence, and internal comparisons
 - `DateTime.Local` for player-facing display (game time starts `2009-01-03 18:15:06 Local`)
 - Unix **milliseconds** for blockchain timestamps
-- Game-time scale: **1 bet tick = 48 in-game seconds**; autobet target: **10 real minutes = 8 in-game hours**
+- Game-time scale: **1 bet tick = 100 in-game seconds**; autobet target: **10 real minutes = 16h 40m in-game**
 
 ### JSON Persistence
 
@@ -198,8 +198,8 @@ User/Session calls ExecuteNext()
 - `NodeAgent` — generates ECDSA wallet keypair; `TryMineSingleNonceAttempt()` = one attempt per call (enforces `1 bet = 1 attempt` rule); caches candidate block to avoid recomputing on each attempt
 - `CryptoUtils` — ECDSA signing/verification, SHA256 hashing, address derivation
 - **Genesis block**: nonce=100, hash=`"0"`, previous=`"0"`, timestamp `2009-01-03 18:15:05 Unix ms`
-- **Coinbase reward**: starts at 50 BTC, halves every **4,381 blocks** (intentionally scaled ≈ 4 in-game years)
-- **Block cap** (planned): 48 transactions per block
+- **Coinbase reward**: starts at 50 BTC, halves every **2,100 blocks** (≈ 4 in-game years at 100X); total supply **210,000 BTC** (converges to in-game year ~2141)
+- **Block cap** (planned): 24 transactions per block
 
 ---
 
@@ -293,9 +293,10 @@ These values are fixed and must be consistent across all docs, UI, and code:
 | Player-facing term | `Main Balance` (not "Principal Balance") |
 | Game over condition | `Main Balance + Bankroll = 0` |
 | Current mining rule | `1 bet = 1 nonce attempt` |
-| Basic Mode halving | `4,381 blocks` (≈ 4 in-game years) |
+| Basic Mode halving | `2,100 blocks` (≈ 4 in-game years at 100X scale) |
+| Total BTC supply | `210,000 BTC` — converges to in-game year ~2141 |
 | Real Bitcoin halving | `210,000 blocks` — NOT used in Basic Mode |
-| Block transaction cap | `48 transactions` (planned) |
+| Block transaction cap | `24 transactions` (planned) |
 | Hardware cap | `100 nonce attempts` per time cycle (planned) |
 | RTP | `99.02%` |
 | Currency for betting | SC only — BTC cannot be wagered directly |
@@ -308,10 +309,10 @@ These values are fixed and must be consistent across all docs, UI, and code:
 
 - Manual and autobet in Dice game
 - Progressive betting strategies with save/load
-- Time progression (1 bet = 48 in-game seconds)
+- Time progression (1 bet = 100 in-game seconds)
 - 1 bet = 1 nonce mining attempt
 - Block mining with SHA256 difficulty target
-- Block reward system (50 BTC, halving at 4,381 blocks)
+- Block reward system (50 BTC, halving at 2,100 blocks, total supply 210,000 BTC)
 - Blockchain Explorer (blocks, transactions, addresses, node balances)
 - Financial checkpoints at block mining events
 - Main Balance / Bankroll separation
@@ -398,7 +399,7 @@ See `Documentation/GLOSSARY.md` for the full canonical terminology list. Key ter
 - **Autobet** — automated repeated betting using the current strategy
 - **Nonce** — value miners vary while searching for a valid block hash
 - **RTP** — Return to Player (Dice targets 99.02%)
-- **Halving** — reward reduction event; Basic Mode = 4,381 blocks
+- **Halving** — reward reduction event; Basic Mode = 2,100 blocks (≈ 4 in-game years at 100X)
 - **Stop on block mined** — strategy condition that halts betting after a block is found
 
 ---
