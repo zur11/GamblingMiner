@@ -93,7 +93,7 @@ public partial class CalendarsNavigator : Control
 		if (_calendarTimeService.IsAutobetActive)
 		{
 			double x1Speed = _timeSpeedSelector.ItemCount > 0
-				? _timeSpeedSelector.GetItemMetadata(0).AsDouble() : 48d;
+				? _timeSpeedSelector.GetItemMetadata(0).AsDouble() : 100d;
 			if (selectedSpeed > x1Speed)
 			{
 				_calendarTimeService.SpeedMultiplier = x1Speed;
@@ -216,10 +216,10 @@ public partial class CalendarsNavigator : Control
 	private void InitializeTimeSpeedSelector()
 	{
 		_timeSpeedSelector.Clear();
-		AddSpeedOption("x1", 48.0);
-		AddSpeedOption("x2", 96.0);
-		AddSpeedOption("x4", 192.0);
-		AddSpeedOption("x10", 480.0);
+		AddSpeedOption("x1", 100.0);
+		AddSpeedOption("x2", 200.0);
+		AddSpeedOption("x4", 400.0);
+		AddSpeedOption("x10", 1000.0);
 
 		double currentSpeed = _calendarTimeService?.SpeedMultiplier ?? 1.0;
 		int selectedIndex = FindBestSpeedIndex(currentSpeed);

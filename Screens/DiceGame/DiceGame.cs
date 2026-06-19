@@ -65,8 +65,8 @@ public partial class DiceGame : Control, IBetEventSource
 	private NetworkRoot _blockchainNetworkRoot;
 	private const string PlayerNodeId = "player";
 	private string _activeNodeId = PlayerNodeId;
-	private const double GameSecondsPerRealSecond = 48.0d; // 10 real min -> 8 game hours
-	private const double GameSecondsPerManualBet = 48.0d; // 1 manual bet tick
+	private const double GameSecondsPerRealSecond = 100.0d; // 10 real min -> 16h 40m game time
+	private const double GameSecondsPerManualBet = 100.0d; // 1 manual bet tick
 	private const string SavedStrategiesPath = "user://saved_betting_strategies.json";
 	private Label _blockchainStatusValue;
 	private OptionButton _activeNodeSelector;

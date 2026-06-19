@@ -29,7 +29,7 @@ public partial class BetsHistoryExplorer : Control
 	private SceneManager _sceneManager;
 	private DateTime _selectedLocal;
 	private bool _liveMode;
-	private readonly double[] _speedSteps = { 48d, 96d, 192d, 480d };
+	private readonly double[] _speedSteps = { 100d, 200d, 400d, 1000d };
 	private List<BetRecord> _sortedRecords = new();
 	private long _lastRenderedSecond = long.MinValue;
 	private int _summaryCursor;
@@ -331,7 +331,7 @@ public partial class BetsHistoryExplorer : Control
 		_sceneManager?.Go(SceneManager.SceneId.DiceGame);
 	}
 
-	private const double GameBaseSpeed = 48.0;
+	private const double GameBaseSpeed = 100.0;
 
 	private void RefreshControlLabels()
 	{

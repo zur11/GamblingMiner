@@ -1,6 +1,6 @@
 # 100X Time Scale Migration Plan
 
-**Status**: Phase 0 ✓ — Next: Phase 1 (Time Scale Constants)  
+**Status**: Phase 0 ✓  Phase 1 ✓ — Next: Phase 2 (Block Economics Code)  
 **Goal**: Migrate the game from 48X to 100X time scale, align block economics to a **210,000 BTC total supply** converging to year ~2140 with halvings every ~4 in-game years, keeping the familiar 50 BTC initial block reward.
 
 ---
@@ -191,7 +191,7 @@ This document is the audit. All 48X constants and documentation references are c
 
 ---
 
-### Phase 1 — Time Scale Code Constants
+### Phase 1 — Time Scale Code Constants  ✓ DONE
 
 **Touch 3 files. Zero logic changes — only constant values.**
 
@@ -432,12 +432,20 @@ grep -r "210000\|210_000" Scripts/            → should return 0 matches
 | D-4 | Difficulty unchanged | The `"00" + char ≤ '6'` target stays. ~585 attempts/block is a good game feel. Changing difficulty would require separate difficulty calibration work. |
 | D-5 | Speed steps stay at 1x/2x/4x/10x ratios | Relative playback multipliers feel the same; only the base changes from 48 to 100. |
 | D-6 | Existing saves are a known break | Retroactive reward recalculation would require a blockchain replay. Recommended: document a fresh save as required post-migration. |
+| D-7 | Block transaction cap: 48 → **24** | The 48 was 2% of real Bitcoin's ~2,400 tx/block capacity; 24 is 1%, maintaining the same fractional scale at 100X. Feature is planned/not yet implemented — documentation must update to 24, code change deferred to block template builder (P4). |
 
 ---
 
-## Open Questions
+## Open Questions — Resolved
 
-- Should the game display "~16h 40m per block" somewhere visible (e.g. mining stats panel)?
-- Is the `48-transaction block cap` intentionally set to 48 for thematic reasons (linked to the old 48X tick), or is it a coincidence? If thematic, should it change to something at 100X?
-- Should the `_speedSteps` label strings in `BetsHistoryExplorer` be updated to reflect "100X base" semantics in the UI, or left as relative x1/x2/x4/x10?
-- Does the `CalendarsNavigator` speed dropdown need a UI label update beyond changing the numeric value?
+**Q: Should the game display "~16h 40m per block" somewhere visible?**  
+→ Yes, in the DiceGame blockchain info panel (the panel that shows blockchain status). Also must be documented in `Documentation/ProjectDesignManual.md` under a new dedicated section explaining the 100X fractal replica design intent in depth (much more detailed than README/DESIGN_OVERVIEW). Deferred to a separate documentation task.
+
+**Q: Is the 48-transaction block cap thematic or coincidence?**  
+→ Coincidence. It was calculated as 2% of the real Bitcoin block capacity (~2,400 transactions/block average with 1MB limit and ~400 byte avg tx size). At 100X, the correct scale is **1% = 24 transactions**. Updated canonical value: `BlockTransactionCap = 24`. This is a planned feature — no code change needed yet, but all documentation must use 24 going forward (see Phase 4 tasks).
+
+**Q: Should `_speedSteps` labels in BetsHistoryExplorer use 100X semantics or relative x1/x2/x4/x10?**  
+→ Keep relative labels: x1 / x2 / x4 / x10. ✓
+
+**Q: Does CalendarsNavigator speed dropdown need UI label updates?**  
+→ No additional UI label changes needed. Will be confirmed during testing.
