@@ -273,6 +273,59 @@ if (completedHalvings >= 32)
 if (completedHalvings >= 34)
 ```
 
+#### Why the cap exists and why it changes to 34
+
+The full function computes the block reward like this:
+
+```csharp
+private static decimal GetBlockRewardForNextCandidate(NodeAgent miner)
+{
+    int nextBlockIndex = miner.Blockchain.GetLastBlock().Index + 1;
+    int completedHalvings = Math.Max(0, (nextBlockIndex - 1) / HalvingIntervalBlocks);
+    if (completedHalvings >= 32)   // ← THE CAP
+    {
+        return 0m;  // no reward
+    }
+
+    decimal reward = GenesisRewardBtc;  // 50 BTC
+    for (int i = 0; i < completedHalvings; i++)
+    {
+        reward /= 2m;  // halve once per completed halving era
+    }
+    return reward;
+}
+```
+
+`completedHalvings` is computed by integer division: `(nextBlockIndex - 1) / HalvingIntervalBlocks`
+
+With `HalvingIntervalBlocks = 2100`, concrete examples:
+
+| Block | Calculation | Completed halvings | Reward |
+|---|---|---|---|
+| 1 | (1-1)/2100 = 0 | 0 | 50 BTC |
+| 2100 | (2100-1)/2100 = 0 | 0 | 50 BTC |
+| 2101 | (2101-1)/2100 = 1 | 1 | 25 BTC |
+| 4200 | (4200-1)/2100 = 1 | 1 | 25 BTC |
+| 4201 | (4201-1)/2100 = 2 | 2 | 12.5 BTC |
+
+**Why the cap exists:** The halving series `50 → 25 → 12.5 → ...` never mathematically reaches exactly zero — you can always divide by 2 again. Without a cap the code would compute rewards smaller than any meaningful precision indefinitely. The cap declares "from here, treat reward as zero." At cap=34, the last active era reward would be:
+
+```
+50 / 2^33 = 50 / 8,589,934,592 ≈ 0.0000000058 BTC
+```
+
+Effectively zero.
+
+**Why change from 32 to 34:** The cap value determines which block is the last to carry a reward, and therefore which in-game year the emission ends:
+
+| Cap | Last rewarded block | Years from 2009 | In-game year |
+|---|---|---|---|
+| 32 | 32 × 2100 = 67,200 | 67,200 / 1.477 / 365.25 ≈ 124.6 | ~2134 |
+| 33 | 33 × 2100 = 69,300 | 69,300 / 1.477 / 365.25 ≈ 128.5 | ~2137 |
+| **34** | **34 × 2100 = 71,400** | **71,400 / 1.477 / 365.25 ≈ 132.3** | **~2141 ≈ 2140 ✓** |
+
+Real Bitcoin ends emission around year 2140. Cap=34 replicates that. Cap=32 was derived from the old `HalvingIntervalBlocks = 210,000` system and would end emission in ~2134 with the new interval.
+
 **Validation after change**: Confirm `GetExpectedAttemptsForCurrentDifficulty()` still returns ~585 (no change there). Confirm the reward table for blocks 1, 2101, 4201 matches the target table above (50 BTC, 25 BTC, 12.5 BTC).
 
 ---
