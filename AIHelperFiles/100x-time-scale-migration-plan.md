@@ -1,6 +1,6 @@
 # 100X Time Scale Migration Plan
 
-**Status**: Phase 0 ✓  Phase 1 ✓ — Next: Phase 2 (Block Economics Code)  
+**Status**: Phase 0 ✓  Phase 1 ✓  Phase 2 ✓ — Next: Phase 3 (CLAUDE.md Canonical Values)  
 **Goal**: Migrate the game from 48X to 100X time scale, align block economics to a **210,000 BTC total supply** converging to year ~2140 with halvings every ~4 in-game years, keeping the familiar 50 BTC initial block reward.
 
 ---
@@ -245,7 +245,7 @@ AddSpeedOption("x1", 100.0);   // was 48.0
 
 ---
 
-### Phase 2 — Block Economics Code
+### Phase 2 — Block Economics Code  ✓ DONE
 
 **Touch 1 file. Two constant changes only — `GenesisRewardBtc` stays at 50m.**
 
@@ -472,6 +472,78 @@ grep -r "48\.0d\|48\.0\b" Screens/ Scripts/   → should return 0 code matches
 grep -r "48d\b" Screens/ Scripts/             → should return 0 code matches
 grep -r "210000\|210_000" Scripts/            → should return 0 matches
 ```
+
+---
+
+---
+
+## Difficulty Calibration Reference
+
+This section is permanent — it should survive beyond the migration and be updated whenever difficulty is adjusted.
+
+### How block time is determined
+
+Block time is not a fixed setting. It emerges from two independent values:
+
+```
+Expected block time (game-seconds) = expected_attempts_per_block × game_seconds_per_nonce_attempt
+```
+
+At 100X with 1 nonce per bet:
+```
+game_seconds_per_nonce_attempt = 100  (1 bet = 100 in-game seconds)
+target_block_time               = 60,000 in-game seconds (16h 40m)
+target_attempts_per_block       = 60,000 / 100 = 600
+```
+
+Current difficulty gives ~585 attempts/block — close enough to 600 for testing.
+
+### Where difficulty lives
+
+**File**: `Scripts/BlockchainPort/Blockchain/BlockchainService.cs`
+
+```csharp
+public const string DifficultyPrefix = "00";
+public const char DifficultyNextHexMaxInclusive = '6';
+```
+
+These are the **only two values to change** when adjusting difficulty. Everything else derives from them automatically via `GetExpectedAttemptsForCurrentDifficulty()`.
+
+### Probability formula
+
+```
+P(valid hash) = (1/16)^len(DifficultyPrefix) × (DifficultyNextHexMaxInclusive - '0' + 1) / 16
+
+Expected attempts per block = 1 / P(valid hash)
+```
+
+Current values: `(1/16)^2 × 7/16 = 7/4096` → expected = **585 attempts**
+
+### Adjustment examples
+
+| Scenario | Change | New expected attempts | New block time at 100X |
+|---|---|---|---|
+| Current (testing) | `"00"`, `'6'` | ~585 | ~16.25 in-game hours |
+| Hardware doubles nonces/bet | raise difficulty | ~1,170 target | still 16h 40m |
+| Raise prefix only | `"000"`, `'6'` | ~9,362 | ~260 in-game hours (too hard) |
+| Lower max char | `"00"`, `'3'` | ~1,024 | ~28.4 in-game hours |
+| Lower max char | `"00"`, `'9'` | ~410 | ~11.4 in-game hours |
+
+### When to recalibrate
+
+Recalibrate when any of these change significantly:
+- **Nonces per bet** increases (P5 hardware progression feature)
+- **Number of active mining participants** increases substantially
+- **Bet speed** changes (if `GameSecondsPerRealSecond` is ever adjusted again)
+
+### Recalibration procedure
+
+1. Determine new total nonces per game-second: `total_nonces = nonces_per_bet / game_seconds_per_bet`
+2. Target: `expected_attempts_per_block = 60,000 × total_nonces` (to keep 16h 40m block time)
+3. Find constants that give `1/P ≈ expected_attempts_per_block`
+4. Change `DifficultyPrefix` and/or `DifficultyNextHexMaxInclusive` in `BlockchainService.cs`
+5. Verify with `BlockchainService.GetExpectedAttemptsForCurrentDifficulty()`
+6. Update this section with the new values and rationale
 
 ---
 

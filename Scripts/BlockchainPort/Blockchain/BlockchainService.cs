@@ -10,6 +10,10 @@ namespace GodotBlockchainPort.Blockchain;
 public sealed class BlockchainService
 {
     public const string CoinbaseSender = "00";
+    // DIFFICULTY CALIBRATION — these two constants are the only values to change when adjusting block time.
+    // Current target: ~585 attempts/block → ~16h 40m in-game at 100X (1 bet = 100 game-sec, target = 58,500 game-sec/block).
+    // To increase difficulty: lengthen DifficultyPrefix (e.g. "000") or lower DifficultyNextHexMaxInclusive (e.g. '3').
+    // Verify with GetExpectedAttemptsForCurrentDifficulty(). Recalibrate whenever nonces-per-bet or participant count changes significantly.
     public const string DifficultyPrefix = "00";
     public const char DifficultyNextHexMaxInclusive = '6';
     public const string SatoshiAddress = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa";

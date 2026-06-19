@@ -22,7 +22,9 @@ public partial class NetworkRoot : Node
     private const string PlayerNodeId = "player";
     private const string CasinoNodeId = "casino";
     private const decimal GenesisRewardBtc = 50m;
-    private const int HalvingIntervalBlocks = 210000;
+    // 50 × 2100 × 2 = 210,000 BTC total supply; ~4 in-game years per halving at 100X scale.
+    // If this value changes, recalculate the emission cap in GetBlockRewardForNextCandidate() to preserve the ~2140 end-of-supply year.
+    private const int HalvingIntervalBlocks = 2100;
     private const string BlockchainDir = "user://blockchain";
     private const string StatePath = "user://blockchain/state.json";
 
@@ -254,7 +256,8 @@ public partial class NetworkRoot : Node
     {
         int nextBlockIndex = miner.Blockchain.GetLastBlock().Index + 1;
         int completedHalvings = Math.Max(0, (nextBlockIndex - 1) / HalvingIntervalBlocks);
-        if (completedHalvings >= 32)
+        // Cap derived from HalvingIntervalBlocks: 34 × 2100 = 71,400 blocks ≈ in-game year 2141.
+        if (completedHalvings >= 34)
         {
             return 0m;
         }
