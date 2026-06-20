@@ -6,6 +6,19 @@ This is the next item after the BTC wallet system (Phase 1–9 of `btc-wallet-sy
 
 ---
 
+## ⚠️ Status & Sequencing Note (2026-06-19)
+
+**This plan is functionally COMPLETE for now — do not expand it next.** Phase 1 (the scheduler) is live in `NetworkRoot`; Phases 2–3 are documentation-only and done; Phase 4 (fees) is intentionally chained to the block-template-builder; Phase 5 is observation only. There is essentially nothing left to *build* here today.
+
+**Impact from the historical migration** (`historical-founders-and-bootstrap-plan.md`): this plan assumes *"player + 4 miner bots + non-miners all exist from block 1."* The historical migration replaces that with a **network that grows over time** — Satoshi → Hal (bootstrap, 3 Jan–21 Mar 2009) → player (21 Mar) → miner bots introduced gradually afterward. Two assumptions here must therefore be **revisited at re-alignment time (master roadmap step 4), not now**:
+
+- `TransactionCirculationStartBlock = 5` — after bootstrap the chain already holds ~114 founder blocks before the player's first bet; circulation should key off *bot introduction*, not an absolute block index.
+- The miner/non-miner recipient pools — bots don't exist during bootstrap; only founders mine. The scheduler must no-op until miner bots are actually registered.
+
+See `AIHelperFiles/IMPLEMENTATION_ROADMAP.md` for where this sits in the unified order. Fees (Phase 4) reactivate with the block-template-builder (roadmap step 6).
+
+---
+
 ## Implementation Status
 
 | Phase | Description | Status |
@@ -13,8 +26,9 @@ This is the next item after the BTC wallet system (Phase 1–9 of `btc-wallet-sy
 | 1 — Scheduler Core | Constants + `ScheduleBotTransactionsAfterBlock` + wire into `HandleMinedBlock` | ✓ DONE |
 | 2 — Circulation Pattern | Expected block-by-block distribution (documentation only) | ✓ DONE |
 | 3 — Persistence | Confirms no new code needed (documentation only) | ✓ DONE |
-| 4 — Fee Model | `Transaction.Fee`, fee selection list, coinbase augmentation | Deferred — block template builder phase |
-| 5 — Dev Visibility | Verify via BlockExplorer + BotsBtcWallets | Pending — run after first autobet session |
+| 4 — Fee Model | `Transaction.Fee`, fee selection list, coinbase augmentation | Deferred — block template builder (roadmap step 6) |
+| 5 — Dev Visibility | Verify via BlockExplorer + BotsBtcWallets | Deferred — verify after historical re-alignment (roadmap step 4) |
+| ↺ Re-alignment | Revisit circulation trigger + pools for the gradual-introduction model | TODO — roadmap step 4 |
 
 ---
 

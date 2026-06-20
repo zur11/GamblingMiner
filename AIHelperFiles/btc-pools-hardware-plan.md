@@ -1,6 +1,6 @@
 # BTC Mining Pools & Hardware Shop — Implementation Plan
 
-**Status**: Phase 1 ○  Phase 2 ○  Phase 3 ○  Phase 4 ○  Phase 5 ○  Phase 6 ○ — Next: Phase 1 (Hardware Credit Data Model)
+**Status**: Phase 1 ○  Phase 2 ○  Phase 3 ○  Phase 4 ○  Phase 5 ○  Phase 6 ○ — **GATED: do not start until roadmap Step 4** (see `IMPLEMENTATION_ROADMAP.md`). This plan's bootstrap assumes "player + 4 bots exist at block 1"; the historical migration introduces bots *gradually after player start*, so the initial allocation and nonce routing must be re-based on that model first. Depends on the minimal block-candidate + hashrate model (roadmap Step 2).
 
 **Architecture summary**:
 - **Option 2 (solo / P2P)**: each hardware credit in a node's *individual pool* generates 1 nonce attempt per bet, routed to that node's own blockchain — current behavior, extended with hardware count control.

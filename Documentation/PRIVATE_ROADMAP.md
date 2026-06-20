@@ -76,8 +76,28 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 - Bot mining: required in Basic Mode.
 - BTC cannot be used directly for betting.
 - Multiplayer, DLCs, multiple casinos, and cloud persistence are postponed until the core loop is fun and data volume requires more infrastructure.
+- Founder entities: `Satoshi` (dominant early miner; target `11,000 BTC` ≈ 1% of his real ≈1.1 M; retires no earlier than `2011-04-26`), `Hal` (joins `2009-01-11`, mines exactly 3 bootstrap blocks), `Mike Hearn` (joins ~April 2009, after the player). Founders mine without needing SC/BTC, like the casino. Detail: `AIHelperFiles/historical-founders-and-bootstrap-plan.md`.
+- Game start: a first-launch bootstrap pre-mines the chain from genesis (`2009-01-03`) to `2009-03-21` (Satoshi + Hal only), so the player always begins on `21 March 2009`. From player start onward, in-game time always follows player bets.
+- Network-growth model: participants appear over time (`Satoshi → Hal → player → miner bots gradually`), not all at block 1. Autonomous (no-bet) mining happens only during the bootstrap window; reserved otherwise for future expansions/DLC/multiplayer.
+- Coinbase recipients use derived `gm1q…` addresses (real base58 kept only as commented reference; genesis coinbase stays unspendable).
+- Balance model: account/balance-based is a **testing-stage** simplification; the target is a realistic **UTXO** simulation surfaced via passphrase wallets (a fresh address per receive — the "Patoshi pattern").
+- Block-candidate + hashrate model: the **keystone** shared by founder mining, hardware pools, and the block template builder. Minimal weighted-lottery first; full per-node template deferred to P4.
 
 ## 5. Implementation Priorities
+
+> **Authoritative implementation order**: `AIHelperFiles/IMPLEMENTATION_ROADMAP.md`. The priorities below are the *feature* breakdown; the roadmap file holds the *sequencing and dependencies*. Current state: P0–P2 largely complete; **PH (Historical Foundation) is the active next work** and precedes the expansion of P3/P4/P5.
+
+### PH - Historical Foundation (NEW — active; precedes P3)
+
+Goal: establish the historically faithful opening and the network-growth init model **before** economy systems expand on top of it (so recirculation, hardware, and fees are built once, on the right foundation).
+
+- Founders Satoshi & Hal as mining nodes with seed phrases; `FoundersWallets` dev scene (room for Mike Hearn).
+- Fix genesis & early coinbase recipients to derived `gm1q…` addresses; review the `InputData` inscription mechanism (genesis-only for now, 100-byte cap).
+- Block-candidate + hashrate model (minimal weighted lottery) — the keystone for founders, hardware pools, and P4.
+- First-launch bootstrap pre-mine to `21 March 2009`; Satoshi `11,000`-BTC dynamic ramp (retire ≥ `2011-04-26`); the `12 Jan` 10 BTC Satoshi→Hal transaction.
+- Companion research: `historical-blockchain-events-research.md` (UTXO/Patoshi direction; remaining address-reuse research).
+
+Done when a new game starts on `21 March 2009` with a Satoshi/Hal-mined chain, and the player begins betting from there.
 
 ### P0 - Documentation Truth Pass
 
@@ -131,6 +151,8 @@ Goal: make bot mining and block contents meaningful.
 - Limit Basic Mode blocks to `24 transactions` for now.
 - Include transaction fees in block rewards.
 - Let bots mine competing blocks using their own candidate blocks.
+
+**Re-alignment with PH**: after the historical foundation, miner bots are **introduced gradually after player start**, not present at block 1. The scheduled-transaction circulation trigger (`AIHelperFiles/scheduled-bot-transactions-plan.md`) must key off bot introduction rather than an absolute block index, and no-op while only founders are mining.
 
 Done when blocks contain believable transactions and bots can win blocks before the player.
 
@@ -268,7 +290,11 @@ Done when a player can earn a casino referral by donating BTC to a non-miner bot
 - [x] Add bot/non-node wallet address model.
 - [x] Add casino BTC addresses.
 - [x] Add `CasinoFinances` development scene.
-- [x] Add scheduled bot transactions.
+- [x] Add scheduled bot transactions (core scheduler; circulation trigger to be re-aligned for gradual bot introduction).
+- [ ] **PH**: Founders Satoshi & Hal as mining nodes + `FoundersWallets` dev scene.
+- [ ] **PH**: Fix genesis/early coinbase to derived `gm1q…` addresses (genesis stays unspendable).
+- [ ] **PH**: Block-candidate + hashrate model (minimal weighted lottery) — the keystone.
+- [ ] **PH**: First-launch bootstrap pre-mine to 21 Mar 2009 + Satoshi 11,000-BTC ramp + 12 Jan 10 BTC Satoshi→Hal tx.
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
 - [ ] Add Winning Referral Commission scene (list referrals, claimable 1% SC commission per bot, claim button).
 - [ ] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`).
