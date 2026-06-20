@@ -109,6 +109,12 @@ Target model:
 - BTC circulation should begin around block 4 or 5.
 - Basic Mode block cap: `24 transactions`.
 
+### Address & UTXO model
+
+- Balances are currently **account/balance-based** (sum of confirmed transactions per address) — a **testing-stage** simplification.
+- Target: simulate a **UTXO-style** system as realistically as possible, made tangible through the **passphrase-wallet** system (many addresses from one seed).
+- Direction: derive a **fresh address per receive** (coinbase reward or deposit) — the historical **Patoshi pattern** — so spends produce real change outputs and players learn UTXO mechanics hands-on. Founder nodes (Satoshi especially) adopt this first. See `AIHelperFiles/historical-founders-and-bootstrap-plan.md` and `historical-blockchain-events-research.md`.
+
 The player should see recent bot bets, not full bot strategies. The player can infer strategy parameters from visible behavior.
 
 ## 7. Block Template Builder

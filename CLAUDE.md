@@ -200,6 +200,7 @@ User/Session calls ExecuteNext()
 - **Genesis block**: nonce=100, hash=`"0"`, previous=`"0"`, timestamp `2009-01-03 18:15:05 Unix ms`
 - **Coinbase reward**: starts at 50 BTC, halves every **2,100 blocks** (≈ 4 in-game years at 100X); total supply **210,000 BTC** (converges to in-game year ~2141)
 - **Block cap** (planned): 24 transactions per block
+- **Balance model**: currently account/balance-based (`GetAddressData` sums per-address txs) — a **testing-stage** simplification. Target: simulate a realistic **UTXO** model, surfaced via passphrase wallets, deriving a **fresh address per receive** (the historical "Patoshi pattern"). See `AIHelperFiles/historical-founders-and-bootstrap-plan.md` + `historical-blockchain-events-research.md`.
 
 ---
 

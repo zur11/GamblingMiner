@@ -1,9 +1,9 @@
 # Historical Founders & Genesis Bootstrap — Implementation Plan
 
-**Status**: Design — not yet implemented. Next: resolve OQ-1 (candidate-blocks-first) and OQ-3 (disappearance date), then Phase 1.
-**Goal**: Make the early-Bitcoin opening of GamblingMiner historically faithful. Introduce **Satoshi Nakamoto** and **Hal Finney** as special mining nodes (no SC/BTC needed to mine, casino-like), pre-mine a real-but-fast blockchain from the genesis instant up to **21 March 2009** so the player always starts on that day, record the famous **12 Jan 2009 Satoshi→Hal 10 BTC** transaction, retire Satoshi in **early 2011** at a fractal target of **~10,000 BTC**, and review/generalise how extra data (the genesis bank-bailout headline) is stored in blocks.
+**Status**: Design — all 10 open questions resolved (see §6). Next: Phase 1 (identity) can start immediately; Phase 0 (weight + lottery) precedes Phases 4–5. The companion research doc `historical-blockchain-events-research.md` must be filled before Phases 5–6 are coded.
+**Goal**: Make the early-Bitcoin opening of GamblingMiner historically faithful. Introduce **Satoshi Nakamoto** and **Hal Finney** (and later **Mike Hearn**) as special founder mining nodes (no SC/BTC needed to mine, casino-like), pre-mine a real-but-fast blockchain from the genesis instant up to **21 March 2009** so the player always starts on that day, record the famous **12 Jan 2009 Satoshi→Hal 10 BTC** transaction (and the April 2009 Mike Hearn transfers), retire Satoshi **no earlier than 26 April 2011** at a fractal target of **11,000 BTC** (1% of his real ≈1.1 M BTC), and review/generalise how extra data (the genesis bank-bailout headline) is stored in blocks.
 
-This plan is the historical-accuracy counterpart to `100x-time-scale-migration-plan.md` and builds on the wallet/identity stack from `btc-wallet-system-plan.md`.
+This plan is the historical-accuracy counterpart to `100x-time-scale-migration-plan.md` and builds on the wallet/identity stack from `btc-wallet-system-plan.md`. The per-character on-chain event data lives in `historical-blockchain-events-research.md`.
 
 ---
 
@@ -14,10 +14,11 @@ This plan is the historical-accuracy counterpart to `100x-time-scale-migration-p
 | 2009-01-03 | Satoshi mines the genesis block, 50 BTC | Already modelled (genesis coinbase). Must point at Satoshi's derived address. |
 | 2009-01-08 | Bitcoin v0.1 released to the cypherpunk mailing list | Flavour only; optional in-game note. |
 | 2009-01-11 | Hal Finney: *"Running bitcoin"* — first external miner | Hal node joins mining from this date. |
-| 2009-01-12 | First person-to-person tx: Satoshi → Hal **10 BTC** (real block 170) | Must be reproduced as a real signed tx in the block whose **timestamp** ≈ 12 Jan. |
-| Jan–Mar 2009 | Satoshi dominant miner; Hal the only documented external miner; community ~handful | Bootstrap: Satoshi mines almost everything, Hal a handful, no one else. |
-| Late 2010 → early 2011 | Satoshi gradually withdraws, then disappears | Satoshi node retires at a configurable "early 2011" date. |
-| (historical estimate) | Satoshi's addresses hold ≈ **1,000,000 BTC** | **Fractal target = 1% = 10,000 BTC** at disappearance (mirrors the project's existing 1%-of-real-BTC supply convention). |
+| 2009-01-12 | First person-to-person tx: Satoshi → Hal **10 BTC** (spent from block-9 coinbase; confirmed real block 170) | Must be reproduced as a real signed tx in the block whose **timestamp** ≈ 12 Jan. |
+| Jan–Mar 2009 | Satoshi dominant miner; Hal the only documented external miner; community ~handful | Bootstrap: Satoshi mines almost everything, Hal exactly 3, no one else. |
+| 2009-04-18 15:55:19 UTC | Satoshi → Mike Hearn **32.51 + 50.00 BTC** (real block 11408) + automatic **17.49 BTC** change back to Satoshi | After player start; Mike Hearn joins as a third founder node. See research doc. |
+| 2010-12-12 / 13 | Satoshi's last public post ("0.3.19 DoS limits"), last login next day | Earliest allowed disappearance reference; our retirement is **no earlier than 2011-04-26**. |
+| (historical estimate) | Satoshi's addresses hold ≈ **1,100,000 BTC** | **Fractal target = 1% = 11,000 BTC** at disappearance (mirrors the project's existing 1%-of-real-BTC supply convention). |
 
 ### Fractal scale reminder (from the 100X migration)
 
@@ -84,12 +85,13 @@ The variable **start time** on 21 March is actually achievable *today* by stampi
 
 ### New special nodes
 
-| Node id | Role | Mines? | Needs SC/BTC to mine? | Seed shown in dev scene? | BTC target |
-|---|---|---|---|---|---|
-| `satoshi` | Founder, dominant early miner | Yes (weighted) | No | Yes | **10,000 BTC by disappearance** |
-| `hal` | Founder, first external miner | Yes (weighted) | No | Yes | None (realism only) |
+| Node id | Role | Enters | Mines? | Needs SC/BTC to mine? | Seed in dev scene? | BTC target |
+|---|---|---|---|---|---|---|
+| `satoshi` | Founder, dominant early miner | Genesis (3 Jan 2009) | Yes (weighted) | No | Yes | **11,000 BTC by disappearance** |
+| `hal` | Founder, first external miner | 11 Jan 2009 | Yes (weighted, exactly 3 in bootstrap) | No | Yes | None (realism only) |
+| `mike_hearn` | Founder, early collaborator | After player start (~April 2009) | TBD (see research doc) | No | Yes | None (realism only) |
 
-Both behave like the casino node in that they are casino-class entities (no betting required), but unlike the casino they **do** mine from genesis. They are created in `WalletInitializationService.EnsureAll()` (seed → base `gm1q…`) and registered as `NodeAgent`s in `NetworkRoot` like the casino node.
+All three behave like the casino node in that they are casino-class entities (no betting required), but unlike the casino they **do** mine. They are created in `WalletInitializationService.EnsureAll()` (seed → base `gm1q…`) and registered as `NodeAgent`s in `NetworkRoot` like the casino node. **Founder nodes stay available for game-design dynamics for as long as they are historically alive**, even when not mining (e.g. Mike Hearn pre-April, Hal/Satoshi post-bootstrap).
 
 ### New service: founders / hashrate controller
 
@@ -145,13 +147,14 @@ Tasks:
 
 **Files**: `BlockchainService.cs`, `NetworkRoot.cs`.
 
-1. Replace the base58 `SatoshiAddress` constant usage in coinbase recipients with **Satoshi's derived `gm1q…` base address**. Because the genesis is built in the `BlockchainService` constructor (before wallets are guaranteed), do the rewrite in `NetworkRoot.NormalizeGenesisTimestampAcrossNodes()` (rename → `NormalizeGenesisAcrossNodes()`): set genesis coinbase recipient = Satoshi address, keep `IsSpendable = false`, keep the headline `InputData`.
-2. Update `EnsureSecondBlockBootstrapPendingTx()` recipient to Satoshi's derived address (or fold it into the Phase 5 bootstrap so block 2 is just Satoshi's first mined block).
-3. Keep `SatoshiAddress` base58 constant only as documentation/reference (clearly commented as "historical real address, not used for payouts").
-4. **Inscription mechanism review** — the current `Transaction.InputDataText` + `InputDataHex` pair is a good, realistic model (hex is canonical, text is a decode convenience; the genesis headline lives on the coinbase exactly like real Bitcoin). Recommendation: keep it, and standardise two uses going forward:
-   - **Coinbase message** (miner-inserted data, e.g. the headline) — realistic; any miner may stamp its coinbase `InputData`.
-   - **OP_RETURN-style note** (future) — a zero-value, unspendable tx carrying only `InputData`, for player/bot on-chain messages. No code needed now; document the convention so we do not invent a second mechanism later.
-   - Add a guard/length cap on `InputData` to mirror real coinbase scriptSig limits (realism + save-size safety).
+1. Replace the base58 `SatoshiAddress` constant usage in coinbase recipients with **Satoshi's derived `gm1q…` address**. Because the genesis is built in the `BlockchainService` constructor (before wallets are guaranteed), do the rewrite in `NetworkRoot.NormalizeGenesisTimestampAcrossNodes()` (rename → `NormalizeGenesisAcrossNodes()`): set genesis coinbase recipient = Satoshi's genesis address, keep `IsSpendable = false`, keep the headline `InputData`.
+2. Update `EnsureSecondBlockBootstrapPendingTx()` recipient to a Satoshi address (or fold it into the Phase 5 bootstrap so block 2 is just Satoshi's first mined block).
+3. Keep `SatoshiAddress` base58 constant only as documentation/reference (clearly commented as "historical real address, not used for payouts"). Optional educational tooltip may surface it (Q-X3).
+4. **⭐ Patoshi multi-address direction (Q-X1 / Q-S2 resolved).** Satoshi is *not* a single-address node. The target is a realistic UTXO-style model where Satoshi **derives a fresh passphrase address per coinbase reward (and per deposit)** — the "Patoshi pattern" — using the existing passphrase-wallet derivation. This is the same mechanic that makes UTXO realism tangible for the player later. The single-base-address form is the **testing-stage shortcut only**; the FoundersWallets scene must be able to list Satoshi's many derived addresses. (Strict one-address-per-receive pending §6 research on whether any real Satoshi address was reused.)
+5. **Inscription mechanism review (Q-X4 resolved).** The current `Transaction.InputDataText` + `InputDataHex` pair is a good, realistic model (hex is canonical, text is a decode convenience; the genesis headline lives on the coinbase exactly like real Bitcoin). **For now, only the genesis block carries an inscription.** Keep the system fully wired and ready to attach messages to other events/contexts later. Conventions to preserve for the future (no code now):
+   - **Coinbase message** (miner-inserted data, e.g. the headline) — any miner may stamp its coinbase `InputData`.
+   - **OP_RETURN-style note** (future) — a zero-value, unspendable tx carrying only `InputData`, for player/bot on-chain messages.
+   - Add a guard/length cap on `InputData` = **100 bytes** (hex ≤ 200 chars) to mirror real coinbase scriptSig limits (realism + save-size safety).
 
 ---
 
@@ -160,44 +163,54 @@ Tasks:
 **Files**: new `Screens/FoundersWallets/FoundersWallets.{tscn,cs}`, `SceneManager.cs`, `MainMenu.{tscn,cs}`.
 
 - Clone the `CasinoFinances` scene pattern (seed words always viewable, base address + Copy, balance refresh, passphrase sub-wallet, send). 
-- Two wallet panels side by side: **Satoshi** and **Hal**, switched by a tab or segmented control.
+- Wallet panels for **Satoshi**, **Hal** (and room for **Mike Hearn**), switched by a tab or segmented control.
 - **Dev-only** entry on MainMenu (label `"Founders Wallets [DEV]"`), gated like `BotsBtcWallets [DEV]` / `Casino Finances [DEV]`.
-- Satoshi panel additionally shows: current BTC vs 10,000 target, current hashrate weight, estimated blocks until disappearance, disappearance date — a live readout of the Phase 4 controller.
+- Satoshi panel additionally shows: current BTC vs **11,000** target, current hashrate weight, estimated blocks until disappearance, disappearance date — a live readout of the Phase 4 controller. It must also **list Satoshi's many derived (Patoshi) addresses** with per-address balances, since he uses a fresh address per reward (Q-X1).
 - Passphrase wallets supported (same mechanism as casino) — "we may find a use later; not a priority" → keep the capability, no bespoke logic.
 
 ---
 
-### Phase 4 — Satoshi dynamic targeting (10,000 BTC by disappearance)  *(needs Phase 0)*
+### Phase 4 — Satoshi dynamic targeting (11,000 BTC, retires no earlier than 26 Apr 2011)  *(needs Phase 0)*
 
 **Files**: `FoundersMiningService.cs`, `NetworkRoot.cs`.
+
+`SatoshiTargetBtc = 11000` (soft target — see OQ-4, excludes the unspendable genesis 50). `SatoshiEarliestDisappearance = 2011-04-26` (hard floor — never retire before this).
 
 Per-block recalculation (run whenever a block is mined while Satoshi is active):
 
 ```
-disappearDate          = configurable, default "early 2011" (see OQ-3)
-blocksUntilDisappear   = ceil( inGameDaysUntil(disappearDate) * 1.477 )   // from current clock
-btcRemaining           = max(0, 10000 - satoshiConfirmedBtc)
+floorDate              = 2011-04-26                  // never retire before this
+blocksUntilFloor       = ceil( inGameDaysUntil(floorDate) * 1.477 )   // >=0; 0 once past floor
+btcRemaining           = max(0, 11000 - satoshiConfirmedBtc)
 reward                 = current era reward (50 BTC in this window)
-targetSatoshiShare     = clamp01( btcRemaining / max(1, blocksUntilDisappear) / reward )
-satoshi.HashrateWeight = shareToWeight(targetSatoshiShare, otherActiveMinersTotalWeight)
+
+if (clock < floorDate):
+    # Pace the ramp so he reaches ~11,000 around the floor date, never sooner.
+    targetSatoshiShare     = clamp01( btcRemaining / max(1, blocksUntilFloor) / reward )
+    satoshi.HashrateWeight = shareToWeight(targetSatoshiShare, otherActiveMinersTotalWeight)
+else:
+    # Past floor and still short: ramp power EXPONENTIALLY to finish ASAP, then retire.
+    satoshi.HashrateWeight = otherActiveMinersTotalWeight * pow(GROWTH, blocksPastFloor)
 ```
 
-`shareToWeight` converts a desired win-share `s` against the rest of the field `W_others` into a weight: `w = s/(1-s) * W_others` (clamped). When few miners are online (bootstrap), `s→1` ⇒ Satoshi mines ~everything; as players/bots join, the same target naturally lowers his share. This is the "power rises as players join, but accumulation is steered to 10,000" behaviour the brief asks for.
+`shareToWeight` converts a desired win-share `s` against the rest of the field `W_others` into a weight: `w = s/(1-s) * W_others` (clamped). When few miners are online (bootstrap), `s→1` ⇒ Satoshi mines ~everything; as players/bots join, the same target naturally lowers his share. **If the player mines so little that Satoshi is still short at the floor date, time is "sacrificed": he keeps mining past 26 Apr 2011 with exponentially rising power until he hits 11,000, then retires (Phase 7).**
 
-**Sanity numbers** (default disappearance ≈ 2011, ~1,080 blocks from genesis; 10,000 BTC = 200 blocks @ 50):
-- Bootstrap (genesis→21 Mar, ~114 blocks): Satoshi ~111, Hal ~3 ⇒ Satoshi ≈ 5,550 BTC at player start.
-- Player start → disappearance (~963 blocks): Satoshi needs ~89 more ⇒ ~9% share, auto-tuned each block.
+**Sanity numbers** (floor date 2011-04-26 ≈ 1,235 blocks from genesis; 11,000 BTC = 220 blocks @ 50):
+- Bootstrap (genesis→21 Mar, ~114 blocks): Satoshi ~111, Hal exactly 3 ⇒ Satoshi ≈ 5,550 BTC at player start.
+- Player start → floor date (~1,121 blocks): Satoshi needs ~109 more ⇒ ~10% share, auto-tuned each block.
 
 ---
 
 ### Phase 5 — Historical bootstrap simulation (genesis → 21 March 2009)  *(needs Phase 0)*
+
+> **Idle-mining policy (OQ-2 resolved):** Autonomous mining (without the player betting) happens **only** during this bootstrap window (3 Jan – 21 Mar 2009), and only `satoshi` + `hal` via the weighted lottery. **From the moment the player starts, in-game time ALWAYS follows the player's bets** — the player appears first, then miner bots are introduced (in that order), all bet-driven. Autonomous time advancement is reserved for possible future expansions/DLC/online-multiplayer only.
 
 **Files**: new `Scripts/Services/HistoricalBootstrapService.cs`, hooked from `CalendarTimeService._Ready()` after `WalletInitializationService.EnsureAll()` and before `EnsureGameEpochInitialized()`; first-launch only (guard on a `user://bootstrap_done.flag` or chain length).
 
 Loop (founders only, via `RunWeightedBlockLottery`):
 
 1. Start clock at genesis instant. Active miners: `satoshi` only until Hal's join timestamp (11 Jan), then `satoshi` + `hal`.
-2. Hal weight tuned to yield **2–3 blocks total**, spaced (e.g. a low fixed weight active only in a few date windows). Satoshi takes the rest.
+2. Hal weight tuned to yield **exactly 3 blocks**, spaced (~12 Jan, ~early Feb, ~early Mar — a low fixed weight active only in those date windows). Satoshi takes every other block.
 3. Each produced block gets `minedAtUnixMs` = running clock advanced by ~`58,500 ± jitter` in-game seconds (jitter from the geometric nature of PoW, drawn from the RNG) so timestamps look organic.
 4. Insert the **12 Jan tx** (Phase 6) into the block whose timestamp first crosses 12 Jan.
 5. Stop when the next block timestamp would land in **21 March 2009**; place it at a **random time-of-day within 21 March**, then set `CalendarTimeService` to that timestamp and persist.
@@ -219,12 +232,13 @@ Result: first launch leaves a ~110-block chain, Satoshi ≈ 5,550 BTC, Hal ≈ 1
 
 ---
 
-### Phase 7 — Satoshi disappearance (early 2011)
+### Phase 7 — Satoshi disappearance (≥ 26 Apr 2011, once 11,000 BTC reached)
 
 **Files**: `FoundersMiningService.cs`.
 
-- When the clock crosses the disappearance date: set Satoshi `HashrateWeight = 0`, flag `satoshi` retired, stop targeting. His BTC stays untouched on-chain forever (a permanent "lost/dormant whale", consistent with the `non_miner` dormant-wallet sim in `btc-wallet-system-plan.md` Task 5.3).
+- Retirement fires when **both** conditions hold: clock ≥ `2011-04-26` **and** `satoshiConfirmedBtc ≥ 11,000`. (If the player under-mines, the exponential ramp in Phase 4 closes the gap after the floor date.) Then set Satoshi `HashrateWeight = 0`, flag `satoshi` retired, stop targeting. His BTC stays untouched on-chain forever (a permanent "lost/dormant whale", consistent with the `non_miner` dormant-wallet sim in `btc-wallet-system-plan.md` Task 5.3).
 - Hal keeps mining at his small weight (no target). His later real-life timeline (active to ~2014) can be a future refinement.
+- Mike Hearn and any other founders remain available for game dynamics while historically alive, independent of Satoshi's retirement.
 - Surface the event in the FoundersWallets dev scene (status: "Retired — last active <date>").
 
 ---
@@ -234,33 +248,37 @@ Result: first launch leaves a ~110-block chain, Satoshi ≈ 5,550 BTC, Hal ≈ 1
 **Files**: `CLAUDE.md`, `Documentation/{DESIGN_OVERVIEW,GLOSSARY,PRIVATE_ROADMAP,PLAYER_GUIDE,ProjectDesignManual}.md`.
 
 - Replace the "Genesis block … reward to SatoshiAddress (base58)" notes with the founder-node model and the `gm1q…` derived address.
-- Add a **Canonical Decisions** row: *Founders = Satoshi (target 10,000 BTC, retires early 2011) + Hal (joins 11 Jan, no target); player starts 21 Mar 2009 after bootstrap.*
-- Add a **Historical Timeline** section mapping real dates → in-game block-by-timestamp (genesis, 11 Jan Hal, 12 Jan 10 BTC tx, 21 Mar player start, early-2011 disappearance).
+- Add a **Canonical Decisions** row: *Founders = Satoshi (target 11,000 BTC, retires ≥ 26 Apr 2011) + Hal (joins 11 Jan, 3 bootstrap blocks, no target) + Mike Hearn (joins ~Apr 2009, no target); player starts 21 Mar 2009 after bootstrap.*
+- Add a **Historical Timeline** section mapping real dates → in-game block-by-timestamp (genesis, 11 Jan Hal, 12 Jan 10 BTC tx, 21 Mar player start, 18 Apr Mike Hearn transfers, ≥ Apr-2011 disappearance). Source data: `historical-blockchain-events-research.md`.
 - Document the inscription/`InputData` convention (coinbase message vs future OP_RETURN note) in `ProjectDesignManual.md`.
 
 ---
 
-## 6. Open Questions
+## 6. Open Questions — ALL RESOLVED (2026-06-19)
 
-**OQ-1 — Candidate/hashrate model scope.** Do we implement the full per-node candidate template (Phase 0 task 1) now, or start with just a `HashrateWeight` on the existing implicit candidate and defer the template refactor? Minimum needed for founders is the weight + weighted lottery; the template refactor mainly benefits future fee/tx-selection work. **Recommendation: weight + lottery now, template refactor folded into the P4 block-template-builder later.**
+**OQ-1 — Candidate/hashrate model scope.** ✅ **RESOLVED:** weight + weighted lottery now; full per-node candidate-template refactor deferred into the P4 block-template-builder.
 
-**OQ-2 — Idle mining.** Should the network keep mining (founders + bots) while the player is idle / not betting, or only during bootstrap and player bets? Real history kept advancing regardless. This affects whether bots/Satoshi accrue blocks during downtime. **Recommendation: bootstrap-only for now; full idle-mining is a separate feature.**
+**OQ-2 — Idle mining.** ✅ **RESOLVED:** autonomous (no-bet) mining happens **only** during the 3 Jan – 21 Mar 2009 bootstrap, Satoshi + Hal via lottery. After bootstrap the player appears first, then miner bots are introduced (in that order), and **in-game time always follows the player's bets**. Autonomous time advancement is reserved for future expansions/DLC/online-multiplayer only.
 
-**OQ-3 — Satoshi's disappearance date.** "Early 2011" — pick a canonical: last forum post (2010-12-13), last known private email to Gavin (≈2011-04-26), or a round 2011-01-01? This sets `blocksUntilDisappear` and therefore his whole ramp. **Recommendation: make it a single constant; default 2011-04-26.**
+**OQ-3 — Satoshi's disappearance date.** ✅ **RESOLVED:** single constant `SatoshiEarliestDisappearance = 2011-04-26`; **never retire before** this. If Satoshi is still short of target at that date, sacrifice as much extra time as needed but ramp his mining power **exponentially** to finish ASAP.
 
-**OQ-4 — 10,000 BTC: hard cap or soft target?** If players/bots mine slower than expected, Satoshi could overshoot or undershoot. Do we hard-clamp at exactly 10,000 (stop rewarding him once reached) or accept ±a few hundred from the probabilistic ramp? **Recommendation: soft target with weight→0 once ≥10,000, accepting small overshoot from the final block.**
+**OQ-4 — Target: hard cap or soft target?** ✅ **RESOLVED:** target corrected to **11,000 BTC** (1% of his real ≈1.1 M BTC). Soft target: weight→0 once ≥ 11,000, small overshoot from the final block accepted.
 
-**OQ-5 — Hal's block count & timing.** "2 or 3 blocks spaced in time" — exact count and which date windows? And should Hal mine anything *after* 21 March / into the player era? **Recommendation: exactly 3 during bootstrap, spaced (~12 Jan, ~early Feb, ~early Mar); tiny non-zero weight afterwards.**
+**OQ-5 — Hal's block count & timing.** ✅ **RESOLVED:** exactly **3** during bootstrap (~12 Jan, ~early Feb, ~early Mar). All founder characters stay available for game dynamics while historically alive. Full per-character on-chain in/out data to be gathered in the new research doc (see below).
 
-**OQ-6 — Bootstrap cost / first-launch time.** ~110 blocks × ~585 attempts is ~64k hashes — trivial CPU, but should it be instant (synchronous) or shown as a themed "syncing early blockchain…" progress screen? **Recommendation: synchronous but behind a brief loading panel.**
+**OQ-6 — Bootstrap cost / first-launch time.** ✅ **RESOLVED:** synchronous, behind a brief themed loading panel.
 
-**OQ-7 — Scene name.** Confirm `FoundersWallets` (chosen here over `SatoshiWallet`) since it now hosts two wallets.
+**OQ-7 — Scene name.** ✅ **RESOLVED:** `FoundersWallets` confirmed. It will likely also host **Mike Hearn**'s wallet (his blockchain in/out still to be designed; he enters after the player).
 
-**OQ-8 — Genesis recipient & spendability.** Confirm genesis stays `IsSpendable = false` (real Bitcoin genesis 50 BTC is unspendable) and only block-2-onward Satoshi rewards are spendable — i.e. Satoshi's effective spendable target is 10,000 BTC *excluding* the genesis 50.
+**OQ-8 — Genesis recipient & spendability.** ✅ **RESOLVED:** genesis stays `IsSpendable = false`; the 11,000 BTC target is spendable BTC and **excludes** the genesis 50.
 
-**OQ-9 — Save migration.** This rewrites genesis recipient and adds founder nodes. Existing `user://blockchain/` saves predate founders. Confirm we treat this as a clean-save break (delete `user://blockchain/`), consistent with prior wallet-system migrations.
+**OQ-9 — Save migration.** ✅ **RESOLVED:** clean-save break — `user://blockchain/` is always deleted (user confirmed this is routine).
 
-**OQ-10 — InputData size cap.** What max length for coinbase/`InputData` messages (realism + JSON save size)? Real coinbase scriptSig is ≤100 bytes. **Recommendation: cap at 100 bytes (hex ≤200 chars).**
+**OQ-10 — InputData size cap.** ✅ **RESOLVED:** cap at **100 bytes** (hex ≤ 200 chars), mirroring real coinbase scriptSig.
+
+### New work item from OQ-5/OQ-7
+
+Create and fill **`historical-blockchain-events-research.md`** — a structured catalogue of every founder/early-character on-chain in/out event, grounded in historical data, organised first as a **questionnaire** (the data I need in order to build a definitive character table with dates and characteristics). Draft created alongside this update.
 
 ---
 
@@ -272,13 +290,14 @@ Result: first launch leaves a ~110-block chain, Satoshi ≈ 5,550 BTC, Hal ≈ 1
 | `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | 0,1,2 | weighted lottery; register `satoshi`/`hal`; genesis recipient fix |
 | `Scripts/BlockchainPort/Blockchain/BlockchainService.cs` | 2 | genesis/coinbase recipient via founder address; `InputData` cap |
 | `Scripts/BlockchainPort/Blockchain/WalletModels.cs` | 1 | `FounderWalletState` record |
-| `Scripts/Services/WalletInitializationService.cs` | 1 | create Satoshi + Hal wallets |
-| `Scripts/Services/FoundersMiningService.cs` | 4,7 | hashrate targeting + disappearance | 
+| `Scripts/Services/WalletInitializationService.cs` | 1 | create Satoshi + Hal (+ Mike Hearn) wallets |
+| `Scripts/Services/FoundersMiningService.cs` | 4,7 | hashrate targeting (11,000) + disappearance (≥ 2011-04-26, exp. ramp) | 
 | `Scripts/Services/HistoricalBootstrapService.cs` | 5,6 | first-launch pre-mine + 10 BTC tx |
 | `Scripts/Services/CalendarTimeService.cs` | 5 | call bootstrap; land clock on 21 Mar |
-| `Screens/FoundersWallets/FoundersWallets.{tscn,cs}` | 3 | dev scene (Satoshi + Hal) |
+| `Screens/FoundersWallets/FoundersWallets.{tscn,cs}` | 3 | dev scene (Satoshi + Hal, room for Mike Hearn) |
 | `Scripts/Services/SceneManager.cs` | 3 | `FoundersWallets` enum + path |
 | `Screens/MainMenu/MainMenu.{tscn,cs}` | 3 | `Founders Wallets [DEV]` button |
+| `AIHelperFiles/historical-blockchain-events-research.md` | — | research questionnaire → character/event table |
 | `CLAUDE.md` + `Documentation/*` | 8 | founders model, timeline, inscription convention |
 
 ---

@@ -20,6 +20,8 @@ gm1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh
 
 The `gm` at the start marks it as a GamblingMiner address (instead of Bitcoin's `bc`). The rest follows identical mathematical rules to real Bitcoin mainnet P2WPKH (Native SegWit) addresses. If you changed `gm` to `bc`, these addresses would be valid on the real Bitcoin network.
 
+> **Note — balance model vs. UTXO realism (design direction).** Today balances are computed **account/balance-based**: `GetAddressData` simply sums every confirmed transaction touching an address. This is a **testing-stage** simplification. The destination is to simulate a **UTXO-style** system as realistically as possible, made tangible through the passphrase-wallet system (many addresses from one seed). The key mechanic is **one fresh address per receive** — the historical "Patoshi pattern" (a new address per mined block) — which makes spends produce genuine change outputs and lets players learn UTXO mechanics by doing. Founder nodes (Satoshi first) adopt this pattern. See `AIHelperFiles/historical-founders-and-bootstrap-plan.md` and `historical-blockchain-events-research.md`.
+
 ---
 
 ### 1.1 — The Derivation Pipeline

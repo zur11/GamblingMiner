@@ -16,6 +16,10 @@
 - **Mempool**: Set of pending BTC transactions waiting to be included in a block.
 - **Merkle root**: Hash root derived from the ordered transactions in a block.
 - **Nonce**: Value changed by miners while attempting to find a valid block hash.
+- **Account/balance model**: Current testing-stage way balances are computed — summing all confirmed transactions per address. A simplification, not the destination (see UTXO model).
+- **UTXO model**: Target design where each receive is a discrete unspent output that must be spent whole, producing change. GamblingMiner aims to simulate this as realistically as possible, made tangible through passphrase-derived addresses.
+- **Patoshi pattern / address-per-receive**: Historical practice (attributed to Satoshi) of using a fresh address for nearly every mined block. Reproduced in-game by deriving a new passphrase address per coinbase reward or deposit — the educational backbone of UTXO realism.
+- **Passphrase wallet**: Extra address derived from the same seed phrase plus a chosen passphrase word; enables many distinct addresses per seed.
 - **RTP**: Return to Player. Dice currently targets roughly 99.02% RTP.
 - **SC**: Stable Coin, simulated USD-pegged currency.
 - **Stop on block mined**: Strategy condition that stops betting after a block is mined.
