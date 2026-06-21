@@ -21,7 +21,22 @@ public partial class CalendarTimeService : Node
 	{
 		WordlistBootstrapper.EnsureWordlist();
 		WalletInitializationService.EnsureAll();
-		EnsureGameEpochInitialized();
+
+		// Step 3a: on a brand-new game, Satoshi + Hal pre-mine the chain to 21 Mar 2009 (first launch
+		// only). When that runs, the player's epoch becomes the random landing time on 21 Mar rather
+		// than the genesis instant — overriding any stale calendar_state.json from a partial reset.
+		HistoricalBootstrapService.RunIfFirstLaunch();
+		if (HistoricalBootstrapService.DidRun && HistoricalBootstrapService.LandingLocalDateTime is DateTime landing)
+		{
+			SetLocalDateTime(landing);
+			SetExplorerSelectedLocalDateTime(landing);
+			_gamePresent = CurrentLocalDateTime;
+			PersistCurrentTime();
+		}
+		else
+		{
+			EnsureGameEpochInitialized();
+		}
 	}
 
 	public override void _Process(double delta)

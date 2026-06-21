@@ -14,6 +14,9 @@ public partial class NetworkRoot : Node
     private static readonly Dictionary<string, NodeAgent> SharedNodesById = new();
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static bool _isInitialized;
+    // When true (during the historical bootstrap), per-block persistence and bot recirculation are
+    // suppressed so ~114 blocks can be mined in one pass; the bootstrap persists once at the end.
+    private static bool _bulkMining;
     private static Block? _lastMinedBlock;
     private static string _lastMinedByNodeId = string.Empty;
     private static int _currentMinerStreak;
@@ -185,10 +188,44 @@ public partial class NetworkRoot : Node
             return false;
         }
 
+        MineForNode(miner, minedAtUnixMs);
+        return true;
+    }
+
+    // Shared mining core: full PoW for one block by the given node, then broadcast + bookkeeping.
+    private static void MineForNode(NodeAgent miner, long? minedAtUnixMs)
+    {
         decimal reward = GetBlockRewardForNextCandidate(miner);
         Block block = miner.MinePendingTransactions(reward);
         HandleMinedBlock(miner, block, minedAtUnixMs);
+    }
+
+    // ── Step 3a: static surface for the historical bootstrap ───────────────────
+    // These let HistoricalBootstrapService drive the engine from CalendarTimeService._Ready()
+    // before any scene (and thus any NetworkRoot Node instance) exists.
+
+    public static void EnsureReady() => EnsureInitialized();
+
+    public static int GetPlayerChainLengthStatic() =>
+        SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player) ? player.Blockchain.Chain.Count : 0;
+
+    public static bool MineNodeStatic(string nodeId, long minedAtUnixMs)
+    {
+        if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? miner))
+        {
+            return false;
+        }
+
+        MineForNode(miner, minedAtUnixMs);
         return true;
+    }
+
+    public static void BeginBulkMining() => _bulkMining = true;
+
+    public static void EndBulkMiningAndPersist()
+    {
+        _bulkMining = false;
+        PersistStateToDisk();
     }
 
     // ── Step 2: weighted block lottery ─────────────────────────────────────────
@@ -305,8 +342,11 @@ public partial class NetworkRoot : Node
             _bestMinerStreak = _currentMinerStreak;
         }
 
-        ScheduleBotTransactionsAfterBlock(block);
-        PersistStateToDisk();
+        if (!_bulkMining)
+        {
+            ScheduleBotTransactionsAfterBlock(block);
+            PersistStateToDisk();
+        }
     }
 
     private static void ScheduleBotTransactionsAfterBlock(Block block)

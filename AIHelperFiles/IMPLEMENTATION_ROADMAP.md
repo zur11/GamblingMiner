@@ -41,10 +41,14 @@
 - **The keystone.** Unblocks Steps 3, 4 (hardware), and 6 (template builder).
 - Done: `NodeAgent.HashrateWeight` (default 1.0); `NetworkRoot.RunWeightedBlockLottery(minerNodeIds, minedAtUnixMs?, rng?)` (weighted winner → mines one real PoW block via `MineAndBroadcastBlock`) + `SetHashrateWeight`/`GetHashrateWeight`; injectable RNG for deterministic bootstrap. A "Mining Lottery [DEV]" panel in FoundersWallets lets you set weights + mine N blocks and observe the Satoshi/Hal split. Per-node candidate *template* refactor deferred to P4 (OQ-1).
 
-### Step 3 — Historical bootstrap + Satoshi targeting  *(founders P4–P6)*
-- First-launch pre-mine genesis→21 Mar; Satoshi 11,000-BTC dynamic ramp (retire ≥ 2011-04-26); Hal's 3 blocks; the **12 Jan 10 BTC Satoshi→Hal tx** (founders Phase 6, inserted at the Jan-12 block).
+### Step 3 — Historical bootstrap + Satoshi targeting  *(founders P4–P6, split into 3a/3b/3c)*
 - Use **single-address Satoshi** as the testing shortcut (Patoshi multi-address is Step 5).
 - **Depends on Steps 1–2.** Establishes the gradual-growth init model as ground truth.
+
+  - **3a — Bootstrap loop + clock landing.**  ✅ IMPLEMENTED (compiles; pending in-engine verification)
+    First-launch-only pre-mine genesis→21 Mar 2009: Satoshi mines every block, Hal exactly 3 (near 12 Jan / 5 Feb / 5 Mar), timestamps march from genesis with ±30% jitter, player clock lands at a random time on 21 Mar. Done: `NetworkRoot` bulk-mining flag + `MineForNode` + static API (`EnsureReady`, `GetPlayerChainLengthStatic`, `MineNodeStatic`, `BeginBulkMining`/`EndBulkMiningAndPersist`); `HistoricalBootstrapService` (first-launch guard = player chain ≤ 1); wired into `CalendarTimeService._Ready()` which lands the epoch on the random 21 Mar time. Loading panel (OQ-6) deferred — bootstrap is ~fast/synchronous. Requires clean `user://blockchain/`.
+  - **3b — Satoshi 11,000-BTC dynamic ramp + disappearance** *(founders Phase 4/7)* — TODO.
+  - **3c — 12 Jan 10 BTC Satoshi→Hal tx** *(founders Phase 6)* — TODO.
 
 ### Step 4 — Re-align recirculation + hardware bootstrap to gradual growth
 - Revisit `scheduled-bot-transactions` triggers (circulation keyed to *bot introduction*, not block ≥ 5; scheduler no-ops with no miner bots).
