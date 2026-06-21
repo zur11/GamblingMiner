@@ -1777,6 +1777,134 @@ GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
 ---
 
+## Chapter 21 — Step 4: The Per-Node Candidate Block Model
+
+**Files changed (4a)**: `Models.cs`, `MerkleTree.cs` (new), `BlockchainService.cs`, `NodeAgent.cs`, `NetworkRoot.cs`
+**Status**: **4a implemented** (models + Merkle tree + header hashing). 4b (mempool/template + coinbase-in-block + fees) and 4c (BlockExplorer surfacing) to follow.
+**Plan**: `AIHelperFiles/candidate-block-model-plan.md`
+
+### The Short Version (for everyone)
+
+Until now, mining in GamblingMiner used a deliberately simplified model: a miner just grabbed *all* of its pending transactions, glued them together with the previous block's hash and a nonce, and hashed that whole blob over and over until the result started with `00…`. It worked, but it wasn't how Bitcoin actually builds blocks.
+
+Step 4 replaces that with the **real model**, the same shape Bitcoin uses:
+
+- A miner builds a **candidate block** — its own proposed next block.
+- The transactions in it are summarised into a single fingerprint called the **Merkle root**.
+- Only a tiny **block header** (previous hash + Merkle root + timestamp + nonce) is hashed during mining — not the whole transaction list.
+- Whoever's header hash hits the difficulty target first wins the block.
+
+This chapter explains the pieces delivered in **4a** (the foundation), and previews what 4b/4c add. The headline benefits: it's **more realistic**, it's **faster** (we hash a short header, not a giant blob), and it's **tamper-evident** (change any transaction and the block's hash no longer matches).
+
+> **Why split Step 4?** It's a big change to the heart of the chain, so we cut it into testable slices: **4a** = data model + Merkle + header hashing (this chapter's "done" part); **4b** = the mempool/template builder, fees, and moving the coinbase into the block; **4c** = showing all of it in the Block Explorer.
+
+---
+
+### 21.1 — What the old model did, and why we changed it
+
+The old `BlockchainService.HashBlock` did this, once per nonce attempt:
+
+```
+hash = SHA256( previousBlockHash + nonce + JSON.Serialize({ transactions, index }) )
+```
+
+Two problems:
+
+1. **Slow & unrealistic.** It re-serialised the entire transaction list to JSON on *every* attempt (~585 attempts per block). Bitcoin never does this — it hashes a fixed 80-byte header.
+2. **No commitment structure.** There was nothing like a Merkle root, so the block had no compact, tamper-evident summary of its contents.
+
+Step 4a fixes both.
+
+---
+
+### 21.2 — The Merkle Tree (`MerkleTree.cs`)
+
+**Plain language.** A Merkle tree is a way to squeeze *any number* of transactions down to a single hash — the **Merkle root** — such that if even one transaction changes by a single character, the root changes completely. It's like a tamper seal for the whole list.
+
+**How it's built:**
+
+1. Each transaction is hashed into a **leaf** (`MerkleTree.LeafHash`).
+2. Leaves are paired up and each pair is hashed together, halving the count.
+3. If a level has an odd number of hashes, the last one is **duplicated** so it can pair with itself (this is exactly what Bitcoin does).
+4. Repeat until a single hash remains — that's the **root**.
+
+```
+   leaf(tx0) leaf(tx1) leaf(tx2)          ← 3 transactions
+        \      /          |
+       hash(0,1)     hash(2,2)            ← odd → tx2 duplicated
+            \          /
+             \        /
+            ROOT = hash( hash(0,1) + hash(2,2) )
+```
+
+**The leaf is a content hash.** `LeafHash(tx)` is the double-SHA256 of the transaction's *content* — amount, sender, recipient, fee, id, input data, spendable flag — **not** its signature. So the Merkle root commits to *what* a transaction does. (This content hash is exactly what will become the transaction's real id in 4b — see 21.6.)
+
+**Double-SHA256.** Like Bitcoin, every hash here is SHA256 applied twice: `Sha256Hex(Sha256Hex(x))`. The historical reason in Bitcoin is defence against a class of length-extension attacks; we mirror it to stay faithful to the real protocol.
+
+---
+
+### 21.3 — The Block Header and why we hash it (`BlockchainService.HashHeader`)
+
+Instead of hashing the whole block, we now hash a compact **header** made of four fields:
+
+```
+HashHeader(previousBlockHash, merkleRoot, timestamp, nonce)
+   = doubleSHA256( "prevHash | merkleRoot | timestamp | nonce" )
+```
+
+This is the real Bitcoin idea: the header is small and fixed-size, and because it contains the **Merkle root**, hashing the header still effectively commits to every transaction in the block. The miner varies the **nonce** and re-hashes the header until the result meets the difficulty target.
+
+**The difficulty target is unchanged.** A hash still wins if it starts with `"00"` and the next hex digit is `≤ '6'` (`IsHashAtTargetDifficulty`). That's about `7/4096` ≈ **1 in 585** attempts — the same block rhythm as before. We only changed *what string* gets hashed, not *how hard* it is.
+
+**Validation now checks two things** (`ChainIsValid`, for every block after genesis):
+
+1. The block's stored `MerkleRoot` must equal `MerkleTree.ComputeRoot(block.Transactions)` — the tamper check.
+2. `HashHeader(prev.Hash, block.MerkleRoot, block.Timestamp, block.Nonce)` must meet the difficulty target and the chain links must match.
+
+The genesis block is the one exception: its hash is the literal `"0"` (it was never mined), so it's validated by the separate genesis rules, not the header check.
+
+---
+
+### 21.4 — Why the timestamp moved *before* mining
+
+This is a subtle but important change. The block **timestamp is now part of the hashed header**, so it must be fixed *before* the nonce search begins — you can't change it afterward without invalidating the hash.
+
+Previously the timestamp was stamped on *after* mining (`HandleMinedBlock` overrode it). Now:
+
+- `NodeAgent.MinePendingTransactions(reward, timestampUnixMs)` and `TryMineSingleNonceAttempt(reward, timestampUnixMs)` take the timestamp up front.
+- `NetworkRoot` computes the timestamp (the in-game time, or the bootstrap's marching time) and passes it **into** mining; it no longer overrides it afterward.
+- For the bet-driven path, `NodeAgent` caches the candidate's Merkle root (`_candidateMerkleRoot`) so that across the many bets it takes to find a block, only the nonce rolls — the expensive Merkle computation happens once per candidate, not once per bet.
+
+---
+
+### 21.5 — Coinbase maturity: why N = 1 here (the "100 confirmations" lesson)
+
+Real Bitcoin won't let a miner spend a block reward until **100 confirmations** — 100 more blocks mined on top. It's a safety margin against chain reorganisations. People often assume "100" means a long time; it's really only ~100 × 10 min ≈ **16.7 hours**.
+
+Here's the fractal twist that decides our value: in GamblingMiner **one block already spans ~16.25 in-game hours** (100× time scale, ~585 attempts/block). So the faithful equivalent of "~16 hours of maturity" is **≈ 1 block**, not 100.
+
+Using 100 here would mean ~68 in-game days before any mined coin is spendable — and worse, it would break dated historical events (e.g. the 12 Jan Satoshi→Hal transaction spends an early coinbase that, at our compressed block heights, wouldn't be mature under a 100-block rule). So **N = 1** is the correct fractal maturity. The actual coinbase-into-block move (so the coinbase collects that block's fees) lands in **4b**; 4a still places the coinbase in the next block.
+
+---
+
+### 21.6 — What 4b and 4c will add
+
+**4b — the real template builder & economy:**
+- A `BlockTemplateBuilder` that selects transactions from the mempool by **fee** (highest first), capped at **24 transactions including the coinbase**.
+- **Fees**: a sender-chosen `Transaction.Fee` (the field exists since 4a) deducted from the sender on top of the amount, and **collected into the coinbase**.
+- **Coinbase-in-block** with the N = 1 maturity rule from 21.5.
+- **Content-hash transaction id** (OQ-C6): the GUID `TransactionId` becomes the same content hash used as the Merkle leaf — making every transaction's id a true fingerprint of its contents. (Deferred to 4b because it also touches the signing payload and the fixed bootstrap transaction ids.)
+
+**4c — visibility:** the Block Explorer surfaces the Merkle root, each transaction's fee, and the coinbase's total collected fees, so the player can *see* that candidate blocks differ by miner and that transaction selection matters.
+
+---
+
+### 21.7 — Migration note
+
+The block structure changed (new `MerkleRoot`, new header hashing), so blocks saved before Step 4a fail the new validation. This is a **clean-save break**: delete `user://blockchain/` before running. The first launch afterward re-runs the historical bootstrap to 21 Mar 2009 on the new format.
+
+---
+
 ---
 
 ## Engineering Note — Autobet Speed Selector Redesign

@@ -20,6 +20,7 @@ public sealed class NodeAgent
     public double HashrateWeight { get; set; } = 1.0;
     private long _candidateNonce;
     private string _candidateKey = string.Empty;
+    private string _candidateMerkleRoot = string.Empty;
 
     public NodeAgent(string nodeId)
     {
@@ -57,28 +58,25 @@ public sealed class NodeAgent
         };
     }
 
-    public Block MinePendingTransactions(decimal rewardAmount = 12.5m)
+    public Block MinePendingTransactions(decimal rewardAmount, long timestampUnixMs)
     {
-        // Mine current pending transactions first.
+        // Mine current pending transactions first. The timestamp is fixed before mining so it is
+        // part of the hashed header (Step 4).
         Block lastBlock = Blockchain.GetLastBlock();
-        var currentBlockData = new
-        {
-            transactions = Blockchain.PendingTransactions,
-            index = lastBlock.Index + 1
-        };
+        string merkleRoot = MerkleTree.ComputeRoot(Blockchain.PendingTransactions);
 
-        long nonce = Blockchain.ProofOfWork(lastBlock.Hash, currentBlockData);
-        string hash = Blockchain.HashBlock(lastBlock.Hash, currentBlockData, nonce);
-        Block minedBlock = Blockchain.CreateNewBlock(nonce, lastBlock.Hash, hash);
+        long nonce = Blockchain.ProofOfWork(lastBlock.Hash, merkleRoot, timestampUnixMs);
+        string hash = Blockchain.HashHeader(lastBlock.Hash, merkleRoot, timestampUnixMs, nonce);
+        Block minedBlock = Blockchain.CreateNewBlock(nonce, lastBlock.Hash, hash, timestampUnixMs, merkleRoot);
         minedBlock.MinedByNodeId = NodeId;
         minedBlock.MinedByAddress = WalletAddress;
 
-        // Reward becomes pending for the next block, matching your expected flow.
+        // Reward becomes pending for the next block, matching the current flow (coinbase-in-block is Step 4b).
         Blockchain.AddTransactionToPendingTransactions(CreateCoinbaseReward(rewardAmount));
         return minedBlock;
     }
 
-    public Block? TryMineSingleNonceAttempt(decimal rewardAmount = 12.5m)
+    public Block? TryMineSingleNonceAttempt(decimal rewardAmount, long timestampUnixMs)
     {
         Block lastBlock = Blockchain.GetLastBlock();
         int nextIndex = lastBlock.Index + 1;
@@ -88,29 +86,25 @@ public sealed class NodeAgent
         {
             _candidateKey = candidateKey;
             _candidateNonce = 0;
+            _candidateMerkleRoot = MerkleTree.ComputeRoot(Blockchain.PendingTransactions);
         }
 
-        var currentBlockData = new
-        {
-            transactions = Blockchain.PendingTransactions,
-            index = nextIndex
-        };
-
-        string hash = Blockchain.HashBlock(lastBlock.Hash, currentBlockData, _candidateNonce);
-        if (!hash.StartsWith(BlockchainService.DifficultyPrefix, System.StringComparison.Ordinal) ||
-            !BlockchainService.IsHashAtTargetDifficulty(hash))
+        // One attempt this bet: current candidate's Merkle root + the caller's timestamp + the rolling nonce.
+        string hash = Blockchain.HashHeader(lastBlock.Hash, _candidateMerkleRoot, timestampUnixMs, _candidateNonce);
+        if (!BlockchainService.IsHashAtTargetDifficulty(hash))
         {
             _candidateNonce++;
             return null;
         }
 
-        Block minedBlock = Blockchain.CreateNewBlock(_candidateNonce, lastBlock.Hash, hash);
+        Block minedBlock = Blockchain.CreateNewBlock(_candidateNonce, lastBlock.Hash, hash, timestampUnixMs, _candidateMerkleRoot);
         minedBlock.MinedByNodeId = NodeId;
         minedBlock.MinedByAddress = WalletAddress;
         Blockchain.AddTransactionToPendingTransactions(CreateCoinbaseReward(rewardAmount));
 
         _candidateNonce = 0;
         _candidateKey = string.Empty;
+        _candidateMerkleRoot = string.Empty;
         return minedBlock;
     }
 

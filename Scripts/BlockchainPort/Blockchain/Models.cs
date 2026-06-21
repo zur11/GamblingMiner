@@ -15,6 +15,12 @@ public sealed class Transaction
     public string InputDataHex { get; set; } = string.Empty;
     public string InputDataText { get; set; } = string.Empty;
     public bool IsSpendable { get; set; } = true;
+    // Step 4: miner fee, paid by the sender on top of Amount and collected into the block coinbase.
+    // Default 0 keeps existing/coinbase transactions free. Fee collection is wired in Step 4b.
+    public decimal Fee { get; set; } = 0m;
+    // Reserved for feerate ordering once transactions have a real size model (Step 4 OQ-C2).
+    // Uniform size for now → feerate ordering == fee ordering.
+    public int SizeVBytes { get; set; } = 1;
 }
 
 public sealed class Block
@@ -25,6 +31,9 @@ public sealed class Block
     public long Nonce { get; set; }
     public string Hash { get; set; } = string.Empty;
     public string PreviousBlockHash { get; set; } = string.Empty;
+    // Step 4: Merkle root over this block's transactions. Part of the hashed header, so any change
+    // to a transaction's content invalidates the block hash (tamper-evidence).
+    public string MerkleRoot { get; set; } = string.Empty;
     public string MinedByNodeId { get; set; } = string.Empty;
     public string MinedByAddress { get; set; } = string.Empty;
 }

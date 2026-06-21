@@ -55,8 +55,9 @@ Two themes still hold:
 - First-launch-only pre-mine genesis→21 Mar 2009: Satoshi mines every block, Hal exactly 3 (near 12 Jan / 5 Feb / 5 Mar), timestamps march from genesis with ±30% jitter, player clock lands at a random time on 21 Mar. `NetworkRoot` bulk-mining + static API; `HistoricalBootstrapService`; wired into `CalendarTimeService._Ready()`.
 - **This is the accepted baseline.** Old 3b/3c are **cancelled as next steps** and re-sequenced to Step 7.
 
-### Step 4 — Per-node Candidate Block Model  *(NEW LEAD — was old Step 6 / PRIVATE_ROADMAP P4 + scheduled-bot-tx Phase 4)*
+### Step 4 — Per-node Candidate Block Model  *(NEW LEAD — was old Step 6 / PRIVATE_ROADMAP P4 + scheduled-bot-tx Phase 4)*  — 4a ✅ implemented
 - The **real blockchain competition engine**: each node builds its own candidate block from a public mempool — tx selection (24-tx cap, feerate ordering, age tie-break), Merkle root, coinbase = reward + collected fees; proper block header hashing.
+- **4a ✅ (compiles):** `Block.MerkleRoot`, `Transaction.Fee`/`SizeVBytes`, `MerkleTree`, header hashing (`HashHeader`), Merkle tamper check in `ChainIsValid`, pre-mine timestamp. **4b** (mempool/template + coinbase-in-block + fees) and **4c** (BlockExplorer surfacing) remain.
 - Built **generically — historical characters are treated as plain nodes and their special economics are ignored here.** During this step the bootstrap stays as-is (simplified path); founders just sit as nodes.
 - **Depends on Step 2** (extends the minimal candidate). Detailed plan + open questions: `candidate-block-model-plan.md`.
 

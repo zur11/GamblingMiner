@@ -193,11 +193,13 @@ public partial class NetworkRoot : Node
     }
 
     // Shared mining core: full PoW for one block by the given node, then broadcast + bookkeeping.
+    // The timestamp is fixed before mining (it is part of the hashed header — Step 4).
     private static void MineForNode(NodeAgent miner, long? minedAtUnixMs)
     {
+        long timestamp = minedAtUnixMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         decimal reward = GetBlockRewardForNextCandidate(miner);
-        Block block = miner.MinePendingTransactions(reward);
-        HandleMinedBlock(miner, block, minedAtUnixMs);
+        Block block = miner.MinePendingTransactions(reward, timestamp);
+        HandleMinedBlock(miner, block);
     }
 
     // ── Step 3a: static surface for the historical bootstrap ───────────────────
@@ -300,24 +302,20 @@ public partial class NetworkRoot : Node
             return false;
         }
 
+        long timestamp = minedAtUnixMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         decimal reward = GetBlockRewardForNextCandidate(miner);
-        minedBlock = miner.TryMineSingleNonceAttempt(reward);
+        minedBlock = miner.TryMineSingleNonceAttempt(reward, timestamp);
         if (minedBlock is null)
         {
             return false;
         }
 
-        HandleMinedBlock(miner, minedBlock, minedAtUnixMs);
+        HandleMinedBlock(miner, minedBlock);
         return true;
     }
 
-    private static void HandleMinedBlock(NodeAgent miner, Block block, long? minedAtUnixMs)
+    private static void HandleMinedBlock(NodeAgent miner, Block block)
     {
-        if (minedAtUnixMs.HasValue)
-        {
-            block.Timestamp = minedAtUnixMs.Value;
-        }
-
         SharedNetwork.BroadcastBlock(miner.NodeId, block);
         Transaction? rewardTx = miner.Blockchain.PendingTransactions
             .LastOrDefault(t => t.Sender == BlockchainService.CoinbaseSender && t.Recipient == miner.WalletAddress);
@@ -870,6 +868,9 @@ public partial class NetworkRoot : Node
                     }
                 }
             }
+
+            // Keep the genesis Merkle root consistent with its (possibly rewritten) coinbase.
+            genesis.MerkleRoot = MerkleTree.ComputeRoot(genesis.Transactions);
         }
     }
 

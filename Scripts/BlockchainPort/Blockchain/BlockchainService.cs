@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Text;
 #nullable enable
 
@@ -25,19 +24,14 @@ public sealed class BlockchainService
     public static readonly long GenesisTimestampUnixMs =
         new DateTimeOffset(2009, 1, 3, 18, 15, 5, TimeSpan.Zero).ToUnixTimeMilliseconds();
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
-
     public List<Block> Chain { get; } = new();
     public List<Transaction> PendingTransactions { get; } = new();
 
     public BlockchainService()
     {
-        Block genesis = CreateNewBlock(100, "0", "0");
-        genesis.Timestamp = GenesisTimestampUnixMs;
+        Block genesis = CreateNewBlock(100, "0", "0", GenesisTimestampUnixMs, "0");
         genesis.Transactions = new List<Transaction> { CreateGenesisCoinbase() };
+        genesis.MerkleRoot = MerkleTree.ComputeRoot(genesis.Transactions);
     }
 
     public static string TextToHex(string text)
@@ -59,16 +53,17 @@ public sealed class BlockchainService
         };
     }
 
-    public Block CreateNewBlock(long nonce, string previousBlockHash, string hash)
+    public Block CreateNewBlock(long nonce, string previousBlockHash, string hash, long timestamp, string merkleRoot)
     {
         Block newBlock = new()
         {
             Index = Chain.Count + 1,
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Timestamp = timestamp,
             Transactions = PendingTransactions.ToList(),
             Nonce = nonce,
             Hash = hash,
-            PreviousBlockHash = previousBlockHash
+            PreviousBlockHash = previousBlockHash,
+            MerkleRoot = merkleRoot
         };
 
         PendingTransactions.Clear();
@@ -158,20 +153,23 @@ public sealed class BlockchainService
         return Chain.Any(b => b.Transactions.Any(t => t.TransactionId == transactionId));
     }
 
-    public string HashBlock(string previousBlockHash, object currentBlockData, long nonce)
+    // Step 4: hash a compact block header (prevHash + merkleRoot + timestamp + nonce) via
+    // double-SHA256, like Bitcoin — instead of re-serialising the whole transaction list per nonce.
+    // The Merkle root commits to every transaction, so this still binds the block contents.
+    public string HashHeader(string previousBlockHash, string merkleRoot, long timestamp, long nonce)
     {
-        string dataAsString = previousBlockHash + nonce + JsonSerializer.Serialize(currentBlockData, JsonOptions);
-        return CryptoUtils.Sha256Hex(dataAsString);
+        string header = $"{previousBlockHash}|{merkleRoot}|{timestamp}|{nonce}";
+        return CryptoUtils.Sha256Hex(CryptoUtils.Sha256Hex(header));
     }
 
-    public long ProofOfWork(string previousBlockHash, object currentBlockData)
+    public long ProofOfWork(string previousBlockHash, string merkleRoot, long timestamp)
     {
         long nonce = 0;
-        string hash = HashBlock(previousBlockHash, currentBlockData, nonce);
+        string hash = HashHeader(previousBlockHash, merkleRoot, timestamp, nonce);
         while (!IsHashAtTargetDifficulty(hash))
         {
             nonce++;
-            hash = HashBlock(previousBlockHash, currentBlockData, nonce);
+            hash = HashHeader(previousBlockHash, merkleRoot, timestamp, nonce);
         }
 
         return nonce;
@@ -190,9 +188,17 @@ public sealed class BlockchainService
             Block currentBlock = blockchain[i];
             Block prevBlock = blockchain[i - 1];
 
-            string blockHash = HashBlock(
+            // Merkle root must match the block's transactions (tamper check)…
+            if (currentBlock.MerkleRoot != MerkleTree.ComputeRoot(currentBlock.Transactions))
+            {
+                validChain = false;
+            }
+
+            // …and the header must hash to a value meeting the difficulty target.
+            string blockHash = HashHeader(
                 prevBlock.Hash,
-                new { transactions = currentBlock.Transactions, index = currentBlock.Index },
+                currentBlock.MerkleRoot,
+                currentBlock.Timestamp,
                 currentBlock.Nonce
             );
 

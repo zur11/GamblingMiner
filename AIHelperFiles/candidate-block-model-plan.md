@@ -1,6 +1,6 @@
 # Per-Node Candidate Block Model — Implementation Plan
 
-**Status**: 🆕 LEAD (roadmap Step 4). **All 9 design decisions resolved (§4) — ready to implement.**
+**Status**: 🆕 LEAD (roadmap Step 4). All 9 decisions resolved (§4). **4a (models + Merkle + header hashing) IMPLEMENTED — compiles clean; pending in-engine verification.** Next: 4b (mempool/template/fees/coinbase-in-block).
 **Goal**: replace the simplified "candidate = all pending tx, hash the whole block" mining with a **real per-node candidate-block competition engine**: a public mempool, fee-based transaction selection with a block cap, a Merkle root, a proper block header that is what actually gets hashed, and a coinbase carrying block reward + collected fees. This is the engine that hardware pools, bot competition, the refit bootstrap, and (later) the founder economics all build on.
 
 **Scope guard (per the 2026-06-20 reset):** build this **generically**. Satoshi/Hal are plain nodes here; their special economics (11,000-BTC ramp, disappearance, the 12 Jan tx) are **out of scope** and re-attach in roadmap Step 7. The historical bootstrap (3a) stays on the simplified path during this step and is refit afterward (Step 5).
@@ -39,13 +39,17 @@ The existing **1 bet = 1 nonce attempt** cadence is unchanged — each attempt n
 
 ## 3. Phases (finalised — all OQs resolved)
 
-1. **Models** — add `Transaction.Fee` (default 0) and optional nominal size; add `Block.MerkleRoot`. Clean-save break.
-2. **Merkle** — `MerkleTree.ComputeRoot(IEnumerable<Transaction>)` in `BlockchainPort/Blockchain` (double-SHA256, reuses `CryptoUtils`).
-3. **Header hashing** — refactor `HashBlock`/`ProofOfWork`/`ChainIsValid`/`IsHashAtTargetDifficulty` to hash the header `{prevHash, merkleRoot, timestamp, nonce}`. Candidate caches the merkle root so only the nonce varies per attempt.
-4. **Public mempool + selection** — a `Mempool` abstraction (or formalised shared pending) + `BlockTemplateBuilder.BuildCandidate(nodeId)` that selects ≤cap txs by feerate, builds the coinbase (reward + fees), computes the merkle root.
-5. **Wire into NodeAgent/NetworkRoot** — `MinePendingTransactions` / `TryMineSingleNonceAttempt` build via the template builder; coinbase goes **into** the mined block (not next). Update reward maturity rule accordingly.
-6. **Fees end-to-end** — sender-chosen fee on `CreateSignedTransaction`; fee deducted from sender; collected into coinbase; `scheduled-bot-transactions` Phase 4 reactivates here.
-7. **Dev/verify** — BlockExplorer shows merkle root + per-tx fee + coinbase fee total; confirm candidates differ by miner.
+**Sub-split (per the Step-3 pattern): 4a = phases 1–3 (foundation), 4b = phases 4–6 (mempool/template/fees/coinbase-in-block), 4c = phase 7 (dev surfacing).**
+
+1. **Models** ✅ DONE (4a) — `Transaction.Fee` (default 0m) + reserved `SizeVBytes`; `Block.MerkleRoot`. Clean-save break.
+2. **Merkle** ✅ DONE (4a) — `MerkleTree.ComputeRoot` + `LeafHash` (double-SHA256 content hash) in `BlockchainPort/Blockchain`.
+3. **Header hashing** ✅ DONE (4a) — `BlockchainService.HashHeader{prevHash, merkleRoot, timestamp, nonce}` (double-SHA256) replaces whole-block serialisation; `ProofOfWork`/`ChainIsValid` updated (+ Merkle tamper check); `CreateNewBlock` takes timestamp+merkleRoot; timestamp is now fixed **before** mining (NodeAgent computes/caches the candidate Merkle root; NetworkRoot passes the timestamp pre-mine and no longer overrides it post-mine). Difficulty target unchanged (~585 attempts). **Coinbase still lands in the next block here — coinbase-in-block is 4b.**
+4. **Public mempool + selection** (4b) — `BlockTemplateBuilder.BuildCandidate(nodeId)` selects ≤cap txs by feerate, builds the coinbase, computes the merkle root.
+5. **Coinbase-in-block + maturity N=1** (4b) — coinbase moves **into** the mined block; reward spendable after 1 confirmation.
+6. **Fees end-to-end** (4b) — sender-chosen fee on `CreateSignedTransaction`; deducted from sender; collected into coinbase; `scheduled-bot-transactions` Phase 4 reactivates here.
+7. **Dev/verify** (4c) — BlockExplorer shows merkle root + per-tx fee + coinbase fee total; confirm candidates differ by miner.
+
+> **Deferred within Step 4 (OQ-C6 full):** replacing the GUID `Transaction.TransactionId` field with the content-hash. 4a computes the content hash as the Merkle *leaf* (`MerkleTree.LeafHash`) but leaves the txid field a GUID, to avoid destabilising the signing payload + fixed bootstrap tx ids in the same pass. Folded into 4b.
 
 ---
 
