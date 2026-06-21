@@ -10,6 +10,8 @@ public static class WalletInitializationService
 {
 	private const string PlayerWalletPath = "user://wallet_state.json";
 	private const string CasinoWalletPath = "user://casino_wallet_state.json";
+	private const string SatoshiWalletPath = "user://satoshi_wallet_state.json";
+	private const string HalWalletPath = "user://hal_wallet_state.json";
 
 	private static readonly JsonSerializerOptions JsonOptions = new()
 	{
@@ -19,12 +21,16 @@ public static class WalletInitializationService
 
 	public static PlayerWalletState? PlayerWallet { get; private set; }
 	public static CasinoWalletState? CasinoWallet { get; private set; }
+	public static FounderWalletState? SatoshiWallet { get; private set; }
+	public static FounderWalletState? HalWallet { get; private set; }
 
 	public static void EnsureAll()
 	{
 		List<WordlistBootstrapper.WordEntry> wordlist = WordlistBootstrapper.EnsureWordlist();
 		PlayerWallet = EnsurePlayerWallet(wordlist);
 		CasinoWallet = EnsureCasinoWallet(wordlist);
+		SatoshiWallet = EnsureFounderWallet(wordlist, SatoshiWalletPath, "satoshi");
+		HalWallet = EnsureFounderWallet(wordlist, HalWalletPath, "hal");
 		BotWalletRegistry.EnsureAll();
 	}
 
@@ -68,6 +74,43 @@ public static class WalletInitializationService
 		SaveCasinoWallet(casino);
 		GD.Print($"[WalletInitializationService] Casino wallet created — {address}");
 		return casino;
+	}
+
+	private static FounderWalletState EnsureFounderWallet(List<WordlistBootstrapper.WordEntry> wordlist, string path, string founderId)
+	{
+		if (FileAccess.FileExists(path))
+		{
+			FounderWalletState state = LoadFounderWallet(path, founderId);
+			GD.Print($"[WalletInitializationService] Founder wallet '{founderId}' loaded — {state.BaseAddress}");
+			return state;
+		}
+
+		string[] words = WordlistBootstrapper.GenerateThreeWords(wordlist, new Random());
+		string address = CryptoUtils.DeriveGmAddress(string.Join(" ", words));
+		var founder = new FounderWalletState(words, address, founderId);
+		SaveFounderWallet(path, founder);
+		GD.Print($"[WalletInitializationService] Founder wallet '{founderId}' created — {address}");
+		GD.Print($"[WalletInitializationService] Founder '{founderId}' seed words: {string.Join(" ", words)}");
+		return founder;
+	}
+
+	private static FounderWalletState LoadFounderWallet(string path, string founderId)
+	{
+		using var file = FileAccess.Open(path, FileAccess.ModeFlags.Read);
+		var dto = JsonSerializer.Deserialize<FounderWalletDto>(file.GetAsText(), JsonOptions)!;
+		return new FounderWalletState(dto.SeedWords, dto.BaseAddress, founderId);
+	}
+
+	private static void SaveFounderWallet(string path, FounderWalletState state)
+	{
+		var dto = new FounderWalletDto
+		{
+			SeedWords = state.SeedWords,
+			BaseAddress = state.BaseAddress,
+			FounderId = state.FounderId
+		};
+		using var file = FileAccess.Open(path, FileAccess.ModeFlags.Write);
+		file.StoreString(JsonSerializer.Serialize(dto, JsonOptions));
 	}
 
 	private static PlayerWalletState LoadPlayerWallet()
@@ -118,5 +161,12 @@ public static class WalletInitializationService
 	{
 		public string[] SeedWords { get; set; } = [];
 		public string BaseAddress { get; set; } = string.Empty;
+	}
+
+	private sealed class FounderWalletDto
+	{
+		public string[] SeedWords { get; set; } = [];
+		public string BaseAddress { get; set; } = string.Empty;
+		public string FounderId { get; set; } = string.Empty;
 	}
 }

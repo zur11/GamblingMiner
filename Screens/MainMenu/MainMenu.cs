@@ -20,5 +20,6 @@ public partial class MainMenu : Control
 		GetNode<Button>("%BTCWalletBtn").Pressed            += () => _sceneManager?.Go(SceneManager.SceneId.BTCWallet);
 		GetNode<Button>("%BotsBtcWalletsBtn").Pressed       += () => _sceneManager?.Go(SceneManager.SceneId.BotsBtcWallets);
 		GetNode<Button>("%CasinoFinancesBtn").Pressed       += () => _sceneManager?.Go(SceneManager.SceneId.CasinoFinances);
+		GetNode<Button>("%FoundersWalletsBtn").Pressed      += () => _sceneManager?.Go(SceneManager.SceneId.FoundersWallets);
 	}
 }

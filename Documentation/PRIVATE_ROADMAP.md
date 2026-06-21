@@ -291,8 +291,8 @@ Done when a player can earn a casino referral by donating BTC to a non-miner bot
 - [x] Add casino BTC addresses.
 - [x] Add `CasinoFinances` development scene.
 - [x] Add scheduled bot transactions (core scheduler; circulation trigger to be re-aligned for gradual bot introduction).
-- [ ] **PH**: Founders Satoshi & Hal as mining nodes + `FoundersWallets` dev scene.
-- [ ] **PH**: Fix genesis/early coinbase to derived `gm1q…` addresses (genesis stays unspendable).
+- [x] **PH**: Founders Satoshi & Hal as nodes + `FoundersWallets` dev scene (implemented; pending in-engine verification). *Note: they do not mine yet — that arrives with the weighted lottery below.*
+- [x] **PH**: Fix genesis/early coinbase to derived `gm1q…` addresses (genesis stays unspendable).
 - [ ] **PH**: Block-candidate + hashrate model (minimal weighted lottery) — the keystone.
 - [ ] **PH**: First-launch bootstrap pre-mine to 21 Mar 2009 + Satoshi 11,000-BTC ramp + 12 Jan 10 BTC Satoshi→Hal tx.
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).

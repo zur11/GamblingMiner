@@ -30,8 +30,9 @@
 
 > Rule of thumb: do the things that **redefine the foundation** before the things that **build on it**. Identity + init model first; economy systems after.
 
-### Step 1 — Founders identity foundation  *(founders P1–P3)*
+### Step 1 — Founders identity foundation  *(founders P1–P3)*  ✅ IMPLEMENTED (compiles; pending in-engine verification)
 - Satoshi & Hal as nodes with seed phrases; `FoundersWallets` dev scene; genesis & early coinbase recipients → derived `gm1q…`.
+- Done: `FounderWalletState`; `WalletInitializationService` creates/persists `satoshi`/`hal` wallets; `NetworkRoot` registers both founder nodes + rewrites genesis & block-2 coinbase recipient to Satoshi's `gm1q…`; `FoundersWallets` dev scene + MainMenu/SceneManager wiring. Deferred to a later step: the 100-byte `InputData` cap.
 - **No dependencies.** Fixes the base58/`gm1q…` inconsistency that every other system references. Low risk, high foundation value. Founders exist as registered nodes but don't mine yet (mining arrives in Step 2/3); game still starts at genesis until Step 3.
 - *(The 12 Jan 10 BTC Satoshi→Hal tx is NOT here — it needs a Jan-12 block and spendable Satoshi coins, so it lands in Step 3 with the bootstrap.)*
 

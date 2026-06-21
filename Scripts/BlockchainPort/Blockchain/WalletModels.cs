@@ -12,6 +12,15 @@ public record CasinoWalletState(
 	string BaseAddress         // gm1q...
 );
 
+// Founder wallet (Satoshi, Hal — later Mike Hearn). Seed words + base address, like the casino.
+// FounderId is the node id ("satoshi" | "hal") used to register the founder as a mining NodeAgent.
+// Step 1: one base address per founder. Patoshi-style multi-address per receive is a later step.
+public record FounderWalletState(
+	string[] SeedWords,
+	string BaseAddress,        // gm1q...
+	string FounderId           // "satoshi" | "hal"
+);
+
 // Wallet entry for bot participants. All bots have a full wallet (address + signing keys)
 // so they can send BTC once they have a balance. IsMinerNode distinguishes the four miner
 // bots (bot_1..4) from the ten non-miner holder wallets.

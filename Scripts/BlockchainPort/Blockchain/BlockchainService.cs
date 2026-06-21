@@ -16,6 +16,9 @@ public sealed class BlockchainService
     // Verify with GetExpectedAttemptsForCurrentDifficulty(). Recalibrate whenever nonces-per-bet or participant count changes significantly.
     public const string DifficultyPrefix = "00";
     public const char DifficultyNextHexMaxInclusive = '6';
+    // Historical reference only — Satoshi's real base58 genesis address. NOT used for payouts.
+    // It is the initial placeholder recipient on the genesis/bootstrap coinbase; NetworkRoot
+    // rewrites that recipient to Satoshi's derived gm1q… address once the founder wallet exists.
     public const string SatoshiAddress = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa";
     public const string GenesisHeadline = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks.";
     public const string BootstrapSecondBlockTxId = "bootstrap-satoshi-second-block-50btc";

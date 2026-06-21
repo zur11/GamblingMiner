@@ -21,6 +21,8 @@ public partial class NetworkRoot : Node
 
     private const string PlayerNodeId = "player";
     private const string CasinoNodeId = "casino";
+    private const string SatoshiNodeId = "satoshi";
+    private const string HalNodeId = "hal";
     private const decimal GenesisRewardBtc = 50m;
     // 50 × 2100 × 2 = 210,000 BTC total supply; ~4 in-game years per halving at 100X scale.
     // If this value changes, recalculate the emission cap in GetBlockRewardForNextCandidate() to preserve the ~2140 end-of-supply year.
@@ -79,8 +81,15 @@ public partial class NetworkRoot : Node
             SharedNodesById[CasinoNodeId] = casinoNode;
         }
 
+        // Founder nodes — Satoshi & Hal. Keys derived from their seed phrases each launch,
+        // same pattern as the casino. Registered before ApplyStateFromSnapshot so they receive
+        // the synced chain. They mine via the weighted lottery introduced in a later step; here
+        // they exist as nodes whose addresses receive the genesis / early coinbase rewards.
+        RegisterFounderNode(WalletInitializationService.SatoshiWallet);
+        RegisterFounderNode(WalletInitializationService.HalWallet);
+
         ApplyStateFromSnapshot(savedState);
-        NormalizeGenesisTimestampAcrossNodes();
+        NormalizeGenesisAcrossNodes();
         EnsureSecondBlockBootstrapPendingTx();
         PersistStateToDisk();
         _isInitialized = true;
@@ -121,6 +130,21 @@ public partial class NetworkRoot : Node
 
         SharedNodesById[nodeId] = node;
         return node;
+    }
+
+    private static void RegisterFounderNode(FounderWalletState? founder)
+    {
+        if (founder is null)
+        {
+            return;
+        }
+
+        string seed = string.Join(" ", founder.SeedWords);
+        (string signPub, string signPriv) = CryptoUtils.DeriveSigningKeypair(seed);
+        string secp256k1Pub = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seed);
+        var node = new NodeAgent(founder.FounderId, founder.BaseAddress, signPub, signPriv, secp256k1Pub);
+        SharedNetwork.RegisterNode(node);
+        SharedNodesById[founder.FounderId] = node;
     }
 
     public Transaction? CreateAndBroadcastTransaction(string fromNodeId, string recipientNodeId, decimal amount)
@@ -692,8 +716,15 @@ public partial class NetworkRoot : Node
         DirAccess.MakeDirRecursiveAbsolute(ProjectSettings.GlobalizePath(path));
     }
 
-    private static void NormalizeGenesisTimestampAcrossNodes()
+    private static void NormalizeGenesisAcrossNodes()
     {
+        // Genesis coinbase is created in the BlockchainService ctor with the historical base58
+        // placeholder (BlockchainService.SatoshiAddress). Once Satoshi's wallet exists we rewrite
+        // the recipient to his derived gm1q… address so the genesis reward belongs to the founder
+        // node. Genesis stays IsSpendable = false. ChainIsValid does not check the recipient, so
+        // this rewrite does not invalidate the chain.
+        string? satoshiAddress = WalletInitializationService.SatoshiWallet?.BaseAddress;
+
         foreach (NodeAgent node in SharedNodesById.Values)
         {
             if (node.Blockchain.Chain.Count <= 0)
@@ -701,10 +732,22 @@ public partial class NetworkRoot : Node
                 continue;
             }
 
-            node.Blockchain.Chain[0].Timestamp = BlockchainService.GenesisTimestampUnixMs;
-            if (node.Blockchain.Chain[0].Transactions.Count == 0)
+            Block genesis = node.Blockchain.Chain[0];
+            genesis.Timestamp = BlockchainService.GenesisTimestampUnixMs;
+            if (genesis.Transactions.Count == 0)
             {
-                node.Blockchain.Chain[0].Transactions.Add(BlockchainService.CreateGenesisCoinbase());
+                genesis.Transactions.Add(BlockchainService.CreateGenesisCoinbase());
+            }
+
+            if (satoshiAddress is not null)
+            {
+                foreach (Transaction tx in genesis.Transactions)
+                {
+                    if (tx.Sender == BlockchainService.CoinbaseSender && tx.Recipient == BlockchainService.SatoshiAddress)
+                    {
+                        tx.Recipient = satoshiAddress;
+                    }
+                }
             }
         }
     }
@@ -719,11 +762,15 @@ public partial class NetworkRoot : Node
             return;
         }
 
+        // Block-2 payout goes to Satoshi's derived gm1q… address (falls back to the historical
+        // base58 placeholder only if the founder wallet is somehow unavailable).
+        string satoshiAddress = WalletInitializationService.SatoshiWallet?.BaseAddress ?? BlockchainService.SatoshiAddress;
+
         Transaction bootstrapTx = new()
         {
             Amount = 50m,
             Sender = BlockchainService.CoinbaseSender,
-            Recipient = BlockchainService.SatoshiAddress,
+            Recipient = satoshiAddress,
             TransactionId = BlockchainService.BootstrapSecondBlockTxId,
             InputDataText = "Bootstrap payout to Satoshi address in block 2",
             InputDataHex = BlockchainService.TextToHex("Bootstrap payout to Satoshi address in block 2"),
