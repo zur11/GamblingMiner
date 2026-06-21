@@ -371,6 +371,24 @@ public partial class NetworkRoot : Node
         return SharedNodesById.Keys.OrderBy(x => x).ToList();
     }
 
+    // Nodes that legitimately participate in DiceGame betting: the player and the miner bots.
+    // Excludes the casino, founders (satoshi/hal), and non-miner holder bots — none of those bet.
+    // Founder mining is driven by the weighted lottery / historical bootstrap, never by DiceGame.
+    public IReadOnlyList<string> GetBettableNodeIds()
+    {
+        EnsureInitialized();
+        var ids = new List<string> { PlayerNodeId };
+        foreach (BotWalletRecord miner in BotWalletRegistry.MinerBots)
+        {
+            if (SharedNodesById.ContainsKey(miner.NodeId))
+            {
+                ids.Add(miner.NodeId);
+            }
+        }
+
+        return ids;
+    }
+
     public int GetPlayerChainLength()
     {
         EnsureInitialized();

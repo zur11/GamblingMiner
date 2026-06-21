@@ -313,7 +313,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_activeNodeSelector.Clear();
 		int selectedIndex = 0;
-		IReadOnlyList<string> nodeIds = _blockchainNetworkRoot.GetNodeIds();
+		IReadOnlyList<string> nodeIds = _blockchainNetworkRoot.GetBettableNodeIds();
 		for (int index = 0; index < nodeIds.Count; index++)
 		{
 			string nodeId = nodeIds[index];
@@ -994,7 +994,7 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		SaveActiveNodeStrategySnapshot();
-		foreach (string nodeId in _blockchainNetworkRoot.GetNodeIds())
+		foreach (string nodeId in _blockchainNetworkRoot.GetBettableNodeIds())
 		{
 			if (string.Equals(nodeId, PlayerNodeId, StringComparison.Ordinal))
 			{
