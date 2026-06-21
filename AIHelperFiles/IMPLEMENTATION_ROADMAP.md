@@ -36,9 +36,10 @@
 - **No dependencies.** Fixes the base58/`gm1q…` inconsistency that every other system references. Low risk, high foundation value. Founders exist as registered nodes but don't mine yet (mining arrives in Step 2/3); game still starts at genesis until Step 3.
 - *(The 12 Jan 10 BTC Satoshi→Hal tx is NOT here — it needs a Jan-12 block and spendable Satoshi coins, so it lands in Step 3 with the bootstrap.)*
 
-### Step 2 — Block Candidate + Hashrate model (minimal)  *(founders P0)*
+### Step 2 — Block Candidate + Hashrate model (minimal)  *(founders P0)*  ✅ IMPLEMENTED (compiles; DEV-verifiable in FoundersWallets)
 - `HashrateWeight` per node + `RunWeightedBlockLottery`. Refactor of existing single-nonce mining; player bet-driven path unchanged.
 - **The keystone.** Unblocks Steps 3, 4 (hardware), and 6 (template builder).
+- Done: `NodeAgent.HashrateWeight` (default 1.0); `NetworkRoot.RunWeightedBlockLottery(minerNodeIds, minedAtUnixMs?, rng?)` (weighted winner → mines one real PoW block via `MineAndBroadcastBlock`) + `SetHashrateWeight`/`GetHashrateWeight`; injectable RNG for deterministic bootstrap. A "Mining Lottery [DEV]" panel in FoundersWallets lets you set weights + mine N blocks and observe the Satoshi/Hal split. Per-node candidate *template* refactor deferred to P4 (OQ-1).
 
 ### Step 3 — Historical bootstrap + Satoshi targeting  *(founders P4–P6)*
 - First-launch pre-mine genesis→21 Mar; Satoshi 11,000-BTC dynamic ramp (retire ≥ 2011-04-26); Hal's 3 blocks; the **12 Jan 10 BTC Satoshi→Hal tx** (founders Phase 6, inserted at the Jan-12 block).

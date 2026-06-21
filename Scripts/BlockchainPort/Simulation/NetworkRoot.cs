@@ -191,6 +191,69 @@ public partial class NetworkRoot : Node
         return true;
     }
 
+    // ── Step 2: weighted block lottery ─────────────────────────────────────────
+    // Picks ONE winner among the given miner node ids with probability proportional to each
+    // node's HashrateWeight, then mines exactly one valid block for that winner (full PoW nonce
+    // search via the existing MineAndBroadcastBlock path) and broadcasts it. Returns the winning
+    // node id, or null if no eligible (registered, weight > 0) miner was supplied.
+    //
+    // This is the mechanism the historical bootstrap (Step 3) uses to let Satoshi + Hal mine the
+    // chain to 21 Mar 2009 without the player betting. Bet-driven player mining is unaffected.
+    // rng is injectable so the bootstrap / tests can be made deterministic; defaults to Random.Shared.
+    public string? RunWeightedBlockLottery(IReadOnlyList<string> minerNodeIds, long? minedAtUnixMs = null, Random? rng = null)
+    {
+        EnsureInitialized();
+        rng ??= Random.Shared;
+
+        double totalWeight = 0d;
+        var eligible = new List<(NodeAgent node, double weight)>();
+        foreach (string id in minerNodeIds)
+        {
+            if (!SharedNodesById.TryGetValue(id, out NodeAgent? node) || node.HashrateWeight <= 0d)
+            {
+                continue;
+            }
+
+            eligible.Add((node, node.HashrateWeight));
+            totalWeight += node.HashrateWeight;
+        }
+
+        if (eligible.Count == 0 || totalWeight <= 0d)
+        {
+            return null;
+        }
+
+        double roll = rng.NextDouble() * totalWeight;
+        NodeAgent winner = eligible[^1].node;
+        double cumulative = 0d;
+        foreach ((NodeAgent node, double weight) in eligible)
+        {
+            cumulative += weight;
+            if (roll < cumulative)
+            {
+                winner = node;
+                break;
+            }
+        }
+
+        return MineAndBroadcastBlock(winner.NodeId, minedAtUnixMs) ? winner.NodeId : null;
+    }
+
+    public void SetHashrateWeight(string nodeId, double weight)
+    {
+        EnsureInitialized();
+        if (SharedNodesById.TryGetValue(nodeId, out NodeAgent? node))
+        {
+            node.HashrateWeight = Math.Max(0d, weight);
+        }
+    }
+
+    public double GetHashrateWeight(string nodeId)
+    {
+        EnsureInitialized();
+        return SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) ? node.HashrateWeight : 0d;
+    }
+
     public bool TryMineSingleNonceAttempt(string minerNodeId, out Block? minedBlock, long? minedAtUnixMs = null)
     {
         EnsureInitialized();

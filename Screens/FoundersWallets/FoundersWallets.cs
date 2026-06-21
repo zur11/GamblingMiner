@@ -1,4 +1,5 @@
 using Godot;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using GodotBlockchainPort.Blockchain;
@@ -15,6 +16,7 @@ public partial class FoundersWallets : Control
 
 	private NetworkRoot _networkRoot = null!;
 	private SceneManager? _sceneManager;
+	private CalendarTimeService? _calendarTimeService;
 
 	// Founder selection
 	private FounderWalletState? _currentFounder;
@@ -57,6 +59,13 @@ public partial class FoundersWallets : Control
 	private Label _sendFeedback = null!;
 	private readonly List<string> _toAddresses = new();
 
+	// Mining lottery dev panel (built programmatically)
+	private VBoxContainer _lotteryDevPanel = null!;
+	private LineEdit _satoshiWeightInput = null!;
+	private LineEdit _halWeightInput = null!;
+	private LineEdit _lotteryBlocksInput = null!;
+	private Label _lotteryResultLabel = null!;
+
 	// Runtime state
 	private string? _currentPassphraseAddress;
 	private string _currentPassphraseNodeId = string.Empty;
@@ -69,6 +78,7 @@ public partial class FoundersWallets : Control
 	{
 		_networkRoot = GetNode<NetworkRoot>("NetworkRoot");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 		GetNode<Button>("%BackBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.MainMenu);
@@ -122,6 +132,7 @@ public partial class FoundersWallets : Control
 		GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
 		BuildSendPanel();
+		BuildLotteryDevPanel();
 
 		// Default to Satoshi.
 		SelectFounder(WalletInitializationService.SatoshiWallet);
@@ -272,6 +283,84 @@ public partial class FoundersWallets : Control
 		SetMode(WalletMode.Send);
 	}
 
+	// ── Mining lottery dev panel ──────────────────────────────────────────────
+
+	private void BuildLotteryDevPanel()
+	{
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+
+		_lotteryDevPanel = new VBoxContainer();
+		_lotteryDevPanel.AddThemeConstantOverride("separation", 8);
+
+		var title = new Label { Text = "Mining Lottery [DEV]" };
+		title.AddThemeFontSizeOverride("font_size", 20);
+		_lotteryDevPanel.AddChild(title);
+
+		_lotteryDevPanel.AddChild(new Label
+		{
+			Text = "Mine founder blocks via the weighted lottery (Satoshi vs Hal). Verifies HashrateWeight distribution."
+		});
+
+		var weightRow = new HBoxContainer();
+		weightRow.AddThemeConstantOverride("separation", 10);
+		weightRow.AddChild(new Label { Text = "Satoshi weight:" });
+		_satoshiWeightInput = new LineEdit { Text = "9", CustomMinimumSize = new Vector2(80, 0) };
+		weightRow.AddChild(_satoshiWeightInput);
+		weightRow.AddChild(new Label { Text = "Hal weight:" });
+		_halWeightInput = new LineEdit { Text = "1", CustomMinimumSize = new Vector2(80, 0) };
+		weightRow.AddChild(_halWeightInput);
+		_lotteryDevPanel.AddChild(weightRow);
+
+		var runRow = new HBoxContainer();
+		runRow.AddThemeConstantOverride("separation", 10);
+		runRow.AddChild(new Label { Text = "Blocks:" });
+		_lotteryBlocksInput = new LineEdit { Text = "20", CustomMinimumSize = new Vector2(80, 0) };
+		runRow.AddChild(_lotteryBlocksInput);
+		var runBtn = new Button { Text = "Run Lottery" };
+		runBtn.Pressed += OnRunLotteryPressed;
+		runRow.AddChild(runBtn);
+		_lotteryDevPanel.AddChild(runRow);
+
+		_lotteryResultLabel = new Label { Text = string.Empty };
+		_lotteryDevPanel.AddChild(_lotteryResultLabel);
+
+		rootVBox.AddChild(_lotteryDevPanel);
+	}
+
+	private void OnRunLotteryPressed()
+	{
+		if (!double.TryParse(_satoshiWeightInput.Text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out double sWeight) || sWeight < 0d)
+			sWeight = 0d;
+		if (!double.TryParse(_halWeightInput.Text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out double hWeight) || hWeight < 0d)
+			hWeight = 0d;
+		if (!int.TryParse(_lotteryBlocksInput.Text.Trim(), out int blocks) || blocks <= 0)
+			blocks = 1;
+		blocks = Math.Min(blocks, 200);
+
+		_networkRoot.SetHashrateWeight("satoshi", sWeight);
+		_networkRoot.SetHashrateWeight("hal", hWeight);
+
+		// Stamp each mined block at increasing game-time so timestamps stay in the 2009 range
+		// without mutating the player's calendar (this is a dev tool).
+		long baseMs = _calendarTimeService != null
+			? new DateTimeOffset(_calendarTimeService.CurrentUtcDateTime).ToUnixTimeMilliseconds()
+			: new DateTimeOffset(2009, 1, 3, 18, 15, 6, TimeSpan.Zero).ToUnixTimeMilliseconds();
+		const long blockIntervalMs = 58_500_000L; // ~16h40m in-game per block at 100X
+
+		int satoshiWins = 0, halWins = 0, none = 0;
+		var miners = new List<string> { "satoshi", "hal" };
+		for (int i = 0; i < blocks; i++)
+		{
+			string? winner = _networkRoot.RunWeightedBlockLottery(miners, baseMs + i * blockIntervalMs);
+			if (winner == "satoshi") satoshiWins++;
+			else if (winner == "hal") halWins++;
+			else none++;
+		}
+
+		_lotteryResultLabel.Text = $"Mined {blocks}:  Satoshi {satoshiWins}  ·  Hal {halWins}" + (none > 0 ? $"  ·  none {none}" : "");
+		RefreshBalances();
+	}
+
 	// ── Balance ───────────────────────────────────────────────────────────────
 
 	private void RefreshBalances()
@@ -300,6 +389,7 @@ public partial class FoundersWallets : Control
 		_passphraseLockedPanel.Visible   = mode == WalletMode.PassphraseLocked;
 		_passphraseUnlockedPanel.Visible = mode == WalletMode.PassphraseUnlocked;
 		_sendPanel.Visible               = mode == WalletMode.Send;
+		_lotteryDevPanel.Visible         = mode == WalletMode.Base;
 
 		if (mode != WalletMode.PassphraseUnlocked && mode != WalletMode.Send)
 			_passphraseInput.Text = string.Empty;

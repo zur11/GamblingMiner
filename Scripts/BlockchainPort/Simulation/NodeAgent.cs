@@ -13,6 +13,11 @@ public sealed class NodeAgent
     public string WalletSecp256k1PublicKey { get; }
     public BlockchainService Blockchain { get; } = new();
     public NodeFinancialState? FinancialState { get; set; }
+
+    // Relative mining power for the weighted block lottery (Step 2). Default 1.0 for the player
+    // and bots; the founders controller drives Satoshi/Hal weights. Bet-driven player mining
+    // does not use this — it only governs RunWeightedBlockLottery (bootstrap / founder mining).
+    public double HashrateWeight { get; set; } = 1.0;
     private long _candidateNonce;
     private string _candidateKey = string.Empty;
 

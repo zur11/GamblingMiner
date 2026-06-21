@@ -115,7 +115,9 @@ All three behave like the casino node in that they are casino-class entities (no
 
 ## 5. Phases
 
-### Phase 0 — Per-node candidate blocks + relative hashrate  *(prerequisite for Phases 4–5)*
+### Phase 0 — Per-node candidate blocks + relative hashrate  *(prerequisite for Phases 4–5)*  ✅ IMPLEMENTED (Step 2 — minimal: weight + lottery)
+
+> **Step 2 done:** `NodeAgent.HashrateWeight` (default 1.0); `NetworkRoot.RunWeightedBlockLottery(minerNodeIds, minedAtUnixMs?, rng?)` picks a weighted winner and mines one real PoW block for it via `MineAndBroadcastBlock`; `SetHashrateWeight`/`GetHashrateWeight`; injectable RNG for deterministic bootstrap. Verified via the "Mining Lottery [DEV]" panel in FoundersWallets. **Task 1 (candidate-template refactor) intentionally deferred to the P4 block-template-builder per OQ-1** — only the weight + lottery were needed for the founders.
 
 **Files**: `NodeAgent.cs`, `NetworkRoot.cs`, new `Scripts/BlockchainPort/Simulation/BlockCandidate.cs` (optional).
 
