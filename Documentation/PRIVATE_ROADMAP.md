@@ -85,19 +85,22 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 
 ## 5. Implementation Priorities
 
-> **Authoritative implementation order**: `AIHelperFiles/IMPLEMENTATION_ROADMAP.md`. The priorities below are the *feature* breakdown; the roadmap file holds the *sequencing and dependencies*. Current state: P0–P2 largely complete; **PH (Historical Foundation) is the active next work** and precedes the expansion of P3/P4/P5.
+> **Authoritative implementation order**: `AIHelperFiles/IMPLEMENTATION_ROADMAP.md`. The priorities below are the *feature* breakdown; the roadmap file holds the *sequencing and dependencies*.
+>
+> **State (2026-06-20):** P0–P2 done. PH historical foundation reached its **accepted baseline** — the game starts on **21 Mar 2009** on a Satoshi/Hal-mined chain (founder identity + genesis fix + weighted lottery + first-launch bootstrap all verified in-engine). **The active next work is now P4 — the per-node candidate block model (the real competition engine)** — built generically with historical characters treated as plain nodes (`AIHelperFiles/candidate-block-model-plan.md`). The remaining historical-character economics (Satoshi 11,000-BTC ramp + disappearance, the 12 Jan 10 BTC tx) are **parked** and re-activate *after* the candidate engine, built on top of it.
 
-### PH - Historical Foundation (NEW — active; precedes P3)
+### PH - Historical Foundation — ✅ BASELINE REACHED
 
-Goal: establish the historically faithful opening and the network-growth init model **before** economy systems expand on top of it (so recirculation, hardware, and fees are built once, on the right foundation).
+Goal: establish the historically faithful opening and the network-growth init model **before** economy systems expand on top of it.
 
-- Founders Satoshi & Hal as mining nodes with seed phrases; `FoundersWallets` dev scene (room for Mike Hearn).
-- Fix genesis & early coinbase recipients to derived `gm1q…` addresses; review the `InputData` inscription mechanism (genesis-only for now, 100-byte cap).
-- Block-candidate + hashrate model (minimal weighted lottery) — the keystone for founders, hardware pools, and P4.
-- First-launch bootstrap pre-mine to `21 March 2009`; Satoshi `11,000`-BTC dynamic ramp (retire ≥ `2011-04-26`); the `12 Jan` 10 BTC Satoshi→Hal transaction.
+- [x] Founders Satoshi & Hal as mining nodes with seed phrases; `FoundersWallets` dev scene (room for Mike Hearn).
+- [x] Fix genesis & early coinbase recipients to derived `gm1q…` addresses. *(InputData 100-byte cap still deferred.)*
+- [x] Block-candidate + hashrate model **(minimal weighted lottery)** — the keystone seed for P4.
+- [x] First-launch bootstrap pre-mine to `21 March 2009` (Satoshi dominant, Hal exactly 3). **Verified in-engine.**
+- [ ] **Parked → after P4:** Satoshi `11,000`-BTC dynamic ramp (retire ≥ `2011-04-26`); the `12 Jan` 10 BTC Satoshi→Hal tx; April Mike Hearn transfers. Re-activated once the candidate engine exists, built on top of it.
 - Companion research: `historical-blockchain-events-research.md` (UTXO/Patoshi direction; remaining address-reuse research).
 
-Done when a new game starts on `21 March 2009` with a Satoshi/Hal-mined chain, and the player begins betting from there.
+**Baseline reached:** a new game starts on `21 March 2009` with a Satoshi/Hal-mined chain and the player bets from there. ➡ **Next: P4 (candidate block model).**
 
 ### P0 - Documentation Truth Pass
 
@@ -156,7 +159,9 @@ Goal: make bot mining and block contents meaningful.
 
 Done when blocks contain believable transactions and bots can win blocks before the player.
 
-### P4 - Block Template Builder
+### P4 - Block Template Builder  ➡ ACTIVE LEAD (the per-node candidate block model)
+
+> Detailed plan + open questions: `AIHelperFiles/candidate-block-model-plan.md`. Pulled forward (2026-06-20) to be the real competition engine that hardware pools, fees, bot competition, and the (parked) founder economics all build on. Built generically — historical characters are treated as plain nodes until it exists, then the bootstrap is refit to it (roadmap Step 5) and founder economics layered on (Step 7).
 
 Goal: simulate Bitcoin-like block assembly without full-node complexity.
 
@@ -293,7 +298,9 @@ Done when a player can earn a casino referral by donating BTC to a non-miner bot
 - [x] Add scheduled bot transactions (core scheduler; circulation trigger to be re-aligned for gradual bot introduction).
 - [x] **PH**: Founders Satoshi & Hal as nodes + `FoundersWallets` dev scene (implemented; pending in-engine verification). *Note: they do not mine yet — that arrives with the weighted lottery below.*
 - [x] **PH**: Fix genesis/early coinbase to derived `gm1q…` addresses (genesis stays unspendable).
-- [x] **PH**: Block-candidate + hashrate model (minimal weighted lottery) — the keystone (implemented; DEV-verifiable in FoundersWallets). Full per-node candidate template deferred to P4.
+- [x] **PH**: Block-candidate + hashrate model (minimal weighted lottery) — the keystone seed (verified). Full per-node candidate engine = **P4, the active lead**.
+- [x] **PH**: First-launch bootstrap to 21 Mar 2009 (Satoshi dominant, Hal exactly 3) — verified in-engine.
+- [ ] **Parked → after P4**: Satoshi 11,000-BTC ramp + disappearance, 12 Jan 10 BTC tx (built on the candidate engine).
 - [ ] **PH**: First-launch bootstrap pre-mine to 21 Mar 2009 + Satoshi 11,000-BTC ramp + 12 Jan 10 BTC Satoshi→Hal tx.
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
 - [ ] Add Winning Referral Commission scene (list referrals, claimable 1% SC commission per bot, claim button).

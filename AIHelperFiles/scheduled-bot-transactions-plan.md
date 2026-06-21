@@ -15,7 +15,7 @@ This is the next item after the BTC wallet system (Phase 1–9 of `btc-wallet-sy
 - `TransactionCirculationStartBlock = 5` — after bootstrap the chain already holds ~114 founder blocks before the player's first bet; circulation should key off *bot introduction*, not an absolute block index.
 - The miner/non-miner recipient pools — bots don't exist during bootstrap; only founders mine. The scheduler must no-op until miner bots are actually registered.
 
-See `AIHelperFiles/IMPLEMENTATION_ROADMAP.md` for where this sits in the unified order. Fees (Phase 4) reactivate with the block-template-builder (roadmap step 6).
+See `AIHelperFiles/IMPLEMENTATION_ROADMAP.md` for where this sits in the unified order. **Fees (Phase 4) are implemented as part of the candidate block model** (`candidate-block-model-plan.md`, roadmap Step 4). Circulation-trigger re-alignment happens in roadmap Step 6, on the candidate engine.
 
 ---
 

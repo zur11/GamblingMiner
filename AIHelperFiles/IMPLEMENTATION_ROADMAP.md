@@ -12,17 +12,27 @@
 |---|---|---|
 | `btc-wallet-system-plan.md` | Addresses, seeds, passphrase wallets, dev scenes, notepad | ✅ Done (Phases 0–9) |
 | `100x-time-scale-migration-plan.md` | 100X time scale, 210k supply, 2,100-block halving | ✅ Done (Phase 5 validation is a checklist, not code) |
-| `scheduled-bot-transactions-plan.md` | Miner-bot → holder-bot BTC recirculation | ⏸ Core done (Phase 1); rest deferred / needs re-alignment |
-| `historical-founders-and-bootstrap-plan.md` | Satoshi/Hal/Hearn nodes, genesis fix, bootstrap to 21 Mar, Satoshi 11k target | 🆕 Designed, not coded |
+| `scheduled-bot-transactions-plan.md` | Miner-bot → holder-bot BTC recirculation | ⏸ Core done (Phase 1); re-aligns onto candidate engine in Step 6 |
+| `historical-founders-and-bootstrap-plan.md` | Satoshi/Hal/Hearn nodes, genesis fix, bootstrap to 21 Mar, Satoshi 11k target | 🟡 Phases 1–3 + bootstrap (3a) done & verified; Phases 4/6/7 **parked → Step 7** |
+| `candidate-block-model-plan.md` | **Per-node candidate blocks, public mempool, tx selection, Merkle, fees — the real competition engine** | 🆕 **LEAD (Step 4)** — design + open questions |
 | `historical-blockchain-events-research.md` | Character/event data + UTXO-realism direction | 🔬 Questionnaire (Q-X1–X4 resolved; address research open) |
-| `btc-pools-hardware-plan.md` | Hardware credits, casino community pool, fees | ◻ Not started |
+| `btc-pools-hardware-plan.md` | Hardware credits, casino community pool, fees | ◻ Not started — re-aligns onto candidate engine in Step 6 |
 
 ---
 
-## 2. The two cross-cutting themes that were colliding
+## 2. Direction reset (2026-06-20)
 
-1. **Block Candidate + Hashrate model** — appears in founders (weighted lottery), hardware (per-credit nonce routing), and fees (template builder). **It is the keystone.** Resolved split (founders OQ-1): minimal `HashrateWeight` + weighted lottery **now**; full per-node candidate *template* (tx selection, Merkle, fees) deferred into the **block-template-builder**.
-2. **Network initialization model** — older plans assume *all participants exist at block 1*. The historical migration replaces this with a **network that grows over time** (Satoshi → Hal → player @ 21 Mar → bots gradually). This is the new ground truth, so it should land **before** we expand recirculation / hardware / fees on the old assumption.
+The historical opening is now an accepted, verified baseline: **3a works in-engine — the game starts on 21 Mar 2009 on a Satoshi/Hal-mined chain.** From here the priority flips.
+
+**Decision:** stop layering historical-character economics next. Instead, build the **real per-node candidate-block competition engine** generically — Satoshi/Hal are treated as plain nodes and their special economics are *ignored* for now — and only afterward (a) **refit the lottery bootstrap** to run through that engine and (b) **re-add the historical-character economics** on top of it.
+
+Why: the candidate-block model is the true keystone — it's depended on by hardware pools, fees, bot competition, and (eventually) the founders' own mining. The minimal `HashrateWeight` + lottery (Step 2) and the bootstrap (Step 3) were enough to reach the baseline; everything past the baseline should sit on the *real* engine, not the simplified one.
+
+**Cancelled as next steps (parked, not deleted):** the old 3b (Satoshi 11,000-BTC ramp + disappearance) and 3c (12 Jan 10 BTC tx). Their design is preserved in `historical-founders-and-bootstrap-plan.md` and re-activates as **Step 7** once the candidate engine exists.
+
+Two themes still hold:
+- **Block-candidate model = keystone.** Minimal weight + lottery done (Step 2); the **full per-node candidate engine is now the lead (Step 4)**.
+- **Network grows over time** (Satoshi → Hal → player @ 21 Mar → bots gradually) — still the init ground truth; the baseline (3a) established it.
 
 ---
 
@@ -41,29 +51,32 @@
 - **The keystone.** Unblocks Steps 3, 4 (hardware), and 6 (template builder).
 - Done: `NodeAgent.HashrateWeight` (default 1.0); `NetworkRoot.RunWeightedBlockLottery(minerNodeIds, minedAtUnixMs?, rng?)` (weighted winner → mines one real PoW block via `MineAndBroadcastBlock`) + `SetHashrateWeight`/`GetHashrateWeight`; injectable RNG for deterministic bootstrap. A "Mining Lottery [DEV]" panel in FoundersWallets lets you set weights + mine N blocks and observe the Satoshi/Hal split. Per-node candidate *template* refactor deferred to P4 (OQ-1).
 
-### Step 3 — Historical bootstrap + Satoshi targeting  *(founders P4–P6, split into 3a/3b/3c)*
-- Use **single-address Satoshi** as the testing shortcut (Patoshi multi-address is Step 5).
-- **Depends on Steps 1–2.** Establishes the gradual-growth init model as ground truth.
+### Step 3 — Historical bootstrap baseline (3a only)  *(founders P5)*  ✅ IMPLEMENTED + VERIFIED IN-ENGINE
+- First-launch-only pre-mine genesis→21 Mar 2009: Satoshi mines every block, Hal exactly 3 (near 12 Jan / 5 Feb / 5 Mar), timestamps march from genesis with ±30% jitter, player clock lands at a random time on 21 Mar. `NetworkRoot` bulk-mining + static API; `HistoricalBootstrapService`; wired into `CalendarTimeService._Ready()`.
+- **This is the accepted baseline.** Old 3b/3c are **cancelled as next steps** and re-sequenced to Step 7.
 
-  - **3a — Bootstrap loop + clock landing.**  ✅ IMPLEMENTED (compiles; pending in-engine verification)
-    First-launch-only pre-mine genesis→21 Mar 2009: Satoshi mines every block, Hal exactly 3 (near 12 Jan / 5 Feb / 5 Mar), timestamps march from genesis with ±30% jitter, player clock lands at a random time on 21 Mar. Done: `NetworkRoot` bulk-mining flag + `MineForNode` + static API (`EnsureReady`, `GetPlayerChainLengthStatic`, `MineNodeStatic`, `BeginBulkMining`/`EndBulkMiningAndPersist`); `HistoricalBootstrapService` (first-launch guard = player chain ≤ 1); wired into `CalendarTimeService._Ready()` which lands the epoch on the random 21 Mar time. Loading panel (OQ-6) deferred — bootstrap is ~fast/synchronous. Requires clean `user://blockchain/`.
-  - **3b — Satoshi 11,000-BTC dynamic ramp + disappearance** *(founders Phase 4/7)* — TODO.
-  - **3c — 12 Jan 10 BTC Satoshi→Hal tx** *(founders Phase 6)* — TODO.
+### Step 4 — Per-node Candidate Block Model  *(NEW LEAD — was old Step 6 / PRIVATE_ROADMAP P4 + scheduled-bot-tx Phase 4)*
+- The **real blockchain competition engine**: each node builds its own candidate block from a public mempool — tx selection (24-tx cap, feerate ordering, age tie-break), Merkle root, coinbase = reward + collected fees; proper block header hashing.
+- Built **generically — historical characters are treated as plain nodes and their special economics are ignored here.** During this step the bootstrap stays as-is (simplified path); founders just sit as nodes.
+- **Depends on Step 2** (extends the minimal candidate). Detailed plan + open questions: `candidate-block-model-plan.md`.
 
-### Step 4 — Re-align recirculation + hardware bootstrap to gradual growth
-- Revisit `scheduled-bot-transactions` triggers (circulation keyed to *bot introduction*, not block ≥ 5; scheduler no-ops with no miner bots).
-- Define *when/how miner bots are introduced* after player start, then build **hardware pools** (`btc-pools-hardware-plan.md`) on the corrected init.
-- **Depends on Step 3** (so bots/hardware are built once, correctly).
+### Step 5 — Refit the lottery bootstrap to the candidate model  *(corrects 3a)*
+- Rework `HistoricalBootstrapService` / `RunWeightedBlockLottery` so founder mining produces **real candidate blocks** through the Step 4 engine (mempool, Merkle, fees) instead of the simplified `MinePendingTransactions` path. Resolve any mismatches the new engine exposes.
+- **Depends on Step 4.**
 
-### Step 5 — UTXO realism / Patoshi per-receive addresses
+### Step 6 — Gradual participant introduction + miner bots + hardware pools  *(old Step 4 + `btc-pools-hardware-plan.md`)*
+- Introduce miner bots after player start on the new engine; re-align `scheduled-bot-transactions` circulation triggers (keyed to bot introduction, not block ≥ 5); build hardware credits + casino community pool.
+- **Depends on Steps 4–5** (built once, on the real engine).
+
+### Step 7 — Historical-character economics  *(re-activated 3b/3c + Hearn — founders P4/P6/P7)*
+- Satoshi 11,000-BTC dynamic ramp + disappearance (≥ 2011-04-26); 12 Jan 10 BTC Satoshi→Hal tx; April 2009 Mike Hearn transfers. All built **on the real candidate engine**, not the simplified path.
+- **Depends on Steps 4–5.** Design preserved in `historical-founders-and-bootstrap-plan.md` (Phases 4, 6, 7).
+
+### Step 8 — UTXO realism / Patoshi per-receive addresses
 - Fresh derived address per coinbase/deposit; real change outputs; surfaced via passphrase wallets. Founders first, then player wallet.
-- **Depends on Step 1** (founders exist). Pending §6 address-reuse research in the research doc. Enhancement, not a blocker for Steps 3–4.
+- **Depends on Step 4** (the candidate/coinbase machinery). Pending §6 address-reuse research in the research doc.
 
-### Step 6 — Block template builder + fees  *(P4 roadmap; scheduled-bot-tx Phase 4 reactivates here)*
-- Full per-node candidate template: ancestor-feerate tx selection, Merkle root, coinbase fee collection, `Transaction.Fee`.
-- **Depends on Step 2** (extends the minimal candidate into a full template).
-
-### Step 7 — Economy & meta  *(PRIVATE_ROADMAP P6–P8)*
+### Step 9 — Economy & meta  *(PRIVATE_ROADMAP P6–P8)*
 - P6 casino finances → P7 BTC/SC trading → P8 achievements.
 
 ---
@@ -71,10 +84,14 @@
 ## 4. Dependency graph (compact)
 
 ```
-Step1 (founders identity) ─┬─> Step3 (bootstrap) ─> Step4 (re-align + hardware) ─> Step6 (template+fees) ─> Step7
-Step2 (candidate+hashrate)─┘                                   ▲                         ▲
-                            └──────────────────────────────────┘                         │
-Step1 ─> Step5 (UTXO/Patoshi) ──────────────────────────────────────────────────────────┘ (informs)
+✅ Step1 (founder identity) ─┐
+✅ Step2 (weight + lottery) ─┼─> ✅ Step3 (bootstrap baseline, 21 Mar)
+                             │
+                             └─> 🔜 Step4 (CANDIDATE BLOCK MODEL — lead)
+                                      ├─> Step5 (refit bootstrap to engine)
+                                      ├─> Step6 (miner bots + hardware pools)
+                                      ├─> Step7 (historical-char economics: ex-3b/3c + Hearn)
+                                      └─> Step8 (UTXO / Patoshi)  ─> Step9 (economy/meta)
 ```
 
 ---
@@ -83,17 +100,17 @@ Step1 ─> Step5 (UTXO/Patoshi) ────────────────
 
 | Roadmap step here | PRIVATE_ROADMAP priority |
 |---|---|
-| Step 1–3 (historical foundation) | New — predates/extends P3 (bots, transactions, mempool) |
-| Step 4 (recirculation + hardware) | P3 + P5 (hardware progression) |
-| Step 5 (UTXO/Patoshi) | New — refines P3 address model |
-| Step 6 (template + fees) | P4 (block template builder) |
-| Step 7 | P6 / P7 / P8 |
-
-> Action item: fold this ordering into `PRIVATE_ROADMAP.md` once Step 1 starts, so the canonical roadmap reflects the historical foundation as a first-class priority.
+| Steps 1–3 (founder identity + bootstrap baseline) | New — predates/extends P3 (bots, transactions, mempool) |
+| **Step 4 (candidate block model — lead)** | **P4 (block template builder)** + P3 mempool + scheduled-bot-tx Phase 4 (fees) |
+| Step 5 (refit bootstrap to engine) | New — corrects the Step 3 baseline |
+| Step 6 (miner bots + hardware pools) | P3 + P5 (hardware progression) |
+| Step 7 (historical-char economics) | New — the parked ex-3b/3c |
+| Step 8 (UTXO / Patoshi) | New — refines P3 address model |
+| Step 9 | P6 / P7 / P8 |
 
 ---
 
 ## 6. What NOT to do next
-- ❌ Don't expand `scheduled-bot-transactions` (functionally complete; its assumptions change in Step 4).
-- ❌ Don't start `btc-pools-hardware` before Step 3 (its bootstrap assumes all-participants-at-block-1).
-- ❌ Don't build the full block-template/fees before the minimal candidate model (Step 2).
+- ❌ Don't add historical-character economics next (Satoshi ramp/disappearance, 10 BTC tx) — **parked to Step 7**, built on the real engine afterward.
+- ❌ Don't expand `scheduled-bot-transactions` or start `btc-pools-hardware` before the candidate engine (Step 4) — both re-align onto it in Step 6.
+- ❌ Don't refit the bootstrap (Step 5) before the candidate engine exists (Step 4).

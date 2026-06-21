@@ -1,6 +1,8 @@
 # Historical Founders & Genesis Bootstrap — Implementation Plan
 
-**Status**: **Phases 1–3 IMPLEMENTED** (Step 1 — compiles clean; pending in-engine verification). All 10 open questions resolved (see §6). **Active lead plan** (roadmap Steps 1–3, 5 — see `IMPLEMENTATION_ROADMAP.md`). Next: Phase 0 (weight + lottery) → Phases 4–5 (bootstrap + Satoshi targeting). The companion research doc `historical-blockchain-events-research.md` must be filled before Phases 5–6 are coded.
+**Status**: **Phases 1, 2, 3, 5 DONE & verified in-engine** — founder identity + genesis fix + `FoundersWallets` + weighted lottery + first-launch bootstrap to **21 Mar 2009** all work. **Phases 4, 6, 7 are now PARKED** (see note below). All 10 open questions resolved (see §6).
+
+> **⚠️ Re-prioritisation (2026-06-20):** the 21 Mar baseline is accepted. The next work is the **real per-node candidate-block competition engine** (`candidate-block-model-plan.md`, roadmap **Step 4**), built generically with the historical characters treated as plain nodes. Only after that do we (Step 5) refit the bootstrap to run through the real engine and (Step 7) re-activate this plan's **Phase 4** (Satoshi 11,000-BTC dynamic ramp), **Phase 6** (12 Jan 10 BTC Satoshi→Hal tx) and **Phase 7** (disappearance ≥ 2011-04-26) on top of it. Those phases are **not the next step** — their design below is preserved for Step 7.
 
 > **Step 1 done (founder identity):** `FounderWalletState` (`WalletModels.cs`); `WalletInitializationService` creates/persists `user://satoshi_wallet_state.json` + `user://hal_wallet_state.json`; `NetworkRoot` registers `satoshi`/`hal` nodes and rewrites the genesis + block-2 coinbase recipient to Satoshi's derived `gm1q…` (genesis stays `IsSpendable=false`); `Screens/FoundersWallets/` dev scene + `SceneManager`/`MainMenu` wiring. Founders exist as registered nodes but do **not** mine yet (lottery = Phase 0/Step 2). Deferred: 100-byte `InputData` cap. Requires a clean `user://blockchain/` (OQ-9).
 **Goal**: Make the early-Bitcoin opening of GamblingMiner historically faithful. Introduce **Satoshi Nakamoto** and **Hal Finney** (and later **Mike Hearn**) as special founder mining nodes (no SC/BTC needed to mine, casino-like), pre-mine a real-but-fast blockchain from the genesis instant up to **21 March 2009** so the player always starts on that day, record the famous **12 Jan 2009 Satoshi→Hal 10 BTC** transaction (and the April 2009 Mike Hearn transfers), retire Satoshi **no earlier than 26 April 2011** at a fractal target of **11,000 BTC** (1% of his real ≈1.1 M BTC), and review/generalise how extra data (the genesis bank-bailout headline) is stored in blocks.
@@ -174,7 +176,7 @@ Tasks:
 
 ---
 
-### Phase 4 — Satoshi dynamic targeting (11,000 BTC, retires no earlier than 26 Apr 2011)  *(needs Phase 0)*
+### Phase 4 — Satoshi dynamic targeting (11,000 BTC, retires no earlier than 26 Apr 2011)  *(needs Phase 0)*  — ⏸ PARKED → roadmap Step 7 (build on the real candidate engine)
 
 **Files**: `FoundersMiningService.cs`, `NetworkRoot.cs`.
 
@@ -205,7 +207,7 @@ else:
 
 ---
 
-### Phase 5 — Historical bootstrap simulation (genesis → 21 March 2009)  *(needs Phase 0)*
+### Phase 5 — Historical bootstrap simulation (genesis → 21 March 2009)  *(needs Phase 0)*  — ✅ DONE & verified (3a). Refit to the real candidate engine = roadmap Step 5.
 
 > **Idle-mining policy (OQ-2 resolved):** Autonomous mining (without the player betting) happens **only** during this bootstrap window (3 Jan – 21 Mar 2009), and only `satoshi` + `hal` via the weighted lottery. **From the moment the player starts, in-game time ALWAYS follows the player's bets** — the player appears first, then miner bots are introduced (in that order), all bet-driven. Autonomous time advancement is reserved for possible future expansions/DLC/online-multiplayer only.
 
@@ -226,7 +228,7 @@ Result: first launch leaves a ~110-block chain, Satoshi ≈ 5,550 BTC, Hal ≈ 1
 
 ---
 
-### Phase 6 — The 12 Jan 2009 Satoshi → Hal 10 BTC transaction
+### Phase 6 — The 12 Jan 2009 Satoshi → Hal 10 BTC transaction  — ⏸ PARKED → roadmap Step 7
 
 **Files**: `HistoricalBootstrapService.cs` (insertion), or a small `HistoricalEvents` helper.
 
@@ -236,7 +238,7 @@ Result: first launch leaves a ~110-block chain, Satoshi ≈ 5,550 BTC, Hal ≈ 1
 
 ---
 
-### Phase 7 — Satoshi disappearance (≥ 26 Apr 2011, once 11,000 BTC reached)
+### Phase 7 — Satoshi disappearance (≥ 26 Apr 2011, once 11,000 BTC reached)  — ⏸ PARKED → roadmap Step 7
 
 **Files**: `FoundersMiningService.cs`.
 
