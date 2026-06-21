@@ -1781,7 +1781,11 @@ GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
 **Files changed (4a)**: `Models.cs`, `MerkleTree.cs` (new), `BlockchainService.cs`, `NodeAgent.cs`, `NetworkRoot.cs`
 **Files changed (4b.1)**: `BlockTemplateBuilder.cs` (new), `BlockchainService.cs`, `NodeAgent.cs`, `NetworkRoot.cs`
-**Status**: **4a ✓ + 4b.1 ✓** (Merkle + header hashing; template builder + coinbase-in-block + maturity N=1). Remaining: 4b.2 (fees), 4b.3 (content-hash txid), 4c (BlockExplorer surfacing).
+**Files changed (4b.2)**: `BlockchainService.cs`, `NodeAgent.cs`, `NetworkRoot.cs`
+**Files changed (4c, surfacing)**: `BlockExplorer.cs`, `NetworkRoot.cs`
+**Files changed (4b.3)**: `Models.cs`, `BlockchainService.cs`, `MerkleTree.cs`, `NodeAgent.cs`, `BlockTemplateBuilder.cs`
+**Files changed (fee selector)**: `BTCWallet.cs`
+**Status**: ✅ **STEP 4 COMPLETE** — Merkle + header hashing (4a); template builder + coinbase-in-block + maturity N=1 (4b.1); fees end-to-end (4b.2); content-hash txids (4b.3); BlockExplorer surfacing + BTCWallet fee selector (4c).
 **Plan**: `AIHelperFiles/candidate-block-model-plan.md`
 
 ### The Short Version (for everyone)
@@ -1897,11 +1901,22 @@ Using 100 here would mean ~68 in-game days before any mined coin is spendable �
 - The coinbase is committed **inside** the block (`CommitBlock`), and only the *included* mempool transactions are removed from the miner's pending pool (unselected ones stay). The candidate is built once per `(tip, mempool)` state and cached on the node, so across the many bets it takes to find a block only the nonce rolls.
 - Coinbase maturity `N = 1` is live (see 21.5). Fees are currently **0** (the `Fee` field exists but nothing sets it yet).
 
-**4b.2 — fees end-to-end (next):** a sender-chosen `Transaction.Fee` deducted from the sender on top of the amount (the spendable check covers `Amount + Fee`), collected into the coinbase. The bot-recirculation scheduler starts attaching fees here.
+**4b.2 ✓ — fees end-to-end:** `Transaction.Fee` is now part of the **signed payload** (so the chosen fee is tamper-evident), and the sender pays **`Amount + Fee`** — enforced in `AddTransactionToPendingTransactions` and reflected in `GetAddressData`/`GetAddressSpendableBalance`. The miner collects the sum of included fees via the coinbase (the `BlockTemplateBuilder` from 4b.1). **The money conserves:** for a transfer of amount `A` with fee `F`, the sender loses `A + F`, the recipient gains `A`, and the block's miner gains `F` (on top of the block reward, which is the only new issuance). Miner bots now attach a random `0.1–1.0 BTC` fee when they recirculate BTC. The engine accepts a fee on every send path; the **player-facing fee selector in the wallet UIs is deferred to 4c** (UI sends currently pass fee 0).
 
-**4b.3 — content-hash transaction id (OQ-C6):** the GUID `TransactionId` becomes the same content hash used as the Merkle leaf — making every transaction's id a true fingerprint of its contents. Deferred to its own slice because it also touches the signing payload and the fixed bootstrap transaction ids.
+**4b.3 ✓ — content-hash transaction id (OQ-C6):** the transaction id is now `BlockchainService.ComputeTransactionId` — the double-SHA256 of the transaction's content (amount, parties, fee, input data, spendability, and a uniqueness `Salt`). It's the *same* value used as the Merkle leaf (id and leaf agree), and `ValidateTransactionSignature` rejects any non-coinbase transaction whose id isn't its content hash. Because our account model has no UTXO inputs to make otherwise-identical payments distinct, the `Salt` provides that uniqueness — random for normal transactions, and the block height (`coinbase:{height}`, BIP34-style) for coinbases so equal-reward coinbases never collide. The genesis coinbase and the block-2 bootstrap transaction keep their human-readable sentinel ids (unique and unsigned); their Merkle leaf is still the recomputed content hash.
 
-**4c — visibility:** the Block Explorer surfaces the Merkle root, each transaction's fee, and the coinbase's total collected fees, so the player can *see* that candidate blocks differ by miner and that transaction selection matters.
+**Player fee selector ✓:** `BTCWallet`'s send form now has a **Fee (BTC)** field (blank = 0); the send is rejected if the wallet can't cover amount + fee. The dev wallets (Casino/Founders/Bots) send with fee 0 — they aren't player-facing.
+
+**4c ✓ — visibility:** the Block Explorer surfaces, for every block, the **Merkle root**, the block **time**, the total **fees collected**, and per-transaction **fee** with a **`[COINBASE]`** marker on transaction #0; the transaction lookup shows fee too. Bootstrap/founder blocks show a coinbase of exactly 50 BTC (no fees); blocks that include a bot recirculation transaction show a coinbase **greater than 50** (reward + collected fees) — the visible proof that fee collection works.
+
+> **Reading a block's fees (avoid this common confusion).** The **coinbase does not pay a fee — it *collects* them.** It is new issuance, so the Block Explorer shows no `Fee` line on the `[COINBASE]` transaction. The only fee-paying transactions are the ordinary (non-coinbase) ones.
+>
+> So in a block with one bot transfer:
+> - `Fee` on the transfer = the fee that transfer pays (e.g. `0.15176540`).
+> - `Fees collected` = the **sum of every non-coinbase fee** in the block (here, just that one → `0.15176540`).
+> - `Coinbase Amount` = **block reward + Fees collected** (`50 + 0.15176540 = 50.15176540`).
+>
+> The same number (`0.15176540`) therefore appears **twice for one single fee**, in two roles: once as the fee the transfer *pays*, and once folded into the coinbase amount the miner *collects*. It is **not** two separate fees — two fee-paying transactions would make `Fees collected` the sum of both, and the coinbase `50 + fee₁ + fee₂`.
 
 ---
 

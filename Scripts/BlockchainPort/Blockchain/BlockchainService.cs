@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 #nullable enable
@@ -105,13 +106,34 @@ public sealed class BlockchainService
             Amount = amount,
             Sender = sender,
             Recipient = recipient,
-            TransactionId = Guid.NewGuid().ToString("N")
+            Salt = Guid.NewGuid().ToString("N"), // uniqueness nonce; the content-hash txid is set by the signer
+            TransactionId = string.Empty
         };
+    }
+
+    // Step 4b.3 (OQ-C6): a transaction's id is the double-SHA256 of its canonical content — amount,
+    // parties, fee, input data, spendability and the uniqueness Salt. Excludes the id itself and the
+    // signature, so it is a true fingerprint of *what* the transaction does. Also used as the Merkle leaf.
+    public static string ComputeTransactionId(Transaction tx)
+    {
+        string content = string.Join("|", new[]
+        {
+            tx.Amount.ToString(CultureInfo.InvariantCulture),
+            tx.Sender,
+            tx.Recipient,
+            tx.Fee.ToString(CultureInfo.InvariantCulture),
+            tx.InputDataHex,
+            tx.IsSpendable ? "1" : "0",
+            tx.Salt
+        });
+        return CryptoUtils.Sha256Hex(CryptoUtils.Sha256Hex(content));
     }
 
     public static string BuildTransactionPayload(Transaction tx)
     {
-        return $"{tx.Amount}|{tx.Sender}|{tx.Recipient}|{tx.TransactionId}";
+        // The txid already commits to amount/parties/fee/data/salt (ComputeTransactionId); signing a
+        // payload that includes it makes the whole transaction tamper-evident under the signature.
+        return $"{tx.Amount}|{tx.Sender}|{tx.Recipient}|{tx.TransactionId}|{tx.Fee}";
     }
 
     public bool ValidateTransactionSignature(Transaction tx)
@@ -124,6 +146,12 @@ public sealed class BlockchainService
         if (string.IsNullOrWhiteSpace(tx.PublicKeyBase64) ||
             string.IsNullOrWhiteSpace(tx.SignatureBase64) ||
             string.IsNullOrWhiteSpace(tx.Secp256k1PublicKeyBase64))
+        {
+            return false;
+        }
+
+        // Integrity: the txid must be the content hash of the transaction (Step 4b.3).
+        if (!string.Equals(tx.TransactionId, ComputeTransactionId(tx), StringComparison.Ordinal))
         {
             return false;
         }
@@ -150,6 +178,12 @@ public sealed class BlockchainService
             return false;
         }
 
+        // A transaction may never pay its own sender (coinbase sender "00" is never a real address).
+        if (string.Equals(transaction.Sender, transaction.Recipient, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
         if (!ValidateTransactionSignature(transaction))
         {
             return false;
@@ -157,8 +191,9 @@ public sealed class BlockchainService
 
         if (transaction.Sender != CoinbaseSender)
         {
+            // Sender must be able to cover amount + fee (the fee is paid to the miner via the coinbase).
             decimal spendableBalance = GetAddressSpendableBalance(transaction.Sender);
-            if (spendableBalance < transaction.Amount)
+            if (spendableBalance < transaction.Amount + transaction.Fee)
             {
                 return false;
             }
@@ -324,7 +359,7 @@ public sealed class BlockchainService
                 }
 
                 if (tx.Recipient == address) balance += tx.Amount;
-                else if (tx.Sender == address) balance -= tx.Amount;
+                else if (tx.Sender == address) balance -= tx.Amount + tx.Fee; // sender pays amount + fee
             }
         }
 
@@ -342,9 +377,9 @@ public sealed class BlockchainService
         {
             if (pending.Sender == address)
             {
-                // Pending outgoing transactions reserve funds immediately.
+                // Pending outgoing transactions reserve funds immediately (amount + fee).
                 // Pending incoming transactions are not spendable until mined.
-                balance -= pending.Amount;
+                balance -= pending.Amount + pending.Fee;
             }
         }
 

@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 
 namespace GodotBlockchainPort.Blockchain;
@@ -10,26 +9,14 @@ namespace GodotBlockchainPort.Blockchain;
 // of the hashed block header (BlockchainService.HashHeader), any change to a transaction's
 // content changes the root and therefore the block hash — tamper-evidence.
 //
-// Note (OQ-C6): the leaf hash is the realistic "content txid". Replacing the GUID
-// Transaction.TransactionId field with this hash is a focused follow-up; for now the leaf is
-// computed independently and the field stays a GUID.
+// OQ-C6 (4b.3): the leaf hash IS the transaction's content-hash txid
+// (BlockchainService.ComputeTransactionId) — id and Merkle leaf are now the same value.
 public static class MerkleTree
 {
-    // Canonical, signature-independent content of a transaction (the "what", not the "who signed").
-    public static string LeafHash(Transaction tx)
-    {
-        string content = string.Join("|", new[]
-        {
-            tx.Amount.ToString(CultureInfo.InvariantCulture),
-            tx.Sender,
-            tx.Recipient,
-            tx.Fee.ToString(CultureInfo.InvariantCulture),
-            tx.TransactionId,
-            tx.InputDataHex,
-            tx.IsSpendable ? "1" : "0"
-        });
-        return DoubleSha256(content);
-    }
+    // The Merkle leaf is the transaction's content hash — the same value used as its txid (Step 4b.3).
+    // Recomputed from content (never read from the stored id), so tampering with any field changes the
+    // root and invalidates the block.
+    public static string LeafHash(Transaction tx) => BlockchainService.ComputeTransactionId(tx);
 
     public static string ComputeRoot(IReadOnlyList<Transaction> transactions)
     {

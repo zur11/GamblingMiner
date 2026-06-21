@@ -54,6 +54,7 @@ public partial class BTCWallet : Control
 	private OptionButton _toDropdown = null!;
 	private LineEdit _manualAddressInput = null!;
 	private LineEdit _amountInput = null!;
+	private LineEdit _feeInput = null!;
 	private Label _sendFeedback = null!;
 	private readonly List<string> _toAddresses = new();
 
@@ -211,6 +212,20 @@ public partial class BTCWallet : Control
 		amountRow.AddChild(_amountInput);
 		_sendPanel.AddChild(amountRow);
 
+		var feeRow = new HBoxContainer();
+		feeRow.AddThemeConstantOverride("separation", 10);
+		var feeLabel = new Label { Text = "Fee (BTC):" };
+		feeLabel.AddThemeFontSizeOverride("font_size", 22);
+		_feeInput = new LineEdit
+		{
+			PlaceholderText = "0.00000000",
+			CustomMinimumSize = new Vector2(220, 0)
+		};
+		_feeInput.AddThemeFontSizeOverride("font_size", 22);
+		feeRow.AddChild(feeLabel);
+		feeRow.AddChild(_feeInput);
+		_sendPanel.AddChild(feeRow);
+
 		var btnRow = new HBoxContainer();
 		btnRow.AddThemeConstantOverride("separation", 12);
 		var sendBtn = new Button { Text = "Send" };
@@ -270,6 +285,7 @@ public partial class BTCWallet : Control
 		_sendFromLabel.Text = $"From: {senderAddress[..10]}...";
 		PopulateToDropdown(senderAddress);
 		_amountInput.Text = string.Empty;
+		_feeInput.Text = string.Empty;
 		_sendFeedback.Text = string.Empty;
 		SetMode(WalletMode.Send);
 	}
@@ -443,16 +459,26 @@ public partial class BTCWallet : Control
 			return;
 		}
 
-		Transaction? tx = _networkRoot.CreateAndBroadcastTransactionToAddress(_sendFromNodeId, recipientAddress, amount);
+		// Fee is optional (blank = 0). The fee goes to whichever miner includes the transaction.
+		string feeText = _feeInput.Text.Trim();
+		decimal fee = 0m;
+		if (feeText.Length > 0 && (!decimal.TryParse(feeText, NumberStyles.Number, CultureInfo.InvariantCulture, out fee) || fee < 0m))
+		{
+			_sendFeedback.Text = "Enter a valid fee (0 or more), or leave it blank.";
+			return;
+		}
+
+		Transaction? tx = _networkRoot.CreateAndBroadcastTransactionToAddress(_sendFromNodeId, recipientAddress, amount, fee);
 		if (tx is null)
 		{
-			_sendFeedback.Text = "Rejected — insufficient balance or invalid route.";
+			_sendFeedback.Text = "Rejected — insufficient balance (amount + fee) or invalid route.";
 			return;
 		}
 
 		string shortId = tx.TransactionId.Length > 8 ? tx.TransactionId[..8] + "..." : tx.TransactionId;
 		_sendFeedback.Text = $"Sent! [{shortId}]";
 		_amountInput.Text = string.Empty;
+		_feeInput.Text = string.Empty;
 		_manualAddressInput.Text = string.Empty;
 	}
 

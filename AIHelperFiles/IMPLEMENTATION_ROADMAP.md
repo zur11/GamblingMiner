@@ -14,7 +14,7 @@
 | `100x-time-scale-migration-plan.md` | 100X time scale, 210k supply, 2,100-block halving | ✅ Done (Phase 5 validation is a checklist, not code) |
 | `scheduled-bot-transactions-plan.md` | Miner-bot → holder-bot BTC recirculation | ⏸ Core done (Phase 1); re-aligns onto candidate engine in Step 6 |
 | `historical-founders-and-bootstrap-plan.md` | Satoshi/Hal/Hearn nodes, genesis fix, bootstrap to 21 Mar, Satoshi 11k target | 🟡 Phases 1–3 + bootstrap (3a) done & verified; Phases 4/6/7 **parked → Step 7** |
-| `candidate-block-model-plan.md` | **Per-node candidate blocks, public mempool, tx selection, Merkle, fees — the real competition engine** | 🆕 **LEAD (Step 4)** — design + open questions |
+| `candidate-block-model-plan.md` | **Per-node candidate blocks, mempool, tx selection, Merkle, fees, content-hash txid — the real competition engine** | ✅ **Step 4 COMPLETE** (4a/4b.1/4b.2/4b.3/4c) |
 | `historical-blockchain-events-research.md` | Character/event data + UTXO-realism direction | 🔬 Questionnaire (Q-X1–X4 resolved; address research open) |
 | `btc-pools-hardware-plan.md` | Hardware credits, casino community pool, fees | ◻ Not started — re-aligns onto candidate engine in Step 6 |
 
@@ -55,20 +55,22 @@ Two themes still hold:
 - First-launch-only pre-mine genesis→21 Mar 2009: Satoshi mines every block, Hal exactly 3 (near 12 Jan / 5 Feb / 5 Mar), timestamps march from genesis with ±30% jitter, player clock lands at a random time on 21 Mar. `NetworkRoot` bulk-mining + static API; `HistoricalBootstrapService`; wired into `CalendarTimeService._Ready()`.
 - **This is the accepted baseline.** Old 3b/3c are **cancelled as next steps** and re-sequenced to Step 7.
 
-### Step 4 — Per-node Candidate Block Model  *(NEW LEAD — was old Step 6 / PRIVATE_ROADMAP P4 + scheduled-bot-tx Phase 4)*  — 4a ✅ implemented
-- The **real blockchain competition engine**: each node builds its own candidate block from a public mempool — tx selection (24-tx cap, feerate ordering, age tie-break), Merkle root, coinbase = reward + collected fees; proper block header hashing.
-- **4a ✅ (verified in-engine):** `Block.MerkleRoot`, `Transaction.Fee`/`SizeVBytes`, `MerkleTree`, header hashing (`HashHeader`), Merkle tamper check in `ChainIsValid`, pre-mine timestamp.
-- **4b.1 ✅ (compiles):** `BlockTemplateBuilder`, coinbase-in-block (`CommitBlock`), 24-tx cap, coinbase maturity N=1 (`GetAddressData`), candidate-template caching. **4b.2** (fees), **4b.3** (content-hash txid), **4c** (BlockExplorer surfacing) remain.
-- Built **generically — historical characters are treated as plain nodes and their special economics are ignored here.** During this step the bootstrap stays as-is (simplified path); founders just sit as nodes.
-- **Depends on Step 2** (extends the minimal candidate). Detailed plan + open questions: `candidate-block-model-plan.md`.
+### Step 4 — Per-node Candidate Block Model  ✅ COMPLETE  *(was old Step 6 / PRIVATE_ROADMAP P4 + scheduled-bot-tx Phase 4)*
+- The **real blockchain competition engine**: each node builds its own candidate block from its mempool view — tx selection (24-tx cap, fee ordering, age tie-break), Merkle root, coinbase = reward + collected fees; proper block header hashing; content-hash txids.
+- **4a ✅ (verified):** `Block.MerkleRoot`, `Transaction.Fee`/`SizeVBytes`, `MerkleTree`, header hashing (`HashHeader`), Merkle tamper check in `ChainIsValid`, pre-mine timestamp.
+- **4b.1 ✅ (verified):** `BlockTemplateBuilder`, coinbase-in-block (`CommitBlock`), 24-tx cap, coinbase maturity N=1 (`GetAddressData`), candidate-template caching.
+- **4b.2 ✅:** `Transaction.Fee` in the signed payload; sender pays `Amount+Fee`; miner collects `ΣFee` via coinbase; bots attach 0.1–1.0 BTC fees.
+- **4b.3 ✅:** content-hash txid (`ComputeTransactionId` + `Transaction.Salt`; Merkle leaf = txid; txid-integrity check; coinbase BIP34-height salt).
+- **4c ✅:** BlockExplorer surfaces Merkle root / time / fees / `[COINBASE]`; player fee selector added to BTCWallet's send form.
+- Built **generically** — historical characters are plain nodes here; their economics return in Step 7.
 
-### Step 5 — Refit the lottery bootstrap to the candidate model  *(corrects 3a)*
-- Rework `HistoricalBootstrapService` / `RunWeightedBlockLottery` so founder mining produces **real candidate blocks** through the Step 4 engine (mempool, Merkle, fees) instead of the simplified `MinePendingTransactions` path. Resolve any mismatches the new engine exposes.
-- **Depends on Step 4.**
+### Step 5 — Refit the lottery bootstrap to the candidate model  ✅ ABSORBED into Step 4 (verify-only)
+- 4b.1 replaced the mining core **in place** (`MinePendingTransactions`/`TryMineSingleNonceAttempt` build via `BlockTemplateBuilder`), so the historical bootstrap and weighted lottery already mine real candidate blocks through the new engine — no separate simplified path remained to refit. Just confirm bootstrap blocks carry proper coinbase/Merkle (they pass `ChainIsValid` on reload).
 
-### Step 6 — Gradual participant introduction + miner bots + hardware pools  *(old Step 4 + `btc-pools-hardware-plan.md`)*
-- Introduce miner bots after player start on the new engine; re-align `scheduled-bot-transactions` circulation triggers (keyed to bot introduction, not block ≥ 5); build hardware credits + casino community pool.
-- **Depends on Steps 4–5** (built once, on the real engine).
+### Step 6 — Gradual participant introduction + miner bots + hardware pools  *(NEXT LEAD — old Step 4 + `btc-pools-hardware-plan.md`)*
+- Introduce miner bots after player start on the new engine; build hardware credits + casino community pool.
+- ✅ **Already done (Step 4 cleanup):** the `scheduled-bot-transactions` circulation trigger was re-aligned to a **per-bot warmup** (`CirculationWarmupBlocks` = 5 blocks since a bot's *own* first mined block, via `FirstBlockHeightMinedBy`) + a no-self-send guard. This already supports gradually-introduced bots, so Step 6 is just the introduction cadence + hardware.
+- **Depends on Step 4** (built once, on the real engine).
 
 ### Step 7 — Historical-character economics  *(re-activated 3b/3c + Hearn — founders P4/P6/P7)*
 - Satoshi 11,000-BTC dynamic ramp + disappearance (≥ 2011-04-26); 12 Jan 10 BTC Satoshi→Hal tx; April 2009 Mike Hearn transfers. All built **on the real candidate engine**, not the simplified path.
@@ -89,9 +91,8 @@ Two themes still hold:
 ✅ Step1 (founder identity) ─┐
 ✅ Step2 (weight + lottery) ─┼─> ✅ Step3 (bootstrap baseline, 21 Mar)
                              │
-                             └─> 🔜 Step4 (CANDIDATE BLOCK MODEL — lead)
-                                      ├─> Step5 (refit bootstrap to engine)
-                                      ├─> Step6 (miner bots + hardware pools)
+                             └─> ✅ Step4 (CANDIDATE BLOCK MODEL) ─> ✅ Step5 (absorbed)
+                                      ├─> 🔜 Step6 (miner bots + hardware pools — lead)
                                       ├─> Step7 (historical-char economics: ex-3b/3c + Hearn)
                                       └─> Step8 (UTXO / Patoshi)  ─> Step9 (economy/meta)
 ```

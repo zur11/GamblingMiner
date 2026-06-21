@@ -21,6 +21,10 @@ public sealed class Transaction
     // Reserved for feerate ordering once transactions have a real size model (Step 4 OQ-C2).
     // Uniform size for now → feerate ordering == fee ordering.
     public int SizeVBytes { get; set; } = 1;
+    // Step 4b.3: uniqueness nonce folded into the content-hash txid — the account-model analog of a
+    // UTXO input reference (and BIP34 block height for coinbases). Without it, two identical payments
+    // (or two equal coinbases) would hash to the same id. Random for normal txs; block height for coinbases.
+    public string Salt { get; set; } = string.Empty;
 }
 
 public sealed class Block

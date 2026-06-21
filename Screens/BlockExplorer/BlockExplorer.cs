@@ -139,15 +139,22 @@ public partial class BlockExplorer : Control
         sb.AppendLine("[b]Block Lookup[/b]");
         sb.AppendLine($"Node: {nodeId}");
         sb.AppendLine($"Index: {block.Index}");
+        sb.AppendLine($"Time: {FormatBlockTime(block.Timestamp)}");
         sb.AppendLine($"Hash: {block.Hash}");
         sb.AppendLine($"PrevHash: {block.PreviousBlockHash}");
+        sb.AppendLine($"MerkleRoot: {block.MerkleRoot}");
         sb.AppendLine($"Nonce: {block.Nonce}");
-        sb.AppendLine($"Transactions: {block.Transactions.Count}");
+        decimal blockFees = block.Transactions
+            .Where(t => t.Sender != BlockchainService.CoinbaseSender)
+            .Sum(t => t.Fee);
+        sb.AppendLine($"Transactions: {block.Transactions.Count}  |  Fees collected: {blockFees:F8} BTC");
         foreach (Transaction tx in block.Transactions)
         {
+            bool isCoinbase = tx.Sender == BlockchainService.CoinbaseSender;
             sb.AppendLine("-");
-            sb.AppendLine($"TxId: {tx.TransactionId}");
+            sb.AppendLine($"TxId: {tx.TransactionId}{(isCoinbase ? "  [COINBASE]" : "")}");
             sb.AppendLine($"Amount: {tx.Amount:F8}");
+            if (!isCoinbase) sb.AppendLine($"Fee: {tx.Fee:F8}");
             sb.AppendLine($"Sender: {tx.Sender}");
             sb.AppendLine($"Recipient: {tx.Recipient}");
         }
@@ -169,22 +176,30 @@ public partial class BlockExplorer : Control
         _latestBlockLabel.Text =
             "[b]Latest Block (player view)[/b]\n" +
             $"Index: {last.Index}\n" +
+            $"Time: {FormatBlockTime(last.Timestamp)}\n" +
             $"Nonce: {last.Nonce}\n" +
             $"Hash: {last.Hash}\n" +
             $"PrevHash: {last.PreviousBlockHash}\n" +
+            $"MerkleRoot: {last.MerkleRoot}\n" +
             $"Transactions: {last.Transactions.Count}\n" +
             BuildLatestTransactionPreview(last);
 
         _networkStatusLabel.Text = "[b]Network Status[/b]\n" + string.Join("\n", _networkRoot.GetNodeStatusLines());
     }
 
+    private static string FormatBlockTime(long unixMs) =>
+        DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
+
     private static string BuildLatestTransactionPreview(Block block)
     {
         if (block.Transactions.Count == 0) return "Last block tx details: none";
         Transaction tx = block.Transactions[0];
+        bool isCoinbase = tx.Sender == BlockchainService.CoinbaseSender;
         return
             "Last block first tx:\n" +
-            $"TxId: {tx.TransactionId}\n" +
+            $"TxId: {tx.TransactionId}{(isCoinbase ? "  [COINBASE]" : "")}\n" +
+            $"Amount: {tx.Amount:F8}\n" +
+            (isCoinbase ? string.Empty : $"Fee: {tx.Fee:F8}\n") +
             $"Sender: {tx.Sender}\n" +
             $"Recipient: {tx.Recipient}";
     }

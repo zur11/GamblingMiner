@@ -159,9 +159,9 @@ Goal: make bot mining and block contents meaningful.
 
 Done when blocks contain believable transactions and bots can win blocks before the player.
 
-### P4 - Block Template Builder  ➡ ACTIVE LEAD (the per-node candidate block model)
+### P4 - Block Template Builder  ✅ DONE (the per-node candidate block model)
 
-> Detailed plan + open questions: `AIHelperFiles/candidate-block-model-plan.md`. Pulled forward (2026-06-20) to be the real competition engine that hardware pools, fees, bot competition, and the (parked) founder economics all build on. Built generically — historical characters are treated as plain nodes until it exists, then the bootstrap is refit to it (roadmap Step 5) and founder economics layered on (Step 7).
+> Implemented as `AIHelperFiles/candidate-block-model-plan.md` (roadmap Step 4 — slices 4a/4b.1/4b.2/4b.3/4c). Each node builds its own candidate block from its mempool view: fee-ordered tx selection (24-tx cap incl. coinbase), Merkle root, coinbase = reward + collected fees, real block-header hashing, content-hash txids, and coinbase maturity N=1. BlockExplorer surfaces it; BTCWallet has a player fee selector. The bootstrap/lottery already mine through this engine (the refactor was in-place), so the founder economics (parked) layer straight on top in Step 7. **Next lead: miner-bot gradual introduction + hardware pools (roadmap Step 6).**
 
 Goal: simulate Bitcoin-like block assembly without full-node complexity.
 
@@ -298,16 +298,15 @@ Done when a player can earn a casino referral by donating BTC to a non-miner bot
 - [x] Add scheduled bot transactions (core scheduler; circulation trigger to be re-aligned for gradual bot introduction).
 - [x] **PH**: Founders Satoshi & Hal as nodes + `FoundersWallets` dev scene (implemented; pending in-engine verification). *Note: they do not mine yet — that arrives with the weighted lottery below.*
 - [x] **PH**: Fix genesis/early coinbase to derived `gm1q…` addresses (genesis stays unspendable).
-- [x] **PH**: Block-candidate + hashrate model (minimal weighted lottery) — the keystone seed (verified). Full per-node candidate engine = **P4, the active lead**.
+- [x] **PH**: Block-candidate + hashrate model (minimal weighted lottery) — the keystone seed (verified). Full per-node candidate engine = **P4 ✅ DONE**.
 - [x] **PH**: First-launch bootstrap to 21 Mar 2009 (Satoshi dominant, Hal exactly 3) — verified in-engine.
-- [ ] **Parked → after P4**: Satoshi 11,000-BTC ramp + disappearance, 12 Jan 10 BTC tx (built on the candidate engine).
-- [ ] **PH**: First-launch bootstrap pre-mine to 21 Mar 2009 + Satoshi 11,000-BTC ramp + 12 Jan 10 BTC Satoshi→Hal tx.
+- [ ] **Parked → Step 7 (after the candidate engine)**: Satoshi 11,000-BTC ramp + disappearance, 12 Jan 10 BTC tx, April Mike Hearn transfers (built on the candidate engine).
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
 - [ ] Add Winning Referral Commission scene (list referrals, claimable 1% SC commission per bot, claim button).
 - [ ] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`).
-- [ ] Add public mempool with 24 transaction block cap.
-- [ ] Add simplified block template builder.
-- [ ] Add bot mining that can beat the player.
+- [x] Add mempool with 24-transaction block cap (`BlockTemplateBuilder`, cap incl. coinbase).
+- [x] Add block template builder (P4 / candidate-block model).
+- [x] Add bot mining that can compete with the player (per-node candidates; verified a player can beat a faster bot to a block).
 - [x] Update README so future features are not presented as current.
 - [x] Update Player Guide so it describes the actual playable state.
 - [ ] Run longer Basic Mode manual/autobet tests after transaction circulation exists.

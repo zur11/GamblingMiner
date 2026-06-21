@@ -37,9 +37,11 @@ public sealed class NodeAgent
         WalletSecp256k1PublicKey = secp256k1PublicKey;
     }
 
-    public Transaction CreateSignedTransaction(decimal amount, string recipientAddress)
+    public Transaction CreateSignedTransaction(decimal amount, string recipientAddress, decimal fee = 0m)
     {
         Transaction tx = Blockchain.CreateUnsignedTransaction(amount, WalletAddress, recipientAddress);
+        tx.Fee = fee; // set before computing the id so amount + fee are part of the content hash (Step 4b.2/4b.3)
+        tx.TransactionId = BlockchainService.ComputeTransactionId(tx); // content-hash txid (OQ-C6)
         string payload = BlockchainService.BuildTransactionPayload(tx);
         tx.SignatureBase64 = CryptoUtils.Sign(payload, WalletPrivateKey);
         tx.PublicKeyBase64 = WalletPublicKey;
@@ -52,7 +54,7 @@ public sealed class NodeAgent
         // Build the candidate (coinbase-in-block + selected mempool txs), then full PoW. The
         // timestamp is fixed before mining so it is part of the hashed header (Step 4).
         Block lastBlock = Blockchain.GetLastBlock();
-        BlockTemplate template = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions);
+        BlockTemplate template = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions, lastBlock.Index + 1);
 
         long nonce = Blockchain.ProofOfWork(lastBlock.Hash, template.MerkleRoot, timestampUnixMs);
         string hash = Blockchain.HashHeader(lastBlock.Hash, template.MerkleRoot, timestampUnixMs, nonce);
@@ -73,7 +75,7 @@ public sealed class NodeAgent
             _candidateKey = candidateKey;
             _candidateNonce = 0;
             // Build the candidate once per (tip, mempool) state; only the nonce rolls across bets.
-            _candidateTemplate = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions);
+            _candidateTemplate = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions, nextIndex);
         }
 
         string hash = Blockchain.HashHeader(lastBlock.Hash, _candidateTemplate.MerkleRoot, timestampUnixMs, _candidateNonce);

@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -15,7 +14,7 @@ public static class BlockTemplateBuilder
 {
     public const int MaxBlockTransactions = 24;
 
-    public static BlockTemplate Build(string minerAddress, decimal blockReward, IReadOnlyList<Transaction> mempool)
+    public static BlockTemplate Build(string minerAddress, decimal blockReward, IReadOnlyList<Transaction> mempool, int blockIndex)
     {
         List<Transaction> selected = mempool
             .OrderByDescending(t => t.Fee)
@@ -29,9 +28,11 @@ public static class BlockTemplateBuilder
             Amount = blockReward + feeTotal,
             Sender = BlockchainService.CoinbaseSender,
             Recipient = minerAddress,
-            TransactionId = Guid.NewGuid().ToString("N"), // content-hash txid arrives in 4b.3 (OQ-C6)
+            // BIP34-style height in the Salt makes each coinbase unique even at equal reward (Step 4b.3).
+            Salt = $"coinbase:{blockIndex}",
             IsSpendable = true
         };
+        coinbase.TransactionId = BlockchainService.ComputeTransactionId(coinbase); // content-hash txid (OQ-C6)
 
         var blockTransactions = new List<Transaction>(selected.Count + 1) { coinbase };
         blockTransactions.AddRange(selected);

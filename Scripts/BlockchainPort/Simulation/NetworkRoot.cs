@@ -33,11 +33,16 @@ public partial class NetworkRoot : Node
     private const string BlockchainDir = "user://blockchain";
     private const string StatePath = "user://blockchain/state.json";
 
-    private const int TransactionCirculationStartBlock = 5;
+    // Blocks a miner bot must wait AFTER its own first mined block before it starts donating BTC —
+    // measured per bot, so it works for bots introduced gradually (not an absolute chain index).
+    private const int CirculationWarmupBlocks = 5;
     private const decimal MinBotSpendableBalanceBtc = 1.0m;
     private const double BotSendProbabilityPerBlock = 0.5;
     private const decimal MinSendFractionDecimal = 0.10m;
     private const decimal MaxSendFractionDecimal = 0.40m;
+    // Step 4b.2: bot-chosen fee range (BTC), collected into the winning miner's coinbase.
+    private const decimal MinBotFeeBtc = 0.1m;
+    private const decimal MaxBotFeeBtc = 1.0m;
 
     public override void _Ready()
     {
@@ -150,7 +155,7 @@ public partial class NetworkRoot : Node
         SharedNodesById[founder.FounderId] = node;
     }
 
-    public Transaction? CreateAndBroadcastTransaction(string fromNodeId, string recipientNodeId, decimal amount)
+    public Transaction? CreateAndBroadcastTransaction(string fromNodeId, string recipientNodeId, decimal amount, decimal fee = 0m)
     {
         EnsureInitialized();
         if (amount <= 0m)
@@ -169,7 +174,7 @@ public partial class NetworkRoot : Node
             return null;
         }
 
-        Transaction tx = sender.CreateSignedTransaction(amount, recipient.WalletAddress);
+        Transaction tx = sender.CreateSignedTransaction(amount, recipient.WalletAddress, fee);
         if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
         {
             return null;
@@ -345,17 +350,25 @@ public partial class NetworkRoot : Node
 
     private static void ScheduleBotTransactionsAfterBlock(Block block)
     {
-        if (block.Index < TransactionCirculationStartBlock) return;
-
         List<string> recipientPool = BotWalletRegistry.NonMinerBots
             .Select(b => b.Address)
             .ToList();
 
         if (recipientPool.Count == 0) return;
 
+        // Canonical chain (the player's synced view) — used to measure each bot's mining warmup.
+        List<Block> chain = SharedNodesById[PlayerNodeId].Blockchain.Chain;
+
         foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
         {
             if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? node)) continue;
+
+            // Warmup measured PER BOT from the block it first mined — so circulation starts a few
+            // blocks after a miner bot actually begins mining (works for bots introduced gradually,
+            // not an absolute chain index that the historical bootstrap would have already passed).
+            int? firstMinedHeight = FirstBlockHeightMinedBy(record.NodeId, chain);
+            if (firstMinedHeight is null) continue; // hasn't mined yet → nothing to circulate
+            if (block.Index - firstMinedHeight.Value < CirculationWarmupBlocks) continue;
 
             decimal spendable = node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
             if (spendable < MinBotSpendableBalanceBtc) continue;
@@ -366,11 +379,31 @@ public partial class NetworkRoot : Node
             decimal sendAmount = Math.Round(spendable * fraction, 8);
             if (sendAmount <= 0m) continue;
 
+            // Step 4b.2: attach a sender-chosen fee (collected into the miner's coinbase).
+            decimal fee = Math.Round(MinBotFeeBtc + (decimal)Random.Shared.NextDouble() * (MaxBotFeeBtc - MinBotFeeBtc), 8);
+            if (sendAmount + fee > spendable) continue; // must cover amount + fee
+
             string recipientAddress = recipientPool[Random.Shared.Next(recipientPool.Count)];
-            Transaction tx = node.CreateSignedTransaction(sendAmount, recipientAddress);
+            if (recipientAddress == node.WalletAddress) continue; // never send to self (recipients are non-miners, but be safe)
+
+            Transaction tx = node.CreateSignedTransaction(sendAmount, recipientAddress, fee);
             if (node.Blockchain.AddTransactionToPendingTransactions(tx))
                 SharedNetwork.BroadcastTransaction(node.NodeId, tx);
         }
+    }
+
+    // Index of the first block in the chain mined by nodeId, or null if it has never mined.
+    private static int? FirstBlockHeightMinedBy(string nodeId, List<Block> chain)
+    {
+        foreach (Block b in chain)
+        {
+            if (string.Equals(b.MinedByNodeId, nodeId, StringComparison.Ordinal))
+            {
+                return b.Index;
+            }
+        }
+
+        return null;
     }
 
     private static decimal GetBlockRewardForNextCandidate(NodeAgent miner)
@@ -491,6 +524,7 @@ public partial class NetworkRoot : Node
                 $"TxId: {pending.TransactionId}\n" +
                 "Status: pending\n" +
                 $"Amount: {pending.Amount:F8}\n" +
+                $"Fee: {pending.Fee:F8}\n" +
                 $"Sender: {pending.Sender}\n" +
                 $"Recipient: {pending.Recipient}";
         }
@@ -500,6 +534,7 @@ public partial class NetworkRoot : Node
             "Status: confirmed\n" +
             $"Block: {block.Index}\n" +
             $"Amount: {tx.Amount:F8}\n" +
+            $"Fee: {tx.Fee:F8}\n" +
             $"Sender: {tx.Sender}\n" +
             $"Recipient: {tx.Recipient}";
     }
@@ -555,7 +590,7 @@ public partial class NetworkRoot : Node
 
     // Creates a signed transaction from a registered node (by nodeId) to any gm1q... address.
     // Used by BotsBtcWallets where the recipient may not be a registered NodeAgent.
-    public Transaction? CreateAndBroadcastTransactionToAddress(string fromNodeId, string recipientAddress, decimal amount)
+    public Transaction? CreateAndBroadcastTransactionToAddress(string fromNodeId, string recipientAddress, decimal amount, decimal fee = 0m)
     {
         EnsureInitialized();
         if (amount <= 0m || string.IsNullOrEmpty(recipientAddress))
@@ -567,7 +602,7 @@ public partial class NetworkRoot : Node
         }
         if (sender.WalletAddress == recipientAddress)
             return null;
-        Transaction tx = sender.CreateSignedTransaction(amount, recipientAddress);
+        Transaction tx = sender.CreateSignedTransaction(amount, recipientAddress, fee);
         if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
             return null;
         SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
