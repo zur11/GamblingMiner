@@ -20,7 +20,7 @@ public sealed class NodeAgent
     public double HashrateWeight { get; set; } = 1.0;
     private long _candidateNonce;
     private string _candidateKey = string.Empty;
-    private string _candidateMerkleRoot = string.Empty;
+    private BlockTemplate? _candidateTemplate;
 
     public NodeAgent(string nodeId)
     {
@@ -47,32 +47,18 @@ public sealed class NodeAgent
         return tx;
     }
 
-    public Transaction CreateCoinbaseReward(decimal amount)
-    {
-        return new Transaction
-        {
-            Amount = amount,
-            Sender = BlockchainService.CoinbaseSender,
-            Recipient = WalletAddress,
-            TransactionId = System.Guid.NewGuid().ToString("N")
-        };
-    }
-
     public Block MinePendingTransactions(decimal rewardAmount, long timestampUnixMs)
     {
-        // Mine current pending transactions first. The timestamp is fixed before mining so it is
-        // part of the hashed header (Step 4).
+        // Build the candidate (coinbase-in-block + selected mempool txs), then full PoW. The
+        // timestamp is fixed before mining so it is part of the hashed header (Step 4).
         Block lastBlock = Blockchain.GetLastBlock();
-        string merkleRoot = MerkleTree.ComputeRoot(Blockchain.PendingTransactions);
+        BlockTemplate template = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions);
 
-        long nonce = Blockchain.ProofOfWork(lastBlock.Hash, merkleRoot, timestampUnixMs);
-        string hash = Blockchain.HashHeader(lastBlock.Hash, merkleRoot, timestampUnixMs, nonce);
-        Block minedBlock = Blockchain.CreateNewBlock(nonce, lastBlock.Hash, hash, timestampUnixMs, merkleRoot);
+        long nonce = Blockchain.ProofOfWork(lastBlock.Hash, template.MerkleRoot, timestampUnixMs);
+        string hash = Blockchain.HashHeader(lastBlock.Hash, template.MerkleRoot, timestampUnixMs, nonce);
+        Block minedBlock = Blockchain.CommitBlock(nonce, lastBlock.Hash, hash, timestampUnixMs, template);
         minedBlock.MinedByNodeId = NodeId;
         minedBlock.MinedByAddress = WalletAddress;
-
-        // Reward becomes pending for the next block, matching the current flow (coinbase-in-block is Step 4b).
-        Blockchain.AddTransactionToPendingTransactions(CreateCoinbaseReward(rewardAmount));
         return minedBlock;
     }
 
@@ -82,29 +68,28 @@ public sealed class NodeAgent
         int nextIndex = lastBlock.Index + 1;
         string pendingFingerprint = string.Join("|", Blockchain.PendingTransactions.Select(t => t.TransactionId));
         string candidateKey = $"{lastBlock.Hash}:{nextIndex}:{pendingFingerprint}";
-        if (!string.Equals(candidateKey, _candidateKey, System.StringComparison.Ordinal))
+        if (!string.Equals(candidateKey, _candidateKey, System.StringComparison.Ordinal) || _candidateTemplate is null)
         {
             _candidateKey = candidateKey;
             _candidateNonce = 0;
-            _candidateMerkleRoot = MerkleTree.ComputeRoot(Blockchain.PendingTransactions);
+            // Build the candidate once per (tip, mempool) state; only the nonce rolls across bets.
+            _candidateTemplate = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions);
         }
 
-        // One attempt this bet: current candidate's Merkle root + the caller's timestamp + the rolling nonce.
-        string hash = Blockchain.HashHeader(lastBlock.Hash, _candidateMerkleRoot, timestampUnixMs, _candidateNonce);
+        string hash = Blockchain.HashHeader(lastBlock.Hash, _candidateTemplate.MerkleRoot, timestampUnixMs, _candidateNonce);
         if (!BlockchainService.IsHashAtTargetDifficulty(hash))
         {
             _candidateNonce++;
             return null;
         }
 
-        Block minedBlock = Blockchain.CreateNewBlock(_candidateNonce, lastBlock.Hash, hash, timestampUnixMs, _candidateMerkleRoot);
+        Block minedBlock = Blockchain.CommitBlock(_candidateNonce, lastBlock.Hash, hash, timestampUnixMs, _candidateTemplate);
         minedBlock.MinedByNodeId = NodeId;
         minedBlock.MinedByAddress = WalletAddress;
-        Blockchain.AddTransactionToPendingTransactions(CreateCoinbaseReward(rewardAmount));
 
         _candidateNonce = 0;
         _candidateKey = string.Empty;
-        _candidateMerkleRoot = string.Empty;
+        _candidateTemplate = null;
         return minedBlock;
     }
 

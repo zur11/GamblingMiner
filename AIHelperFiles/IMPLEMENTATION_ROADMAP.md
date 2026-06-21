@@ -57,7 +57,8 @@ Two themes still hold:
 
 ### Step 4 — Per-node Candidate Block Model  *(NEW LEAD — was old Step 6 / PRIVATE_ROADMAP P4 + scheduled-bot-tx Phase 4)*  — 4a ✅ implemented
 - The **real blockchain competition engine**: each node builds its own candidate block from a public mempool — tx selection (24-tx cap, feerate ordering, age tie-break), Merkle root, coinbase = reward + collected fees; proper block header hashing.
-- **4a ✅ (compiles):** `Block.MerkleRoot`, `Transaction.Fee`/`SizeVBytes`, `MerkleTree`, header hashing (`HashHeader`), Merkle tamper check in `ChainIsValid`, pre-mine timestamp. **4b** (mempool/template + coinbase-in-block + fees) and **4c** (BlockExplorer surfacing) remain.
+- **4a ✅ (verified in-engine):** `Block.MerkleRoot`, `Transaction.Fee`/`SizeVBytes`, `MerkleTree`, header hashing (`HashHeader`), Merkle tamper check in `ChainIsValid`, pre-mine timestamp.
+- **4b.1 ✅ (compiles):** `BlockTemplateBuilder`, coinbase-in-block (`CommitBlock`), 24-tx cap, coinbase maturity N=1 (`GetAddressData`), candidate-template caching. **4b.2** (fees), **4b.3** (content-hash txid), **4c** (BlockExplorer surfacing) remain.
 - Built **generically — historical characters are treated as plain nodes and their special economics are ignored here.** During this step the bootstrap stays as-is (simplified path); founders just sit as nodes.
 - **Depends on Step 2** (extends the minimal candidate). Detailed plan + open questions: `candidate-block-model-plan.md`.
 

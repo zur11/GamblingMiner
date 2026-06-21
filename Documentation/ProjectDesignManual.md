@@ -1780,7 +1780,8 @@ GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 ## Chapter 21 — Step 4: The Per-Node Candidate Block Model
 
 **Files changed (4a)**: `Models.cs`, `MerkleTree.cs` (new), `BlockchainService.cs`, `NodeAgent.cs`, `NetworkRoot.cs`
-**Status**: **4a implemented** (models + Merkle tree + header hashing). 4b (mempool/template + coinbase-in-block + fees) and 4c (BlockExplorer surfacing) to follow.
+**Files changed (4b.1)**: `BlockTemplateBuilder.cs` (new), `BlockchainService.cs`, `NodeAgent.cs`, `NetworkRoot.cs`
+**Status**: **4a ✓ + 4b.1 ✓** (Merkle + header hashing; template builder + coinbase-in-block + maturity N=1). Remaining: 4b.2 (fees), 4b.3 (content-hash txid), 4c (BlockExplorer surfacing).
 **Plan**: `AIHelperFiles/candidate-block-model-plan.md`
 
 ### The Short Version (for everyone)
@@ -1883,17 +1884,22 @@ Real Bitcoin won't let a miner spend a block reward until **100 confirmations** 
 
 Here's the fractal twist that decides our value: in GamblingMiner **one block already spans ~16.25 in-game hours** (100× time scale, ~585 attempts/block). So the faithful equivalent of "~16 hours of maturity" is **≈ 1 block**, not 100.
 
-Using 100 here would mean ~68 in-game days before any mined coin is spendable — and worse, it would break dated historical events (e.g. the 12 Jan Satoshi→Hal transaction spends an early coinbase that, at our compressed block heights, wouldn't be mature under a 100-block rule). So **N = 1** is the correct fractal maturity. The actual coinbase-into-block move (so the coinbase collects that block's fees) lands in **4b**; 4a still places the coinbase in the next block.
+Using 100 here would mean ~68 in-game days before any mined coin is spendable — and worse, it would break dated historical events (e.g. the 12 Jan Satoshi→Hal transaction spends an early coinbase that, at our compressed block heights, wouldn't be mature under a 100-block rule). So **N = 1** is the correct fractal maturity.
+
+**Implemented in 4b.1.** The coinbase is now built **into** the block it rewards (transaction #0, via `BlockTemplateBuilder` + `BlockchainService.CommitBlock`), and `GetAddressData` enforces `CoinbaseMaturity = 1`: a coinbase is excluded from an address's spendable balance until at least one more block sits on top of it. Concretely, the reward for the block you just mined shows up once the *next* block is mined — the same ~1-block delay as the old model, but now with the realistic structure (and ready to collect fees in 4b.2).
 
 ---
 
-### 21.6 — What 4b and 4c will add
+### 21.6 — The template builder (4b.1, done) and what remains
 
-**4b — the real template builder & economy:**
-- A `BlockTemplateBuilder` that selects transactions from the mempool by **fee** (highest first), capped at **24 transactions including the coinbase**.
-- **Fees**: a sender-chosen `Transaction.Fee` (the field exists since 4a) deducted from the sender on top of the amount, and **collected into the coinbase**.
-- **Coinbase-in-block** with the N = 1 maturity rule from 21.5.
-- **Content-hash transaction id** (OQ-C6): the GUID `TransactionId` becomes the same content hash used as the Merkle leaf — making every transaction's id a true fingerprint of its contents. (Deferred to 4b because it also touches the signing payload and the fixed bootstrap transaction ids.)
+**4b.1 ✓ — `BlockTemplateBuilder` + coinbase-in-block:**
+- `BlockTemplateBuilder.Build(minerAddress, reward, mempool)` selects up to **23** mempool transactions by **fee** (highest first; equal fees keep arrival order = age tie-break), then prepends a **coinbase** paying `reward + collected fees` to the miner. Cap = **24 including the coinbase**.
+- The coinbase is committed **inside** the block (`CommitBlock`), and only the *included* mempool transactions are removed from the miner's pending pool (unselected ones stay). The candidate is built once per `(tip, mempool)` state and cached on the node, so across the many bets it takes to find a block only the nonce rolls.
+- Coinbase maturity `N = 1` is live (see 21.5). Fees are currently **0** (the `Fee` field exists but nothing sets it yet).
+
+**4b.2 — fees end-to-end (next):** a sender-chosen `Transaction.Fee` deducted from the sender on top of the amount (the spendable check covers `Amount + Fee`), collected into the coinbase. The bot-recirculation scheduler starts attaching fees here.
+
+**4b.3 — content-hash transaction id (OQ-C6):** the GUID `TransactionId` becomes the same content hash used as the Merkle leaf — making every transaction's id a true fingerprint of its contents. Deferred to its own slice because it also touches the signing payload and the fixed bootstrap transaction ids.
 
 **4c — visibility:** the Block Explorer surfaces the Merkle root, each transaction's fee, and the coinbase's total collected fees, so the player can *see* that candidate blocks differ by miner and that transaction selection matters.
 

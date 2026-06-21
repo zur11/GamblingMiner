@@ -316,13 +316,9 @@ public partial class NetworkRoot : Node
 
     private static void HandleMinedBlock(NodeAgent miner, Block block)
     {
+        // Step 4b: the coinbase now lives inside the block (BlockTemplateBuilder), so it propagates
+        // with BroadcastBlock — no separate coinbase-transaction broadcast is needed.
         SharedNetwork.BroadcastBlock(miner.NodeId, block);
-        Transaction? rewardTx = miner.Blockchain.PendingTransactions
-            .LastOrDefault(t => t.Sender == BlockchainService.CoinbaseSender && t.Recipient == miner.WalletAddress);
-        if (rewardTx is not null)
-        {
-            SharedNetwork.BroadcastTransaction(miner.NodeId, rewardTx);
-        }
 
         _lastMinedBlock = block;
         if (string.Equals(_lastMinedByNodeId, miner.NodeId, StringComparison.Ordinal))

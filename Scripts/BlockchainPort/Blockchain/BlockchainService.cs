@@ -71,6 +71,31 @@ public sealed class BlockchainService
         return newBlock;
     }
 
+    // Step 4b: commit a mined block built from a BlockTemplate. Unlike CreateNewBlock (used only for
+    // genesis), the coinbase is already inside template.BlockTransactions, and only the transactions
+    // actually included are removed from the mempool (unselected ones remain pending).
+    public Block CommitBlock(long nonce, string previousBlockHash, string hash, long timestamp, BlockTemplate template)
+    {
+        Block newBlock = new()
+        {
+            Index = Chain.Count + 1,
+            Timestamp = timestamp,
+            Transactions = template.BlockTransactions,
+            Nonce = nonce,
+            Hash = hash,
+            PreviousBlockHash = previousBlockHash,
+            MerkleRoot = template.MerkleRoot
+        };
+
+        foreach (Transaction included in template.SelectedMempoolTxs)
+        {
+            PendingTransactions.Remove(included);
+        }
+
+        Chain.Add(newBlock);
+        return newBlock;
+    }
+
     public Block GetLastBlock() => Chain[^1];
 
     public Transaction CreateUnsignedTransaction(decimal amount, string sender, string recipient)
@@ -263,26 +288,44 @@ public sealed class BlockchainService
         return PendingTransactions.FirstOrDefault(t => t.TransactionId == transactionId);
     }
 
+    // Step 4b: a coinbase output needs CoinbaseMaturity confirmations (blocks mined on top) before
+    // it is spendable — the fractal equivalent of Bitcoin's 100-confirmation rule (≈16h ≈ 1 block
+    // here). Immature coinbase is excluded from the balance until it matures.
+    public const int CoinbaseMaturity = 1;
+
     public AddressData GetAddressData(string address)
     {
+        int tipIndex = Chain.Count > 0 ? Chain[^1].Index : 0;
+
         List<Transaction> addressTransactions = new();
+        decimal balance = 0m;
+
         foreach (Block block in Chain)
         {
-            addressTransactions.AddRange(
-                block.Transactions.Where(t => t.Sender == address || t.Recipient == address)
-            );
-        }
-
-        decimal balance = 0m;
-        foreach (Transaction tx in addressTransactions)
-        {
-            if (!tx.IsSpendable)
+            foreach (Transaction tx in block.Transactions)
             {
-                continue;
-            }
+                if (tx.Sender != address && tx.Recipient != address)
+                {
+                    continue;
+                }
 
-            if (tx.Recipient == address) balance += tx.Amount;
-            else if (tx.Sender == address) balance -= tx.Amount;
+                addressTransactions.Add(tx);
+
+                if (!tx.IsSpendable)
+                {
+                    continue;
+                }
+
+                // Immature coinbase (not enough confirmations) does not count toward the balance yet.
+                bool isCoinbase = tx.Sender == CoinbaseSender;
+                if (isCoinbase && (tipIndex - block.Index) < CoinbaseMaturity)
+                {
+                    continue;
+                }
+
+                if (tx.Recipient == address) balance += tx.Amount;
+                else if (tx.Sender == address) balance -= tx.Amount;
+            }
         }
 
         return new AddressData
