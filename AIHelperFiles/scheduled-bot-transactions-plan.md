@@ -6,6 +6,26 @@ This is the next item after the BTC wallet system (Phase 1–9 of `btc-wallet-sy
 
 ---
 
+## ✅ Branch Status for Merge (2026-06-21)
+
+Everything below is either **done on this branch** or **recorded as future-gated work**. The branch is a stable, mergeable increment.
+
+**Done & tested on `scheduled-bot-transactions`:**
+- Miner-bot → non-miner recirculation (scheduler core) + **per-bot warmup** + **no-self-send** guard.
+- **Fees** end-to-end (built via the candidate-block model: sender pays amount+fee, miner collects via coinbase).
+- **Donation ledger** (derived from chain) + BlockExplorer **Enroll Mode** toggle.
+- **Referral auction — starter (option b, gradual introduction):** staggered per-bot windows, winner = top donor at close, permanent enrollment; observable + resolved winners shown.
+
+**Future-gated (recorded here; build in a *new* branch when the dependency exists):**
+- **Winning Referral Commission payout (1%→5% SC)** → needs the **Casino Rank System** (the %), **P6 casino finances** (the payer), and the **bot betting simulation** (the SC-winnings source).
+- **`Referrals` scene + Miner Referrals sub-scene**, persisted enrollment records.
+- **Miner Referral conversion** (donate 2 hardware) → needs the **hardware system** (`btc-pools-hardware-plan.md`).
+- Pre-Oct-2009 non-miner send programming; window/stagger tuning.
+
+> **How to continue these:** keep them as the "Future —" + "Resolved Decisions" sections below (design is locked, just unbuilt). Don't try to build them on this branch — each waits on a system that lives on its own future branch. When that system lands, branch fresh from `main` and pull the relevant design from here.
+
+---
+
 ## ⚠️ Status & Sequencing Note (2026-06-19)
 
 **This plan is functionally COMPLETE for now — do not expand it next.** Phase 1 (the scheduler) is live in `NetworkRoot`; Phases 2–3 are documentation-only and done; Phase 4 (fees) is intentionally chained to the block-template-builder; Phase 5 is observation only. There is essentially nothing left to *build* here today.
@@ -256,12 +276,16 @@ NonMinerBotDonorRecord:
 
 Persisted alongside or inside the bot wallet registry. Updated only when a transaction to a non-miner address is **confirmed in a block**.
 
-### 7-Day Window Rule
+### Auction Window Rule (implemented — gradual introduction, option b)
 
-- **Initial 10 non-miner bots**: window starts at genesis block timestamp
-- **Future non-miner bots**: window starts at the block timestamp when they were added to the registry
-- When the 7-day in-game window closes, the donor with the highest `totalDonatedBtc` wins the referral
-- **The win is permanent (OQ-E, resolved).** Once won, the non-miner **leaves the auction forever** and stays the referral of the winner (player or miner bot). There is **no renewal / continuous auction** — the window determines the winner exactly once. *(Supersedes the earlier "window resets" wording.)*
+> ✅ Implemented & tested on this branch. **Each non-miner has its own staggered window** — *not* a single genesis-based window (that earlier wording was wrong, since the player only arrives on 21 Mar after the bootstrap). See `ProjectDesignManual.md` Chapter 22 for the full explanation.
+
+- Non-miner bots are **introduced gradually** after live mining begins — **not** all at genesis. The anchor is the **first live block** (first block mined by a non-founder ≈ the player's first mined block on/after 21 Mar 2009).
+- **Non-miner `i`** (its order in the registry) enters the auction at `firstLiveTimestamp + i × 2 in-game days`, so **every bot has its own window opening at a different time** (what you see in-engine).
+- Each bot's auction then runs **7 in-game days** from its own introduction.
+- When a bot's window closes, the donor with the highest cumulative donation **confirmed by the close timestamp** wins the referral.
+- **The win is permanent (OQ-E).** Once won, the non-miner **leaves the auction forever** and stays the referral of the winner (player or miner bot). There is **no renewal / continuous auction** — the window determines the winner exactly once.
+- **Fully derived from the chain** (no persisted auction state). `NetworkRoot.ComputeAuctionLedger` / `GetNonMinerAuctionLedger`; constants `NonMinerIntroIntervalMs` (~2 in-game days), `AuctionWindowMs` (7 in-game days). The recirculation scheduler donates only to **in-auction** non-miners; BlockExplorer **Enroll Mode** shows the race + resolved winners.
 
 ### Referrals Scene (planned)
 
