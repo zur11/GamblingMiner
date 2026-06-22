@@ -2083,3 +2083,55 @@ A toggle (default off) reveals the auction: a header counter (`In auction / Reso
 ### 22.5 — Migration note
 
 Auction state is derived, so there's no new save format. But it depends on the bootstrap having run (to define the first live block), so as always start from a clean `user://blockchain/` when testing.
+
+---
+
+## Chapter 23 — Scheduled Bot Transactions (BTC Recirculation)
+
+**Files**: `NetworkRoot.cs` (`ScheduleBotTransactionsAfterBlock`, `FirstBlockHeightMinedBy`), `BlockchainService.cs` (no-self-send guard)
+**Status**: Implemented (merged from the `scheduled-bot-transactions` branch).
+**Plan**: `AIHelperFiles/scheduled-bot-transactions-plan.md`
+
+### The Short Version (for everyone)
+
+Miner bots don't just hoard the BTC they mine — they periodically **send a slice of it to non-miner "holder" bots**. This creates visible BTC circulation in the Block Explorer, and it *is* the donation mechanism that drives the referral auction (Chapter 22). Left alone, the holder bots' balances only grow, which makes them interesting accumulation targets.
+
+### 23.1 — When it runs
+
+After every mined block, `NetworkRoot.HandleMinedBlock` calls `ScheduleBotTransactionsAfterBlock(block)`. It is **skipped during the historical bootstrap** (the `_bulkMining` flag is set then), so recirculation only happens in the **live era** (after the 21 Mar player start), once real mining is underway.
+
+### 23.2 — Per-bot warmup (so a bot has something to circulate)
+
+A miner bot only starts donating once **at least `CirculationWarmupBlocks` (5) blocks have passed since its *own* first mined block** (`FirstBlockHeightMinedBy`). This is measured **per bot**, not as an absolute chain height — which is what makes it work for bots that are introduced gradually rather than all at block 1. A bot that has never mined is skipped entirely.
+
+### 23.3 — What each eligible bot does, per block
+
+For each miner bot past its warmup:
+
+1. Check it has at least `MinBotSpendableBalanceBtc` (1.0) spendable.
+2. Roll `BotSendProbabilityPerBlock` (≈50%) — so on average ~half the eligible miners send each block.
+3. Choose a send amount = a random **10–40%** of spendable.
+4. Choose a **fee** = random **0.1–1.0 BTC** (Step 4b.2 — the fee is collected by whoever mines the block that includes this transaction).
+5. Ensure `amount + fee ≤ spendable`.
+6. Pick a recipient **only from non-miners currently in an open auction window** (`InAuctionNonMinerAddresses(block.Timestamp)` — see Chapter 22). Never send to self.
+7. Sign + broadcast the transaction; it confirms when included in a future block.
+
+### 23.4 — Safety rails
+
+- **No self-send (two layers):** the scheduler skips a recipient equal to the sender, and `BlockchainService.AddTransactionToPendingTransactions` rejects **any** transaction where `Sender == Recipient` (the coinbase sender `00` is never a real address, so coinbases are unaffected).
+- **Recipients are non-miners only**, and only those still in auction — so circulation stays contained and focused on the live referral competition.
+
+### 23.5 — Where to see it
+
+- **Block Explorer block/transaction lookup:** bot→non-miner transfers appear with their fee; the block's coinbase is `50 + collected fees`.
+- **Block Explorer "Enroll Mode":** the donation race per non-miner (leading donor, days left) — Chapter 22.
+
+### 23.6 — Roles (Basic Mode)
+
+| Node | Sends (auto) | Receives (auto) |
+|---|---|---|
+| `bot_1`…`bot_4` (miners) | **Yes** (this system) | No |
+| `non_miner_*` (holders) | No | **Yes** (only while in auction) |
+| `player`, `casino`, founders | No | No |
+
+The player participates manually (donating from BTCWallet) to compete in the referral auction; the casino and founders are excluded from automatic recirculation.
