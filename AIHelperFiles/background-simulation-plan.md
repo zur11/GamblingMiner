@@ -1,6 +1,6 @@
 # Background Simulation — Implementation Plan
 
-**Status**: 🆕 LEAD on branch `background-simulation`. Design + open questions — **answer the OQs before coding**.
+**Status**: 🆕 LEAD on branch `background-simulation`. **All decisions resolved (§7) — implementing, Phase 1 first.**
 **Goal**: while the player keeps an autobet strategy running, the **whole simulation keeps running regardless of the active scene** — bets fire, nodes mine, time advances, balances change — so the Block Explorer, StatusBar, etc. update in real time. Leaving/entering DiceGame (or any scene) must **not** interrupt or rewind it. Plus: show in the Block Explorer **which miner bots are mining and at what speed**.
 
 ---
@@ -42,7 +42,7 @@ DiceGame becomes a **view / controller**:
 `TickAutoBet`, `ExecuteAutoBetOnce`, `TickBotAutoBets`, `ExecuteBotBet`, `StartBotRunners`/`StopAllBotRunners`, the player `_session` + `_wallet`/`_betService`, the autobet accumulators/rate telemetry, the per-bet mining call (`ProcessBlockchainAttemptForBet`), block checkpoints, and stats registration, plus ownership of `CalendarTimeService.IsRunning/SpeedMultiplier/IsAutobetActive` while autobet is active.
 
 ### What stays in DiceGame
-The whole UI, the strategy panel, manual betting, the MartingaleCalculator popup, and per-node strategy editing — all of which now **drive** the service rather than run the loop.
+The whole UI, the strategy panel, manual betting, the MartingaleCalculator popup, and per-node strategy editing — all of which now **drive** the service rather than run the loop. **Manual bets remain DiceGame-only and still advance the bots** (a bot burst per manual bet), but that burst is requested from `SimulationService` so bot state has a single owner. The cross-scene background loop only runs while autobet is active (OQ-1).
 
 ---
 
@@ -78,26 +78,26 @@ Source: `SimulationService` exposes per-active-node bets/sec; BlockExplorer read
 ## 6. Phases (sliced for testing)
 
 1. **`SimulationService` skeleton + move player autobet.** Create the autoload; move `TickAutoBet`/`ExecuteAutoBetOnce` + player session/wallet + time control; DiceGame calls `StartPlayerAutobet`/`Stop` and displays service state. *Test: start autobet, leave DiceGame → BlockExplorer keeps advancing; return → no rewind.*
-2. **Move bot runners.** `StartBotRunners`/`TickBotAutoBets`/`ExecuteBotBet` into the service, tied to the player autobet being active. *Test: bots keep mining/circulating across scenes.*
+2. **Move bot runners.** `StartBotRunners`/`TickBotAutoBets`/`ExecuteBotBet` into the service (single owner of bot state). The continuous bot ticking runs while the player **autobet** is active (background, across scenes); DiceGame's **manual-bet burst** now calls the service to advance bots one burst. *Test: during autobet, bots keep mining/circulating across scenes; manual bets in DiceGame still drive bot bursts.*
 3. **Balance sync + StatusBar live everywhere.** Write-through to balance services; confirm StatusBar updates in all scenes. *Test: balance moves while in MainMenu/BlockExplorer.*
 4. **Block Explorer mining indicator.** Per-node `⛏ rate`. *Test: see which bots mine + speed, live.*
 5. **Polish:** stop-condition handling while away, app-restart behavior (per OQs), telemetry.
 
 ---
 
-## 7. Open Questions (please answer)
+## 7. Resolved Decisions (2026-06-21)
 
-**OQ-1 — Bots tied to player autobet?** Should bot runners run **only while the player's autobet is active** (consistent with the "time follows the player's bets" model), and stop when the player stops? *Recommendation: yes — bots run iff the player autobet is running.*
+**OQ-1 — Bot betting scope (clarified to avoid future confusion).** Bots advance whenever the **player bets** — this includes **manual bets inside DiceGame** (each manual bet drives a bot burst, exactly as today) **and** the autobet loop. The rule *"bots run only while the player's autobet is active"* governs **only the cross-scene background simulation**: once you leave DiceGame, autobet is the *only* way the player is still betting (manual betting exists only inside DiceGame), so background bot activity runs **iff the player autobet is active**. Inside DiceGame, manual bets keep advancing bots normally. To keep a **single owner of bot state**, the manual-bet burst is routed through `SimulationService` too (DiceGame asks the service to advance the bots one burst per manual bet) rather than DiceGame keeping its own separate bot runners.
 
-**OQ-2 — Stop condition reached while in another scene.** If the player's session hits stop-on-profit/loss/block while you're away, the whole sim stops (bots too). Do you want a **notification on return** (toast/badge), or just show the stopped state silently? *Recommendation: stop silently for the starter; add a small "autobet stopped: <reason>" banner on the StatusBar later.*
+**OQ-2 — Stop-while-away → silent (starter).** If the player's session hits a stop condition (profit/loss/block) while in another scene, the whole sim stops (bots too) and shows the stopped state on return. A small "autobet stopped: \<reason\>" StatusBar banner is a later polish.
 
-**OQ-3 — Run while the app is unfocused/minimized?** Keep simulating when the window loses focus? *Recommendation: yes (simplest, matches "keeps running"); revisit if it causes issues.*
+**OQ-3 — Unfocused/minimized → keep running.** The sim keeps going when the window loses focus (simplest; revisit if problematic).
 
-**OQ-4 — Resume autobet after an app restart?** Scene-change persistence is the bug we're fixing. But if the player **quits the whole app** mid-autobet, should it auto-resume on next launch, or start stopped? *Recommendation: start **stopped** on app launch (autobet is something you actively start); only scene changes keep it running.*
+**OQ-4 — App restart → start stopped.** Scene changes keep autobet running (the bug fix); a full app **restart** starts with autobet **stopped** (it's something the player actively starts).
 
-**OQ-5 — Mining indicator format.** OK with appending `⛏ <bets/sec>` to the existing Block Explorer node list (vs a separate panel)? *Recommendation: append to the existing list — least UI churn, exactly your suggestion.*
+**OQ-5 — Mining indicator → append to the node list.** Append `⛏ <bets/sec>` to the existing Block Explorer node list (no separate panel).
 
-**OQ-6 — Speed across scenes.** Run the background sim at the **same** speed as in DiceGame (no slow-down when not viewing it)? *Recommendation: yes, same speed.*
+**OQ-6 — Same speed across scenes.** The background sim runs at the same speed regardless of the active scene.
 
 ---
 
