@@ -47,6 +47,35 @@ Betting speed in DiceGame is **locked to total hardware credits** (not freely se
 
 ## New Concepts
 
+### Two-Piece Hardware Model + Obsolescence (decided 2026-06-21)
+
+> Design decisions captured while on the `scheduled-bot-transactions` branch (referral OQ-C surfaced them). They belong to **this** future hardware/pools branch — route to `main` so they persist.
+
+**Every miner has two kinds of hardware:**
+
+1. **Base (Piece 1) — the computer.** A normal laptop/PC. Always present (one per node), gives the baseline hashrate, and is **not** the thing you keep buying. Era-appropriate baseline: 2009 ≈ a Core 2 Duo laptop (~1–5 MH/s) or an i7 desktop (~20–30 MH/s).
+2. **Accelerator (Piece 2) — the timeline-appropriate, buyable piece.** The hardware/software that makes sense in the current in-game era and complements the base. **These are what the player buys to raise mining power** (they map onto the "hardware credits" below — each accelerator ≈ credits / nonce-attempts per bet). The accelerator **changes by era** (see timeline) and **becomes obsolete** over time.
+
+**A minimal viable miner = Base (1) + at least one Accelerator (1).** Buying more / better accelerators increases hashrate.
+
+**Obsolescence (default for Basic Mode):** an accelerator's *competitive* life averaged ~**12 in-game months** in the 2009–2012 window (CPU → GPU → FPGA → ASIC waves each obsoleted the prior tier). Default obsolescence = **12 in-game months**, and it should **shorten in later eras** (ASIC era → a few months). The hardware/pools scene shows each piece's **remaining lifetime live**. (Competitive/economic life is shorter than physical life — model the economic one.)
+
+**Era timeline (historical reference — from `hardware mineria.txt`):**
+
+| In-game era | Accelerator (Piece 2) | Approx hashrate | Notes |
+|---|---|---|---|
+| 2009 early | CPU baseline (Core 2 Duo laptop) | ~1–5 MH/s | difficulty = 1; CPU sufficient |
+| 2009 late | Multi-core CPU (i7) + code optimizations (midstate, SIMD) | ~20–30 MH/s | 2–8× over single-core; ~10–20% from optimizations |
+| 2010-07 | **GPU** (NVIDIA GTX 260 ~200–300 MH/s; AMD Radeon 5970 ~600–700 MH/s) | ~200–700 MH/s | ArtForz; 50–100× CPU; the big jump |
+| 2010-07 | Mining **pools** (Slushpool) | — | distributes risk, not raw speed (maps to our casino pool) |
+| 2011 | Multiple GPUs | ~1–2 GH/s | competition heats up |
+| 2012 | FPGA (research → early units); ASIC research begins | ~ tens of GH/s | GPUs still viable |
+| 2013-01 | **ASIC** (Avalon, Antminer…) | ≫ GPUs | GPUs become useless; ASIC industry era |
+
+Difficulty grew ~16.5× across 2010 (≈1 → ~12,000 by Dec 2010); our fractal must scale the *relative* jumps, not the absolute numbers.
+
+**How it connects:** Piece 2 (accelerators) are the buyable units modeled by the **hardware credits** below; the Base is the starting credit a node always has. Obsolescence retires accelerator credits over time, pushing the player to keep upgrading.
+
 ### Hardware Credit
 
 A **hardware credit** is an abstract unit representing one dedicated mining pipeline.
