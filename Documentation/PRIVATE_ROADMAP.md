@@ -243,28 +243,38 @@ Done when at least the core betting and money logic has automated coverage and a
 
 Goal: give non-miner holder bots (`non_miner_1`..`non_miner_10`) a social and economic role in the casino ecosystem, and give the player an organic reason to donate BTC to them.
 
-**Referral auction mechanic**:
+**Referral auction mechanic** (decisions resolved 2026-06-21 — see `scheduled-bot-transactions-plan.md` → Resolved Decisions):
 - Each non-miner bot runs a **7-day in-game auction window** (starting from the bot's creation block timestamp; genesis timestamp for the initial 10 bots).
-- Non-miner bot addresses are visible in BlockExplorer — no dedicated UI scene needed for discovery.
-- The player with the highest total confirmed BTC donation to a bot when the window closes becomes that bot's **casino referral**.
-- Miner bots also compete for referrals independently (not player-controlled); miner bots can also earn their own referrals.
+- Non-miner bot addresses are visible in BlockExplorer; a toggleable **"Enroll Mode"** (default off) filters the explorer to only still-recruitable (un-enrolled) non-miners.
+- The participant with the highest total confirmed BTC donation when the window closes becomes that bot's **casino referral** — **permanently**: the bot then **leaves the auction forever** (no renewal). Player and miner bots compete in the same auction; **no cap** on referrals per node.
 
-**Winning Referral Commission** (primary perk):
-- 1% of the referred bot's SC winnings, claimable by the player at any time.
-- A new **Referral Commission scene** lists all active referrals and per-referral claimable amounts; claim button enabled when amount > 0.
+**Winning Referral Commission** (the only perk):
+- **1% → up to 5%** of the referred bot's SC winnings — scales with the referral's **Casino Rank** (top rank = 5%; see the Casino Rank System item below).
+- **Always paid by the casino, never deducted from the referral's earnings.**
+- Claimable in **real time** in a new **`Referrals` scene** (from MainMenu), which also opens a **Miner Referrals** sub-scene.
 - Bot SC winnings come from simulated betting (MartingaleCalculator-derived logic, designed in a later phase).
 
 **Minimum donation rule**: Send amount must be ≥ fee amount (at 0.1 BTC fee, minimum donation is 0.1 BTC).
 
 **Donation ledger**: Updated at block confirmation only — never at broadcast. Schema: `botNodeId`, `senderAddress`, `totalDonatedBtc`, `confirmedAtBlockIndex`, referral award block.
 
-**Miner Referral conversion**: Every 10 referrals earned, the player may convert one non-miner referral into a **Miner Referral Node** by donating 2 hardware pieces. Miner Referrals are player-controlled: the player manages their mining pool shares, autobet strategies, hardware purchases (from Miner Referral's MainBalance), and BTC→SC conversions. Miner Referral BTC cannot be sent to external wallets. SC from conversions goes to Miner Referral's MainBalance and can only be spent on hardware. Chain sync simulation: new nodes simulate downloading the full chain before mining begins (`blockCount × 0.5 in-game seconds` delay).
+**Miner Referral conversion**: Every 10 referrals earned, the player may convert one non-miner referral into a **Miner Referral Node** by donating 2 hardware pieces — done in a **dedicated Miner Referrals scene opened from the `Referrals` scene** (OQ-D). Miner Referrals are player-controlled: the player manages their mining pool shares, autobet strategies, hardware purchases (from Miner Referral's MainBalance), and BTC→SC conversions. Miner Referral BTC cannot be sent to external wallets. SC from conversions goes to Miner Referral's MainBalance and can only be spent on hardware. Chain sync simulation: new nodes simulate downloading the full chain before mining begins — sync time **decreases over the in-game years** (tech progress) but a **longer chain always costs more** (length-sensitive); exact curve TBD (OQ-C).
 
 **BTC/SC trade scene** (planned): wallet selector must include all active Miner Referral wallets alongside player wallets, so the player can manage referral BTC conversions in the same flow as personal conversions. BTCPoolsAndHardwareShop scene must also include Miner Referral selectors for hardware purchases.
 
-See `AIHelperFiles/scheduled-bot-transactions-plan.md` → Future sections for full design notes.
+See `AIHelperFiles/scheduled-bot-transactions-plan.md` → Future + Resolved Decisions sections for full design notes.
 
-Done when a player can earn a casino referral by donating BTC to a non-miner bot and observe at least one Winning Referral Commission claimable in the Referral Commission scene.
+Done when a player can earn a casino referral by donating BTC to a non-miner bot and observe at least one Winning Referral Commission claimable in the `Referrals` scene.
+
+### Post-Basic Mode — Casino Rank System
+
+Goal: a progression ladder for casino participants (player, and notably **Miner Referrals**) that gates and scales rewards.
+
+- Defines ranks from an entry level up to a top level (exact tiers + advancement criteria TBD — likely wager volume / time survived / BTC or SC milestones).
+- **Drives the Winning Referral Commission scale:** a referral's rank sets its commission rate, from **1% at the base rank up to 5% at the top rank** (the commission is paid by the casino).
+- Connects to other systems over time (achievements P8, conversion-fee tiers P7, etc.).
+
+Done when a participant's rank is tracked and visibly affects at least the referral commission rate.
 
 ---
 

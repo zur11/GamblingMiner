@@ -222,7 +222,7 @@ All open questions from the original design have been resolved:
 
 **Donation ledger timing (OQ-2)**: Only at **block confirmation** — never at broadcast. A transaction in the pending pool has not yet landed in a block and could be dropped. Future note: may eventually require 2+ block confirmations for deeper chain safety.
 
-**Referral perk name and design (OQ-3)**: Called **"Winning Referral Commission"** — explicitly NOT cashback (different system, different scope). Initial perk = 1% of the referred bot's SC winnings. A new dedicated scene will display each referral and a claim button enabled when claimable commission > 0. Bot betting simulation (the source of commission) uses MartingaleCalculator-derived logic — designed after the referral earning mechanic is confirmed working.
+**Referral perk name and design (OQ-3)**: Called **"Winning Referral Commission"** — explicitly NOT cashback (different system, different scope). Commission = **1% of the referred bot's SC winnings, scaling up to a maximum of 5%** as the referral climbs the Casino Rank System (top rank = 5%; see OQ-A in Resolved Decisions). **Always paid by the casino, never deducted from the referral.** The `Referrals` scene (from MainMenu) lists referrals with a claim button enabled when claimable commission > 0 (real-time claims, OQ-B). Bot betting simulation (the source of commission) uses MartingaleCalculator-derived logic — designed after the referral earning mechanic is confirmed working.
 
 **Miner bot referral eligibility (OQ-4)**: Miner bots (`bot_1`..`bot_4`) are always competitors and mining allies — they do NOT become player referrals. However, each miner bot has the potential to **earn their own referrals** over time. The exception is the Miner Referral conversion mechanic described in OQ-6 (non-miner referrals can be promoted to miner nodes by the player — this is a fundamentally different role).
 
@@ -240,7 +240,7 @@ Non-miner bot addresses (`non_miner_1`..`non_miner_10`) are visible in BlockExpl
 - Miner bots send automatically via the scheduler
 - The player can send manually from BTCWallet at any time
 
-Each non-miner bot tracks a **donation ledger**: total BTC sent to it by each unique sender address, updated only at block confirmation. The player with the highest cumulative donation when the bot's 7-day window expires becomes that bot's **casino referral**, earning a **Winning Referral Commission** of 1% of the bot's SC winnings.
+Each non-miner bot tracks a **donation ledger**: total BTC sent to it by each unique sender address, updated only at block confirmation. The participant (player or miner bot) with the highest cumulative donation when the bot's 7-day window closes **permanently** becomes that bot's **casino referral** (it leaves the auction forever — OQ-E), earning a **Winning Referral Commission** of 1% → up to 5% of the bot's SC winnings (scales with the referral's Casino Rank — OQ-A), **always paid by the casino**.
 
 ### Donation Ledger Model (future data structure)
 
@@ -261,15 +261,16 @@ Persisted alongside or inside the bot wallet registry. Updated only when a trans
 - **Initial 10 non-miner bots**: window starts at genesis block timestamp
 - **Future non-miner bots**: window starts at the block timestamp when they were added to the registry
 - When the 7-day in-game window closes, the donor with the highest `totalDonatedBtc` wins the referral
-- If a player already holds a referral for a given bot and continues donating, they retain it automatically on renewal (window resets)
+- **The win is permanent (OQ-E, resolved).** Once won, the non-miner **leaves the auction forever** and stays the referral of the winner (player or miner bot). There is **no renewal / continuous auction** — the window determines the winner exactly once. *(Supersedes the earlier "window resets" wording.)*
 
-### Referral Commission Scene (planned)
+### Referrals Scene (planned)
 
-A new scene — accessible from BTCWallet or a dedicated Referrals screen — shows:
-- List of player's active referrals with bot IDs and addresses
-- Per-referral claimable commission amount (1% of bot's SC winnings since last claim)
-- Claim button: enabled when claimable amount > 0
+A `Referrals` scene — accessible from **MainMenu** (OQ-D) — shows:
+- List of player's referrals with bot IDs and addresses
+- Per-referral claimable commission amount (1%→5% of bot's SC winnings since last claim, casino-paid)
+- Claim button: enabled when claimable amount > 0 (real-time, OQ-B)
 - Bot win/loss history (from simulated betting — designed in a later phase)
+- Entry point to the **Miner Referrals** sub-scene (hardware donation / conversion / pool & strategy control)
 
 ### No New Scene for the Public Pool
 
@@ -330,16 +331,30 @@ Regular miner bots (`bot_1`..`bot_4` and future spawned miners) can also earn th
 
 ---
 
-## Open Questions (Remaining)
+## Resolved Decisions — Referral System (2026-06-21)
 
-**OQ-A — Referral perk priority (secondary perks)**: After Winning Referral Commission (1% SC), which perk type is added next? Reduced BTC/SC conversion fee? Tournament entries? Extended auto-recharge grace period?
+**OQ-A — Secondary perks → none; scale the commission instead.** ✅ No extra perk types. The single perk is the **Winning Referral Commission**, which **scales from 1% up to a maximum of 5%** of the referred bot's SC winnings as that referral climbs the **Casino Rank System** (not yet designed — added to `PRIVATE_ROADMAP.md`), hitting 5% at its top rank. **The commission is ALWAYS paid by the casino — never subtracted from the referral's earnings.**
 
-**OQ-B — Commission claim frequency**: Should commission claims be real-time (claim at any moment), or capped at once per in-game day/week to match the game's time progression?
+**OQ-B — Claim frequency → real-time.** ✅ Claimable at any moment; finer pacing may be defined later.
 
-**OQ-C — Chain sync formula validation**: Is `blockCount * 0.5 in-game seconds` a good sync time formula? Should later blocks in the chain be weighted differently (exponential vs. linear)?
+**OQ-C — Miner Referral chain-sync time → decreasing but length-sensitive.** ✅ The sync wait shrinks over the in-game years (simulating hardware/bandwidth progress), but a longer chain always costs more even as tech improves. Exact curve TBD alongside the historical-events schedule. *(This OQ also surfaced **hardware obsolescence** — a separate hardware topic, logged for `btc-pools-hardware-plan.md`: default Basic-Mode mining-set lifespan ≈ **12 in-game months** for the 2009–2012 window, shown live in the hardware/pools scene.)*
 
-**OQ-D — Miner Referral hardware donation mechanics**: How is the hardware donation UI integrated? Does the player select from their inventory in BTCWallet, or in a dedicated referral management screen?
+**OQ-D — Hardware-donation UI → dedicated Miner Referrals scene.** ✅ Converting a non-miner referral into a Miner Referral by donating hardware happens in a **new scene opened from the Referrals scene** (not in BTCWallet).
 
-**OQ-E — Donation window renewal**: After a referral is won, does the 7-day window reset automatically (continuous auction), or does the referral become permanent until revoked by a competing donor?
+**OQ-E — Window renewal → none; referral is permanent.** ✅ When a non-miner referral is won (by the player OR a miner bot), it **leaves the auction forever** and remains the permanent referral of whoever won it. **This replaces the earlier "renewing 7-day window" wording** — the 7-day auction picks the winner once, then the bot is enrolled permanently.
 
-**OQ-F — Referral cap per player**: Should there be a maximum number of non-miner referrals per player? Or is the only cap the 10-referral threshold for Miner Referral conversion?
+**OQ-F — Referral cap → none.** ✅ No maximum number of non-miner referrals per miner node.
+
+### Scenes
+
+- **`Referrals`** — accessible from **MainMenu**; lists the player's referrals + claimable commission.
+- **Miner Referrals** sub-scene — opened from `Referrals`; dedicated to miner-node referrals (hardware donation / conversion, pool & strategy control).
+
+### BlockExplorer — "Enroll Mode" toggle
+
+A toggleable **"Enroll Mode" (on/off, default off)** that focuses the explorer on the still-running auction:
+
+- **ON** shows only transactions involving **non-miner bots not yet enrolled** as anyone's referral (still recruitable); a tx to an already-enrolled non-miner is hidden — even a historical tx to a bot that has *since* been enrolled. A block mixing a tx to a now-enrolled bot with a tx to one still in the auction will show only the latter.
+- **ON** also filters the **central non-miner list** to only still-recruitable addresses.
+- This is partly natural today (enrolled non-miners stop transacting), but must be explicit because we may program sends to/between non-miners **before BTC has value (3 Oct 2009)**.
+- Proposed extras: per recruitable bot, the **current leading donor + total**; a **"X of N still recruitable"** counter; **color** (green = player leading, red = a bot leading); optionally hide coinbase rows in ON mode.
