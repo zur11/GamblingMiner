@@ -43,6 +43,10 @@ public partial class NetworkRoot : Node
     // Step 4b.2: bot-chosen fee range (BTC), collected into the winning miner's coinbase.
     private const decimal MinBotFeeBtc = 0.1m;
     private const decimal MaxBotFeeBtc = 1.0m;
+    // Referral auction (starter, option-b gradual introduction): a new non-miner enters the auction
+    // every ~2 in-game days after live mining begins; each runs a 7-in-game-day donation window.
+    private const long NonMinerIntroIntervalMs = 2L * 86_400_000L;
+    private const long AuctionWindowMs = 7L * 86_400_000L;
 
     public override void _Ready()
     {
@@ -350,9 +354,9 @@ public partial class NetworkRoot : Node
 
     private static void ScheduleBotTransactionsAfterBlock(Block block)
     {
-        List<string> recipientPool = BotWalletRegistry.NonMinerBots
-            .Select(b => b.Address)
-            .ToList();
+        // Donations target only non-miners currently in their open auction window (recruitable),
+        // at this block's time. Empty until the first non-miner is introduced (after live mining begins).
+        List<string> recipientPool = InAuctionNonMinerAddresses(block.Timestamp);
 
         if (recipientPool.Count == 0) return;
 
@@ -489,6 +493,143 @@ public partial class NetworkRoot : Node
         return SharedNodesById.Values
             .OrderBy(n => n.NodeId)
             .Select(n => $"{n.NodeId}: {n.WalletAddress}")
+            .ToList();
+    }
+
+    // Maps an address to a registered node id for display, or a shortened address if unknown.
+    public string DescribeAddress(string address)
+    {
+        EnsureInitialized();
+        foreach (NodeAgent node in SharedNodesById.Values)
+        {
+            if (node.WalletAddress == address)
+            {
+                return node.NodeId;
+            }
+        }
+
+        return address.Length > 12 ? address[..12] + "…" : address;
+    }
+
+    // Referral auction ledger (starter, option-(b) gradual introduction). Fully DERIVED from the
+    // canonical chain — no persisted state. Non-miner holder bots enter the auction one at a time
+    // after live mining begins; each runs a 7-in-game-day donation window; the top donor at window
+    // close wins the referral permanently. Coinbase txs excluded. "now" = latest block timestamp.
+    public IReadOnlyList<NonMinerDonationSummary> GetNonMinerAuctionLedger()
+    {
+        EnsureInitialized();
+        long nowMs = SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? p) && p.Blockchain.Chain.Count > 0
+            ? p.Blockchain.Chain[^1].Timestamp
+            : 0;
+        return ComputeAuctionLedger(nowMs);
+    }
+
+    private static List<NonMinerDonationSummary> ComputeAuctionLedger(long nowMs)
+    {
+        List<BotWalletRecord> nonMiners = BotWalletRegistry.NonMinerBots.ToList();
+        var donations = new Dictionary<string, List<(string donor, decimal amount, long ts)>>();
+        foreach (BotWalletRecord b in nonMiners)
+        {
+            donations[b.Address] = new List<(string, decimal, long)>();
+        }
+
+        SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player);
+        if (player is not null)
+        {
+            foreach (Block block in player.Blockchain.Chain)
+            {
+                foreach (Transaction tx in block.Transactions)
+                {
+                    if (tx.Sender == BlockchainService.CoinbaseSender) continue;
+                    if (donations.TryGetValue(tx.Recipient, out List<(string, decimal, long)>? list))
+                    {
+                        list.Add((tx.Sender, tx.Amount, block.Timestamp));
+                    }
+                }
+            }
+        }
+
+        long? firstLiveTs = FirstLiveBlockTimestamp(player);
+
+        var result = new List<NonMinerDonationSummary>();
+        for (int i = 0; i < nonMiners.Count; i++)
+        {
+            BotWalletRecord b = nonMiners[i];
+            List<(string donor, decimal amount, long ts)> list = donations[b.Address];
+
+            var summary = new NonMinerDonationSummary
+            {
+                NonMinerNodeId = b.NodeId,
+                NonMinerAddress = b.Address,
+                TotalReceived = list.Sum(d => d.amount),
+                DonorCount = list.Select(d => d.donor).Distinct().Count()
+            };
+
+            (string addr, decimal total) leader = TopDonor(list, long.MaxValue);
+            summary.LeadingDonorAddress = leader.addr;
+            summary.LeadingDonorTotal = leader.total;
+
+            if (firstLiveTs is null)
+            {
+                summary.Status = NonMinerAuctionStatus.NotIntroduced;
+                result.Add(summary);
+                continue;
+            }
+
+            summary.IntroUnixMs = firstLiveTs.Value + i * NonMinerIntroIntervalMs;
+            summary.WindowCloseUnixMs = summary.IntroUnixMs + AuctionWindowMs;
+
+            if (nowMs < summary.IntroUnixMs) summary.Status = NonMinerAuctionStatus.NotIntroduced;
+            else if (nowMs < summary.WindowCloseUnixMs) summary.Status = NonMinerAuctionStatus.InAuction;
+            else
+            {
+                summary.Status = NonMinerAuctionStatus.Resolved;
+                summary.WinnerAddress = TopDonor(list, summary.WindowCloseUnixMs).addr; // donors confirmed by close
+            }
+
+            result.Add(summary);
+        }
+
+        return result;
+    }
+
+    private static (string addr, decimal total) TopDonor(List<(string donor, decimal amount, long ts)> list, long maxTsInclusive)
+    {
+        var totals = new Dictionary<string, decimal>();
+        foreach ((string donor, decimal amount, long ts) in list)
+        {
+            if (ts > maxTsInclusive) continue;
+            totals.TryGetValue(donor, out decimal cur);
+            totals[donor] = cur + amount;
+        }
+
+        if (totals.Count == 0) return (string.Empty, 0m);
+        KeyValuePair<string, decimal> top = totals.OrderByDescending(kv => kv.Value).First();
+        return (top.Key, top.Value);
+    }
+
+    // Timestamp of the first block mined by a non-founder (live era ≈ 21 Mar player start); null if none yet.
+    private static long? FirstLiveBlockTimestamp(NodeAgent? player)
+    {
+        if (player is null) return null;
+        foreach (Block b in player.Blockchain.Chain)
+        {
+            if (b.Index > 1 && !string.IsNullOrEmpty(b.MinedByNodeId)
+                && b.MinedByNodeId != SatoshiNodeId && b.MinedByNodeId != HalNodeId)
+            {
+                return b.Timestamp;
+            }
+        }
+
+        return null;
+    }
+
+    // Addresses of non-miners currently in their open auction window (recruitable) at the given time.
+    private static List<string> InAuctionNonMinerAddresses(long nowMs)
+    {
+        return ComputeAuctionLedger(nowMs)
+            .Where(s => s.Status == NonMinerAuctionStatus.InAuction)
+            .Select(s => s.NonMinerAddress)
             .ToList();
     }
 
@@ -1013,4 +1154,21 @@ public sealed class BlockchainMiningAnnouncement
     public int CurrentMinerStreak { get; set; }
     public int BestMinerStreak { get; set; }
     public bool WasPlayer { get; set; }
+}
+
+public enum NonMinerAuctionStatus { NotIntroduced, InAuction, Resolved }
+
+// Donation-race + auction summary for one non-miner holder bot (referral-system starter).
+public sealed class NonMinerDonationSummary
+{
+    public string NonMinerNodeId { get; set; } = string.Empty;
+    public string NonMinerAddress { get; set; } = string.Empty;
+    public decimal TotalReceived { get; set; }
+    public int DonorCount { get; set; }
+    public string LeadingDonorAddress { get; set; } = string.Empty;
+    public decimal LeadingDonorTotal { get; set; }
+    public NonMinerAuctionStatus Status { get; set; } = NonMinerAuctionStatus.NotIntroduced;
+    public long IntroUnixMs { get; set; }
+    public long WindowCloseUnixMs { get; set; }
+    public string WinnerAddress { get; set; } = string.Empty; // set when Resolved ("" if no donors)
 }

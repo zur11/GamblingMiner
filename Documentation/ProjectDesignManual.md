@@ -2039,3 +2039,47 @@ Both components use pre-allocated object pools (260 items, `MoveChild` only — 
 2. **Never call `OptionButton.GetItemMetadata(Selected)` without first confirming `Selected >= 0` and `ItemCount > 0`.** During startup signal wiring the selector may be empty. Prefer index-only encoding — it requires no metadata at all.
 
 3. **Connect the `ItemSelected` signal after `InitializeApsSelector()` finishes.** Connecting before population creates a window in which any signal dispatch finds `Selected == -1` and would crash a metadata read or produce a default that overwrites a valid session state.
+
+---
+
+## Chapter 22 — Referral Auction (Starter): Gradual Non-Miner Introduction
+
+**Files changed**: `NetworkRoot.cs`, `BlockExplorer.cs`
+**Status**: **Starter implemented** on the `scheduled-bot-transactions` branch (2026-06-21). Auction *timing + winner* are live and observable; the *commission economy* (1%→5% payout) is still gated (Casino Rank System, casino finances, bot betting sim).
+**Plan**: `AIHelperFiles/scheduled-bot-transactions-plan.md`
+
+### The Short Version (for everyone)
+
+Non-miner "holder" bots (`non_miner_1`…`non_miner_10`) are the prizes of a **referral auction**: whoever donates the most BTC to one of them wins it as a permanent **casino referral**. Miner bots donate automatically (the recirculation scheduler); the player can donate from BTCWallet. The highest donor when a bot's window closes wins it forever.
+
+The catch this chapter solves: the game **starts on 21 March 2009** (after the historical bootstrap), but the original design started each bot's window at the genesis instant (3 Jan) — those windows would have closed *before the player ever arrives*. So we switched to **gradual introduction**: bots enter the auction one at a time *after live mining begins*, each with a fresh window.
+
+### 22.1 — The timing model (all derived from the chain)
+
+Nothing here is persisted — it's all recomputed from the canonical chain, so it survives reloads with zero sync bugs:
+
+- **Anchor** = the **first live block**: the first block mined by a non-founder (not Satoshi/Hal), i.e. roughly the player's first mined block on/after 21 March. (`FirstLiveBlockTimestamp`.)
+- **Introduction**: non-miner *i* (0-indexed in the registry) enters the auction at `firstLiveTimestamp + i × 2 in-game days` (`NonMinerIntroIntervalMs`). So the holders appear gradually over ~20 in-game days, mirroring a community that grows over time.
+- **Window**: each bot's auction runs **7 in-game days** from its introduction (`AuctionWindowMs`).
+- **Status** (computed at "now" = the latest block's timestamp): `NotIntroduced` → `InAuction` → `Resolved`.
+- **Winner**: when a window closes, the **top cumulative donor among donations confirmed by the close timestamp** wins it **permanently** (it leaves the auction forever). If nobody donated, it closes with no winner.
+
+`NetworkRoot.GetNonMinerAuctionLedger()` returns this per-bot state (status, totals, leading donor, window close, winner); `ComputeAuctionLedger(nowMs)` is the shared core (the scheduler calls it at the new block's time, the explorer at the latest block's time).
+
+### 22.2 — Who can be donated to
+
+The recirculation scheduler now targets **only non-miners currently in an open window** (`InAuctionNonMinerAddresses(block.Timestamp)`). Before the first bot is introduced, the pool is empty (no donations); once a bot resolves, the scheduler stops donating to it (the auction is over). The player may still *send* to any address, but donations after a window closes don't change its winner (they're past the close timestamp).
+
+### 22.3 — Seeing it: BlockExplorer "Enroll Mode"
+
+A toggle (default off) reveals the auction: a header counter (`In auction / Resolved / Not yet introduced`), each in-auction bot with its total received, donor count, **leading donor**, and **days left**, then a list of resolved bots with **who won** each. This is the player's window into the live auction.
+
+### 22.4 — What's deliberately *not* here yet (starter scope)
+
+- **No commission payout.** Winning records the referral (derived), but the 1%→5% SC commission isn't paid — that needs the **Casino Rank System** (sets the %), casino finances (P6, the payer), and the bot betting simulation (the SC-winnings source).
+- **No persisted enrollment / `Referrals` scene yet.** Winners are derived on the fly; the dedicated `Referrals` + Miner Referrals scenes come later.
+- **Tuning is provisional.** The 2-day stagger and 7-day window are starting values, chosen to be "realistic enough," not final.
+
+### 22.5 — Migration note
+
+Auction state is derived, so there's no new save format. But it depends on the bootstrap having run (to define the first live block), so as always start from a clean `user://blockchain/` when testing.

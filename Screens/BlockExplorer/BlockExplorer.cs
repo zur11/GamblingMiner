@@ -28,6 +28,10 @@ public partial class BlockExplorer : Control
     // Notepad
     private NotepadPopup _notepadPopup = null!;
 
+    // Enroll Mode (referral-auction foundation) — built programmatically
+    private CheckBox _enrollModeToggle = null!;
+    private RichTextLabel _enrollModeLabel = null!;
+
     public override void _Ready()
     {
         _networkRoot = GetNode<NetworkRoot>("NetworkRoot");
@@ -62,9 +66,76 @@ public partial class BlockExplorer : Control
         AddChild(_notepadPopup);
         GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
+        BuildEnrollModePanel();
+
         PopulateNodeSelectors();
         PopulateAddressDirectory();
         RefreshUi();
+    }
+
+    // "Enroll Mode" (referral-auction foundation): a toggle that reveals the donation race for
+    // still-recruitable non-miner holder bots. Observe-only for now — enrolled/permanent filtering
+    // activates once auction resolution (window timing) and the economy land.
+    private void BuildEnrollModePanel()
+    {
+        // Toggle lives in the top action bar (always visible).
+        var topActions = GetNode<HBoxContainer>("Margin/MainVBox/TopActions");
+        _enrollModeToggle = new CheckBox { Text = "Enroll Mode" };
+        _enrollModeToggle.Toggled += _ => RefreshEnrollMode();
+        topActions.AddChild(_enrollModeToggle);
+
+        // Panel sits just below the top bar (above the main split), so it's visible when toggled on.
+        var mainVBox = GetNode<VBoxContainer>("Margin/MainVBox");
+        _enrollModeLabel = new RichTextLabel
+        {
+            BbcodeEnabled = true,
+            FitContent = true,
+            Visible = false,
+            CustomMinimumSize = new Vector2(0, 160)
+        };
+        mainVBox.AddChild(_enrollModeLabel);
+        mainVBox.MoveChild(_enrollModeLabel, topActions.GetIndex() + 1);
+    }
+
+    private void RefreshEnrollMode()
+    {
+        bool on = _enrollModeToggle.ButtonPressed;
+        _enrollModeLabel.Visible = on;
+        if (!on) return;
+
+        var ledger = _networkRoot.GetNonMinerAuctionLedger();
+        long nowMs = _networkRoot.GetPlayerLatestBlock().Timestamp;
+
+        int inAuction = ledger.Count(s => s.Status == NonMinerAuctionStatus.InAuction);
+        int resolved = ledger.Count(s => s.Status == NonMinerAuctionStatus.Resolved);
+        int notYet = ledger.Count(s => s.Status == NonMinerAuctionStatus.NotIntroduced);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("[b]Enroll Mode — referral auction[/b]");
+        sb.AppendLine($"In auction (recruitable): {inAuction}  |  Resolved: {resolved}  |  Not yet introduced: {notYet}");
+
+        foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.InAuction))
+        {
+            string leader = string.IsNullOrEmpty(s.LeadingDonorAddress)
+                ? "no donations yet"
+                : $"leading {_networkRoot.DescribeAddress(s.LeadingDonorAddress)} ({s.LeadingDonorTotal:F8})";
+            double daysLeft = Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d);
+            sb.AppendLine($"{s.NonMinerNodeId}  {s.NonMinerAddress[..10]}…  | recv {s.TotalReceived:F8} ({s.DonorCount} donor)  | {leader}  | {daysLeft:0.0}d left");
+        }
+
+        if (resolved > 0)
+        {
+            sb.AppendLine("[b]Resolved (out of auction):[/b]");
+            foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.Resolved))
+            {
+                string winner = string.IsNullOrEmpty(s.WinnerAddress)
+                    ? "no winner (no donations)"
+                    : $"referral of {_networkRoot.DescribeAddress(s.WinnerAddress)}";
+                sb.AppendLine($"{s.NonMinerNodeId}  | {winner}");
+            }
+        }
+
+        _enrollModeLabel.Text = sb.ToString();
     }
 
     private void PopulateNodeSelectors()
@@ -185,6 +256,8 @@ public partial class BlockExplorer : Control
             BuildLatestTransactionPreview(last);
 
         _networkStatusLabel.Text = "[b]Network Status[/b]\n" + string.Join("\n", _networkRoot.GetNodeStatusLines());
+
+        RefreshEnrollMode();
     }
 
     private static string FormatBlockTime(long unixMs) =>
