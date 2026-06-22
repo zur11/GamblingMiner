@@ -66,7 +66,7 @@ public partial class BlockExplorer : Control
         AddChild(_notepadPopup);
         GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
-        BuildEnrollModePanel(mainVBox);
+        BuildEnrollModePanel();
 
         PopulateNodeSelectors();
         PopulateAddressDirectory();
@@ -76,15 +76,16 @@ public partial class BlockExplorer : Control
     // "Enroll Mode" (referral-auction foundation): a toggle that reveals the donation race for
     // still-recruitable non-miner holder bots. Observe-only for now — enrolled/permanent filtering
     // activates once auction resolution (window timing) and the economy land.
-    private void BuildEnrollModePanel(VBoxContainer mainVBox)
+    private void BuildEnrollModePanel()
     {
-        var row = new HBoxContainer();
-        row.AddThemeConstantOverride("separation", 10);
-        _enrollModeToggle = new CheckBox { Text = "Enroll Mode (non-miner donation race)" };
+        // Toggle lives in the top action bar (always visible).
+        var topActions = GetNode<HBoxContainer>("Margin/MainVBox/TopActions");
+        _enrollModeToggle = new CheckBox { Text = "Enroll Mode" };
         _enrollModeToggle.Toggled += _ => RefreshEnrollMode();
-        row.AddChild(_enrollModeToggle);
-        mainVBox.AddChild(row);
+        topActions.AddChild(_enrollModeToggle);
 
+        // Panel sits just below the top bar (above the main split), so it's visible when toggled on.
+        var mainVBox = GetNode<VBoxContainer>("Margin/MainVBox");
         _enrollModeLabel = new RichTextLabel
         {
             BbcodeEnabled = true,
@@ -93,6 +94,7 @@ public partial class BlockExplorer : Control
             CustomMinimumSize = new Vector2(0, 160)
         };
         mainVBox.AddChild(_enrollModeLabel);
+        mainVBox.MoveChild(_enrollModeLabel, topActions.GetIndex() + 1);
     }
 
     private void RefreshEnrollMode()
