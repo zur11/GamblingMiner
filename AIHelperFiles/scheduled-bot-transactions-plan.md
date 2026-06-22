@@ -352,6 +352,8 @@ Regular miner bots (`bot_1`..`bot_4` and future spawned miners) can also earn th
 
 ### BlockExplorer — "Enroll Mode" toggle
 
+> ✅ **Foundation implemented (way 2, observe-only) — `scheduled-bot-transactions` branch, 2026-06-21.** `NetworkRoot.GetNonMinerDonationLedger()` computes, on demand from the canonical chain, each non-miner's total received + per-donor totals + leading donor (coinbase excluded; no persisted state yet). BlockExplorer has an **"Enroll Mode" CheckBox** (default off, built programmatically) that reveals a **donation-race panel**: per non-miner — total received, donor count, and leading donor (via `NetworkRoot.DescribeAddress`). **Still deferred (gated):** the *enrolled/permanent* filtering of tx lists + the central list, which needs auction resolution (window-timing decision) + the economy. Today nothing is enrolled, so the counter shows N/N recruitable.
+
 A toggleable **"Enroll Mode" (on/off, default off)** that focuses the explorer on the still-running auction:
 
 - **ON** shows only transactions involving **non-miner bots not yet enrolled** as anyone's referral (still recruitable); a tx to an already-enrolled non-miner is hidden — even a historical tx to a bot that has *since* been enrolled. A block mixing a tx to a now-enrolled bot with a tx to one still in the auction will show only the latter.

@@ -28,6 +28,10 @@ public partial class BlockExplorer : Control
     // Notepad
     private NotepadPopup _notepadPopup = null!;
 
+    // Enroll Mode (referral-auction foundation) — built programmatically
+    private CheckBox _enrollModeToggle = null!;
+    private RichTextLabel _enrollModeLabel = null!;
+
     public override void _Ready()
     {
         _networkRoot = GetNode<NetworkRoot>("NetworkRoot");
@@ -62,9 +66,53 @@ public partial class BlockExplorer : Control
         AddChild(_notepadPopup);
         GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
+        BuildEnrollModePanel(mainVBox);
+
         PopulateNodeSelectors();
         PopulateAddressDirectory();
         RefreshUi();
+    }
+
+    // "Enroll Mode" (referral-auction foundation): a toggle that reveals the donation race for
+    // still-recruitable non-miner holder bots. Observe-only for now — enrolled/permanent filtering
+    // activates once auction resolution (window timing) and the economy land.
+    private void BuildEnrollModePanel(VBoxContainer mainVBox)
+    {
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 10);
+        _enrollModeToggle = new CheckBox { Text = "Enroll Mode (non-miner donation race)" };
+        _enrollModeToggle.Toggled += _ => RefreshEnrollMode();
+        row.AddChild(_enrollModeToggle);
+        mainVBox.AddChild(row);
+
+        _enrollModeLabel = new RichTextLabel
+        {
+            BbcodeEnabled = true,
+            FitContent = true,
+            Visible = false,
+            CustomMinimumSize = new Vector2(0, 160)
+        };
+        mainVBox.AddChild(_enrollModeLabel);
+    }
+
+    private void RefreshEnrollMode()
+    {
+        bool on = _enrollModeToggle.ButtonPressed;
+        _enrollModeLabel.Visible = on;
+        if (!on) return;
+
+        var ledger = _networkRoot.GetNonMinerDonationLedger();
+        var sb = new StringBuilder();
+        sb.AppendLine("[b]Enroll Mode — non-miner donation race[/b]");
+        sb.AppendLine($"Recruitable: {ledger.Count}/{ledger.Count}  (none enrolled yet — auction resolution is a later step)");
+        foreach (NonMinerDonationSummary s in ledger)
+        {
+            string leader = string.IsNullOrEmpty(s.LeadingDonorAddress)
+                ? "no donations yet"
+                : $"leading {_networkRoot.DescribeAddress(s.LeadingDonorAddress)} ({s.LeadingDonorTotal:F8})";
+            sb.AppendLine($"{s.NonMinerNodeId}  {s.NonMinerAddress[..10]}…  | received {s.TotalReceived:F8} from {s.DonorCount} donor(s)  | {leader}");
+        }
+        _enrollModeLabel.Text = sb.ToString();
     }
 
     private void PopulateNodeSelectors()
@@ -185,6 +233,8 @@ public partial class BlockExplorer : Control
             BuildLatestTransactionPreview(last);
 
         _networkStatusLabel.Text = "[b]Network Status[/b]\n" + string.Join("\n", _networkRoot.GetNodeStatusLines());
+
+        RefreshEnrollMode();
     }
 
     private static string FormatBlockTime(long unixMs) =>

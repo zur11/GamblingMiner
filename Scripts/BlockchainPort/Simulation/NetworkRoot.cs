@@ -492,6 +492,70 @@ public partial class NetworkRoot : Node
             .ToList();
     }
 
+    // Maps an address to a registered node id for display, or a shortened address if unknown.
+    public string DescribeAddress(string address)
+    {
+        EnsureInitialized();
+        foreach (NodeAgent node in SharedNodesById.Values)
+        {
+            if (node.WalletAddress == address)
+            {
+                return node.NodeId;
+            }
+        }
+
+        return address.Length > 12 ? address[..12] + "…" : address;
+    }
+
+    // Donation ledger (referral-system foundation): per non-miner holder bot, the cumulative
+    // confirmed BTC each donor (sender) has sent it. Computed on demand from the canonical chain —
+    // no persisted state yet (auction resolution / enrollment is a later step). Coinbase txs excluded.
+    public IReadOnlyList<NonMinerDonationSummary> GetNonMinerDonationLedger()
+    {
+        EnsureInitialized();
+
+        var perNonMiner = new Dictionary<string, Dictionary<string, decimal>>();
+        foreach (BotWalletRecord b in BotWalletRegistry.NonMinerBots)
+        {
+            perNonMiner[b.Address] = new Dictionary<string, decimal>();
+        }
+
+        if (SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+        {
+            foreach (Block block in player.Blockchain.Chain)
+            {
+                foreach (Transaction tx in block.Transactions)
+                {
+                    if (tx.Sender == BlockchainService.CoinbaseSender) continue;
+                    if (!perNonMiner.TryGetValue(tx.Recipient, out Dictionary<string, decimal>? donors)) continue;
+                    donors.TryGetValue(tx.Sender, out decimal current);
+                    donors[tx.Sender] = current + tx.Amount;
+                }
+            }
+        }
+
+        var result = new List<NonMinerDonationSummary>();
+        foreach (BotWalletRecord b in BotWalletRegistry.NonMinerBots)
+        {
+            Dictionary<string, decimal> donors = perNonMiner[b.Address];
+            (string addr, decimal total) leader = donors.Count == 0
+                ? (string.Empty, 0m)
+                : donors.OrderByDescending(kv => kv.Value).Select(kv => (kv.Key, kv.Value)).First();
+
+            result.Add(new NonMinerDonationSummary
+            {
+                NonMinerNodeId = b.NodeId,
+                NonMinerAddress = b.Address,
+                TotalReceived = donors.Values.Sum(),
+                DonorCount = donors.Count,
+                LeadingDonorAddress = leader.addr,
+                LeadingDonorTotal = leader.total
+            });
+        }
+
+        return result;
+    }
+
     public Block? GetBlockByIndexForNode(string nodeId, int blockIndex)
     {
         EnsureInitialized();
@@ -1013,4 +1077,15 @@ public sealed class BlockchainMiningAnnouncement
     public int CurrentMinerStreak { get; set; }
     public int BestMinerStreak { get; set; }
     public bool WasPlayer { get; set; }
+}
+
+// Donation-race summary for one non-miner holder bot (referral-system foundation).
+public sealed class NonMinerDonationSummary
+{
+    public string NonMinerNodeId { get; set; } = string.Empty;
+    public string NonMinerAddress { get; set; } = string.Empty;
+    public decimal TotalReceived { get; set; }
+    public int DonorCount { get; set; }
+    public string LeadingDonorAddress { get; set; } = string.Empty;
+    public decimal LeadingDonorTotal { get; set; }
 }
