@@ -542,3 +542,12 @@ Detailed design documents are in `Documentation/`:
 | `GLOSSARY.md` | Canonical terminology (source of truth for naming) |
 | `PLAYER_GUIDE.md` | What is playable now (updated for each release) |
 | `PRIVATE_ROADMAP.md` | Internal priorities P0–P8, canonical decisions, open questions |
+
+---
+
+## Git Workflow
+
+- **`main` is the stable trunk.** It is anchored at known-good points (e.g. a completed roadmap step). Keep it buildable.
+- **One branch per category of modifications** (e.g. `scheduled-bot-transactions`, `candidate-block-model`, `historical-founders`). Do feature work on its branch; merge back to `main` when stable.
+- **Staging and commits are done manually by the developer.** Claude does **not** run `git add`/`commit`/`push`/branch operations unless explicitly asked — only assists with git when requested. A clean working tree usually means the developer already committed; verify via recent commit history, don't assume there's work to commit.
+- **CLAUDE.md is a `main` document.** Maintain and commit it on `main` (it describes stable architecture, so feature branches rarely edit it). When a merged feature changes the architecture, update CLAUDE.md on `main`. It stays tracked — do not untrack it (its history matters and Claude Code reads it every session).
