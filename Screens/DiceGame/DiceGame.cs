@@ -41,6 +41,8 @@ public partial class DiceGame : Control, IBetEventSource
 	private BankrollProgramService _bankrollProgramService;
 	private BlockSessionCheckpointService _blockCheckpointService;
 	private FinancialBettingStats _financialStats;
+	private SimulationService _simulationService;
+	private bool _autobetDelegated;
 	private Timer _autoBetTimer;
 	private BaseBetSession _session;
 	private bool _isAutoPaused;
@@ -166,6 +168,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_principalBalanceService?.EnsureInitialized();
 		_bankrollProgramService = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");
 		_blockCheckpointService = GetNodeOrNull<BlockSessionCheckpointService>("/root/BlockSessionCheckpointService");
+		_simulationService = GetNodeOrNull<SimulationService>("/root/SimulationService");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_bankrollStateService?.EnsureInitialized(0m);
 		decimal initialBalance = _bankrollStateService?.CurrentBalance ?? 0m;
@@ -286,6 +289,18 @@ public partial class DiceGame : Control, IBetEventSource
 		CaptureBlockCheckpointIfMissing();
 		RefreshCalculatorFromGameSettings();
 		_resultValue.Text = "Place your bet.";
+
+		// Background autobet (SimulationService): subscribe for live UI updates, and if a background
+		// autobet is already running (we navigated back into DiceGame), bind to it instead of starting fresh.
+		if (_simulationService != null)
+		{
+			_simulationService.BetSettled += OnSimBetSettled;
+			_simulationService.AutobetStopped += OnSimAutobetStopped;
+			if (_simulationService.IsRunning)
+			{
+				BindToRunningBackgroundAutobet();
+			}
+		}
 	}
 
 	private void InitializeApsSelector()
@@ -783,6 +798,11 @@ public partial class DiceGame : Control, IBetEventSource
 
 		if (!running)
 		{
+			// Stop the background player autobet (owned by SimulationService) and re-sync DiceGame's
+			// own wallet from the bankroll source of truth so manual betting resumes correctly.
+			_simulationService?.Stop();
+			_autobetDelegated = false;
+
 			if (_calendarTimeService != null)
 			{
 				_calendarTimeService.IsRunning = false;
@@ -799,6 +819,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_userStatsService?.SetHighFrequencyMode(false);
 			StopAllBotRunners();
 			_session.Stop(IBettingStrategy.StopReason.ManualStop);
+			ReseedWalletFromBankrollSource();
 			RefreshCalculatorFromGameSettings();
 			return;
 		}
@@ -810,7 +831,21 @@ public partial class DiceGame : Control, IBetEventSource
 			_calendarTimeService.IsRunning = true;
 			_calendarTimeService.IsAutobetActive = true;
 		}
-		StartOrRestartSession(true);
+		// Delegate the PLAYER autobet to SimulationService so it keeps running across scene changes.
+		// The service builds its own session/wallet (seeded from the bankroll source of truth).
+		_simulationService?.StartPlayerAutobet(new SimulationService.PlayerAutobetConfig
+		{
+			Chance = (int)_chanceSlider.Value,
+			BetHigh = _highLowToggleBtn.ButtonPressed,
+			BetsPerSecond = GetEffectiveAutoBetsPerGameSecond(),
+			NumberOfBets = _strategyPanel.NumberOfBets,
+			ActiveNodeId = _activeNodeId,
+			GameId = GameId,
+			StopOnBlockMined = _strategyPanel.StopOnBlockMinedEnabled,
+			IsPlayerActive = IsPlayerActive(),
+			Strategy = _strategyPanel.BuildConfig()
+		});
+		_autobetDelegated = true;
 		StartBotRunners();
 
 		_autoBetAccumulatorGameSeconds = 0d;
@@ -852,6 +887,57 @@ public partial class DiceGame : Control, IBetEventSource
 			_calendarTimeService.IsRunning = true;
 		}
 		_resultValue.Text = $"Auto resumed | {GetAutoBetApsText()}";
+	}
+
+	// ── Background autobet (SimulationService) integration ──────────────────────
+
+	private void ReseedWalletFromBankrollSource()
+	{
+		decimal bankroll = _bankrollStateService?.CurrentBalance ?? _wallet?.Balance ?? 0m;
+		_wallet?.SetBalanceForTimeTravel(bankroll);
+		UpdateBalanceUI();
+	}
+
+	// Fired by SimulationService after each background player bet (only while DiceGame is on screen).
+	private void OnSimBetSettled()
+	{
+		if (_simulationService == null) return;
+		ReseedWalletFromBankrollSource();
+		_strategyPanel.SetNumberOfBets(_simulationService.SessionInfinite ? 0 : _simulationService.SessionRemainingBets);
+		_strategyPanel.SetBetAmount(_simulationService.SessionCurrentBet);
+		UpdateBlockchainStatusUI();
+		AnnounceLatestMinedBlockIfAny();
+	}
+
+	// Fired by SimulationService when the background autobet stops on its own (stop condition).
+	private void OnSimAutobetStopped()
+	{
+		_autobetDelegated = false;
+		ReseedWalletFromBankrollSource();
+		_strategyPanel.SetAutoPaused(false);
+		_strategyPanel.SetAutoRunning(false);
+		_strategyPanel.SetManualEnabled(true);
+		_resultValue.Text = "Auto stopped.";
+		RefreshCalculatorFromGameSettings();
+	}
+
+	// On entering DiceGame while the background autobet is already running, bind the UI to it
+	// (no new session, no rewind).
+	private void BindToRunningBackgroundAutobet()
+	{
+		_autobetDelegated = true;
+		SimulationService.PlayerAutobetConfig cfg = _simulationService?.CurrentConfig;
+		if (cfg != null)
+		{
+			_chanceSlider.Value = cfg.Chance;
+			_highLowToggleBtn.ButtonPressed = cfg.BetHigh;
+			_highLowToggleBtn.Text = cfg.BetHigh ? "HIGH" : "LOW";
+		}
+		_strategyPanel.SetManualEnabled(false);
+		_strategyPanel.SetAutoRunning(true);
+		_strategyPanel.SetAutoPaused(false);
+		ReseedWalletFromBankrollSource();
+		_resultValue.Text = "Auto running (background).";
 	}
 
 	private void OnBetsPerSecondChanged(double _)
@@ -942,7 +1028,15 @@ public partial class DiceGame : Control, IBetEventSource
 
 	public override void _ExitTree()
 	{
-		if (_calendarTimeService != null)
+		// Stop listening to the background sim; Godot auto-disconnects on free, this is explicit + safe.
+		if (_simulationService != null)
+		{
+			_simulationService.BetSettled -= OnSimBetSettled;
+			_simulationService.AutobetStopped -= OnSimAutobetStopped;
+		}
+		// If autobet is delegated to the background service, leave the clock's autobet flag alone so the
+		// simulation keeps running across scenes (the service owns IsRunning/IsAutobetActive while delegated).
+		if (_calendarTimeService != null && !_autobetDelegated)
 			_calendarTimeService.IsAutobetActive = false;
 		SaveActiveNodeStrategySnapshot();
 		StopAllBotRunners();
@@ -1307,6 +1401,10 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateAutoBetMeasuredRates(1.0d);
 		MaybePrintAutoBetTelemetry();
 		TickBotAutoBets(effectiveRealDelta);
+
+		// The PLAYER autobet is driven by SimulationService (so it survives scene changes); DiceGame
+		// only ticks the bots here for now. (Bots move to the service in Phase 2.)
+		if (_autobetDelegated) return;
 
 		double intervalGameSeconds = 1.0d / Math.Max(0.0001d, betsPerGameSecond);
 		int executedThisFrame = 0;

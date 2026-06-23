@@ -32,6 +32,10 @@ public partial class BlockExplorer : Control
     private CheckBox _enrollModeToggle = null!;
     private RichTextLabel _enrollModeLabel = null!;
 
+    // Live auto-refresh so background simulation (mining/balances) shows in real time.
+    private double _autoRefreshTimer;
+    private const double AutoRefreshInterval = 1.0;
+
     public override void _Ready()
     {
         _networkRoot = GetNode<NetworkRoot>("NetworkRoot");
@@ -136,6 +140,15 @@ public partial class BlockExplorer : Control
         }
 
         _enrollModeLabel.Text = sb.ToString();
+    }
+
+    public override void _Process(double delta)
+    {
+        // Reflect the background simulation (blocks, balances, auction) in real time.
+        _autoRefreshTimer += delta;
+        if (_autoRefreshTimer < AutoRefreshInterval) return;
+        _autoRefreshTimer = 0d;
+        RefreshUi();
     }
 
     private void PopulateNodeSelectors()
