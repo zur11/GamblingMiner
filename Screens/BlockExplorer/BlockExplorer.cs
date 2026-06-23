@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using GodotBlockchainPort.Simulation;
@@ -12,6 +13,7 @@ public partial class BlockExplorer : Control
 {
     private NetworkRoot _networkRoot = null!;
     private SceneManager? _sceneManager;
+    private SimulationService? _simulationService;
 
     private OptionButton _minerNodeOption = null!;
     private Label _chainInfoLabel = null!;
@@ -60,6 +62,7 @@ public partial class BlockExplorer : Control
         GetNode<Button>("%LookupBlockButton").Pressed   += OnLookupBlockPressed;
         GetNode<Button>("%BackToDiceButton").Pressed    += OnBackToDicePressed;
         _sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+        _simulationService = GetNodeOrNull<SimulationService>("/root/SimulationService");
 
         var mainVBox = GetNode<VBoxContainer>("Margin/MainVBox");
         var statusBar = new StatusBar();
@@ -268,9 +271,25 @@ public partial class BlockExplorer : Control
             $"Transactions: {last.Transactions.Count}\n" +
             BuildLatestTransactionPreview(last);
 
-        _networkStatusLabel.Text = "[b]Network Status[/b]\n" + string.Join("\n", _networkRoot.GetNodeStatusLines());
+        _networkStatusLabel.Text = "[b]Network Status[/b]\n" + string.Join("\n", BuildNodeStatusLinesWithMiningRates());
 
         RefreshEnrollMode();
+    }
+
+    // Appends a "⛏ <bets/sec>" marker to nodes that are actively mining in the background simulation.
+    private IEnumerable<string> BuildNodeStatusLinesWithMiningRates()
+    {
+        IReadOnlyDictionary<string, double> rates =
+            _simulationService?.GetActiveMiningRates() ?? new Dictionary<string, double>();
+
+        foreach (string line in _networkRoot.GetNodeStatusLines())
+        {
+            int sep = line.IndexOf(" | ", StringComparison.Ordinal);
+            string nodeId = sep > 0 ? line[..sep] : line;
+            yield return rates.TryGetValue(nodeId, out double bps)
+                ? $"{line} | ⛏ {bps:0.#}/s"
+                : line;
+        }
     }
 
     private static string FormatBlockTime(long unixMs) =>
