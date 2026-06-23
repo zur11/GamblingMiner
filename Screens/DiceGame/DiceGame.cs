@@ -43,6 +43,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private FinancialBettingStats _financialStats;
 	private SimulationService _simulationService;
 	private bool _autobetDelegated;
+	private BetTransactionEvent _lastLoggedBetEvent;
 	private Timer _autoBetTimer;
 	private BaseBetSession _session;
 	private bool _isAutoPaused;
@@ -993,10 +994,13 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		if (_simulationService == null) return;
 		// Feed the bet-history container (it subscribes to BetExecuted), since the autobet now settles
-		// inside SimulationService rather than DiceGame's local ExecuteBet.
+		// inside SimulationService rather than DiceGame's local ExecuteBet. BetSettled also fires on
+		// non-bet refreshes (e.g. after an auto-recharge restart), so dedupe by event reference to avoid
+		// logging the same bet twice.
 		BetTransactionEvent settled = _simulationService.LastSettledBetEvent;
-		if (settled != null)
+		if (settled != null && !ReferenceEquals(settled, _lastLoggedBetEvent))
 		{
+			_lastLoggedBetEvent = settled;
 			BetExecuted?.Invoke(GameId, settled);
 		}
 		ReseedWalletFromBankrollSource();
