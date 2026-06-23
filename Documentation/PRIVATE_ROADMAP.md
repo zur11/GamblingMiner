@@ -300,7 +300,7 @@ Done when a participant's rank is tracked and visibly affects at least the refer
 - [x] Block checkpoints restore financial state.
 - [x] Saved strategies work as development/player-owned strategies.
 - [x] User-facing DiceGame label uses `Main Balance`.
-- [ ] Clarify auto-recharge behavior in UI and docs.
+- [~] Clarify auto-recharge behavior in UI and docs. **Docs done** (ProjectDesignManual Ch.25 + CLAUDE.md: progression resets, Insist After Stop, auto-recharge precedence). UI labels/warnings still pending (P2).
 - [x] Add player BTC wallet and addresses.
 - [x] Add bot/non-node wallet address model.
 - [x] Add casino BTC addresses.

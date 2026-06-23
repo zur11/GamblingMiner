@@ -2205,3 +2205,110 @@ The Block Explorer got a 1-second `_Process` auto-refresh so the background sim 
 - **App restart** → starts **stopped**: nothing persists/restores `IsRunning`; autobet is something the player actively starts.
 - **Window unfocused/minimized** → keeps running.
 - **Clock ownership**: only `SimulationService` drives `CalendarTimeService.IsRunning` / `SpeedMultiplier` / `IsAutobetActive` while autobet is active, so there is never a second owner of time.
+
+## Chapter 25 — Bankroll Management: Progression Resets, Insist After Stop, and Auto-Recharge
+
+**Files**: `Scripts/Sessions/BaseBetSession.cs` (`ApplyStopConditions`, `HandleProfitOrLossStop`, `ResetProgressionToBase`), `Scripts/Betting/ProgressiveBettingStrategy.cs`, `Scripts/Services/SimulationService.cs` (`TryPlayerAutoRechargeAndRestart`, `TryRechargeAndRestartBot`)
+**Status**: Implemented and user-tested.
+
+### The Short Version (for everyone)
+
+A progressive strategy grows the bet on each trigger (e.g. ×2.3 on every loss). Left unchecked it would balloon until the bankroll is gone. Three mechanisms keep it under control, in order of preference:
+
+1. **`StopOnLoss` / `StopOnProfit` + Insist After Stop** — the *primary* bankroll manager. You set a loss (or profit) threshold **below** the bankroll; when the running progression reaches it, the bet **resets to base** and keeps going. This caps how deep any one losing run goes, so the bankroll lasts many cycles **without spending a single recharge**.
+2. **Bankroll-limit reset (safety net)** — if the grown bet ever exceeds the bankroll but the **base** bet still fits, the progression also resets to base (no recharge). This is the fallback for when a threshold was set too high (or, for bots, not set at all).
+3. **Auto-recharge (last resort)** — only when even the **base** bet can't be afforded does the system move money from the Main Balance into the Bankroll and restart from base.
+
+So: **reset cheaply as long as you can; only recharge when you absolutely must.**
+
+### 25.1 — The progression itself
+
+`ProgressiveBettingStrategy.CalculateNextBet` is pure and stateless: on a trigger outcome (`IncreaseOnLoss` and a loss, or `IncreaseOnWin` and a win) it returns `currentBet × (1 + IncreasePercent/100)`; otherwise it returns `BaseBet`. With `IncreasePercent = 130` the multiplier is **×2.3**, so base 10 → 23 → 52.9 → 121.67 → …
+
+### 25.2 — Where the decisions happen: `ApplyStopConditions`
+
+This runs at the **end of every** `ExecuteNext`, *after* `_currentBet` has already been advanced to the **next** bet. In order:
+
+1. **`StopOnProfit`** reached → `HandleProfitOrLossStop(StopOnProfit)`.
+2. **`StopOnLoss`** reached → `HandleProfitOrLossStop(StopOnLoss)`.
+3. **`_currentBet > balance`** (can't afford the next bet) → either reset to base (insist) or stop (see §25.5).
+4. **`RemainingBets`** countdown → stop on `CounterCountReached`.
+
+The profit/loss metric is `currentBalance − baseline`, where the baseline depends on **Session vs Anchor** mode — see §25.3.
+
+### 25.3 — Session vs Anchor stops: where profit/loss is measured from
+
+`StopOnProfit` / `StopOnLoss` always compare `currentBalance − baseline` against your threshold. **Which baseline** is chosen by `UseProgressionAnchorStops` (`BaseBetSession.ApplyStopConditions`):
+
+| | **Session mode** (`UseProgressionAnchorStops = false`) | **Anchor mode** (`UseProgressionAnchorStops = true`) |
+|---|---|---|
+| Baseline | `SessionStartingBalance` — the bankroll when the autobet session started | `ProgressionAnchorBalance` — the bankroll at the start of the **current progression run** (the last base bet that began the run) |
+| Question it answers | "How is the **whole session** doing?" | "How is **this one progression run** doing?" |
+| Effect of a win | Win profit nets against the running total, but the baseline does **not** move | A win ends the run and **re-anchors** the baseline; the next run measures fresh |
+| With Insist After Stop | Re-anchored to the current balance on each reset (each post-reset segment measures fresh) | Already moves per run; also re-anchored on reset |
+
+**How the anchor moves (anchor mode).** `UpdateProgressionStreak` sets `ProgressionAnchorBalance` to the balance **just before** the first bet of a new streak (the base bet that starts a run). Any non-trigger outcome — e.g. a win when `IncreaseOnLoss` — ends the streak and re-anchors to the current balance, so the next base bet's run measures from zero again.
+
+**Why Session mode re-anchors on an Insist reset.** A reset adds no money, so if `SessionStartingBalance` stayed put, `balance − baseline` would still be past `−StopOnLoss` right after the reset and would re-trigger **every** bet (stuck at base). Re-anchoring on each reset (`ResetProgressionToBase`) makes each post-reset segment measure fresh. So: **no insist → Session baseline is fixed at session start; with insist → it measures from the last reset.**
+
+**Illustration** (base 10, ×2.3 on loss, `StopOnLoss = 50`, Insist ON) — sequence *lose, lose, win, lose, lose…*:
+
+- **Anchor mode:** the first two losses don't reach −50 for that run; the **win re-anchors**, and the next losing run starts measuring fresh. The reset-to-base fires only when a **single run** drops 50.
+- **Session mode:** the win's profit nets against the total since session start, so the reset-to-base fires when the **net session** is down 50 — wins literally buy more room before the next reset.
+
+(The §25.4 canonical example uses `StopOnLoss = 33` with **no win** in the run, so Session and Anchor coincide there — both anchor at 100 because it's the very first run.)
+
+**When to use which.**
+- **Anchor** — cap the damage of *any single* losing run; resets the martingale frequently, run-by-run (tight per-run control).
+- **Session** — cap the *net drawdown* of the whole session; tolerate deeper individual runs as long as wins keep the session afloat.
+
+Both modes feed the same downstream logic (Insist resets, the bankroll-limit fallback, and auto-recharge) described in §25.4–§25.6.
+
+### 25.4 — `HandleProfitOrLossStop` and Insist After Stop
+
+- **Insist OFF** → `Stop(reason)`. The session ends; the player sees `Auto stopped: StopOnProfit/StopOnLoss`.
+- **Insist ON** → `ResetProgressionToBase()` instead of stopping: `_currentBet = BaseBet`, profit metric zeroed, streak cleared, and the baselines (`SessionStartingBalance`, `ProgressionAnchorBalance`) re-anchored to the current balance. **No recharge.** The run simply continues from base.
+
+> **Insist After Stop applies only to `StopOnProfit` / `StopOnLoss`.** `StopOnBlockMined` is handled outside the session (by `SimulationService` / DiceGame) and is **never** insisted — a mined block always stops the run if that toggle is on.
+
+**Worked example (the canonical bankroll-management setup):** base 10, ×2.3 on loss, **`StopOnLoss = 33`**, Insist ON, start 100 SC.
+
+| Bet | Amount | Result | Balance | Cumulative loss vs anchor | Action |
+|----:|-------:|--------|--------:|--------------------------:|--------|
+| 1 | 10 | loss | 90 | 10 | 10 < 33 → grow to 23 |
+| 2 | 23 | loss | 67 | 33 | 33 ≥ 33 → **reset to base** (no recharge) |
+| 3 | 10 | … | … | re-anchored | continue from base |
+
+Two losses cap the drawdown at ~33 SC and the bet returns to 10 — exactly the intent: manage the bankroll in few attempts, spending **no** recharges. (Setting `StopOnLoss` *above* the bankroll defeats its purpose; the threshold is meant to live **below** the current bankroll.)
+
+### 25.5 — The bankroll-limit branch (`_currentBet > balance`)
+
+After the threshold checks, if the next bet still can't be afforded:
+
+```csharp
+if (_currentBet > _wallet.Balance)
+{
+    if (_config.InsistAfterStop && _config.BaseBet <= _wallet.Balance)
+        ResetProgressionToBase();          // grown bet too big, but base fits → reset, NO recharge
+    else
+    {
+        LastStopReason = InsufficientBalance;
+        Stop(LastStopReason);              // even base won't fit (or no insist) → stop; recharge happens next
+    }
+}
+```
+
+This is the safety net (item 2 of the Short Version): with Insist ON, a too-deep progression that outruns the bankroll still falls back to base **for free**, as long as the base bet fits. Only when the **base** bet itself is unaffordable does the session stop with `InsufficientBalance`.
+
+### 25.6 — Auto-recharge: the last resort, *after* the stop
+
+`ApplyStopConditions` never recharges — it only ever stops with `InsufficientBalance`. The recharge is decided one level up, **after** the session has stopped (see Chapter 24.5 for why this placement is mandatory):
+
+- **Player** — `SimulationService._Process`: on `!IsRunning` with reason `InsufficientBalance` and auto-recharge enabled, `TryPlayerAutoRechargeAndRestart()` transfers `AutoRechargeAmount` from Main Balance to Bankroll, syncs `BankrollStateService`, and **restarts the progression from base**.
+- **Bots** — `SimulationService.TickBots`: the mirror, `TryRechargeAndRestartBot()`, tops up the bot's own `NodeFinancialState.PrincipalBalance` (repeatedly if one top-up can't cover the base bet) and restarts from base.
+
+Because the restart reuses the same `BettingStrategyConfig`, **Insist After Stop stays active after a recharge** — the run keeps resetting cheaply to base until, once again, even the base bet can't be afforded and another recharge is strictly necessary.
+
+### 25.7 — Precedence, in one sentence
+
+On every settled bet: **profit/loss threshold reset (insist)** → else **bankroll-limit reset to base (insist, if base fits)** → else **stop `InsufficientBalance`** → then, post-stop, **auto-recharge + restart from base** (if enabled). Resets are free; recharges are the last resort. This logic lives in the shared `BaseBetSession`, so **player and bot sessions behave identically**.

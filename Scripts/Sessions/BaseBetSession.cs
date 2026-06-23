@@ -20,7 +20,11 @@ namespace Scripts.Sessions
         public decimal CurrentBet => _currentBet;
         public int ProgressionTriggerStreak { get; private set; }
         public decimal SessionBaseBet => _config?.BaseBet ?? 0m;
+        // Baseline for stop-condition P/L in SESSION mode: the bankroll when the session started. Re-anchored
+        // to the current balance on every Insist-After-Stop reset (see ResetProgressionToBase).
         public decimal SessionStartingBalance { get; private set; }
+        // Baseline for stop-condition P/L in ANCHOR mode: the bankroll at the start of the CURRENT progression
+        // streak (the last base bet that began the run). Maintained by UpdateProgressionStreak.
         public decimal ProgressionAnchorBalance { get; private set; }
         public decimal SessionProfit => _sessionProfit;
 
@@ -111,6 +115,9 @@ namespace Scripts.Sessions
             return (result, betEvent, _currentBet);
         }
 
+        // Tracks ANCHOR-mode's baseline (ProgressionAnchorBalance) = the bankroll at the start of the current
+        // progression streak. A "trigger outcome" is the one that grows the bet (a loss with IncreaseOnLoss, or
+        // a win with IncreaseOnWin).
         private void UpdateProgressionStreak(
             BetOutcome outcome,
             decimal balanceBeforeBet,
@@ -122,6 +129,7 @@ namespace Scripts.Sessions
 
             if (isTriggerOutcome)
             {
+                // First bet of a new streak → anchor to the balance just before this (base) bet.
                 if (ProgressionTriggerStreak == 0)
                     ProgressionAnchorBalance = balanceBeforeBet;
 
@@ -129,6 +137,7 @@ namespace Scripts.Sessions
                 return;
             }
 
+            // Non-trigger outcome ends the streak; the next base bet starts fresh from here.
             ProgressionTriggerStreak = 0;
             ProgressionAnchorBalance = balanceAfterBet;
         }
@@ -139,6 +148,12 @@ namespace Scripts.Sessions
 
         protected virtual void ApplyStopConditions()
         {
+            // Stop conditions measure profit/loss as (current balance − baseline). The baseline depends on
+            // the chosen mode:
+            //   • SESSION mode (UseProgressionAnchorStops = false): from SessionStartingBalance — the bankroll
+            //     when the session started (cumulative session P/L).
+            //   • ANCHOR mode  (UseProgressionAnchorStops = true):  from ProgressionAnchorBalance — the bankroll
+            //     at the start of the current progression streak (P/L of just this run; a win clears the streak).
             decimal stopBaseline = _config.UseProgressionAnchorStops
                 ? ProgressionAnchorBalance
                 : SessionStartingBalance;
@@ -162,8 +177,19 @@ namespace Scripts.Sessions
 
             if (_currentBet > _wallet.Balance)
             {
-                LastStopReason = IBettingStrategy.StopReason.InsufficientBalance;
-                Stop(LastStopReason);
+                if (_config.InsistAfterStop && _config.BaseBet <= _wallet.Balance)
+                {
+                    // Insist: the grown progression bet is unaffordable, but the base bet still fits the
+                    // bankroll — reset the progression to base and keep going WITHOUT a recharge. A recharge
+                    // only happens when even the base bet can't be afforded (handled below by stopping with
+                    // InsufficientBalance, which the simulation then recharges + restarts from base).
+                    ResetProgressionToBase();
+                }
+                else
+                {
+                    LastStopReason = IBettingStrategy.StopReason.InsufficientBalance;
+                    Stop(LastStopReason);
+                }
             }
 
             if (RemainingBets != int.MaxValue)
@@ -188,6 +214,16 @@ namespace Scripts.Sessions
                 return;
             }
 
+            ResetProgressionToBase();
+        }
+
+        // Restart the progression from the base bet (used by Insist After Stop, both on a profit/loss
+        // stop and when the bankroll can no longer sustain the grown bet but still covers the base bet).
+        // Re-anchors BOTH stop baselines to the current balance: each post-reset segment is then measured
+        // fresh. This re-anchor is what makes SESSION-mode insist work — without it the P/L metric would
+        // still be past the threshold right after a reset and would re-trigger every bet.
+        private void ResetProgressionToBase()
+        {
             _currentBet = _config.BaseBet;
             _sessionProfit = 0m;
             ProgressionTriggerStreak = 0;

@@ -177,9 +177,14 @@ Owns the running **background simulation** so it survives scene changes. While a
   - `BaseBet`, `IncreasePercent`, `IncreaseOnLoss`, `IncreaseOnWin`
   - `StopOnProfit`, `StopOnLoss` (optional thresholds)
   - `StopOnBlockMined` — halts session when a block is mined
-  - `UseProgressionAnchorStops` — stop conditions relative to streak start
-  - `InsistAfterStop` — retry after hitting a stop condition (except for StopOnBlockMined)
+  - `UseProgressionAnchorStops` — chooses the baseline the `StopOnProfit`/`StopOnLoss` metric (`currentBalance − baseline`) is measured from. **Session mode** (`false`): `SessionStartingBalance` = bankroll at session start (net session P/L). **Anchor mode** (`true`): `ProgressionAnchorBalance` = bankroll at the start of the current progression run (P/L of just that run; a win re-anchors). With `InsistAfterStop`, both baselines re-anchor to the current balance on each reset. See Chapter 25.3.
+  - `InsistAfterStop` — on a `StopOnProfit`/`StopOnLoss` hit, **reset the progression to base bet and keep going** instead of stopping. Applies **only** to `StopOnProfit`/`StopOnLoss`, **never** to `StopOnBlockMined` (a mined block always stops if that toggle is on).
 - `SavedBettingStrategy` / `SavedBettingStrategyRepository` — persistence of named strategies
+
+**Progression resets vs. auto-recharge (bankroll management).** Implemented in `BaseBetSession.ApplyStopConditions` + `SimulationService`; shared by player **and** bot sessions. Order of preference — *reset cheaply, recharge only as a last resort*:
+1. **`StopOnLoss`/`StopOnProfit` + `InsistAfterStop`** (primary): threshold set **below** the bankroll caps a losing run's depth, resetting to base with **no** recharge.
+2. **Bankroll-limit reset** (safety net): if the grown bet exceeds the bankroll but the **base** bet still fits and `InsistAfterStop` is on → reset to base, **no** recharge.
+3. **Auto-recharge** (last resort): only when even the **base** bet can't be afforded does the session stop with `InsufficientBalance`; then — *after* the stop — `SimulationService.TryPlayerAutoRechargeAndRestart` / `TryRechargeAndRestartBot` moves funds (Main Balance→Bankroll for the player, `NodeFinancialState.PrincipalBalance` for bots) and **restarts the progression from base**. The recharge is decided *after* the stop because `ApplyStopConditions` self-stops on `InsufficientBalance` *inside* `ExecuteNext`. `InsistAfterStop` stays active across recharges. See `Documentation/ProjectDesignManual.md` Chapter 25 (and 24.5).
 
 ### Bet Sessions
 **Locations**: `Scripts/Sessions/`
