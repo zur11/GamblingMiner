@@ -81,7 +81,7 @@ Block Mined? → BTC Reward + Checkpoint → Manage Bankroll / Strategies → Re
 
 ## Key Architecture — Autoload Services
 
-Six singletons registered in `project.godot`. They persist across all scenes and are accessible globally by class name.
+Seven core service singletons registered in `project.godot` (plus `SceneManager` and `NotepadService`, documented in their own sections — nine autoloads total). They persist across all scenes and are accessible globally by class name.
 
 ### `CalendarTimeService`
 **Location**: `Scripts/Services/CalendarTimeService.cs`
@@ -142,6 +142,19 @@ Saves the full financial state at each block mining event.
 - Stores calendar local time + history checkpoint UTC time independently
 - Enables rollback to pre-mined-block state
 - Persists to `user://block_session_checkpoint.json`
+
+### `SimulationService`
+**Location**: `Scripts/Services/SimulationService.cs`
+
+Owns the running **background simulation** so it survives scene changes. While a player autobet is active, this service ticks the player autobet **and** the bot runners in its own `_Process`, in every scene — bets fire, bots mine, time advances, balances change. DiceGame is a thin view/controller on top of it.
+
+- **Single source of truth = `BankrollStateService`**: the service builds its **own** wallet/session (seeded from the bankroll, written back each settled bet), so its wallet has **no** scene-bound event subscriptions and freeing a scene cannot crash it.
+- Owns bot runners (`StartBots`/`StopBots`/`TickBots`/`RunBotManualBurst`); DiceGame supplies per-node strategy snapshots via `BuildBotConfigs()`.
+- Player **and** bot auto-recharge happen *after* the session self-stops on `InsufficientBalance` (`TryPlayerAutoRechargeAndRestart` / `TryRechargeAndRestartBot`), restarting the progression from base bet.
+- Signals: `BetSettled` (per player bet), `AutobetStopped` (run ended). Exposes `GetActiveMiningRates()` for the Block Explorer mining indicator.
+- While delegated, it is the **sole owner** of `CalendarTimeService.IsRunning/SpeedMultiplier/IsAutobetActive`. No persisted run state → the app starts with autobet **stopped**.
+- Not persisted; registered in `project.godot` as an autoload.
+- See `Documentation/ProjectDesignManual.md` Chapter 24 and `AIHelperFiles/background-simulation-plan.md`.
 
 ---
 
@@ -320,6 +333,7 @@ These values are fixed and must be consistent across all docs, UI, and code:
 - Auto-recharge system with transfer tracking
 - User betting statistics and history persistence (JSON, monthly chunks)
 - Calendar-based history browsing
+- Background simulation: autobet + bots keep running, mining, and recharging across all scenes (SimulationService autoload)
 
 ### Prototype (Partially Implemented)
 
