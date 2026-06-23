@@ -2135,3 +2135,73 @@ For each miner bot past its warmup:
 | `player`, `casino`, founders | No | No |
 
 The player participates manually (donating from BTCWallet) to compete in the referral auction; the casino and founders are excluded from automatic recirculation.
+
+---
+
+## Chapter 24 — Background Simulation (the game keeps running across scenes)
+
+**Files**: `Scripts/Services/SimulationService.cs` (new autoload), `Screens/DiceGame/DiceGame.cs` (now a view/controller), `Screens/BlockExplorer/BlockExplorer.cs` (live auto-refresh + mining indicator), `project.godot` (autoload registration)
+**Status**: Implemented and user-tested (branch `background-simulation`).
+**Plan**: `AIHelperFiles/background-simulation-plan.md`
+
+### The Short Version (for everyone)
+
+Before this change, the **entire** autobet + mining loop lived inside the DiceGame scene. The moment you navigated away (to the Block Explorer, etc.), Godot freed DiceGame, the loop stopped, and on return it rebuilt a fresh session and reloaded the clock — so the world looked **frozen** and even **rewound**. Now the loop lives in a persistent **autoload** (`SimulationService`) that survives scene changes: while a player autobet is running, bets fire, bots bet, blocks are mined, time advances and balances change **in every scene**. DiceGame became a thin "view + controls" layer on top of it.
+
+### 24.1 — Why an autoload was the only fix
+
+A Godot scene node dies with its scene (`ChangeSceneToFile` frees it). Anything that must keep ticking regardless of the visible screen has to live somewhere that *isn't* tied to a scene — in Godot, that's an **autoload** (a node parented under `/root` for the whole app lifetime). So `SimulationService` is registered in `project.godot` alongside the other six services and owns the running autobet in its own `_Process`.
+
+### 24.2 — The single-source-of-truth rule (the key design decision)
+
+The dangerous-but-tempting approach is to hand DiceGame's live `Wallet`/session to the service. That **crashes**: a `Wallet`'s C# events (`BalanceDeltaChanged`) and the session's `OnStopped` are wired to DiceGame, so the next background bet after DiceGame is freed would invoke a disposed node.
+
+The rule that avoids this: **`BankrollStateService` is the single source of truth for the player's bankroll.**
+
+- `SimulationService` builds its **own** wallet/session, **seeded from `BankrollStateService`** at start, and **writes the resolved balance back** to `BankrollStateService` after every settled bet.
+- The service's wallet has **no** subscriptions to any scene, so freeing a scene can never crash it.
+- DiceGame and the `StatusBar` simply **display** from `BankrollStateService`. On stop / re-entry, DiceGame re-seeds its own display wallet from it (current value → no rewind).
+
+### 24.3 — DiceGame as a view/controller
+
+DiceGame no longer runs the player loop. Instead:
+
+- **Start autobet** → builds a `PlayerAutobetConfig` (chance, high/low, bets/sec, number of bets, active node, stop-on-block, **auto-recharge**, strategy) and calls `SimulationService.StartPlayerAutobet(config)`; sets `_autobetDelegated = true`.
+- **Stop autobet** → `SimulationService.Stop()`.
+- While delegated, DiceGame's own `TickAutoBet` early-returns; it just reflects live state.
+- Two Godot signals from the service drive the UI: `BetSettled` (per player bet) and `AutobetStopped` (the run ended on its own). Godot auto-disconnects these when DiceGame is freed; DiceGame also unsubscribes explicitly in `_ExitTree`.
+- **Re-entry**: if the service `IsRunning` when DiceGame loads, `BindToRunningBackgroundAutobet()` binds the UI to it (no new session, no rewind). If it stopped while you were away, a consumable `StopNoticePending` flag lets DiceGame show `Auto stopped: <reason>` on return.
+
+### 24.4 — Bots live in the service too (Phase 2)
+
+`BotConfig`/`BotRunner`, `StartBots`/`StopBots`, `TickBots`, `ExecuteBotBet`, `RunBotManualBurst`, and the bot recharge live in `SimulationService`. DiceGame keeps only the **per-node strategy UI** (`_nodeStrategies`) and hands the service snapshots via `BuildBotConfigs()`.
+
+- During a background autobet, `TickBots` runs in `_Process` so bots keep mining/circulating in every scene.
+- **Manual** bets (DiceGame-only) call `RunBotManualBurst(configs)` — a one-shot burst on temporary runners, so manual betting still advances the bots.
+
+### 24.5 — Auto-recharge: player and bots use the *same* post-stop pattern
+
+This is the subtle part, and it caused a real bug worth remembering.
+
+`BaseBetSession.ApplyStopConditions()` runs at the end of **every** `ExecuteNext` and **self-stops the session with `InsufficientBalance` the instant the next progression bet exceeds the bankroll** — *inside* `ExecuteNext`. So a bet-loop's own "can I afford the next bet?" check at the *top* never sees it; the session is already stopped, with leftover bankroll (e.g. a martingale bot stopping at 60.16 SC).
+
+The correct place to recharge is therefore **after** the session stops:
+
+- **Player**: `SimulationService._Process` detects `!_session.IsRunning`; if the reason is `InsufficientBalance` and auto-recharge is on, `TryPlayerAutoRechargeAndRestart()` transfers from Main Balance to Bankroll (`BankrollProgramService.TryTransferBalanceToBankroll`), syncs `BankrollStateService`, and **restarts the progression from base bet**.
+- **Bots**: `TickBots` does the mirror — on a stopped bot with `InsufficientBalance`, `TryRechargeAndRestartBot()` tops up the bot's **own** main balance (`NodeFinancialState.PrincipalBalance`, repeatedly if one 100 SC top-up can't cover the base bet) and `RestartBotSessionFromBase()`. Only if the top-up can't be afforded does the runner get removed.
+
+**Restarting from base bet matters**: a single top-up rarely covers a *grown* martingale bet, so without the reset the bot would re-stop immediately. Resetting to base makes the next bet affordable, exactly as the player behaves.
+
+### 24.6 — Watching it live in the Block Explorer
+
+The Block Explorer got a 1-second `_Process` auto-refresh so the background sim is visible without clicking Refresh. Its **Network Status** lines also show **which nodes are actively mining and how fast**: `SimulationService.GetActiveMiningRates()` returns nodeId → bets/sec for the player plus each running bot, and `BuildNodeStatusLinesWithMiningRates()` appends `⛏ <rate>/s` to the matching line.
+
+> **Scope note:** the Block Explorer is a **BTC** view — its per-node "balance" is the on-chain mining balance. Casino/SC information is intentionally **not** surfaced there (except the player's StatusBar). Watching a bot's *SC bankroll* change live belongs in DiceGame; that read-only "Observe node" panel is a planned future slice (see §9 of the plan).
+
+### 24.7 — Edge cases & decisions
+
+- **Node switch during autobet**: selecting an active node calls `LoadActiveNodeFinancialState`, which *rewrites* the shared `BankrollStateService` / `PrincipalBalanceService` (it's a "play as this node" control). That would corrupt a running player autobet, so the **active-node selector is locked** while delegated (`SetActiveNodeSelectorLocked`), with a guard message "Stop the autobet to change the active node."
+- **Stop while away** → silent; the reason is shown on return (banner).
+- **App restart** → starts **stopped**: nothing persists/restores `IsRunning`; autobet is something the player actively starts.
+- **Window unfocused/minimized** → keeps running.
+- **Clock ownership**: only `SimulationService` drives `CalendarTimeService.IsRunning` / `SpeedMultiplier` / `IsAutobetActive` while autobet is active, so there is never a second owner of time.
