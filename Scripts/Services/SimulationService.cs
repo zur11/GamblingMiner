@@ -29,6 +29,7 @@ public partial class SimulationService : Node
 		public string ActiveNodeId = "player";
 		public string GameId = "Dice";
 		public bool StopOnBlockMined;
+		public bool AutoRecharge;            // auto top-up bankroll from main balance on insufficient funds
 		public bool IsPlayerActive = true;
 		public BettingStrategyConfig Strategy = null!;
 	}
@@ -83,6 +84,14 @@ public partial class SimulationService : Node
 
 	// Last settled player bet, so DiceGame can feed its bet-history container while autobet is delegated.
 	public BetTransactionEvent? LastSettledBetEvent { get; private set; }
+
+	// Why the background autobet last stopped, for the "Auto stopped: <reason>" banner on return.
+	public IBettingStrategy.StopReason LastAutobetStopReason { get; private set; }
+
+	// Set when the autobet stops on its own; lets DiceGame show the reason even if it stopped while the
+	// player was in another scene. Consumed (cleared) once shown.
+	public bool StopNoticePending { get; private set; }
+	public void ConsumeStopNotice() => StopNoticePending = false;
 
 	// Display snapshots for the (live) DiceGame UI.
 	public int SessionRemainingBets => _session?.RemainingBets ?? 0;
@@ -173,9 +182,16 @@ public partial class SimulationService : Node
 		// The session may have stopped itself (profit/loss/block/insufficient) while we were away.
 		if (!_session.IsRunning)
 		{
-			ClearRunningState();
-			EmitSignal(SignalName.AutobetStopped);
-			return;
+			// On insufficient funds, auto-recharge the bankroll (if enabled) and restart from base bet —
+			// this now works across scenes too, not only inside DiceGame.
+			if (!TryPlayerAutoRechargeAndRestart())
+			{
+				LastAutobetStopReason = _session.LastStopReason;
+				StopNoticePending = true;
+				ClearRunningState();
+				EmitSignal(SignalName.AutobetStopped);
+				return;
+			}
 		}
 
 		double betsPerSecond = Math.Max(0.0001d, _config.BetsPerSecond);
@@ -262,6 +278,40 @@ public partial class SimulationService : Node
 		};
 
 		_networkRoot.SetNodeFinancialState(_config.ActiveNodeId, state, persist);
+	}
+
+	// If the player's autobet stopped for insufficient funds and auto-recharge is on, top up the bankroll
+	// from the main balance and restart the session from base bet. Returns true if it kept running.
+	private bool TryPlayerAutoRechargeAndRestart()
+	{
+		if (_session == null || _config == null || _wallet == null || _betService == null) return false;
+		if (!_config.AutoRecharge) return false;
+		if (_session.LastStopReason != IBettingStrategy.StopReason.InsufficientBalance) return false;
+		if (_bankrollProgram == null || _principal == null) return false;
+
+		decimal amount = _bankrollProgram.AutoRechargeAmount > 0m
+			? _bankrollProgram.AutoRechargeAmount
+			: BankrollProgramService.DefaultAutoRechargeAmount;
+
+		if (!_bankrollProgram.TryTransferBalanceToBankroll(_principal, _wallet, amount, "auto_recharge"))
+		{
+			return false;
+		}
+
+		if (_config.IsPlayerActive)
+		{
+			_userStats?.RegisterDeposit(amount, _wallet.Balance, DateTime.UtcNow);
+		}
+		_bankroll?.SetBalance(_wallet.Balance);
+		PersistFinancialState(false);
+
+		// Restart the progression from base bet (mirrors DiceGame's recharge-then-restart behaviour).
+		var session = new AutoBetSession(_betService, _wallet, new ProgressiveBettingStrategy());
+		session.Start(_config.NumberOfBets, _config.Strategy);
+		_session = session;
+
+		EmitSignal(SignalName.BetSettled); // refresh UI: balance jumped, progression reset
+		return true;
 	}
 
 	private void CaptureCheckpoint()
@@ -357,9 +407,20 @@ public partial class SimulationService : Node
 		{
 			if (!runner.Session.IsRunning)
 			{
-				SaveBotFinancialState(runner);
-				_botRunners.Remove(runner.NodeId);
-				continue;
+				// The session self-stops (in ApplyStopConditions) the instant the next progression bet
+				// exceeds the bankroll. Mirror the player: on InsufficientBalance, recharge from the bot's
+				// main balance and restart from base bet instead of removing the runner.
+				if (runner.Session.LastStopReason == IBettingStrategy.StopReason.InsufficientBalance
+					&& TryRechargeAndRestartBot(runner))
+				{
+					// Recharged + restarted; keep it running.
+				}
+				else
+				{
+					SaveBotFinancialState(runner);
+					_botRunners.Remove(runner.NodeId);
+					continue;
+				}
 			}
 
 			double betsPerSecond = Math.Clamp(runner.Config.BetsPerSecond, 1, MaxAutoBetBaseAps);
@@ -380,14 +441,12 @@ public partial class SimulationService : Node
 	{
 		if (!runner.Session.IsRunning) return;
 
-		if (runner.Session.CurrentBet > runner.Wallet.Balance)
+		// Defensive: if the current (base, after a restart) bet can't be afforded, recharge + restart.
+		if (runner.Session.CurrentBet > runner.Wallet.Balance && !TryRechargeAndRestartBot(runner))
 		{
-			if (!TryAutoRechargeBot(runner) || runner.Session.CurrentBet > runner.Wallet.Balance)
-			{
-				runner.Session.Stop(IBettingStrategy.StopReason.InsufficientBalance);
-				SaveBotFinancialState(runner);
-				return;
-			}
+			runner.Session.Stop(IBettingStrategy.StopReason.InsufficientBalance);
+			SaveBotFinancialState(runner);
+			return;
 		}
 
 		try
@@ -431,7 +490,10 @@ public partial class SimulationService : Node
 
 	private bool TryAutoRechargeBot(BotRunner runner)
 	{
-		if (!runner.Config.AutoRechargeEnabled) return false;
+		if (!runner.Config.AutoRechargeEnabled)
+		{
+			return false;
+		}
 
 		NodeFinancialState state = _networkRoot.GetOrCreateNodeFinancialState(
 			runner.NodeId,
@@ -458,6 +520,36 @@ public partial class SimulationService : Node
 		});
 		_networkRoot.SetNodeFinancialState(runner.NodeId, state, false);
 		return true;
+	}
+
+	// Recharge the bot's bankroll from its main balance (repeatedly if a single top-up can't cover the
+	// base bet) and restart the progression from base bet. Returns true if the bot can keep running.
+	private bool TryRechargeAndRestartBot(BotRunner runner)
+	{
+		decimal baseBet = runner.Config.Strategy?.BaseBet ?? 0m;
+		bool recharged = TryAutoRechargeBot(runner);
+		while (runner.Wallet.Balance < baseBet && TryAutoRechargeBot(runner))
+		{
+			recharged = true;
+		}
+		if (!recharged)
+		{
+			return false;
+		}
+
+		RestartBotSessionFromBase(runner);
+		return runner.Wallet.Balance >= runner.Session.CurrentBet;
+	}
+
+	// Rebuilds a bot's session so its progression restarts from base bet (used right after a recharge).
+	private void RestartBotSessionFromBase(BotRunner runner)
+	{
+		_engine ??= new DiceEngine();
+		var betService = new BetService(_engine, runner.Wallet, TransactionSource.Bet,
+			() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
+		var session = new AutoBetSession(betService, runner.Wallet, new ProgressiveBettingStrategy());
+		session.Start(runner.Config.NumberOfBets, runner.Config.Strategy);
+		runner.Session = session;
 	}
 
 	private void SaveBotFinancialState(BotRunner runner)

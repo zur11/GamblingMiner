@@ -1,6 +1,6 @@
 # Background Simulation — Implementation Plan
 
-**Status**: 🆕 LEAD on branch `background-simulation`. **All decisions resolved (§7) — implementing, Phase 1 first.**
+**Status**: ✅ COMPLETE on branch `background-simulation`. **All phases (1–5) implemented, built clean, and user-tested.** Pending: document in `ProjectDesignManual.md` and merge to `main`.
 **Goal**: while the player keeps an autobet strategy running, the **whole simulation keeps running regardless of the active scene** — bets fire, nodes mine, time advances, balances change — so the Block Explorer, StatusBar, etc. update in real time. Leaving/entering DiceGame (or any scene) must **not** interrupt or rewind it. Plus: show in the Block Explorer **which miner bots are mining and at what speed**.
 
 ---
@@ -85,7 +85,28 @@ Source: `SimulationService` exposes per-active-node bets/sec; BlockExplorer read
 2. **Move bot runners.** ✅ DONE. `BotConfig`/`BotRunner`/`StartBots`/`StopBots`/`RunBotManualBurst`/`TickBots`/`ExecuteBotBet`/`TryAutoRechargeBot`/`SaveBotFinancialState` now live in `SimulationService` (single owner of bot state). Continuous bot ticking runs in the service's `_Process` while the player **autobet** is active (background, across scenes); DiceGame's **manual-bet burst** calls `SimulationService.RunBotManualBurst(configs)` (one-shot temp runners). DiceGame keeps only the per-node strategy UI (`_nodeStrategies`) and supplies snapshots via `BuildBotConfigs()`. `_ExitTree` no longer stops bots when `_autobetDelegated`. *Test: during autobet, bots keep mining/circulating across scenes; manual bets in DiceGame still drive bot bursts.* **Note:** fixed a latent gap from 1c — once autobet was delegated, DiceGame's `TickAutoBet` returned before reaching `TickBotAutoBets`, so bots weren't actually ticking; the service now owns that tick.
 3. **Balance sync + StatusBar live everywhere.** ✅ Covered by 1c (player) + Phase 2 (bots): the service writes through to `BankrollStateService` / `NodeFinancialState` each bet, and the clock keeps running across scenes, so StatusBar + BlockExplorer update live (BlockExplorer added a 1 s `_Process` auto-refresh).
 4. **Block Explorer mining indicator.** ✅ DONE. `SimulationService.GetActiveMiningRates()` returns nodeId → bets/sec for the player + each running bot; BlockExplorer appends `⛏ <rate>/s` to the matching Network Status line (`BuildNodeStatusLinesWithMiningRates`). Updates live via the 1 s auto-refresh.
-5. **Polish (pending):** stop-condition banner while away, app-restart behavior (per OQs), telemetry, auto-recharge-while-away for the **player** bankroll (deferred from 1c), and node-switch-during-background-autobet edge case.
+5. **Polish.** ✅ DONE.
+   - **Player auto-recharge while away** (deferred from 1c): `SimulationService.TryPlayerAutoRechargeAndRestart()` — on `InsufficientBalance` with auto-recharge on, transfers from main balance to bankroll (`BankrollProgramService.TryTransferBalanceToBankroll`), registers the deposit, syncs `BankrollStateService`, and restarts the progression from base bet. Works across scenes. `AutoRecharge` added to `PlayerAutobetConfig` (set from `_strategyPanel.AutoRechargeEnabled`).
+   - **Stop-reason banner**: `LastAutobetStopReason` + a consumable `StopNoticePending` flag. DiceGame shows `Auto stopped: <reason>` both via the live `AutobetStopped` signal and, if it stopped while the player was elsewhere, on re-entry (`_Ready` consumes the pending notice).
+   - **App restart → start stopped** (OQ-4): nothing persists/restores `IsRunning`, so the service starts idle on launch — no code needed.
+   - **Node-switch during background autobet**: switching the active node calls `LoadActiveNodeFinancialState`, which *rewrites the shared `BankrollStateService` / `PrincipalBalanceService`* with the selected node's balances — and a running player autobet uses those as its source of truth. So the active-node selector is **locked** (`SetActiveNodeSelectorLocked`) while a background autobet is delegated, with a defensive guard in `OnActiveNodeSelected` (shows "Stop the autobet to change the active node."). *(Earlier this stopped the whole sim on switch — that was wrong; it now stays running and the selector is simply disabled.)*
+   - **Bot auto-recharge parity** (post-test fix, **verified working**): the real root cause was that `BaseBetSession.ApplyStopConditions()` (run at the end of every `ExecuteNext`) **self-stops the session with `InsufficientBalance`** the instant the next progression bet exceeds the bankroll — *inside* `ExecuteNext`, before `ExecuteBotBet`'s own bust check could run (which is why no recharge fired and the bot stopped with leftover bankroll, e.g. 60.16 SC). The player works because its recharge is handled in `_Process` *after* the stop. Fix: `TickBots` now mirrors the player — when a bot session stops with `InsufficientBalance`, it calls `TryRechargeAndRestartBot` (top up the bot's bankroll from its main balance via `TryAutoRechargeBot`, repeatedly if a single 100 SC top-up can't cover the base bet, then `RestartBotSessionFromBase`) instead of removing the runner. Bots now recharge and keep mining from any scene, exactly like the player.
+
+---
+
+## 9. Proposal — live bot **SC bankroll** view inside DiceGame (future enhancement)
+
+**Context / constraint (user, 2026-06-23):** the Block Explorer is a **BTC** view — its node "balance" is the on-chain mining balance and must stay that way. **No casino/SC information belongs in the Block Explorer** except the player's own StatusBar. So watching a bot's *SC bankroll* change live belongs in **DiceGame**, not the explorer.
+
+**Why it isn't trivial today:** the active-node selector is overloaded — selecting a node calls `LoadActiveNodeFinancialState`, which **rewrites the global `BankrollStateService` / `PrincipalBalanceService`** with that node's balances (it's a *control* switch, "play as this node"). During a background autobet those globals are the player's source of truth, so switching corrupts the run — hence the selector is locked while delegated.
+
+**Proposed design (decouple *view* from *control*):**
+1. Add a small read-only **"Observe node"** panel in DiceGame (separate from the active-node selector), with its own dropdown of bettable node ids. It never touches the global balance services.
+2. `SimulationService` exposes a per-node SC snapshot, e.g. `GetNodeBankrollSnapshot(nodeId) → (bankroll, principal, lastBet, betsPerSec, recharges)` read from the live `BotRunner` (or `NodeFinancialState` when idle). Bot runners already hold this live.
+3. DiceGame refreshes the observe panel on each `OnSimBetSettled` tick (or its own ~250 ms throttle), showing the observed bot's **SC bankroll** counting up/down in real time, plus a `⛏` marker — all in casino (SC) terms, staying inside DiceGame.
+4. The observe panel is purely informational: it does not change the active node, does not stop the sim, and the active-node selector stays locked during autobet as today.
+
+**Effort:** small-to-medium (one new read-only panel + one service getter; no change to the betting/mining core). Deferred to its own slice; not required for the background-simulation feature to be complete.
 
 ---
 

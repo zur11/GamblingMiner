@@ -290,6 +290,12 @@ public partial class DiceGame : Control, IBetEventSource
 			{
 				BindToRunningBackgroundAutobet();
 			}
+			else if (_simulationService.StopNoticePending)
+			{
+				// The background autobet stopped while we were in another scene — surface the reason now.
+				_resultValue.Text = $"Auto stopped: {_simulationService.LastAutobetStopReason}";
+				_simulationService.ConsumeStopNotice();
+			}
 		}
 	}
 
@@ -346,6 +352,17 @@ public partial class DiceGame : Control, IBetEventSource
 		string nextNodeId = _activeNodeSelector.GetItemText((int)selectedIndex);
 		if (string.Equals(nextNodeId, _activeNodeId, StringComparison.Ordinal))
 		{
+			return;
+		}
+
+		// Switching the active node rewrites the shared balance services (BankrollStateService /
+		// PrincipalBalanceService) with the selected node's balances. A running background autobet uses
+		// those as its source of truth, so switching mid-autobet would corrupt it. The selector is
+		// disabled while delegated; this is a defensive guard. To watch bot balances live, use the
+		// Block Explorer (per-node, auto-refreshing).
+		if (_autobetDelegated)
+		{
+			_resultValue.Text = "Stop the autobet to change the active node.";
 			return;
 		}
 
@@ -809,6 +826,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_userStatsService?.SetHighFrequencyMode(false);
 			StopAllBotRunners();
 			_session.Stop(IBettingStrategy.StopReason.ManualStop);
+			SetActiveNodeSelectorLocked(false);
 			ReseedWalletFromBankrollSource();
 			RefreshCalculatorFromGameSettings();
 			return;
@@ -832,10 +850,12 @@ public partial class DiceGame : Control, IBetEventSource
 			ActiveNodeId = _activeNodeId,
 			GameId = GameId,
 			StopOnBlockMined = _strategyPanel.StopOnBlockMinedEnabled,
+			AutoRecharge = _strategyPanel.AutoRechargeEnabled,
 			IsPlayerActive = IsPlayerActive(),
 			Strategy = _strategyPanel.BuildConfig()
 		});
 		_autobetDelegated = true;
+		SetActiveNodeSelectorLocked(true);
 		StartBotRunners();
 
 		_autoBetAccumulatorGameSeconds = 0d;
@@ -881,6 +901,16 @@ public partial class DiceGame : Control, IBetEventSource
 
 	// ── Background autobet (SimulationService) integration ──────────────────────
 
+	// The active-node selector rewrites the shared balance services on switch, so it must be locked
+	// while a background autobet is running (it uses those services as its source of truth).
+	private void SetActiveNodeSelectorLocked(bool locked)
+	{
+		if (_activeNodeSelector != null)
+		{
+			_activeNodeSelector.Disabled = locked;
+		}
+	}
+
 	private void ReseedWalletFromBankrollSource()
 	{
 		decimal bankroll = _bankrollStateService?.CurrentBalance ?? _wallet?.Balance ?? 0m;
@@ -910,11 +940,13 @@ public partial class DiceGame : Control, IBetEventSource
 	private void OnSimAutobetStopped()
 	{
 		_autobetDelegated = false;
+		SetActiveNodeSelectorLocked(false);
 		ReseedWalletFromBankrollSource();
 		_strategyPanel.SetAutoPaused(false);
 		_strategyPanel.SetAutoRunning(false);
 		_strategyPanel.SetManualEnabled(true);
-		_resultValue.Text = "Auto stopped.";
+		_resultValue.Text = $"Auto stopped: {_simulationService?.LastAutobetStopReason}";
+		_simulationService?.ConsumeStopNotice();
 		RefreshCalculatorFromGameSettings();
 	}
 
@@ -923,6 +955,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private void BindToRunningBackgroundAutobet()
 	{
 		_autobetDelegated = true;
+		SetActiveNodeSelectorLocked(true);
 		SimulationService.PlayerAutobetConfig cfg = _simulationService?.CurrentConfig;
 		if (cfg != null)
 		{
