@@ -72,6 +72,8 @@ public partial class DiceGame : Control, IBetEventSource
 	private const string SavedStrategiesPath = "user://saved_betting_strategies.json";
 	private Label _blockchainStatusValue;
 	private OptionButton _activeNodeSelector;
+	private ImageTexture _readyDotTexture;
+	private ImageTexture _notReadyDotTexture;
 	private Button _openBlockExplorerBtn;
 	private LineEdit _strategyNameInput;
 	private Button _saveStrategyBtn;
@@ -340,6 +342,58 @@ public partial class DiceGame : Control, IBetEventSource
 			_activeNodeSelector.Select(selectedIndex);
 			_activeNodeId = _activeNodeSelector.GetItemText(selectedIndex);
 		}
+
+		RefreshNodeSelectorReadyDots();
+	}
+
+	// Shows a green dot next to a node that has a valid, ready-to-play strategy, red otherwise.
+	private void RefreshNodeSelectorReadyDots()
+	{
+		if (_activeNodeSelector == null)
+		{
+			return;
+		}
+
+		for (int index = 0; index < _activeNodeSelector.ItemCount; index++)
+		{
+			string nodeId = _activeNodeSelector.GetItemText(index);
+			bool ready = _nodeStrategies.TryGetValue(nodeId, out NodeStrategyState state) && state.IsValid;
+			_activeNodeSelector.SetItemIcon(index, GetReadyDotTexture(ready));
+		}
+	}
+
+	private ImageTexture GetReadyDotTexture(bool ready)
+	{
+		if (ready)
+		{
+			_readyDotTexture ??= CreateDotTexture(new Color(0.20f, 0.80f, 0.25f));
+			return _readyDotTexture;
+		}
+
+		_notReadyDotTexture ??= CreateDotTexture(new Color(0.85f, 0.20f, 0.20f));
+		return _notReadyDotTexture;
+	}
+
+	private static ImageTexture CreateDotTexture(Color color)
+	{
+		const int size = 16;
+		Image image = Image.CreateEmpty(size, size, false, Image.Format.Rgba8);
+		image.Fill(new Color(0, 0, 0, 0));
+
+		var center = new Vector2(size / 2f, size / 2f);
+		float radius = size / 2f - 2f;
+		for (int y = 0; y < size; y++)
+		{
+			for (int x = 0; x < size; x++)
+			{
+				if (center.DistanceTo(new Vector2(x + 0.5f, y + 0.5f)) <= radius)
+				{
+					image.SetPixel(x, y, color);
+				}
+			}
+		}
+
+		return ImageTexture.CreateFromImage(image);
 	}
 
 	private void OnActiveNodeSelected(long selectedIndex)
@@ -657,6 +711,8 @@ public partial class DiceGame : Control, IBetEventSource
 			BetHigh = _highLowToggleBtn.ButtonPressed,
 			BetsPerSecond = GetAutoBetBaseAps()
 		};
+
+		RefreshNodeSelectorReadyDots();
 	}
 
 	private void LoadActiveNodeStrategySnapshot()
@@ -688,6 +744,9 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			_loadingNodeStrategy = false;
 		}
+
+		// Only the player may place bets / autobet; bots can be configured but not bet manually.
+		_strategyPanel.SetBettingControlsEnabled(IsPlayerActive());
 
 		UpdateStrategySaveLoadButtons();
 	}
@@ -744,6 +803,10 @@ public partial class DiceGame : Control, IBetEventSource
 	// --- Manual Bet Session
 	private void OnManualBetFromPanel()
 	{
+		// Only the player bets; bots are configured but never bet directly.
+		if (!IsPlayerActive())
+			return;
+
 		if (!_strategyPanel.TryGetValidBet(out _))
 		{
 			_resultValue.Text = "Invalid bet format.";
@@ -781,6 +844,13 @@ public partial class DiceGame : Control, IBetEventSource
 	// --- Autobet Session
 	private void OnAutoBetToggled(bool running)
 	{
+		// Only the player may run an autobet; bots are configured but never bet directly.
+		if (running && !IsPlayerActive())
+		{
+			_strategyPanel.SetAutoRunning(false);
+			return;
+		}
+
 		if (running)
 		{
 			if (!_strategyPanel.TryGetValidBet(out decimal bet))

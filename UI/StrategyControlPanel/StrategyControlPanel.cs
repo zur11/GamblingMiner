@@ -202,6 +202,14 @@ namespace UI.StrategyControlPanel
 			_betOnceBtn.Disabled = !enabled;
 		}
 
+		// Enables/disables BOTH betting buttons. Used to lock betting when the active node is a bot —
+		// only the player may place bets (and thereby advance time).
+		public void SetBettingControlsEnabled(bool enabled)
+		{
+			_betOnceBtn.Disabled = !enabled;
+			_autoBetToggle.Disabled = !enabled;
+		}
+
 		public void SetAutoRunning(bool running)
 		{
 			_autoBetToggle.ButtonPressed = running;
