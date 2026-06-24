@@ -2312,3 +2312,45 @@ Because the restart reuses the same `BettingStrategyConfig`, **Insist After Stop
 ### 25.7 — Precedence, in one sentence
 
 On every settled bet: **profit/loss threshold reset (insist)** → else **bankroll-limit reset to base (insist, if base fits)** → else **stop `InsufficientBalance`** → then, post-stop, **auto-recharge + restart from base** (if enabled). Resets are free; recharges are the last resort. This logic lives in the shared `BaseBetSession`, so **player and bot sessions behave identically**.
+
+## Chapter 26 — Network Difficulty (continuous, persisted, validated)
+
+**Files**: `Scripts/BlockchainPort/Blockchain/Models.cs` (`Block.Difficulty`), `Scripts/BlockchainPort/Blockchain/BlockchainService.cs`, `Scripts/BlockchainPort/Simulation/NodeAgent.cs`, `Screens/BlockExplorer/BlockExplorer.cs`
+**Status**: **D.1 implemented** (foundation). The dynamic LWMA retarget (D.2) builds on this and is documented as it lands.
+**Plan**: `AIHelperFiles/btc-pools-hardware-plan.md` → "Network Difficulty Regulator".
+
+### The Short Version (for everyone)
+
+"Difficulty" is **how hard it is to mine one block** — concretely, *how many nonce attempts a block is expected to take*. Until now it was a **fixed** rule (a hash had to start with `00` and the next hex digit be ≤ `6`). That works, but it can't *move*: when more miners or faster hardware join, blocks would just come faster and faster. Real Bitcoin solves this by **adjusting difficulty so the average time between blocks stays near a target**. This chapter is the foundation for that: difficulty is now a **single tunable number stored on every block**, ready for the regulator to start moving it (next step).
+
+### 26.1 — Why the old rule had to change
+
+The discrete `"00"` + next-hex-≤`'6'` check has only a few possible "tightness" settings (lengthen the prefix, lower the max hex) — coarse jumps, not a smooth dial. A regulator needs to nudge difficulty by small percentages every block, so difficulty had to become a **continuous value**.
+
+### 26.2 — The continuous model
+
+- **`Difficulty` = expected nonce attempts per block.** Higher = harder.
+- A 64-hex double-SHA256 block hash, read as a 256-bit integer `H`, **meets target** when:
+
+  ```
+  H ≤ 2²⁵⁶ / Difficulty
+  ```
+
+  A uniformly random hash satisfies that with probability `1 / Difficulty` — so on average it takes `Difficulty` attempts to find a valid block. (This is exactly how Bitcoin's "target" works; we just store the human-friendly *attempts* number instead of the raw target.)
+- Implemented in `IsHashAtTargetDifficulty(hash, difficulty)` using `System.Numerics.BigInteger` (the hash is parsed with a leading `0` nibble so it's always read as a non-negative 256-bit number).
+
+### 26.3 — Same pace as before (`InitialDifficulty`)
+
+The old rule's success probability was `(1/16²) × (7/16) = 7/4096`, i.e. **`4096/7 ≈ 585.14` expected attempts**. So `InitialDifficulty = 4096/7` reproduces the **exact** old probability. D.1 changes only the *representation*, not the block pace: genesis and every new block are seeded at `InitialDifficulty`, so nothing about gameplay timing changes until the regulator (D.2) starts moving the number. Target pace stays **58,500 in-game seconds per block** (≈16h40m at the 100X scale).
+
+### 26.4 — Persisted per block, validated without replay
+
+- Every block stores the difficulty it was mined against in **`Block.Difficulty`** (serialized with the block in the monthly JSON chunks — no schema work needed).
+- Mining (`NodeAgent.MinePendingTransactions` and the 1-bet-per-attempt `TryMineSingleNonceAttempt`) asks `Blockchain.GetNextBlockDifficulty()`, mines against it, and stamps it on the block via `CommitBlock`.
+- **`ChainIsValid` checks each block's hash against its own stored `Difficulty`.** This is the key reason difficulty is *persisted* rather than recomputed: validating (and knowing the current difficulty on load) is **O(1)** — read the tip — instead of replaying every retarget from genesis (which would grow with chain height). `EffectiveDifficulty` treats a missing/zero value (a pre-D.1 save) as `InitialDifficulty`, so old chains still validate.
+- **`GetNextBlockDifficulty()` is the single retarget hook.** In D.1 it returns the tip's difficulty (constant). In D.2 its body becomes the **LWMA block-time retarget** (`nextDifficulty = clamp(currentDifficulty × TargetBlockSeconds / lwmaSolvetime, ×0.5, ×2.0)` over the last `W = 20` blocks) — and because both mining paths already route through it, the bootstrap and the weighted lottery inherit the regulator automatically.
+
+### 26.5 — Seeing it / verifying it
+
+- **Block Explorer** shows the network difficulty on the chain-info line, in the **Latest Block** panel, and in the per-block **Block Lookup** (each block carries its own value). In D.1 every block reads ≈ `585.14`; once D.2 lands, this number will visibly rise/fall with block pace.
+- **`ChainIsValid` has no UI** — it runs automatically on load: `ApplyStateFromSnapshot` → `TryReplaceChain`, which **only accepts the chain if `ChainIsValid` passes**. Practical check: mine some blocks, restart the app; if the chain **survives intact** (full length, every block with its difficulty), validation passed. If a block's hash didn't meet its stored difficulty, the chain would be rejected and reset to genesis-only.

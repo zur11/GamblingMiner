@@ -212,7 +212,7 @@ User/Session calls ExecuteNext()
 ### Blockchain / Mining System
 **Locations**: `Scripts/BlockchainPort/`
 
-- `BlockchainService` — difficulty model: hash must start with `"00"` and next hex ≤ `'6'`; expected attempts ~107 per block
+- `BlockchainService` — **continuous difficulty model** (Step 6 / D.1): `Difficulty` = expected nonce attempts per block; a 64-hex hash meets target when, read as a 256-bit `BigInteger`, `H ≤ 2²⁵⁶ / Difficulty`. `InitialDifficulty = 4096/7 ≈ 585.14` (the exact probability of the old `"00"`+next-hex-≤'6' rule, so pace is unchanged). Difficulty is **persisted per block** (`Block.Difficulty`) and `ChainIsValid` validates each block against its own stored difficulty (no genesis replay). `GetNextBlockDifficulty()` is the retarget hook — constant in D.1, **LWMA block-time retarget** arriving in D.2. Target pace = `58,500` in-game sec/block. See `AIHelperFiles/btc-pools-hardware-plan.md` (Difficulty Regulator) + ProjectDesignManual Ch.26.
 - `NodeAgent` — generates ECDSA wallet keypair; `TryMineSingleNonceAttempt()` = one attempt per call (enforces `1 bet = 1 attempt` rule); caches candidate block to avoid recomputing on each attempt
 - `CryptoUtils` — ECDSA signing/verification, SHA256 hashing, address derivation
 - **Genesis block**: nonce=100, hash=`"0"`, previous=`"0"`, timestamp `2009-01-03 18:15:05 Unix ms`

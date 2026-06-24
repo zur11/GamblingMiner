@@ -38,8 +38,9 @@ Answers that re-scope Step 6 (`IMPLEMENTATION_ROADMAP.md` Step 6 = gradual parti
 
 **Goal**: replace the static difficulty with a regulator that keeps the **average block time near a target** as total network power and participant count change. Foundational for hardware/pools (more power must be pushed back) and gradual spawning (more participants must be pushed back). Buildable **now** against the current model.
 
-### Current state (what we're changing)
-Difficulty is **static & discrete** in `BlockchainService`: `DifficultyPrefix = "00"` + `DifficultyNextHexMaxInclusive = '6'` → `IsHashAtTargetDifficulty` is a fixed prefix check (~**585** expected attempts/block; the "~107" figure in some docs is stale). A regulator needs a **continuous, tunable** difficulty value.
+### Current state
+- **Before D.1:** difficulty was **static & discrete** — `"00"` prefix + next-hex ≤ '6' (≈585 expected attempts/block; the "~107" figure in old docs was wrong).
+- **After D.1 (done):** difficulty is a **continuous, persisted-per-block** value (`Block.Difficulty`), seeded at `InitialDifficulty = 4096/7 ≈ 585.14` (same pace). The regulator (D.2) just needs to make `GetNextBlockDifficulty()` dynamic.
 
 ### Design principles (grounded in real BTC)
 - **Block time is the canonical signal.** Real Bitcoin **never measures hashrate** — it only compares actual vs. expected **block time** and retargets. Block time already captures *total* network power **and** participant count **and** variance. (So measuring power directly is redundant as the *primary* control.)
@@ -60,10 +61,11 @@ Difficulty is **static & discrete** in `BlockchainService`: `DifficultyPrefix = 
 - **Where it lives.** A `DifficultyRegulator` (static in `BlockchainService` or a small helper) called where the next candidate's difficulty is set (the `BlockTemplateBuilder` / mining path in `NetworkRoot`). No separate per-frame service.
 
 ### Difficulty Regulator — small steps
-- **D.1 — Continuous difficulty + persisted target (no behavior change yet).** `Block.Difficulty` field; `BigInteger` target math; `IsHashAtTargetDifficulty(hash, difficulty)`; seed difficulty ≈585 everywhere (genesis + new blocks). `GetExpectedAttemptsForCurrentDifficulty()` reads the last block. *Test: chain mines + `ChainIsValid` pass identically; persisted/reloaded difficulty round-trips.*
-- **D.2 — LWMA retarget.** Compute next difficulty from the last `W` block solvetimes (clamped), write it onto each new candidate; the bootstrap and lottery paths inherit it automatically. *Test: raise bot count/speed (DEV) → block time dips below `T_target` → difficulty climbs and block time settles back near `T_target`; lower it → difficulty falls.*
-- **D.3 — Block Explorer live difficulty (OQ-10).** Show current network difficulty + recent average block time (and a short trend) in the Block Explorer, auto-refreshing with the existing 1 s tick. *(Only the Block Explorer surfaces it for now.)*
-- **D.4 — Calibrate & document.** Tune `W`/clamps for feel; write the manual chapter explaining LWMA, `T_target`, the clamp, and the fractal intent.
+- **D.1 — Continuous difficulty + persisted target (no behavior change yet).** ✅ **DONE.** `Block.Difficulty` field (persisted via the existing JSON chunks/snapshot); `BigInteger` target math (`MaxHash256`, `HexToBigInteger`); `IsHashAtTargetDifficulty(hash, difficulty)`; `InitialDifficulty = 4096/7 ≈ 585.14` (the *exact* probability of the old `"00"`+next-hex-≤'6' rule → identical pace) seeded on genesis + every new block; `ProofOfWork`/`CommitBlock` take + stamp the difficulty; `GetNextBlockDifficulty()` (D.1: returns the tip's difficulty = constant) and instance `GetExpectedAttemptsForCurrentDifficulty()` read the tip; `ChainIsValid`/`TryAcceptMinedBlock` validate each block against **its own** `Difficulty`; `EffectiveDifficulty` coerces a missing/0 value (pre-D.1 save) to `InitialDifficulty`. **Verified:** chain mines + validates + round-trips across reload. *Files:* `Models.cs`, `BlockchainService.cs`, `NodeAgent.cs`, `NetworkRoot.cs`.
+  - **Display added early (a slice of D.3, for verification):** Block Explorer now shows the network difficulty on the chain-info line, the latest-block panel, and the per-block lookup. The richer **avg block time + trend** still belongs to D.3.
+- **D.2 — LWMA retarget.** Replace `GetNextBlockDifficulty()`'s constant body with the LWMA: next difficulty from the last `W` block solvetimes (clamped), inherited automatically by the bootstrap and lottery mining paths. *Test: raise bot count/speed (DEV) → block time dips below `T_target` → difficulty climbs and block time settles back near `T_target`; lower it → difficulty falls.*
+- **D.3 — Block Explorer live difficulty (OQ-10).** Add **recent average block time** + a short **trend** alongside the difficulty already shown; auto-refresh with the existing 1 s tick. *(Only the Block Explorer surfaces it for now.)*
+- **D.4 — Calibrate & document.** Tune `W`/clamps for feel; expand the manual chapter (LWMA, `T_target`, the clamp, the fractal intent).
 
 ---
 

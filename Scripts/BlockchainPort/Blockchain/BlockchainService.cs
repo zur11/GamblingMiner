@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Numerics;
 using System.Text;
 #nullable enable
 
@@ -10,12 +11,21 @@ namespace GodotBlockchainPort.Blockchain;
 public sealed class BlockchainService
 {
     public const string CoinbaseSender = "00";
-    // DIFFICULTY CALIBRATION — these two constants are the only values to change when adjusting block time.
-    // Current target: ~585 attempts/block → ~16h 40m in-game at 100X (1 bet = 100 game-sec, target = 58,500 game-sec/block).
-    // To increase difficulty: lengthen DifficultyPrefix (e.g. "000") or lower DifficultyNextHexMaxInclusive (e.g. '3').
-    // Verify with GetExpectedAttemptsForCurrentDifficulty(). Recalibrate whenever nonces-per-bet or participant count changes significantly.
-    public const string DifficultyPrefix = "00";
-    public const char DifficultyNextHexMaxInclusive = '6';
+
+    // ── Difficulty (Difficulty Regulator, D.1) ────────────────────────────────────────────────────
+    // Difficulty is a CONTINUOUS value = expected nonce attempts per block (probability 1/Difficulty that
+    // a block-header hash meets the target). A hash meets target when, read as a 256-bit integer H,
+    // H ≤ 2²⁵⁶ / Difficulty. The difficulty in effect for each block is stored on the block (Block.Difficulty)
+    // so the chain validates without replaying retargets from genesis (D.1 is representation-only; the LWMA
+    // retarget arrives in D.2).
+    //
+    // InitialDifficulty = the legacy effective difficulty (the old "00" prefix + next-hex ≤ '6' rule had
+    // success probability (1/16²)·(7/16) = 7/4096, i.e. 4096/7 ≈ 585.14 expected attempts) — seeding this
+    // keeps the block pace unchanged until the regulator runs. Target block pace: 58,500 in-game sec/block.
+    public const double InitialDifficulty = 4096d / 7d; // ≈ 585.14
+
+    // 2²⁵⁶ — the space of a 256-bit (64-hex) double-SHA256 hash. Acceptance threshold = MaxHash256 / Difficulty.
+    private static readonly BigInteger MaxHash256 = BigInteger.Pow(2, 256);
     // Historical reference only — Satoshi's real base58 genesis address. NOT used for payouts.
     // It is the initial placeholder recipient on the genesis/bootstrap coinbase; NetworkRoot
     // rewrites that recipient to Satoshi's derived gm1q… address once the founder wallet exists.
@@ -33,6 +43,7 @@ public sealed class BlockchainService
         Block genesis = CreateNewBlock(100, "0", "0", GenesisTimestampUnixMs, "0");
         genesis.Transactions = new List<Transaction> { CreateGenesisCoinbase() };
         genesis.MerkleRoot = MerkleTree.ComputeRoot(genesis.Transactions);
+        genesis.Difficulty = InitialDifficulty; // genesis is exempt from PoW validation; set for consistency
     }
 
     public static string TextToHex(string text)
@@ -75,7 +86,7 @@ public sealed class BlockchainService
     // Step 4b: commit a mined block built from a BlockTemplate. Unlike CreateNewBlock (used only for
     // genesis), the coinbase is already inside template.BlockTransactions, and only the transactions
     // actually included are removed from the mempool (unselected ones remain pending).
-    public Block CommitBlock(long nonce, string previousBlockHash, string hash, long timestamp, BlockTemplate template)
+    public Block CommitBlock(long nonce, string previousBlockHash, string hash, long timestamp, BlockTemplate template, double difficulty)
     {
         Block newBlock = new()
         {
@@ -85,7 +96,8 @@ public sealed class BlockchainService
             Nonce = nonce,
             Hash = hash,
             PreviousBlockHash = previousBlockHash,
-            MerkleRoot = template.MerkleRoot
+            MerkleRoot = template.MerkleRoot,
+            Difficulty = difficulty
         };
 
         foreach (Transaction included in template.SelectedMempoolTxs)
@@ -222,17 +234,31 @@ public sealed class BlockchainService
         return CryptoUtils.Sha256Hex(CryptoUtils.Sha256Hex(header));
     }
 
-    public long ProofOfWork(string previousBlockHash, string merkleRoot, long timestamp)
+    public long ProofOfWork(string previousBlockHash, string merkleRoot, long timestamp, double difficulty)
     {
         long nonce = 0;
         string hash = HashHeader(previousBlockHash, merkleRoot, timestamp, nonce);
-        while (!IsHashAtTargetDifficulty(hash))
+        while (!IsHashAtTargetDifficulty(hash, difficulty))
         {
             nonce++;
             hash = HashHeader(previousBlockHash, merkleRoot, timestamp, nonce);
         }
 
         return nonce;
+    }
+
+    // Difficulty to mine the NEXT block. D.1: constant (no regulator yet) → the chain keeps the same pace.
+    // D.2 replaces this body with the LWMA retarget computed from the last W block solvetimes.
+    public double GetNextBlockDifficulty()
+    {
+        return Chain.Count > 0 ? EffectiveDifficulty(Chain[^1]) : InitialDifficulty;
+    }
+
+    // A block with no stored difficulty (pre-D.1 save) is treated as InitialDifficulty — the value it was
+    // actually mined against — so old chains still validate and retarget cleanly.
+    private static double EffectiveDifficulty(Block block)
+    {
+        return block.Difficulty > 0d ? block.Difficulty : InitialDifficulty;
     }
 
     public bool ChainIsValid(IReadOnlyList<Block> blockchain)
@@ -262,7 +288,7 @@ public sealed class BlockchainService
                 currentBlock.Nonce
             );
 
-            if (!IsHashAtTargetDifficulty(blockHash))
+            if (!IsHashAtTargetDifficulty(blockHash, EffectiveDifficulty(currentBlock)))
             {
                 validChain = false;
             }
@@ -293,7 +319,7 @@ public sealed class BlockchainService
             return false;
         }
 
-        if (!IsHashAtTargetDifficulty(newBlock.Hash))
+        if (!IsHashAtTargetDifficulty(newBlock.Hash, EffectiveDifficulty(newBlock)))
         {
             return false;
         }
@@ -400,28 +426,32 @@ public sealed class BlockchainService
         return true;
     }
 
-    public static bool IsHashAtTargetDifficulty(string hash)
+    // A 64-hex double-SHA256 hash meets the target when, read as a 256-bit integer, it is ≤ 2²⁵⁶ / Difficulty
+    // (so the chance a random hash passes is 1/Difficulty). Continuous → any positive Difficulty is valid.
+    public static bool IsHashAtTargetDifficulty(string hash, double difficulty)
     {
-        if (!hash.StartsWith(DifficultyPrefix, StringComparison.Ordinal))
+        if (difficulty <= 0d || string.IsNullOrEmpty(hash))
         {
             return false;
         }
 
-        if (hash.Length <= DifficultyPrefix.Length)
-        {
-            return false;
-        }
-
-        char nextHex = hash[DifficultyPrefix.Length];
-        return nextHex is >= '0' and <= DifficultyNextHexMaxInclusive;
+        BigInteger target = (BigInteger)(MaxHash256dbl / difficulty);
+        return HexToBigInteger(hash) <= target;
     }
 
-    public static double GetExpectedAttemptsForCurrentDifficulty()
+    // 2²⁵⁶ as a double (≈1.16e77). Used only to derive the acceptance threshold; double's ~15–16 significant
+    // digits set the probability precisely enough (the discarded low bits are far below any meaningful target).
+    private static readonly double MaxHash256dbl = Math.Pow(2d, 256d);
+
+    private static BigInteger HexToBigInteger(string hash)
     {
-        double prefixProbability = Math.Pow(16d, -DifficultyPrefix.Length);
-        int acceptedNextHexValues = (DifficultyNextHexMaxInclusive - '0') + 1;
-        double nextNibbleProbability = acceptedNextHexValues / 16d;
-        double successProbability = prefixProbability * nextNibbleProbability;
-        return 1d / successProbability;
+        // Prefix "0" so the leading hex nibble is never read as a sign bit → always a non-negative value.
+        return BigInteger.Parse("0" + hash, NumberStyles.HexNumber);
+    }
+
+    // Expected nonce attempts per block at the chain's CURRENT difficulty (the tip's stored Difficulty).
+    public double GetExpectedAttemptsForCurrentDifficulty()
+    {
+        return Chain.Count > 0 ? EffectiveDifficulty(Chain[^1]) : InitialDifficulty;
     }
 }

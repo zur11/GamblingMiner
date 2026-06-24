@@ -40,6 +40,10 @@ public sealed class Block
     public string MerkleRoot { get; set; } = string.Empty;
     public string MinedByNodeId { get; set; } = string.Empty;
     public string MinedByAddress { get; set; } = string.Empty;
+    // Step 6 / Difficulty Regulator (D.1): the difficulty this block was mined against = expected nonce
+    // attempts (probability 1/Difficulty of a hash meeting target). Persisted per block so the chain can be
+    // validated against the difficulty in effect when each block was mined, with no genesis replay on load.
+    public double Difficulty { get; set; }
 }
 
 public sealed class AddressData

@@ -874,7 +874,7 @@ public partial class NetworkRoot : Node
         int nextBlock = node.Blockchain.GetLastBlock().Index + 1;
         int pending = node.Blockchain.PendingTransactions.Count;
         long nonce = node.GetCurrentCandidateNonce();
-        double expected = BlockchainService.GetExpectedAttemptsForCurrentDifficulty();
+        double expected = node.Blockchain.GetExpectedAttemptsForCurrentDifficulty();
         decimal reward = GetBlockRewardForNextCandidate(node);
 
         string lastInfo = _lastMinedBlock is null

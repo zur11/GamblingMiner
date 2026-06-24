@@ -56,9 +56,10 @@ public sealed class NodeAgent
         Block lastBlock = Blockchain.GetLastBlock();
         BlockTemplate template = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions, lastBlock.Index + 1);
 
-        long nonce = Blockchain.ProofOfWork(lastBlock.Hash, template.MerkleRoot, timestampUnixMs);
+        double difficulty = Blockchain.GetNextBlockDifficulty();
+        long nonce = Blockchain.ProofOfWork(lastBlock.Hash, template.MerkleRoot, timestampUnixMs, difficulty);
         string hash = Blockchain.HashHeader(lastBlock.Hash, template.MerkleRoot, timestampUnixMs, nonce);
-        Block minedBlock = Blockchain.CommitBlock(nonce, lastBlock.Hash, hash, timestampUnixMs, template);
+        Block minedBlock = Blockchain.CommitBlock(nonce, lastBlock.Hash, hash, timestampUnixMs, template, difficulty);
         minedBlock.MinedByNodeId = NodeId;
         minedBlock.MinedByAddress = WalletAddress;
         return minedBlock;
@@ -78,14 +79,15 @@ public sealed class NodeAgent
             _candidateTemplate = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions, nextIndex);
         }
 
+        double difficulty = Blockchain.GetNextBlockDifficulty();
         string hash = Blockchain.HashHeader(lastBlock.Hash, _candidateTemplate.MerkleRoot, timestampUnixMs, _candidateNonce);
-        if (!BlockchainService.IsHashAtTargetDifficulty(hash))
+        if (!BlockchainService.IsHashAtTargetDifficulty(hash, difficulty))
         {
             _candidateNonce++;
             return null;
         }
 
-        Block minedBlock = Blockchain.CommitBlock(_candidateNonce, lastBlock.Hash, hash, timestampUnixMs, _candidateTemplate);
+        Block minedBlock = Blockchain.CommitBlock(_candidateNonce, lastBlock.Hash, hash, timestampUnixMs, _candidateTemplate, difficulty);
         minedBlock.MinedByNodeId = NodeId;
         minedBlock.MinedByAddress = WalletAddress;
 

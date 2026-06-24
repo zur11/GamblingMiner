@@ -231,6 +231,7 @@ public partial class BlockExplorer : Control
         sb.AppendLine($"PrevHash: {block.PreviousBlockHash}");
         sb.AppendLine($"MerkleRoot: {block.MerkleRoot}");
         sb.AppendLine($"Nonce: {block.Nonce}");
+        sb.AppendLine($"Difficulty: {block.Difficulty:F2}  (~{block.Difficulty:F0} attempts/block)");
         decimal blockFees = block.Transactions
             .Where(t => t.Sender != BlockchainService.CoinbaseSender)
             .Sum(t => t.Fee);
@@ -258,13 +259,16 @@ public partial class BlockExplorer : Control
     private void RefreshUi()
     {
         Block last = _networkRoot.GetPlayerLatestBlock();
-        _chainInfoLabel.Text = $"Player chain length: {_networkRoot.GetPlayerChainLength()} | Player pending tx: {_networkRoot.GetPlayerPendingTransactionCount()}";
+        _chainInfoLabel.Text =
+            $"Player chain length: {_networkRoot.GetPlayerChainLength()} | Player pending tx: {_networkRoot.GetPlayerPendingTransactionCount()}"
+            + $" | Network difficulty: {last.Difficulty:F2} (~{last.Difficulty:F0} attempts/block)";
 
         _latestBlockLabel.Text =
             "[b]Latest Block (player view)[/b]\n" +
             $"Index: {last.Index}\n" +
             $"Time: {FormatBlockTime(last.Timestamp)}\n" +
             $"Nonce: {last.Nonce}\n" +
+            $"Difficulty: {last.Difficulty:F2}  (~{last.Difficulty:F0} attempts/block)\n" +
             $"Hash: {last.Hash}\n" +
             $"PrevHash: {last.PreviousBlockHash}\n" +
             $"MerkleRoot: {last.MerkleRoot}\n" +
