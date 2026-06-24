@@ -21,6 +21,9 @@ public partial class NetworkRoot : Node
     private static string _lastMinedByNodeId = string.Empty;
     private static int _currentMinerStreak;
     private static int _bestMinerStreak;
+    // D.2 hybrid difficulty: total active mining power (Σ active miners' bets/sec), pushed in by
+    // SimulationService. The feed-forward term in GetNextBlockDifficulty reads this. 0 = unknown (bootstrap/idle).
+    private static double _activeMiningPower;
 
     private const string PlayerNodeId = "player";
     private const string CasinoNodeId = "casino";
@@ -207,7 +210,7 @@ public partial class NetworkRoot : Node
     {
         long timestamp = minedAtUnixMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         decimal reward = GetBlockRewardForNextCandidate(miner);
-        Block block = miner.MinePendingTransactions(reward, timestamp);
+        Block block = miner.MinePendingTransactions(reward, timestamp, _activeMiningPower);
         HandleMinedBlock(miner, block);
     }
 
@@ -313,7 +316,7 @@ public partial class NetworkRoot : Node
 
         long timestamp = minedAtUnixMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         decimal reward = GetBlockRewardForNextCandidate(miner);
-        minedBlock = miner.TryMineSingleNonceAttempt(reward, timestamp);
+        minedBlock = miner.TryMineSingleNonceAttempt(reward, timestamp, _activeMiningPower);
         if (minedBlock is null)
         {
             return false;
@@ -321,6 +324,13 @@ public partial class NetworkRoot : Node
 
         HandleMinedBlock(miner, minedBlock);
         return true;
+    }
+
+    // Total active mining power (Σ active miners' bets/sec) for the difficulty feed-forward. Set by
+    // SimulationService while a player autobet runs; 0 when idle/bootstrapping (feed-forward then no-ops).
+    public void SetActiveMiningPower(double power)
+    {
+        _activeMiningPower = power > 0d ? power : 0d;
     }
 
     private static void HandleMinedBlock(NodeAgent miner, Block block)
@@ -476,6 +486,34 @@ public partial class NetworkRoot : Node
     {
         EnsureInitialized();
         return SharedNodesById[PlayerNodeId].Blockchain.GetLastBlock();
+    }
+
+    // Average in-game seconds between the last `window` player blocks (the signal the difficulty regulator
+    // targets). 0 if there aren't enough blocks yet. (D.3 — Block Explorer difficulty readout.)
+    public double GetPlayerRecentAverageBlockSeconds(int window)
+    {
+        EnsureInitialized();
+        List<Block> chain = SharedNodesById[PlayerNodeId].Blockchain.Chain;
+        if (chain.Count < 2) return 0d;
+
+        int deltas = Math.Min(window, chain.Count - 1);
+        double sum = 0d;
+        for (int k = 0; k < deltas; k++)
+        {
+            sum += (chain[chain.Count - 1 - k].Timestamp - chain[chain.Count - 2 - k].Timestamp) / 1000d;
+        }
+        return sum / deltas;
+    }
+
+    // The difficulty stamped on the player block `blocksAgo` back from the tip (clamped to the genesis end),
+    // for showing a rising/falling difficulty trend. (D.3.)
+    public double GetPlayerDifficultyBlocksAgo(int blocksAgo)
+    {
+        EnsureInitialized();
+        List<Block> chain = SharedNodesById[PlayerNodeId].Blockchain.Chain;
+        if (chain.Count == 0) return 0d;
+        int index = Math.Max(0, chain.Count - 1 - Math.Max(0, blocksAgo));
+        return chain[index].Difficulty;
     }
 
     public IReadOnlyList<string> GetNodeStatusLines()

@@ -24,6 +24,19 @@ public sealed class BlockchainService
     // keeps the block pace unchanged until the regulator runs. Target block pace: 58,500 in-game sec/block.
     public const double InitialDifficulty = 4096d / 7d; // ≈ 585.14
 
+    // ── LWMA retarget (D.2) ───────────────────────────────────────────────────────────────────────
+    // The difficulty is nudged every block so the average *in-game* time between blocks stays near
+    // TargetBlockSeconds. We use an LWMA (Linear Weighted Moving Average) of the last LwmaWindow block
+    // solvetimes — recent blocks weighted more — then nextDifficulty = current × (Target / lwmaSolvetime),
+    // clamped per step. Because in-game time is bet-driven and a block needs ≈Difficulty attempts, more
+    // total mining (more bots / faster hardware) makes blocks arrive in fewer in-game seconds → solvetime
+    // dips below target → difficulty rises (and vice-versa). Block time is the only signal (no hashrate term).
+    public const double TargetBlockSeconds = 58_500d; // matches the 100X bootstrap pace (≈16h40m/block)
+    public const int LwmaWindow = 20;
+    public const double MaxStepUp = 2.0d;             // difficulty can at most double per block…
+    public const double MaxStepDown = 0.5d;           // …or halve per block (anti-oscillation clamp)
+    public const double MinDifficulty = 1.0d;         // floor (1 expected attempt = every hash passes)
+
     // 2²⁵⁶ — the space of a 256-bit (64-hex) double-SHA256 hash. Acceptance threshold = MaxHash256 / Difficulty.
     private static readonly BigInteger MaxHash256 = BigInteger.Pow(2, 256);
     // Historical reference only — Satoshi's real base58 genesis address. NOT used for payouts.
@@ -247,11 +260,56 @@ public sealed class BlockchainService
         return nonce;
     }
 
-    // Difficulty to mine the NEXT block. D.1: constant (no regulator yet) → the chain keeps the same pace.
-    // D.2 replaces this body with the LWMA retarget computed from the last W block solvetimes.
-    public double GetNextBlockDifficulty()
+    // Difficulty to mine the NEXT block (D.2: HYBRID regulator). Computed from the EXISTING chain only (the
+    // block being mined isn't timestamped yet), so it's stable across a candidate's nonce rolls. O(LwmaWindow).
+    //
+    //   nextDifficulty = anchor × feedbackTrim
+    //
+    // • anchor — feed-forward from the KNOWN total mining power. In-game time runs at clock-speed × real time
+    //   and a block needs ≈Difficulty attempts, so equilibrium difficulty = (TargetBlockSeconds / clockSpeed) ×
+    //   power = InitialDifficulty × power (baseline: 1 bet/sec ↔ InitialDifficulty). This lands the *correct
+    //   level* instantly — when a miner joins/leaves or hardware changes, the next block already reflects it,
+    //   with no waiting for feedback. When power is unknown (0: historical bootstrap / idle), hold at the
+    //   current difficulty (feedback-only).
+    // • feedbackTrim = LWMA(TargetBlockSeconds / recent solvetimes) — the "real-process" block-time signal that
+    //   trims calibration drift + PoW variance. CLAMPED to [MaxStepDown, MaxStepUp] per block (anti-oscillation).
+    public double GetNextBlockDifficulty(double networkPower)
     {
-        return Chain.Count > 0 ? EffectiveDifficulty(Chain[^1]) : InitialDifficulty;
+        if (Chain.Count == 0)
+        {
+            return InitialDifficulty;
+        }
+
+        double current = EffectiveDifficulty(Chain[^1]);
+
+        // Feed-forward anchor (instant, NOT clamped — a known power level should land in one block).
+        double anchor = networkPower > 0d ? InitialDifficulty * networkPower : current;
+
+        // Feedback: LWMA over the last up-to-W solvetimes (most recent weighted highest). Clamped.
+        double feedbackTrim = 1d;
+        if (Chain.Count >= 2)
+        {
+            int deltas = Math.Min(LwmaWindow, Chain.Count - 1);
+            double weightedSum = 0d;
+            double weightTotal = 0d;
+            for (int k = 0; k < deltas; k++)
+            {
+                double solveSec = (Chain[Chain.Count - 1 - k].Timestamp - Chain[Chain.Count - 2 - k].Timestamp) / 1000d;
+                if (solveSec < 1d)
+                {
+                    solveSec = 1d;
+                }
+
+                double weight = deltas - k; // k=0 is the most recent delta → highest weight
+                weightedSum += weight * solveSec;
+                weightTotal += weight;
+            }
+
+            feedbackTrim = TargetBlockSeconds / (weightedSum / weightTotal);
+        }
+        feedbackTrim = Math.Clamp(feedbackTrim, MaxStepDown, MaxStepUp);
+
+        return Math.Max(anchor * feedbackTrim, MinDifficulty);
     }
 
     // A block with no stored difficulty (pre-D.1 save) is treated as InitialDifficulty — the value it was

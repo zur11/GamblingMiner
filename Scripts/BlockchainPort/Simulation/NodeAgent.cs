@@ -49,23 +49,24 @@ public sealed class NodeAgent
         return tx;
     }
 
-    public Block MinePendingTransactions(decimal rewardAmount, long timestampUnixMs)
+    public Block MinePendingTransactions(decimal rewardAmount, long timestampUnixMs, double networkPower = 0d)
     {
         // Build the candidate (coinbase-in-block + selected mempool txs), then full PoW. The
         // timestamp is fixed before mining so it is part of the hashed header (Step 4).
         Block lastBlock = Blockchain.GetLastBlock();
         BlockTemplate template = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions, lastBlock.Index + 1);
 
-        double difficulty = Blockchain.GetNextBlockDifficulty();
+        double difficulty = Blockchain.GetNextBlockDifficulty(networkPower);
         long nonce = Blockchain.ProofOfWork(lastBlock.Hash, template.MerkleRoot, timestampUnixMs, difficulty);
         string hash = Blockchain.HashHeader(lastBlock.Hash, template.MerkleRoot, timestampUnixMs, nonce);
         Block minedBlock = Blockchain.CommitBlock(nonce, lastBlock.Hash, hash, timestampUnixMs, template, difficulty);
         minedBlock.MinedByNodeId = NodeId;
         minedBlock.MinedByAddress = WalletAddress;
+        minedBlock.MiningPower = networkPower;
         return minedBlock;
     }
 
-    public Block? TryMineSingleNonceAttempt(decimal rewardAmount, long timestampUnixMs)
+    public Block? TryMineSingleNonceAttempt(decimal rewardAmount, long timestampUnixMs, double networkPower = 0d)
     {
         Block lastBlock = Blockchain.GetLastBlock();
         int nextIndex = lastBlock.Index + 1;
@@ -79,7 +80,7 @@ public sealed class NodeAgent
             _candidateTemplate = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions, nextIndex);
         }
 
-        double difficulty = Blockchain.GetNextBlockDifficulty();
+        double difficulty = Blockchain.GetNextBlockDifficulty(networkPower);
         string hash = Blockchain.HashHeader(lastBlock.Hash, _candidateTemplate.MerkleRoot, timestampUnixMs, _candidateNonce);
         if (!BlockchainService.IsHashAtTargetDifficulty(hash, difficulty))
         {
@@ -90,6 +91,7 @@ public sealed class NodeAgent
         Block minedBlock = Blockchain.CommitBlock(_candidateNonce, lastBlock.Hash, hash, timestampUnixMs, _candidateTemplate, difficulty);
         minedBlock.MinedByNodeId = NodeId;
         minedBlock.MinedByAddress = WalletAddress;
+        minedBlock.MiningPower = networkPower;
 
         _candidateNonce = 0;
         _candidateKey = string.Empty;

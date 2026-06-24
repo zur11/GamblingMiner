@@ -64,6 +64,13 @@ public partial class BlockExplorer : Control
         _sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
         _simulationService = GetNodeOrNull<SimulationService>("/root/SimulationService");
 
+        // A dedicated "Go to DiceGame" button (the existing one goes to the Main Menu).
+        var goToDiceBtn = new Button { Text = "Go to DiceGame" };
+        goToDiceBtn.Pressed += OnGoToDicePressed;
+        Button backBtn = GetNode<Button>("%BackToDiceButton");
+        backBtn.GetParent().AddChild(goToDiceBtn);
+        backBtn.GetParent().MoveChild(goToDiceBtn, backBtn.GetIndex() + 1);
+
         var mainVBox = GetNode<VBoxContainer>("Margin/MainVBox");
         var statusBar = new StatusBar();
         mainVBox.AddChild(statusBar);
@@ -256,19 +263,38 @@ public partial class BlockExplorer : Control
         _sceneManager?.Go(SceneManager.SceneId.MainMenu);
     }
 
+    private void OnGoToDicePressed()
+    {
+        CalendarTimeService? calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+        calendar?.PersistCurrentTime();
+        _sceneManager?.Go(SceneManager.SceneId.DiceGame);
+    }
+
     private void RefreshUi()
     {
         Block last = _networkRoot.GetPlayerLatestBlock();
+
+        // Difficulty readout (D.3): current difficulty + recent average block time vs target + a trend arrow.
+        int window = BlockchainService.LwmaWindow;
+        double avgBlockSec = _networkRoot.GetPlayerRecentAverageBlockSeconds(window);
+        double targetSec = BlockchainService.TargetBlockSeconds;
+        double diffAgo = _networkRoot.GetPlayerDifficultyBlocksAgo(window);
+        string trend = last.Difficulty > diffAgo * 1.001 ? "rising ↑"
+            : last.Difficulty < diffAgo * 0.999 ? "falling ↓"
+            : "steady →";
+        string avgBlockText = avgBlockSec > 0 ? FormatDuration(avgBlockSec) : "n/a";
+
         _chainInfoLabel.Text =
             $"Player chain length: {_networkRoot.GetPlayerChainLength()} | Player pending tx: {_networkRoot.GetPlayerPendingTransactionCount()}"
-            + $" | Network difficulty: {last.Difficulty:F2} (~{last.Difficulty:F0} attempts/block)";
+            + $" | Difficulty: {last.Difficulty:F2} ({trend})";
 
         _latestBlockLabel.Text =
             "[b]Latest Block (player view)[/b]\n" +
             $"Index: {last.Index}\n" +
             $"Time: {FormatBlockTime(last.Timestamp)}\n" +
             $"Nonce: {last.Nonce}\n" +
-            $"Difficulty: {last.Difficulty:F2}  (~{last.Difficulty:F0} attempts/block)\n" +
+            $"Difficulty: {last.Difficulty:F2}  (~{last.Difficulty:F0} attempts/block) — {trend}\n" +
+            $"Avg block time (last {window}): {avgBlockText}  (target {FormatDuration(targetSec)})\n" +
             $"Hash: {last.Hash}\n" +
             $"PrevHash: {last.PreviousBlockHash}\n" +
             $"MerkleRoot: {last.MerkleRoot}\n" +
@@ -298,6 +324,17 @@ public partial class BlockExplorer : Control
 
     private static string FormatBlockTime(long unixMs) =>
         DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
+
+    // In-game block time as a human-readable duration (e.g. "16h 15m", "2d 03h 10m").
+    private static string FormatDuration(double seconds)
+    {
+        if (seconds <= 0) return "n/a";
+        long total = (long)Math.Round(seconds);
+        long days = total / 86400; total %= 86400;
+        long hours = total / 3600; total %= 3600;
+        long mins = total / 60;
+        return days > 0 ? $"{days}d {hours:00}h {mins:00}m" : $"{hours}h {mins:00}m";
+    }
 
     private static string BuildLatestTransactionPreview(Block block)
     {

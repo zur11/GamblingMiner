@@ -170,6 +170,18 @@ public partial class SimulationService : Node
 			_calendar.IsAutobetActive = false;
 		}
 		_userStats?.SetHighFrequencyMode(false);
+		_networkRoot?.SetActiveMiningPower(0d); // idle → difficulty feed-forward no-ops
+	}
+
+	// Total active mining power for the difficulty feed-forward = Σ (player + running bots) bets/sec.
+	private double GetTotalActiveMiningPower()
+	{
+		double total = 0d;
+		foreach (double rate in GetActiveMiningRates().Values)
+		{
+			total += rate;
+		}
+		return total;
 	}
 
 	public override void _Process(double delta)
@@ -178,6 +190,9 @@ public partial class SimulationService : Node
 		{
 			return;
 		}
+
+		// Keep the difficulty regulator's feed-forward informed of the current total mining power.
+		_networkRoot?.SetActiveMiningPower(GetTotalActiveMiningPower());
 
 		// The session may have stopped itself (profit/loss/block/insufficient) while we were away.
 		if (!_session.IsRunning)

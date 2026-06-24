@@ -1030,6 +1030,14 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		_autobetDelegated = true;
 		SetActiveNodeSelectorLocked(true);
+		// _Ready() stops the clock (line ~180, "start stopped"); since the background autobet is still
+		// running, re-assert the clock here or it would stay frozen in every scene until app restart.
+		if (_calendarTimeService != null)
+		{
+			_calendarTimeService.SpeedMultiplier = GameSecondsPerRealSecond;
+			_calendarTimeService.IsRunning = true;
+			_calendarTimeService.IsAutobetActive = true;
+		}
 		SimulationService.PlayerAutobetConfig cfg = _simulationService?.CurrentConfig;
 		if (cfg != null)
 		{
@@ -1854,6 +1862,14 @@ public partial class DiceGame : Control, IBetEventSource
 	private void RestoreLegacyCheckpointIfNeeded()
 	{
 		if (_blockCheckpointService == null || !_blockCheckpointService.HasCheckpoint())
+		{
+			return;
+		}
+
+		// If a background autobet is live, the running clock/history is authoritative — restoring the last
+		// block checkpoint here would rewind the clock to that block's time (the bug seen on re-entry).
+		// The checkpoint restore is only for resuming a fresh app start, not for re-entering DiceGame mid-run.
+		if (_simulationService?.IsRunning == true)
 		{
 			return;
 		}

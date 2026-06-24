@@ -44,6 +44,10 @@ public sealed class Block
     // attempts (probability 1/Difficulty of a hash meeting target). Persisted per block so the chain can be
     // validated against the difficulty in effect when each block was mined, with no genesis replay on load.
     public double Difficulty { get; set; }
+    // D.2 (hybrid regulator): total active mining power (Σ active miners' bets/sec) at the moment this block
+    // was mined. Informational/diagnostic — the difficulty feed-forward anchors off the *current* power
+    // (InitialDifficulty × power), not a per-block ratio. 0 = unknown (e.g. the historical bootstrap / idle).
+    public double MiningPower { get; set; }
 }
 
 public sealed class AddressData
