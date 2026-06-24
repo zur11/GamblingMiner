@@ -1,6 +1,9 @@
 # BTC Mining Pools & Hardware Shop — Implementation Plan
 
-**Status**: Phase 1 ○  Phase 2 ○  Phase 3 ○  Phase 4 ○  Phase 5 ○  Phase 6 ○ — **GATED: do not start until roadmap Step 6** (see `IMPLEMENTATION_ROADMAP.md`). This plan builds on the **per-node candidate block model** (`candidate-block-model-plan.md`, roadmap Step 4) — per-credit nonce routing mines real candidates. It also assumes "player + 4 bots at block 1", whereas the network now introduces miner bots *gradually after the 21 Mar player start*; the initial allocation and routing are re-based on that model in Step 6.
+**Status**: Phase 1 ○  Phase 2 ○  Phase 3 ○  Phase 4 ○  Phase 5 ○  Phase 6 ○ — **roadmap Step 6 is now active and RE-SCOPED** (see "Step 6 Scope & Decisions" below). This plan builds on the **per-node candidate block model** (`candidate-block-model-plan.md`, roadmap Step 4) — per-credit nonce routing mines real candidates.
+> ⚠️ **Two corrections to this plan since it was written:**
+> 1. **Gradual miner spawning is POSTPONED** (needs a per-bot strategy set first), so for now we keep **DEV access to all bettable nodes**; the "player + 4 bots at block 1" assumption is fine for the prototype.
+> 2. **The bot/player betting loop moved to `SimulationService`** during the background-simulation work — so Phase 3's nonce-routing/speed-lock now targets `SimulationService.ExecutePlayerBetOnce` / `ExecuteBotBet`, **not** `DiceGame.ExecuteBotBet` / `BotAutoBetRunner` (those no longer exist in DiceGame).
 
 **Architecture summary**:
 - **Option 2 (solo / P2P)**: each hardware credit in a node's *individual pool* generates 1 nonce attempt per bet, routed to that node's own blockchain — current behavior, extended with hardware count control.
@@ -9,6 +12,64 @@
 
 **Starting state**: player + 4 bots each receive **2 hardware credits** at bootstrap (1 individual, 1 casino pool).  
 Betting speed in DiceGame is **locked to total hardware credits** (not freely selectable). 2 credits → 2 bets/second.
+
+---
+
+## Step 6 Scope & Decisions (2026-06-23)
+
+Answers that re-scope Step 6 (`IMPLEMENTATION_ROADMAP.md` Step 6 = gradual participants + miner bots + hardware pools):
+
+- **Bots never mine without the player** (original decision stands — time only advances while the player participates). **Gradual miner-bot spawning is POSTPONED** until a curated set of per-bot strategies exists; each miner will *later* spawn gradually with its era-appropriate hashrate. **For now: keep DEV access to all bettable nodes** in DiceGame (no intro gating).
+- **FIRST — Network Difficulty Regulator** (dedicated section below): foundational; **built first**, independent of gradual spawn and hardware.
+- **Bot Play-History scene** — moved to its **own plan** (`bot-play-history-plan.md`); sequenced **after** the regulator, tracked separately.
+- **Hardware credits at introduction:** deferred until a hardware **prototype** is working — build the prototype first (flat credits), wire credit-at-introduction afterward.
+- **Era-based hashrate + obsolescence:** deferred to the definitive Basic-Mode build.
+- **DEV features** (free "Buy Hardware", dev access to all nodes, dev panels): fine **while developing**; **all DEV features are removed for the final Basic Mode.**
+
+### Revised Step 6 order
+1. **Network Difficulty Regulator** (foundational — this plan, section below).
+2. **Bot Play-History scene + Notepad access** — own plan (`bot-play-history-plan.md`).
+3. **Hardware/pools prototype** — credit model + casino pool + hardware-locked speed (routed through `SimulationService`); credit-at-introduction & obsolescence deferred.
+4. **Gradual miner spawning** — postponed to a later step (once per-bot strategies exist).
+
+---
+
+## NEW SYSTEM — Network Difficulty Regulator
+
+**Goal**: replace the static difficulty with a regulator that keeps the **average block time near a target** as total network power and participant count change. Foundational for hardware/pools (more power must be pushed back) and gradual spawning (more participants must be pushed back). Buildable **now** against the current model.
+
+### Current state (what we're changing)
+Difficulty is **static & discrete** in `BlockchainService`: `DifficultyPrefix = "00"` + `DifficultyNextHexMaxInclusive = '6'` → `IsHashAtTargetDifficulty` is a fixed prefix check (~**585** expected attempts/block; the "~107" figure in some docs is stale). A regulator needs a **continuous, tunable** difficulty value.
+
+### Design principles (grounded in real BTC)
+- **Block time is the canonical signal.** Real Bitcoin **never measures hashrate** — it only compares actual vs. expected **block time** and retargets. Block time already captures *total* network power **and** participant count **and** variance. (So measuring power directly is redundant as the *primary* control.)
+- **Use TOTAL hashrate, not average.** If/when we add a power term, it must be the **sum** of all active miners' power (Σ credits × bets/sec). The *average* normalizes out participant count — the very variable we want included. `total = avg × count`.
+- **Bitcoin classic** retargets every **2016 blocks**: `newDifficulty = oldDifficulty × (expectedTimespan / actualTimespan)`, clamped to **[0.25×, 4×]**. Robust but slow; oscillates on small/spiky networks.
+- **Per-block algorithms (DigiShield / LWMA)** retarget **every block** from a weighted moving average of recent solvetimes (recent weighted more). Fast, smooth, oscillation-resistant — **the better fit for this fast, fractal game.**
+
+### Finalized implementation (decisions baked in)
+
+**Constants** (`BlockchainService`): `TargetBlockSeconds = 58_500` (OQ-8), `LwmaWindow = 20` (OQ-10), `MaxStepUp = 2.0`, `MaxStepDown = 0.5` (OQ-10), plus a `MinDifficulty` floor.
+
+- **0. Continuous difficulty (foundational refactor).** Replace the discrete prefix rule with a numeric `Difficulty = expectedAttemptsPerBlock` (double). Acceptance: interpret the 64-hex block hash as a 256-bit `BigInteger` `H`, accept if `H ≤ 2²⁵⁶ / Difficulty` (probability `1/Difficulty`). `IsHashAtTargetDifficulty(hash, difficulty)` takes the difficulty; `GetExpectedAttemptsForCurrentDifficulty()` returns the **current chain** difficulty. Seed the genesis/initial difficulty at **≈585** (today's effective value) so nothing changes until the regulator runs.
+- **1. Persisted per block (OQ-12).** Add **`Block.Difficulty`** (the value the block was mined against). Mining a candidate: difficulty is computed from the previous blocks (below), written onto the block, and the PoW must satisfy it. Validation (`ChainIsValid`) checks each block's hash against **its own** `Difficulty`. On load, the **current** difficulty = the last block's `Difficulty` → O(1), no genesis replay.
+- **2. Primary regulator — LWMA block-time feedback (OQ-9).** When building the next candidate, compute the next difficulty from the last `W` blocks' solvetimes (in-game timestamp deltas), recent blocks weighted more (linear weights), then `nextDifficulty = clamp( currentDifficulty × (TargetBlockSeconds / lwmaSolvetime), currentDifficulty×0.5, currentDifficulty×2.0 )`, and not below `MinDifficulty`. (Fewer than `W` blocks early on → use what's available / hold at seed.)
+- **3. Anti-oscillation / safety.** Per-step clamp + `MinDifficulty` floor. Timestamps are engine-controlled (no adversary) → we **skip** Bitcoin's median-time-past / timestamp-attack defenses.
+- **4. Fractal calibration.** `TargetBlockSeconds` is fixed (OQ-8); `W`/clamps tunable. Calibrate so **relative** jumps mirror BTC's fractal (~16.5× across 2010), not absolute hashes — a later tuning pass.
+- **No feed-forward term (OQ-11).** Block-time already captures total power; a direct hashrate term is dropped.
+- **Where it lives.** A `DifficultyRegulator` (static in `BlockchainService` or a small helper) called where the next candidate's difficulty is set (the `BlockTemplateBuilder` / mining path in `NetworkRoot`). No separate per-frame service.
+
+### Difficulty Regulator — small steps
+- **D.1 — Continuous difficulty + persisted target (no behavior change yet).** `Block.Difficulty` field; `BigInteger` target math; `IsHashAtTargetDifficulty(hash, difficulty)`; seed difficulty ≈585 everywhere (genesis + new blocks). `GetExpectedAttemptsForCurrentDifficulty()` reads the last block. *Test: chain mines + `ChainIsValid` pass identically; persisted/reloaded difficulty round-trips.*
+- **D.2 — LWMA retarget.** Compute next difficulty from the last `W` block solvetimes (clamped), write it onto each new candidate; the bootstrap and lottery paths inherit it automatically. *Test: raise bot count/speed (DEV) → block time dips below `T_target` → difficulty climbs and block time settles back near `T_target`; lower it → difficulty falls.*
+- **D.3 — Block Explorer live difficulty (OQ-10).** Show current network difficulty + recent average block time (and a short trend) in the Block Explorer, auto-refreshing with the existing 1 s tick. *(Only the Block Explorer surfaces it for now.)*
+- **D.4 — Calibrate & document.** Tune `W`/clamps for feel; write the manual chapter explaining LWMA, `T_target`, the clamp, and the fractal intent.
+
+---
+
+## Bot Play-History scene — moved out
+
+The Bot Play-History scene (last 260 plays per active miner bot + Notepad access) now has its **own plan**: **`AIHelperFiles/bot-play-history-plan.md`**. It's part of Step 6 but tracked separately and **sequenced after the Difficulty Regulator**. (Decisions OQ-13/OQ-14 live in that file.)
 
 ---
 
@@ -642,6 +703,18 @@ Before marking all phases done:
 | OQ-5 | Should the player be able to set 0 individual credits (all credits in casino pool)? | Mechanically valid. Means all player bets contribute to casino chain only. Needs UI warning since player won't mine their own blocks at all. |
 | OQ-6 | Should moving credits between pools be instant or require a "next block" delay (simulating hardware migration latency)? | Instant for Basic Mode. Real-world delay could be a future detail. |
 | OQ-7 | Should `CasinoPoolStatsPanel` show each bot's contributed credits to the player, or only the player's own share? | Currently both are shown. May be too much information. TBD UX pass. |
+
+### Resolved decisions (2026-06-23)
+
+| ID | Decision |
+|---|---|
+| OQ-8 | **`T_target` = 58,500 in-game seconds/block** (≈16h40m at 100X). Fixed — it's what keeps temporal + fractal coherence with the 100X scale. |
+| OQ-9 | **LWMA per-block** retarget (recommended). Document it thoroughly once implemented. |
+| OQ-10 | **`W` = 20 blocks**, **per-step clamp [0.5×, 2×]** (recommended). Explain clearly in the docs. **Also: show the live network difficulty in the Block Explorer** (only there, for now). |
+| OQ-11 | **No total-hashrate feed-forward.** Block-time already captures total power; a direct power term follows no simulation principle, so it's dropped. (Former step D.3 removed.) |
+| OQ-12 | **Persisted** difficulty (store the target per block) — not recomputed from genesis (could get slow at large heights). Periodic weekly/monthly/yearly reference snapshots are a *maybe-later* if the chain grows huge. |
+
+*(OQ-13 / OQ-14 concerned the Bot Play-History scene — moved to `bot-play-history-plan.md`.)*
 
 ---
 
