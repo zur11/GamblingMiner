@@ -274,27 +274,28 @@ public partial class BlockExplorer : Control
     {
         Block last = _networkRoot.GetPlayerLatestBlock();
 
-        // Difficulty readout (D.3): current difficulty + recent average block time vs target + a trend arrow.
+        // Difficulty readout (D.3): the MAIN presenter shows the difficulty of the block being mined NOW
+        // (next-block difficulty), not the last mined block — each mined block's own value is shown in its panel.
         int window = BlockchainService.LwmaWindow;
+        double miningDifficulty = _networkRoot.GetPlayerNextBlockDifficulty();
         double avgBlockSec = _networkRoot.GetPlayerRecentAverageBlockSeconds(window);
         double targetSec = BlockchainService.TargetBlockSeconds;
-        double diffAgo = _networkRoot.GetPlayerDifficultyBlocksAgo(window);
-        string trend = last.Difficulty > diffAgo * 1.001 ? "rising ↑"
-            : last.Difficulty < diffAgo * 0.999 ? "falling ↓"
+        string trend = miningDifficulty > last.Difficulty * 1.001 ? "rising ↑"
+            : miningDifficulty < last.Difficulty * 0.999 ? "falling ↓"
             : "steady →";
         string avgBlockText = avgBlockSec > 0 ? FormatDuration(avgBlockSec) : "n/a";
 
         _chainInfoLabel.Text =
             $"Player chain length: {_networkRoot.GetPlayerChainLength()} | Player pending tx: {_networkRoot.GetPlayerPendingTransactionCount()}"
-            + $" | Difficulty: {last.Difficulty:F2} ({trend})";
+            + $" | Mining difficulty (block #{last.Index + 1}): {miningDifficulty:F2} ({trend})"
+            + $" | Avg block time (last {window}): {avgBlockText} (target {FormatDuration(targetSec)})";
 
         _latestBlockLabel.Text =
             "[b]Latest Block (player view)[/b]\n" +
             $"Index: {last.Index}\n" +
             $"Time: {FormatBlockTime(last.Timestamp)}\n" +
             $"Nonce: {last.Nonce}\n" +
-            $"Difficulty: {last.Difficulty:F2}  (~{last.Difficulty:F0} attempts/block) — {trend}\n" +
-            $"Avg block time (last {window}): {avgBlockText}  (target {FormatDuration(targetSec)})\n" +
+            $"Difficulty: {last.Difficulty:F2}  (~{last.Difficulty:F0} attempts/block)\n" +
             $"Hash: {last.Hash}\n" +
             $"PrevHash: {last.PreviousBlockHash}\n" +
             $"MerkleRoot: {last.MerkleRoot}\n" +

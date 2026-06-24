@@ -210,7 +210,10 @@ public partial class NetworkRoot : Node
     {
         long timestamp = minedAtUnixMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         decimal reward = GetBlockRewardForNextCandidate(miner);
-        Block block = miner.MinePendingTransactions(reward, timestamp, _activeMiningPower);
+        // During the scripted historical bootstrap, pin difficulty to InitialDifficulty (the regulator can't
+        // run meaningfully on pre-scripted timestamps). Live mining uses the regulator via TryMineSingleNonceAttempt.
+        double? forcedDifficulty = _bulkMining ? BlockchainService.InitialDifficulty : (double?)null;
+        Block block = miner.MinePendingTransactions(reward, timestamp, _activeMiningPower, forcedDifficulty);
         HandleMinedBlock(miner, block);
     }
 
@@ -503,6 +506,18 @@ public partial class NetworkRoot : Node
             sum += (chain[chain.Count - 1 - k].Timestamp - chain[chain.Count - 2 - k].Timestamp) / 1000d;
         }
         return sum / deltas;
+    }
+
+    // Difficulty the block CURRENTLY being mined will use (next-block difficulty at the current network
+    // power), for the Block Explorer's main "mining" readout — distinct from any already-mined block's value.
+    public double GetPlayerNextBlockDifficulty()
+    {
+        EnsureInitialized();
+        NodeAgent player = SharedNodesById[PlayerNodeId];
+        // Prefer the LOCKED difficulty of the candidate currently being mined (fixed until that block is found,
+        // so a power change shows up only from the next block). Fall back to the prospective value when idle.
+        double candidate = player.GetCurrentCandidateDifficulty();
+        return candidate > 0d ? candidate : player.Blockchain.GetNextBlockDifficulty(_activeMiningPower);
     }
 
     // The difficulty stamped on the player block `blocksAgo` back from the tip (clamped to the genesis end),

@@ -304,26 +304,19 @@ public partial class BetsHistoryExplorer : Control
 		RefreshControlLabels();
 	}
 
+	// The background sim is an autoload and survives scene changes → always navigate normally. In live mode
+	// the clock is owned by the running autobet, so we don't touch it; only the time-travel (non-live)
+	// browsing resets the clock before leaving.
 	private void OnBackToCalendarPressed()
 	{
-		if (_liveMode)
-		{
-			_sceneManager?.PopOverlay();
-			return;
-		}
-		if (_calendarTimeService != null)
+		if (!_liveMode && _calendarTimeService != null)
 			_calendarTimeService.IsRunning = false;
 		_sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
 	}
 
 	private void OnBackToDicePressed()
 	{
-		if (_liveMode)
-		{
-			_sceneManager?.PopAllOverlays();
-			return;
-		}
-		if (_calendarTimeService != null)
+		if (!_liveMode && _calendarTimeService != null)
 		{
 			_calendarTimeService.IsRunning = false;
 			_calendarTimeService.SetNow();

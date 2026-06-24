@@ -36,6 +36,9 @@ public sealed class BlockchainService
     public const double MaxStepUp = 2.0d;             // difficulty can at most double per block…
     public const double MaxStepDown = 0.5d;           // …or halve per block (anti-oscillation clamp)
     public const double MinDifficulty = 1.0d;         // floor (1 expected attempt = every hash passes)
+    // Easing (D.2, Option A): fraction of the gap to the target closed each block, so a power change ramps
+    // in over a few blocks instead of snapping in one. 1.0 = instant; 0.7 ≈ ~97% closed in 3 blocks (tuned by test).
+    public const double DifficultyEaseAlpha = 0.7d;
 
     // 2²⁵⁶ — the space of a 256-bit (64-hex) double-SHA256 hash. Acceptance threshold = MaxHash256 / Difficulty.
     private static readonly BigInteger MaxHash256 = BigInteger.Pow(2, 256);
@@ -263,16 +266,17 @@ public sealed class BlockchainService
     // Difficulty to mine the NEXT block (D.2: HYBRID regulator). Computed from the EXISTING chain only (the
     // block being mined isn't timestamped yet), so it's stable across a candidate's nonce rolls. O(LwmaWindow).
     //
-    //   nextDifficulty = anchor × feedbackTrim
+    //   target = anchor × feedbackTrim ;  nextDifficulty = current + DifficultyEaseAlpha × (target − current)
     //
     // • anchor — feed-forward from the KNOWN total mining power. In-game time runs at clock-speed × real time
     //   and a block needs ≈Difficulty attempts, so equilibrium difficulty = (TargetBlockSeconds / clockSpeed) ×
-    //   power = InitialDifficulty × power (baseline: 1 bet/sec ↔ InitialDifficulty). This lands the *correct
-    //   level* instantly — when a miner joins/leaves or hardware changes, the next block already reflects it,
-    //   with no waiting for feedback. When power is unknown (0: historical bootstrap / idle), hold at the
-    //   current difficulty (feedback-only).
+    //   power = InitialDifficulty × power (baseline: 1 bet/sec ↔ InitialDifficulty). This is the *correct level*
+    //   for the current power; when a miner joins/leaves or hardware changes the target updates at once. When
+    //   power is unknown (0: historical bootstrap / idle), hold at the current difficulty (feedback-only).
     // • feedbackTrim = LWMA(TargetBlockSeconds / recent solvetimes) — the "real-process" block-time signal that
     //   trims calibration drift + PoW variance. CLAMPED to [MaxStepDown, MaxStepUp] per block (anti-oscillation).
+    // • easing (Option A) — instead of snapping to target, close a fraction DifficultyEaseAlpha of the gap each
+    //   block, so the change ramps in over a few blocks rather than instantly.
     public double GetNextBlockDifficulty(double networkPower)
     {
         if (Chain.Count == 0)
@@ -309,7 +313,10 @@ public sealed class BlockchainService
         }
         feedbackTrim = Math.Clamp(feedbackTrim, MaxStepDown, MaxStepUp);
 
-        return Math.Max(anchor * feedbackTrim, MinDifficulty);
+        // Ease toward the target rather than snapping, so a power change ramps in over a few blocks.
+        double target = anchor * feedbackTrim;
+        double next = current + DifficultyEaseAlpha * (target - current);
+        return Math.Max(next, MinDifficulty);
     }
 
     // A block with no stored difficulty (pre-D.1 save) is treated as InitialDifficulty — the value it was

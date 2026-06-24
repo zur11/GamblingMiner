@@ -2316,7 +2316,7 @@ On every settled bet: **profit/loss threshold reset (insist)** → else **bankro
 ## Chapter 26 — Network Difficulty (continuous, persisted, validated)
 
 **Files**: `Scripts/BlockchainPort/Blockchain/Models.cs` (`Block.Difficulty`), `Scripts/BlockchainPort/Blockchain/BlockchainService.cs`, `Scripts/BlockchainPort/Simulation/NodeAgent.cs`, `Screens/BlockExplorer/BlockExplorer.cs`
-**Status**: **D.1 implemented** (foundation). The dynamic LWMA retarget (D.2) builds on this and is documented as it lands.
+**Status**: **D.1–D.4 implemented & user-tested** — continuous difficulty (D.1), hybrid feed-forward + LWMA retarget with easing (D.2), Block Explorer live readout (D.3), calibrated (D.4).
 **Plan**: `AIHelperFiles/btc-pools-hardware-plan.md` → "Network Difficulty Regulator".
 
 ### The Short Version (for everyone)
@@ -2348,9 +2348,42 @@ The old rule's success probability was `(1/16²) × (7/16) = 7/4096`, i.e. **`40
 - Every block stores the difficulty it was mined against in **`Block.Difficulty`** (serialized with the block in the monthly JSON chunks — no schema work needed).
 - Mining (`NodeAgent.MinePendingTransactions` and the 1-bet-per-attempt `TryMineSingleNonceAttempt`) asks `Blockchain.GetNextBlockDifficulty()`, mines against it, and stamps it on the block via `CommitBlock`.
 - **`ChainIsValid` checks each block's hash against its own stored `Difficulty`.** This is the key reason difficulty is *persisted* rather than recomputed: validating (and knowing the current difficulty on load) is **O(1)** — read the tip — instead of replaying every retarget from genesis (which would grow with chain height). `EffectiveDifficulty` treats a missing/zero value (a pre-D.1 save) as `InitialDifficulty`, so old chains still validate.
-- **`GetNextBlockDifficulty()` is the single retarget hook.** In D.1 it returns the tip's difficulty (constant). In D.2 its body becomes the **LWMA block-time retarget** (`nextDifficulty = clamp(currentDifficulty × TargetBlockSeconds / lwmaSolvetime, ×0.5, ×2.0)` over the last `W = 20` blocks) — and because both mining paths already route through it, the bootstrap and the weighted lottery inherit the regulator automatically.
+- **`GetNextBlockDifficulty(networkPower)` is the single retarget hook**, called by both mining paths — so the bootstrap and the weighted lottery inherit the regulator automatically. Its body is the hybrid regulator (§26.6).
 
-### 26.5 — Seeing it / verifying it
+### 26.5 — The regulator: how difficulty actually moves (D.2)
 
-- **Block Explorer** shows the network difficulty on the chain-info line, in the **Latest Block** panel, and in the per-block **Block Lookup** (each block carries its own value). In D.1 every block reads ≈ `585.14`; once D.2 lands, this number will visibly rise/fall with block pace.
-- **`ChainIsValid` has no UI** — it runs automatically on load: `ApplyStateFromSnapshot` → `TryReplaceChain`, which **only accepts the chain if `ChainIsValid` passes**. Practical check: mine some blocks, restart the app; if the chain **survives intact** (full length, every block with its difficulty), validation passed. If a block's hash didn't meet its stored difficulty, the chain would be rejected and reset to genesis-only.
+The whole point is to keep the **average time between blocks near a target** (`TargetBlockSeconds = 58,500` in-game sec ≈ 16h15m) as mining power changes. `GetNextBlockDifficulty` combines three pieces:
+
+```
+target = anchor × feedbackTrim
+next   = current + DifficultyEaseAlpha × (target − current)
+```
+
+1. **Feed-forward anchor** — the *instant, exact* part. In-game time runs at clock-speed × real time and a block needs ≈`Difficulty` attempts, so the difficulty that holds block time at target is `(TargetBlockSeconds / clockSpeed) × power = InitialDifficulty × power`, where **power** = the total active mining rate (Σ of all active miners' bets/sec). When a miner joins/leaves or hardware changes, the anchor reflects it immediately — no waiting for feedback. When power is unknown (`0`: the historical bootstrap or idle), the anchor holds at the current difficulty (feedback-only).
+2. **Feedback trim (LWMA)** — the "real Bitcoin" part: `TargetBlockSeconds / lwmaSolvetime`, where `lwmaSolvetime` is a Linear-Weighted Moving Average of the last `W = 20` block solvetimes (recent blocks weighted more). It corrects calibration drift and PoW luck. **Clamped to `[0.5×, 2×]`** per block so noise can't swing it wildly.
+3. **Easing** (`DifficultyEaseAlpha = 0.7`) — instead of snapping to `target`, close 70% of the gap each block, so a change ramps in over ~3 blocks rather than instantly (gives a brief, fair transition window).
+
+**Why hybrid (and not pure block-time like Bitcoin)?** Bitcoin uses *only* block time because it has millions of miners → the signal is smooth. Our network has **1–5 miners**, so per-block solvetime is noisy and pure feedback converges slowly. We *know* the exact total power, so the feed-forward anchors the level instantly and the LWMA just trims — best of both.
+
+**Why total power, not average or participant count:** difficulty must track the **sum** of all miners' rates (`avg × count`). The average alone would ignore how many are mining; the sum captures both per-miner power and the number of participants.
+
+**Plumbing of `power`:** `SimulationService` sums `GetActiveMiningRates()` each frame and calls `NetworkRoot.SetActiveMiningPower(total)` (0 when idle); `NetworkRoot` passes it into `NodeAgent` → `GetNextBlockDifficulty(power)`. Each mined block stores the power used in `Block.MiningPower` (diagnostic).
+
+**Two important refinements:**
+- **The bootstrap is exempt.** The historical pre-mine (genesis → 21 Mar) uses *scripted* block timestamps, so block-time feedback there is meaningless — running it would drift the starting difficulty (it once fell to ~100). So while `_bulkMining` is set, every bootstrap block is pinned to `InitialDifficulty` (`MineForNode` passes a `forcedDifficulty`). The game therefore always starts at ≈585, and the regulator only governs **live** play.
+- **Difficulty is locked on the first nonce attempt of a block, per tip.** It's fixed the moment the first attempt at a new tip (block height) happens (`NodeAgent._candidateDifficulty`, keyed by `_difficultyTipHash`) and **kept for the whole block — even across mempool changes** (a bot broadcasting a tx rebuilds the candidate *template*, but must not move the difficulty). So a power/participant change *before* the first attempt counts for that block; *after* it, it applies only to the **next** block. The Block Explorer's "mining difficulty" shows this locked value (`GetPlayerNextBlockDifficulty`).
+- **Manual and autobet behave identically.** Both mine through `TryMineSingleNonceAttempt`, so both honour the per-tip lock. The power input is what differs: autobet's `SimulationService` pushes it each frame; **manual betting sets the same total (player + configured bots) via `SetManualMiningPower` before the bet** — otherwise manual would stay stuck at the player-only difficulty.
+
+### 26.6 — Seeing it in the Block Explorer (D.3)
+
+- The **main readout** (chain-info line) shows the **difficulty of the block being mined now** (`GetPlayerNextBlockDifficulty`, i.e. the next-block difficulty at the current power) + a trend arrow (vs the last block) + the **recent average block time** vs target. This is the live "where is difficulty heading" view.
+- Each **already-mined block** shows its *own* stored difficulty in the Latest-Block panel and the per-block Lookup (those don't change).
+- Everything auto-refreshes on the explorer's 1-second tick.
+
+### 26.7 — Calibration (D.4)
+
+Tuned by play-testing: `DifficultyEaseAlpha = 0.7` (ramps a change in over ~3 blocks — fast enough to track participants/hardware, smooth enough to avoid jerk), `LwmaWindow = 20`, clamp `[0.5×, 2×]`, `MinDifficulty = 1.0`. `TargetBlockSeconds = 58,500` is fixed for 100X temporal coherence. Fractal-scale calibration of the *absolute* difficulty jumps across later eras (CPU→GPU→ASIC) is a future tuning item.
+
+### 26.8 — Verifying `ChainIsValid`
+
+`ChainIsValid` has no UI — it runs automatically on load: `ApplyStateFromSnapshot` → `TryReplaceChain`, which **only accepts the chain if `ChainIsValid` passes** (each block's hash checked against its own stored `Difficulty`). Practical check: mine some blocks, restart the app; if the chain **survives intact** (full length, every block with its difficulty), validation passed. If a block's hash didn't meet its stored difficulty, the chain would be rejected and reset to genesis-only.

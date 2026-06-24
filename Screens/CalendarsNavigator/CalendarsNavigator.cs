@@ -58,7 +58,13 @@ public partial class CalendarsNavigator : Control
 		_timeSpeedSelector.ItemSelected += OnTimeSpeedSelected;
 		_applyDateTimeButton.Pressed += OnApplyDateTimePressed;
 		_setNowButton.Pressed += OnSetNowPressed;
-		_backToDiceGameButton.Pressed += OnBackToDiceGamePressed;
+		// The existing button actually goes to the Main Menu — relabel it and add a real "Go to DiceGame".
+		_backToDiceGameButton.Text = "Go to Main Menu";
+		_backToDiceGameButton.Pressed += OnGoToMainMenuPressed;
+		var goToDiceButton = new Button { Text = "Go to DiceGame" };
+		goToDiceButton.Pressed += OnGoToDiceGamePressed;
+		_backToDiceGameButton.GetParent().AddChild(goToDiceButton);
+		_backToDiceGameButton.GetParent().MoveChild(goToDiceButton, _backToDiceGameButton.GetIndex() + 1);
 		_openHistoryExplorerButton.Pressed += OnOpenHistoryExplorerPressed;
 		_yearInput.ValueChanged += _ => ValidateDayInput();
 		_monthInput.ValueChanged += _ => ValidateDayInput();
@@ -144,12 +150,17 @@ public partial class CalendarsNavigator : Control
 		UpdatePresenters();
 	}
 
-	private void OnBackToDiceGamePressed()
+	// This button goes to the Main Menu. The background sim is an autoload and survives scene changes, so
+	// we always navigate normally — the old overlay/PopOverlay path trapped the user when autobet was active
+	// but this scene wasn't actually an overlay (e.g. reached from the Main Menu).
+	private void OnGoToMainMenuPressed()
 	{
-		if (_calendarTimeService?.IsAutobetActive == true)
-			_sceneManager?.PopOverlay();
-		else
-			_sceneManager?.Go(SceneManager.SceneId.MainMenu);
+		_sceneManager?.Go(SceneManager.SceneId.MainMenu);
+	}
+
+	private void OnGoToDiceGamePressed()
+	{
+		_sceneManager?.Go(SceneManager.SceneId.DiceGame);
 	}
 
 	private void OnOpenHistoryExplorerPressed()
@@ -157,16 +168,7 @@ public partial class CalendarsNavigator : Control
 		DateTime selected = GetCurrentLocalDateTime();
 		_calendarTimeService?.SetExplorerSelectedLocalDateTime(selected);
 		_calendarTimeService?.SetLocalDateTime(selected);
-		if (_calendarTimeService?.IsAutobetActive == true && _sceneManager != null)
-		{
-			Visible = false;
-			Node overlay = _sceneManager.PushScene(SceneManager.SceneId.BetsHistoryExplorer);
-			overlay.TreeExited += () => { if (IsInsideTree()) Visible = true; };
-		}
-		else
-		{
-			_sceneManager?.Go(SceneManager.SceneId.BetsHistoryExplorer);
-		}
+		_sceneManager?.Go(SceneManager.SceneId.BetsHistoryExplorer);
 	}
 
 	private void SyncInputsFromClock()

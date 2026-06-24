@@ -817,6 +817,10 @@ public partial class DiceGame : Control, IBetEventSource
 		if (!IsBetAmountValid(_strategyPanel.BetAmount))
 			return;
 
+		// Manual mining must see the same total network power as autobet (player + configured bots), so the
+		// difficulty regulator behaves identically — otherwise manual stays at the player-only difficulty.
+		SetManualMiningPower();
+
 		EnsureSession(false); // 🔥 manual
 
 		SaveActiveNodeStrategySnapshot();
@@ -1194,6 +1198,20 @@ public partial class DiceGame : Control, IBetEventSource
 		_session.Start(_strategyPanel.NumberOfBets, config);
 	}
 
+	// Total active mining power for the difficulty regulator during MANUAL play = player rate + configured
+	// bots (those that burst alongside a manual bet). Mirrors SimulationService's autobet power so manual and
+	// auto produce the same difficulty. (Autobet itself sets the power from SimulationService.)
+	private void SetManualMiningPower()
+	{
+		if (_blockchainNetworkRoot == null || !IsPlayerActive())
+			return;
+
+		double power = GetAutoBetBaseAps();
+		foreach (SimulationService.BotConfig cfg in BuildBotConfigs())
+			power += cfg.BetsPerSecond;
+		_blockchainNetworkRoot.SetActiveMiningPower(power);
+	}
+
 	// Bots now live in SimulationService (Phase 2) so they keep mining across scene changes while the
 	// player autobet is active. DiceGame just supplies the per-node strategy snapshots and delegates.
 	private List<SimulationService.BotConfig> BuildBotConfigs()
@@ -1499,17 +1517,10 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnOpenCalendarNavigatorPressed()
 	{
+		// The background simulation is an autoload and survives scene changes, so we navigate normally
+		// (the old overlay path is obsolete and caused "trapped" back-buttons when autobet was active).
 		_calendarTimeService?.PersistCurrentTime();
-		if (_calendarTimeService?.IsAutobetActive == true && _sceneManager != null)
-		{
-			Visible = false;
-			Node overlay = _sceneManager.PushScene(SceneManager.SceneId.CalendarsNavigator);
-			overlay.TreeExited += () => { if (IsInsideTree()) Visible = true; };
-		}
-		else
-		{
-			_sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
-		}
+		_sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
 	}
 
 	private void OnOpenBlockExplorerPressed()
