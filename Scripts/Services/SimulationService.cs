@@ -7,6 +7,7 @@ using Scripts.Finance;
 using Scripts.Game;
 using Scripts.Sessions;
 using Scripts.Betting;
+using Scripts.Hardware;
 using GodotBlockchainPort.Simulation;
 using GodotBlockchainPort.Blockchain;
 #nullable enable
@@ -270,10 +271,11 @@ public partial class SimulationService : Node
 
 		PersistFinancialState(false);
 
-		// One nonce attempt per bet (1 bet = 1 attempt), real PoW on the shared chain.
+		// One nonce attempt per bet (1 bet = 1 attempt), routed by the active node's hardware allocation
+		// (individual pool → own chain; casino pool → casino chain). Real PoW on the shared chain.
 		long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
-		bool mined = _networkRoot.TryMineSingleNonceAttempt(_config.ActiveNodeId, out Block? block, tsMs);
-		if (mined && block != null)
+		Block? block = RouteNonceAttempt(_config.ActiveNodeId, tsMs);
+		if (block != null)
 		{
 			CaptureCheckpoint();
 			if (_config.StopOnBlockMined && _session.IsRunning)
@@ -492,8 +494,8 @@ public partial class SimulationService : Node
 			PushBotPlayEntry(runner.NodeId, betEvent);
 
 			long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
-			bool mined = _networkRoot.TryMineSingleNonceAttempt(runner.NodeId, out Block? block, tsMs);
-			if (mined && block != null)
+			Block? block = RouteNonceAttempt(runner.NodeId, tsMs);
+			if (block != null)
 			{
 				CaptureCheckpoint();
 				StopPlayerOnExternalBlockMined();
@@ -511,6 +513,21 @@ public partial class SimulationService : Node
 			runner.Session.Stop(IBettingStrategy.StopReason.ManualStop);
 			SaveBotFinancialState(runner);
 		}
+	}
+
+	// Routes this bet's single nonce attempt by the node's hardware allocation (Phase 3, linear model):
+	// individual-pool slots mine the node's own chain; casino-pool slots mine the casino pool's chain.
+	// Returns the mined block (own-chain OR casino), or null if the attempt didn't solve a block.
+	private Block? RouteNonceAttempt(string nodeId, long tsMs)
+	{
+		if (HardwareAllocationRepository.NextNonceTarget(nodeId) == HardwareAllocationRepository.NoncePoolTarget.Casino)
+		{
+			_networkRoot.TryCasinoNonceAttempt(out Block? casinoBlock, tsMs);
+			return casinoBlock;
+		}
+
+		_networkRoot.TryMineSingleNonceAttempt(nodeId, out Block? ownBlock, tsMs);
+		return ownBlock;
 	}
 
 	// When a bot mines a block, stop the player's background autobet if it requested stop-on-block.

@@ -24,6 +24,30 @@ public static class HardwareAllocationRepository
 	private static HardwareAllocationSnapshot _snapshot = new();
 	private static bool _loaded;
 
+	// Which chain a single bet's nonce attempt is routed to.
+	public enum NoncePoolTarget { Individual, Casino }
+
+	// Per-node round-robin cursor over the node's credit slots. Transient (runtime distribution
+	// mechanism only) — not persisted, reset on app restart.
+	private static readonly Dictionary<string, int> _routingCursors = new();
+
+	// Routes ONE nonce attempt for this bet (1 bet = 1 nonce attempt, linear model). The node's first
+	// IndividualPoolCredits slots route to its own chain; the remaining CasinoPoolCredits slots to the
+	// casino pool. Over TotalCredits consecutive bets this yields exactly IndividualPoolCredits own +
+	// CasinoPoolCredits casino attempts — a true reallocation of mining power, never a multiplier.
+	public static NoncePoolTarget NextNonceTarget(string nodeId)
+	{
+		NodeHardwareState hw = GetNode(nodeId);
+		int total = hw.TotalCredits;
+		if (total <= 0 || hw.CasinoPoolCredits <= 0) return NoncePoolTarget.Individual;
+		if (hw.IndividualPoolCredits <= 0) return NoncePoolTarget.Casino;
+
+		_routingCursors.TryGetValue(nodeId, out int slot);
+		slot %= total;
+		_routingCursors[nodeId] = (slot + 1) % total;
+		return slot < hw.IndividualPoolCredits ? NoncePoolTarget.Individual : NoncePoolTarget.Casino;
+	}
+
 	public static void EnsureLoaded()
 	{
 		if (_loaded) return;

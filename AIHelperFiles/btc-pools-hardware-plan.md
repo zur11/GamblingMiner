@@ -1,6 +1,15 @@
 # BTC Mining Pools & Hardware Shop — Implementation Plan
 
-**Status**: Phase 1 ✅  Phase 2 ✅  Phase 3 ○  Phase 4 ○  Phase 5 ○  Phase 6 ○ — **roadmap Step 6 is now active and RE-SCOPED** (see "Step 6 Scope & Decisions" below). This plan builds on the **per-node candidate block model** (`candidate-block-model-plan.md`, roadmap Step 4) — per-credit nonce routing mines real candidates.
+**Status**: Phase 1 ✅  Phase 2 ✅  Phase 3 ✅  Phase 4 ○  Phase 5 ○  Phase 6 ○ — **roadmap Step 6 is now active and RE-SCOPED**
+
+> **Phase 3 implementation note (model decision):** the linear model was chosen over the plan's
+> literal per-credit loop. **1 bet = 1 nonce attempt** (canonical rule preserved); speed is locked to
+> total credits and each bet's single attempt is **round-robin routed** across the node's credit slots
+> (first `IndividualPoolCredits` → own chain, rest → casino). Over `TotalCredits` bets this yields
+> exactly `IndividualPoolCredits` own + `CasinoPoolCredits` casino attempts — a true reallocation of
+> power, not a multiplier (avoids the quadratic `TotalCredits²` attempts/sec of the literal loop).
+> Routing lives in `HardwareAllocationRepository.NextNonceTarget(nodeId)`; betting moved to
+> `SimulationService` (player + bots) with the manual path in `DiceGame.ProcessBlockchainAttemptForBet`. (see "Step 6 Scope & Decisions" below). This plan builds on the **per-node candidate block model** (`candidate-block-model-plan.md`, roadmap Step 4) — per-credit nonce routing mines real candidates.
 > ⚠️ **Two corrections to this plan since it was written:**
 > 1. **Gradual miner spawning is POSTPONED** (needs a per-bot strategy set first), so for now we keep **DEV access to all bettable nodes**; the "player + 4 bots at block 1" assumption is fine for the prototype.
 > 2. **The bot/player betting loop moved to `SimulationService`** during the background-simulation work — so Phase 3's nonce-routing/speed-lock now targets `SimulationService.ExecutePlayerBetOnce` / `ExecuteBotBet`, **not** `DiceGame.ExecuteBotBet` / `BotAutoBetRunner` (those no longer exist in DiceGame).
@@ -775,7 +784,9 @@ Player Coordinator
 | `Scripts/Services/WalletInitializationService.cs` | ✅ Modified (bootstrap call) | Phase 1 |
 | `Scripts/Hardware/CasinoPoolRepository.cs` | ✅ Created | Phase 2 |
 | `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | ✅ Modified (casino nonce, fee, distribution) | Phase 2 |
-| `Screens/DiceGame/DiceGame.cs` | ○ To modify (hardware lock, nonce routing) | Phase 3 |
+| `Screens/DiceGame/DiceGame.cs` | ✅ Modified (hardware lock, manual nonce routing, bot speed) | Phase 3 |
+| `Scripts/Services/SimulationService.cs` | ✅ Modified (player + bot nonce routing) | Phase 3 |
+| `Scripts/Hardware/HardwareAllocationRepository.cs` | ✅ Modified (NextNonceTarget round-robin router) | Phase 3 |
 | `Screens/BTCPoolsAndHardwareShop/BTCPoolsAndHardwareShop.tscn` | ○ To create | Phase 4 |
 | `Screens/BTCPoolsAndHardwareShop/BTCPoolsAndHardwareShop.cs` | ○ To create | Phase 4 |
 | `Scripts/Services/SceneManager.cs` | ○ To modify (new enum entry + path) | Phase 5 |

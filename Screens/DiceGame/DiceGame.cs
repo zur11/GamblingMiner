@@ -12,6 +12,7 @@ using Scripts.Betting;
 using Scripts.StateMachines;
 using Scripts.Controllers;
 using Scripts.History;
+using Scripts.Hardware;
 using UI.StrategyControlPanel;
 using UI.StatusBar;
 using GodotBlockchainPort.Simulation;
@@ -266,6 +267,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.ProfitStopModeDoubleClicked += OnProfitStopModeDoubleClicked;
 		_strategyPanel.AutoRechargeToggled += _ => UpdateBalanceUI();
 		InitializeApsSelector();
+		RefreshHardwareDrivenSpeed();
 		_apsSelector.ItemSelected += _ => OnBetsPerSecondChanged(0d);
 		_session.OnStopped += OnSessionStopped;
 
@@ -442,6 +444,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_activeNodeId = nextNodeId;
 		LoadActiveNodeFinancialState();
 		LoadActiveNodeStrategySnapshot();
+		RefreshHardwareDrivenSpeed(); // re-lock the betting speed to the newly selected node's hardware
 		_betHistoryContainer?.ClearEntries();
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
@@ -1252,7 +1255,8 @@ public partial class DiceGame : Control, IBetEventSource
 				AutoRechargeEnabled = strategyState.AutoRechargeEnabled,
 				WinningChance = strategyState.WinningChance,
 				BetHigh = strategyState.BetHigh,
-				BetsPerSecond = strategyState.BetsPerSecond
+				// Hardware-locked speed (Phase 3): the bot bets at its total hardware credits, not a free value.
+				BetsPerSecond = Math.Clamp(HardwareAllocationRepository.GetNode(nodeId).TotalCredits, 1, MaxAutoBetBaseAps)
 			});
 		}
 
@@ -1661,8 +1665,21 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		long gameUnixMs = new DateTimeOffset(_calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
-		bool mined = _blockchainNetworkRoot.TryMineSingleNonceAttempt(minerNodeId, out var minedBlock, gameUnixMs);
-		if (!mined || minedBlock is null)
+		// One nonce attempt per manual bet, routed by the node's hardware allocation (individual → own
+		// chain; casino pool → casino chain). Mirrors the autobet path in SimulationService.RouteNonceAttempt.
+		Block minedBlock;
+		if (HardwareAllocationRepository.NextNonceTarget(minerNodeId) == HardwareAllocationRepository.NoncePoolTarget.Casino)
+		{
+			_blockchainNetworkRoot.TryCasinoNonceAttempt(out var casinoBlock, gameUnixMs);
+			minedBlock = casinoBlock;
+		}
+		else
+		{
+			_blockchainNetworkRoot.TryMineSingleNonceAttempt(minerNodeId, out var ownBlock, gameUnixMs);
+			minedBlock = ownBlock;
+		}
+
+		if (minedBlock is null)
 		{
 			return;
 		}
@@ -1820,12 +1837,24 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private int GetAutoBetBaseAps()
 	{
-		if (_apsSelector == null || _apsSelector.Selected < 0)
+		// Hardware-locked speed (Phase 3): the active node's betting rate = its total hardware credits,
+		// NOT a free selection. The ApsSelector is kept in sync + disabled (see RefreshHardwareDrivenSpeed)
+		// and is display-only — the actual rate is read here straight from the hardware allocation.
+		HardwareAllocationRepository.EnsureLoaded();
+		int total = HardwareAllocationRepository.GetNode(_activeNodeId).TotalCredits;
+		return Math.Clamp(total, 1, MaxAutoBetBaseAps);
+	}
+
+	// Syncs the (disabled, display-only) ApsSelector to the active node's hardware-locked betting speed.
+	private void RefreshHardwareDrivenSpeed()
+	{
+		if (_apsSelector == null || _apsSelector.ItemCount <= 0)
 		{
-			return 1;
+			return;
 		}
 
-		return Math.Clamp(_apsSelector.Selected + 1, 1, MaxAutoBetBaseAps);
+		_apsSelector.Select(GetAutoBetBaseAps() - 1);
+		_apsSelector.Disabled = true;
 	}
 
 	// Funciones auxiliares
