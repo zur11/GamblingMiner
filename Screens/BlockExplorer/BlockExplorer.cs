@@ -71,6 +71,10 @@ public partial class BlockExplorer : Control
         mainVBox.AddChild(statusBar);
         mainVBox.MoveChild(statusBar, 0);
 
+        var devTimeScale = new UI.DevTimeScaleSelector.DevTimeScaleSelector();
+        mainVBox.AddChild(devTimeScale);
+        mainVBox.MoveChild(devTimeScale, 1);
+
         _notepadPopup = new NotepadPopup();
         AddChild(_notepadPopup);
         GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;

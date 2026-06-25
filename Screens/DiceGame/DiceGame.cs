@@ -270,6 +270,11 @@ public partial class DiceGame : Control, IBetEventSource
 		RefreshHardwareDrivenSpeed();
 		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
 		_apsSelector.ItemSelected += _ => OnBetsPerSecondChanged(0d);
+
+		// DEV/TEST time-acceleration selector (100X..1000X), placed next to the APS selector.
+		var devTimeScale = new UI.DevTimeScaleSelector.DevTimeScaleSelector();
+		_apsSelector.GetParent().AddChild(devTimeScale);
+		_apsSelector.GetParent().MoveChild(devTimeScale, _apsSelector.GetIndex() + 1);
 		_session.OnStopped += OnSessionStopped;
 
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>

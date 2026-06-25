@@ -12,6 +12,13 @@ public partial class CalendarTimeService : Node
 	public bool IsAutobetActive { get; set; } = false;
 	public double SpeedMultiplier { get; set; } = 1.0;
 
+	// DEV/TEST ONLY — orthogonal time-acceleration multiplier on top of SpeedMultiplier (1 = 100X base,
+	// up to 10 = 1000X). It scales BOTH the calendar clock (here) and the bet-execution rate
+	// (SimulationService._Process), keeping attempts-per-IN-GAME-second — and therefore the difficulty /
+	// power / solvetime dynamics — mathematically invariant. Only wall-clock time compresses. NOT persisted;
+	// resets to 1 on restart. Set via the DEV time-scale selector in DiceGame / BlockExplorer.
+	public int DevTimeScale { get; set; } = 1;
+
 	private DateTime _gamePresent = DateTime.Now;
 	public DateTime GamePresentLocalDateTime => _gamePresent;
 
@@ -46,7 +53,7 @@ public partial class CalendarTimeService : Node
 			return;
 		}
 
-		CurrentLocalDateTime = CurrentLocalDateTime.AddSeconds(delta * SpeedMultiplier);
+		CurrentLocalDateTime = CurrentLocalDateTime.AddSeconds(delta * SpeedMultiplier * Math.Max(1, DevTimeScale));
 	}
 
 	public void SetLocalDateTime(DateTime localDateTime)

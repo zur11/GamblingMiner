@@ -231,9 +231,16 @@ public partial class SimulationService : Node
 			}
 		}
 
+		// DEV/TEST time-acceleration: scale the execution delta by the calendar's DevTimeScale so bets fire
+		// DevTimeScale× faster in real time. The calendar clock is scaled by the same factor (in
+		// CalendarTimeService._Process), so attempts-per-IN-GAME-second — and thus the difficulty / power /
+		// solvetime dynamics under measurement — stay invariant; only wall-clock time compresses. The power
+		// fed to the difficulty regulator (HardwareRate / GetTotalActiveMiningPower) is deliberately NOT scaled.
+		double simDelta = Math.Max(0d, delta) * Math.Max(1, _calendar?.DevTimeScale ?? 1);
+
 		double betsPerSecond = HardwareRate(_config.ActiveNodeId);
 		double interval = 1.0d / betsPerSecond;
-		_accumulatorSeconds = Math.Min(_accumulatorSeconds + Math.Max(0d, delta), MaxBacklogSeconds);
+		_accumulatorSeconds = Math.Min(_accumulatorSeconds + simDelta, MaxBacklogSeconds);
 
 		int executed = 0;
 		while (_accumulatorSeconds >= interval && executed < MaxBetsPerFrame && _session.IsRunning)
@@ -244,7 +251,7 @@ public partial class SimulationService : Node
 		}
 
 		// Bots advance alongside the player autobet, in every scene (Phase 2).
-		TickBots(delta);
+		TickBots(simDelta);
 	}
 
 	private void ExecutePlayerBetOnce()
