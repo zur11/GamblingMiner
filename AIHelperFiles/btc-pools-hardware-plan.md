@@ -875,6 +875,16 @@ First live trace (`difficulty_trace.csv`, 17 blocks, indices 113–129, single s
 
 **Lead hypothesis**: `GetTotalActiveMiningPower()` undercounts credits routed to the casino pool (or the `casino` node contributes attempts not in the per-node `HardwareRate` sum), so the anchor is fed a power lower than what actually executes → feedback must climb ~40% to compensate. **Next**: (1) audit casino-pool power accounting in code; (2) a steady-state run (constant power, ≥30 blocks) to pin the calibration factor with a solid aggregate (17 blocks is thin at this variance). Caveat: aggregate realized is time-weighted, so a few long-tail blocks can bias it — hence the larger sample.
 
+### Dev tooling — time acceleration 100X→1000X (2026-06-25) ✅
+
+To run validation samples (e.g. the ≥30-block steady-state runs F5 needs) in ~1/10 the wall-clock time **without altering the dynamics under measurement**.
+
+- **Key correctness point**: bumping `SpeedMultiplier` alone is wrong — it speeds the clock but not bet execution, so in-game solvetime per block inflates ~10×, the regulator reads "blocks too slow", and `feedbackTrim` (clamped [0.5, 2]) can't compensate → difficulty collapses. The dynamics we measure would be destroyed.
+- **Correct design**: an orthogonal `CalendarTimeService.DevTimeScale` (int 1..10) scales **both** by the same factor `k`: the calendar clock (`delta × SpeedMultiplier × k`) **and** bet execution (`SimulationService._Process`: `simDelta = delta × k` for player + bots). The power fed to the regulator (`HardwareRate`/`GetTotalActiveMiningPower`) is **deliberately not scaled**. ⇒ `attempts/in-game-second = (rate·k)/(100·k) = rate/100` is invariant → difficulty, power, in-game solvetimes and ratios are identical; only wall-clock compresses (`real_time/block = TargetBlockSeconds/(100·k)`).
+- **UI**: `UI/DevTimeScaleSelector/DevTimeScaleSelector.cs` (programmatic, like StatusBar) — selector "100X".."1000X" in DiceGame (next to the APS selector) and BlockExplorer (under the StatusBar). Live (next frame). **Not persisted** — resets to 100X on restart.
+- **Caveat**: `MaxBetsPerFrame = 10`/node/frame would throttle only at extreme scale × very high single-node hardware (~99 credits at 1000X); irrelevant for the measurement regime (power ~10–15 split across nodes).
+- **Files**: `CalendarTimeService.cs`, `SimulationService.cs`, `UI/DevTimeScaleSelector/DevTimeScaleSelector.cs`, `DiceGame.cs`, `BlockExplorer.cs`.
+
 ### Phase F1 — EMA on the power signal *(secondary; smooths the anchor on a step)*
 
 - **What**: smooth power before it feeds the anchor, so it tracks *realized* throughput, not the instantaneous configured step; also damps the noisy 18.9/12.3 swings.
