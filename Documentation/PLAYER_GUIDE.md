@@ -71,8 +71,10 @@ When a block is mined:
 
 - The winning miner receives the block reward.
 - The latest block data is updated.
-- A checkpoint can preserve financial state.
+- A checkpoint saves your full state (time, balances, and the blockchain).
 - The block can be inspected in the Blockchain Explorer.
+
+**Your progress is saved only when a block is mined.** As you play, time, balances, and pending transactions advance freely — but they become permanent only at a mined block. If you close the game *without* mining a block, on reopen everything rewinds to the last mined block: the clock, all balances, and any transactions not yet included in a block. Mining a block is what locks in your progress.
 
 Basic Mode uses a scaled halving interval of `2,100 blocks`, not Bitcoin's real `210,000` blocks. The initial block reward is 50 BTC and the total supply converges to 210,000 BTC by approximately in-game year 2141.
 

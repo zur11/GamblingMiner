@@ -84,7 +84,7 @@ Current implemented behavior includes:
 - Blockchain Explorer.
 - Block checkpoints.
 
-**Persistence model — a block is the only commit.** Within a play session, the live clock and all balances advance and survive scene changes (held by the autoloads and the in-memory simulation). Disk persistence of financial state happens **only when a block is mined**; navigating between scenes does not commit. So closing the app *without* mining a block and reopening it reverts the clock to the last mined block and every participant's balance/bankroll to its last-block (initial) value — mining a block is what makes progress durable. See `Documentation/ProjectDesignManual.md` §24.8.
+**Persistence model — a block is the only commit.** Within a play session, the live clock, all balances, and the mempool advance and survive scene changes (held by the autoloads and the in-memory simulation). Disk persistence happens **only when a block is mined** — navigating between scenes, sending a BTC transaction, or any other between-block action does **not** commit. So closing the app *without* mining a block and reopening it reverts the entire world to the last mined block: the clock, every participant's balance/bankroll (back to its last-block / initial value), **and** any pending transactions not yet in a block (discarded). Mining a block is what makes progress durable. See `Documentation/ProjectDesignManual.md` §24.8.
 
 Basic Mode halving:
 
