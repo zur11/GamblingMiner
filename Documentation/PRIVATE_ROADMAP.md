@@ -320,3 +320,33 @@ Done when a participant's rank is tracked and visibly affects at least the refer
 - [x] Update README so future features are not presented as current.
 - [x] Update Player Guide so it describes the actual playable state.
 - [ ] Run longer Basic Mode manual/autobet tests after transaction circulation exists.
+
+## 8. Tech-Debt & Cleanup Tasks (annotated 2026-06-24 — not yet implemented)
+
+Three concrete tasks identified while fixing the clock/persistence bugs (see `Documentation/ProjectDesignManual.md` §24.8). **Annotations only — no implementation yet.**
+
+### T1 — Stop transactions/consensus from committing financial state to disk
+
+Closes the "known edge" left open by the **block = the only commit to disk** model. Today a mid-session action flushes in-memory SC balances to disk, so an app restart would *not* fully revert to the last block.
+
+- **Root cause**: `NetworkRoot.PersistStateToDisk()` serializes the *whole* snapshot — chain, pending tx, wallets **and** the live `NodeFinancialStates` — and is called outside block-mining by `CreateAndBroadcastTransaction` (`NetworkRoot.cs` ~191), `CreateAndBroadcastTransactionToAddress` (~803), and `RunConsensus` (~449).
+- **Fix direction**: decouple financial-state persistence from chain/tx persistence. A BTC transaction or consensus round should persist only chain + pending transactions + wallets — never the SC `NodeFinancialStates`. Financial state should reach disk **only** at the block-commit paths (`SimulationService.CaptureCheckpoint`, `DiceGame.CaptureBlockCheckpoint`, `HandleMinedBlock`). Options: split the snapshot write into two methods, or snapshot the committed financial state separately at block time.
+- **Done when**: sending BTC / running consensus between blocks does not change what an app restart reverts to (still the last mined block for every participant).
+
+### T2 — Remove dead Block-Mining / maintenance UI from BlockExplorer
+
+These controls predate the background simulation + real-time auto-refresh and now have no purpose.
+
+- **Mine button** (`%MineButton` → `OnMinePressed` → `MineAndBroadcastBlock`): manual block minting; mining is now bet-driven (player) + background-sim (bots). Leftover.
+- **Consensus button** (`%ConsensusButton` → `OnConsensusPressed` → `RunConsensus`): purpose never clear; with a single shared static chain it has no visible effect (and it also triggers the unwanted persist in T1).
+- **Refresh button** (`%RefreshButton` → `OnRefreshPressed`): redundant — `BlockExplorer._Process` already auto-refreshes every 1 s (`AutoRefreshInterval`).
+- **Scope caution**: `%MinerNodeOption` is reused by the tx/address/block **lookup** features — keep the selector; remove only the mine action. Clean up the matching `.tscn` nodes + handler methods.
+- **Done when**: BlockExplorer shows only live, useful read-only controls; no orphaned `%MineButton`/`%ConsensusButton`/`%RefreshButton` nodes or handlers remain.
+
+### T3 — DiceGame docked mining display shows stale difficulty
+
+The mining readout embedded in DiceGame does not track the live (retargeted) difficulty the way BlockExplorer does.
+
+- **Root cause**: DiceGame's `BuildMiningStatusLine` uses `Blockchain.GetExpectedAttemptsForCurrentDifficulty()`, which returns `EffectiveDifficulty(Chain[^1])` — the **last already-mined block's** difficulty, ignoring the live `_activeMiningPower` feed-forward. BlockExplorer instead uses `NetworkRoot.GetPlayerNextBlockDifficulty()` (the locked candidate difficulty, else the prospective next-block difficulty at current power), so only it reflects the retarget.
+- **Fix direction**: have the DiceGame readout draw from the same next-block/candidate-difficulty source as BlockExplorer (e.g. expose/consume `GetPlayerNextBlockDifficulty()`), so the docked "expected attempts / difficulty" line matches the explorer.
+- **Done when**: the DiceGame mining display and BlockExplorer agree on the in-progress block's difficulty and both update as power/difficulty change.

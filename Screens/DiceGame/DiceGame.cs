@@ -173,7 +173,14 @@ public partial class DiceGame : Control, IBetEventSource
 			TransactionSource.Bet,
 			() => DateTime.UtcNow
 		);
-		_calendarTimeService?.EnsureGameEpochInitialized();
+		// Only (re)initialize the epoch from persisted state when no background autobet is live. While the
+		// SimulationService advances the clock across scenes, the running in-memory time is authoritative;
+		// reloading calendar_state.json here would rewind it to the last persisted instant — the regression
+		// that grew the longer the player stayed out of DiceGame (mirrors the checkpoint-restore guard below).
+		if (_simulationService?.IsRunning != true)
+		{
+			_calendarTimeService?.EnsureGameEpochInitialized();
+		}
 		if (_calendarTimeService != null)
 		{
 			_calendarTimeService.SpeedMultiplier = GameSecondsPerRealSecond;
@@ -428,7 +435,10 @@ public partial class DiceGame : Control, IBetEventSource
 		StopAllBotRunners();
 
 		SaveActiveNodeStrategySnapshot();
-		SaveActiveNodeFinancialState(true);
+		// Block = the only commit to disk: between-block financial advances stay in-memory (the static
+		// NetworkRoot survives scene/node changes) and are NOT persisted, so an app restart reverts every
+		// participant to the last mined block. Disk persistence happens only at block-mining (CaptureBlockCheckpoint).
+		SaveActiveNodeFinancialState(false);
 		_activeNodeId = nextNodeId;
 		LoadActiveNodeFinancialState();
 		LoadActiveNodeStrategySnapshot();
@@ -1510,7 +1520,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnOpenBankrollProgrammerPressed()
 	{
-		SaveActiveNodeFinancialState(true);
+		// In-memory only (block = the only disk commit) — see the node-switch handler above.
+		SaveActiveNodeFinancialState(false);
 		_calendarTimeService?.PersistCurrentTime();
 		_sceneManager?.Go(SceneManager.SceneId.BankrollProgrammer);
 	}
@@ -1525,14 +1536,16 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnOpenBlockExplorerPressed()
 	{
-		SaveActiveNodeFinancialState(true);
+		// In-memory only (block = the only disk commit) — see the node-switch handler above.
+		SaveActiveNodeFinancialState(false);
 		_calendarTimeService?.PersistCurrentTime();
 		_sceneManager?.Go(SceneManager.SceneId.BlockExplorer);
 	}
 
 	private void OnGoToMainMenuPressed()
 	{
-		SaveActiveNodeFinancialState(true);
+		// In-memory only (block = the only disk commit) — see the node-switch handler above.
+		SaveActiveNodeFinancialState(false);
 		_calendarTimeService?.PersistCurrentTime();
 		_sceneManager?.Go(SceneManager.SceneId.MainMenu);
 	}
@@ -1870,16 +1883,32 @@ public partial class DiceGame : Control, IBetEventSource
 		return ok;
 	}
 
+	// True once the one-shot checkpoint restore opportunity has been spent for this app process. Static so it
+	// survives DiceGame being freed and rebuilt on each scene change, resetting only on a real app restart.
+	// The checkpoint clock/history restore is only for resuming a fresh app start; re-entering DiceGame within
+	// a session must never re-run it or it rewinds the clock to the last mined block's time (the reset on
+	// re-entry). The flag is marked spent on the FIRST DiceGame load regardless of whether a checkpoint
+	// existed yet — otherwise a brand-new game (no checkpoint on first load, one captured moments later)
+	// would rewind on its second entry.
+	private static bool _checkpointRestoreSpentThisSession;
+
 	private void RestoreLegacyCheckpointIfNeeded()
 	{
+		// Only the very first DiceGame load of the app process may restore. Mark the opportunity spent up
+		// front so any later re-entry (autobet running or stopped) skips it.
+		if (_checkpointRestoreSpentThisSession)
+		{
+			return;
+		}
+		_checkpointRestoreSpentThisSession = true;
+
 		if (_blockCheckpointService == null || !_blockCheckpointService.HasCheckpoint())
 		{
 			return;
 		}
 
-		// If a background autobet is live, the running clock/history is authoritative — restoring the last
-		// block checkpoint here would rewind the clock to that block's time (the bug seen on re-entry).
-		// The checkpoint restore is only for resuming a fresh app start, not for re-entering DiceGame mid-run.
+		// Defensive: if a background autobet is somehow already live at first load, its running clock is
+		// authoritative — don't rewind it to the last block's checkpoint time.
 		if (_simulationService?.IsRunning == true)
 		{
 			return;

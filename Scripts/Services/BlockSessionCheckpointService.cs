@@ -31,12 +31,27 @@ public partial class BlockSessionCheckpointService : Node
 
 	// Called once on startup after all other autoloads have loaded their own files.
 	// Ensures every scene (including MainMenu) sees checkpoint values, not live transaction values.
+	// Block = the only commit point: an app restart reverts the clock and balances to the last mined
+	// block, discarding any between-block advance. The clock revert lives here (not in DiceGame) so it
+	// applies at startup regardless of which scene the app opens into.
 	private void ApplyCheckpointToServices()
 	{
 		GetNodeOrNull<BankrollStateService>("/root/BankrollStateService")
 			?.SetBalance(CurrentSnapshot.BankrollBalance);
 		GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService")
 			?.SetBalance(CurrentSnapshot.PrincipalBalance);
+
+		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
+		{
+			CalendarTimeService calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+			if (calendar != null)
+			{
+				DateTime checkpointLocal = new DateTime(CurrentSnapshot.CalendarLocalTicks.Value, DateTimeKind.Local);
+				calendar.SetLocalDateTime(checkpointLocal);
+				calendar.SetExplorerSelectedLocalDateTime(checkpointLocal);
+				calendar.PersistCurrentTime(); // also resets the present frontier (_gamePresent) to the last block
+			}
+		}
 	}
 
 	public void CaptureCheckpoint(

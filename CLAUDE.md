@@ -142,6 +142,7 @@ Saves the full financial state at each block mining event.
 - Stores calendar local time + history checkpoint UTC time independently
 - Enables rollback to pre-mined-block state
 - Persists to `user://block_session_checkpoint.json`
+- **On startup**, `ApplyCheckpointToServices()` restores **both** balances **and** the game clock (+ the `_gamePresent` frontier) to the last block — the only place the clock reverts on app restart, so it applies before any scene loads. A block is the only commit to disk (see Important Pattern 2)
 
 ### `SimulationService`
 **Location**: `Scripts/Services/SimulationService.cs`
@@ -376,9 +377,11 @@ event Action<UserBettingStats> StatsChanged;
 private void EmitStatsChangedIfNeeded()  // 250 ms throttle
 ```
 
-### 2. Checkpoint / Rollback
+### 2. Checkpoint / Rollback — a block is the only commit to disk
 
 `BlockSessionCheckpointService` captures the full financial state at each block mining event. This is the only rollback mechanism. Do not add ad-hoc save points elsewhere.
+
+**Within a session**, the live clock and balances advance and survive scene changes — the autoloads and the **static** `NetworkRoot` hold them in memory. **Disk persistence of financial state happens only at block-mining**: between-block navigation / node-switch saves use `SaveActiveNodeFinancialState(false)` (in-memory only); the sole `persist:true` financial writes are the block-commit paths (`SimulationService.CaptureCheckpoint`, `DiceGame.CaptureBlockCheckpoint`, `NetworkRoot.HandleMinedBlock → PersistStateToDisk`). Consequently an **app restart reverts every participant to the last mined block** (clock + balances), performed at startup by `BlockSessionCheckpointService.ApplyCheckpointToServices()`. Within-session re-entry must never rewind the clock: `DiceGame` skips `EnsureGameEpochInitialized()` while `SimulationService.IsRunning`, and the checkpoint clock/history restore is a once-per-process operation guarded by the static `_checkpointRestoreSpentThisSession`. Full rationale and the three bugs this resolved: `Documentation/ProjectDesignManual.md` §24.8.
 
 ### 3. Fractional Profit Accumulation
 

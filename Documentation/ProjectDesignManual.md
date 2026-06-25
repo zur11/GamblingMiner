@@ -2206,6 +2206,25 @@ The Block Explorer got a 1-second `_Process` auto-refresh so the background sim 
 - **Window unfocused/minimized** → keeps running.
 - **Clock ownership**: only `SimulationService` drives `CalendarTimeService.IsRunning` / `SpeedMultiplier` / `IsAutobetActive` while autobet is active, so there is never a second owner of time.
 
+### 24.8 — Time/balance persistence: the "block = the only commit" model (re-entry and restart)
+
+Three related clock/balance bugs were fixed together; their resolution defines exactly how time and money persist.
+
+**The model in one line:** *within* a session the live in-memory state (clock + balances, held by the autoloads and the **static** `NetworkRoot`) is authoritative and survives scene changes; **a mined block is the only thing that commits state to disk**, so an app **restart** reverts every participant to the last mined block. Mining a block is the commit that makes progress durable.
+
+**Bug 1 — clock rewound on re-entry while autobet was *running*.** `DiceGame._Ready()` calls `CalendarTimeService.EnsureGameEpochInitialized()`, which reloads the clock from `calendar_state.json`. The background sim advances time across scenes *without* persisting it every tick, so that reload snapped the clock back to the last-persisted instant — and the lost interval grew the longer the player stayed away. **Fix:** skip the reload when `SimulationService.IsRunning` (the running in-memory clock is authoritative). `Screens/DiceGame/DiceGame.cs`, in `_Ready()` around the `EnsureGameEpochInitialized()` call.
+
+**Bug 2 — clock rewound on re-entry while autobet was *stopped*.** `RestoreLegacyCheckpointIfNeeded()` runs on every `_Ready()` and (when no sim is running) restores the clock + history to the last block's checkpoint — behaviour intended **only** for resuming a fresh app start. It re-ran on every DiceGame entry, snapping the clock back to the last block. **Fix:** a process-`static` guard (`_checkpointRestoreSpentThisSession`) marks the one-shot restore as spent on the **first** DiceGame load — *before* the `HasCheckpoint()` early-return, so a brand-new game (no checkpoint on first load, one captured moments later by `CaptureBlockCheckpointIfMissing`) does not rewind on its second entry. The flag resets only on a real app restart (new process).
+
+**Bug 3 — restart *persisted* between-block advances instead of reverting.** Two things defeated the checkpoint on restart: (a) `NetworkRoot` wrote every participant's `NodeFinancialState` to `blockchain/state.json` on **every scene exit** (`SaveActiveNodeFinancialState(true)`), and `LoadActiveNodeFinancialState()` then re-applied those *advanced* values over the checkpoint that the autoloads had just restored; (b) the clock revert lived only in DiceGame, so whether it ran depended on opening DiceGame first. **Fix (chosen approach: "block = the only commit to disk"):**
+
+- The between-block **navigation / node-switch** saves now use `SaveActiveNodeFinancialState(false)`. The static `NetworkRoot` keeps the advance in memory (so scene changes preserve it), but **nothing reaches disk**. Financial state is written to disk **only at block-mining**: player via `SimulationService.CaptureCheckpoint → PersistFinancialState(true)` (autobet) and `DiceGame.CaptureBlockCheckpoint` (manual); bots via `HandleMinedBlock → PersistStateToDisk`. The only remaining `persist:true` financial writes are those two commit paths.
+- The clock revert moved **up to the autoload** `BlockSessionCheckpointService.ApplyCheckpointToServices()` (which already reset balances on startup). It now also restores the clock **and the present frontier** (`_gamePresent`, via `PersistCurrentTime()`) to the checkpoint's `CalendarLocalTicks`. Because this autoload loads *after* `CalendarTimeService`, the revert applies at startup regardless of which scene the app opens into (MainMenu shows the reverted time immediately).
+
+**Net effect.** Play and navigate freely — everything advances and survives scene changes. Close the app *without mining a block* → on reopen the clock returns to the last mined block (Satoshi's bootstrap tip on a fresh save) and every participant's balance/bankroll returns to its last-block (initial) value.
+
+**Known edge (not the reported case):** `NetworkRoot.PersistStateToDisk()` also fires on a BTC-transaction send / consensus run, which would flush current in-memory financial state mid-session. Pure betting never triggers these, so the restart-revert holds for the common case; strict block-only commit under manual BTC sends between blocks is a future refinement (decouple financial-state persistence from chain persistence).
+
 ## Chapter 25 — Bankroll Management: Progression Resets, Insist After Stop, and Auto-Recharge
 
 **Files**: `Scripts/Sessions/BaseBetSession.cs` (`ApplyStopConditions`, `HandleProfitOrLossStop`, `ResetProgressionToBase`), `Scripts/Betting/ProgressiveBettingStrategy.cs`, `Scripts/Services/SimulationService.cs` (`TryPlayerAutoRechargeAndRestart`, `TryRechargeAndRestartBot`)
