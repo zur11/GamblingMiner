@@ -443,13 +443,11 @@ public partial class NetworkRoot : Node
         return reward;
     }
 
-    public void RunConsensus()
-    {
-        EnsureInitialized();
-        SharedNetwork.RunConsensusRound();
-        // No disk write — consensus is a between-block action; a block is the only commit. (Currently a no-op in
-        // this single-shared-chain design; flagged for removal with the Block Explorer Consensus button in T2.)
-    }
+    // NOTE: chain "consensus" (longest-chain reconciliation) was removed in T2 — it was a no-op in this
+    // single-shared-chain design (every node already holds the same canonical chain via BroadcastBlock). It
+    // becomes meaningful only with divergent chains (forks / orphan blocks / P2P propagation), a feature
+    // deliberately deferred to **after Basic Mode** — see PRIVATE_ROADMAP "Post-Basic Mode — Divergent
+    // Chains / Fork Simulation" and AIHelperFiles/IMPLEMENTATION_ROADMAP.md.
 
     public IReadOnlyList<string> GetNodeIds()
     {

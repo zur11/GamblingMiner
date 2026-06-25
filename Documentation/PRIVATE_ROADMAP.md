@@ -276,6 +276,18 @@ Goal: a progression ladder for casino participants (player, and notably **Miner 
 
 Done when a participant's rank is tracked and visibly affects at least the referral commission rate.
 
+### Post-Basic Mode — Divergent Chains / Fork Simulation (revisit AFTER Basic Mode)
+
+**Deferred, not discarded.** The idea is wanted; the system simply has higher priorities until Basic Mode is finished. **Re-plan this only once Basic Mode is complete.**
+
+Today every node shares one canonical chain (a block is mined → `BroadcastBlock` → every node accepts it via `TryAcceptMinedBlock`), so there are never competing chains. That made the old `RunConsensus` / `RunConsensusRound` a no-op, and it was removed in T2.
+
+Goal (post-Basic-Mode): model a more realistic P2P network where chains can **diverge** — block propagation delay, two miners finding a block near-simultaneously, **forks**, **orphan/stale blocks**, and **reorgs** — then resolve them with a real **longest-chain (most-work) consensus** pass. This is a strong educational fit and layers naturally on top of the per-node candidate-block model (P4).
+
+When revisited, this re-introduces a consensus step (reinstate `RunConsensusRound`-style longest-chain adoption, keyed on accumulated work/difficulty rather than raw length) and the UI to observe forks/orphans in the Block Explorer.
+
+Start when: Basic Mode is complete and stable. Until then, leave mining committing to the single shared chain.
+
 ---
 
 ## 6. Design Questions Still Open
@@ -333,15 +345,16 @@ Closed the "known edge" left open by the **block = the only commit to disk** mod
 - **Fix shipped (stronger than first planned — *nothing* persists between blocks)**: the between-block `PersistStateToDisk()` calls in `CreateAndBroadcastTransaction`, `CreateAndBroadcastTransactionToAddress`, and `RunConsensus` were **removed**. Those actions now only mutate the in-memory chain/mempool; `PersistStateToDisk()` runs only at block-mining (`HandleMinedBlock`), baseline node creation, and startup. (The first attempt — an `includeFinancialState` flag that still persisted the pending tx — was discarded: it would have left a pending tx with its own `Timestamp` on disk while the clock/balances reverted, an inconsistent half-state.)
 - **Result**: a BTC tx between blocks lives in the mempool and becomes durable only when the next block is mined; close the app before that and the whole world — clock, balances **and** un-mined pending transactions — reverts to the last mined block. A block is the only commit.
 
-### T2 — Remove dead Block-Mining / maintenance UI from BlockExplorer
+### T2 — Remove dead Block-Mining / maintenance UI from BlockExplorer ✅ DONE (2026-06-24)
 
-These controls predate the background simulation + real-time auto-refresh and now have no purpose.
+These controls predated the background simulation + real-time auto-refresh and had no purpose.
 
-- **Mine button** (`%MineButton` → `OnMinePressed` → `MineAndBroadcastBlock`): manual block minting; mining is now bet-driven (player) + background-sim (bots). Leftover.
-- **Consensus button** (`%ConsensusButton` → `OnConsensusPressed` → `RunConsensus`): **decision — remove the button AND the code path** (`NetworkRoot.RunConsensus`, `NetworkSimulator.RunConsensusRound`). `RunConsensusRound` makes each node adopt the longest chain among its peers, but every node already shares one canonical chain (`BroadcastBlock` → `TryAcceptMinedBlock` keeps them identical), so there is never a longer chain to adopt — it is a no-op. Consensus would only earn its keep if the sim ever modeled **divergent chains** (real P2P propagation, forks, orphan/stale blocks) — not on the current roadmap, where mining commits to a single shared chain. If that fork-simulation feature is ever pursued, reintroduce consensus then. (Its between-block persist was already removed in T1.)
-- **Refresh button** (`%RefreshButton` → `OnRefreshPressed`): redundant — `BlockExplorer._Process` already auto-refreshes every 1 s (`AutoRefreshInterval`).
-- **Scope caution**: `%MinerNodeOption` is reused by the tx/address/block **lookup** features — keep the selector; remove only the mine action. Clean up the matching `.tscn` nodes + handler methods.
-- **Done when**: BlockExplorer shows only live, useful read-only controls; no orphaned `%MineButton`/`%ConsensusButton`/`%RefreshButton` nodes or handlers remain.
+- **Mine button** (`%MineButton` → `OnMinePressed`): removed — manual block minting is obsolete (mining is bet-driven for the player + background-sim for bots). `NetworkRoot.MineAndBroadcastBlock` is **kept** (still used by `RunWeightedBlockLottery`).
+- **Consensus button** (`%ConsensusButton` → `OnConsensusPressed`): removed, **and the code path with it** — `NetworkRoot.RunConsensus` and `NetworkSimulator.RunConsensusRound` deleted. They were a no-op: every node already shares one canonical chain (`BroadcastBlock` → `TryAcceptMinedBlock`), so longest-chain reconciliation had nothing to do. (Revisit with fork simulation — see the Post-Basic-Mode item below.)
+- **Refresh button** (`%RefreshButton` → `OnRefreshPressed`): removed — redundant with `BlockExplorer._Process`'s 1 s auto-refresh.
+- Also removed the now-unused `ActionFeedbackLabel` (only the three deleted handlers wrote to it) and retitled the lone-`%MinerNodeOption` section from "Mining / Consensus" to **"Inspect node"**.
+- **Kept**: `%MinerNodeOption` (the node-context selector reused by the tx/address/block lookups).
+- **Result**: BlockExplorer shows only live, read-only inspection controls; no orphaned mine/consensus/refresh nodes, handlers, or consensus code remain.
 
 ### T3 — DiceGame docked mining display shows stale difficulty
 

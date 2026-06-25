@@ -2,7 +2,7 @@
 
 **Purpose**: single source of truth for *what to build next and why*, across all the plan files in `AIHelperFiles/`. The individual plans hold the detail; this file holds the **order and the dependencies** so overlapping themes (block-candidate model, gradual network growth, UTXO realism) don't collide.
 
-**Last updated**: 2026-06-19.
+**Last updated**: 2026-06-24.
 
 ---
 
@@ -84,6 +84,11 @@ Two themes still hold:
 
 ### Step 9 — Economy & meta  *(PRIVATE_ROADMAP P6–P8)*
 - P6 casino finances → P7 BTC/SC trading → P8 achievements.
+
+### Step 10 — (POST-BASIC-MODE) Divergent Chains / Fork Simulation  *(deferred — revisit only after Basic Mode is complete)*
+- **Deferred, not discarded.** Wanted feature; lower priority until Basic Mode ships. Today all nodes share one canonical chain (`BroadcastBlock` → `TryAcceptMinedBlock`), so there are no forks and chain "consensus" was a no-op — the old `RunConsensus`/`RunConsensusRound` were removed in cleanup task T2.
+- Goal: a realistic P2P layer where chains can **diverge** — propagation delay, near-simultaneous blocks, **forks**, **orphan/stale blocks**, **reorgs** — resolved by a real **most-work longest-chain consensus** pass (reinstating a `RunConsensusRound`-style step, keyed on accumulated work, plus Block-Explorer fork/orphan visualization). Layers on top of the per-node candidate-block model (Step 4).
+- **Gate:** do not start until Basic Mode is complete and stable. Detail mirrored in `Documentation/PRIVATE_ROADMAP.md` → "Post-Basic Mode — Divergent Chains / Fork Simulation".
 
 ---
 

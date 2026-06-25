@@ -20,7 +20,6 @@ public partial class BlockExplorer : Control
     private RichTextLabel _latestBlockLabel = null!;
     private RichTextLabel _networkStatusLabel = null!;
     private RichTextLabel _addressDirectoryLabel = null!;
-    private Label _actionFeedbackLabel = null!;
 
     private LineEdit _txLookupInput = null!;
     private LineEdit _addressLookupInput = null!;
@@ -47,16 +46,12 @@ public partial class BlockExplorer : Control
         _latestBlockLabel = GetNode<RichTextLabel>("%LatestBlockLabel");
         _networkStatusLabel = GetNode<RichTextLabel>("%NetworkStatusLabel");
         _addressDirectoryLabel = GetNode<RichTextLabel>("%AddressDirectoryLabel");
-        _actionFeedbackLabel = GetNode<Label>("%ActionFeedbackLabel");
 
         _txLookupInput = GetNode<LineEdit>("%TxLookupInput");
         _addressLookupInput = GetNode<LineEdit>("%AddressLookupInput");
         _blockLookupInput = GetNode<LineEdit>("%BlockLookupInput");
         _lookupResultLabel = GetNode<RichTextLabel>("%LookupResultLabel");
 
-        GetNode<Button>("%MineButton").Pressed      += OnMinePressed;
-        GetNode<Button>("%ConsensusButton").Pressed += OnConsensusPressed;
-        GetNode<Button>("%RefreshButton").Pressed   += OnRefreshPressed;
         GetNode<Button>("%LookupTxButton").Pressed      += OnLookupTransactionPressed;
         GetNode<Button>("%LookupAddressButton").Pressed += OnLookupAddressPressed;
         GetNode<Button>("%LookupBlockButton").Pressed   += OnLookupBlockPressed;
@@ -176,29 +171,6 @@ public partial class BlockExplorer : Control
     private void PopulateAddressDirectory()
     {
         _addressDirectoryLabel.Text = "[b]Node -> Address[/b]\n" + string.Join("\n", _networkRoot.GetNodeAddressLines());
-    }
-
-    private void OnMinePressed()
-    {
-        string minerNodeId = _minerNodeOption.GetItemText(_minerNodeOption.Selected);
-        bool ok = _networkRoot.MineAndBroadcastBlock(minerNodeId);
-        _actionFeedbackLabel.Text = ok
-            ? $"Block mined by {minerNodeId}. Reward moved to next pending block."
-            : "Mining failed: invalid miner node.";
-        RefreshUi();
-    }
-
-    private void OnConsensusPressed()
-    {
-        _networkRoot.RunConsensus();
-        _actionFeedbackLabel.Text = "Consensus round executed.";
-        RefreshUi();
-    }
-
-    private void OnRefreshPressed()
-    {
-        _actionFeedbackLabel.Text = "UI refreshed.";
-        RefreshUi();
     }
 
     private void OnLookupTransactionPressed()

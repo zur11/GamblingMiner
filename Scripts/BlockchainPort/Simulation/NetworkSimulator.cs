@@ -57,32 +57,8 @@ public sealed class NetworkSimulator
         }
     }
 
-    public void RunConsensusRound()
-    {
-        foreach (NodeAgent node in _nodes.Values)
-        {
-            List<NodeAgent> candidates = _nodes.Values
-                .Where(other => other.NodeId != node.NodeId)
-                .ToList();
-
-            int maxChainLength = node.Blockchain.Chain.Count;
-            List<Block>? newLongestChain = null;
-            List<Transaction>? newPendingTransactions = null;
-
-            foreach (NodeAgent candidate in candidates)
-            {
-                if (candidate.Blockchain.Chain.Count > maxChainLength)
-                {
-                    maxChainLength = candidate.Blockchain.Chain.Count;
-                    newLongestChain = candidate.Blockchain.Chain.ToList();
-                    newPendingTransactions = candidate.Blockchain.PendingTransactions.ToList();
-                }
-            }
-
-            if (newLongestChain is not null && newPendingTransactions is not null)
-            {
-                node.Blockchain.TryReplaceChain(newLongestChain, newPendingTransactions);
-            }
-        }
-    }
+    // RunConsensusRound() (longest-chain reconciliation) was removed in T2: it was a no-op while every node
+    // shares one canonical chain (BroadcastBlock keeps them identical). Reintroduce it together with divergent
+    // chains (forks / orphan blocks / P2P propagation) — deferred to after Basic Mode (see PRIVATE_ROADMAP
+    // "Post-Basic Mode — Divergent Chains / Fork Simulation").
 }

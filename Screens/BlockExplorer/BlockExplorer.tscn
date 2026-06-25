@@ -41,11 +41,6 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Chain length: - | Pending tx: -"
 
-[node name="ActionFeedbackLabel" type="Label" parent="Margin/MainVBox"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Actions log"
-
 [node name="TopActions" type="HBoxContainer" parent="Margin/MainVBox"]
 layout_mode = 2
 
@@ -71,7 +66,7 @@ theme_override_constants/separation = 10
 
 [node name="MiningTitle" type="Label" parent="Margin/MainVBox/Panels/Left"]
 layout_mode = 2
-text = "Mining / Consensus"
+text = "Inspect node"
 
 [node name="MiningControls" type="HBoxContainer" parent="Margin/MainVBox/Panels/Left"]
 layout_mode = 2
@@ -81,21 +76,6 @@ theme_override_constants/separation = 6
 unique_name_in_owner = true
 custom_minimum_size = Vector2(120, 0)
 layout_mode = 2
-
-[node name="MineButton" type="Button" parent="Margin/MainVBox/Panels/Left/MiningControls"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Mine Block"
-
-[node name="ConsensusButton" type="Button" parent="Margin/MainVBox/Panels/Left/MiningControls"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Run Consensus"
-
-[node name="RefreshButton" type="Button" parent="Margin/MainVBox/Panels/Left/MiningControls"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Refresh"
 
 [node name="LookupTitle" type="Label" parent="Margin/MainVBox/Panels/Left"]
 layout_mode = 2
