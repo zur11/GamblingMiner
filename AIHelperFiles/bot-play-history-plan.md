@@ -1,6 +1,6 @@
 # Bot Play-History Scene — Implementation Plan
 
-**Status**: ◻ Not started. Part of roadmap **Step 6** (`IMPLEMENTATION_ROADMAP.md`), tracked separately from `btc-pools-hardware-plan.md`. **Sequenced after the Network Difficulty Regulator** (the regulator is foundational; this scene is independent and can follow it).
+**Status**: ✅ Implemented (H.1–H.4; builds clean). Part of roadmap **Step 6** (`IMPLEMENTATION_ROADMAP.md`), tracked separately from `btc-pools-hardware-plan.md`. **Sequenced after the Network Difficulty Regulator** (the regulator is foundational; this scene is independent and can follow it).
 
 **Goal**: let the player **study how the miner bots bet**, so they can learn strategies. Show the **last 260 plays of each miner bot currently playing alongside the player**.
 
@@ -53,10 +53,10 @@ BotPlayHistory (Control)
 
 ## Small steps
 
-- **H.1 — History buffer.** `BotPlayEntry` record + per-nodeId 260-ring buffer in `SimulationService`; push in `ExecuteBotBet`; getters `GetBotPlayHistory(nodeId)` / `GetActiveBotNodeIds()`. *Test (DEV): run bots, log a getter — entries accumulate, cap at 260, survive a bot recharge/restart.*
-- **H.2 — Scene.** `Screens/BotPlayHistory/BotPlayHistory.{tscn,cs}`: bot list + history table + StatusBar. *Test: shows each active bot's recent plays, newest first, live-updating.*
-- **H.3 — Notepad.** Add a Notepad button wired to `NotepadPopup`.
-- **H.4 — Navigation.** `SceneManager.SceneId.BotPlayHistory` + path; MainMenu button (round-trip, Back → MainMenu).
+- **H.1 — History buffer.** ✅ `BotPlayEntry` record + per-nodeId 260-ring buffer (`_botHistories`, keyed by nodeId so it survives recharge/restart) in `SimulationService`; pushed in `ExecuteBotBet`; getters `GetBotPlayHistory(nodeId)` (newest first) / `GetActiveBotNodeIds()` (running session or non-empty history).
+- **H.2 — Scene.** ✅ `Screens/BotPlayHistory/BotPlayHistory.{tscn,cs}`: live bot list (left) + history table (right, bbcode `[table=6]`: #, bet, roll, W/L, profit, bankroll, newest first) + StatusBar. Refreshes on a 1 s timer.
+- **H.3 — Notepad.** ✅ Notepad button in the top bar wired to `NotepadPopup`.
+- **H.4 — Navigation.** ✅ `SceneManager.SceneId.BotPlayHistory` + path; MainMenu "Bot Play History [DEV]" button (round-trip, Back → MainMenu).
 
 ---
 
@@ -64,8 +64,8 @@ BotPlayHistory (Control)
 
 | File | Status |
 |---|---|
-| `Scripts/Services/SimulationService.cs` | ○ modify (ring buffer + getters + push in `ExecuteBotBet`) |
-| `Screens/BotPlayHistory/BotPlayHistory.tscn` | ○ create |
-| `Screens/BotPlayHistory/BotPlayHistory.cs` | ○ create |
-| `Scripts/Services/SceneManager.cs` | ○ modify (enum + path) |
-| `Screens/MainMenu/MainMenu.tscn` / `.cs` | ○ modify (entry button) |
+| `Scripts/Services/SimulationService.cs` | ✅ modified (ring buffer + getters + push in `ExecuteBotBet`) |
+| `Screens/BotPlayHistory/BotPlayHistory.tscn` | ✅ created |
+| `Screens/BotPlayHistory/BotPlayHistory.cs` | ✅ created |
+| `Scripts/Services/SceneManager.cs` | ✅ modified (enum + path) |
+| `Screens/MainMenu/MainMenu.tscn` / `.cs` | ✅ modified (entry button) |

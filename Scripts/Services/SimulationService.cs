@@ -46,6 +46,16 @@ public partial class SimulationService : Node
 		public int BetsPerSecond;
 	}
 
+	// One settled-bet entry in a bot's rolling play history (for the Bot Play-History study screen).
+	// Mirrors the player's BetTransactionEvent fields that matter for studying a strategy.
+	public sealed record BotPlayEntry(
+		decimal BetAmount,
+		int Roll,
+		decimal Multiplier,
+		bool IsWin,
+		decimal Profit,
+		DateTime TimestampUtc);
+
 	private sealed class BotRunner
 	{
 		public string NodeId = "";
@@ -78,6 +88,12 @@ public partial class SimulationService : Node
 	// Bot runners (Phase 2): continuous background betting for casino bot nodes while the player autobet
 	// is active. Single owner of bot state lives here, not in DiceGame.
 	private readonly Dictionary<string, BotRunner> _botRunners = new();
+
+	// Per-bot rolling play history (Bot Play-History screen). Keyed by nodeId — NOT on the transient
+	// BotRunner — so it survives a recharge/restart (the history is the bot's, not the session's).
+	// In-memory only: cleared on app restart. Each buffer caps at BotHistoryCapacity (newest kept).
+	private const int BotHistoryCapacity = 260;
+	private readonly Dictionary<string, Queue<BotPlayEntry>> _botHistories = new();
 
 	public bool IsRunning { get; private set; }
 	public PlayerAutobetConfig? CurrentConfig => _config;
@@ -467,10 +483,13 @@ public partial class SimulationService : Node
 		try
 		{
 			DateTime tsUtc = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
-			runner.Session.ExecuteNext(
+			var (_, betEvent, _) = runner.Session.ExecuteNext(
 				Math.Clamp(runner.Config.WinningChance, 1, 95),
 				runner.Config.BetHigh,
 				tsUtc);
+
+			// Record the settled bet in the bot's rolling history (for the study screen).
+			PushBotPlayEntry(runner.NodeId, betEvent);
 
 			long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
 			bool mined = _networkRoot.TryMineSingleNonceAttempt(runner.NodeId, out Block? block, tsMs);
@@ -575,6 +594,54 @@ public partial class SimulationService : Node
 			runner.Wallet.Balance);
 		state.BankrollBalance = runner.Wallet.Balance;
 		_networkRoot.SetNodeFinancialState(runner.NodeId, state, false);
+	}
+
+	// ── Bot play history (study screen) ─────────────────────────────────────────
+
+	private void PushBotPlayEntry(string nodeId, BetTransactionEvent e)
+	{
+		if (!_botHistories.TryGetValue(nodeId, out Queue<BotPlayEntry>? buffer))
+		{
+			buffer = new Queue<BotPlayEntry>(BotHistoryCapacity);
+			_botHistories[nodeId] = buffer;
+		}
+
+		buffer.Enqueue(new BotPlayEntry(
+			e.BetAmount, e.Roll, e.Multiplier, e.IsWin, e.Profit, e.Timestamp));
+
+		while (buffer.Count > BotHistoryCapacity)
+		{
+			buffer.Dequeue();
+		}
+	}
+
+	// Last (up to 260) settled bets for a bot, newest first. Empty if the bot has no recorded plays.
+	public IReadOnlyList<BotPlayEntry> GetBotPlayHistory(string nodeId)
+	{
+		if (_botHistories.TryGetValue(nodeId, out Queue<BotPlayEntry>? buffer) && buffer.Count > 0)
+		{
+			var list = buffer.ToList();
+			list.Reverse(); // queue is oldest→newest; the screen wants newest first
+			return list;
+		}
+		return Array.Empty<BotPlayEntry>();
+	}
+
+	// Bots that currently have a running session OR any recorded play history, sorted for a stable list.
+	public IReadOnlyList<string> GetActiveBotNodeIds()
+	{
+		var ids = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var kvp in _botHistories)
+		{
+			if (kvp.Value.Count > 0) ids.Add(kvp.Key);
+		}
+		foreach (var kvp in _botRunners)
+		{
+			if (kvp.Value.Session.IsRunning) ids.Add(kvp.Key);
+		}
+		var result = ids.ToList();
+		result.Sort(StringComparer.Ordinal);
+		return result;
 	}
 
 	// Per-node mining rates for the active simulation (player + running bots), for the Block Explorer
