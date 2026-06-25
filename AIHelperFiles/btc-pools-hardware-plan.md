@@ -803,3 +803,106 @@ Player Coordinator
 | `Screens/MainMenu/MainMenu.tscn` | ✅ Modified (new button) | Phase 5 |
 | `Screens/MainMenu/MainMenu.cs` | ✅ Modified (new button handler) | Phase 5 |
 | `Scripts/Services/WalletInitializationService.cs` | ✅ Modified (CasinoPoolRepository.EnsureLoaded) | Phase 6 |
+
+---
+
+## Difficulty Regulator — Power-Step Contingency Plan (2026-06-25)
+
+**Status**: 📋 Planned (not started). Diagnostic-driven; supersedes nothing — extends the hybrid regulator (OQ-11/OQ-12) with transition handling.
+
+### Context — what triggered this
+
+A ~80-in-game-day test run (121 blocks; chain at `user://blockchain/state.json`) with **all bots + the casino pool active** and an **extra hardware credit bought for the player and assigned to the casino pool**. Goal was to watch the difficulty regulator across a power step and compare per-share payouts of that extra credit in the casino pool.
+
+### Empirical findings
+
+**Baseline (blocks 2–117, power ≈ 1, difficulty pinned at `InitialDifficulty` 585.14):** the regulator is excellent. Feedback-only mode (power 0/1) held difficulty flat and solvetimes hugged target — mean ratio **0.98×**, **sd 0.16**, range 0.70–1.28×, **0%** of blocks slower than 2×. Note the **low sd (0.16)**: this sim's per-block solvetime is *tightly regulated*, not a noisy exponential PoW process.
+
+**Transition (block 118): power stepped ~1 → 11** (bots + casino pool switched on). The feed-forward anchor correctly identified the new equilibrium (`InitialDifficulty × 11 ≈ 6437`) and easing ramped difficulty 585 → 4658 → 5357 → 5396 → 5611 over 4 blocks. But solvetime ratios came out **2.43×, 1.64×, 0.49×, 0.78×**.
+
+Because baseline sd is 0.16, the 2.43× block is a **~9σ event — structural, not variance.** Inverting `realizedPower = 100 · difficulty / solvetimeSec` (calibration verified by baseline ≈ 1.0) gives the realized throughput during the transition:
+
+| Block | Difficulty | Solvetime ratio | Realized power |
+|---|---|---|---|
+| 118 | 4658 | 2.43× | **~3.3** (stall) |
+| 120 | 5396 | 0.49× | **~18.9** (catch-up burst) |
+| 121 | 5611 | 0.78× | **~12.3** (settling) |
+
+So during block 118 the network only delivered attempts equivalent to power ~3.3, although **the power reported to the regulator was a clean step to 11** (`HardwareRate` is a constant config value, summed over running sessions — there is *no ramp in the regulator's input*).
+
+### Root cause — two stacked effects at a power step
+
+1. **Deterministic easing ramp (~3 blocks, by design).** `next = current + α·(target − current)` with `DifficultyEaseAlpha = 0.7` ramps difficulty up over a few blocks. During the ramp difficulty sits *below* equilibrium, so this makes early blocks *faster*, not slower — it is **not** the cause of the slow block 118.
+
+2. **Throughput transient (the real culprit for block 118).** `StartBots()` builds all `BotRunner`s in one synchronous loop (they all tick on the same frames), each with `AccumulatorSeconds = 0` (so no synchronized burst at t=0, but execution is concentrated). At the moment of enabling the fleet (buy hardware + assign to pool + pool/UI spin-up) a **frame hitch** produces a large `delta`; `Math.Min(accum + delta, MaxBacklogSeconds = 2.0)` **discards** attempts beyond 2 real-seconds' worth → permanent loss → throughput dips (~3.3). The retained 2 s backlog then flushes → overshoot (~18.9) → settles (~12.3). Bot cold-starts (base bet, fresh bankroll, early stop→recharge→restart cycles) cost extra ticks in that first interval.
+
+> The anchor is fed the *instantaneous configured* power (11) while the *realized* throughput during the first block is ~3.3 → difficulty is briefly priced for more power than is present → the slow block. Lowering `α` only softens effect (1); it does **not** address effect (2), which is what produced block 118.
+
+Code paths: power feed `SimulationService.GetTotalActiveMiningPower()` → `NetworkRoot.SetActiveMiningPower()` (stores static `_activeMiningPower`) → `BlockchainService.GetNextBlockDifficulty(_activeMiningPower)`. Execution caps in `SimulationService` (`MaxBetsPerFrame = 10`, `MaxBacklogSeconds = 2.0`, per-node accumulators in `_Process` / `TickBots`).
+
+### Goal
+
+After a **power step** (enable fleet / add hardware), the first 1–3 blocks should not be mis-priced, **without** distorting the long-run pace or the response to power *drops*. Recommended order by leverage: **F0 → F1 → F3 → F2 → (F4 fallback) → F5.**
+
+### Phase F0 — Instrumentation & baseline *(prerequisite, no logic change)*
+
+Stop inferring realized power; measure it.
+
+- **What**: on each mined block, record `index, configuredPower, realizedPower (= 100·dif/solvetimeSec), anchor, feedbackTrim, easedNext, solvetimeRatio` → `user://logs/difficulty_trace.csv` (or surface in BlockExplorer).
+- **Where**: the mining commit point in `NetworkRoot` / `BlockchainService` where solvetime and difficulty are both known.
+- **Acceptance**: reproduce the 1→11 step and capture the realized-power curve; confirm or refute the stall→burst→settle pattern before changing logic.
+- **Risk**: none (read/log only).
+
+### Phase F1 — EMA on the power signal *(highest leverage; fixes the anchor-leads-throughput mismatch)*
+
+- **What**: smooth power before it feeds the anchor, so it tracks *realized* throughput, not the instantaneous configured step; also damps the noisy 18.9/12.3 swings.
+- **Where**: `NetworkRoot.SetActiveMiningPower()` (single chokepoint):
+  `_activeMiningPower = _activeMiningPower <= 0 ? raw : _activeMiningPower + PowerEmaAlpha·(raw − _activeMiningPower);`
+  with `PowerEmaAlpha ≈ 0.2–0.35`; bypass-to-`raw` on the first non-zero sample so it doesn't crawl up from 0.
+- **Acceptance**: in the 1→11 step the anchor rises over 3–5 samples without leading throughput; the 2.43× block disappears.
+- **Risk**: low. Trade-off: slightly slower reaction to *legitimate* power changes (mitigated by F2's asymmetry).
+
+### Phase F2 — Asymmetric easing
+
+- **What**: split `DifficultyEaseAlpha` into `EaseAlphaUp` (gentle, ≈0.4–0.5: a new miner must not punish newcomers) and `EaseAlphaDown` (fast, ≈0.8: relieve a stuck-too-hard chain quickly).
+- **Where**: `BlockchainService.GetNextBlockDifficulty()` — `double alpha = target >= current ? EaseAlphaUp : EaseAlphaDown;`
+- **Acceptance**: increases ramp over ~3–4 blocks; decreases resolve in ~1–2 (validate by simulating a miner leaving).
+- **Risk**: low. Directly matches the design goal "don't delay the first nodes' mining."
+
+### Phase F3 — Tame the startup throughput transient
+
+Sub-options, least→most invasive; pick based on what F0 shows:
+
+- **F3a — Desynchronize cadence**: seed each runner's `AccumulatorSeconds` with a small jitter (`Random·interval`) in `BuildBotRunner` so they don't all tick on the same frames.
+- **F3b — Protect the backlog from a hitch**: raise `MaxBacklogSeconds` (e.g. 2→5) and/or clamp per-frame `delta`, so a single hitch doesn't discard attempts (fixes the permanent loss behind the ~3.3).
+- **F3c — Soften bot cold-start**: avoid several bots cycling stop/recharge in the first interval (e.g. brief grace before applying stops right after start).
+- **Acceptance**: realized power reaches configured within ≤1 block, no stall/overshoot (measured via F0).
+- **Risk**: medium (touches the shared player+bot executor). Apply changes one at a time, each measured.
+
+### Phase F4 — Palliative knob *(fallback / one-liner)*
+
+- **What**: lower the default `DifficultyEaseAlpha` 0.7 → 0.5–0.6.
+- **When**: only if F1–F3 are deferred and immediate relief is wanted. **Softens the easing ramp, not the throughput transient** (the real cause of block 118). Subsumed by `EaseAlphaUp` once F2 lands.
+- **Risk**: minimal. Trade-off: slower convergence + a longer window of too-fast (under-difficulty) blocks during the transition.
+
+### Phase F5 — Validation
+
+- **What**: re-run the 1→11 step with the F0 trace; compare before/after.
+- **Acceptance**:
+  - first 5 post-step blocks: ratio within ≈[0.7, 1.4] (vs. 2.43 today);
+  - steady state (≥20 blocks at power 11): mean ratio ≈ 1.0, sd comparable to baseline (~0.16);
+  - power drop: difficulty cedes in ≤2 blocks (verifies F2).
+- Also: let the chain run longer at steady power 11 to confirm the `dif = InitialDifficulty × power` calibration holds in the new regime.
+
+### Recommendation
+
+F0 first (no risk), then **F1 (EMA) + F3b (backlog clamp)** together — they attack both real causes (anchor lead + hitch-induced attempt loss). F2 as a quality improvement; F4 only as a fallback.
+
+### File Checklist (this section)
+
+| File | Change | Phase |
+|---|---|---|
+| `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | EMA in `SetActiveMiningPower` | F1 |
+| `Scripts/BlockchainPort/Blockchain/BlockchainService.cs` | trace fields (F0); `EaseAlphaUp`/`EaseAlphaDown` (F2); default `α` (F4) | F0/F2/F4 |
+| `Scripts/Services/SimulationService.cs` | accumulator jitter (F3a); `MaxBacklogSeconds`/`delta` clamp (F3b); cold-start grace (F3c) | F3 |
+| Block Explorer / log writer | difficulty trace surface | F0/F5 |
