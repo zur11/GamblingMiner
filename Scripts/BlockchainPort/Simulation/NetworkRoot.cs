@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using Godot;
 using GodotBlockchainPort.Blockchain;
+using Scripts.Hardware;
 #nullable enable
 
 namespace GodotBlockchainPort.Simulation;
@@ -35,6 +36,9 @@ public partial class NetworkRoot : Node
     private const int HalvingIntervalBlocks = 2100;
     private const string BlockchainDir = "user://blockchain";
     private const string StatePath = "user://blockchain/state.json";
+    // Casino community pool: fixed per-payout transaction fee (lowest available to the casino),
+    // deducted from each contributor's gross share before it is sent (Phase 2).
+    private const decimal CasinoTxFee = 0.1m;
 
     // Blocks a miner bot must wait AFTER its own first mined block before it starts donating BTC —
     // measured per bot, so it works for bots introduced gradually (not an absolute chain index).
@@ -337,6 +341,161 @@ public partial class NetworkRoot : Node
         _activeMiningPower = power > 0d ? power : 0d;
     }
 
+    // ── Phase 2: Casino community mining pool ──────────────────────────────────
+    // Credits assigned to the casino pool route their nonce attempts to the casino node's chain.
+    // When the casino mines a block, its coinbase reward is queued and later distributed to the
+    // pool's contributors (proportional to their casino-pool credits) minus a dynamic casino fee.
+
+    // Dynamic casino fee as a function of casino-pool vs. individual mining power (credit totals).
+    // ratio = casinoTotal / individualTotal: 1.0 → 30% (balanced); >1 → up to 50%; <1 → down to 10%.
+    public static decimal CalculateCasinoFeePercent(int casinoTotal, int individualTotal)
+    {
+        if (individualTotal <= 0) return 0.50m;
+        double ratio = (double)casinoTotal / individualTotal;
+        if (ratio >= 1.0)
+        {
+            double t = Math.Clamp((ratio - 1.0) / 2.0, 0.0, 1.0);
+            return (decimal)(0.30 + t * 0.20); // 30% → 50%
+        }
+
+        return (decimal)(0.10 + ratio * 0.20); // 10% → 30%
+    }
+
+    // One casino-pool nonce attempt: mines on the casino node's behalf. On a hit, the block goes
+    // through the normal broadcast/bookkeeping path and its reward is queued for distribution.
+    public void TryCasinoNonceAttempt(out Block? minedBlock, long? minedAtUnixMs = null)
+    {
+        EnsureInitialized();
+        minedBlock = null;
+        if (!SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
+        {
+            return;
+        }
+
+        long timestamp = minedAtUnixMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        decimal reward = GetBlockRewardForNextCandidate(casino);
+        minedBlock = casino.TryMineSingleNonceAttempt(reward, timestamp, _activeMiningPower);
+        if (minedBlock is null)
+        {
+            return;
+        }
+
+        HandleMinedBlock(casino, minedBlock);
+        QueueCasinoRewardForDistribution(minedBlock, reward);
+    }
+
+    // Snapshots contributor credits at mining time, computes per-contributor net payouts (gross share
+    // minus the casino tx fee), records the reward event, and attempts distribution immediately.
+    private static void QueueCasinoRewardForDistribution(Block block, decimal reward)
+    {
+        IReadOnlyList<NodeHardwareState> allNodes = HardwareAllocationRepository.AllNodes();
+        int casinoTotal = HardwareAllocationRepository.TotalCasinoPoolCredits();
+        int individualTotal = HardwareAllocationRepository.TotalIndividualCredits();
+
+        decimal feePercent = CalculateCasinoFeePercent(casinoTotal, individualTotal);
+        decimal feeAmount = Scripts.Finance.Money.Normalize(reward * feePercent);
+        decimal poolAmount = reward - feeAmount;
+
+        var payouts = new List<CasinoPoolPendingPayout>();
+        if (casinoTotal > 0)
+        {
+            foreach (NodeHardwareState n in allNodes.Where(n => n.CasinoPoolCredits > 0))
+            {
+                decimal share = Scripts.Finance.Money.Normalize(poolAmount * n.CasinoPoolCredits / casinoTotal);
+                decimal net = Scripts.Finance.Money.Normalize(share - CasinoTxFee);
+                if (net <= 0m) continue; // reward too small to cover the tx fee → skip (OQ-2)
+
+                string address = GetNodeAddress(n.NodeId);
+                if (string.IsNullOrEmpty(address)) continue;
+
+                payouts.Add(new CasinoPoolPendingPayout
+                {
+                    RecipientNodeId = n.NodeId,
+                    RecipientAddress = address,
+                    GrossAmount = share,
+                    NetAmount = net,
+                    FromBlockIndex = block.Index
+                });
+            }
+        }
+
+        var rewardEvent = new CasinoPoolRewardEvent
+        {
+            BlockIndex = block.Index,
+            TotalReward = reward,
+            CasinoFeePercent = feePercent,
+            CasinoFeeAmount = feeAmount,
+            Payouts = payouts,
+            Distributed = false
+        };
+
+        CasinoPoolRepository.AddRewardEvent(rewardEvent);
+        TryDistributePendingCasinoRewards();
+    }
+
+    // Sends queued casino-pool payouts whose backing coinbase has matured (CoinbaseMaturity). Each
+    // event is all-or-nothing: only attempted once the casino can cover every payout in it, so a
+    // partial send can never double-pay on a later retry. Called after every mined block.
+    private static void TryDistributePendingCasinoRewards()
+    {
+        if (!SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
+        {
+            return;
+        }
+
+        foreach (CasinoPoolRewardEvent evt in CasinoPoolRepository.GetUndistributed())
+        {
+            if (evt.Payouts.Count == 0)
+            {
+                CasinoPoolRepository.MarkDistributed(evt.BlockIndex); // nothing owed (e.g. no contributors)
+                continue;
+            }
+
+            decimal required = evt.Payouts.Sum(p => p.NetAmount + CasinoTxFee);
+            decimal spendable = casino.Blockchain.GetAddressSpendableBalance(casino.WalletAddress);
+            if (spendable < required) continue; // coinbase not matured / not enough yet → retry next block
+
+            bool allSent = true;
+            foreach (CasinoPoolPendingPayout payout in evt.Payouts)
+            {
+                if (SendFromCasino(casino, payout.RecipientAddress, payout.NetAmount) is null)
+                {
+                    allSent = false;
+                }
+            }
+
+            if (allSent)
+            {
+                CasinoPoolRepository.MarkDistributed(evt.BlockIndex);
+            }
+        }
+    }
+
+    // Broadcasts a single payout from the casino wallet at the fixed casino tx fee. Static mirror of
+    // CreateAndBroadcastTransactionToAddress for the static distribution path. No disk write — the tx
+    // becomes durable when the next block is mined.
+    private static Transaction? SendFromCasino(NodeAgent casino, string recipientAddress, decimal amount)
+    {
+        if (amount <= 0m || string.IsNullOrEmpty(recipientAddress)) return null;
+        if (casino.WalletAddress == recipientAddress) return null;
+
+        Transaction tx = casino.CreateSignedTransaction(amount, recipientAddress, CasinoTxFee);
+        if (!casino.Blockchain.AddTransactionToPendingTransactions(tx)) return null;
+
+        SharedNetwork.BroadcastTransaction(casino.NodeId, tx);
+        return tx;
+    }
+
+    private static string GetNodeAddress(string nodeId) =>
+        SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) ? node.WalletAddress : string.Empty;
+
+    // Read-only view of the casino-pool reward ledger (for the BTCPoolsAndHardwareShop stats panel).
+    public List<CasinoPoolRewardEvent> GetCasinoPoolHistory()
+    {
+        EnsureInitialized();
+        return CasinoPoolRepository.Current.RewardHistory.ToList();
+    }
+
     private static void HandleMinedBlock(NodeAgent miner, Block block)
     {
         // Step 4b: the coinbase now lives inside the block (BlockTemplateBuilder), so it propagates
@@ -363,6 +522,8 @@ public partial class NetworkRoot : Node
         {
             ScheduleBotTransactionsAfterBlock(block);
             PersistStateToDisk();
+            // After every block (any miner), retry casino-pool payouts whose coinbase has now matured.
+            TryDistributePendingCasinoRewards();
         }
     }
 
