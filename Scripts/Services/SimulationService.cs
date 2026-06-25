@@ -190,6 +190,11 @@ public partial class SimulationService : Node
 		_networkRoot?.SetActiveMiningPower(0d); // idle → difficulty feed-forward no-ops
 	}
 
+	// Live betting rate for a node = its current total hardware credits (1 credit = 1 bet/sec, Phase 3).
+	// Read FRESH each use (no cached BetsPerSecond) so buying/moving hardware mid-run takes effect at once.
+	private static double HardwareRate(string nodeId) =>
+		Math.Clamp(HardwareAllocationRepository.GetNode(nodeId).TotalCredits, 1, MaxAutoBetBaseAps);
+
 	// Total active mining power for the difficulty feed-forward = Σ (player + running bots) bets/sec.
 	private double GetTotalActiveMiningPower()
 	{
@@ -226,7 +231,7 @@ public partial class SimulationService : Node
 			}
 		}
 
-		double betsPerSecond = Math.Max(0.0001d, _config.BetsPerSecond);
+		double betsPerSecond = HardwareRate(_config.ActiveNodeId);
 		double interval = 1.0d / betsPerSecond;
 		_accumulatorSeconds = Math.Min(_accumulatorSeconds + Math.Max(0d, delta), MaxBacklogSeconds);
 
@@ -456,7 +461,7 @@ public partial class SimulationService : Node
 				}
 			}
 
-			double betsPerSecond = Math.Clamp(runner.Config.BetsPerSecond, 1, MaxAutoBetBaseAps);
+			double betsPerSecond = HardwareRate(runner.NodeId);
 			double interval = 1.0d / Math.Max(0.0001d, betsPerSecond);
 			runner.AccumulatorSeconds = Math.Min(runner.AccumulatorSeconds + Math.Max(0d, delta), MaxBacklogSeconds);
 
@@ -668,13 +673,13 @@ public partial class SimulationService : Node
 		var rates = new Dictionary<string, double>();
 		if (IsRunning && _config != null)
 		{
-			rates[_config.ActiveNodeId] = Math.Max(0.0001d, _config.BetsPerSecond);
+			rates[_config.ActiveNodeId] = HardwareRate(_config.ActiveNodeId);
 		}
 		foreach (BotRunner runner in _botRunners.Values)
 		{
 			if (runner.Session.IsRunning)
 			{
-				rates[runner.NodeId] = Math.Clamp(runner.Config.BetsPerSecond, 1, MaxAutoBetBaseAps);
+				rates[runner.NodeId] = HardwareRate(runner.NodeId);
 			}
 		}
 		return rates;

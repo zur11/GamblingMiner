@@ -686,12 +686,9 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void ApplyAutoBetSpeedSettings(int betsPerSecond)
 	{
-		if (_apsSelector == null || _apsSelector.ItemCount <= 0)
-		{
-			return;
-		}
-
-		_apsSelector.Select(Math.Clamp(betsPerSecond, 1, MaxAutoBetBaseAps) - 1);
+		// Speed is hardware-locked (Phase 3): a saved/loaded BetsPerSecond no longer drives the selector.
+		// Always re-lock to the active node's current hardware total so the display can't go stale (e.g. to 1X).
+		RefreshHardwareDrivenSpeed();
 	}
 
 	private void SaveActiveNodeStrategySnapshot()

@@ -41,6 +41,9 @@ public static class WalletInitializationService
 
 	private static void EnsureHardwareAllocation()
 	{
+		// Casino-pool reward ledger loads alongside the hardware allocation (Task 6.1).
+		CasinoPoolRepository.EnsureLoaded();
+
 		if (FileAccess.FileExists(HardwareAllocationPath))
 		{
 			HardwareAllocationRepository.EnsureLoaded();

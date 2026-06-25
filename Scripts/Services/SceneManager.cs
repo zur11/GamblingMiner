@@ -17,6 +17,7 @@ public partial class SceneManager : Node
 		CasinoFinances,
 		FoundersWallets,
 		BotPlayHistory,
+		BTCPoolsAndHardwareShop,
 	}
 
 	private static readonly Dictionary<SceneId, string> Paths = new()
@@ -33,6 +34,7 @@ public partial class SceneManager : Node
 		[SceneId.CasinoFinances]       = "res://Screens/CasinoFinances/CasinoFinances.tscn",
 		[SceneId.FoundersWallets]      = "res://Screens/FoundersWallets/FoundersWallets.tscn",
 		[SceneId.BotPlayHistory]       = "res://Screens/BotPlayHistory/BotPlayHistory.tscn",
+		[SceneId.BTCPoolsAndHardwareShop] = "res://Screens/BTCPoolsAndHardwareShop/BTCPoolsAndHardwareShop.tscn",
 	};
 
 	// Overlay stack: scenes added on top without replacing the current scene.

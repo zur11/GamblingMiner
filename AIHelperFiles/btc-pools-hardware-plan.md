@@ -1,6 +1,6 @@
 # BTC Mining Pools & Hardware Shop — Implementation Plan
 
-**Status**: Phase 1 ✅  Phase 2 ✅  Phase 3 ✅  Phase 4 ✅  Phase 5 ○  Phase 6 ○ — **roadmap Step 6 is now active and RE-SCOPED**
+**Status**: Phase 1 ✅  Phase 2 ✅  Phase 3 ✅  Phase 4 ✅  Phase 5 ✅  Phase 6 ✅ (wiring; Task 6.2 smoke test = manual, in-editor) — **roadmap Step 6 is now active and RE-SCOPED**
 
 > **Phase 3 implementation note (model decision):** the linear model was chosen over the plan's
 > literal per-credit loop. **1 bet = 1 nonce attempt** (canonical rule preserved); speed is locked to
@@ -9,7 +9,12 @@
 > exactly `IndividualPoolCredits` own + `CasinoPoolCredits` casino attempts — a true reallocation of
 > power, not a multiplier (avoids the quadratic `TotalCredits²` attempts/sec of the literal loop).
 > Routing lives in `HardwareAllocationRepository.NextNonceTarget(nodeId)`; betting moved to
-> `SimulationService` (player + bots) with the manual path in `DiceGame.ProcessBlockchainAttemptForBet`. (see "Step 6 Scope & Decisions" below). This plan builds on the **per-node candidate block model** (`candidate-block-model-plan.md`, roadmap Step 4) — per-credit nonce routing mines real candidates.
+> `SimulationService` (player + bots) with the manual path in `DiceGame.ProcessBlockchainAttemptForBet`.
+> **Rate is read LIVE from hardware** (`SimulationService.HardwareRate(nodeId)` in `_Process`/`TickBots`/
+> `GetActiveMiningRates`) — never cached at autobet start — so buying/moving credits mid-run takes effect
+> immediately (bet rate, Block Explorer ⛏ readout, and difficulty feed-forward all update at once). The
+> DiceGame ApsSelector is display-only and re-locked to hardware via `RefreshHardwareDrivenSpeed()`
+> (also from `ApplyAutoBetSpeedSettings`, so a strategy load can't reset the shown value to a stale 1X). (see "Step 6 Scope & Decisions" below). This plan builds on the **per-node candidate block model** (`candidate-block-model-plan.md`, roadmap Step 4) — per-credit nonce routing mines real candidates.
 > ⚠️ **Two corrections to this plan since it was written:**
 > 1. **Gradual miner spawning is POSTPONED** (needs a per-bot strategy set first), so for now we keep **DEV access to all bettable nodes**; the "player + 4 bots at block 1" assumption is fine for the prototype.
 > 2. **The bot/player betting loop moved to `SimulationService`** during the background-simulation work — so Phase 3's nonce-routing/speed-lock now targets `SimulationService.ExecutePlayerBetOnce` / `ExecuteBotBet`, **not** `DiceGame.ExecuteBotBet` / `BotAutoBetRunner` (those no longer exist in DiceGame).
@@ -708,7 +713,10 @@ Before marking all phases done:
 - [ ] Casino fee at 30% with starting 1:1 ratio
 - [ ] BTCPoolsAndHardwareShop: buy +1 hardware for player → player now shows 3 credits (2 individual, 1 casino); DiceGame speed becomes 3/s
 - [ ] Move 1 credit to casino pool → player: 1 individual, 2 casino; speed still 3/s; casino pool total = 6
-- [ ] Fee recalculates correctly with new ratio (casino 6 / individual 4 = 1.5 → ~40%)
+- [ ] Fee recalculates correctly with the new ratio. NOTE: after that move the player keeps **1**
+      individual credit, so individual total = 5 (4 bots + player), casino total = 6 → ratio 1.2 →
+      **32%** by the exact Task 2.2 formula (`0.30 + clamp((ratio−1)/2,0,1)×0.20`). The earlier
+      "~40%" was loose prose; the implemented formula is the source of truth.
 
 ---
 
@@ -791,6 +799,7 @@ Player Coordinator
 | `Screens/BTCPoolsAndHardwareShop/BTCPoolsAndHardwareShop.cs` | ✅ Created | Phase 4 |
 | `Scripts/Hardware/HardwareAllocationRepository.cs` | ✅ Modified (HardwareChanged event) | Phase 4 |
 | `Screens/DiceGame/DiceGame.cs` | ✅ Modified (HardwareChanged subscription) | Phase 4 |
-| `Scripts/Services/SceneManager.cs` | ○ To modify (new enum entry + path) | Phase 5 |
-| `Screens/MainMenu/MainMenu.tscn` | ○ To modify (new button) | Phase 5 |
-| `Screens/MainMenu/MainMenu.cs` | ○ To modify (new button handler) | Phase 5 |
+| `Scripts/Services/SceneManager.cs` | ✅ Modified (new enum entry + path) | Phase 5 |
+| `Screens/MainMenu/MainMenu.tscn` | ✅ Modified (new button) | Phase 5 |
+| `Screens/MainMenu/MainMenu.cs` | ✅ Modified (new button handler) | Phase 5 |
+| `Scripts/Services/WalletInitializationService.cs` | ✅ Modified (CasinoPoolRepository.EnsureLoaded) | Phase 6 |
