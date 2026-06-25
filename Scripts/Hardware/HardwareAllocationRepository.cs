@@ -24,6 +24,10 @@ public static class HardwareAllocationRepository
 	private static HardwareAllocationSnapshot _snapshot = new();
 	private static bool _loaded;
 
+	// Raised after any credit modification (add / move / set), with the affected nodeId. DiceGame
+	// subscribes to re-lock the active node's betting speed when its hardware changes.
+	public static event Action<string>? HardwareChanged;
+
 	// Which chain a single bet's nonce attempt is routed to.
 	public enum NoncePoolTarget { Individual, Casino }
 
@@ -82,6 +86,7 @@ public static class HardwareAllocationRepository
 		else nodes.Add(updated);
 		_snapshot = _snapshot with { Nodes = nodes };
 		Save();
+		HardwareChanged?.Invoke(updated.NodeId);
 	}
 
 	// New hardware purchased; lands in the individual pool by default.

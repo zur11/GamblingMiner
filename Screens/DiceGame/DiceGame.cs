@@ -268,6 +268,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.AutoRechargeToggled += _ => UpdateBalanceUI();
 		InitializeApsSelector();
 		RefreshHardwareDrivenSpeed();
+		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
 		_apsSelector.ItemSelected += _ => OnBetsPerSecondChanged(0d);
 		_session.OnStopped += OnSessionStopped;
 
@@ -1163,6 +1164,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_simulationService.BetSettled -= OnSimBetSettled;
 			_simulationService.AutobetStopped -= OnSimAutobetStopped;
 		}
+		HardwareAllocationRepository.HardwareChanged -= OnHardwareChanged;
 		// If autobet is delegated to the background service, leave the clock's autobet flag alone so the
 		// simulation keeps running across scenes (the service owns IsRunning/IsAutobetActive while delegated).
 		if (_calendarTimeService != null && !_autobetDelegated)
@@ -1855,6 +1857,16 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_apsSelector.Select(GetAutoBetBaseAps() - 1);
 		_apsSelector.Disabled = true;
+	}
+
+	// Raised by HardwareAllocationRepository after a credit change (e.g. from the Pools & Hardware shop).
+	// Re-lock the betting speed if the change affected the node we're currently showing.
+	private void OnHardwareChanged(string nodeId)
+	{
+		if (string.Equals(nodeId, _activeNodeId, StringComparison.Ordinal))
+		{
+			RefreshHardwareDrivenSpeed();
+		}
 	}
 
 	// Funciones auxiliares

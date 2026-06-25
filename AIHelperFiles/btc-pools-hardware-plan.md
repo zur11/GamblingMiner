@@ -1,6 +1,6 @@
 # BTC Mining Pools & Hardware Shop — Implementation Plan
 
-**Status**: Phase 1 ✅  Phase 2 ✅  Phase 3 ✅  Phase 4 ○  Phase 5 ○  Phase 6 ○ — **roadmap Step 6 is now active and RE-SCOPED**
+**Status**: Phase 1 ✅  Phase 2 ✅  Phase 3 ✅  Phase 4 ✅  Phase 5 ○  Phase 6 ○ — **roadmap Step 6 is now active and RE-SCOPED**
 
 > **Phase 3 implementation note (model decision):** the linear model was chosen over the plan's
 > literal per-credit loop. **1 bet = 1 nonce attempt** (canonical rule preserved); speed is locked to
@@ -787,8 +787,10 @@ Player Coordinator
 | `Screens/DiceGame/DiceGame.cs` | ✅ Modified (hardware lock, manual nonce routing, bot speed) | Phase 3 |
 | `Scripts/Services/SimulationService.cs` | ✅ Modified (player + bot nonce routing) | Phase 3 |
 | `Scripts/Hardware/HardwareAllocationRepository.cs` | ✅ Modified (NextNonceTarget round-robin router) | Phase 3 |
-| `Screens/BTCPoolsAndHardwareShop/BTCPoolsAndHardwareShop.tscn` | ○ To create | Phase 4 |
-| `Screens/BTCPoolsAndHardwareShop/BTCPoolsAndHardwareShop.cs` | ○ To create | Phase 4 |
+| `Screens/BTCPoolsAndHardwareShop/BTCPoolsAndHardwareShop.tscn` | ✅ Created | Phase 4 |
+| `Screens/BTCPoolsAndHardwareShop/BTCPoolsAndHardwareShop.cs` | ✅ Created | Phase 4 |
+| `Scripts/Hardware/HardwareAllocationRepository.cs` | ✅ Modified (HardwareChanged event) | Phase 4 |
+| `Screens/DiceGame/DiceGame.cs` | ✅ Modified (HardwareChanged subscription) | Phase 4 |
 | `Scripts/Services/SceneManager.cs` | ○ To modify (new enum entry + path) | Phase 5 |
 | `Screens/MainMenu/MainMenu.tscn` | ○ To modify (new button) | Phase 5 |
 | `Screens/MainMenu/MainMenu.cs` | ○ To modify (new button handler) | Phase 5 |
