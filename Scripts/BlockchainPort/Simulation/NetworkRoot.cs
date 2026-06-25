@@ -508,16 +508,23 @@ public partial class NetworkRoot : Node
         return sum / deltas;
     }
 
-    // Difficulty the block CURRENTLY being mined will use (next-block difficulty at the current network
-    // power), for the Block Explorer's main "mining" readout — distinct from any already-mined block's value.
+    // Difficulty of the block a node is CURRENTLY mining: the LOCKED candidate difficulty (fixed until that
+    // block is found, so a power change only shows from the next block) or, when idle, the prospective
+    // next-block difficulty at the live network power. In this model Difficulty == the expected nonce attempts
+    // for that block. Shared by the Block Explorer AND the DiceGame mining readout so both track the same live
+    // value — NOT the last already-mined block's stamped difficulty (which is what made DiceGame look stale).
+    private static double GetNextOrCandidateDifficulty(NodeAgent node)
+    {
+        double candidate = node.GetCurrentCandidateDifficulty();
+        return candidate > 0d ? candidate : node.Blockchain.GetNextBlockDifficulty(_activeMiningPower);
+    }
+
+    // Difficulty the block CURRENTLY being mined will use, for the Block Explorer's main "mining" readout —
+    // distinct from any already-mined block's value.
     public double GetPlayerNextBlockDifficulty()
     {
         EnsureInitialized();
-        NodeAgent player = SharedNodesById[PlayerNodeId];
-        // Prefer the LOCKED difficulty of the candidate currently being mined (fixed until that block is found,
-        // so a power change shows up only from the next block). Fall back to the prospective value when idle.
-        double candidate = player.GetCurrentCandidateDifficulty();
-        return candidate > 0d ? candidate : player.Blockchain.GetNextBlockDifficulty(_activeMiningPower);
+        return GetNextOrCandidateDifficulty(SharedNodesById[PlayerNodeId]);
     }
 
     // The difficulty stamped on the player block `blocksAgo` back from the tip (clamped to the genesis end),
@@ -927,7 +934,8 @@ public partial class NetworkRoot : Node
         int nextBlock = node.Blockchain.GetLastBlock().Index + 1;
         int pending = node.Blockchain.PendingTransactions.Count;
         long nonce = node.GetCurrentCandidateNonce();
-        double expected = node.Blockchain.GetExpectedAttemptsForCurrentDifficulty();
+        // The difficulty of the block being mined NOW (live, power-aware) — matches the Block Explorer readout.
+        double difficulty = GetNextOrCandidateDifficulty(node);
         decimal reward = GetBlockRewardForNextCandidate(node);
 
         string lastInfo = _lastMinedBlock is null
@@ -940,7 +948,7 @@ public partial class NetworkRoot : Node
             $"Current nonce attempt: {nonce}\n" +
             $"Pending tx in candidate: {pending}\n" +
             $"Next reward: {reward:F8} BTC\n" +
-            $"Expected attempts avg: {expected:0}\n" +
+            $"Mining difficulty: {difficulty:F2}  (~{difficulty:F0} attempts/block)\n" +
             $"Miner streak current/best: {_currentMinerStreak}/{_bestMinerStreak}\n" +
             $"{lastInfo}\n" +
             "Attempts per bet: 1";

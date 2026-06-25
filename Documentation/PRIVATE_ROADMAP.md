@@ -333,9 +333,9 @@ Start when: Basic Mode is complete and stable. Until then, leave mining committi
 - [x] Update Player Guide so it describes the actual playable state.
 - [ ] Run longer Basic Mode manual/autobet tests after transaction circulation exists.
 
-## 8. Tech-Debt & Cleanup Tasks (annotated 2026-06-24 — not yet implemented)
+## 8. Tech-Debt & Cleanup Tasks (2026-06-24 — ✅ all implemented)
 
-Three concrete tasks identified while fixing the clock/persistence bugs (see `Documentation/ProjectDesignManual.md` §24.8). **Annotations only — no implementation yet.**
+Three concrete tasks identified while fixing the clock/persistence bugs (see `Documentation/ProjectDesignManual.md` §24.8). All three are now done — details per task below.
 
 ### T1 — Stop transactions/consensus from committing financial state to disk ✅ DONE (2026-06-24)
 
@@ -356,10 +356,10 @@ These controls predated the background simulation + real-time auto-refresh and h
 - **Kept**: `%MinerNodeOption` (the node-context selector reused by the tx/address/block lookups).
 - **Result**: BlockExplorer shows only live, read-only inspection controls; no orphaned mine/consensus/refresh nodes, handlers, or consensus code remain.
 
-### T3 — DiceGame docked mining display shows stale difficulty
+### T3 — DiceGame docked mining display shows stale difficulty ✅ DONE (2026-06-24)
 
-The mining readout embedded in DiceGame does not track the live (retargeted) difficulty the way BlockExplorer does.
+The mining readout embedded in DiceGame did not track the live (retargeted) difficulty the way BlockExplorer does.
 
-- **Root cause**: DiceGame's `BuildMiningStatusLine` uses `Blockchain.GetExpectedAttemptsForCurrentDifficulty()`, which returns `EffectiveDifficulty(Chain[^1])` — the **last already-mined block's** difficulty, ignoring the live `_activeMiningPower` feed-forward. BlockExplorer instead uses `NetworkRoot.GetPlayerNextBlockDifficulty()` (the locked candidate difficulty, else the prospective next-block difficulty at current power), so only it reflects the retarget.
-- **Fix direction**: have the DiceGame readout draw from the same next-block/candidate-difficulty source as BlockExplorer (e.g. expose/consume `GetPlayerNextBlockDifficulty()`), so the docked "expected attempts / difficulty" line matches the explorer.
-- **Done when**: the DiceGame mining display and BlockExplorer agree on the in-progress block's difficulty and both update as power/difficulty change.
+- **Was**: DiceGame's `BuildMiningStatusLine` used `Blockchain.GetExpectedAttemptsForCurrentDifficulty()`, which returns `EffectiveDifficulty(Chain[^1])` — the **last already-mined block's** difficulty, ignoring the live `_activeMiningPower` feed-forward. BlockExplorer instead used `NetworkRoot.GetPlayerNextBlockDifficulty()` (the locked candidate difficulty, else the prospective next-block difficulty at current power), so only it reflected the retarget.
+- **Fix shipped**: extracted a shared `GetNextOrCandidateDifficulty(node)` helper (locked candidate difficulty, else `GetNextBlockDifficulty(_activeMiningPower)`); `GetPlayerNextBlockDifficulty()` now delegates to it, and `BuildMiningStatusLine` uses it too — so both readouts compute the in-progress block's difficulty from the same live source. The DiceGame line was relabelled `Mining difficulty: {x:F2}  (~{x:F0} attempts/block)` to match the Block Explorer format. `GetExpectedAttemptsForCurrentDifficulty()` is left in place (now only a validation helper referenced by `100x-time-scale-migration-plan.md`).
+- **Result**: the DiceGame mining display and BlockExplorer agree on the in-progress block's difficulty and both update live as power/difficulty change.
