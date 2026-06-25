@@ -911,6 +911,8 @@ To run validation samples (e.g. the ≥30-block steady-state runs F5 needs) in ~
 - **Caveat**: `MaxBetsPerFrame = 10`/node/frame would throttle only at extreme scale × very high single-node hardware (~99 credits at 1000X); irrelevant for the measurement regime (power ~10–15 split across nodes).
 - **Files**: `CalendarTimeService.cs`, `SimulationService.cs`, `UI/DevTimeScaleSelector/DevTimeScaleSelector.cs`, `DiceGame.cs`, `BlockExplorer.cs`.
 
+**Companion: "Discard Hardware (−1)" button** (Pools & Hardware screen, 2026-06-25 ✅) — the counterpart to the DEV "Buy Hardware". `HardwareAllocationRepository.RemoveCredits` drops a credit (casino pool first, then individual; floored at **1 total** so reported power stays consistent with `TotalCredits`). Enables dropping a node to a single private-pool credit and **power-decrease test runs** (needed to validate F2 asymmetric easing — the fast-relief-on-drop path — and the open power-≈10 calibration check). Built programmatically next to Buy Hardware (no .tscn edit), disabled at the 1-credit floor. Files: `HardwareAllocationRepository.cs`, `BTCPoolsAndHardwareShop.cs`.
+
 ### Phase F1 — EMA on the power signal *(secondary; smooths the anchor on a step)*
 
 - **What**: smooth power before it feeds the anchor, so it tracks *realized* throughput, not the instantaneous configured step; also damps the noisy 18.9/12.3 swings.

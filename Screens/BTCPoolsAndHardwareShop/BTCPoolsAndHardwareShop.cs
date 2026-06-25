@@ -22,6 +22,7 @@ public partial class BTCPoolsAndHardwareShop : Control
 	private VBoxContainer _nodeList = null!;
 	private VBoxContainer _detailVBox = null!;
 	private Button _buyHardwareBtn = null!;
+	private Button _discardHardwareBtn = null!;
 
 	private readonly Dictionary<string, Button> _nodeButtons = new();
 	private string? _selectedNodeId;
@@ -42,6 +43,14 @@ public partial class BTCPoolsAndHardwareShop : Control
 		_detailVBox = GetNode<VBoxContainer>("%DetailVBox");
 		_buyHardwareBtn = GetNode<Button>("%BuyHardwareBtn");
 		_buyHardwareBtn.Pressed += OnBuyHardwarePressed;
+
+		// DEV: "Discard Hardware (-1)" — removes a credit (casino pool first, then individual; never below
+		// 1 total). Built programmatically next to Buy Hardware so the .tscn needs no edit. Used to drop a
+		// node to a single private-pool credit and for power-decrease tests.
+		_discardHardwareBtn = new Button { Text = "Discard Hardware (-1)", Visible = false };
+		_discardHardwareBtn.Pressed += OnDiscardHardwarePressed;
+		_buyHardwareBtn.GetParent().AddChild(_discardHardwareBtn);
+		_buyHardwareBtn.GetParent().MoveChild(_discardHardwareBtn, _buyHardwareBtn.GetIndex() + 1);
 
 		BuildNodeList();
 		ShowNoSelection();
@@ -81,11 +90,14 @@ public partial class BTCPoolsAndHardwareShop : Control
 		if (nodeId == CasinoNodeId)
 		{
 			_buyHardwareBtn.Visible = false;
+			_discardHardwareBtn.Visible = false;
 			BuildCasinoDetail();
 		}
 		else
 		{
 			_buyHardwareBtn.Visible = true; // DEV: free hardware for non-casino nodes
+			_discardHardwareBtn.Visible = true;
+			UpdateDiscardEnabled(nodeId);
 			BuildNodeDetail(nodeId);
 		}
 	}
@@ -94,6 +106,7 @@ public partial class BTCPoolsAndHardwareShop : Control
 	{
 		_selectedNodeId = null;
 		_buyHardwareBtn.Visible = false;
+		_discardHardwareBtn.Visible = false;
 		ClearDetail();
 		AddDetailLabel("Select a mining node to manage its hardware pools.", 18);
 	}
@@ -212,7 +225,20 @@ public partial class BTCPoolsAndHardwareShop : Control
 		if (_selectedNodeId == null || _selectedNodeId == CasinoNodeId) return;
 		HardwareAllocationRepository.AddCredits(_selectedNodeId, 1); // lands in the individual pool
 		BuildNodeDetail(_selectedNodeId);
+		UpdateDiscardEnabled(_selectedNodeId);
 	}
+
+	private void OnDiscardHardwarePressed()
+	{
+		if (_selectedNodeId == null || _selectedNodeId == CasinoNodeId) return;
+		HardwareAllocationRepository.RemoveCredits(_selectedNodeId, 1); // casino pool first, then individual
+		BuildNodeDetail(_selectedNodeId);
+		UpdateDiscardEnabled(_selectedNodeId);
+	}
+
+	// Can't discard below 1 total credit — disable the button at the floor for clear feedback.
+	private void UpdateDiscardEnabled(string nodeId) =>
+		_discardHardwareBtn.Disabled = HardwareAllocationRepository.GetNode(nodeId).TotalCredits <= 1;
 
 	// ── Detail panel helpers ─────────────────────────────────────────────────
 

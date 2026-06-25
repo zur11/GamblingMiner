@@ -97,6 +97,27 @@ public static class HardwareAllocationRepository
 		SetNode(current with { IndividualPoolCredits = current.IndividualPoolCredits + count });
 	}
 
+	// DEV/TEST: discard hardware (power-decrease tests). Removes credits from the CASINO pool first, then
+	// the individual pool, but never below 1 total credit — a node must keep ≥1 so its reported power
+	// (HardwareRate clamps to min 1) stays consistent with TotalCredits. From (1 indiv + 1 casino) one
+	// discard yields (1 indiv + 0 casino) = "a single credit in the private pool".
+	public static void RemoveCredits(string nodeId, int count)
+	{
+		if (count <= 0) return;
+		NodeHardwareState current = GetNode(nodeId);
+		int removable = Math.Max(0, current.TotalCredits - 1); // keep at least 1 credit
+		int remove = Math.Min(count, removable);
+		if (remove <= 0) return;
+
+		int fromCasino = Math.Min(remove, current.CasinoPoolCredits);
+		int fromIndividual = remove - fromCasino;
+		SetNode(current with
+		{
+			CasinoPoolCredits = current.CasinoPoolCredits - fromCasino,
+			IndividualPoolCredits = current.IndividualPoolCredits - fromIndividual
+		});
+	}
+
 	// Move credits from the casino pool back to the individual pool (clamped to availability).
 	public static void MoveToIndividual(string nodeId, int count)
 	{
