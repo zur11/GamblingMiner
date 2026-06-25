@@ -808,7 +808,7 @@ Player Coordinator
 
 ## Difficulty Regulator — Power-Step Contingency Plan (2026-06-25)
 
-**Status**: 📋 Planned (not started). Diagnostic-driven; supersedes nothing — extends the hybrid regulator (OQ-11/OQ-12) with transition handling.
+**Status**: F0 ✅ implemented + Test Run #1 done (2026-06-25) → **priorities revised** (anchor calibration promoted to PRIMARY; F3 dropped). F1/F2/F4/F5 📋 planned. Diagnostic-driven; extends the hybrid regulator (OQ-11/OQ-12) with transition handling.
 
 ### Context — what triggered this
 
@@ -844,16 +844,38 @@ Code paths: power feed `SimulationService.GetTotalActiveMiningPower()` → `Netw
 
 After a **power step** (enable fleet / add hardware), the first 1–3 blocks should not be mis-priced, **without** distorting the long-run pace or the response to power *drops*. Recommended order by leverage: **F0 → F1 → F3 → F2 → (F4 fallback) → F5.**
 
-### Phase F0 — Instrumentation & baseline *(prerequisite, no logic change)*
+### Phase F0 — Instrumentation & baseline *(prerequisite, no logic change)* ✅
 
 Stop inferring realized power; measure it.
 
-- **What**: on each mined block, record `index, configuredPower, realizedPower (= 100·dif/solvetimeSec), anchor, feedbackTrim, easedNext, solvetimeRatio` → `user://logs/difficulty_trace.csv` (or surface in BlockExplorer).
-- **Where**: the mining commit point in `NetworkRoot` / `BlockchainService` where solvetime and difficulty are both known.
-- **Acceptance**: reproduce the 1→11 step and capture the realized-power curve; confirm or refute the stall→burst→settle pattern before changing logic.
+- **What**: on each mined block, append a row `utcMs, miner, index, configuredPower, realizedPower (= difficulty·clockSpeed/solveSec), difficulty, anchor, solveSec, solveRatio` → `user://logs/difficulty_trace.csv`. (`feedbackTrim`/`easedNext` deferred — not needed to confirm the issue; can be added for F5 tuning.)
+- **Where**: ✅ `NetworkRoot.AppendDifficultyTrace()`, called from `HandleMinedBlock` **inside the `!_bulkMining` guard** — so the historical bootstrap replay is excluded and only **live-mined** blocks are traced. Per-chain (uses the miner's own `Chain[^2]` for solvetime); rows interleave across chains → filter by the `miner` column. `clockSpeed = TargetBlockSeconds / InitialDifficulty`. Build verified green.
+- **Acceptance**: reproduce a power step and capture the realized-power curve; confirm or refute the stall→burst→settle pattern before changing logic. ✅ **done — see Test Run #1 below.**
 - **Risk**: none (read/log only).
 
-### Phase F1 — EMA on the power signal *(highest leverage; fixes the anchor-leads-throughput mismatch)*
+### F0 Test Run #1 (2026-06-25) — findings & plan revision
+
+First live trace (`difficulty_trace.csv`, 17 blocks, indices 113–129, single shared chain). A **power step 2 → 10** at block 117 (anchor jumped 1170 → 5851 = `585 × {2,10}` ✓). Clock confirmed: `CalendarTimeService.SpeedMultiplier = 100`, calendar free-runs on `delta × 100` (not per-bet), so `realizedPower = difficulty × 100 / solveSec` measures the **true attempt-execution rate** with no clock artifact. **This run overturns part of the earlier (state.json-based) diagnosis.**
+
+**Finding 1 — live per-block variance is huge; single blocks are uninformative.** `solveRatio` ranged **0.023× → 3.67×**; `realizedPower` **0.54 → 434**. Live PoW solvetime is ≈ exponential. The earlier "block 118 = structural ~9σ stall" was a **bootstrap artifact** — blocks 2–117 in `state.json` were bulk-mined/semi-synthetic (sd 0.16), not representative of live mining. ⇒ **F3 (startup throughput stall) is DROPPED** — no evidence of a stall; realized throughput sits at/above configured.
+
+**Finding 2 (robust signal) — the feed-forward anchor under-calls equilibrium by ~1.4×.** Don't read single blocks; read where difficulty *converged*. At power 2, difficulty held ~1000–1160 ≈ anchor 1170 (calibration correct; outlier-removed aggregate realized ≈ 2.17 ≈ 2). At power 10, difficulty **climbed via LWMA feedback to ~8400**, and only there did a block hit target (**block 128: dif 8396, ratio 0.94**). So true equilibrium ≈ **8400** vs anchor **5851** → **anchor ≈ 30–45% low** (8400/5851 = 1.44; aggregate realized over the power-10 window ≈ 14 vs configured 10 — same factor). The offset appeared **right after extra hardware was assigned to the casino pool**.
+
+**Finding 3 — the real symptom is the OPPOSITE of the original complaint.** While feedback climbed 5851 → 8400, blocks ran **too fast** (window mean `solveRatio` ≈ **0.73**), not delayed. The "first nodes take too long" impression was a couple of high-variance slow blocks (115: 3.67×, 129: 2.95×). So the issue is mild over-issuance during catch-up, not a delaying shock.
+
+**Plan revision (priorities updated):**
+
+| Item | Was | Now |
+|---|---|---|
+| **Anchor calibration / power accounting** (esp. casino-pool credits) | part of F5 | 🔴 **PRIMARY** |
+| F1 — EMA on power | highest | medium (smooths the step; secondary) |
+| F2 — asymmetric easing | medium | medium (unchanged) |
+| F3 — startup stall | medium | ⚪ **dropped** (no evidence) |
+| F4 — lower α | fallback | fallback (the cause isn't the ramp) |
+
+**Lead hypothesis**: `GetTotalActiveMiningPower()` undercounts credits routed to the casino pool (or the `casino` node contributes attempts not in the per-node `HardwareRate` sum), so the anchor is fed a power lower than what actually executes → feedback must climb ~40% to compensate. **Next**: (1) audit casino-pool power accounting in code; (2) a steady-state run (constant power, ≥30 blocks) to pin the calibration factor with a solid aggregate (17 blocks is thin at this variance). Caveat: aggregate realized is time-weighted, so a few long-tail blocks can bias it — hence the larger sample.
+
+### Phase F1 — EMA on the power signal *(secondary; smooths the anchor on a step)*
 
 - **What**: smooth power before it feeds the anchor, so it tracks *realized* throughput, not the instantaneous configured step; also damps the noisy 18.9/12.3 swings.
 - **Where**: `NetworkRoot.SetActiveMiningPower()` (single chokepoint):
@@ -869,7 +891,9 @@ Stop inferring realized power; measure it.
 - **Acceptance**: increases ramp over ~3–4 blocks; decreases resolve in ~1–2 (validate by simulating a miner leaving).
 - **Risk**: low. Directly matches the design goal "don't delay the first nodes' mining."
 
-### Phase F3 — Tame the startup throughput transient
+### Phase F3 — Tame the startup throughput transient ⚪ DROPPED
+
+> **Dropped after Test Run #1** — the "startup stall" was a bootstrap-data artifact; live realized throughput sits at/above configured (no stall). Kept for the record; revisit only if a real stall is ever measured. Sub-options below were never implemented.
 
 Sub-options, least→most invasive; pick based on what F0 shows:
 
@@ -887,22 +911,23 @@ Sub-options, least→most invasive; pick based on what F0 shows:
 
 ### Phase F5 — Validation
 
-- **What**: re-run the 1→11 step with the F0 trace; compare before/after.
+- **What**: re-run a power step with the F0 trace; judge by **aggregates**, not single blocks (live per-block variance is ≈ exponential — see Test Run #1).
 - **Acceptance**:
-  - first 5 post-step blocks: ratio within ≈[0.7, 1.4] (vs. 2.43 today);
-  - steady state (≥20 blocks at power 11): mean ratio ≈ 1.0, sd comparable to baseline (~0.16);
+  - steady state (**≥30 blocks** at constant power): aggregate realized power (`100·Σdif / ΣsolveSec`) ≈ configured power within ~10%, and difficulty converges near the anchor (not ~40% above it as in Test Run #1);
+  - window mean `solveRatio` ≈ 1.0 (vs ≈ 0.73 during the un-calibrated catch-up);
   - power drop: difficulty cedes in ≤2 blocks (verifies F2).
-- Also: let the chain run longer at steady power 11 to confirm the `dif = InitialDifficulty × power` calibration holds in the new regime.
+- Use ≥30 blocks because the aggregate is time-weighted and a few long-tail solvetimes can bias a small sample.
 
-### Recommendation
+### Recommendation (revised after Test Run #1)
 
-F0 first (no risk), then **F1 (EMA) + F3b (backlog clamp)** together — they attack both real causes (anchor lead + hitch-induced attempt loss). F2 as a quality improvement; F4 only as a fallback.
+**PRIMARY: fix the anchor calibration / power accounting.** Test Run #1 showed the feed-forward anchor under-calls equilibrium by ~1.4× once hardware is in the casino pool, forcing the feedback to climb ~40% (fast blocks meanwhile). Audit casino-pool power counting in `GetTotalActiveMiningPower`/`GetActiveMiningRates`/routing first; if the count is correct, apply the empirical factor to the anchor. Then **F1 (EMA)** to smooth steps and **F2 (asymmetric easing)** for quality. **F3 dropped**; **F4** only as a fallback (the cause is anchor level, not the easing ramp). Validate every change against a ≥30-block steady-state aggregate (F5).
 
 ### File Checklist (this section)
 
 | File | Change | Phase |
 |---|---|---|
-| `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | EMA in `SetActiveMiningPower` | F1 |
-| `Scripts/BlockchainPort/Blockchain/BlockchainService.cs` | trace fields (F0); `EaseAlphaUp`/`EaseAlphaDown` (F2); default `α` (F4) | F0/F2/F4 |
-| `Scripts/Services/SimulationService.cs` | accumulator jitter (F3a); `MaxBacklogSeconds`/`delta` clamp (F3b); cold-start grace (F3c) | F3 |
+| `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | ✅ `AppendDifficultyTrace` (F0); anchor calibration factor + EMA in `SetActiveMiningPower` | F0 done · PRIMARY/F1 |
+| `Scripts/Services/SimulationService.cs` | audit `GetTotalActiveMiningPower`/`GetActiveMiningRates` for casino-pool credit counting | PRIMARY |
+| `Scripts/BlockchainPort/Blockchain/BlockchainService.cs` | `EaseAlphaUp`/`EaseAlphaDown` (F2); default `α` (F4, fallback) | F2/F4 |
+| ~~`SimulationService` accumulator jitter / backlog clamp / cold-start grace~~ | ⚪ dropped (F3) | — |
 | Block Explorer / log writer | difficulty trace surface | F0/F5 |

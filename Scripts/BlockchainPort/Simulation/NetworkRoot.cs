@@ -520,10 +520,77 @@ public partial class NetworkRoot : Node
 
         if (!_bulkMining)
         {
+            AppendDifficultyTrace(miner, block); // F0: per-block difficulty/throughput telemetry (live blocks only)
             ScheduleBotTransactionsAfterBlock(block);
             PersistStateToDisk();
             // After every block (any miner), retry casino-pool payouts whose coinbase has now matured.
             TryDistributePendingCasinoRewards();
+        }
+    }
+
+    // F0 (difficulty-regulator contingency plan): append one telemetry row per LIVE-mined block so the
+    // realized-vs-configured power curve across a power step can be measured instead of inferred. Excludes
+    // the historical bootstrap (called inside the !_bulkMining guard). One CSV per chain-miner is interleaved;
+    // filter by the `miner` column. realizedPower inverts the equilibrium calibration solvetime = difficulty ×
+    // (TargetBlockSeconds / InitialDifficulty) / power, so realizedPower = difficulty × clockSpeed / solveSec.
+    private const string DifficultyTracePath = "user://logs/difficulty_trace.csv";
+
+    private static void AppendDifficultyTrace(NodeAgent miner, Block block)
+    {
+        try
+        {
+            var chain = miner.Blockchain.Chain;
+            if (chain.Count < 2)
+            {
+                return; // need a previous block to derive a solvetime
+            }
+
+            Block prev = chain[chain.Count - 2];
+            double solveSec = (block.Timestamp - prev.Timestamp) / 1000d;
+            if (solveSec <= 0d)
+            {
+                return; // non-monotonic timestamp (e.g. bootstrap remnant) — skip rather than divide-by-zero
+            }
+
+            double configuredPower = block.MiningPower;
+            double clockSpeed = BlockchainService.TargetBlockSeconds / BlockchainService.InitialDifficulty;
+            double realizedPower = block.Difficulty * clockSpeed / solveSec;
+            double anchor = configuredPower > 0d
+                ? BlockchainService.InitialDifficulty * configuredPower
+                : prev.Difficulty;
+            double solveRatio = solveSec / BlockchainService.TargetBlockSeconds;
+
+            if (!DirAccess.DirExistsAbsolute("user://logs"))
+            {
+                DirAccess.MakeDirRecursiveAbsolute("user://logs");
+            }
+
+            bool exists = FileAccess.FileExists(DifficultyTracePath);
+            using FileAccess file = exists
+                ? FileAccess.Open(DifficultyTracePath, FileAccess.ModeFlags.ReadWrite)
+                : FileAccess.Open(DifficultyTracePath, FileAccess.ModeFlags.Write);
+            if (file == null)
+            {
+                return;
+            }
+
+            if (exists)
+            {
+                file.SeekEnd();
+            }
+            else
+            {
+                file.StoreLine("utcMs,miner,index,configuredPower,realizedPower,difficulty,anchor,solveSec,solveRatio");
+            }
+
+            file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0},{1},{2},{3:F4},{4:F4},{5:F4},{6:F4},{7:F1},{8:F4}",
+                block.Timestamp, miner.NodeId, block.Index, configuredPower, realizedPower,
+                block.Difficulty, anchor, solveSec, solveRatio));
+        }
+        catch (Exception e)
+        {
+            GD.PushWarning($"[DifficultyTrace] failed: {e.Message}");
         }
     }
 
