@@ -808,7 +808,7 @@ Player Coordinator
 
 ## Difficulty Regulator — Power-Step Contingency Plan (2026-06-25)
 
-**Status**: F0 ✅ implemented + Test Run #1 done (2026-06-25) → **priorities revised** (anchor calibration promoted to PRIMARY; F3 dropped). F1/F2/F4/F5 📋 planned. Diagnostic-driven; extends the hybrid regulator (OQ-11/OQ-12) with transition handling.
+**Status**: F0 ✅ + dev time-accel tool ✅ + Test Run #1 + power-accounting audit + **F5 steady-state run** done (2026-06-25). **VERDICT: regulator correctly calibrated** (steady-state power 2: realized 2.05 ≈ 2.0, ratio 0.94, difficulty ≈ anchor) → the ~1.4× was transient feed-forward+feedback overshoot, **not** a bug. No anchor/accounting fix needed. Remaining = optional polish (F1 EMA / F2 asymmetric easing) for the transient on large steps; F3 dropped, F4 fallback. One open item: confirm once at power ≈10. Extends the hybrid regulator (OQ-11/OQ-12).
 
 ### Context — what triggered this
 
@@ -865,15 +865,41 @@ First live trace (`difficulty_trace.csv`, 17 blocks, indices 113–129, single s
 
 **Plan revision (priorities updated):**
 
-| Item | Was | Now |
+| Item | Was | Now (post steady-state verdict) |
 |---|---|---|
-| **Anchor calibration / power accounting** (esp. casino-pool credits) | part of F5 | 🔴 **PRIMARY** |
-| F1 — EMA on power | highest | medium (smooths the step; secondary) |
-| F2 — asymmetric easing | medium | medium (unchanged) |
+| Power accounting (casino-pool credits) | 🔴 PRIMARY (suspected bug) | ✅ **audited — correct, no bug** |
+| Anchor calibration | 🔴 PRIMARY | ✅ **verified correct at steady state (power 2)** — no fix |
+| F1 — EMA on power | highest | 🟢 optional polish — softens the step/overshoot |
+| F2 — asymmetric easing | medium | 🟢 optional polish (quality) |
 | F3 — startup stall | medium | ⚪ **dropped** (no evidence) |
-| F4 — lower α | fallback | fallback (the cause isn't the ramp) |
+| F4 — lower α | fallback | fallback (unneeded; not the cause) |
+| Confirm calibration at power ≈10 | — | 🔵 open (low priority; likely fine) |
 
-**Lead hypothesis**: `GetTotalActiveMiningPower()` undercounts credits routed to the casino pool (or the `casino` node contributes attempts not in the per-node `HardwareRate` sum), so the anchor is fed a power lower than what actually executes → feedback must climb ~40% to compensate. **Next**: (1) audit casino-pool power accounting in code; (2) a steady-state run (constant power, ≥30 blocks) to pin the calibration factor with a solid aggregate (17 blocks is thin at this variance). Caveat: aggregate realized is time-weighted, so a few long-tail blocks can bias it — hence the larger sample.
+**Lead hypothesis (casino-pool undercount): ❌ REFUTED by code audit (2026-06-25).** Traced the full path: `RouteNonceAttempt` (and DiceGame's manual mirror) makes **exactly one** attempt per bet, round-robin to the casino chain *or* the node's own chain (`NextNonceTarget`) — no doubling. `GetTotalActiveMiningPower = Σ HardwareRate` over {player + running bots} = Σ `TotalCredits` (individual **+** casino); every casino-routed attempt originates from one of those counted credits. The `casino` node is **not** a runner (`BuildBotConfigs` excludes `player` and requires a valid strategy; casino is a wallet/pool node) → no uncounted attempts, no double-count. One logical chain (consensus via `BroadcastBlock`; globally sequential indices confirm it) → total attempt rate = power, so `anchor = InitialDifficulty × power` **is** the correct equilibrium level. **Accounting is correct.**
+
+**Revised likely cause: feed-forward + feedback overshoot during the un-converged transient (not a calibration bug).** At the step the anchor sets the level (~5851), but easing keeps difficulty *below* equilibrium for a few blocks → those blocks run fast → `LWMA(solvetimes)` small → `feedbackTrim = Target/LWMA > 1` → `target = anchor × trim` overshoots above the anchor → difficulty climbs past it (to 8418, still rising at block 129 — peak not yet reached). Test Run #1 captured only the climb, not the settle-back. The feed-forward already corrects the level; the feedback then piles on, reacting to the easing-induced fast blocks.
+
+**Decider — the ≥30-block steady-state run (in progress, using the new 100X→1000X dev tool):**
+- difficulty settles **≈ anchor** (5851 at power 10), mean ratio → 1.0 ⇒ **no calibration error**; the 1.4× was pure transient overshoot → refinement = *tame overshoot on large steps* (F1 EMA on power smooths the step; or damp feedback while the anchor makes a big jump).
+- difficulty stabilizes **~40% above anchor**, ratio → 1.0 ⇒ a **real factor** exists → investigate consensus/orphan losses or a constant.
+
+Caveat: aggregate realized power is time-weighted, so a few long-tail solvetimes can bias a small sample — judge on ≥30 blocks.
+
+### F5 Steady-State Run — VERDICT (2026-06-25) ✅ regulator is correctly calibrated
+
+Second trace: **constant power = 2.0** for 32 blocks (no step), run fast via the dev time-accel tool. Aggregates (dropping the 2 leading warmup blocks):
+
+| Metric | Observed | Expected if calibrated |
+|---|---|---|
+| aggregate realized power (`100·Σdif/Σsolve`) | **2.05** | ≈ 2.0 ✓ |
+| mean `solveRatio` | **0.94** | ≈ 1.0 ✓ |
+| mean difficulty | **1121** | ≈ anchor 1170 ✓ |
+
+Difficulty orbited the anchor (oscillating 836–1436 under the heavy per-block variance, but **centered on 1170**), not ~40% above it. **No calibration error.** This **confirms the transient-overshoot explanation**: Test Run #1's ~1.4× was the un-converged feed-forward+feedback overshoot after the 2→10 step (only the climb was captured), **not** a bad anchor. Per-block variance reconfirmed (ratios 0.097→3.36 at constant power) — always judge by aggregates.
+
+**Conclusion:** the hybrid regulator is **fundamentally sound** — no anchor factor, no accounting fix. Remaining work is optional polish for the *transient* on large power steps: **F1 (EMA on power)** to soften the step (and thus the overshoot), **F2 (asymmetric easing)** for quality. F3/F4 stay dropped/fallback.
+
+> **Caveat — confirmed at power 2, not yet at power 10.** The `anchor = InitialDifficulty × power` relation is linear and the accounting audit holds regardless of pool split, so a power-10 calibration error is unlikely — but a single steady-state run at power ≈10 (let it settle ≥20 blocks past the step) would fully close it. Until then, treat F1/F2 as optional polish rather than fixes.
 
 ### Dev tooling — time acceleration 100X→1000X (2026-06-25) ✅
 
@@ -928,9 +954,13 @@ Sub-options, least→most invasive; pick based on what F0 shows:
   - power drop: difficulty cedes in ≤2 blocks (verifies F2).
 - Use ≥30 blocks because the aggregate is time-weighted and a few long-tail solvetimes can bias a small sample.
 
-### Recommendation (revised after Test Run #1)
+### Recommendation (revised after Test Run #1 + power-accounting audit)
 
-**PRIMARY: fix the anchor calibration / power accounting.** Test Run #1 showed the feed-forward anchor under-calls equilibrium by ~1.4× once hardware is in the casino pool, forcing the feedback to climb ~40% (fast blocks meanwhile). Audit casino-pool power counting in `GetTotalActiveMiningPower`/`GetActiveMiningRates`/routing first; if the count is correct, apply the empirical factor to the anchor. Then **F1 (EMA)** to smooth steps and **F2 (asymmetric easing)** for quality. **F3 dropped**; **F4** only as a fallback (the cause is anchor level, not the easing ramp). Validate every change against a ≥30-block steady-state aggregate (F5).
+Power accounting was **audited and is correct** — the casino-undercount idea is dead. The ~1.4× elevation in Test Run #1 is most likely **feed-forward + feedback overshoot during the still-converging transient**, not a calibration error. **Next gate: the ≥30-block steady-state run** (using the new dev time-acceleration tool):
+- if difficulty settles ≈ anchor with ratio → 1.0 ⇒ no calibration fix needed; pursue **overshoot taming** — **F1 (EMA on power)** to soften the step, optionally damp the feedback while the anchor makes a large jump;
+- if it stabilizes ~40% above anchor ⇒ a real factor exists; investigate consensus/orphan losses or a constant before any anchor change.
+
+**F2 (asymmetric easing)** remains a quality improvement; **F3 dropped**; **F4** fallback only. Validate every change against a ≥30-block steady-state aggregate (F5). Do **not** apply an empirical anchor factor until the steady-state run distinguishes overshoot from a real offset.
 
 ### File Checklist (this section)
 
