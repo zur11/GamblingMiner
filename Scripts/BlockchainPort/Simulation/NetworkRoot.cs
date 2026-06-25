@@ -188,7 +188,8 @@ public partial class NetworkRoot : Node
         }
 
         SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
-        PersistStateToDisk();
+        // No disk write: a block is the only commit. The tx lives in the in-memory mempool and becomes durable
+        // when the next block is mined; if the app closes before that, it is discarded on restart (revert to block).
         return tx;
     }
 
@@ -446,7 +447,8 @@ public partial class NetworkRoot : Node
     {
         EnsureInitialized();
         SharedNetwork.RunConsensusRound();
-        PersistStateToDisk();
+        // No disk write — consensus is a between-block action; a block is the only commit. (Currently a no-op in
+        // this single-shared-chain design; flagged for removal with the Block Explorer Consensus button in T2.)
     }
 
     public IReadOnlyList<string> GetNodeIds()
@@ -800,7 +802,7 @@ public partial class NetworkRoot : Node
         if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
             return null;
         SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
-        PersistStateToDisk();
+        // No disk write: a block is the only commit (see CreateAndBroadcastTransaction / PersistStateToDisk).
         return tx;
     }
 
@@ -967,6 +969,11 @@ public partial class NetworkRoot : Node
         };
     }
 
+    // "Block = the only commit to disk" (ProjectDesignManual §24.8 / PRIVATE_ROADMAP T1): this is only ever
+    // called at block-mining, baseline node creation, and startup. NOTHING between blocks persists — not the
+    // chain, not the mempool, not financial state — so an app restart reverts the whole world (clock, balances
+    // AND pending transactions) to the last mined block. A tx broadcast or consensus round only mutates the
+    // in-memory state; it becomes durable when the next block is mined.
     private static void PersistStateToDisk()
     {
         EnsureDirectory(BlockchainDir);

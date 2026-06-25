@@ -325,20 +325,20 @@ Done when a participant's rank is tracked and visibly affects at least the refer
 
 Three concrete tasks identified while fixing the clock/persistence bugs (see `Documentation/ProjectDesignManual.md` §24.8). **Annotations only — no implementation yet.**
 
-### T1 — Stop transactions/consensus from committing financial state to disk
+### T1 — Stop transactions/consensus from committing financial state to disk ✅ DONE (2026-06-24)
 
-Closes the "known edge" left open by the **block = the only commit to disk** model. Today a mid-session action flushes in-memory SC balances to disk, so an app restart would *not* fully revert to the last block.
+Closed the "known edge" left open by the **block = the only commit to disk** model: a mid-session BTC send / consensus round used to flush in-memory SC balances to disk, so an app restart would *not* fully revert to the last block.
 
-- **Root cause**: `NetworkRoot.PersistStateToDisk()` serializes the *whole* snapshot — chain, pending tx, wallets **and** the live `NodeFinancialStates` — and is called outside block-mining by `CreateAndBroadcastTransaction` (`NetworkRoot.cs` ~191), `CreateAndBroadcastTransactionToAddress` (~803), and `RunConsensus` (~449).
-- **Fix direction**: decouple financial-state persistence from chain/tx persistence. A BTC transaction or consensus round should persist only chain + pending transactions + wallets — never the SC `NodeFinancialStates`. Financial state should reach disk **only** at the block-commit paths (`SimulationService.CaptureCheckpoint`, `DiceGame.CaptureBlockCheckpoint`, `HandleMinedBlock`). Options: split the snapshot write into two methods, or snapshot the committed financial state separately at block time.
-- **Done when**: sending BTC / running consensus between blocks does not change what an app restart reverts to (still the last mined block for every participant).
+- **Was**: `NetworkRoot.PersistStateToDisk()` serialized the *whole* snapshot — chain, pending tx, wallets **and** the live `NodeFinancialStates` — and was called outside block-mining by `CreateAndBroadcastTransaction`, `CreateAndBroadcastTransactionToAddress`, and `RunConsensus`.
+- **Fix shipped (stronger than first planned — *nothing* persists between blocks)**: the between-block `PersistStateToDisk()` calls in `CreateAndBroadcastTransaction`, `CreateAndBroadcastTransactionToAddress`, and `RunConsensus` were **removed**. Those actions now only mutate the in-memory chain/mempool; `PersistStateToDisk()` runs only at block-mining (`HandleMinedBlock`), baseline node creation, and startup. (The first attempt — an `includeFinancialState` flag that still persisted the pending tx — was discarded: it would have left a pending tx with its own `Timestamp` on disk while the clock/balances reverted, an inconsistent half-state.)
+- **Result**: a BTC tx between blocks lives in the mempool and becomes durable only when the next block is mined; close the app before that and the whole world — clock, balances **and** un-mined pending transactions — reverts to the last mined block. A block is the only commit.
 
 ### T2 — Remove dead Block-Mining / maintenance UI from BlockExplorer
 
 These controls predate the background simulation + real-time auto-refresh and now have no purpose.
 
 - **Mine button** (`%MineButton` → `OnMinePressed` → `MineAndBroadcastBlock`): manual block minting; mining is now bet-driven (player) + background-sim (bots). Leftover.
-- **Consensus button** (`%ConsensusButton` → `OnConsensusPressed` → `RunConsensus`): purpose never clear; with a single shared static chain it has no visible effect (and it also triggers the unwanted persist in T1).
+- **Consensus button** (`%ConsensusButton` → `OnConsensusPressed` → `RunConsensus`): **decision — remove the button AND the code path** (`NetworkRoot.RunConsensus`, `NetworkSimulator.RunConsensusRound`). `RunConsensusRound` makes each node adopt the longest chain among its peers, but every node already shares one canonical chain (`BroadcastBlock` → `TryAcceptMinedBlock` keeps them identical), so there is never a longer chain to adopt — it is a no-op. Consensus would only earn its keep if the sim ever modeled **divergent chains** (real P2P propagation, forks, orphan/stale blocks) — not on the current roadmap, where mining commits to a single shared chain. If that fork-simulation feature is ever pursued, reintroduce consensus then. (Its between-block persist was already removed in T1.)
 - **Refresh button** (`%RefreshButton` → `OnRefreshPressed`): redundant — `BlockExplorer._Process` already auto-refreshes every 1 s (`AutoRefreshInterval`).
 - **Scope caution**: `%MinerNodeOption` is reused by the tx/address/block **lookup** features — keep the selector; remove only the mine action. Clean up the matching `.tscn` nodes + handler methods.
 - **Done when**: BlockExplorer shows only live, useful read-only controls; no orphaned `%MineButton`/`%ConsensusButton`/`%RefreshButton` nodes or handlers remain.
