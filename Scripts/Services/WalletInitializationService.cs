@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using GodotBlockchainPort.Blockchain;
 using GodotBlockchainPort.Simulation;
+using Scripts.Hardware;
 #nullable enable
 
 public static class WalletInitializationService
@@ -12,6 +13,9 @@ public static class WalletInitializationService
 	private const string CasinoWalletPath = "user://casino_wallet_state.json";
 	private const string SatoshiWalletPath = "user://satoshi_wallet_state.json";
 	private const string HalWalletPath = "user://hal_wallet_state.json";
+	private const string HardwareAllocationPath = "user://hardware_allocation.json";
+
+	private static readonly string[] HardwareNodeIds = { "player", "bot_1", "bot_2", "bot_3", "bot_4" };
 
 	private static readonly JsonSerializerOptions JsonOptions = new()
 	{
@@ -32,6 +36,30 @@ public static class WalletInitializationService
 		SatoshiWallet = EnsureFounderWallet(wordlist, SatoshiWalletPath, "satoshi");
 		HalWallet = EnsureFounderWallet(wordlist, HalWalletPath, "hal");
 		BotWalletRegistry.EnsureAll();
+		EnsureHardwareAllocation();
+	}
+
+	private static void EnsureHardwareAllocation()
+	{
+		if (FileAccess.FileExists(HardwareAllocationPath))
+		{
+			HardwareAllocationRepository.EnsureLoaded();
+			GD.Print("[WalletInitializationService] Hardware allocation loaded.");
+			return;
+		}
+
+		// Bootstrap: each of the 5 miner nodes gets 1 individual + 1 casino pool credit.
+		// Starting totals → casino pool = 5, individual = 5, ratio = 1.0 → fee = 30%.
+		foreach (string nodeId in HardwareNodeIds)
+		{
+			HardwareAllocationRepository.SetNode(new NodeHardwareState
+			{
+				NodeId = nodeId,
+				IndividualPoolCredits = 1,
+				CasinoPoolCredits = 1
+			});
+		}
+		GD.Print("[WalletInitializationService] Hardware allocation bootstrapped — 5 nodes, 1 individual + 1 casino credit each.");
 	}
 
 	public static void MarkSeedPopupSeen()

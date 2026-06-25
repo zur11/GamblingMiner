@@ -1,6 +1,6 @@
 # BTC Mining Pools & Hardware Shop — Implementation Plan
 
-**Status**: Phase 1 ○  Phase 2 ○  Phase 3 ○  Phase 4 ○  Phase 5 ○  Phase 6 ○ — **roadmap Step 6 is now active and RE-SCOPED** (see "Step 6 Scope & Decisions" below). This plan builds on the **per-node candidate block model** (`candidate-block-model-plan.md`, roadmap Step 4) — per-credit nonce routing mines real candidates.
+**Status**: Phase 1 ✅  Phase 2 ○  Phase 3 ○  Phase 4 ○  Phase 5 ○  Phase 6 ○ — **roadmap Step 6 is now active and RE-SCOPED** (see "Step 6 Scope & Decisions" below). This plan builds on the **per-node candidate block model** (`candidate-block-model-plan.md`, roadmap Step 4) — per-credit nonce routing mines real candidates.
 > ⚠️ **Two corrections to this plan since it was written:**
 > 1. **Gradual miner spawning is POSTPONED** (needs a per-bot strategy set first), so for now we keep **DEV access to all bettable nodes**; the "player + 4 bots at block 1" assumption is fine for the prototype.
 > 2. **The bot/player betting loop moved to `SimulationService`** during the background-simulation work — so Phase 3's nonce-routing/speed-lock now targets `SimulationService.ExecutePlayerBetOnce` / `ExecuteBotBet`, **not** `DiceGame.ExecuteBotBet` / `BotAutoBetRunner` (those no longer exist in DiceGame).
@@ -770,9 +770,9 @@ Player Coordinator
 
 | File | Status | Phase |
 |---|---|---|
-| `Scripts/Hardware/HardwareModels.cs` | ○ To create | Phase 1 |
-| `Scripts/Hardware/HardwareAllocationRepository.cs` | ○ To create | Phase 1 |
-| `Scripts/Services/WalletInitializationService.cs` | ○ To modify (bootstrap call) | Phase 1 |
+| `Scripts/Hardware/HardwareModels.cs` | ✅ Created | Phase 1 |
+| `Scripts/Hardware/HardwareAllocationRepository.cs` | ✅ Created | Phase 1 |
+| `Scripts/Services/WalletInitializationService.cs` | ✅ Modified (bootstrap call) | Phase 1 |
 | `Scripts/Hardware/CasinoPoolRepository.cs` | ○ To create | Phase 2 |
 | `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | ○ To modify (casino nonce, fee, distribution) | Phase 2 |
 | `Screens/DiceGame/DiceGame.cs` | ○ To modify (hardware lock, nonce routing) | Phase 3 |
