@@ -9,7 +9,9 @@ namespace UI.DevTimeScaleSelector
 	// so it can be dropped into any screen without editing its .tscn. Not persisted; resets to 100X on restart.
 	public partial class DevTimeScaleSelector : HBoxContainer
 	{
-		private const int MaxScale = 10; // 10 options: 100X (×1) … 1000X (×10)
+		// DevTimeScale multipliers on the 100X base clock: 100X, then 1000X..9000X in 1000X steps.
+		// (Capped at 9000X — 10000X hit the MaxBetsPerFrame throughput ceiling and lagged.)
+		private static readonly int[] Multipliers = { 1, 10, 20, 30, 40, 50, 60, 70, 80, 90 };
 
 		private OptionButton _selector;
 		private CalendarTimeService _calendar;
@@ -25,22 +27,22 @@ namespace UI.DevTimeScaleSelector
 			AddChild(label);
 
 			_selector = new OptionButton();
-			for (int scale = 1; scale <= MaxScale; scale++)
+			foreach (int mult in Multipliers)
 			{
-				_selector.AddItem($"{scale * 100}X");
+				_selector.AddItem($"{mult * 100}X");
 			}
 
-			int current = Mathf.Clamp((_calendar?.DevTimeScale ?? 1) - 1, 0, MaxScale - 1);
-			_selector.Select(current);
+			int current = System.Array.IndexOf(Multipliers, _calendar?.DevTimeScale ?? 1);
+			_selector.Select(current < 0 ? 0 : current);
 			_selector.ItemSelected += OnScaleSelected;
 			AddChild(_selector);
 		}
 
 		private void OnScaleSelected(long index)
 		{
-			if (_calendar != null)
+			if (_calendar != null && index >= 0 && index < Multipliers.Length)
 			{
-				_calendar.DevTimeScale = (int)index + 1; // index 0 → ×1 (100X), index 9 → ×10 (1000X)
+				_calendar.DevTimeScale = Multipliers[index]; // index 0 → ×1 (100X) … index 9 → ×90 (9000X)
 			}
 		}
 	}

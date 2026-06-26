@@ -12,8 +12,8 @@ public partial class CalendarTimeService : Node
 	public bool IsAutobetActive { get; set; } = false;
 	public double SpeedMultiplier { get; set; } = 1.0;
 
-	// DEV/TEST ONLY — orthogonal time-acceleration multiplier on top of SpeedMultiplier (1 = 100X base,
-	// up to 10 = 1000X). It scales BOTH the calendar clock (here) and the bet-execution rate
+	// DEV/TEST ONLY — orthogonal time-acceleration multiplier on top of SpeedMultiplier (1 = 100X base;
+	// selector offers 100X, then 1000X..9000X i.e. multipliers 1, 10, 20 … 90). It scales BOTH the calendar clock (here) and the bet-execution rate
 	// (SimulationService._Process), keeping attempts-per-IN-GAME-second — and therefore the difficulty /
 	// power / solvetime dynamics — mathematically invariant. Only wall-clock time compresses. NOT persisted;
 	// resets to 1 on restart. Set via the DEV time-scale selector in DiceGame / BlockExplorer.

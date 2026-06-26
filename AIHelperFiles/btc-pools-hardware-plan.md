@@ -879,7 +879,7 @@ First live trace (`difficulty_trace.csv`, 17 blocks, indices 113–129, single s
 
 **Revised likely cause: feed-forward + feedback overshoot during the un-converged transient (not a calibration bug).** At the step the anchor sets the level (~5851), but easing keeps difficulty *below* equilibrium for a few blocks → those blocks run fast → `LWMA(solvetimes)` small → `feedbackTrim = Target/LWMA > 1` → `target = anchor × trim` overshoots above the anchor → difficulty climbs past it (to 8418, still rising at block 129 — peak not yet reached). Test Run #1 captured only the climb, not the settle-back. The feed-forward already corrects the level; the feedback then piles on, reacting to the easing-induced fast blocks.
 
-**Decider — the ≥30-block steady-state run (in progress, using the new 100X→1000X dev tool):**
+**Decider — the ≥30-block steady-state run (in progress, using the new 100X→9000X dev tool):**
 - difficulty settles **≈ anchor** (5851 at power 10), mean ratio → 1.0 ⇒ **no calibration error**; the 1.4× was pure transient overshoot → refinement = *tame overshoot on large steps* (F1 EMA on power smooths the step; or damp feedback while the anchor makes a big jump).
 - difficulty stabilizes **~40% above anchor**, ratio → 1.0 ⇒ a **real factor** exists → investigate consensus/orphan losses or a constant.
 
@@ -901,14 +901,14 @@ Difficulty orbited the anchor (oscillating 836–1436 under the heavy per-block 
 
 > **Caveat — confirmed at power 2, not yet at power 10.** The `anchor = InitialDifficulty × power` relation is linear and the accounting audit holds regardless of pool split, so a power-10 calibration error is unlikely — but a single steady-state run at power ≈10 (let it settle ≥20 blocks past the step) would fully close it. Until then, treat F1/F2 as optional polish rather than fixes.
 
-### Dev tooling — time acceleration 100X→1000X (2026-06-25) ✅
+### Dev tooling — time acceleration 100X→9000X (2026-06-25) ✅
 
-To run validation samples (e.g. the ≥30-block steady-state runs F5 needs) in ~1/10 the wall-clock time **without altering the dynamics under measurement**.
+To run validation samples (e.g. the ≥30-block steady-state runs F5 needs) in a fraction of the wall-clock time **without altering the dynamics under measurement**.
 
-- **Key correctness point**: bumping `SpeedMultiplier` alone is wrong — it speeds the clock but not bet execution, so in-game solvetime per block inflates ~10×, the regulator reads "blocks too slow", and `feedbackTrim` (clamped [0.5, 2]) can't compensate → difficulty collapses. The dynamics we measure would be destroyed.
-- **Correct design**: an orthogonal `CalendarTimeService.DevTimeScale` (int 1..10) scales **both** by the same factor `k`: the calendar clock (`delta × SpeedMultiplier × k`) **and** bet execution (`SimulationService._Process`: `simDelta = delta × k` for player + bots). The power fed to the regulator (`HardwareRate`/`GetTotalActiveMiningPower`) is **deliberately not scaled**. ⇒ `attempts/in-game-second = (rate·k)/(100·k) = rate/100` is invariant → difficulty, power, in-game solvetimes and ratios are identical; only wall-clock compresses (`real_time/block = TargetBlockSeconds/(100·k)`).
-- **UI**: `UI/DevTimeScaleSelector/DevTimeScaleSelector.cs` (programmatic, like StatusBar) — selector "100X".."1000X" in DiceGame (next to the APS selector) and BlockExplorer (under the StatusBar). Live (next frame). **Not persisted** — resets to 100X on restart.
-- **Caveat**: `MaxBetsPerFrame = 10`/node/frame would throttle only at extreme scale × very high single-node hardware (~99 credits at 1000X); irrelevant for the measurement regime (power ~10–15 split across nodes).
+- **Key correctness point**: bumping `SpeedMultiplier` alone is wrong — it speeds the clock but not bet execution, so in-game solvetime per block inflates with the factor, the regulator reads "blocks too slow", and `feedbackTrim` (clamped [0.5, 2]) can't compensate → difficulty collapses. The dynamics we measure would be destroyed.
+- **Correct design**: an orthogonal `CalendarTimeService.DevTimeScale` (int) scales **both** by the same factor `k`: the calendar clock (`delta × SpeedMultiplier × k`) **and** bet execution (`SimulationService._Process`: `simDelta = delta × k` for player + bots). The power fed to the regulator (`HardwareRate`/`GetTotalActiveMiningPower`) is **deliberately not scaled**. ⇒ `attempts/in-game-second = (rate·k)/(100·k) = rate/100` is invariant → difficulty, power, in-game solvetimes and ratios are identical; only wall-clock compresses (`real_time/block = TargetBlockSeconds/(100·k)`).
+- **UI**: `UI/DevTimeScaleSelector/DevTimeScaleSelector.cs` (programmatic, like StatusBar) — selector with **10 options: 100X, then 1000X..9000X in 1000X steps** (`DevTimeScale` multipliers 1, 10, 20 … 90), in DiceGame (next to the APS selector) and BlockExplorer (under the StatusBar). Live (next frame). **Not persisted** — resets to 100X on restart.
+- **Caveat**: `MaxBetsPerFrame = 10`/node/frame caps throughput at `~600 bets/s/node`, so at very high scale × high single-node hardware the acceleration stops being linear (blocks no longer compress proportionally; the measured dynamics stay intact). The 10000X option was **removed** because it hit this ceiling and lagged; **9000X is the tested-smooth ceiling**. Irrelevant for the measurement regime (power split across nodes, each low-rate).
 - **Files**: `CalendarTimeService.cs`, `SimulationService.cs`, `UI/DevTimeScaleSelector/DevTimeScaleSelector.cs`, `DiceGame.cs`, `BlockExplorer.cs`.
 
 **Companion: "Discard Hardware (−1)" button** (Pools & Hardware screen, 2026-06-25 ✅) — the counterpart to the DEV "Buy Hardware". `HardwareAllocationRepository.RemoveCredits` drops a credit (casino pool first, then individual; floored at **1 total** so reported power stays consistent with `TotalCredits`). Enables dropping a node to a single private-pool credit and **power-decrease test runs** (needed to validate F2 asymmetric easing — the fast-relief-on-drop path — and the open power-≈10 calibration check). Built programmatically next to Buy Hardware (no .tscn edit), disabled at the 1-credit floor. Files: `HardwareAllocationRepository.cs`, `BTCPoolsAndHardwareShop.cs`.
@@ -920,7 +920,7 @@ What's left to measure before deciding whether F1/F2 are worth implementing. The
 **Universal protocol (applies to every run):**
 - **Clean the CSV** first — delete `user://logs/difficulty_trace.csv` (`…\app_userdata\GamblingMiner\logs\`) so the file starts fresh; the header is rewritten on the first live block.
 - **One session, no restart** mid-run — an app restart rolls the world back to the last block but the CSV log does **not** revert (rows would desync from the chain).
-- **Use the DEV time selector at 1000X** so 25–30 blocks take ~1/10 the wall-clock.
+- **Use the DEV time selector at 1000X or higher (up to 9000X)** so 25–30 blocks take a fraction of the wall-clock.
 - **Judge by aggregates, never single blocks** — per-block variance is ≈ exponential (ratios seen 0.02→3.7 at constant power). Use ≥20–30 blocks per regime; `aggregate realized power = 100 · Σdifficulty / ΣsolveSec`, plus mean `solveRatio` and mean `difficulty` vs `anchor`.
 - **Power** = Σ `TotalCredits` of player + running bots (shown as `configuredPower` per block). Raise it with **Buy Hardware**, lower it with **Discard Hardware (−1)** or by stopping bots. Keep the **player autobet running** the whole time (it drives the clock).
 
@@ -1000,7 +1000,7 @@ Sub-options, least→most invasive; pick based on what F0 shows:
 - **F3 (startup stall)** — ⚪ dropped (artifact of bootstrap data).
 - **F4 (lower α)** — ⚪ fallback only; not needed.
 
-**Kept as permanent assets**: the F0 difficulty trace (`difficulty_trace.csv`) and the dev tools (time-accel 100X→1000X, Discard Hardware) — reuse them to re-validate if the regulator, calibration constants, or pool/hardware model change later. Always judge by aggregates over ≥20–30 blocks (per-block solvetime is ≈ exponential).
+**Kept as permanent assets**: the F0 difficulty trace (`difficulty_trace.csv`) and the dev tools (time-accel 100X→9000X, Discard Hardware) — reuse them to re-validate if the regulator, calibration constants, or pool/hardware model change later. Always judge by aggregates over ≥20–30 blocks (per-block solvetime is ≈ exponential).
 
 ### File Checklist (this section)
 
