@@ -24,8 +24,8 @@
 - **Option 1 (community pool)**: hardware credits assigned to the *casino pool* route each bet's nonce attempt to the casino node's blockchain; the casino distributes block rewards to contributors proportionally minus a dynamic fee.
 - **Option 3 (hybrid coordinator)**: designed in a future plan — reserved for post-Basic Mode.
 
-**Starting state**: player + 4 bots each receive **2 hardware credits** at bootstrap (1 individual, 1 casino pool).  
-Betting speed in DiceGame is **locked to total hardware credits** (not freely selectable). 2 credits → 2 bets/second.
+**Starting state** (revised 2026-06-25): player + 4 bots each start with **1 hardware credit** at first-launch bootstrap (1 individual, **0 casino pool**) — everyone begins at a single private-pool credit; casino-pool participation is opt-in by moving credits.  
+Betting speed in DiceGame is **locked to total hardware credits** (not freely selectable). 1 credit → 1 bet/second. *(Was `2 credits = 1 individual + 1 casino` before this revision.)*
 
 ---
 
@@ -336,19 +336,19 @@ If `user://hardware_allocation.json` does not exist, bootstrap:
 
 ```csharp
 // 5 nodes: "player", "bot_1", "bot_2", "bot_3", "bot_4"
-// Each gets: 1 individual credit, 1 casino pool credit
+// Each gets: 1 individual credit, 0 casino pool credits  (revised 2026-06-25)
 foreach (string nodeId in new[] { "player", "bot_1", "bot_2", "bot_3", "bot_4" })
 {
     HardwareAllocationRepository.SetNode(new NodeHardwareState
     {
         NodeId = nodeId,
         IndividualPoolCredits = 1,
-        CasinoPoolCredits = 1
+        CasinoPoolCredits = 0
     });
 }
 ```
 
-Starting totals: casino pool = 5 credits, individual = 5 credits → ratio = 1.0 → fee = 30%.
+Starting totals: individual = 5 credits, casino pool = 0 (no casino contributors at first launch — players opt in by moving credits to the casino pool). **Revised 2026-06-25**: was `1 individual + 1 casino` each; now `1 individual + 0 casino` so everyone starts at a single private-pool credit.
 
 ---
 
@@ -704,6 +704,8 @@ CasinoPoolRepository.EnsureLoaded();            // new line
 ### Task 6.2 — Smoke Test Checklist
 
 Before marking all phases done:
+
+> **Note (2026-06-25)**: the bootstrap was later changed to **1 individual + 0 casino** per node. The figures below were written against the original **1 + 1** bootstrap, so the *starting* numbers differ now (a fresh game shows `CasinoPoolCredits = 0`, casino pool empty, player speed 1/s; move a credit into the casino pool before exercising the casino-payout steps). The relative checks (buy/move/fee-recalc) still hold from the new baseline.
 
 - [ ] Fresh game: 5 nodes each show `IndividualPoolCredits = 1`, `CasinoPoolCredits = 1`
 - [ ] DiceGame player autobet rate locked to 2/s; ApsSelector is disabled showing "2X"

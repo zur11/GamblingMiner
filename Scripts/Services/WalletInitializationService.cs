@@ -51,18 +51,19 @@ public static class WalletInitializationService
 			return;
 		}
 
-		// Bootstrap: each of the 5 miner nodes gets 1 individual + 1 casino pool credit.
-		// Starting totals → casino pool = 5, individual = 5, ratio = 1.0 → fee = 30%.
+		// Bootstrap: each of the 5 miner nodes (player + 4 bots) starts with a single individual-pool
+		// credit and 0 casino-pool credits. Starting totals → individual = 5, casino pool = 0 (no casino
+		// pool contributors at first launch; players opt in by moving credits to the casino pool).
 		foreach (string nodeId in HardwareNodeIds)
 		{
 			HardwareAllocationRepository.SetNode(new NodeHardwareState
 			{
 				NodeId = nodeId,
 				IndividualPoolCredits = 1,
-				CasinoPoolCredits = 1
+				CasinoPoolCredits = 0
 			});
 		}
-		GD.Print("[WalletInitializationService] Hardware allocation bootstrapped — 5 nodes, 1 individual + 1 casino credit each.");
+		GD.Print("[WalletInitializationService] Hardware allocation bootstrapped — 5 nodes, 1 individual + 0 casino credit each.");
 	}
 
 	public static void MarkSeedPopupSeen()
