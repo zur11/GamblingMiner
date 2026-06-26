@@ -42,9 +42,16 @@ public sealed class NodeAgent
         WalletSecp256k1PublicKey = secp256k1PublicKey;
     }
 
-    public Transaction CreateSignedTransaction(decimal amount, string recipientAddress, decimal fee = 0m)
+    // deterministicSalt: pass a fixed string (e.g. a historical-event key) to make the content-hash txid
+    // reproducible across runs/frames, so the scripted-history injectors (Step 7.3/7.4) get idempotency for
+    // free via ContainsTransactionId. Default null keeps the random per-tx salt for normal traffic.
+    public Transaction CreateSignedTransaction(decimal amount, string recipientAddress, decimal fee = 0m, string? deterministicSalt = null)
     {
         Transaction tx = Blockchain.CreateUnsignedTransaction(amount, WalletAddress, recipientAddress);
+        if (deterministicSalt != null)
+        {
+            tx.Salt = deterministicSalt;
+        }
         tx.Fee = fee; // set before computing the id so amount + fee are part of the content hash (Step 4b.2/4b.3)
         tx.TransactionId = BlockchainService.ComputeTransactionId(tx); // content-hash txid (OQ-C6)
         string payload = BlockchainService.BuildTransactionPayload(tx);

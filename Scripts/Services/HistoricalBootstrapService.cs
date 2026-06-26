@@ -29,6 +29,13 @@ public static class HistoricalBootstrapService
 	// ~16h 40m in-game per block at 100X (≈585 attempts/block × 100 in-game seconds).
 	private const long BlockIntervalMs = 58_500_000L;
 
+	// Step 7.3 (E4): the famous first person-to-person tx — Satoshi → Hal, 10 BTC, ~12 Jan 2009.
+	// Injected into the mempool once the bootstrap clock reaches this date, so it confirms in the
+	// block whose timestamp ≈ 12 Jan (real block 170; ~block 13 here — dates, not heights, rule).
+	private static readonly DateTime E4DateLocal = new(2009, 1, 12, 0, 0, 0, DateTimeKind.Local);
+	private const decimal E4AmountBtc = 10m;
+	private const string E4Salt = "hist_E4_satoshi_hal_10";
+
 	public static bool DidRun { get; private set; }
 	public static DateTime? LandingLocalDateTime { get; private set; }
 
@@ -63,6 +70,8 @@ public static class HistoricalBootstrapService
 		}
 
 		long ts = BlockchainService.GenesisTimestampUnixMs;
+		long e4DateMs = new DateTimeOffset(E4DateLocal).ToUnixTimeMilliseconds();
+		bool e4Injected = false;
 		int satoshiBlocks = 0;
 		int halBlocks = 0;
 
@@ -77,6 +86,13 @@ public static class HistoricalBootstrapService
 				if (ts >= landingMs)
 				{
 					break;
+				}
+
+				// E4: once the clock reaches 12 Jan, inject the Satoshi→Hal 10 BTC tx BEFORE mining this
+				// block so it lands in it. Retries on later blocks if Satoshi isn't funded yet (he is by now).
+				if (!e4Injected && ts >= e4DateMs)
+				{
+					e4Injected = NetworkRoot.InjectHistoricalSignedTxStatic("satoshi", "hal", E4AmountBtc, E4Salt);
 				}
 
 				bool halTurn = halTargets.Count > 0 && ts >= halTargets.Peek();
@@ -102,6 +118,6 @@ public static class HistoricalBootstrapService
 		DidRun = true;
 		LandingLocalDateTime = landingLocal;
 		GD.Print($"[HistoricalBootstrap] First launch — mined genesis → {landingLocal:yyyy-MM-dd HH:mm:ss}. " +
-				 $"Satoshi {satoshiBlocks} blocks, Hal {halBlocks} blocks.");
+				 $"Satoshi {satoshiBlocks} blocks, Hal {halBlocks} blocks. E4 (10 BTC Satoshi→Hal): {(e4Injected ? "on-chain" : "skipped")}.");
 	}
 }

@@ -242,6 +242,42 @@ public partial class NetworkRoot : Node
         return true;
     }
 
+    // Step 7.3/7.4: inject a scripted historical signed transaction between two registered nodes (e.g. the
+    // 12 Jan 2009 Satoshi→Hal 10 BTC tx, or the April 2009 Satoshi↔Hearn round-trip). Uses a deterministic
+    // salt so the content-hash txid is reproducible → idempotent (a second call is a no-op via
+    // ContainsTransactionId / AddTransactionToPendingTransactions). Returns true if the tx is now pending or
+    // already on-chain; false if the sender can't afford it or a node is unknown. Per Q-X4, no InputData note.
+    public static bool InjectHistoricalSignedTxStatic(string fromNodeId, string toNodeId, decimal amount, string deterministicSalt, decimal fee = 0m)
+    {
+        EnsureInitialized();
+        if (amount <= 0m
+            || !SharedNodesById.TryGetValue(fromNodeId, out NodeAgent? sender)
+            || !SharedNodesById.TryGetValue(toNodeId, out NodeAgent? recipient)
+            || sender.WalletAddress == recipient.WalletAddress)
+        {
+            return false;
+        }
+
+        Transaction tx = sender.CreateSignedTransaction(amount, recipient.WalletAddress, fee, deterministicSalt);
+        if (sender.Blockchain.ContainsTransactionId(tx.TransactionId))
+        {
+            return true; // already injected (pending or confirmed) — idempotent no-op
+        }
+
+        if (sender.Blockchain.GetAddressSpendableBalance(sender.WalletAddress) < amount + fee)
+        {
+            return false; // not enough spendable yet — caller may retry on a later block
+        }
+
+        if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
+        {
+            return false;
+        }
+
+        SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
+        return true;
+    }
+
     public static void BeginBulkMining() => _bulkMining = true;
 
     public static void EndBulkMiningAndPersist()
@@ -769,10 +805,42 @@ public partial class NetworkRoot : Node
     public IReadOnlyList<string> GetNodeStatusLines()
     {
         EnsureInitialized();
+        Dictionary<string, int> mined = MinedBlockCountsByNode();
         return SharedNetwork.Nodes
             .OrderBy(n => n.NodeId)
-            .Select(n => $"{n.NodeId} | block: {n.Blockchain.Chain.Count} | pending: {n.Blockchain.PendingTransactions.Count} | balance: {n.Blockchain.GetAddressSpendableBalance(n.WalletAddress):F8}")
+            .Select(n => $"{n.NodeId} | mined: {(mined.TryGetValue(n.NodeId, out int c) ? c : 0)} | block: {n.Blockchain.Chain.Count} | pending: {n.Blockchain.PendingTransactions.Count} | balance: {n.Blockchain.GetAddressSpendableBalance(n.WalletAddress):F8}")
             .ToList();
+    }
+
+    // Blocks each node has mined on the canonical (player) chain, keyed by node id. Genesis (index 0,
+    // unattributed) is excluded. Lets the Block Explorer show who mined how much — e.g. Satoshi's ~10%
+    // founder share accruing during play (Step 7.2).
+    public IReadOnlyDictionary<string, int> GetMinedBlockCountsByNode()
+    {
+        EnsureInitialized();
+        return MinedBlockCountsByNode();
+    }
+
+    private static Dictionary<string, int> MinedBlockCountsByNode()
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+        {
+            return counts;
+        }
+
+        foreach (Block b in player.Blockchain.Chain)
+        {
+            if (b.Index == 0 || string.IsNullOrEmpty(b.MinedByNodeId))
+            {
+                continue;
+            }
+
+            counts.TryGetValue(b.MinedByNodeId, out int c);
+            counts[b.MinedByNodeId] = c + 1;
+        }
+
+        return counts;
     }
 
     public IReadOnlyList<string> GetNodeAddressLines()
