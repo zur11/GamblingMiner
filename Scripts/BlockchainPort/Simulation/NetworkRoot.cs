@@ -106,6 +106,7 @@ public partial class NetworkRoot : Node
         // they exist as nodes whose addresses receive the genesis / early coinbase rewards.
         RegisterFounderNode(WalletInitializationService.SatoshiWallet);
         RegisterFounderNode(WalletInitializationService.HalWallet);
+        RegisterFounderNode(WalletInitializationService.MikeHearnWallet);
 
         ApplyStateFromSnapshot(savedState);
         NormalizeGenesisAcrossNodes();
@@ -276,6 +277,24 @@ public partial class NetworkRoot : Node
 
         SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
         return true;
+    }
+
+    // Whether a scripted historical tx (identified by its deterministic-salt content-hash txid) is already
+    // CONFIRMED on the canonical chain (not merely pending). Lets HistoricalEventScheduler sequence a
+    // multi-step exchange — each step waits for the previous to be mined (Step 7.4). Chain-derived state,
+    // so it survives the revert-to-last-block model with no side flag file.
+    public static bool IsHistoricalTxConfirmedStatic(string fromNodeId, string toNodeId, decimal amount, string deterministicSalt, decimal fee = 0m)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(fromNodeId, out NodeAgent? sender)
+            || !SharedNodesById.TryGetValue(toNodeId, out NodeAgent? recipient)
+            || !SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+        {
+            return false;
+        }
+
+        string txid = sender.CreateSignedTransaction(amount, recipient.WalletAddress, fee, deterministicSalt).TransactionId;
+        return player.Blockchain.Chain.Any(b => b.Transactions.Any(t => t.TransactionId == txid));
     }
 
     public static void BeginBulkMining() => _bulkMining = true;
@@ -558,6 +577,7 @@ public partial class NetworkRoot : Node
         {
             AppendDifficultyTrace(miner, block); // F0: per-block difficulty/throughput telemetry (live blocks only)
             ScheduleBotTransactionsAfterBlock(block);
+            HistoricalEventScheduler.OnBlockMined(block); // Step 7.4: inject scripted player-era txs at their date
             PersistStateToDisk();
             // After every block (any miner), retry casino-pool payouts whose coinbase has now matured.
             TryDistributePendingCasinoRewards();

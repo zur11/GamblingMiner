@@ -13,6 +13,7 @@ public static class WalletInitializationService
 	private const string CasinoWalletPath = "user://casino_wallet_state.json";
 	private const string SatoshiWalletPath = "user://satoshi_wallet_state.json";
 	private const string HalWalletPath = "user://hal_wallet_state.json";
+	private const string MikeHearnWalletPath = "user://mike_hearn_wallet_state.json";
 	private const string HardwareAllocationPath = "user://hardware_allocation.json";
 
 	private static readonly string[] HardwareNodeIds = { "player", "bot_1", "bot_2", "bot_3", "bot_4" };
@@ -27,6 +28,7 @@ public static class WalletInitializationService
 	public static CasinoWalletState? CasinoWallet { get; private set; }
 	public static FounderWalletState? SatoshiWallet { get; private set; }
 	public static FounderWalletState? HalWallet { get; private set; }
+	public static FounderWalletState? MikeHearnWallet { get; private set; }
 
 	public static void EnsureAll()
 	{
@@ -35,6 +37,7 @@ public static class WalletInitializationService
 		CasinoWallet = EnsureCasinoWallet(wordlist);
 		SatoshiWallet = EnsureFounderWallet(wordlist, SatoshiWalletPath, "satoshi");
 		HalWallet = EnsureFounderWallet(wordlist, HalWalletPath, "hal");
+		MikeHearnWallet = EnsureFounderWallet(wordlist, MikeHearnWalletPath, "mike_hearn");
 		BotWalletRegistry.EnsureAll();
 		EnsureHardwareAllocation();
 	}
