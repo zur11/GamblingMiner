@@ -26,7 +26,7 @@ The parked plan's **OQ-2** read: *"autonomous (no-bet) mining happens **only** d
 The three founders are **not symmetric** — each is grounded in its real history (see §2.3, derived from `Resumen Hal Finney y Mike Hearn.txt`):
 
 - **Satoshi** — regulated miner, share dictated by the **11,000 BTC by 2011-04-26** requirement (not a tunable preference — Q-A1).
-- **Hal** — a real "drip" miner whose power **decays to ~0 around Aug 2009**, his real **ALS diagnosis** turning point; dormant afterward.
+- **Hal** — keeps **one participant's worth of power** (`P=1.0`, kept as-is) and falls behind **relatively** as the network grows (gradual miners up to **~9 Aug 2009**, his ALS turning point), then dormant. v1 stand-in = a linear `1.0→0` fade.
 - **Hearn** — **never mines** (real history: *"sin minería documentada — enfocado en software, no hardware"*). Holder entering ~April 2009 who does the famous **32.51 BTC round-trip** with Satoshi (he *does* send once — Q-N1), netting the +50 gift.
 
 ---
@@ -89,12 +89,13 @@ retire when  clock >= floorDate AND satoshiConfirmedBtc >= targetBtc:
 | Founder | Mines in player era? | Power model (v1) | Real anchor (from the source file) |
 |---|---|---|---|
 | **Satoshi** | Yes — regulated | Power recomputed per block to hit **11,000 BTC by 2011-04-26** (§2.2). Retires (power→0, frozen forever) once both conditions hold. | ≈1.1M BTC real → 1% target; "moved on… in good hands with Gavin" ~2011. |
-| **Hal** | Yes — decaying drip | Enters the player era at baseline power `P = 1.0` (one participant) and **decays linearly to 0 by ~Aug 2009** (his ALS diagnosis); dormant (receive-only) afterward. **No BTC target** — his amount is emergent. | Mined "hundreds of BTC" Jan–2009; ALS Aug 2009 → mining tapers; coins later spent on medical care (2013, out of Basic-Mode scope). |
+| **Hal** | Yes — relative drip | Keeps **one participant's worth of power** (`P = 1.0`, kept as-is — never lowered). As the network grows (more miners join up to **~9 Aug 2009**, by design) he falls behind **relatively** on his own. v1 stand-in: a linear `P = 1.0 → 0` fade to 9 Aug; **no BTC target**. Dormant afterward. | Mined "hundreds of BTC" Jan–2009; 2nd miner after Satoshi; ALS turning point Aug 2009 → tapers; coins spent on medical care (2013, out of scope). |
 | **Hearn** | **No — never mines** | `P = 0` permanently. Enters ~12 Apr 2009 (first Satoshi contact); does the **32.51 round-trip** with Satoshi (sends once — Q-N1), ending with the +82.51 gift, then **dormant**. | "Sin minería documentada — enfocado en software, no hardware." The deal: *"si Hearn le enviaba 32.51, Satoshi le devolvería la moneda más 50."* |
 
 Notes:
 - Hal's bootstrap holdings (3 blocks = 150 BTC + 10 received) are a known **overshoot** vs strict fractal scaling, but the bootstrap baseline is **locked** (Q-bootstrap) — accepted as-is; only his **player-era** curve is shaped here.
-- Hal's decay endpoint (Aug 2009) and Hearn's no-mining are the v1 grounding; the richer long-term behaviour (Hal's 2013 medical sell-off, the 2014 dormancy flag, Hearn's 2016 exit) stays **deferred to late Basic-Mode tuning** — keep the hooks, keep them cheap.
+- **Why keep Hal at `P = 1.0` instead of lowering it (decided after the 7.2 test — Q-N2):** at a bare 1-credit player Hal mines ~50% of blocks, which *looks* huge — but that is correct "equal to one participant" behaviour. The intended dynamic is that the player + a growing miner field (gradual spawning up to ~9 Aug 2009) outgrow Hal so he shrinks **relatively**, exactly as a fixed-power miner should. The network-coupled fade ("his power keeps up with the network's general rise less and less as August nears") is the **target**; the current linear `1.0→0` decay is its **v1 stand-in** until the postponed gradual-miner-spawning feature lands (Step 6 note).
+- Hal's decay endpoint (9 Aug 2009) and Hearn's no-mining are the v1 grounding; the richer long-term behaviour (Hal's 2013 medical sell-off, the 2014 dormancy flag, Hearn's 2016 exit) stays **deferred to late Basic-Mode tuning** — keep the hooks, keep them cheap.
 
 ---
 
@@ -107,7 +108,7 @@ Notes:
 Owns, with **no persisted state** (recomputed from the chain each launch, like the rest of the between-block world):
 
 1. Per-founder **power** `P_f`, **active/retired** flags, and **fractional attempt accumulators** (§2.1).
-2. **Constants**: `SatoshiTargetBtc = 11000m`, `SatoshiEarliestDisappearance = 2011-04-26`, `BlocksPerInGameDay = 1.477`, `Growth` (exponential ramp base, e.g. `1.15`); `HalBaselinePower = 1.0`, `HalDecayEndDate = 2009-08-01` (linear `P=1→0` from player start to here — his ALS turning point); `HearnPower = 0` (never mines).
+2. **Constants**: `SatoshiTargetBtc = 11000m`, `SatoshiEarliestDisappearance = 2011-04-26`, `BlocksPerInGameDay = 1.477`, `Growth` (exponential ramp base, e.g. `1.15`); `HalBaselinePower = 1.0` (kept as-is), `HalDecayStart = 2009-03-21`, `HalDecayEnd = 2009-08-09` (linear `P=1→0` between — his ALS turning point); `HearnPower = 0` (never mines).
 3. **Satoshi power recompute** `RecomputeSatoshiPower(double nonFounderTotalPower, DateTime nowLocal)` implementing §2.2; `shareToWeight(s, w)`; retirement transition. **Hal power** = `HalBaselinePower · clamp01((HalDecayEndDate − now)/(HalDecayEndDate − playerStart))`, → 0 after Aug 2009. **Hearn** is never added to the miner set.
 4. **Confirmed-BTC query**: add `NetworkRoot.GetFounderConfirmedSpendableBtc(founderId)` (sum spendable, exclude genesis) — Satoshi reads this each block.
 5. **Drive API** (used by Phase 7.2): `DriveFounderAttempts(int nonFounderAttemptsThisFrame, double nonFounderTotalPower, long tsMs)` — runs the accumulator math and mines founder attempts; `TotalFounderPower` (added to `SetActiveMiningPower`); `OnBlockMined(Block, …)` to recompute Satoshi after every block + apply Hal/Hearn decay.
@@ -180,6 +181,26 @@ Owns, with **no persisted state** (recomputed from the chain each launch, like t
 
 ---
 
+## 3b. Implementation status & test log
+
+| Phase | Status | Notes |
+|---|---|---|
+| 7.1 FoundersMiningService | ✅ **Done** | `Scripts/Services/FoundersMiningService.cs` (pure controller, autoload). Satoshi regulator + Hal decay + lockstep accumulators + readout getters. No persisted state. |
+| 7.2 Player-era concurrent mining | ✅ **Done & verified** | `SimulationService` feeds player+bots+founder power to `SetActiveMiningPower`; recomputes founder powers once per new block (`_lastFounderChainLen` guard around Satoshi's chain-scan); drives `DrainFounderAttempts` after the bet loops; founder blocks reuse the external-block path (`CaptureCheckpoint` + `StopPlayerOnExternalBlockMined`). `TickBots` now returns its bet count. |
+| 7.3 E4 10-BTC Satoshi→Hal tx | ✅ **Done & verified in-engine** | `NodeAgent.CreateSignedTransaction(..., deterministicSalt)`; `NetworkRoot.InjectHistoricalSignedTxStatic` (idempotent via deterministic-salt txid); `HistoricalBootstrapService` injects it when the bootstrap clock crosses 12 Jan. No `InputData` note (Q-X4). |
+| Block Explorer: mined-per-node | ✅ **Done** | `NetworkRoot.GetMinedBlockCountsByNode()`; `GetNodeStatusLines()` now shows `mined: N` per node so founder/player share is visible. |
+| 7.4 / 7.5 / 7.6 | ⏳ Pending | scheduler + Hearn / FoundersWallets readout + disappearance / docs. |
+
+**Test — 7.3 (E4):** ✅ confirmed on app open with a clean save — the 10 BTC Satoshi→Hal tx is on-chain near 12 Jan.
+
+**Test — 7.2 (51 player-era blocks, 1-credit player, no bots), audited via `user://logs/difficulty_trace.csv`:**
+- Miner split over blocks 114→164: **player 26, hal 21, satoshi 4**.
+- **Satoshi ≈ 7.8%** (4/51) — on his ~10% target within small-sample variance; his regulated power solved to ~0.21 ⇒ share ~10%. ✅
+- Chain **mechanically sound**: indices sequential & gap-free; timestamps monotonic; `anchor = 585.14 × configuredPower`; `realizedPower = difficulty × 99.98 / solveSec` self-consistent on every row; `configuredPower` falls 2.2157 → 1.9350 across the run = **Hal's decay working**. ✅
+- **Hal ≈ 41%** — correct for `P = 1.0` against a lone 1-credit player; **kept on purpose** (Q-N2): he shrinks relatively once the network grows. Not a bug.
+
+---
+
 ## 4. Suggested build order & dependencies
 
 ```
@@ -225,7 +246,7 @@ Owns, with **no persisted state** (recomputed from the chain each launch, like t
 ### 6.2 New questions — all resolved this round
 
 - **Q-N1 — Hearn tx structure.** ✅ **RESOLVED — literal round-trip.** Hearn sends 32.51 back to Satoshi (seeded by Satoshi's test send) and Satoshi returns the coin + 50 = 82.51. "Coins never moved" is **dropped** — Hearn signs one outgoing tx. Modelled as E6 (Satoshi→Hearn 32.51, + E8 17.49 change) → E6b (Hearn→Satoshi 32.51) → E7 (Satoshi→Hearn 82.51). See Phase 7.4.
-- **Q-N2 — Hal's player-era decay shape.** ✅ **RESOLVED — confirmed.** Linear `P=1→0` over 21 Mar → 1 Aug 2009 (ALS turning point).
+- **Q-N2 — Hal's player-era decay shape.** ✅ **RESOLVED (refined after the 7.2 test).** Keep `HalBaselinePower = 1.0` as-is — do **not** lower it. Endpoint moved to **9 Aug 2009**. Hal shrinks **relatively** as the network grows (gradual miners join up to 9 Aug); the linear `P=1→0` fade is the v1 stand-in for the network-coupled fade. See §2.3 note.
 - **Q-N3 — Hal's node-as-Satoshi-backup detail.** ✅ **RESOLVED — ignored for Basic Mode**, *not discarded* — kept on the table for later versions (no mechanical effect now).
 - **Q-N4 — Hal in Satoshi's `W_others`.** ✅ **RESOLVED — confirmed.** While Hal mines (Mar–Aug 2009) he counts as a competing miner in Satoshi's share denominator, so Satoshi's ~10% target self-adjusts and stays exact (§2.2).
 
