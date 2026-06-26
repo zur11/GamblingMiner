@@ -76,7 +76,13 @@ public partial class SimulationService : Node
 	private BankrollStateService? _bankroll;
 	private BankrollProgramService? _bankrollProgram;
 	private BlockSessionCheckpointService? _checkpoint;
+	private FoundersMiningService? _founders;
 	private NetworkRoot _networkRoot = null!;
+
+	// Step 7.2: founder powers are recomputed only when a new block appears (Satoshi's confirmed-BTC
+	// query is a full chain scan — too costly per frame). The cached power still feeds the difficulty
+	// every frame. -1 forces a recompute on the first frame of a run.
+	private int _lastFounderChainLen = -1;
 
 	// Service-owned autobet engine (built from config; not handed from any scene).
 	private DiceEngine? _engine;
@@ -126,6 +132,7 @@ public partial class SimulationService : Node
 		_bankroll = GetNodeOrNull<BankrollStateService>("/root/BankrollStateService");
 		_bankrollProgram = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");
 		_checkpoint = GetNodeOrNull<BlockSessionCheckpointService>("/root/BlockSessionCheckpointService");
+		_founders = GetNodeOrNull<FoundersMiningService>("/root/FoundersMiningService");
 
 		_networkRoot = new NetworkRoot();
 		AddChild(_networkRoot); // persistent — lives under this autoload
@@ -150,6 +157,7 @@ public partial class SimulationService : Node
 		_session = session;
 
 		_accumulatorSeconds = 0d;
+		_lastFounderChainLen = -1; // force a founder-power recompute on the first frame of this run
 		IsRunning = true;
 
 		if (_calendar != null)
@@ -213,8 +221,12 @@ public partial class SimulationService : Node
 			return;
 		}
 
-		// Keep the difficulty regulator's feed-forward informed of the current total mining power.
-		_networkRoot?.SetActiveMiningPower(GetTotalActiveMiningPower());
+		// Step 7.2: founders mine concurrently with the player (no autonomous clock). Recompute their
+		// power only when a new block appeared (cheap-guard around Satoshi's full-chain BTC scan), then
+		// feed player+bots+founders power to the difficulty regulator so block pacing stays constant.
+		double otherMinersPower = GetTotalActiveMiningPower();
+		RecomputeFoundersOnNewBlock(otherMinersPower);
+		_networkRoot?.SetActiveMiningPower(otherMinersPower + (_founders?.TotalActiveFounderPower ?? 0d));
 
 		// The session may have stopped itself (profit/loss/block/insufficient) while we were away.
 		if (!_session.IsRunning)
@@ -251,7 +263,62 @@ public partial class SimulationService : Node
 		}
 
 		// Bots advance alongside the player autobet, in every scene (Phase 2).
-		TickBots(simDelta);
+		int botExecuted = TickBots(simDelta);
+
+		// Step 7.2: drive the founders' concurrent attempts in lockstep with the time the player just
+		// advanced (one founder attempt per its power-share of the player+bot attempts this frame).
+		DriveFounderMining(executed + botExecuted, otherMinersPower);
+	}
+
+	// Recompute founder powers exactly once per new block on the canonical chain. Satoshi's confirmed-BTC
+	// query (GetNodeSpendableBalance) scans the whole chain, so it must not run every frame.
+	private void RecomputeFoundersOnNewBlock(double otherMinersPower)
+	{
+		if (_founders == null || _networkRoot == null)
+		{
+			return;
+		}
+
+		int chainLen = _networkRoot.GetPlayerChainLength();
+		if (chainLen == _lastFounderChainLen)
+		{
+			return;
+		}
+
+		_lastFounderChainLen = chainLen;
+		decimal satoshiBtc = _networkRoot.GetNodeSpendableBalance(FoundersMiningService.SatoshiNodeId);
+		DateTime nowLocal = _calendar?.CurrentLocalDateTime ?? DateTime.Now;
+		_founders.RecomputeFounderPowers(otherMinersPower, nowLocal, satoshiBtc);
+	}
+
+	// Founders perform their owed nonce attempts on their OWN chains (own coinbase). A founder-mined block
+	// is an external block, exactly like a bot's: it checkpoints and can stop the player's stop-on-block run.
+	private void DriveFounderMining(int nonFounderAttempts, double otherMinersPower)
+	{
+		if (_founders == null || _networkRoot == null || nonFounderAttempts <= 0)
+		{
+			return;
+		}
+
+		IReadOnlyList<(string founderId, int attempts)> drained = _founders.DrainFounderAttempts(nonFounderAttempts, otherMinersPower);
+		if (drained.Count == 0)
+		{
+			return;
+		}
+
+		long tsMs = new DateTimeOffset(_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
+		foreach ((string founderId, int attempts) in drained)
+		{
+			for (int i = 0; i < attempts; i++)
+			{
+				_networkRoot.TryMineSingleNonceAttempt(founderId, out Block? block, tsMs);
+				if (block != null)
+				{
+					CaptureCheckpoint();
+					StopPlayerOnExternalBlockMined();
+				}
+			}
+		}
 	}
 
 	private void ExecutePlayerBetOnce()
@@ -444,10 +511,13 @@ public partial class SimulationService : Node
 		return new BotRunner { NodeId = cfg.NodeId, Wallet = wallet, Session = session, Config = cfg };
 	}
 
-	private void TickBots(double delta)
+	// Returns the total number of bot bets (= nonce attempts) executed this frame, so the founder drive
+	// can size the founders' lockstep attempts against ALL non-founder mining (player + bots).
+	private int TickBots(double delta)
 	{
-		if (_botRunners.Count == 0) return;
+		if (_botRunners.Count == 0) return 0;
 
+		int totalExecuted = 0;
 		foreach (BotRunner runner in _botRunners.Values.ToList())
 		{
 			if (!runner.Session.IsRunning)
@@ -479,7 +549,10 @@ public partial class SimulationService : Node
 				ExecuteBotBet(runner);
 				executed++;
 			}
+			totalExecuted += executed;
 		}
+
+		return totalExecuted;
 	}
 
 	private void ExecuteBotBet(BotRunner runner)
