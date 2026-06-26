@@ -39,10 +39,14 @@ public partial class FoundersMiningService : Node
 	private const double MaxShare = 0.99;
 
 	// ── Hal decay (step7 plan §2.3, Q-N2) ──────────────────────────────────────
-	// Enters the player era at one participant's power and decays linearly to 0 by his ALS turning point.
+	// Hal keeps ONE participant's worth of power (baseline 1.0 — kept as-is, never lowered): as the network
+	// grows (more miners join up to ~9 Aug 2009, by design) he falls behind RELATIVELY on his own. The linear
+	// 1.0→0 fade to 9 Aug is the v1 stand-in for "his power keeps up with the network's general rise less and
+	// less as August nears, then goes dormant" (his real ALS turning point). Full network-coupled model awaits
+	// the postponed gradual-miner-spawning feature.
 	private const double HalBaselinePower = 1.0;
 	private static readonly DateTime HalDecayStart = new(2009, 3, 21, 0, 0, 0, DateTimeKind.Local); // player start day
-	private static readonly DateTime HalDecayEnd = new(2009, 8, 1, 0, 0, 0, DateTimeKind.Local);    // ~ALS diagnosis
+	private static readonly DateTime HalDecayEnd = new(2009, 8, 9, 0, 0, 0, DateTimeKind.Local);    // ~ALS turning point
 
 	private sealed class FounderRuntime
 	{
