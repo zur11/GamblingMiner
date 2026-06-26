@@ -25,6 +25,7 @@ BankrollProgramService="*res://Scripts/Services/BankrollProgramService.cs"
 BlockSessionCheckpointService="*res://Scripts/Services/BlockSessionCheckpointService.cs"
 SceneManager="*res://Scripts/Services/SceneManager.cs"
 NotepadService="*res://Scripts/Services/NotepadService.cs"
+FoundersMiningService="*res://Scripts/Services/FoundersMiningService.cs"
 SimulationService="*res://Scripts/Services/SimulationService.cs"
 
 [display]
