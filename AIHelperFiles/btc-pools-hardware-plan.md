@@ -808,7 +808,7 @@ Player Coordinator
 
 ## Difficulty Regulator — Power-Step Contingency Plan (2026-06-25)
 
-**Status**: F0 ✅ + dev time-accel tool ✅ + Test Run #1 + power-accounting audit + **F5 steady-state run** done (2026-06-25). **VERDICT: regulator correctly calibrated** (steady-state power 2: realized 2.05 ≈ 2.0, ratio 0.94, difficulty ≈ anchor) → the ~1.4× was transient feed-forward+feedback overshoot, **not** a bug. No anchor/accounting fix needed. Remaining = optional polish (F1 EMA / F2 asymmetric easing) for the transient on large steps; F3 dropped, F4 fallback. One open item: confirm once at power ≈10. Extends the hybrid regulator (OQ-11/OQ-12).
+**Status**: ✅ **CLOSED (2026-06-25) — hybrid regulator fully validated, no fixes needed.** F0 + dev tools + power-accounting audit + steady-state (power 2) + Test 1 (up-step 2→10) + Test 2 (down-step 10→1) all done. Calibration correct at steady state for **power 1, 2 and 10** (difficulty ≈ anchor, ratio ≈ 1). Up-step: mild variance-driven overshoot (1.13×, ~2-block settle) → **F1 not justified**. Down-step: symmetric ~3-block descent → **F2 not justified**. Test Run #1's 1.4× was an un-converged transient (unlucky variance), not a bug; accounting audited correct. **F1/F2/F3/F4 all unnecessary.** Extends the hybrid regulator (OQ-11/OQ-12).
 
 ### Context — what triggered this
 
@@ -868,12 +868,12 @@ First live trace (`difficulty_trace.csv`, 17 blocks, indices 113–129, single s
 | Item | Was | Now (post steady-state verdict) |
 |---|---|---|
 | Power accounting (casino-pool credits) | 🔴 PRIMARY (suspected bug) | ✅ **audited — correct, no bug** |
-| Anchor calibration | 🔴 PRIMARY | ✅ **verified correct at steady state (power 2)** — no fix |
-| F1 — EMA on power | highest | 🟢 optional polish — softens the step/overshoot |
-| F2 — asymmetric easing | medium | 🟢 optional polish (quality) |
+| Anchor calibration | 🔴 PRIMARY | ✅ **verified correct at steady state — power 2 AND power 10** — no fix |
+| F1 — EMA on power | highest | ⚪ **not justified** (Test 1: overshoot 1.13×, ~2-block settle, variance-driven) |
+| F2 — asymmetric easing | medium | ⚪ **not justified** (Test 2: symmetric ~3-block descent, no prolonged stall) |
 | F3 — startup stall | medium | ⚪ **dropped** (no evidence) |
 | F4 — lower α | fallback | fallback (unneeded; not the cause) |
-| Confirm calibration at power ≈10 | — | 🔵 open (low priority; likely fine) |
+| Confirm calibration at power ≈10 | open | ✅ **closed by Test 1** |
 
 **Lead hypothesis (casino-pool undercount): ❌ REFUTED by code audit (2026-06-25).** Traced the full path: `RouteNonceAttempt` (and DiceGame's manual mirror) makes **exactly one** attempt per bet, round-robin to the casino chain *or* the node's own chain (`NextNonceTarget`) — no doubling. `GetTotalActiveMiningPower = Σ HardwareRate` over {player + running bots} = Σ `TotalCredits` (individual **+** casino); every casino-routed attempt originates from one of those counted credits. The `casino` node is **not** a runner (`BuildBotConfigs` excludes `player` and requires a valid strategy; casino is a wallet/pool node) → no uncounted attempts, no double-count. One logical chain (consensus via `BroadcastBlock`; globally sequential indices confirm it) → total attempt rate = power, so `anchor = InitialDifficulty × power` **is** the correct equilibrium level. **Accounting is correct.**
 
@@ -912,6 +912,41 @@ To run validation samples (e.g. the ≥30-block steady-state runs F5 needs) in ~
 - **Files**: `CalendarTimeService.cs`, `SimulationService.cs`, `UI/DevTimeScaleSelector/DevTimeScaleSelector.cs`, `DiceGame.cs`, `BlockExplorer.cs`.
 
 **Companion: "Discard Hardware (−1)" button** (Pools & Hardware screen, 2026-06-25 ✅) — the counterpart to the DEV "Buy Hardware". `HardwareAllocationRepository.RemoveCredits` drops a credit (casino pool first, then individual; floored at **1 total** so reported power stays consistent with `TotalCredits`). Enables dropping a node to a single private-pool credit and **power-decrease test runs** (needed to validate F2 asymmetric easing — the fast-relief-on-drop path — and the open power-≈10 calibration check). Built programmatically next to Buy Hardware (no .tscn edit), disabled at the 1-credit floor. Files: `HardwareAllocationRepository.cs`, `BTCPoolsAndHardwareShop.cs`.
+
+### Required Test Runs (priority order)
+
+What's left to measure before deciding whether F1/F2 are worth implementing. The regulator is already verified sound at steady-state power 2; these close the remaining gaps: the **up-step overshoot** (F1 decision), the **down-step relief** (F2 decision, never measured), and the **power-10 calibration** sanity (open caveat).
+
+**Universal protocol (applies to every run):**
+- **Clean the CSV** first — delete `user://logs/difficulty_trace.csv` (`…\app_userdata\GamblingMiner\logs\`) so the file starts fresh; the header is rewritten on the first live block.
+- **One session, no restart** mid-run — an app restart rolls the world back to the last block but the CSV log does **not** revert (rows would desync from the chain).
+- **Use the DEV time selector at 1000X** so 25–30 blocks take ~1/10 the wall-clock.
+- **Judge by aggregates, never single blocks** — per-block variance is ≈ exponential (ratios seen 0.02→3.7 at constant power). Use ≥20–30 blocks per regime; `aggregate realized power = 100 · Σdifficulty / ΣsolveSec`, plus mean `solveRatio` and mean `difficulty` vs `anchor`.
+- **Power** = Σ `TotalCredits` of player + running bots (shown as `configuredPower` per block). Raise it with **Buy Hardware**, lower it with **Discard Hardware (−1)** or by stopping bots. Keep the **player autobet running** the whole time (it drives the clock).
+
+---
+
+**Test 1 — Full up-step: climb → overshoot peak → settle (PRIORITY 1). ✅ DONE (2026-06-25) — power-10 calibration CONFIRMED; F1 NOT justified.**
+- **Why**: Test Run #1 captured only the climb after a 2→10 step (difficulty was still rising at the last block). Quantify the **overshoot magnitude** and **settle time** to decide if F1 (EMA on power) is worth it — and, once settled, read the **steady-state-at-power-10** aggregate to confirm `anchor = InitialDifficulty × power` at the higher power.
+- **Setup**: clean CSV → 1000X → start at LOW power (player only, ~1–2) and run ~5–8 blocks (baseline) → **step up**: enable all bots + casino pool (power ~10–15) → run **≥30 more blocks** (long enough to see difficulty peak and settle).
+- **Result** (8 blocks at power 2, step at block 124, 38 blocks at power 10):
+  - **Power-10 calibration CONFIRMED ✅** — settle tail (last 20 blocks): aggregate realized **9.60** ≈ 10, mean ratio **1.03** ≈ 1.0, mean difficulty **5793** ≈ anchor 5851 (99%). `anchor = InitialDifficulty × power` holds at power 10 → **open item closed**.
+  - **Overshoot mild & variance-driven → F1 NOT justified.** Peak difficulty 6591 = **1.13×** anchor (not the 1.4×/8400 of Test Run #1), reached the anchor band in ~2 blocks. The difference vs Test Run #1 was an early long-tail **slow** block here (idx 126, ratio 7.52×) that damped `feedbackTrim`, where Test Run #1 chained fast blocks that inflated it — i.e. the overshoot is **transient noise, not systematic**. Against the criterion below (>1.3× **and** >10 blocks), this is **1.13× / ~2 blocks** ⇒ leave the regulator as-is; **F1 is cosmetic at best**. Revisit only if Test 2 (down-step) shows a problem.
+
+**Test 2 — Power decrease (down-step) (PRIORITY 2). ✅ DONE (2026-06-25) — F2 NOT justified; regulator fully validated.**
+- **Why**: validate F2 (asymmetric easing — fast relief on drops). On a power drop the anchor falls instantly but easing (α=0.7) and the `feedbackTrim` clamp `[0.5×,2×]` cap how fast difficulty can come down per block; meanwhile blocks run **slow** (difficulty too high for the new low power). Measure how many blocks the slow stall lasts.
+- **Setup**: continued in the same session from Test 1's settled power-10 state; dropped **power 10 → 1** at block 162 (anchor 585); ran ~33 blocks at power 1.
+- **Result**:
+  - **Descent is fast & symmetric**: difficulty fell 5622 → 2002 → 899 → **565 ≈ anchor in 3 blocks** (163–165). Slow-stall (ratio > 1.3) lasted only ~3–4 blocks, then normal variance. Same speed as the up-step (symmetric α=0.7) — **no prolonged stall** ⇒ **F2 not justified.** The one genuinely slow block (162, ratio 3.87) is the 1-frame power-read-lag transition artifact (difficulty computed at power 10, mined at power 1) — a single block, unavoidable, and F1/EMA wouldn't fix it (would slow the anchor more).
+  - **Power-1 calibration confirmed**: settled (skip 3 descent blocks, 30 blocks) realized **1.05–1.16** ≈ 1, mean ratio **0.87**, mean difficulty **~535–592** ≈ anchor 585.
+- **Minor note**: at power 1 and 2 difficulty settles ~10% *below* anchor (ratio ~0.87); at power 10 it sits right on anchor. Small, within the noise floor, harmless direction — not actionable.
+
+**Test 3 — Minimum-power sanity (PRIORITY 3, optional).**
+- **Why**: confirm the floor regime is sane (single private-pool credit).
+- **Setup**: Discard down to **1 credit, individual pool only** (0 casino) on the player; stop bots; 1000X; run ≥20 blocks.
+- **Capture & decide**: aggregate realized ≈ 1, mean ratio ≈ 1.0, difficulty ≈ anchor (≈585). Confirms the low-power end and the `TotalCredits` floor behave.
+
+> After each run, hand over the CSV — the aggregates get computed and the verdict (and any F1/F2 go/no-go) recorded here.
 
 ### Phase F1 — EMA on the power signal *(secondary; smooths the anchor on a step)*
 
@@ -956,13 +991,16 @@ Sub-options, least→most invasive; pick based on what F0 shows:
   - power drop: difficulty cedes in ≤2 blocks (verifies F2).
 - Use ≥30 blocks because the aggregate is time-weighted and a few long-tail solvetimes can bias a small sample.
 
-### Recommendation (revised after Test Run #1 + power-accounting audit)
+### Recommendation — FINAL (all tests done, 2026-06-25)
 
-Power accounting was **audited and is correct** — the casino-undercount idea is dead. The ~1.4× elevation in Test Run #1 is most likely **feed-forward + feedback overshoot during the still-converging transient**, not a calibration error. **Next gate: the ≥30-block steady-state run** (using the new dev time-acceleration tool):
-- if difficulty settles ≈ anchor with ratio → 1.0 ⇒ no calibration fix needed; pursue **overshoot taming** — **F1 (EMA on power)** to soften the step, optionally damp the feedback while the anchor makes a large jump;
-- if it stabilizes ~40% above anchor ⇒ a real factor exists; investigate consensus/orphan losses or a constant before any anchor change.
+**No code changes to the regulator. Close this section.** Three steady-state regimes (power 1, 2, 10) confirmed difficulty settles at `anchor = InitialDifficulty × power` with ratio ≈ 1; the up-step (2→10) and down-step (10→1) both transition cleanly in ~2–3 blocks with only mild, variance-driven, **symmetric** overshoot/undershoot. The power-accounting audit found the count correct. Test Run #1's apparent ~1.4× anchor offset was an un-converged transient (unlucky variance), **not** a calibration error or accounting bug.
 
-**F2 (asymmetric easing)** remains a quality improvement; **F3 dropped**; **F4** fallback only. Validate every change against a ≥30-block steady-state aggregate (F5). Do **not** apply an empirical anchor factor until the steady-state run distinguishes overshoot from a real offset.
+- **F1 (EMA on power)** — ⚪ not implemented; overshoot is mild (1.13×) and short (~2 blocks). Would only cosmetically smooth a noisy transient and would *slow* the anchor's legitimate response.
+- **F2 (asymmetric easing)** — ⚪ not implemented; the down-step cedes in ~3 blocks (symmetric to the up-step), no prolonged slow stall.
+- **F3 (startup stall)** — ⚪ dropped (artifact of bootstrap data).
+- **F4 (lower α)** — ⚪ fallback only; not needed.
+
+**Kept as permanent assets**: the F0 difficulty trace (`difficulty_trace.csv`) and the dev tools (time-accel 100X→1000X, Discard Hardware) — reuse them to re-validate if the regulator, calibration constants, or pool/hardware model change later. Always judge by aggregates over ≥20–30 blocks (per-block solvetime is ≈ exponential).
 
 ### File Checklist (this section)
 
