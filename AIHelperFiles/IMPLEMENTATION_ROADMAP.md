@@ -2,7 +2,7 @@
 
 **Purpose**: single source of truth for *what to build next and why*, across all the plan files in `AIHelperFiles/`. The individual plans hold the detail; this file holds the **order and the dependencies** so overlapping themes (block-candidate model, gradual network growth, UTXO realism) don't collide.
 
-**Last updated**: 2026-06-24.
+**Last updated**: 2026-06-25.
 
 ---
 
@@ -16,8 +16,8 @@
 | `historical-founders-and-bootstrap-plan.md` | Satoshi/Hal/Hearn nodes, genesis fix, bootstrap to 21 Mar, Satoshi 11k target | 🟡 Phases 1–3 + bootstrap (3a) done & verified; Phases 4/6/7 **parked → Step 7** |
 | `candidate-block-model-plan.md` | **Per-node candidate blocks, mempool, tx selection, Merkle, fees, content-hash txid — the real competition engine** | ✅ **Step 4 COMPLETE** (4a/4b.1/4b.2/4b.3/4c) |
 | `historical-blockchain-events-research.md` | Character/event data + UTXO-realism direction | 🔬 Questionnaire (Q-X1–X4 resolved; address research open) |
-| `btc-pools-hardware-plan.md` | Hardware credits, casino community pool, fees, **+ Network Difficulty Regulator** | ◻ Not started — Step 6 lead is the difficulty regulator |
-| `bot-play-history-plan.md` | Bot Play-History scene (last 260 plays/bot + Notepad) | ◻ Not started — Step 6, after the regulator |
+| `btc-pools-hardware-plan.md` | Hardware credits, casino community pool, fees, **+ Network Difficulty Regulator** | ✅ **Done & validated** — difficulty regulator (D.1–D.4, power-step validation closed) + hardware credits/pools/shop. ProjectDesignManual Ch. 26–27 |
+| `bot-play-history-plan.md` | Bot Play-History scene (last 260 plays/bot + Notepad) | ✅ Done — `Screens/BotPlayHistory/`, in use |
 
 ---
 
@@ -68,8 +68,8 @@ Two themes still hold:
 ### Step 5 — Refit the lottery bootstrap to the candidate model  ✅ ABSORBED into Step 4 (verify-only)
 - 4b.1 replaced the mining core **in place** (`MinePendingTransactions`/`TryMineSingleNonceAttempt` build via `BlockTemplateBuilder`), so the historical bootstrap and weighted lottery already mine real candidate blocks through the new engine — no separate simplified path remained to refit. Just confirm bootstrap blocks carry proper coinbase/Merkle (they pass `ChainIsValid` on reload).
 
-### Step 6 — Difficulty regulator + bot play-history + hardware pools  *(NEXT LEAD — RE-SCOPED 2026-06-23)*
-- **Re-scoped order:** (1) ✅ **Network Difficulty Regulator — DONE & user-tested** (D.1–D.4: continuous difficulty, hybrid feed-forward + LWMA retarget with easing, Block Explorer readout, calibrated; `btc-pools-hardware-plan.md` + ProjectDesignManual Ch.26); (2) **Bot Play-History scene** (last 260 plays per active miner bot + Notepad; own plan `bot-play-history-plan.md`) — NEXT; (3) **Hardware credits + casino community pool** prototype (routed through `SimulationService`; `btc-pools-hardware-plan.md`).
+### Step 6 — Difficulty regulator + bot play-history + hardware pools  ✅ COMPLETE  *(RE-SCOPED 2026-06-23; finished 2026-06-25)*
+- **Re-scoped order:** (1) ✅ **Network Difficulty Regulator — DONE, user-tested & validation-closed** (D.1–D.4: continuous difficulty, hybrid feed-forward + LWMA retarget with easing, Block Explorer readout, calibrated; power-step validation campaign confirmed it sound, contingency fixes closed unimplemented; `btc-pools-hardware-plan.md` + ProjectDesignManual Ch. 26); (2) ✅ **Bot Play-History scene — DONE** (last 260 plays per active miner bot + Notepad; `Screens/BotPlayHistory/`, in use; `bot-play-history-plan.md`); (3) ✅ **Hardware credits + casino community pool — DONE** (credit model, individual↔casino split + round-robin routing, dynamic fee + proportional distribution, `BTCPoolsAndHardwareShop` with Buy/Discard, hardware-locked speed; bootstrap = 1 individual + 0 casino; routed through `SimulationService`; ProjectDesignManual Ch. 27). Also added: a DEV time-acceleration tool (100X→9000X) for validation runs.
 - **Gradual miner spawning is POSTPONED** to a later step — it needs a curated per-bot strategy set first; for now keep **DEV access to all bettable nodes**. Era-based hashrate + obsolescence and credit-at-introduction are deferred too.
 - ✅ **Already done (Step 4 cleanup):** the `scheduled-bot-transactions` circulation trigger was re-aligned to a **per-bot warmup** (`CirculationWarmupBlocks` = 5 blocks since a bot's *own* first mined block, via `FirstBlockHeightMinedBy`) + a no-self-send guard — ready for gradual bots when they return.
 - **Depends on Step 4** (built once, on the real engine).
@@ -99,7 +99,7 @@ Two themes still hold:
 ✅ Step2 (weight + lottery) ─┼─> ✅ Step3 (bootstrap baseline, 21 Mar)
                              │
                              └─> ✅ Step4 (CANDIDATE BLOCK MODEL) ─> ✅ Step5 (absorbed)
-                                      ├─> 🔜 Step6 (miner bots + hardware pools — lead)
+                                      ├─> ✅ Step6 (regulator + hardware pools + bot play-history)
                                       ├─> Step7 (historical-char economics: ex-3b/3c + Hearn)
                                       └─> Step8 (UTXO / Patoshi)  ─> Step9 (economy/meta)
 ```

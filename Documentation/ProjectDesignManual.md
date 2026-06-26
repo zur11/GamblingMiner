@@ -2335,7 +2335,7 @@ On every settled bet: **profit/loss threshold reset (insist)** → else **bankro
 ## Chapter 26 — Network Difficulty (continuous, persisted, validated)
 
 **Files**: `Scripts/BlockchainPort/Blockchain/Models.cs` (`Block.Difficulty`), `Scripts/BlockchainPort/Blockchain/BlockchainService.cs`, `Scripts/BlockchainPort/Simulation/NodeAgent.cs`, `Screens/BlockExplorer/BlockExplorer.cs`
-**Status**: **D.1–D.4 implemented & user-tested** — continuous difficulty (D.1), hybrid feed-forward + LWMA retarget with easing (D.2), Block Explorer live readout (D.3), calibrated (D.4).
+**Status**: **D.1–D.4 implemented, user-tested & validation-closed** — continuous difficulty (D.1), hybrid feed-forward + LWMA retarget with easing (D.2), Block Explorer live readout (D.3), calibrated (D.4). A 2026-06-25 power-step validation campaign (§26.9) confirmed the regulator is correct at steady state (power 1/2/10) and across up/down steps; the drafted contingency fixes were all closed unimplemented.
 **Plan**: `AIHelperFiles/btc-pools-hardware-plan.md` → "Network Difficulty Regulator".
 
 ### The Short Version (for everyone)
@@ -2406,3 +2406,72 @@ Tuned by play-testing: `DifficultyEaseAlpha = 0.7` (ramps a change in over ~3 bl
 ### 26.8 — Verifying `ChainIsValid`
 
 `ChainIsValid` has no UI — it runs automatically on load: `ApplyStateFromSnapshot` → `TryReplaceChain`, which **only accepts the chain if `ChainIsValid` passes** (each block's hash checked against its own stored `Difficulty`). Practical check: mine some blocks, restart the app; if the chain **survives intact** (full length, every block with its difficulty), validation passed. If a block's hash didn't meet its stored difficulty, the chain would be rejected and reset to genesis-only.
+
+### 26.9 — Validation campaign & verdict (2026-06-25): the regulator is sound, no fixes
+
+After the hardware/pools work landed, the regulator was stress-tested across power steps with real instrumentation. **Verdict: the hybrid regulator is fundamentally correct and needs no changes.** A contingency plan (EMA on power, asymmetric easing, startup-stall fixes, lowering α) was drafted and then **closed unimplemented** — every proposed fix turned out unjustified. The full investigation lives in `AIHelperFiles/btc-pools-hardware-plan.md` ("Difficulty Regulator — Power-Step Contingency Plan").
+
+**How it was measured (kept as permanent assets):**
+- **F0 difficulty trace** — `NetworkRoot.AppendDifficultyTrace()` appends one CSV row per *live*-mined block (excluded during `_bulkMining`) to `user://logs/difficulty_trace.csv`: `configuredPower`, `realizedPower = difficulty × (TargetBlockSeconds/InitialDifficulty) / solveSec`, `difficulty`, `anchor`, `solveSec`, `solveRatio`. Inverting the calibration this way recovers the **true attempt-execution rate** per block, so claims can be checked against data instead of inferred.
+- **DEV time-acceleration tool** (Ch. 27.7) to run 30-block samples in a fraction of the wall-clock.
+
+**What the data showed:**
+- **Per-block solvetime is ≈ exponential** — single-block `solveRatio` ranged 0.02→3.7 at *constant* power. ⇒ The regulator must always be judged by **aggregates over ≥20–30 blocks**, never single blocks. An early "structural stall" read was a bootstrap-data artifact (the bulk-mined baseline is semi-synthetic, sd ≈ 0.16, unlike live PoW).
+- **Steady-state calibration is correct at power 1, 2 and 10.** In each regime difficulty settled at `anchor = InitialDifficulty × power` with aggregate realized power ≈ configured and mean `solveRatio` ≈ 1.0 (e.g. power 10: realized 9.6, ratio 1.03, difficulty 5793 vs anchor 5851).
+- **Up-step (2→10):** mild, *variance-driven* overshoot — peak 1.13× anchor, settled within ~2 blocks. An earlier run that appeared to overshoot ~1.4× had simply not converged (a lucky run of fast blocks inflating the LWMA); it was a transient, not a calibration error.
+- **Down-step (10→1):** symmetric — difficulty cedes from ~5600 to the new anchor (~585) in ~3 blocks; the only genuinely slow block is the 1-frame power-read-lag transition block. No prolonged stall ⇒ asymmetric easing not needed.
+- **Power accounting audited correct:** total power = Σ`HardwareRate` over {player + running bots} = Σ`TotalCredits`; every casino-routed attempt originates from a counted credit; the `casino` node is not itself a runner. So `anchor = InitialDifficulty × power` is fed the right number (see Ch. 27.4).
+
+**Minor, non-actionable observation:** at power 1 and 2 difficulty settles ~10% *below* anchor (ratio ~0.87); at power 10 it sits right on it. Within the noise floor and in the harmless direction — left as-is. Re-run the F0 trace + dev tools to re-validate if the regulator, its constants, or the pool/hardware model ever change.
+
+## Chapter 27 — Hardware Credits & Mining Pools (individual vs casino community pool)
+
+**Files**: `Scripts/Hardware/HardwareModels.cs` (`NodeHardwareState`), `Scripts/Hardware/HardwareAllocationRepository.cs`, `Scripts/Hardware/CasinoPoolRepository.cs`, `Scripts/Services/WalletInitializationService.cs` (bootstrap), `Scripts/Services/SimulationService.cs` (`HardwareRate`, `RouteNonceAttempt`, power feed), `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` (casino nonce, fee, distribution), `Screens/BTCPoolsAndHardwareShop/`, `Screens/DiceGame/DiceGame.cs` (speed lock, manual nonce routing).
+**Status**: **Implemented & validated** (Step 6 hardware/pools). **Plan**: `AIHelperFiles/btc-pools-hardware-plan.md`.
+
+### The Short Version (for everyone)
+
+Mining power in GamblingMiner is measured in **hardware credits**. Each credit = **one nonce attempt per second** (= one bet/sec of betting speed). A node's credits sit in one of two pools:
+- **Individual pool** — *solo mining*: the credit's attempts go to the node's own blocks; if it mines, it keeps the **full** block reward.
+- **Casino community pool** — *shared mining*: the credit's attempts mine on the casino's behalf; when the casino mines a block, the reward is split **proportionally** among all casino-pool contributors, **minus a dynamic fee**.
+
+The trade-off mirrors real mining pools: solo = full reward but spiky (you might mine nothing for a long time); pool = smaller, steadier payouts minus a fee. **`1 bet = 1 nonce attempt` always holds** — credits *reallocate* where each attempt is aimed; they never multiply attempts.
+
+### 27.1 — The credit model (`NodeHardwareState`)
+
+Per node: `IndividualPoolCredits`, `CasinoPoolCredits`, and `TotalCredits = Individual + Casino`. Persisted in `user://hardware_allocation.json` (CamelCase JSON) by the static `HardwareAllocationRepository`, which raises `HardwareChanged(nodeId)` after any change so DiceGame re-locks the active node's betting speed live.
+
+- **Betting speed is hardware-locked.** `SimulationService.HardwareRate(nodeId) = Clamp(TotalCredits, 1, 99)` bets/sec — read **fresh every tick**, so buying/moving/discarding credits mid-run takes effect immediately (bet rate, Block Explorer ⛏ readout, and the difficulty feed-forward all update at once). The DiceGame APS selector is display-only, re-locked to hardware.
+- Repository operations: `AddCredits` (buy → lands in the individual pool), `RemoveCredits` (discard → from the **casino pool first, then individual**, floored at **1 total** so reported power stays consistent with `TotalCredits`), `MoveToCasinoPool` / `MoveToIndividual` (reallocate the split, total unchanged).
+
+### 27.2 — How one attempt is routed (round-robin, never a multiplier)
+
+`HardwareAllocationRepository.NextNonceTarget(nodeId)` decides where a single bet's attempt goes. A per-node cursor walks the node's credit slots: the first `IndividualPoolCredits` slots route to the node's **own** chain, the remaining `CasinoPoolCredits` slots to the **casino** chain. Over `TotalCredits` consecutive bets this yields exactly `IndividualPoolCredits` own + `CasinoPoolCredits` casino attempts — a **true reallocation of power**, avoiding any quadratic `TotalCredits²` blow-up. `SimulationService.RouteNonceAttempt` (autobet, player + bots) and `DiceGame.ProcessBlockchainAttemptForBet` (manual) both call it, so manual and autobet behave identically.
+
+### 27.3 — The casino community pool: fee & reward distribution
+
+When a casino-routed attempt mines a block (`NetworkRoot.TryCasinoNonceAttempt` → `HandleMinedBlock` + `QueueCasinoRewardForDistribution`):
+- **Dynamic fee** (`CalculateCasinoFeePercent(casinoTotal, individualTotal)`): a function of `ratio = casinoTotal / individualTotal` — **30%** at a balanced 1:1 ratio, scaling **up to 50%** when the casino pool dominates and **down to 10%** when individual pools dominate (exact form `0.30 + clamp((ratio−1)/2, 0, 1)×0.20` for `ratio ≥ 1`, symmetric downward). This makes solo vs pool a live economic decision.
+- **Proportional payout**: each contributor receives `poolAmount × (its CasinoPoolCredits / casinoTotal)`, minus a fixed `CasinoTxFee = 0.1` per payout. Payouts wait for **coinbase maturity (N = 1 block)** and are then distributed (`TryDistributePendingCasinoRewards`, retried after every block). The reward ledger (events, payouts, status) is persisted by `CasinoPoolRepository` and surfaced in the Pools & Hardware screen.
+
+### 27.4 — How pools feed the difficulty regulator (one chain, honest power)
+
+All nodes share **one canonical chain** (consensus via `BroadcastBlock`; block indices stay globally sequential). Whether an attempt is "individual-routed" or "casino-routed" only changes the candidate's coinbase recipient/transactions — every attempt still extends the same chain tip at the same difficulty. So the **total attempt rate on the chain = Σ`TotalCredits` of all active miners**, which is exactly what `SimulationService.GetTotalActiveMiningPower()` sums (player + running bots) and pushes to `NetworkRoot.SetActiveMiningPower()` → the regulator's feed-forward anchor `InitialDifficulty × power` (Ch. 26.5). This identity was **audited** during the validation campaign (Ch. 26.9): the casino node is not itself a runner, and casino-routed attempts come from already-counted credits — no double-count, no uncounted attempts.
+
+### 27.5 — First-launch bootstrap: 1 individual + 0 casino (revised 2026-06-25)
+
+`WalletInitializationService.EnsureHardwareAllocation()` seeds credits **only on first launch** (guarded by the existence of `hardware_allocation.json`; existing saves keep their allocation). Each of the 5 miner nodes (`player`, `bot_1..4`) starts with **1 individual-pool credit and 0 casino-pool credits** → everyone begins at a single private-pool credit, 1 bet/sec, and an **empty casino pool**. Casino participation is **opt-in**: a node joins by moving a credit into the casino pool.
+
+> **Design determination**: the original bootstrap was `1 individual + 1 casino` per node (casino pool pre-populated, fee starting at 30%). It was changed so the starting world is the simplest possible solo-mining baseline and the casino pool is something players deliberately opt into — also the cleanest baseline for power/regulator testing. To observe the new bootstrap on an existing install, the `hardware_allocation.json` must be cleared (or user data reset).
+
+### 27.6 — The Pools & Hardware screen (`BTCPoolsAndHardwareShop`)
+
+A left node list + right detail panel, reading straight from the static repositories (no `NetworkRoot` instance). For a mining node it shows the individual↔casino split with **move** buttons and two **DEV** buttons: **Buy Hardware** (+1 credit → individual pool) and **Discard Hardware (−1)** (removes a credit, casino-first, disabled at the 1-credit floor). For the casino it shows pool totals, the current dynamic fee, contributors, and the recent reward-event table. The Discard button exists primarily for **power-decrease test runs** (dropping a node to a single private-pool credit and back down from high power).
+
+### 27.7 — DEV tooling: time acceleration (100X→9000X)
+
+To run validation samples in a fraction of the wall-clock without altering the dynamics under measurement, `CalendarTimeService.DevTimeScale` (an integer multiplier on the 100X base clock) scales **both** the calendar clock (`delta × SpeedMultiplier × DevTimeScale`) **and** the bet-execution rate (`SimulationService._Process`: `simDelta = delta × DevTimeScale` for player + bots) by the same factor. The power fed to the regulator is **deliberately not scaled**, so `attempts/in-game-second = (rate·k)/(100·k) = rate/100` stays invariant — difficulty, power, in-game solvetimes and ratios are identical; only wall-clock compresses.
+
+- **Why not just raise `SpeedMultiplier`?** That speeds the clock but not bet execution, so in-game solvetime per block inflates by the factor, the regulator reads "blocks too slow", and the clamped `feedbackTrim` can't compensate → difficulty collapses. Both must scale together.
+- **UI**: `UI/DevTimeScaleSelector/DevTimeScaleSelector.cs` (programmatic, like `StatusBar`) — selector with **10 options: 100X, then 1000X..9000X** in 1000X steps — in DiceGame (next to the APS selector) and BlockExplorer (under the StatusBar). Live; **not persisted** (resets to 100X on restart).
+- **Caveat**: `MaxBetsPerFrame = 10`/node/frame caps throughput at ~600 bets/s/node; at very high scale × high single-node hardware the acceleration stops being linear (measured dynamics stay intact). The 10000X option was removed for hitting this ceiling; **9000X is the tested-smooth ceiling**. Irrelevant for the normal measurement regime (power split across low-rate nodes).

@@ -325,7 +325,7 @@ Start when: Basic Mode is complete and stable. Until then, leave mining committi
 - [ ] **Parked → Step 7 (after the candidate engine)**: Satoshi 11,000-BTC ramp + disappearance, 12 Jan 10 BTC tx, April Mike Hearn transfers (built on the candidate engine).
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
 - [ ] Add Winning Referral Commission scene (list referrals, claimable 1% SC commission per bot, claim button).
-- [ ] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`).
+- [x] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`). ✅ 2026-06-25 — credit model, individual↔casino split + round-robin routing, dynamic fee + proportional distribution, Buy/Discard hardware, hardware-locked speed, bootstrap 1 individual + 0 casino. Foundation for **P5** is in place (ProjectDesignManual Ch. 27). Also: continuous difficulty regulator (Ch. 26) validated, + DEV 100X→9000X time tool.
 - [x] Add mempool with 24-transaction block cap (`BlockTemplateBuilder`, cap incl. coinbase).
 - [x] Add block template builder (P4 / candidate-block model).
 - [x] Add bot mining that can compete with the player (per-node candidates; verified a player can beat a faster bot to a block).
