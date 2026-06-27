@@ -80,9 +80,9 @@ Two themes still hold:
 - **Done & verified:** founders are **regulated concurrent miners** (`FoundersMiningService`) — they mine in lockstep with the player's time advancement (no autonomous clock), Satoshi power-regulated to ~10% toward 11,000 BTC by 2011-04-26, Hal a `P=1.0` drip fading to 0 by 9 Aug 2009, Hearn a receive-only holder doing the 32.51 round-trip (+82.51). E4 10-BTC tx in the bootstrap; `HistoricalEventScheduler` for player-era scripted txs; FoundersWallets DEV readout + `founders_trace.csv` telemetry. In-engine tests: Satoshi 9.4% share, Hal disappears exactly 9 Aug, Hearn round-trip on 18 Apr, 168-block durability run clean. **Only 7.6 (docs) remained.**
 - Full detail: **`step7-historical-character-economics-plan.md`**. Original design preserved in `historical-founders-and-bootstrap-plan.md` (Phases 4, 6, 7).
 
-### Step 8 — UTXO realism / Patoshi per-receive addresses
-- Fresh derived address per coinbase/deposit; real change outputs; surfaced via passphrase wallets. Founders first, then player wallet.
-- **Depends on Step 4** (the candidate/coinbase machinery). Pending §6 address-reuse research in the research doc.
+### Step 8 — UTXO realism / address non-reuse (Satoshi) + change outputs
+- **Satoshi-only** fresh derived address per coinbase (the "Patoshi" address-non-reuse pattern — what distinguishes him; ~220 addresses at the 11k floor). Real **change outputs** to fresh addresses (incl. the reinstated E8 17.49 Hearn change), surfaced via the derived-address wallet. **Satoshi first, then the player** — but the player keeps a **single coinbase address** and meets UTXO realism only through **change outputs on send** (coinbase spread is Satoshi's trait, not the player's).
+- **Depends on Step 4** (the candidate/coinbase machinery). §6 address-reuse research now resolved.
 
 ### Step 9 — Economy & meta  *(PRIVATE_ROADMAP P6–P8)*
 - P6 casino finances → P7 BTC/SC trading → P8 achievements.
