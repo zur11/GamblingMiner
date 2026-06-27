@@ -176,7 +176,7 @@ The genuine Patoshi pattern is a **mining fingerprint**, not addresses. Our engi
 - A Block Explorer **"forensic" toggle** that highlights all blocks where `MinedByNodeId == "satoshi"` (data we already store) as a contiguous band — visually echoing Lerner's ExtraNonce-vs-height plot ("the slope that reveals one miner").
 - A one-line teaching caption: *"In real Bitcoin, Satoshi's blocks were identified forensically by the Patoshi mining fingerprint (ExtraNonce/nonce/timestamp artifacts) — here we attribute them directly from the miner id. This is distinct from address non-reuse (the many-addresses pattern), shown in the wallet."*
 
-This keeps the two concepts **separated and correctly named** for the player. **Not required for Step 8 completion** — include only if time permits.
+This keeps the two concepts **separated and correctly named** for the player. **Decision (OQ-8.5): documented only — NOT built in Basic Mode v1.** This phase stays as a designed-but-unbuilt future/optional flavor; the D0 terminology correction still ships in the docs (Phase 8.6) regardless.
 
 ---
 
@@ -200,7 +200,7 @@ This keeps the two concepts **separated and correctly named** for the player. **
 | 8.2 Satoshi address non-reuse | ☐ TODO | Coinbase → fresh address; aggregate confirmed BTC; ~220 addresses by the floor. |
 | 8.3 UTXO-lite spends + E8 | ☐ TODO | `CreateSpendWithChange`; reinstate E8 (17.49 real change); E4/E6/E7 spend-with-change. |
 | 8.4 Player wallet UTXO realism | ☐ TODO | Player coinbase fresh-per-block; BTCWallet aggregated total + address list; send-with-change. |
-| 8.5 Patoshi forensic view (optional) | ☐ TODO | Block Explorer highlight of Satoshi-mined blocks + teaching caption. Ship only if cheap. |
+| 8.5 Patoshi forensic view (optional) | ⏸ **Deferred (OQ-8.5)** | Documented only — **not built in Basic Mode v1**. Block Explorer highlight of Satoshi-mined blocks + teaching caption; future/optional flavor. |
 | 8.6 Docs + terminology fix | ☐ TODO | Apply D0 rename globally; mark §6 + E8 resolved; record UTXO-lite model. |
 
 ---
@@ -246,12 +246,12 @@ This keeps the two concepts **separated and correctly named** for the player. **
 - **E8 (17.49 change).** ✅ Reinstated as a real change output to a fresh address (Phase 8.3), resolving the Step 7 deferral.
 - **Persistence (D3).** ✅ No new save file — derived wallet is reconstructed from the chain (gap-limit rescan).
 
-### 6.2 New / carried-forward
-- **OQ-8.1 — multi-input consolidation.** v1 is single-input + change (D1). When a wallet's value is fragmented across many small addresses with no single one covering a payment, a real wallet consolidates several inputs. **Deferred** — needs a true multi-input/multi-output `Transaction` (a model refactor). The full refactor is **designed in Appendix A** (do not build in core Step 8; promote it when fragmentation actually blocks a needed send, or alongside Step 10 fork simulation). Revisit then.
-- **OQ-8.2 — bot multi-address.** Bots have no stored seed (address-only or single keypair). **Deferred** — they stay single-address; not the educational focus. Revisit with the gradual-miner-spawning feature.
-- **OQ-8.3 — player deposit-address rotation.** Rotating the *incoming* receive address after each external deposit (full HD behavior) is **deferred** to avoid UX churn; v1 delivers non-reuse via coinbases + change outputs. Hook noted in 8.4.
-- **OQ-8.4 — gap-limit size.** Pick the rescan gap limit (a few indices) so a reverted-then-rebroadcast coinbase frontier is always re-found. Tune during 8.1 verification.
-- **OQ-8.5 — Phase 8.5 inclusion.** Ship the optional Patoshi mining-forensic view, or leave it as a documented stand-in only? Decide at 8.5 based on cost.
+### 6.2 Decided this round (Basic Mode v1)
+- **OQ-8.1 — multi-input consolidation.** ✅ **DECIDED — deferred until fragmentation actually forces it.** v1 is single-input + change (D1). The full multi-input/multi-output refactor is fully **designed in Appendix A** but **not built**; promote it the first time UTXO-lite can't fund a send from a single address, or bundle it with Step 10 (fork sim — shared validation core).
+- **OQ-8.2 — bot multi-address.** ✅ **DECIDED — deferred in Basic Mode v1.** Bots stay single-address (no stored seed; not the educational focus). Revisit with the gradual-miner-spawning feature in a later version.
+- **OQ-8.3 — player deposit-address rotation.** ✅ **DECIDED — deferred in Basic Mode v1.** Rotating the *incoming* receive address after each external deposit (full HD behavior) is out of scope; v1 delivers address non-reuse via coinbases + change outputs. The hook is noted in Phase 8.4 for a later version.
+- **OQ-8.4 — rescan gap limit.** ✅ **DECIDED — gap limit = 20 (BIP44 convention).** Our strictly-sequential assignment means gaps should never occur, so 20 is a pure safety margin and is educational. Implement cheaply: **one** chain pass collects every used address into a `HashSet<string>`, then derived addresses are probed against the set in O(1) — so "scan 20 past the last hit" is ~20 SHA256 derivations, not 20 full chain scans. (See §2.3.)
+- **OQ-8.5 — Phase 8.5 (Patoshi mining-forensic view).** ✅ **DECIDED — documented only, not built in Basic Mode v1.** The design stays in the plan (Phase 8.5) as a future/optional flavor; it is **not implemented** in v1. The terminology correction (D0) — keeping "Patoshi pattern" reserved for the mining fingerprint vs. "address non-reuse" — still ships in the docs (Phase 8.6), independent of whether the forensic view is built.
 
 ---
 
