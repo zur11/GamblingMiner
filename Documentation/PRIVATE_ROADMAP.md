@@ -161,7 +161,7 @@ Done when blocks contain believable transactions and bots can win blocks before 
 
 ### P4 - Block Template Builder  ✅ DONE (the per-node candidate block model)
 
-> Implemented as `AIHelperFiles/candidate-block-model-plan.md` (roadmap Step 4 — slices 4a/4b.1/4b.2/4b.3/4c). Each node builds its own candidate block from its mempool view: fee-ordered tx selection (24-tx cap incl. coinbase), Merkle root, coinbase = reward + collected fees, real block-header hashing, content-hash txids, and coinbase maturity N=1. BlockExplorer surfaces it; BTCWallet has a player fee selector. The bootstrap/lottery already mine through this engine (the refactor was in-place), so the founder economics (parked) layer straight on top in Step 7. **Next lead: miner-bot gradual introduction + hardware pools (roadmap Step 6).**
+> Implemented as `AIHelperFiles/candidate-block-model-plan.md` (roadmap Step 4 — slices 4a/4b.1/4b.2/4b.3/4c). Each node builds its own candidate block from its mempool view: fee-ordered tx selection (24-tx cap incl. coinbase), Merkle root, coinbase = reward + collected fees, real block-header hashing, content-hash txids, and coinbase maturity N=1. BlockExplorer surfaces it; BTCWallet has a player fee selector. The bootstrap/lottery already mine through this engine (the refactor was in-place), and the founder economics layered straight on top in **Step 7 (✅ done)**. **Next lead: Step 8 — UTXO realism / Patoshi per-receive addresses.**
 
 Goal: simulate Bitcoin-like block assembly without full-node complexity.
 
@@ -318,11 +318,17 @@ Start when: Basic Mode is complete and stable. Until then, leave mining committi
 - [x] Add casino BTC addresses.
 - [x] Add `CasinoFinances` development scene.
 - [x] Add scheduled bot transactions (core scheduler; circulation trigger to be re-aligned for gradual bot introduction).
-- [x] **PH**: Founders Satoshi & Hal as nodes + `FoundersWallets` dev scene (implemented; pending in-engine verification). *Note: they do not mine yet — that arrives with the weighted lottery below.*
+- [x] **PH**: Founders Satoshi & Hal (and Mike Hearn) as nodes + `FoundersWallets` dev scene (verified). *They now mine concurrently in the player era — Step 7 below.*
 - [x] **PH**: Fix genesis/early coinbase to derived `gm1q…` addresses (genesis stays unspendable).
 - [x] **PH**: Block-candidate + hashrate model (minimal weighted lottery) — the keystone seed (verified). Full per-node candidate engine = **P4 ✅ DONE**.
 - [x] **PH**: First-launch bootstrap to 21 Mar 2009 (Satoshi dominant, Hal exactly 3) — verified in-engine.
-- [ ] **Parked → Step 7 (after the candidate engine)**: Satoshi 11,000-BTC ramp + disappearance, 12 Jan 10 BTC tx, April Mike Hearn transfers (built on the candidate engine).
+- [x] **Step 7 (founder economics) — DONE & verified**: founders as **regulated concurrent miners** (`FoundersMiningService`) — Satoshi 11,000-BTC ramp + disappearance (~10% share, retire ≥ 2011-04-26), Hal `P=1.0` drip fading to 0 by 9 Aug 2009, Mike Hearn 32.51 round-trip (+82.51, never mines), 12 Jan 10 BTC Satoshi→Hal tx, `HistoricalEventScheduler`, FoundersWallets DEV readout + `founders_trace.csv`. See `AIHelperFiles/step7-historical-character-economics-plan.md`.
+- [ ] **Step 8 (UTXO realism / Patoshi) — NEXT.** Replace the account/balance model with a realistic UTXO simulation surfaced via passphrase wallets:
+  - [ ] §6 address research first: which address(es) humans paid Satoshi to, and whether any Satoshi address was reused (decides strict one-address-per-receive vs documented exceptions). `historical-blockchain-events-research.md`.
+  - [ ] Fresh derived address **per receive** (coinbase reward + deposit) — the Patoshi pattern; **founders first** (Satoshi), then the player wallet.
+  - [ ] Real **change outputs** on spends — including the deferred **E8** (17.49 BTC Hearn change → a new Satoshi address), upgrading the Step-7 placeholder.
+  - [ ] `FoundersWallets` lists Satoshi's many derived addresses with per-address balances.
+  - [ ] Hal's network-coupled fade (replace the linear `1.0→0` stand-in once gradual miner spawning exists) — *late Basic-Mode tuning, not blocking.*
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
 - [ ] Add Winning Referral Commission scene (list referrals, claimable 1% SC commission per bot, claim button).
 - [x] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`). ✅ 2026-06-25 — credit model, individual↔casino split + round-robin routing, dynamic fee + proportional distribution, Buy/Discard hardware, hardware-locked speed, bootstrap 1 individual + 0 casino. Foundation for **P5** is in place (ProjectDesignManual Ch. 27). Also: continuous difficulty regulator (Ch. 26) validated, + DEV 100X→9000X time tool.
