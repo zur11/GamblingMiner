@@ -196,7 +196,7 @@ This keeps the two concepts **separated and correctly named** for the player. **
 
 | Phase | Status | Notes |
 |---|---|---|
-| 8.1 DerivedAddressWallet | ☐ TODO | HD-lite derivation + chain-rescan + sign-any-owned-address. No persisted state. |
+| 8.1 DerivedAddressWallet | ✅ **Done (compiles; DEV-verifiable)** | `Scripts/BlockchainPort/Blockchain/DerivedAddressWallet.cs` (pure C#): index derivation (`addr(0)`==base via empty suffix, `addr(i≥1)` = seed+`" #r"+i`), `DeriveSigningContext`, chain-`Rescan` (gap limit 20), `NextReceiveAddress`, `TryFindSpendingContext`. `NetworkRoot.CollectUsedAddressSet()` (one-pass O(1) probe, OQ-8.4) + `GetWalletTotalConfirmed(addresses)`. DEV readout in `FoundersWallets` ("Derived Addresses [DEV]"): verifies addr(0)==base + distinctness + rescan frontier/owned/total. No persisted state. |
 | 8.2 Satoshi address non-reuse | ☐ TODO | Coinbase → fresh address; aggregate confirmed BTC; ~220 addresses by the floor. |
 | 8.3 UTXO-lite spends + E8 | ☐ TODO | `CreateSpendWithChange`; reinstate E8 (17.49 real change); E4/E6/E7 spend-with-change. |
 | 8.4 Player wallet UTXO realism | ☐ TODO | Player coinbase fresh-per-block; BTCWallet aggregated total + address list; send-with-change. |

@@ -1161,6 +1161,43 @@ public partial class NetworkRoot : Node
         return (data.AddressBalance, pendingOut);
     }
 
+    // Phase 8.1 (Step 8) — every address that appears anywhere on the confirmed player chain (coinbase
+    // recipient, tx recipient, or real tx sender), collected in a single pass so a DerivedAddressWallet
+    // rescan can probe membership in O(1) (OQ-8.4) instead of scanning the chain once per derived address.
+    public HashSet<string> CollectUsedAddressSet()
+    {
+        EnsureInitialized();
+        var used = new HashSet<string>();
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+            return used;
+
+        foreach (Block block in player.Blockchain.Chain)
+            foreach (Transaction tx in block.Transactions)
+            {
+                if (!string.IsNullOrEmpty(tx.Recipient))
+                    used.Add(tx.Recipient);
+                // The coinbase sentinel "00" is never a real address.
+                if (!string.IsNullOrEmpty(tx.Sender) && tx.Sender != BlockchainService.CoinbaseSender)
+                    used.Add(tx.Sender);
+            }
+        return used;
+    }
+
+    // Phase 8.1 (Step 8) — confirmed-balance aggregate across a derived-address set (a node's many
+    // receive addresses). Sums each address's confirmed (mature) balance on the player chain; used by the
+    // founder-economics aggregation in Phase 8.2 and the wallet total in Phase 8.4.
+    public decimal GetWalletTotalConfirmed(IEnumerable<string> addresses)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+            return 0m;
+
+        decimal total = 0m;
+        foreach (string address in addresses)
+            total += player.Blockchain.GetAddressData(address).AddressBalance;
+        return Scripts.Finance.Money.Normalize(total);
+    }
+
     public NodeFinancialState GetOrCreateNodeFinancialState(string nodeId, decimal defaultPrincipalBalance, decimal defaultBankrollBalance)
     {
         EnsureInitialized();

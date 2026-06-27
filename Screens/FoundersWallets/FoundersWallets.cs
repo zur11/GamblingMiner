@@ -72,6 +72,10 @@ public partial class FoundersWallets : Control
 	private LineEdit _lotteryBlocksInput = null!;
 	private Label _lotteryResultLabel = null!;
 
+	// Derived-address dev panel (Step 8.1 — built programmatically)
+	private VBoxContainer _derivedDevPanel = null!;
+	private RichTextLabel _derivedResultLabel = null!;
+
 	// Runtime state
 	private string? _currentPassphraseAddress;
 	private string _currentPassphraseNodeId = string.Empty;
@@ -146,6 +150,7 @@ public partial class FoundersWallets : Control
 
 		BuildSendPanel();
 		BuildLotteryDevPanel();
+		BuildDerivedAddressDevPanel();
 		BuildFounderEconomicsPanel();
 
 		// Default to Satoshi.
@@ -438,6 +443,79 @@ public partial class FoundersWallets : Control
 		RefreshBalances();
 	}
 
+	// ── Derived-address dev panel (Step 8.1) ──────────────────────────────────
+	// Verifies the HD-lite DerivedAddressWallet against the live chain: addr(0) must equal the founder's
+	// current base address (back-compatibility), the first sample must be distinct (address non-reuse),
+	// and a chain rescan must find the receive frontier + owned set. No model wiring yet (that is 8.2).
+
+	private void BuildDerivedAddressDevPanel()
+	{
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+
+		_derivedDevPanel = new VBoxContainer();
+		_derivedDevPanel.AddThemeConstantOverride("separation", 8);
+
+		var title = new Label { Text = "Derived Addresses [DEV] (Step 8.1)" };
+		title.AddThemeFontSizeOverride("font_size", 20);
+		_derivedDevPanel.AddChild(title);
+
+		_derivedDevPanel.AddChild(new Label
+		{
+			Text = "HD-lite address-non-reuse check for the selected founder: derives the first addresses, " +
+			       "verifies addr(0) == base + distinctness, and rescans the chain for the receive frontier."
+		});
+
+		var runBtn = new Button { Text = "Inspect Derived Addresses" };
+		runBtn.Pressed += OnInspectDerivedAddressesPressed;
+		_derivedDevPanel.AddChild(runBtn);
+
+		_derivedResultLabel = new RichTextLabel
+		{
+			BbcodeEnabled = true,
+			FitContent = true,
+			CustomMinimumSize = new Vector2(0, 140),
+			ScrollActive = false
+		};
+		_derivedResultLabel.AddThemeFontSizeOverride("normal_font_size", 14);
+		_derivedDevPanel.AddChild(_derivedResultLabel);
+
+		rootVBox.AddChild(_derivedDevPanel);
+	}
+
+	private void OnInspectDerivedAddressesPressed()
+	{
+		if (_currentFounder == null)
+		{
+			_derivedResultLabel.Text = "No founder selected.";
+			return;
+		}
+
+		string seed = string.Join(" ", _currentFounder.SeedWords);
+		var wallet = new DerivedAddressWallet(seed);
+
+		const int sample = 8;
+		var addrs = new List<string>();
+		for (int i = 0; i < sample; i++) addrs.Add(wallet.DeriveAddress(i));
+
+		bool baseMatches = addrs[0] == _currentFounder.BaseAddress;
+		bool distinct = new HashSet<string>(addrs).Count == addrs.Count;
+
+		wallet.Rescan(_networkRoot.CollectUsedAddressSet().Contains);
+		decimal total = _networkRoot.GetWalletTotalConfirmed(wallet.OwnedAddresses);
+
+		var sb = new System.Text.StringBuilder();
+		sb.AppendLine($"[b]{_currentFounder.FounderId}[/b]  seed-derived address book");
+		sb.AppendLine($"addr(0) == base: {(baseMatches ? "[color=lime]YES[/color]" : "[color=red]NO[/color]")}" +
+		              $"   ·   first {sample} distinct: {(distinct ? "[color=lime]YES[/color]" : "[color=red]NO[/color]")}");
+		sb.AppendLine($"rescan → nextReceiveIndex [b]{wallet.NextReceiveIndex}[/b]  ·  owned [b]{wallet.OwnedAddresses.Count}[/b]  ·  total [b]{total:F2}[/b] BTC");
+		for (int i = 0; i < sample; i++)
+		{
+			bool owned = wallet.OwnedAddresses.Contains(addrs[i]);
+			sb.AppendLine($"  addr({i})  {addrs[i]}  {(owned ? "[color=lime]●[/color]" : "[color=gray]○[/color]")}");
+		}
+		_derivedResultLabel.Text = sb.ToString();
+	}
+
 	// ── Balance ───────────────────────────────────────────────────────────────
 
 	private void RefreshBalances()
@@ -467,6 +545,7 @@ public partial class FoundersWallets : Control
 		_passphraseUnlockedPanel.Visible = mode == WalletMode.PassphraseUnlocked;
 		_sendPanel.Visible               = mode == WalletMode.Send;
 		_lotteryDevPanel.Visible         = mode == WalletMode.Base;
+		_derivedDevPanel.Visible         = mode == WalletMode.Base;
 
 		if (mode != WalletMode.PassphraseUnlocked && mode != WalletMode.Send)
 			_passphraseInput.Text = string.Empty;
