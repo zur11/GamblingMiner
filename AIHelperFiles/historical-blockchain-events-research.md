@@ -85,6 +85,8 @@ Real **dates** are the source of truth; fractal **block heights** are derived (�
 ❓ **Q-E1**: Confirm the fractal-block approximations are "by timestamp, not by height" (i.e. we don't try to reproduce real heights like 170 or 11408 — impossible at 1% block density). Plan assumes yes.
 ❓ **Q-E2**: Should the famous tx amounts be exact (10, 32.51, 50.00, 17.49) even though our economy is fractal? **Recommendation: keep exact amounts — they're iconic and BTC values aren't scaled, only block density and total supply are.** Confirm.
 
+**Timeline milestone — network-wide fee activation (`FeeActivationDate` ≈ 2009-04-26).** Early Bitcoin charged **no transaction fees**; our replica matches this with a **fee-free network until ~26 Apr 2009** (the nearest mined block, just after the 18 Apr Hearn round-trip). From that block on, **all** participants (bots, casino, player) begin paying fees. This keeps the scripted Apr-18 round-trip fee-free *because the whole network is*, not as a special case. Implementation is a **deferred adaptation on its own branch** (see `step8-utxo-realism-plan.md` OQ-8.7 + `IMPLEMENTATION_ROADMAP.md`); provisional date, resolve to the nearest block by timestamp.
+
 ---
 
 ## 5. Cross-cutting design questions — ALL RESOLVED (2026-06-19)

@@ -332,6 +332,7 @@ These values are fixed and must be consistent across all docs, UI, and code:
 | Real Bitcoin halving | `210,000 blocks` — NOT used in Basic Mode |
 | Block transaction cap | `24 transactions` (planned) |
 | Hardware cap | `100 nonce attempts` per time cycle (planned) |
+| Network fee activation | `~2009-04-26` nearest block (planned, own branch) — whole network **fee-free before**, all participants (bots/casino/player) pay fees **after**; matches early-Bitcoin zero-fee history. See `AIHelperFiles/step8-utxo-realism-plan.md` OQ-8.7 |
 | RTP | `99.02%` |
 | Currency for betting | SC only — BTC cannot be wagered directly |
 | Founders | Satoshi (target `11,000 BTC`, retires ≥ `2011-04-26`, then frozen) + Hal (`P=1.0` drip, fades to 0 by `2009-08-09`) + Mike Hearn (joins ~Apr 2009, never mines, +82.51 BTC round-trip) |
