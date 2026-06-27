@@ -224,6 +224,50 @@ public partial class FoundersMiningService : Node
 		}
 	}
 
+	// ── Phase 7.5: founder telemetry (parallels NetworkRoot's difficulty_trace) ─────
+	// One CSV row per live block while founders are active, so the Hal-disappearance / Satoshi-ramp tests
+	// can be measured: power curves, Satoshi's share + BTC ramp, Hal's decay to 0 by 9 Aug, Hearn's jump at
+	// the round-trip. Caller (SimulationService) supplies the chain-scanned balances. Best-effort; never throws.
+	private const string FounderTracePath = "user://logs/founders_trace.csv";
+
+	public void AppendTelemetry(int blockIndex, string lastMiner, long tsMs, decimal satoshiBtc, decimal halBtc, decimal hearnBtc)
+	{
+		try
+		{
+			if (!DirAccess.DirExistsAbsolute("user://logs"))
+			{
+				DirAccess.MakeDirRecursiveAbsolute("user://logs");
+			}
+
+			bool exists = FileAccess.FileExists(FounderTracePath);
+			using FileAccess file = exists
+				? FileAccess.Open(FounderTracePath, FileAccess.ModeFlags.ReadWrite)
+				: FileAccess.Open(FounderTracePath, FileAccess.ModeFlags.Write);
+			if (file == null)
+			{
+				return;
+			}
+
+			if (exists)
+			{
+				file.SeekEnd();
+			}
+			else
+			{
+				file.StoreLine("utcMs,blockIndex,lastMiner,satoshiPower,halPower,satoshiShare,satoshiBtc,halBtc,hearnBtc,satoshiRetired");
+			}
+
+			file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+				"{0},{1},{2},{3:F4},{4:F4},{5:F4},{6:F2},{7:F2},{8:F2},{9}",
+				tsMs, blockIndex, lastMiner, _satoshi.Power, _hal.Power, SatoshiShare,
+				satoshiBtc, halBtc, hearnBtc, _satoshi.Retired ? 1 : 0));
+		}
+		catch (Exception e)
+		{
+			GD.PushWarning($"[FounderTrace] failed: {e.Message}");
+		}
+	}
+
 	// Test/diagnostic reset (no persisted state to clear; restores fresh runtime).
 	public void ResetForNewGame()
 	{

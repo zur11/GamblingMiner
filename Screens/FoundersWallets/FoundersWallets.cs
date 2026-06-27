@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using GodotBlockchainPort.Blockchain;
 using GodotBlockchainPort.Simulation;
+using Scripts.Hardware;
 using UI.StatusBar;
 using UI.NotepadPopup;
 #nullable enable
@@ -17,12 +18,17 @@ public partial class FoundersWallets : Control
 	private NetworkRoot _networkRoot = null!;
 	private SceneManager? _sceneManager;
 	private CalendarTimeService? _calendarTimeService;
+	private FoundersMiningService? _foundersMining;
 
 	// Founder selection
 	private FounderWalletState? _currentFounder;
 	private Button _satoshiBtn = null!;
 	private Button _halBtn = null!;
+	private Button _hearnBtn = null!;
 	private Label _founderTitle = null!;
+
+	// Founder economics readout (programmatic)
+	private RichTextLabel _economicsLabel = null!;
 
 	// Mode panels
 	private VBoxContainer _baseWalletPanel = null!;
@@ -79,6 +85,7 @@ public partial class FoundersWallets : Control
 		_networkRoot = GetNode<NetworkRoot>("NetworkRoot");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		_foundersMining = GetNodeOrNull<FoundersMiningService>("/root/FoundersMiningService");
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 		GetNode<Button>("%BackBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.MainMenu);
@@ -88,6 +95,12 @@ public partial class FoundersWallets : Control
 		_halBtn     = GetNode<Button>("%HalBtn");
 		_satoshiBtn.Pressed += () => SelectFounder(WalletInitializationService.SatoshiWallet);
 		_halBtn.Pressed     += () => SelectFounder(WalletInitializationService.HalWallet);
+
+		// Mike Hearn selector — added programmatically as a sibling of the existing founder buttons.
+		_hearnBtn = new Button { Text = "Mike Hearn", ToggleMode = true };
+		_hearnBtn.AddThemeFontSizeOverride("font_size", _halBtn.GetThemeFontSize("font_size"));
+		_halBtn.GetParent().AddChild(_hearnBtn);
+		_hearnBtn.Pressed += () => SelectFounder(WalletInitializationService.MikeHearnWallet);
 
 		// Base wallet
 		_baseWalletPanel = GetNode<VBoxContainer>("%BaseWalletPanel");
@@ -133,6 +146,7 @@ public partial class FoundersWallets : Control
 
 		BuildSendPanel();
 		BuildLotteryDevPanel();
+		BuildFounderEconomicsPanel();
 
 		// Default to Satoshi.
 		SelectFounder(WalletInitializationService.SatoshiWallet);
@@ -144,6 +158,67 @@ public partial class FoundersWallets : Control
 		if (_refreshTimer < RefreshInterval) return;
 		_refreshTimer = 0d;
 		RefreshBalances();
+		RefreshFounderEconomics();
+	}
+
+	// ── Founder economics readout (Phase 7.5) ─────────────────────────────────
+	// Live status for all three founders — Satoshi's 11,000-BTC ramp + retirement, Hal's decay, Hearn's
+	// holdings — so the founder dynamics are observable in-engine without reading the chain by hand.
+
+	private void BuildFounderEconomicsPanel()
+	{
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+
+		var panel = new VBoxContainer();
+		panel.AddThemeConstantOverride("separation", 6);
+
+		var title = new Label { Text = "Founder Economics [DEV]" };
+		title.AddThemeFontSizeOverride("font_size", 20);
+		panel.AddChild(title);
+
+		_economicsLabel = new RichTextLabel
+		{
+			BbcodeEnabled = true,
+			FitContent = true,
+			CustomMinimumSize = new Vector2(0, 96),
+			ScrollActive = false
+		};
+		_economicsLabel.AddThemeFontSizeOverride("normal_font_size", 16);
+		panel.AddChild(_economicsLabel);
+
+		rootVBox.AddChild(panel);
+		RefreshFounderEconomics();
+	}
+
+	private void RefreshFounderEconomics()
+	{
+		if (_economicsLabel == null) return;
+		if (_foundersMining == null)
+		{
+			_economicsLabel.Text = "FoundersMiningService unavailable.";
+			return;
+		}
+
+		// Recompute against the live clock + Satoshi's confirmed BTC so the readout is fresh even when idle.
+		// otherMinersPower mirrors the player's hardware rate (the dominant non-founder miner in the tests).
+		decimal satoshiBtc = _networkRoot.GetNodeSpendableBalance("satoshi");
+		decimal halBtc      = _networkRoot.GetNodeSpendableBalance("hal");
+		decimal hearnBtc    = _networkRoot.GetNodeSpendableBalance("mike_hearn");
+		double otherPower   = Math.Clamp(HardwareAllocationRepository.GetNode("player").TotalCredits, 1, 99);
+		DateTime nowLocal   = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
+		_foundersMining.RecomputeFounderPowers(otherPower, nowLocal, satoshiBtc);
+
+		string satoshiState = _foundersMining.SatoshiRetired
+			? $"[color=gray]RETIRED {_foundersMining.SatoshiRetiredAtLocal:yyyy-MM-dd}[/color]"
+			: "[color=lime]ACTIVE[/color]";
+		string halState = _foundersMining.HalPower > 0.0001d ? "[color=lime]MINING[/color]" : "[color=gray]DORMANT[/color]";
+
+		_economicsLabel.Text =
+			$"[b]Satoshi[/b]  {satoshiBtc:F2} / {_foundersMining.SatoshiTarget:F0} BTC  ·  power {_foundersMining.SatoshiPower:F3}  ·  " +
+			$"share {_foundersMining.SatoshiShare * 100:F1}%  ·  ~{_foundersMining.EstimatedBlocksUntilTarget:F0} blk to target  ·  " +
+			$"retire ≥ {_foundersMining.SatoshiFloorDateLocal:yyyy-MM-dd}  ·  {satoshiState}\n" +
+			$"[b]Hal[/b]  {halBtc:F2} BTC  ·  power {_foundersMining.HalPower:F3}  ·  fading → 0 by 2009-08-09  ·  {halState}\n" +
+			$"[b]Mike Hearn[/b]  {hearnBtc:F2} BTC  ·  never mines  ·  [color=gray]holder[/color]";
 	}
 
 	// ── Founder selection ──────────────────────────────────────────────────────
@@ -153,12 +228,14 @@ public partial class FoundersWallets : Control
 		_currentFounder = founder;
 		_satoshiBtn.ButtonPressed = founder?.FounderId == "satoshi";
 		_halBtn.ButtonPressed     = founder?.FounderId == "hal";
+		_hearnBtn.ButtonPressed   = founder?.FounderId == "mike_hearn";
 
 		string displayName = founder?.FounderId switch
 		{
-			"satoshi" => "Satoshi Nakamoto",
-			"hal"     => "Hal Finney",
-			_         => "Founder"
+			"satoshi"    => "Satoshi Nakamoto",
+			"hal"        => "Hal Finney",
+			"mike_hearn" => "Mike Hearn",
+			_            => "Founder"
 		};
 		_founderTitle.Text = $"{displayName} Wallet";
 		_addressLabel.Text = founder?.BaseAddress ?? "—";
@@ -485,9 +562,10 @@ public partial class FoundersWallets : Control
 		if (_currentFounder == null) return;
 		string displayName = _currentFounder.FounderId switch
 		{
-			"satoshi" => "Satoshi",
-			"hal"     => "Hal Finney",
-			_         => "Founder"
+			"satoshi"    => "Satoshi",
+			"hal"        => "Hal Finney",
+			"mike_hearn" => "Mike Hearn",
+			_            => "Founder"
 		};
 		_seedPopupTitle.Text = $"{displayName} Seed Words";
 		_seedWordsLabel.Text = string.Join("   ", _currentFounder.SeedWords);

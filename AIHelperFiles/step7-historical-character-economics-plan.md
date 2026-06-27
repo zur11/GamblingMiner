@@ -189,7 +189,10 @@ Owns, with **no persisted state** (recomputed from the chain each launch, like t
 | 7.2 Player-era concurrent mining | ✅ **Done & verified** | `SimulationService` feeds player+bots+founder power to `SetActiveMiningPower`; recomputes founder powers once per new block (`_lastFounderChainLen` guard around Satoshi's chain-scan); drives `DrainFounderAttempts` after the bet loops; founder blocks reuse the external-block path (`CaptureCheckpoint` + `StopPlayerOnExternalBlockMined`). `TickBots` now returns its bet count. |
 | 7.3 E4 10-BTC Satoshi→Hal tx | ✅ **Done & verified in-engine** | `NodeAgent.CreateSignedTransaction(..., deterministicSalt)`; `NetworkRoot.InjectHistoricalSignedTxStatic` (idempotent via deterministic-salt txid); `HistoricalBootstrapService` injects it when the bootstrap clock crosses 12 Jan. No `InputData` note (Q-X4). |
 | Block Explorer: mined-per-node | ✅ **Done** | `NetworkRoot.GetMinedBlockCountsByNode()`; `GetNodeStatusLines()` now shows `mined: N` per node so founder/player share is visible. |
-| 7.4 / 7.5 / 7.6 | ⏳ Pending | scheduler + Hearn / FoundersWallets readout + disappearance / docs. |
+| 7.4 Scheduler + Mike Hearn | ✅ **Done** | `mike_hearn` founder node (wallet + registration). `HistoricalEventScheduler` (static, hooked in `HandleMinedBlock`) injects the ~18 Apr 2009 round-trip **E6** (Satoshi→Hearn 32.51) → **E6b** (Hearn→Satoshi 32.51) → **E7** (Satoshi→Hearn 82.51), strictly sequenced via chain-confirmed state (`NetworkRoot.IsHistoricalTxConfirmedStatic`), idempotent. E8 (17.49 change) omitted — implicit change in the account model / self-send is rejected; returns in Step 8. Hearn nets +82.51, never mines. |
+| 7.5 FoundersWallets readout + telemetry | ✅ **Done** | "Founder Economics [DEV]" panel (live Satoshi target/power/share/retirement, Hal decay, Hearn holdings) + Mike Hearn selector. `FoundersMiningService.AppendTelemetry` → `user://logs/founders_trace.csv` (one row/block: powers, Satoshi share + BTC, Hal/Hearn BTC, retired flag), driven from `SimulationService`. Satoshi disappearance surfaced (retirement logic in 7.1; full retire date 2011-04-26 not reachable in a short test). |
+| Block Explorer: mining ⛏ for casino/founders | ✅ **Done** | `GetActiveMiningRates()` now also lists the casino (Σ active casino-pool credits) + Satoshi/Hal (regulated power) so the ⛏ indicator shows for them; Hearn correctly absent (never mines). `GetTotalActiveMiningPower()` was **decoupled** from this method (it must stay player+bots only — see the test-log bug). |
+| 7.6 Docs | ⏳ Pending | CLAUDE.md / ProjectDesignManual / roadmap + plan status flips. |
 
 **Test — 7.3 (E4):** ✅ confirmed on app open with a clean save — the 10 BTC Satoshi→Hal tx is on-chain near 12 Jan.
 
@@ -198,6 +201,13 @@ Owns, with **no persisted state** (recomputed from the chain each launch, like t
 - **Satoshi ≈ 7.8%** (4/51) — on his ~10% target within small-sample variance; his regulated power solved to ~0.21 ⇒ share ~10%. ✅
 - Chain **mechanically sound**: indices sequential & gap-free; timestamps monotonic; `anchor = 585.14 × configuredPower`; `realizedPower = difficulty × 99.98 / solveSec` self-consistent on every row; `configuredPower` falls 2.2157 → 1.9350 across the run = **Hal's decay working**. ✅
 - **Hal ≈ 41%** — correct for `P = 1.0` against a lone 1-credit player; **kept on purpose** (Q-N2): he shrinks relatively once the network grows. Not a bug.
+
+**Test — 7.4 + 7.5 (durability run, blocks 114→281 = 168 blocks, 1-credit solo player), audited via `user://logs/founders_trace.csv`:**
+- **Hal disappearance — exact.** `halPower` decays `1.0 → 0`, hitting **0.0000 at block 275, timestamp = 9 Aug 2009** (day 221) — precisely the configured `HalDecayEnd`. Then DORMANT. ✅
+- **7.4 Hearn round-trip — exact.** Block 145 (timestamp **18 Apr 2009**): `satoshiBtc` −32.51 (E6). `hearnBtc` reaches **82.51** by block 148 and holds for the rest of the run; `hearnBtc = 0` during 145–147 is correct (E6b pending reserves the funds). ✅ Net Hearn +82.51.
+- **Durability — passed.** 168 blocks, indices sequential & gap-free, timestamps monotonic, no crash, `satoshiRetired = 0` throughout. ✅
+- **Hal ended at 1810 BTC** — expected for the 1-credit solo setup (Hal ~45% early); the accepted Q-N2 tradeoff, not an error.
+- 🐞 **Bug found & fixed — Satoshi's real share was ~15%, not ~10%** (25/168 blocks mined by Satoshi). Root cause: the 7.5 mining-indicator change added founders/casino to `GetActiveMiningRates()`, and `GetTotalActiveMiningPower()` summed that method — so `otherMinersPower` (must be player+bots only) double-counted the founders into Satoshi's own `W_others`, inflating his power (`0.34` vs the correct `0.21`). **Fix:** `GetTotalActiveMiningPower()` now computes player+bots directly, decoupled from the display method. **Confirmed by a short re-run** (blocks 113→165): Satoshi mined **5/53 = 9.4%** (back on his ~10% target); `satoshiPower ≈ 0.21`; the displayed `satoshiShare` now matches the real share exactly (`0.2175 / 0.0983 → total 2.213 = player + hal + satoshi`).
 
 ---
 

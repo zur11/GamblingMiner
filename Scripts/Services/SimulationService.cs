@@ -203,13 +203,25 @@ public partial class SimulationService : Node
 	private static double HardwareRate(string nodeId) =>
 		Math.Clamp(HardwareAllocationRepository.GetNode(nodeId).TotalCredits, 1, MaxAutoBetBaseAps);
 
-	// Total active mining power for the difficulty feed-forward = Σ (player + running bots) bets/sec.
+	// Non-founder network power = Σ (player + running bots) bets/sec. This is the "W_others" the founder
+	// regulator competes against AND the base the founders' power is added to for the difficulty feed-forward,
+	// so it must include ONLY the player + bots — NOT the founders or the casino (casino-pool attempts are
+	// already part of each node's HardwareRate). It is deliberately computed directly here, NOT from
+	// GetActiveMiningRates() (which also lists founders/casino for the Block Explorer display) — mixing the
+	// two double-counts the founders into their own denominator and inflates Satoshi's share.
 	private double GetTotalActiveMiningPower()
 	{
 		double total = 0d;
-		foreach (double rate in GetActiveMiningRates().Values)
+		if (IsRunning && _config != null)
 		{
-			total += rate;
+			total += HardwareRate(_config.ActiveNodeId);
+		}
+		foreach (BotRunner runner in _botRunners.Values)
+		{
+			if (runner.Session.IsRunning)
+			{
+				total += HardwareRate(runner.NodeId);
+			}
 		}
 		return total;
 	}
@@ -289,6 +301,12 @@ public partial class SimulationService : Node
 		decimal satoshiBtc = _networkRoot.GetNodeSpendableBalance(FoundersMiningService.SatoshiNodeId);
 		DateTime nowLocal = _calendar?.CurrentLocalDateTime ?? DateTime.Now;
 		_founders.RecomputeFounderPowers(otherMinersPower, nowLocal, satoshiBtc);
+
+		// Phase 7.5 telemetry: one row per new block, so the founder ramp/decay tests can be measured.
+		Block latest = _networkRoot.GetPlayerLatestBlock();
+		decimal halBtc = _networkRoot.GetNodeSpendableBalance(FoundersMiningService.HalNodeId);
+		decimal hearnBtc = _networkRoot.GetNodeSpendableBalance("mike_hearn");
+		_founders.AppendTelemetry(latest.Index, latest.MinedByNodeId ?? string.Empty, latest.Timestamp, satoshiBtc, halBtc, hearnBtc);
 	}
 
 	// Founders perform their owed nonce attempts on their OWN chains (own coinbase). A founder-mined block
@@ -746,22 +764,49 @@ public partial class SimulationService : Node
 		return result;
 	}
 
-	// Per-node mining rates for the active simulation (player + running bots), for the Block Explorer
-	// "who's mining + speed" indicator. Empty when the background sim is idle.
+	// Per-node mining rates for the active simulation, for the Block Explorer "who's mining + speed"
+	// indicator. Includes the player + running bots, the casino pool, and the founders (Satoshi/Hal) —
+	// all the entities that mine while a player autobet is active. Empty when the background sim is idle.
 	public IReadOnlyDictionary<string, double> GetActiveMiningRates()
 	{
 		var rates = new Dictionary<string, double>();
-		if (IsRunning && _config != null)
+		if (!IsRunning)
+		{
+			return rates; // nothing mines unless the player's autobet is driving time
+		}
+
+		// Casino-pool hashrate = the casino-pool credits of every currently-mining node (those attempts
+		// route to the casino chain). Accumulated as we add each active miner below.
+		double casinoRate = 0d;
+
+		if (_config != null)
 		{
 			rates[_config.ActiveNodeId] = HardwareRate(_config.ActiveNodeId);
+			casinoRate += HardwareAllocationRepository.GetNode(_config.ActiveNodeId).CasinoPoolCredits;
 		}
+
 		foreach (BotRunner runner in _botRunners.Values)
 		{
 			if (runner.Session.IsRunning)
 			{
 				rates[runner.NodeId] = HardwareRate(runner.NodeId);
+				casinoRate += HardwareAllocationRepository.GetNode(runner.NodeId).CasinoPoolCredits;
 			}
 		}
+
+		if (casinoRate > 0d)
+		{
+			rates["casino"] = casinoRate;
+		}
+
+		// Founders mine concurrently in lockstep with the player's time advancement (Step 7.2). Show their
+		// regulated power (same bets/sec-equivalent unit) while they are active.
+		if (_founders != null)
+		{
+			if (_founders.SatoshiPower > 0d) rates[FoundersMiningService.SatoshiNodeId] = _founders.SatoshiPower;
+			if (_founders.HalPower > 0d) rates[FoundersMiningService.HalNodeId] = _founders.HalPower;
+		}
+
 		return rates;
 	}
 }
