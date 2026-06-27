@@ -126,43 +126,52 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Find Block"
 
-[node name="LookupResultLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Left"]
-unique_name_in_owner = true
+[node name="ResultScroll" type="ScrollContainer" parent="Margin/MainVBox/Panels/Left"]
 layout_mode = 2
 size_flags_vertical = 3
-custom_minimum_size = Vector2(0, 220)
+horizontal_scroll_mode = 0
+
+[node name="LookupResultLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Left/ResultScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
 bbcode_enabled = true
-fit_content = false
-scroll_active = true
+fit_content = true
+scroll_active = false
 selection_enabled = true
 
-[node name="Right" type="VBoxContainer" parent="Margin/MainVBox/Panels"]
+[node name="Right" type="ScrollContainer" parent="Margin/MainVBox/Panels"]
 layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="RightVBox" type="VBoxContainer" parent="Margin/MainVBox/Panels/Right"]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/separation = 8
 
-[node name="LatestBlockLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Right"]
+[node name="LatestBlockLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Right/RightVBox"]
 unique_name_in_owner = true
 layout_mode = 2
-size_flags_vertical = 3
+size_flags_horizontal = 3
 bbcode_enabled = true
-fit_content = false
-scroll_active = true
+fit_content = true
+scroll_active = false
 selection_enabled = true
 
-[node name="NetworkStatusLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Right"]
+[node name="NetworkStatusLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Right/RightVBox"]
 unique_name_in_owner = true
 layout_mode = 2
-size_flags_vertical = 3
+size_flags_horizontal = 3
 bbcode_enabled = true
-fit_content = false
-scroll_active = true
+fit_content = true
+scroll_active = false
 selection_enabled = true
 
-[node name="AddressDirectoryLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Right"]
+[node name="AddressDirectoryLabel" type="RichTextLabel" parent="Margin/MainVBox/Panels/Right/RightVBox"]
 unique_name_in_owner = true
 layout_mode = 2
-size_flags_vertical = 3
+size_flags_horizontal = 3
 bbcode_enabled = true
-fit_content = false
-scroll_active = true
+fit_content = true
+scroll_active = false
 selection_enabled = true

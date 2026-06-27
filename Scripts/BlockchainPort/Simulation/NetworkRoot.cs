@@ -165,11 +165,11 @@ public partial class NetworkRoot : Node
         string secp256k1Pub = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seed);
         var node = new NodeAgent(founder.FounderId, founder.BaseAddress, signPub, signPriv, secp256k1Pub);
 
-        // Step 8.2 — founders that mine (Satoshi, Hal) pay each coinbase to a fresh derived address
-        // (address non-reuse → ~220 Satoshi addresses at the 11,000-BTC floor). Hearn never mines; his
-        // receive rotation comes in Step 8.3. The frontier is positioned from the chain by
-        // RescanFounderReceiveWallets() once the chain is loaded.
-        if (founder.FounderId is "satoshi" or "hal")
+        // Step 8.2 — address non-reuse is a SATOSHI-ONLY trait ("Patoshi"/one-address-per-reward); other
+        // early miners (Hal) reused a single address, so only Satoshi gets a fresh coinbase address per block
+        // (→ ~220 addresses at the 11,000-BTC floor). Hal/Hearn keep their single base address. The frontier
+        // is positioned from the chain by RescanFounderReceiveWallets() once the chain is loaded.
+        if (founder.FounderId == "satoshi")
             node.ReceiveWallet = new DerivedAddressWallet(seed);
 
         SharedNetwork.RegisterNode(node);
@@ -252,58 +252,135 @@ public partial class NetworkRoot : Node
         return true;
     }
 
-    // Step 7.3/7.4: inject a scripted historical signed transaction between two registered nodes (e.g. the
-    // 12 Jan 2009 Satoshi→Hal 10 BTC tx, or the April 2009 Satoshi↔Hearn round-trip). Uses a deterministic
-    // salt so the content-hash txid is reproducible → idempotent (a second call is a no-op via
-    // ContainsTransactionId / AddTransactionToPendingTransactions). Returns true if the tx is now pending or
-    // already on-chain; false if the sender can't afford it or a node is unknown. Per Q-X4, no InputData note.
+    // Step 7.3/7.4 + Step 8.3: inject a scripted historical signed transaction between two registered nodes
+    // (e.g. the 12 Jan 2009 Satoshi→Hal 10 BTC tx, or the April 2009 Satoshi↔Hearn round-trip). UTXO-lite:
+    //   • SOURCE  — coin-selects an exact-match UTXO if one exists, else the largest covering one (so E7a
+    //     spends precisely the 32.51 Hearn returned, E7b a whole 50-BTC coinbase, and E6 a pristine 50-BTC
+    //     coinbase → the iconic 17.49 change). Sources from the base address for nodes without a derived
+    //     wallet (Hearn).
+    //   • RECIPIENT — a FRESH derived address when the recipient is a multi-address founder (address
+    //     non-reuse — e.g. Satoshi receives E6b at a new address), else the recipient's base.
+    //   • CHANGE  — for a founder sender, the remainder of the consumed address is sent to a FRESH address
+    //     (a real change output, e.g. E6's 17.49 = E8), fully consuming the source "UTXO".
+    // Idempotency is by SALT (unique per event), not the reconstructed txid, because the source address now
+    // varies (Step 8.3). Chain-derived, so it survives the revert-to-last-block model. Per Q-X4, no InputData.
     public static bool InjectHistoricalSignedTxStatic(string fromNodeId, string toNodeId, decimal amount, string deterministicSalt, decimal fee = 0m)
     {
         EnsureInitialized();
         if (amount <= 0m
             || !SharedNodesById.TryGetValue(fromNodeId, out NodeAgent? sender)
-            || !SharedNodesById.TryGetValue(toNodeId, out NodeAgent? recipient)
-            || sender.WalletAddress == recipient.WalletAddress)
+            || !SharedNodesById.TryGetValue(toNodeId, out NodeAgent? recipient))
         {
             return false;
         }
 
-        Transaction tx = sender.CreateSignedTransaction(amount, recipient.WalletAddress, fee, deterministicSalt);
-        if (sender.Blockchain.ContainsTransactionId(tx.TransactionId))
+        // Idempotent no-op if this event is already pending or confirmed (by salt).
+        if (IsHistoricalSaltPresent(sender, deterministicSalt))
         {
-            return true; // already injected (pending or confirmed) — idempotent no-op
+            return true;
         }
 
-        if (sender.Blockchain.GetAddressSpendableBalance(sender.WalletAddress) < amount + fee)
+        // Coin-select the source UTXO (smallest owned address covering amount+fee). Founder senders draw from
+        // their derived set; others (Hearn) from base. Fail → caller retries on a later block (not funded yet).
+        if (!TrySelectSpendSource(sender, amount + fee, out (string addr, string pub, string priv, string secp) src))
         {
-            return false; // not enough spendable yet — caller may retry on a later block
+            return false;
         }
 
+        // Recipient lands on a fresh derived address when it is a multi-address founder (address non-reuse).
+        string recipientAddr = recipient.ReceiveWallet?.NextReceiveAddress() ?? recipient.WalletAddress;
+        if (src.addr == recipientAddr)
+        {
+            return false; // never pay the source address itself
+        }
+
+        Transaction tx = sender.CreateSignedTransactionFrom(src.addr, src.pub, src.priv, src.secp, amount, recipientAddr, fee, deterministicSalt);
         if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
         {
             return false;
         }
-
         SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
+        recipient.ReceiveWallet?.MarkReceiveConsumed(); // recipient's fresh address is now used
+
+        // Real change output (E8): drain the remainder of the consumed UTXO to a fresh sender address. The
+        // first tx is now pending, so GetAddressSpendableBalance(src) already nets out amount+fee = the change.
+        if (sender.ReceiveWallet != null)
+        {
+            decimal change = sender.Blockchain.GetAddressSpendableBalance(src.addr);
+            if (change > 0m)
+            {
+                string changeAddr = sender.ReceiveWallet.NextReceiveAddress();
+                Transaction changeTx = sender.CreateSignedTransactionFrom(
+                    src.addr, src.pub, src.priv, src.secp, change, changeAddr, 0m, deterministicSalt + "_change");
+                if (sender.Blockchain.AddTransactionToPendingTransactions(changeTx))
+                {
+                    SharedNetwork.BroadcastTransaction(sender.NodeId, changeTx);
+                    sender.ReceiveWallet.MarkReceiveConsumed();
+                }
+            }
+        }
         return true;
     }
 
-    // Whether a scripted historical tx (identified by its deterministic-salt content-hash txid) is already
-    // CONFIRMED on the canonical chain (not merely pending). Lets HistoricalEventScheduler sequence a
-    // multi-step exchange — each step waits for the previous to be mined (Step 7.4). Chain-derived state,
-    // so it survives the revert-to-last-block model with no side flag file.
+    // Coin-selection for a single-input spend: prefer an EXACT-match UTXO (balance == needed → no change, so
+    // E7a spends precisely the 32.51 Hearn returned and E7b a whole 50-BTC coinbase); otherwise the LARGEST
+    // covering UTXO (so E6 spends a pristine 50-BTC coinbase → the iconic 17.49 change, never a smaller
+    // leftover like the 40-BTC E4 change). Founder senders pick across their derived set + base; others use
+    // base only. Returns the chosen address and its signing keys (Step 8.3).
+    private static bool TrySelectSpendSource(NodeAgent sender, decimal needed, out (string addr, string pub, string priv, string secp) src)
+    {
+        if (sender.ReceiveWallet == null)
+        {
+            decimal baseBal = sender.Blockchain.GetAddressSpendableBalance(sender.WalletAddress);
+            src = (sender.WalletAddress, sender.WalletPublicKey, sender.WalletPrivateKey, sender.WalletSecp256k1PublicKey);
+            return baseBal >= needed;
+        }
+
+        var candidates = new HashSet<string>(sender.ReceiveWallet.OwnedAddresses) { sender.WalletAddress };
+        string? exact = null;
+        string? largest = null;
+        decimal largestBal = -1m;
+        foreach (string addr in candidates)
+        {
+            decimal bal = sender.Blockchain.GetAddressSpendableBalance(addr);
+            if (bal == needed)
+            {
+                exact = addr; // perfect UTXO → no change output
+                break;
+            }
+            if (bal >= needed && bal > largestBal)
+            {
+                largest = addr;
+                largestBal = bal;
+            }
+        }
+
+        string? best = exact ?? largest;
+        if (best != null && sender.ReceiveWallet.TryFindSpendingContext(best, out var ctx))
+        {
+            src = (ctx.address, ctx.signingPublicKeyBase64, ctx.signingPrivateKeyBase64, ctx.secp256k1PublicKeyBase64);
+            return true;
+        }
+        src = default;
+        return false;
+    }
+
+    private static bool IsHistoricalSaltPresent(NodeAgent node, string salt) =>
+        node.Blockchain.PendingTransactions.Any(t => t.Salt == salt)
+        || node.Blockchain.Chain.Any(b => b.Transactions.Any(t => t.Salt == salt));
+
+    // Whether a scripted historical tx (identified by its unique event SALT) is already CONFIRMED on the
+    // canonical chain (not merely pending). Lets HistoricalEventScheduler sequence a multi-step exchange —
+    // each step waits for the previous to be mined (Step 7.4). Salt-based (Step 8.3) so it is independent of
+    // the now-variable source/recipient addresses. Chain-derived, surviving the revert-to-last-block model.
     public static bool IsHistoricalTxConfirmedStatic(string fromNodeId, string toNodeId, decimal amount, string deterministicSalt, decimal fee = 0m)
     {
         EnsureInitialized();
-        if (!SharedNodesById.TryGetValue(fromNodeId, out NodeAgent? sender)
-            || !SharedNodesById.TryGetValue(toNodeId, out NodeAgent? recipient)
-            || !SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
         {
             return false;
         }
-
-        string txid = sender.CreateSignedTransaction(amount, recipient.WalletAddress, fee, deterministicSalt).TransactionId;
-        return player.Blockchain.Chain.Any(b => b.Transactions.Any(t => t.TransactionId == txid));
+        return player.Blockchain.Chain.Any(b => b.Transactions.Any(t => t.Salt == deterministicSalt));
     }
 
     public static void BeginBulkMining() => _bulkMining = true;
@@ -837,7 +914,7 @@ public partial class NetworkRoot : Node
         Dictionary<string, int> mined = MinedBlockCountsByNode();
         return SharedNetwork.Nodes
             .OrderBy(n => n.NodeId)
-            .Select(n => $"{n.NodeId} | mined: {(mined.TryGetValue(n.NodeId, out int c) ? c : 0)} | block: {n.Blockchain.Chain.Count} | pending: {n.Blockchain.PendingTransactions.Count} | balance: {n.Blockchain.GetAddressSpendableBalance(n.WalletAddress):F8}")
+            .Select(n => $"{n.NodeId} | mined: {(mined.TryGetValue(n.NodeId, out int c) ? c : 0)} | block: {n.Blockchain.Chain.Count} | pending: {n.Blockchain.PendingTransactions.Count} | balance: {AggregateSpendable(n):F8}")
             .ToList();
     }
 
@@ -877,7 +954,10 @@ public partial class NetworkRoot : Node
         EnsureInitialized();
         return SharedNodesById.Values
             .OrderBy(n => n.NodeId)
-            .Select(n => $"{n.NodeId}: {n.WalletAddress}")
+            .Select(n =>
+                n.ReceiveWallet != null && n.ReceiveWallet.OwnedAddresses.Count > 1
+                    ? $"{n.NodeId}: {n.WalletAddress}  (base/identity; rewards spread across {n.ReceiveWallet.OwnedAddresses.Count} addresses)"
+                    : $"{n.NodeId}: {n.WalletAddress}")
             .ToList();
     }
 
@@ -1091,20 +1171,68 @@ public partial class NetworkRoot : Node
             return 0m;
         }
 
-        // Step 8.2 — founders spread their coinbases across many derived addresses (address non-reuse), so
-        // their spendable balance is the sum across the owned set plus the base/identity address (which holds
-        // p2p receives like E4 and is excluded from the owned set only until a rescan re-folds it in). The
-        // unspendable genesis 50 is already excluded by GetAddressData (IsSpendable = false).
-        if (node.ReceiveWallet != null)
+        return AggregateSpendable(node);
+    }
+
+    // Step 8.2 — the founder's SCRIPTED historical activity (the automatic, system-driven events: the Hearn
+    // round-trip, the 10-BTC Satoshi→Hal tx, …), so the wallet can show these in a panel SEPARATE from the
+    // main balance — they are not manual withdrawals the founder ordered. Lists each `hist_*`-salted tx that
+    // involves one of the node's addresses (excluding internal self-change), with direction + counterparty +
+    // pending/confirmed status. Drives the "Automatic Activity" panel in FoundersWallets.
+    public IReadOnlyList<(string label, bool outgoing, decimal amount, string counterparty, bool confirmed)> GetNodeScriptedActivity(string nodeId)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node)
+            || !SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+            return [];
+
+        HashSet<string> addresses = node.ReceiveWallet != null
+            ? new HashSet<string>(node.ReceiveWallet.OwnedAddresses) { node.WalletAddress }
+            : new HashSet<string> { node.WalletAddress };
+
+        var result = new List<(string, bool, decimal, string, bool)>();
+
+        void Consider(Transaction t, bool confirmed)
         {
-            var addresses = new HashSet<string>(node.ReceiveWallet.OwnedAddresses) { node.WalletAddress };
-            decimal total = 0m;
-            foreach (string address in addresses)
-                total += node.Blockchain.GetAddressSpendableBalance(address);
-            return total;
+            if (string.IsNullOrEmpty(t.Salt) || !t.Salt.StartsWith("hist_")) return;
+            bool isSender = addresses.Contains(t.Sender);
+            bool isRecipient = addresses.Contains(t.Recipient);
+            if (isSender == isRecipient) return; // not involved, or an internal self-change → skip
+            string counterparty = isSender ? t.Recipient : t.Sender;
+            result.Add((ScriptedEventLabel(t.Salt), isSender, t.Amount, counterparty, confirmed));
         }
 
-        return node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
+        foreach (Block block in player.Blockchain.Chain)
+            foreach (Transaction t in block.Transactions)
+                Consider(t, true);
+        foreach (Transaction t in player.Blockchain.PendingTransactions)
+            Consider(t, false);
+
+        return result;
+    }
+
+    // "hist_E6_satoshi_hearn_3251" → "E6"; "..._change" → "E6 change".
+    private static string ScriptedEventLabel(string salt)
+    {
+        string[] parts = salt.Split('_');
+        string code = parts.Length > 1 ? parts[1] : salt;
+        return salt.EndsWith("_change") ? code + " change" : code;
+    }
+
+    // Step 8.2 — a node's full spendable balance. A multi-address node (Satoshi) spreads its coinbases across
+    // many derived addresses (address non-reuse), so its balance is the sum across the owned set plus the
+    // base/identity address (which holds p2p receives like E4). Single-address nodes use the base only. The
+    // unspendable genesis 50 is already excluded by GetAddressData (IsSpendable = false).
+    private static decimal AggregateSpendable(NodeAgent node)
+    {
+        if (node.ReceiveWallet == null)
+            return node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
+
+        var addresses = new HashSet<string>(node.ReceiveWallet.OwnedAddresses) { node.WalletAddress };
+        decimal total = 0m;
+        foreach (string address in addresses)
+            total += node.Blockchain.GetAddressSpendableBalance(address);
+        return total;
     }
 
     // Returns all confirmed transactions involving address (as sender or recipient),

@@ -16,9 +16,9 @@ using GodotBlockchainPort.Simulation;
 // a step is only attempted once the previous one is confirmed on-chain, and injection is idempotent.
 //
 // v1 roster event: the famous April 2009 Satoshi ↔ Mike Hearn 32.51 round-trip (Q-N1, literal: Hearn
-// returns the coin first). E8 (17.49 change) is NOT modelled here — change is implicit in the account
-// model and a Satoshi→Satoshi self-send is rejected by the engine; it returns as a real change output
-// in Step 8 (UTXO realism).
+// returns the coin first). Step 8.3 makes it UTXO-faithful: E6 spends a 50-BTC coinbase and leaves a real
+// 17.49 change output to a fresh Satoshi address (E8); Satoshi receives E6b at a fresh address; and the
+// 82.51 return is split into E7a (32.51, the returned coin) + E7b (50.00, the gift) — see InjectHistoricalSignedTxStatic.
 public static class HistoricalEventScheduler
 {
 	private const string Satoshi = "satoshi";
@@ -32,15 +32,20 @@ public static class HistoricalEventScheduler
 	// One scripted transfer. `Salt` makes the content-hash txid reproducible → idempotent + chain-checkable.
 	private sealed record Step(string FromNodeId, string ToNodeId, decimal Amount, long DateMs, string Salt);
 
-	// The Hearn round-trip, in order (E6 → E6b → E7). Hearn nets +82.51 and signs exactly one tx (E6b).
+	// The Hearn round-trip, in order (E6 → E6b → E7a → E7b). Hearn nets +82.51 and signs exactly one tx (E6b).
+	// E7 is split into two single-input sends (Step 8.3 decision): under UTXO-lite no single 50-BTC coinbase
+	// can fund 82.51, and this restores the historically-accurate amounts (E6=32.51 test, E7=50.00 gift).
 	private static readonly Step[] Steps =
 	{
-		// E6  — Satoshi seeds Hearn the test coin so he can "send 32.51 first".
+		// E6  — Satoshi seeds Hearn the test coin so he can "send 32.51 first". Spends a 50-BTC coinbase,
+		//       leaving 17.49 change to a fresh Satoshi address (E8).
 		new(Satoshi, Hearn, 32.51m, HearnDealDateMs, "hist_E6_satoshi_hearn_3251"),
-		// E6b — Hearn returns the coin (his single outgoing tx).
+		// E6b — Hearn returns the coin (his single outgoing tx) to a fresh Satoshi address.
 		new(Hearn, Satoshi, 32.51m, HearnDealDateMs, "hist_E6b_hearn_satoshi_3251"),
-		// E7  — Satoshi returns the coin plus the 50 BTC gift (32.51 + 50 = 82.51).
-		new(Satoshi, Hearn, 82.51m, HearnDealDateMs, "hist_E7_satoshi_hearn_8251"),
+		// E7a — Satoshi returns the coin, spending exactly the 32.51 Hearn just sent (no change).
+		new(Satoshi, Hearn, 32.51m, HearnDealDateMs, "hist_E7a_satoshi_hearn_3251"),
+		// E7b — Satoshi adds the 50 BTC gift, spending one 50-BTC coinbase (no change).
+		new(Satoshi, Hearn, 50.00m, HearnDealDateMs, "hist_E7b_satoshi_hearn_5000"),
 	};
 
 	// Called after every live (non-bootstrap) mined block. Advances at most one step per block: it finds

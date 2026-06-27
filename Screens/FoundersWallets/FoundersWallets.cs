@@ -76,6 +76,9 @@ public partial class FoundersWallets : Control
 	private VBoxContainer _derivedDevPanel = null!;
 	private RichTextLabel _derivedResultLabel = null!;
 
+	// Automatic-activity panel (Step 8.2 — scripted historical events, built programmatically)
+	private RichTextLabel _activityLabel = null!;
+
 	// Runtime state
 	private string? _currentPassphraseAddress;
 	private string _currentPassphraseNodeId = string.Empty;
@@ -151,6 +154,7 @@ public partial class FoundersWallets : Control
 		BuildSendPanel();
 		BuildLotteryDevPanel();
 		BuildDerivedAddressDevPanel();
+		BuildAutomaticActivityPanel();
 		BuildFounderEconomicsPanel();
 
 		// Default to Satoshi.
@@ -163,6 +167,7 @@ public partial class FoundersWallets : Control
 		if (_refreshTimer < RefreshInterval) return;
 		_refreshTimer = 0d;
 		RefreshBalances();
+		RefreshAutomaticActivity();
 		RefreshFounderEconomics();
 	}
 
@@ -516,17 +521,76 @@ public partial class FoundersWallets : Control
 		_derivedResultLabel.Text = sb.ToString();
 	}
 
+	// ── Automatic activity panel (Step 8.2) ──────────────────────────────────
+	// Scripted, system-driven historical transactions (the Hearn round-trip, the 10-BTC Satoshi→Hal tx, …)
+	// shown SEPARATELY from the main balance, because the founder did not order them manually. This is what
+	// makes the "32.51 in then immediately out" legible: it is a historical script, not a manual withdrawal.
+
+	private void BuildAutomaticActivityPanel()
+	{
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+
+		var panel = new VBoxContainer();
+		panel.AddThemeConstantOverride("separation", 6);
+
+		var title = new Label { Text = "Automatic Activity [DEV]" };
+		title.AddThemeFontSizeOverride("font_size", 20);
+		panel.AddChild(title);
+
+		panel.AddChild(new Label
+		{
+			Text = "System-driven historical transactions (NOT manual withdrawals): the Hearn round-trip, " +
+			       "the 10-BTC Satoshi→Hal tx, etc. The main balance above only counts funds available to move manually."
+		});
+
+		_activityLabel = new RichTextLabel
+		{
+			BbcodeEnabled = true,
+			FitContent = true,
+			CustomMinimumSize = new Vector2(0, 96),
+			ScrollActive = false
+		};
+		_activityLabel.AddThemeFontSizeOverride("normal_font_size", 15);
+		panel.AddChild(_activityLabel);
+
+		rootVBox.AddChild(panel);
+	}
+
+	private void RefreshAutomaticActivity()
+	{
+		if (_activityLabel == null || _currentFounder == null) return;
+
+		var activity = _networkRoot.GetNodeScriptedActivity(_currentFounder.FounderId);
+		if (activity.Count == 0)
+		{
+			_activityLabel.Text = "[color=gray]No automatic historical activity.[/color]";
+			return;
+		}
+
+		var sb = new System.Text.StringBuilder();
+		foreach ((string label, bool outgoing, decimal amount, string counterparty, bool confirmed) in activity)
+		{
+			string status = confirmed ? "[color=lime]✓ done[/color]" : "[color=yellow]⏳ pending[/color]";
+			string dir = outgoing ? "→ sent to" : "← received from";
+			string shortAddr = counterparty.Length > 14 ? counterparty[..14] + "…" : counterparty;
+			sb.AppendLine($"{status}  [b]{label}[/b]  {dir} {shortAddr}  ({amount:F8} BTC)");
+		}
+		_activityLabel.Text = sb.ToString();
+	}
+
 	// ── Balance ───────────────────────────────────────────────────────────────
 
 	private void RefreshBalances()
 	{
 		if (_currentFounder == null) return;
 
-		(decimal confirmed, decimal pendingOut) = _networkRoot.GetAddressBalanceDetails(_currentFounder.BaseAddress);
-		_balanceLabel.Text = $"Confirmed balance:  {confirmed:F8} BTC";
-		_pendingLabel.Visible = pendingOut > 0m;
-		if (pendingOut > 0m)
-			_pendingLabel.Text = $"Pending outgoing:   {pendingOut:F8} BTC";
+		// Main balance = AVAILABLE (spendable): settled holdings NOT committed to an in-flight automatic
+		// process — i.e. what could be moved manually right now. The automatic scripted processes (the Hearn
+		// round-trip, etc.) are shown SEPARATELY in the Automatic Activity panel, since the founder did not
+		// order them manually (Step 8.2 design decision).
+		decimal available = _networkRoot.GetNodeSpendableBalance(_currentFounder.FounderId);
+		_balanceLabel.Text = $"Available balance:  {available:F8} BTC";
+		_pendingLabel.Visible = false; // automatic activity is shown in its own panel, not as a wallet "pending"
 
 		if (_currentPassphraseAddress == null) return;
 		(decimal passConfirmed, decimal passPending) = _networkRoot.GetAddressBalanceDetails(_currentPassphraseAddress);

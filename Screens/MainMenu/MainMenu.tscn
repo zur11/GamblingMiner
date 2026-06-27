@@ -49,14 +49,14 @@ horizontal_scroll_mode = 0
 [node name="ButtonsVBox" type="VBoxContainer" parent="RootMargin/RootVBox/ButtonsScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 18
+theme_override_constants/separation = 10
 
 [node name="DiceGameBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Dice Game"
 
 [node name="BlockExplorerBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
@@ -64,7 +64,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Block Explorer"
 
 [node name="BankrollProgrammerBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
@@ -72,7 +72,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Bankroll Programmer"
 
 [node name="CalendarsNavigatorBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
@@ -80,7 +80,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Calendars / History"
 
 [node name="MartingaleCalcBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
@@ -88,7 +88,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Martingale Calculator"
 
 [node name="BTCWalletBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
@@ -96,7 +96,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Bitcoin Wallet"
 
 [node name="BotsBtcWalletsBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
@@ -104,7 +104,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Bot Wallets [DEV]"
 
 [node name="CasinoFinancesBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
@@ -112,7 +112,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Casino Finances [DEV]"
 
 [node name="FoundersWalletsBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
@@ -120,7 +120,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Founders Wallets [DEV]"
 
 [node name="BotPlayHistoryBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
@@ -128,7 +128,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Bot Play History [DEV]"
 
 [node name="BTCPoolsAndHardwareShopBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
@@ -136,5 +136,5 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 26
 text = "Mining Pools & Hardware"

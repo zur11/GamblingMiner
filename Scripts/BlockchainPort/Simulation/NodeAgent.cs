@@ -67,6 +67,29 @@ public sealed class NodeAgent
         return tx;
     }
 
+    // Step 8.3 — sign a transaction from an ARBITRARY owned address (a derived coinbase / change / received
+    // output), not just the base WalletAddress, using that address's own keypair. Lets a multi-address founder
+    // spend a chosen "UTXO" and emit change to a fresh address (UTXO-lite). The caller (NetworkRoot) resolves
+    // the per-address keys via DerivedAddressWallet.TryFindSpendingContext. The salt keeps the txid
+    // reproducible for scripted historical events; note the txid now commits to the chosen source address.
+    public Transaction CreateSignedTransactionFrom(
+        string fromAddress, string fromSigningPublicKey, string fromSigningPrivateKey, string fromSecp256k1PublicKey,
+        decimal amount, string recipientAddress, decimal fee = 0m, string? deterministicSalt = null)
+    {
+        Transaction tx = Blockchain.CreateUnsignedTransaction(amount, fromAddress, recipientAddress);
+        if (deterministicSalt != null)
+        {
+            tx.Salt = deterministicSalt;
+        }
+        tx.Fee = fee;
+        tx.TransactionId = BlockchainService.ComputeTransactionId(tx);
+        string payload = BlockchainService.BuildTransactionPayload(tx);
+        tx.SignatureBase64 = CryptoUtils.Sign(payload, fromSigningPrivateKey);
+        tx.PublicKeyBase64 = fromSigningPublicKey;
+        tx.Secp256k1PublicKeyBase64 = fromSecp256k1PublicKey;
+        return tx;
+    }
+
     public Block MinePendingTransactions(decimal rewardAmount, long timestampUnixMs, double networkPower = 0d, double? forcedDifficulty = null)
     {
         // Build the candidate (coinbase-in-block + selected mempool txs), then full PoW. The
