@@ -111,6 +111,7 @@ public partial class NetworkRoot : Node
         ApplyStateFromSnapshot(savedState);
         NormalizeGenesisAcrossNodes();
         EnsureSecondBlockBootstrapPendingTx();
+        RescanFounderReceiveWallets(); // Step 8.2 — position founders' fresh-coinbase frontier from the chain
         PersistStateToDisk();
         _isInitialized = true;
     }
@@ -163,6 +164,14 @@ public partial class NetworkRoot : Node
         (string signPub, string signPriv) = CryptoUtils.DeriveSigningKeypair(seed);
         string secp256k1Pub = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seed);
         var node = new NodeAgent(founder.FounderId, founder.BaseAddress, signPub, signPriv, secp256k1Pub);
+
+        // Step 8.2 — founders that mine (Satoshi, Hal) pay each coinbase to a fresh derived address
+        // (address non-reuse → ~220 Satoshi addresses at the 11,000-BTC floor). Hearn never mines; his
+        // receive rotation comes in Step 8.3. The frontier is positioned from the chain by
+        // RescanFounderReceiveWallets() once the chain is loaded.
+        if (founder.FounderId is "satoshi" or "hal")
+            node.ReceiveWallet = new DerivedAddressWallet(seed);
+
         SharedNetwork.RegisterNode(node);
         SharedNodesById[founder.FounderId] = node;
     }
@@ -1082,6 +1091,19 @@ public partial class NetworkRoot : Node
             return 0m;
         }
 
+        // Step 8.2 — founders spread their coinbases across many derived addresses (address non-reuse), so
+        // their spendable balance is the sum across the owned set plus the base/identity address (which holds
+        // p2p receives like E4 and is excluded from the owned set only until a rescan re-folds it in). The
+        // unspendable genesis 50 is already excluded by GetAddressData (IsSpendable = false).
+        if (node.ReceiveWallet != null)
+        {
+            var addresses = new HashSet<string>(node.ReceiveWallet.OwnedAddresses) { node.WalletAddress };
+            decimal total = 0m;
+            foreach (string address in addresses)
+                total += node.Blockchain.GetAddressSpendableBalance(address);
+            return total;
+        }
+
         return node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
     }
 
@@ -1167,10 +1189,17 @@ public partial class NetworkRoot : Node
     public HashSet<string> CollectUsedAddressSet()
     {
         EnsureInitialized();
-        var used = new HashSet<string>();
-        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
-            return used;
+        return SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)
+            ? BuildUsedAddressSet(player)
+            : new HashSet<string>();
+    }
 
+    // Single-pass scan of every address appearing on a node's confirmed chain (coinbase recipient, tx
+    // recipient, or real tx sender). Static + no EnsureInitialized so it is safe to call from inside
+    // EnsureInitialized (RescanFounderReceiveWallets) without re-entrancy.
+    private static HashSet<string> BuildUsedAddressSet(NodeAgent player)
+    {
+        var used = new HashSet<string>();
         foreach (Block block in player.Blockchain.Chain)
             foreach (Transaction tx in block.Transactions)
             {
@@ -1181,6 +1210,18 @@ public partial class NetworkRoot : Node
                     used.Add(tx.Sender);
             }
         return used;
+    }
+
+    // Step 8.2 — position each mining founder's derived-address frontier from the chain (Decision D3).
+    // Called at init after the chain is loaded/normalized; in-session the frontier then advances
+    // incrementally via NodeAgent.ReceiveWallet.MarkReceiveConsumed as each founder block is mined.
+    private static void RescanFounderReceiveWallets()
+    {
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+            return;
+        HashSet<string> used = BuildUsedAddressSet(player);
+        foreach (NodeAgent node in SharedNodesById.Values)
+            node.ReceiveWallet?.Rescan(used.Contains);
     }
 
     // Phase 8.1 (Step 8) — confirmed-balance aggregate across a derived-address set (a node's many

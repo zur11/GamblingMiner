@@ -14,6 +14,12 @@ public sealed class NodeAgent
     public BlockchainService Blockchain { get; } = new();
     public NodeFinancialState? FinancialState { get; set; }
 
+    // Step 8.2 — when set (founders that mine: Satoshi, Hal), every coinbase is paid to a FRESH derived
+    // address (address non-reuse) instead of the static WalletAddress. Null for the player/bots/casino,
+    // which keep a single coinbase address. The frontier is positioned from the chain at init and advances
+    // as each block is mined (MarkReceiveConsumed). MinedByAddress stays = WalletAddress (stable identity).
+    public DerivedAddressWallet? ReceiveWallet { get; set; }
+
     // Relative mining power for the weighted block lottery (Step 2). Default 1.0 for the player
     // and bots; the founders controller drives Satoshi/Hal weights. Bet-driven player mining
     // does not use this — it only governs RunWeightedBlockLottery (bootstrap / founder mining).
@@ -66,7 +72,8 @@ public sealed class NodeAgent
         // Build the candidate (coinbase-in-block + selected mempool txs), then full PoW. The
         // timestamp is fixed before mining so it is part of the hashed header (Step 4).
         Block lastBlock = Blockchain.GetLastBlock();
-        BlockTemplate template = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions, lastBlock.Index + 1);
+        string coinbaseRecipient = ReceiveWallet?.NextReceiveAddress() ?? WalletAddress;
+        BlockTemplate template = BlockTemplateBuilder.Build(coinbaseRecipient, rewardAmount, Blockchain.PendingTransactions, lastBlock.Index + 1);
 
         // forcedDifficulty is used by the historical bootstrap: its block timestamps are scripted (not driven
         // by mining), so the block-time regulator would drift the difficulty meaninglessly — pin it instead.
@@ -77,6 +84,7 @@ public sealed class NodeAgent
         minedBlock.MinedByNodeId = NodeId;
         minedBlock.MinedByAddress = WalletAddress;
         minedBlock.MiningPower = networkPower;
+        ReceiveWallet?.MarkReceiveConsumed(); // advance to the next fresh coinbase address (Step 8.2)
         return minedBlock;
     }
 
@@ -102,7 +110,10 @@ public sealed class NodeAgent
             _candidateNonce = 0;
             // Build the candidate once per (tip, mempool) state; only the nonce rolls across bets. (The
             // difficulty is NOT touched here — it's locked per tip above, so a mempool change can't move it.)
-            _candidateTemplate = BlockTemplateBuilder.Build(WalletAddress, rewardAmount, Blockchain.PendingTransactions, nextIndex);
+            // ReceiveWallet (founders) supplies a fresh coinbase address; the frontier only advances on commit,
+            // so rebuilds within the same block reuse the same address (Step 8.2).
+            string coinbaseRecipient = ReceiveWallet?.NextReceiveAddress() ?? WalletAddress;
+            _candidateTemplate = BlockTemplateBuilder.Build(coinbaseRecipient, rewardAmount, Blockchain.PendingTransactions, nextIndex);
         }
 
         string hash = Blockchain.HashHeader(lastBlock.Hash, _candidateTemplate.MerkleRoot, timestampUnixMs, _candidateNonce);
@@ -117,6 +128,7 @@ public sealed class NodeAgent
         minedBlock.MinedByAddress = WalletAddress;
         minedBlock.MiningPower = networkPower;
 
+        ReceiveWallet?.MarkReceiveConsumed(); // advance to the next fresh coinbase address (Step 8.2)
         _candidateNonce = 0;
         _candidateKey = string.Empty;
         _candidateTemplate = null;

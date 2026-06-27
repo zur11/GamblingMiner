@@ -37,9 +37,12 @@ public sealed class DerivedAddressWallet
 	{
 		_seedPhrase = seedPhrase ?? throw new ArgumentNullException(nameof(seedPhrase));
 		OwnedAddresses = new HashSet<string>();
+		// index 0 == the base / identity address (genesis, p2p receives such as E4). Mined coinbases and
+		// fresh receives start at index 1, so a node's reward never lands on its own identity address.
+		NextReceiveIndex = 1;
 	}
 
-	// The next fresh receive index = first unused address after the highest used one.
+	// The next fresh receive index = first unused address after the highest used one (always >= 1).
 	public int NextReceiveIndex { get; private set; }
 
 	// Every derived address that currently appears on-chain (the funded/used set), set by Rescan.
@@ -106,7 +109,17 @@ public sealed class DerivedAddressWallet
 		}
 
 		OwnedAddresses = owned;
-		NextReceiveIndex = lastUsed + 1;
+		// Reserve index 0 as the base/identity address: the receive frontier is always >= 1.
+		NextReceiveIndex = Math.Max(lastUsed + 1, 1);
+	}
+
+	// Advances the receive frontier past the address just paid — the in-session hot path after a block the
+	// node mined to NextReceiveAddress() commits. Cheap (no chain scan); the full Rescan re-derives the
+	// frontier from the chain on launch / after a revert-to-last-block (Decision D3).
+	public void MarkReceiveConsumed()
+	{
+		OwnedAddresses.Add(NextReceiveAddress());
+		NextReceiveIndex++;
 	}
 
 	// The signing context for a held address, so any owned derived address can sign a spend (used by the
