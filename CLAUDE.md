@@ -81,7 +81,7 @@ Block Mined? → BTC Reward + Checkpoint → Manage Bankroll / Strategies → Re
 
 ## Key Architecture — Autoload Services
 
-Seven core service singletons registered in `project.godot` (plus `SceneManager` and `NotepadService`, documented in their own sections — nine autoloads total). They persist across all scenes and are accessible globally by class name.
+Seven core service singletons registered in `project.godot` (plus `SceneManager`, `NotepadService`, and `FoundersMiningService`, documented in their own sections — **ten autoloads total**). They persist across all scenes and are accessible globally by class name.
 
 ### `CalendarTimeService`
 **Location**: `Scripts/Services/CalendarTimeService.cs`
@@ -154,8 +154,21 @@ Owns the running **background simulation** so it survives scene changes. While a
 - Player **and** bot auto-recharge happen *after* the session self-stops on `InsufficientBalance` (`TryPlayerAutoRechargeAndRestart` / `TryRechargeAndRestartBot`), restarting the progression from base bet.
 - Signals: `BetSettled` (per player bet), `AutobetStopped` (run ended). Exposes `GetActiveMiningRates()` for the Block Explorer mining indicator.
 - While delegated, it is the **sole owner** of `CalendarTimeService.IsRunning/SpeedMultiplier/IsAutobetActive`. No persisted run state → the app starts with autobet **stopped**.
+- Also **drives the founders' concurrent mining** (Step 7): each frame it recomputes founder power once per new block, feeds `player+bots+founders` power to the difficulty regulator, and runs `FoundersMiningService.DrainFounderAttempts` so Satoshi/Hal mine in lockstep with the player's time advancement. `GetTotalActiveMiningPower()` is player+bots **only** (it is the founders' competition denominator — never sum `GetActiveMiningRates()`, which also lists founders/casino for display).
 - Not persisted; registered in `project.godot` as an autoload.
 - See `Documentation/ProjectDesignManual.md` Chapter 24 and `AIHelperFiles/background-simulation-plan.md`.
+
+### `FoundersMiningService`
+**Location**: `Scripts/Services/FoundersMiningService.cs`
+
+Owns the **player-era mining power of the founders** (Satoshi + Hal) and the regulator math (Step 7). A **pure controller** — no chain/Godot state; callers feed it the live facts (other miners' power, the game clock, Satoshi's confirmed BTC) and it returns powers + per-founder nonce-attempt counts. No persisted state (recomputed from the live world each launch).
+
+- **Satoshi** is power-regulated toward **11,000 BTC by 2011-04-26** (`shareToWeight` ramp ⇒ ~10% share; exponential past the floor date if short; retires when both conditions hold, coins frozen forever in Basic Mode).
+- **Hal** keeps `P = 1.0` (one participant's worth) and fades linearly to 0 by **9 Aug 2009** (his ALS turning point) — a v1 stand-in for "falls behind as the network grows"; dormant after.
+- **Founders are concurrent miners, not clock movers** (OQ-2 refinement): they only attempt nonces while the player advances time by betting. `DrainFounderAttempts` accrues each founder ∝ its power-share of the player+bot attempts that frame; `SimulationService` mines those on the founders' own candidates (own coinbase), handled as external blocks.
+- **Mike Hearn never mines** — he's a receive-only holder driven by `HistoricalEventScheduler` (the static class, like `HistoricalBootstrapService`), which injects player-era scripted txs (the April 2009 32.51 round-trip) when the game clock crosses their date, with chain-derived idempotent state.
+- DEV readout + `user://logs/founders_trace.csv` telemetry surface it in `FoundersWallets`.
+- See `AIHelperFiles/step7-historical-character-economics-plan.md`.
 
 ---
 
@@ -219,7 +232,8 @@ User/Session calls ExecuteNext()
 - **Genesis block**: nonce=100, hash=`"0"`, previous=`"0"`, timestamp `2009-01-03 18:15:05 Unix ms`
 - **Coinbase reward**: starts at 50 BTC, halves every **2,100 blocks** (≈ 4 in-game years at 100X); total supply **210,000 BTC** (converges to in-game year ~2141)
 - **Block cap** (planned): 24 transactions per block
-- **Balance model**: currently account/balance-based (`GetAddressData` sums per-address txs) — a **testing-stage** simplification. Target: simulate a realistic **UTXO** model, surfaced via passphrase wallets, deriving a **fresh address per receive** (the historical "Patoshi pattern"). See `AIHelperFiles/historical-founders-and-bootstrap-plan.md` + `historical-blockchain-events-research.md`.
+- **Founder economics** (Step 7): Satoshi & Hal are **regulated concurrent miners** (`FoundersMiningService`, driven by `SimulationService`) — they mine their own candidates in lockstep with the player's bets (no autonomous clock). Satoshi targets ~10% share toward **11,000 BTC by 2011-04-26**; Hal fades to 0 by **9 Aug 2009**. Scripted historical txs: the **12 Jan 2009 10 BTC Satoshi→Hal** tx (`HistoricalBootstrapService`, in the bootstrap) and the **April 2009 Mike Hearn 32.51 round-trip** (`HistoricalEventScheduler`, player era, → Hearn +82.51, never mines). See `AIHelperFiles/step7-historical-character-economics-plan.md`.
+- **Balance model**: currently account/balance-based (`GetAddressData` sums per-address txs) — a **testing-stage** simplification. Target: simulate a realistic **UTXO** model, surfaced via passphrase wallets, deriving a **fresh address per receive** (the historical "Patoshi pattern"); this also brings the deferred E8 (17.49 Hearn change) as a real change output. See `AIHelperFiles/step7-historical-character-economics-plan.md` (Step 8) + `historical-blockchain-events-research.md`.
 
 ---
 
@@ -320,6 +334,8 @@ These values are fixed and must be consistent across all docs, UI, and code:
 | Hardware cap | `100 nonce attempts` per time cycle (planned) |
 | RTP | `99.02%` |
 | Currency for betting | SC only — BTC cannot be wagered directly |
+| Founders | Satoshi (target `11,000 BTC`, retires ≥ `2011-04-26`, then frozen) + Hal (`P=1.0` drip, fades to 0 by `2009-08-09`) + Mike Hearn (joins ~Apr 2009, never mines, +82.51 BTC round-trip) |
+| Player start | `21 Mar 2009` after the first-launch bootstrap |
 
 ---
 
@@ -340,6 +356,7 @@ These values are fixed and must be consistent across all docs, UI, and code:
 - User betting statistics and history persistence (JSON, monthly chunks)
 - Calendar-based history browsing
 - Background simulation: autobet + bots keep running, mining, and recharging across all scenes (SimulationService autoload)
+- Historical founders (Step 7): Satoshi/Hal/Hearn nodes; first-launch bootstrap to 21 Mar 2009; founders as regulated concurrent miners (`FoundersMiningService`); Satoshi 11k-BTC ramp + disappearance logic; Hal drip-fade to 9 Aug 2009; 12 Jan 10 BTC Satoshi→Hal tx; April 2009 Hearn 32.51 round-trip (`HistoricalEventScheduler`); FoundersWallets DEV readout + `founders_trace.csv`
 
 ### Prototype (Partially Implemented)
 

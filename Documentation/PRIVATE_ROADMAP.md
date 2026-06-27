@@ -76,8 +76,8 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 - Bot mining: required in Basic Mode.
 - BTC cannot be used directly for betting.
 - Multiplayer, DLCs, multiple casinos, and cloud persistence are postponed until the core loop is fun and data volume requires more infrastructure.
-- Founder entities: `Satoshi` (dominant early miner; target `11,000 BTC` ≈ 1% of his real ≈1.1 M; retires no earlier than `2011-04-26`), `Hal` (joins `2009-01-11`, mines exactly 3 bootstrap blocks), `Mike Hearn` (joins ~April 2009, after the player). Founders mine without needing SC/BTC, like the casino. Detail: `AIHelperFiles/historical-founders-and-bootstrap-plan.md`.
-- Game start: a first-launch bootstrap pre-mines the chain from genesis (`2009-01-03`) to `2009-03-21` (Satoshi + Hal only), so the player always begins on `21 March 2009`. From player start onward, in-game time always follows player bets.
+- Founder entities (Step 7, implemented): `Satoshi` (dominant early miner; power-regulated to ~10% of blocks toward `11,000 BTC` ≈ 1% of his real ≈1.1 M; retires ≥ `2011-04-26`, then frozen), `Hal` (joins `2009-01-11`, 3 bootstrap blocks, then a `P=1.0` player-era drip fading to 0 by `9 Aug 2009`), `Mike Hearn` (joins ~April 2009, never mines, +82.51 BTC round-trip). Founders mine without needing SC/BTC, like the casino. Detail: `AIHelperFiles/step7-historical-character-economics-plan.md`.
+- Game start: a first-launch bootstrap pre-mines the chain from genesis (`2009-01-03`) to `2009-03-21` (Satoshi + Hal only), so the player always begins on `21 March 2009`. From player start onward, in-game time always follows player bets — but the founders **mine concurrently in lockstep** with those bets (they add hashrate, never advance the clock themselves).
 - Network-growth model: participants appear over time (`Satoshi → Hal → player → miner bots gradually`), not all at block 1. Autonomous (no-bet) mining happens only during the bootstrap window; reserved otherwise for future expansions/DLC/multiplayer.
 - Coinbase recipients use derived `gm1q…` addresses (real base58 kept only as commented reference; genesis coinbase stays unspendable).
 - Balance model: account/balance-based is a **testing-stage** simplification; the target is a realistic **UTXO** simulation surfaced via passphrase wallets (a fresh address per receive — the "Patoshi pattern").
@@ -87,7 +87,7 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 
 > **Authoritative implementation order**: `AIHelperFiles/IMPLEMENTATION_ROADMAP.md`. The priorities below are the *feature* breakdown; the roadmap file holds the *sequencing and dependencies*.
 >
-> **State (2026-06-20):** P0–P2 done. PH historical foundation reached its **accepted baseline** — the game starts on **21 Mar 2009** on a Satoshi/Hal-mined chain (founder identity + genesis fix + weighted lottery + first-launch bootstrap all verified in-engine). **The active next work is now P4 — the per-node candidate block model (the real competition engine)** — built generically with historical characters treated as plain nodes (`AIHelperFiles/candidate-block-model-plan.md`). The remaining historical-character economics (Satoshi 11,000-BTC ramp + disappearance, the 12 Jan 10 BTC tx) are **parked** and re-activate *after* the candidate engine, built on top of it.
+> **State (2026-06-26):** P0–P2 + the candidate engine (P4/Step 4), difficulty regulator + hardware pools (Step 6), and **founder economics (Step 7)** are all done & verified in-engine. The game starts on **21 Mar 2009** on a Satoshi/Hal-mined chain; founders now mine concurrently in the player era (Satoshi 11,000-BTC ramp + disappearance, Hal drip, Mike Hearn round-trip, 12 Jan 10 BTC tx — see `AIHelperFiles/step7-historical-character-economics-plan.md`). **The active next work is Step 8 — UTXO realism / Patoshi per-receive addresses** (fresh address per receive, real change outputs incl. the deferred E8 17.49 Hearn change), then Step 9 economy/meta (P6–P8).
 
 ### PH - Historical Foundation — ✅ BASELINE REACHED
 
@@ -97,10 +97,10 @@ Goal: establish the historically faithful opening and the network-growth init mo
 - [x] Fix genesis & early coinbase recipients to derived `gm1q…` addresses. *(InputData 100-byte cap still deferred.)*
 - [x] Block-candidate + hashrate model **(minimal weighted lottery)** — the keystone seed for P4.
 - [x] First-launch bootstrap pre-mine to `21 March 2009` (Satoshi dominant, Hal exactly 3). **Verified in-engine.**
-- [ ] **Parked → after P4:** Satoshi `11,000`-BTC dynamic ramp (retire ≥ `2011-04-26`); the `12 Jan` 10 BTC Satoshi→Hal tx; April Mike Hearn transfers. Re-activated once the candidate engine exists, built on top of it.
-- Companion research: `historical-blockchain-events-research.md` (UTXO/Patoshi direction; remaining address-reuse research).
+- [x] **DONE (Step 7, on the candidate engine):** Satoshi `11,000`-BTC dynamic ramp (retire ≥ `2011-04-26`); the `12 Jan` 10 BTC Satoshi→Hal tx; April Mike Hearn 32.51 round-trip (+82.51). Built as **regulated concurrent mining** (`FoundersMiningService` + `HistoricalEventScheduler`); Hal `P=1.0` fades to 0 by `9 Aug 2009`. Verified in-engine. See `AIHelperFiles/step7-historical-character-economics-plan.md`.
+- Companion research: `historical-blockchain-events-research.md` (UTXO/Patoshi direction; remaining address-reuse research → Step 8).
 
-**Baseline reached:** a new game starts on `21 March 2009` with a Satoshi/Hal-mined chain and the player bets from there. ➡ **Next: P4 (candidate block model).**
+**Baseline reached:** a new game starts on `21 March 2009` with a Satoshi/Hal-mined chain and the player bets from there. ➡ **Step 7 (founder economics) complete; next: Step 8 (UTXO / Patoshi per-receive addresses).**
 
 ### P0 - Documentation Truth Pass
 

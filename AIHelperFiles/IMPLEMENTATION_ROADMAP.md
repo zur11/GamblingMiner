@@ -13,9 +13,10 @@
 | `btc-wallet-system-plan.md` | Addresses, seeds, passphrase wallets, dev scenes, notepad | ✅ Done (Phases 0–9) |
 | `100x-time-scale-migration-plan.md` | 100X time scale, 210k supply, 2,100-block halving | ✅ Done (Phase 5 validation is a checklist, not code) |
 | `scheduled-bot-transactions-plan.md` | Miner-bot → holder-bot BTC recirculation | ⏸ Core done (Phase 1); re-aligns onto candidate engine in Step 6 |
-| `historical-founders-and-bootstrap-plan.md` | Satoshi/Hal/Hearn nodes, genesis fix, bootstrap to 21 Mar, Satoshi 11k target | 🟡 Phases 1–3 + bootstrap (3a) done & verified; Phases 4/6/7 **parked → Step 7** |
+| `historical-founders-and-bootstrap-plan.md` | Satoshi/Hal/Hearn nodes, genesis fix, bootstrap to 21 Mar, Satoshi 11k target | ✅ Phases 1–3 + bootstrap (3a) done; Phases 4/6/7 **implemented in Step 7** |
+| `step7-historical-character-economics-plan.md` | **Founders as regulated concurrent miners: Satoshi 11k ramp, Hal drip, Hearn round-trip, E4 tx, event scheduler** | ✅ **Core (7.1–7.5) COMPLETE & verified** — 7.6 docs |
 | `candidate-block-model-plan.md` | **Per-node candidate blocks, mempool, tx selection, Merkle, fees, content-hash txid — the real competition engine** | ✅ **Step 4 COMPLETE** (4a/4b.1/4b.2/4b.3/4c) |
-| `historical-blockchain-events-research.md` | Character/event data + UTXO-realism direction | 🔬 Questionnaire (Q-X1–X4 resolved; address research open) |
+| `historical-blockchain-events-research.md` | Character/event data + UTXO-realism direction | ✅ Roster + events (E1/E4/E6–E8) canonical for Step 7; §6 address research still open (Step 8) |
 | `btc-pools-hardware-plan.md` | Hardware credits, casino community pool, fees, **+ Network Difficulty Regulator** | ✅ **Done & validated** — difficulty regulator (D.1–D.4, power-step validation closed) + hardware credits/pools/shop. ProjectDesignManual Ch. 26–27 |
 | `bot-play-history-plan.md` | Bot Play-History scene (last 260 plays/bot + Notepad) | ✅ Done — `Screens/BotPlayHistory/`, in use |
 
@@ -74,9 +75,10 @@ Two themes still hold:
 - ✅ **Already done (Step 4 cleanup):** the `scheduled-bot-transactions` circulation trigger was re-aligned to a **per-bot warmup** (`CirculationWarmupBlocks` = 5 blocks since a bot's *own* first mined block, via `FirstBlockHeightMinedBy`) + a no-self-send guard — ready for gradual bots when they return.
 - **Depends on Step 4** (built once, on the real engine).
 
-### Step 7 — Historical-character economics  *(re-activated 3b/3c + Hearn — founders P4/P6/P7)*
-- Satoshi 11,000-BTC dynamic ramp + disappearance (≥ 2011-04-26); 12 Jan 10 BTC Satoshi→Hal tx; April 2009 Mike Hearn transfers. All built **on the real candidate engine**, not the simplified path.
-- **Depends on Steps 4–5.** Design preserved in `historical-founders-and-bootstrap-plan.md` (Phases 4, 6, 7).
+### Step 7 — Historical-character economics  ✅ CORE COMPLETE (7.1–7.5) *(re-activated 3b/3c + Hearn — founders P4/P6/P7)*
+- Satoshi 11,000-BTC dynamic ramp + disappearance (≥ 2011-04-26); 12 Jan 10 BTC Satoshi→Hal tx; April 2009 Mike Hearn round-trip. All built **on the real candidate engine**, not the simplified path.
+- **Done & verified:** founders are **regulated concurrent miners** (`FoundersMiningService`) — they mine in lockstep with the player's time advancement (no autonomous clock), Satoshi power-regulated to ~10% toward 11,000 BTC by 2011-04-26, Hal a `P=1.0` drip fading to 0 by 9 Aug 2009, Hearn a receive-only holder doing the 32.51 round-trip (+82.51). E4 10-BTC tx in the bootstrap; `HistoricalEventScheduler` for player-era scripted txs; FoundersWallets DEV readout + `founders_trace.csv` telemetry. In-engine tests: Satoshi 9.4% share, Hal disappears exactly 9 Aug, Hearn round-trip on 18 Apr, 168-block durability run clean. **Only 7.6 (docs) remained.**
+- Full detail: **`step7-historical-character-economics-plan.md`**. Original design preserved in `historical-founders-and-bootstrap-plan.md` (Phases 4, 6, 7).
 
 ### Step 8 — UTXO realism / Patoshi per-receive addresses
 - Fresh derived address per coinbase/deposit; real change outputs; surfaced via passphrase wallets. Founders first, then player wallet.
@@ -100,7 +102,7 @@ Two themes still hold:
                              │
                              └─> ✅ Step4 (CANDIDATE BLOCK MODEL) ─> ✅ Step5 (absorbed)
                                       ├─> ✅ Step6 (regulator + hardware pools + bot play-history)
-                                      ├─> Step7 (historical-char economics: ex-3b/3c + Hearn)
+                                      ├─> ✅ Step7 (historical-char economics: ex-3b/3c + Hearn) — core 7.1–7.5 done
                                       └─> Step8 (UTXO / Patoshi)  ─> Step9 (economy/meta)
 ```
 
@@ -120,7 +122,7 @@ Two themes still hold:
 
 ---
 
-## 6. What NOT to do next
-- ❌ Don't add historical-character economics next (Satoshi ramp/disappearance, 10 BTC tx) — **parked to Step 7**, built on the real engine afterward.
-- ❌ Don't expand `scheduled-bot-transactions` or start `btc-pools-hardware` before the candidate engine (Step 4) — both re-align onto it in Step 6.
-- ❌ Don't refit the bootstrap (Step 5) before the candidate engine exists (Step 4).
+## 6. What's next
+- ✅ Steps 1–7 core done. **Next: Step 8 (UTXO realism / Patoshi per-receive addresses)** — fresh derived address per coinbase/deposit, real change outputs (incl. the deferred E8 17.49 Hearn change), founders first then the player wallet. Pending §6 address-reuse research in `historical-blockchain-events-research.md`.
+- Step 7 leftover refinements (deferred to late Basic-Mode tuning): Hal's network-coupled fade (currently a linear `1.0→0` stand-in pending gradual miner spawning), the founders' full long-term timelines (Hal 2013 sell-off / 2014, Hearn 2016).
+- ❌ Still don't start Step 9 (economy/meta P6–P8) before Step 8 — the UTXO model underpins BTC/SC trading.

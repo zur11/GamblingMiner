@@ -1,6 +1,6 @@
 # Historical Blockchain Events — Research & Data Capture
 
-**Status**: Questionnaire phase. Companion to `historical-founders-and-bootstrap-plan.md`.
+**Status**: **Step 7 roster + events CANONICAL** (implemented; see `step7-historical-character-economics-plan.md`). The v1 roster (Satoshi/Hal/Hearn) and the reproduced events (E1 genesis, E4 10 BTC Satoshi→Hal, E6/E6b/E7 Hearn 32.51 round-trip → +82.51) are frozen and wired in code. **Still open (Step 8):** §6 address-reuse research + E8 (17.49 change) as a real change output. Companion to `historical-founders-and-bootstrap-plan.md`.
 **Purpose**: build one authoritative table of **every early-Bitcoin character** and **every on-chain in/out event** we want to reproduce in the fractal (100X, 1%-supply) replica — grounded in real history wherever possible. This file is filled in two passes:
 
 1. **Questionnaire pass (now)** — list every fact we need, mark what is already known vs. what must be decided/researched. Answer inline under each `❓`.

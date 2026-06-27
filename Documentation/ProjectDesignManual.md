@@ -2475,3 +2475,62 @@ To run validation samples in a fraction of the wall-clock without altering the d
 - **Why not just raise `SpeedMultiplier`?** That speeds the clock but not bet execution, so in-game solvetime per block inflates by the factor, the regulator reads "blocks too slow", and the clamped `feedbackTrim` can't compensate → difficulty collapses. Both must scale together.
 - **UI**: `UI/DevTimeScaleSelector/DevTimeScaleSelector.cs` (programmatic, like `StatusBar`) — selector with **10 options: 100X, then 1000X..9000X** in 1000X steps — in DiceGame (next to the APS selector) and BlockExplorer (under the StatusBar). Live; **not persisted** (resets to 100X on restart).
 - **Caveat**: `MaxBetsPerFrame = 10`/node/frame caps throughput at ~600 bets/s/node; at very high scale × high single-node hardware the acceleration stops being linear (measured dynamics stay intact). The 10000X option was removed for hitting this ceiling; **9000X is the tested-smooth ceiling**. Irrelevant for the normal measurement regime (power split across low-rate nodes).
+
+---
+
+## Chapter 28 — Founder Economics (Step 7: Satoshi, Hal, Mike Hearn)
+
+Makes the early-Bitcoin opening historically faithful on top of the real candidate engine (Ch. 21) and the difficulty regulator (Ch. 26). Implementation + decisions + test log: `AIHelperFiles/step7-historical-character-economics-plan.md`. Original design provenance: `historical-founders-and-bootstrap-plan.md` (Phases 4/6/7).
+
+### 28.1 — Founders are regulated concurrent miners (the model)
+
+After the first-launch bootstrap (21 Mar 2009 baseline), the founders **keep mining in the player era** — but they never advance the clock. This **refines OQ-2** ("no autonomous mining after the bootstrap"): there is no autonomous **time** advancement, yet founders **do** add hashrate. They only perform nonce attempts *while the player advances time by betting* (lockstep).
+
+`FoundersMiningService` (autoload, pure controller — no chain/Godot state, nothing persisted) owns each founder's **power** and the regulator math. `SimulationService` drives it each frame:
+1. `GetTotalActiveMiningPower()` = **player + running bots only** (`W_others`). ⚠️ It must **not** sum `GetActiveMiningRates()` (which also lists founders + casino for the Block Explorer ⛏ display) — doing so double-counts the founders into their own denominator and inflates Satoshi's share (a bug caught and fixed in the 7.5 test).
+2. Once per **new block**, `RecomputeFounderPowers(W_others, nowLocal, satoshiConfirmedBtc)` updates powers (Satoshi's chain-scanned BTC query is too costly per frame).
+3. Every frame, `SetActiveMiningPower(W_others + ΣfounderPower)` so the regulator raises difficulty for the founders' hashrate and block pacing stays at `TargetBlockSeconds`. Net effect: the player loses ~Satoshi-share of blocks — thematically, "Satoshi mined most early blocks".
+4. After the bet loops, `DrainFounderAttempts(nonFounderAttempts, W_others)` accrues each founder `attempts ∝ power/W_others` into a fractional accumulator; `SimulationService` mines those whole attempts on the founders' own candidates (own coinbase). A founder block is an **external block** — `CaptureCheckpoint()` + `StopPlayerOnExternalBlockMined()`, exactly like a bot's.
+
+Share identity: with `power = s/(1−s)·W_others` (`shareToWeight`), a founder wins fraction `s` of blocks regardless of how many bots are online, because difficulty is shared (blocks won ∝ attempts made).
+
+### 28.2 — Satoshi's regulator (11,000 BTC by 2011-04-26)
+
+Recomputed per block while active (`SatoshiTargetBtc = 11000`, spendable, excludes the unspendable genesis 50; `SatoshiEarliestDisappearance = 2011-04-26`):
+- **Before the floor date:** `targetShare = clamp01(btcRemaining / blocksUntilFloor / 50)`; `power = shareToWeight(targetShare, W_others)`. From ~5,550 BTC at player start this is **~10% share** — a *historical requirement*, not a tunable (it's the output, never capped to make the player richer).
+- **Past the floor, still short:** ramp power **exponentially** (`W_others · GROWTH^blocksPastFloor`) to finish ASAP, then retire.
+- **Retire** when clock ≥ floor **and** confirmed ≥ 11,000 → power 0, flagged retired, **coins frozen forever** in Basic Mode (a "Satoshi returns" event is left open for the full version / DLCs).
+
+### 28.3 — Hal: a `P=1.0` drip that fades by 9 Aug 2009
+
+Hal keeps **one participant's worth of power** (`HalBaselinePower = 1.0`, deliberately *not* lowered) and fades linearly to 0 between 21 Mar and **9 Aug 2009** (his real ALS turning point), then dormant. He has **no BTC target** (emergent). The intended dynamic is that the player + a growing miner field outgrow him so he shrinks **relatively**; the linear absolute fade is the **v1 stand-in** for the network-coupled fade, pending the postponed gradual-miner-spawning feature. He counts in Satoshi's `W_others` while he mines (so Satoshi's ~10% stays exact). His bootstrap holdings (3 blocks + 10 BTC) are a known overshoot vs strict fractal scaling, accepted because the bootstrap baseline is locked.
+
+### 28.4 — Mike Hearn + scripted player-era events
+
+Mike Hearn is a registered founder node who **never mines** (real history: no documented mining) — a receive-only holder entering ~12 Apr 2009. Player-era scripted transactions are injected by **`HistoricalEventScheduler`** (a static class, like `HistoricalBootstrapService`), hooked into `NetworkRoot.HandleMinedBlock` beside the bot-tx scheduler. State is **derived from the chain** (each step's deterministic-salt txid checked for confirmation via `IsHistoricalTxConfirmedStatic`) — no side flag file, so it survives the revert-to-last-block model — and steps run strictly in order, idempotently.
+
+The famous **~18 Apr 2009 32.51 round-trip** (literal — Hearn sends first; Q-N1):
+- **E6** Satoshi → Hearn 32.51 (seed) → **E6b** Hearn → Satoshi 32.51 (his single outgoing tx) → **E7** Satoshi → Hearn 82.51 (the coin + 50 gift). Net **Hearn +82.51**.
+- **E8** (17.49 change) is **not** modelled here — change is implicit in the account model and a Satoshi→Satoshi self-send is rejected by the engine; it returns as a real change output in **Step 8** (UTXO realism).
+
+### 28.5 — The 12 Jan 2009 10 BTC Satoshi → Hal tx (E4)
+
+Injected in the **bootstrap** (`HistoricalBootstrapService`) when the scripted clock crosses 12 Jan, via `NetworkRoot.InjectHistoricalSignedTxStatic` (a real signed tx, deterministic-salt txid for idempotency, no `InputData` note per Q-X4 — only the genesis carries an inscription in v1). Confirmed in the block whose timestamp ≈ 12 Jan (real block 170; ~block 13 here — **dates are the source of truth, not heights**).
+
+### 28.6 — Historical timeline (real date → in-game)
+
+| Real date | Event | In-game reproduction |
+|---|---|---|
+| 2009-01-03 | Genesis, 50 BTC (unspendable) | Genesis coinbase → Satoshi's derived `gm1q…` |
+| 2009-01-11 | Hal "Running bitcoin" | Hal joins the bootstrap miners |
+| 2009-01-12 | First p2p tx: 10 BTC Satoshi→Hal | **E4**, injected in the bootstrap (~block 13) |
+| 2009-03-21 | — | **Player start** (random time-of-day) after the bootstrap |
+| 2009-04-18 | Satoshi↔Hearn 32.51 + 50 gift | **E6/E6b/E7** round-trip via the scheduler (Hearn +82.51) |
+| 2009-08-09 | Hal's ALS turning point | Hal's power reaches 0; dormant after |
+| ≥ 2011-04-26 | Satoshi's disappearance | Retirement once ≥ 11,000 BTC; coins frozen |
+
+### 28.7 — DEV surfacing & telemetry
+
+`FoundersWallets` adds a **"Founder Economics [DEV]"** readout (live Satoshi target/power/share/retirement, Hal decay, Hearn holdings) + a Mike Hearn selector. `FoundersMiningService.AppendTelemetry` writes `user://logs/founders_trace.csv` (one row/block: powers, Satoshi share + BTC, Hal/Hearn BTC, retired flag), the founder-economics counterpart to the difficulty trace (Ch. 26). The Block Explorer's ⛏ indicator also lists the casino (Σ active casino-pool credits) and the founders' regulated power.
+
+**Verified in-engine:** Satoshi 9.4% share (5/53) on target; Hal hits 0 exactly on 9 Aug 2009; the Hearn round-trip lands on 18 Apr (Hearn +82.51); a 168-block durability run stayed sequential, monotonic, crash-free, and chain-valid on reload.

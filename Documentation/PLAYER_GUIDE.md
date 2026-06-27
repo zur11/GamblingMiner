@@ -78,6 +78,10 @@ When a block is mined:
 
 Basic Mode uses a scaled halving interval of `2,100 blocks`, not Bitcoin's real `210,000` blocks. The initial block reward is 50 BTC and the total supply converges to 210,000 BTC by approximately in-game year 2141.
 
+### The founders mine alongside you
+
+You start on **21 March 2009**, on a chain Satoshi and Hal already mined from the genesis block. They keep mining in your era too — but only while *you* advance time by betting (they never run the clock on their own). So you will see some of "your" blocks won by **Satoshi** (he stays the dominant early miner, taking roughly 1 in 10 blocks until he reaches his historical hoard and disappears around 2011) and by **Hal** (a steady early miner who fades out by August 2009). You will also spot famous historical transactions appear on-chain: the **12 Jan 2009 10 BTC Satoshi→Hal** send, and **Mike Hearn's April 2009 exchange** with Satoshi. This is intended — you are mining *inside* early Bitcoin history, not in an empty world.
+
 ## Bots
 
 Miner Bots are intended to be real competitors in Basic Mode. They should be able to mine blocks before the player.

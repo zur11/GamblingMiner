@@ -83,6 +83,7 @@ Current implemented behavior includes:
 - Block reward visibility.
 - Blockchain Explorer.
 - Block checkpoints.
+- **Founder economics (Step 7, implemented):** Satoshi & Hal mine concurrently with the player in the player era — in lockstep with the player's bets, never advancing the clock on their own (`FoundersMiningService`). Satoshi is power-regulated to ~10% of blocks toward `11,000 BTC` by `2011-04-26` (then retires); Hal fades to 0 by `9 Aug 2009`. Scripted historical txs appear on-chain: the `12 Jan 2009` 10 BTC Satoshi→Hal send (bootstrap) and the April 2009 Mike Hearn 32.51 round-trip (`HistoricalEventScheduler`). See `ProjectDesignManual.md` Ch. 28.
 
 **Persistence model — a block is the only commit.** Within a play session, the live clock, all balances, and the mempool advance and survive scene changes (held by the autoloads and the in-memory simulation). Disk persistence happens **only when a block is mined** — navigating between scenes, sending a BTC transaction, or any other between-block action does **not** commit. So closing the app *without* mining a block and reopening it reverts the entire world to the last mined block: the clock, every participant's balance/bankroll (back to its last-block / initial value), **and** any pending transactions not yet in a block (discarded). Mining a block is what makes progress durable. See `Documentation/ProjectDesignManual.md` §24.8.
 

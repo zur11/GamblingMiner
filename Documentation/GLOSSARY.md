@@ -10,17 +10,21 @@
 - **CasinoFinances**: Planned development scene for tracking casino SC income, payouts, credit line, and debt.
 - **Coinbase transaction**: Special transaction that creates the block reward and pays fees to the miner.
 - **Difficulty**: Measure of how hard it is to mine a block.
+- **Founders**: Satoshi, Hal, and Mike Hearn — special historical nodes that mine (or hold) without betting SC. Satoshi & Hal are **regulated concurrent miners** in the player era (they mine in lockstep with the player's bets, never advancing the clock on their own); Hearn never mines.
 - **Game over**: State reached when Main Balance plus Bankroll equals zero.
+- **Hal Finney**: Founder node, the second early miner; keeps one participant's worth of mining power that fades to zero by 9 Aug 2009 (his ALS turning point), then dormant.
 - **Halving**: Reward reduction event. Basic Mode uses a scaled interval of 2,100 blocks (≈ 4 in-game years at 100X scale; initial reward 50 BTC; total supply 210,000 BTC).
 - **Main Balance**: Player reserve outside active betting. This is the preferred user-facing term.
 - **Mempool**: Set of pending BTC transactions waiting to be included in a block.
 - **Merkle root**: Hash root derived from the ordered transactions in a block.
+- **Mike Hearn**: Founder node who never mines (a receive-only holder); enters ~Apr 2009 and does the famous 32.51 BTC round-trip with Satoshi, ending with +82.51 BTC.
 - **Nonce**: Value changed by miners while attempting to find a valid block hash.
 - **Account/balance model**: Current testing-stage way balances are computed — summing all confirmed transactions per address. A simplification, not the destination (see UTXO model).
 - **UTXO model**: Target design where each receive is a discrete unspent output that must be spent whole, producing change. GamblingMiner aims to simulate this as realistically as possible, made tangible through passphrase-derived addresses.
 - **Patoshi pattern / address-per-receive**: Historical practice (attributed to Satoshi) of using a fresh address for nearly every mined block. Reproduced in-game by deriving a new passphrase address per coinbase reward or deposit — the educational backbone of UTXO realism.
 - **Passphrase wallet**: Extra address derived from the same seed phrase plus a chosen passphrase word; enables many distinct addresses per seed.
 - **RTP**: Return to Player. Dice currently targets roughly 99.02% RTP.
+- **Satoshi Nakamoto**: Founder node, the dominant early miner; power-regulated to ~10% of blocks toward a 11,000-BTC target by 26 Apr 2011, then retires (coins frozen in Basic Mode).
 - **SC**: Stable Coin, simulated USD-pegged currency.
 - **Stop on block mined**: Strategy condition that stops betting after a block is mined.
 - **Stop on loss/profit**: Strategy condition that stops betting after session loss or profit reaches a configured value.
