@@ -17,9 +17,9 @@ public partial class BlockExplorer : Control
 
     private OptionButton _minerNodeOption = null!;
     private Label _chainInfoLabel = null!;
-    private RichTextLabel _latestBlockLabel = null!;
-    private RichTextLabel _networkStatusLabel = null!;
-    private RichTextLabel _addressDirectoryLabel = null!;
+    // One scrollable right column (Latest Block + Network Status + Address Directory) — a single
+    // internally-scrolling RichTextLabel so the whole column is reachable (incl. Satoshi, last in the directory).
+    private RichTextLabel _rightColumnLabel = null!;
 
     private LineEdit _txLookupInput = null!;
     private LineEdit _addressLookupInput = null!;
@@ -43,9 +43,7 @@ public partial class BlockExplorer : Control
         _minerNodeOption = GetNode<OptionButton>("%MinerNodeOption");
 
         _chainInfoLabel = GetNode<Label>("%ChainInfoLabel");
-        _latestBlockLabel = GetNode<RichTextLabel>("%LatestBlockLabel");
-        _networkStatusLabel = GetNode<RichTextLabel>("%NetworkStatusLabel");
-        _addressDirectoryLabel = GetNode<RichTextLabel>("%AddressDirectoryLabel");
+        _rightColumnLabel = GetNode<RichTextLabel>("%RightColumnLabel");
 
         _txLookupInput = GetNode<LineEdit>("%TxLookupInput");
         _addressLookupInput = GetNode<LineEdit>("%AddressLookupInput");
@@ -82,7 +80,6 @@ public partial class BlockExplorer : Control
         BuildEnrollModePanel();
 
         PopulateNodeSelectors();
-        PopulateAddressDirectory();
         RefreshUi();
     }
 
@@ -172,9 +169,9 @@ public partial class BlockExplorer : Control
             _minerNodeOption.Select(playerIndex);
     }
 
-    private void PopulateAddressDirectory()
+    private string BuildAddressDirectory()
     {
-        _addressDirectoryLabel.Text = "[b]Node -> Address[/b]\n" + string.Join("\n", _networkRoot.GetNodeAddressLines());
+        return "[b]Node -> Address[/b]\n" + string.Join("\n", _networkRoot.GetNodeAddressLines());
     }
 
     private void OnLookupTransactionPressed()
@@ -266,7 +263,11 @@ public partial class BlockExplorer : Control
             + $" | Mining difficulty (block #{last.Index + 1}): {miningDifficulty:F2} ({trend})"
             + $" | Avg block time (last {window}): {avgBlockText} (target {FormatDuration(targetSec)})";
 
-        _latestBlockLabel.Text =
+        // Preserve the label's own internal scroll position across the 1 s refresh (setting Text resets it to top).
+        VScrollBar rightVScroll = _rightColumnLabel.GetVScrollBar();
+        double rightScroll = rightVScroll.Value;
+
+        _rightColumnLabel.Text =
             "[b]Latest Block (player view)[/b]\n" +
             $"Index: {last.Index}\n" +
             $"Time: {FormatBlockTime(last.Timestamp)}\n" +
@@ -276,9 +277,12 @@ public partial class BlockExplorer : Control
             $"PrevHash: {last.PreviousBlockHash}\n" +
             $"MerkleRoot: {last.MerkleRoot}\n" +
             $"Transactions: {last.Transactions.Count}\n" +
-            BuildLatestTransactionPreview(last);
+            BuildLatestTransactionPreview(last) +
+            "\n\n[b]Network Status[/b]\n" + string.Join("\n", BuildNodeStatusLinesWithMiningRates()) +
+            "\n\n" + BuildAddressDirectory() +
+            "\n\n\n"; // trailing padding so the last real line (Satoshi) clears the scroll's bottom edge
 
-        _networkStatusLabel.Text = "[b]Network Status[/b]\n" + string.Join("\n", BuildNodeStatusLinesWithMiningRates());
+        rightVScroll.Value = rightScroll;
 
         RefreshEnrollMode();
     }

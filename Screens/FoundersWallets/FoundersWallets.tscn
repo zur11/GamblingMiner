@@ -27,192 +27,197 @@ theme_override_constants/margin_top = 30
 theme_override_constants/margin_right = 40
 theme_override_constants/margin_bottom = 30
 
-[node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
+[node name="RootScroll" type="ScrollContainer" parent="RootMargin"]
+layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="RootVBox" type="VBoxContainer" parent="RootMargin/RootScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12
+
+[node name="TopBar" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="TopBar" type="HBoxContainer" parent="RootMargin/RootVBox"]
-layout_mode = 2
-theme_override_constants/separation = 12
-
-[node name="BackBtn" type="Button" parent="RootMargin/RootVBox/TopBar"]
+[node name="BackBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/TopBar"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "← Main Menu"
 
-[node name="NotepadBtn" type="Button" parent="RootMargin/RootVBox/TopBar"]
+[node name="NotepadBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/TopBar"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Notepad"
 
-[node name="StatusBarPlaceholder" type="HBoxContainer" parent="RootMargin/RootVBox/TopBar"]
+[node name="StatusBarPlaceholder" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox/TopBar"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="FounderSelectorRow" type="HBoxContainer" parent="RootMargin/RootVBox"]
+[node name="FounderSelectorRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="SelectorLabel" type="Label" parent="RootMargin/RootVBox/FounderSelectorRow"]
+[node name="SelectorLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/FounderSelectorRow"]
 layout_mode = 2
 text = "Founder:"
 
-[node name="SatoshiBtn" type="Button" parent="RootMargin/RootVBox/FounderSelectorRow"]
+[node name="SatoshiBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/FounderSelectorRow"]
 unique_name_in_owner = true
 layout_mode = 2
 toggle_mode = true
 text = "Satoshi"
 
-[node name="HalBtn" type="Button" parent="RootMargin/RootVBox/FounderSelectorRow"]
+[node name="HalBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/FounderSelectorRow"]
 unique_name_in_owner = true
 layout_mode = 2
 toggle_mode = true
 text = "Hal Finney"
 
-[node name="BaseWalletPanel" type="VBoxContainer" parent="RootMargin/RootVBox"]
+[node name="BaseWalletPanel" type="VBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="Title" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel"]
+[node name="Title" type="Label" parent="RootMargin/RootScroll/RootVBox/BaseWalletPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 22
 text = "Founder Wallet"
 
-[node name="Subtitle" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel"]
+[node name="Subtitle" type="Label" parent="RootMargin/RootScroll/RootVBox/BaseWalletPanel"]
 layout_mode = 2
 text = "Base Wallet Address"
 
-[node name="AddressRow" type="HBoxContainer" parent="RootMargin/RootVBox/BaseWalletPanel"]
+[node name="AddressRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox/BaseWalletPanel"]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="AddressLabel" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel/AddressRow"]
+[node name="AddressLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/BaseWalletPanel/AddressRow"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "—"
 
-[node name="CopyAddressBtn" type="Button" parent="RootMargin/RootVBox/BaseWalletPanel/AddressRow"]
+[node name="CopyAddressBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/BaseWalletPanel/AddressRow"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Copy"
 
-[node name="ShowSeedWordsBtn" type="Button" parent="RootMargin/RootVBox/BaseWalletPanel"]
+[node name="ShowSeedWordsBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/BaseWalletPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Show Seed Words"
 
-[node name="BalanceLabel" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel"]
+[node name="BalanceLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/BaseWalletPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Confirmed balance:  —"
 
-[node name="PendingLabel" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel"]
+[node name="PendingLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/BaseWalletPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 visible = false
 text = "Pending outgoing:   —"
 
-[node name="OpenPassphraseBtn" type="Button" parent="RootMargin/RootVBox/BaseWalletPanel"]
+[node name="OpenPassphraseBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/BaseWalletPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Open Passphrase Wallet →"
 
-[node name="SendBtcBtn" type="Button" parent="RootMargin/RootVBox/BaseWalletPanel"]
+[node name="SendBtcBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/BaseWalletPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Send BTC"
 
-[node name="PassphraseLockedPanel" type="VBoxContainer" parent="RootMargin/RootVBox"]
+[node name="PassphraseLockedPanel" type="VBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 visible = false
 theme_override_constants/separation = 10
 
-[node name="PassTitle" type="Label" parent="RootMargin/RootVBox/PassphraseLockedPanel"]
+[node name="PassTitle" type="Label" parent="RootMargin/RootScroll/RootVBox/PassphraseLockedPanel"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Passphrase Wallet"
 
-[node name="PassHint" type="Label" parent="RootMargin/RootVBox/PassphraseLockedPanel"]
+[node name="PassHint" type="Label" parent="RootMargin/RootScroll/RootVBox/PassphraseLockedPanel"]
 layout_mode = 2
 text = "Enter your passphrase word"
 
-[node name="PassRow" type="HBoxContainer" parent="RootMargin/RootVBox/PassphraseLockedPanel"]
+[node name="PassRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox/PassphraseLockedPanel"]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="PassphraseInput" type="LineEdit" parent="RootMargin/RootVBox/PassphraseLockedPanel/PassRow"]
+[node name="PassphraseInput" type="LineEdit" parent="RootMargin/RootScroll/RootVBox/PassphraseLockedPanel/PassRow"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 placeholder_text = "passphrase word..."
 secret = true
 
-[node name="UnlockBtn" type="Button" parent="RootMargin/RootVBox/PassphraseLockedPanel/PassRow"]
+[node name="UnlockBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/PassphraseLockedPanel/PassRow"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Unlock"
 
-[node name="PassWarning" type="Label" parent="RootMargin/RootVBox/PassphraseLockedPanel"]
+[node name="PassWarning" type="Label" parent="RootMargin/RootScroll/RootVBox/PassphraseLockedPanel"]
 layout_mode = 2
 text = "⚠ Save your passphrase offline. It cannot be recovered from this app."
 
-[node name="BackToBaseBtn1" type="Button" parent="RootMargin/RootVBox/PassphraseLockedPanel"]
+[node name="BackToBaseBtn1" type="Button" parent="RootMargin/RootScroll/RootVBox/PassphraseLockedPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "← Base Wallet"
 
-[node name="PassphraseUnlockedPanel" type="VBoxContainer" parent="RootMargin/RootVBox"]
+[node name="PassphraseUnlockedPanel" type="VBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 visible = false
 theme_override_constants/separation = 10
 
-[node name="PassTitle2" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+[node name="PassTitle2" type="Label" parent="RootMargin/RootScroll/RootVBox/PassphraseUnlockedPanel"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Passphrase Wallet"
 
-[node name="PassAddrRow" type="HBoxContainer" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+[node name="PassAddrRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox/PassphraseUnlockedPanel"]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="PassphraseAddressLabel" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel/PassAddrRow"]
+[node name="PassphraseAddressLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/PassphraseUnlockedPanel/PassAddrRow"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "—"
 
-[node name="CopyPassphraseBtn" type="Button" parent="RootMargin/RootVBox/PassphraseUnlockedPanel/PassAddrRow"]
+[node name="CopyPassphraseBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/PassphraseUnlockedPanel/PassAddrRow"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Copy"
 
-[node name="PassBalanceLabel" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+[node name="PassBalanceLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/PassphraseUnlockedPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Balance:  —"
 
-[node name="PassPendingLabel" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+[node name="PassPendingLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/PassphraseUnlockedPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 visible = false
 text = "Pending outgoing:   —"
 
-[node name="PassWarning2" type="Label" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+[node name="PassWarning2" type="Label" parent="RootMargin/RootScroll/RootVBox/PassphraseUnlockedPanel"]
 layout_mode = 2
 text = "⚠ Save your passphrase offline. It cannot be recovered from this app."
 
-[node name="SendBtcPassphraseBtn" type="Button" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+[node name="SendBtcPassphraseBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/PassphraseUnlockedPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Send BTC"
 
-[node name="BackToBaseBtn2" type="Button" parent="RootMargin/RootVBox/PassphraseUnlockedPanel"]
+[node name="BackToBaseBtn2" type="Button" parent="RootMargin/RootScroll/RootVBox/PassphraseUnlockedPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "← Base Wallet"

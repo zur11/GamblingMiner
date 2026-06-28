@@ -2536,3 +2536,59 @@ Injected in the **bootstrap** (`HistoricalBootstrapService`) when the scripted c
 `FoundersWallets` adds a **"Founder Economics [DEV]"** readout (live Satoshi target/power/share/retirement, Hal decay, Hearn holdings) + a Mike Hearn selector. `FoundersMiningService.AppendTelemetry` writes `user://logs/founders_trace.csv` (one row/block: powers, Satoshi share + BTC, Hal/Hearn BTC, retired flag), the founder-economics counterpart to the difficulty trace (Ch. 26). The Block Explorer's ⛏ indicator also lists the casino (Σ active casino-pool credits) and the founders' regulated power.
 
 **Verified in-engine:** Satoshi 9.4% share (5/53) on target; Hal hits 0 exactly on 9 Aug 2009; the Hearn round-trip lands on 18 Apr (Hearn +82.51); a 168-block durability run stayed sequential, monotonic, crash-free, and chain-valid on reload.
+
+---
+
+## Chapter 29 — UI Design & Godot Layout (especially scrolling)
+
+This chapter exists because a single "Satoshi isn't visible at the bottom of the address list" bug consumed an entire session of wrong guesses. Almost none of the guesses were the real cause. Read this **before** building or fixing any scrollable panel — it will save hours.
+
+### 29.1 — The core mental model
+
+A panel scrolls **only if it has a height that is BOTH bounded AND smaller than its content.** Two things must be true at once:
+
+1. **Bounded:** some ancestor pins the panel to a finite height. The dependable bounding chain is:
+   `MarginContainer` (fills the screen: `anchors_preset = 15`, full-rect) → `VBoxContainer` → the scroll element with `size_flags_vertical = Fill+Expand (3)`.
+   A `MarginContainer` *forces* its child to fill it; a `VBoxContainer` then gives its **expand** child the remaining space. If an ancestor is itself unbounded, nothing below it is bounded either.
+2. **Overflowing:** the content's natural/declared height exceeds that bounded height, so a scrollbar appears.
+
+If a panel "won't scroll," exactly one of these is false — usually (1) the element isn't actually bounded, or the content's reported height is wrong.
+
+### 29.2 — The two scroll patterns (pick ONE, never mix)
+
+**Pattern A — `ScrollContainer` wrapping the content.** Best for a column of many distinct controls (Labels, Buttons, inputs, or `RichTextLabel`s **that carry an explicit `custom_minimum_size`**). The container scrolls the whole stack with one scrollbar.
+- Structure: `MarginContainer → ScrollContainer (horizontal_scroll_mode = 0) → VBoxContainer (size_flags_horizontal = 3) → content`.
+- Used by `FoundersWallets`, `BotsBtcWallets`, `MainMenu` (button list).
+- **Why content needs real minimum heights:** the `ScrollContainer` decides whether to scroll from its child's *minimum size*. Regular Labels/Buttons report a correct minimum; a `fit_content` `RichTextLabel` does **not** (see 29.3). FoundersWallets works because its dynamic labels set `CustomMinimumSize` explicitly.
+
+**Pattern B — a single `RichTextLabel`'s own internal scroll.** Best for one big block of dynamic BBCode text.
+- Settings: `scroll_active = true`, `fit_content = false`, and a **bounded** height (via `size_flags_vertical = 3` inside an expanding parent).
+- The label renders **all** of its text into an internal scroll buffer and shows its own scrollbar — no height estimation, no clipping. It also handles its own mouse wheel.
+- Used by `BlockExplorer`'s right column (Latest Block + Network Status + Address Directory merged into one label).
+
+### 29.3 — The traps that wasted the session (in the order they bit)
+
+1. **`fit_content = true` `RichTextLabel` inside a `ScrollContainer` → never scrolls.** `fit_content` reports an unreliable minimum height inside containers, so the `ScrollContainer` thinks the content fits. This is the #1 trap. Fix: use Pattern A with `custom_minimum_size`, or Pattern B.
+2. **`HSplitContainer` does not reliably bound/report content height inside a scroll.** It is built to *fill* and let you drag a divider, not to size-to-content. Replace it with `HBoxContainer` (give one column a fixed `custom_minimum_size` width and the other `size_flags_horizontal = 3`).
+3. **Mouse wheel eaten by `mouse_filter`.** In Pattern A, the wheel reaches the `ScrollContainer` only if **every** control from the hovered node up the parent chain has `mouse_filter = PASS (1)`. The default is `STOP (0)`, which marks the event handled and stops propagation. A big label (or any container) in the chain with `STOP` swallows the wheel. Either set the whole chain to `PASS`, or use Pattern B (the label scrolls its own wheel, so `STOP` is correct there).
+4. **The last line is flush against the bottom edge.** A `scroll_active` label's maximum scroll equals its content height, so the final line sits exactly at the viewport's bottom edge and looks half-clipped — the user sees the *second-to-last* line as "the bottom." Fix: append a few trailing blank lines (`"\n\n\n"`) so the last real line clears the edge. (This was the actual final bug: "the scrollbar always stops at `player`," the entry just before `satoshi`.)
+5. **`Text` resets the scroll position.** Setting `RichTextLabel.Text` snaps its internal scroll back to the top. On a timer-refreshed panel, capture `GetVScrollBar().Value` before assigning `Text` and restore it after.
+
+### 29.4 — Diagnose with numbers; never guess at layout
+
+The session was lost to *guessing* at structure. The fix came in one shot once real numbers were printed. When a panel won't scroll, print — for the scroll element and its content label — at least:
+
+- `GetVScrollBar()` → `Value`, `MaxValue`, `Page`, `Visible` (if `MaxValue > Page` and `Visible`, scrolling *works*; if `MaxValue ≈ Page`, the element isn't bounded or the content height is underreported),
+- the label's `Size`, `GetContentHeight()`, `GetLineCount()`, `ScrollActive`, `FitContent`,
+- proof the data is even present (e.g. the tail of `Text`, or the last data row) — sometimes "missing" content is a data bug, not a layout bug.
+
+Also add a **visible canary** (e.g. temporarily append a marker to a Title) to confirm the running app actually reloaded the edited `.tscn`. C# changes always rebuild the assembly; **external `.tscn` edits require the scene to be reloaded** in the editor (or a Godot restart) — if the canary doesn't change, the problem is stale scene loading, not the layout. Strip the diagnostic + canary once fixed.
+
+### 29.5 — Checklist for a new scrollable panel
+
+1. Bounded chain: `MarginContainer → … → expand element`.
+2. Choose Pattern A or B; do not nest a `fit_content` `RichTextLabel` in a `ScrollContainer`.
+3. Two columns that scroll → `HBoxContainer`, not `HSplitContainer`.
+4. Pattern A + a big label → set the wheel chain to `mouse_filter = PASS`.
+5. Dynamic text → preserve scroll across refresh; add trailing blank lines.
+6. If it doesn't scroll, **print the numbers** before changing structure.

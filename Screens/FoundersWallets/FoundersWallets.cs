@@ -177,7 +177,7 @@ public partial class FoundersWallets : Control
 
 	private void BuildFounderEconomicsPanel()
 	{
-		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootScroll/RootVBox");
 
 		var panel = new VBoxContainer();
 		panel.AddThemeConstantOverride("separation", 6);
@@ -257,7 +257,7 @@ public partial class FoundersWallets : Control
 
 	private void BuildSendPanel()
 	{
-		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootScroll/RootVBox");
 
 		_sendPanel = new VBoxContainer();
 		_sendPanel.AddThemeConstantOverride("separation", 12);
@@ -374,7 +374,7 @@ public partial class FoundersWallets : Control
 
 	private void BuildLotteryDevPanel()
 	{
-		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootScroll/RootVBox");
 
 		_lotteryDevPanel = new VBoxContainer();
 		_lotteryDevPanel.AddThemeConstantOverride("separation", 8);
@@ -455,7 +455,7 @@ public partial class FoundersWallets : Control
 
 	private void BuildDerivedAddressDevPanel()
 	{
-		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootScroll/RootVBox");
 
 		_derivedDevPanel = new VBoxContainer();
 		_derivedDevPanel.AddThemeConstantOverride("separation", 8);
@@ -528,7 +528,7 @@ public partial class FoundersWallets : Control
 
 	private void BuildAutomaticActivityPanel()
 	{
-		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootScroll/RootVBox");
 
 		var panel = new VBoxContainer();
 		panel.AddThemeConstantOverride("separation", 6);
