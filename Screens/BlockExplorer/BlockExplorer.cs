@@ -179,7 +179,7 @@ public partial class BlockExplorer : Control
         string txId = _txLookupInput.Text.Trim();
         if (string.IsNullOrEmpty(txId)) { _lookupResultLabel.Text = "Enter a transaction hash first."; return; }
         string nodeId = _minerNodeOption.GetItemText(_minerNodeOption.Selected);
-        _lookupResultLabel.Text = "[b]Transaction Lookup[/b]\n" + _networkRoot.BuildTransactionDetails(nodeId, txId);
+        SetLookupResult("[b]Transaction Lookup[/b]\n" + _networkRoot.BuildTransactionDetails(nodeId, txId));
     }
 
     private void OnLookupAddressPressed()
@@ -187,7 +187,7 @@ public partial class BlockExplorer : Control
         string address = _addressLookupInput.Text.Trim();
         if (string.IsNullOrEmpty(address)) { _lookupResultLabel.Text = "Enter an address first."; return; }
         string nodeId = _minerNodeOption.GetItemText(_minerNodeOption.Selected);
-        _lookupResultLabel.Text = "[b]Address Lookup[/b]\n" + _networkRoot.BuildAddressDetailsForNode(nodeId, address);
+        SetLookupResult("[b]Address Lookup[/b]\n" + _networkRoot.BuildAddressDetailsForNode(nodeId, address));
     }
 
     private void OnLookupBlockPressed()
@@ -226,8 +226,14 @@ public partial class BlockExplorer : Control
             sb.AppendLine($"Sender: {tx.Sender}");
             sb.AppendLine($"Recipient: {tx.Recipient}");
         }
-        _lookupResultLabel.Text = sb.ToString();
+        SetLookupResult(sb.ToString());
     }
+
+    // Sets the left-column lookup result. The trailing blank lines clear the scroll's bottom edge so the last
+    // real line (e.g. the last transaction's Recipient) isn't half-clipped — same fix as the right column
+    // (see ProjectDesignManual Ch. 29). The label is set on demand here (not on the auto-refresh), so it needs
+    // no scroll-position preservation.
+    private void SetLookupResult(string text) => _lookupResultLabel.Text = text + "\n\n\n";
 
     private void OnBackToDicePressed()
     {
