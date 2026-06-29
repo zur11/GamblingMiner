@@ -190,18 +190,15 @@ public partial class NetworkRoot : Node
         // Step 8.2 — coinbase address spread (a fresh coinbase address per block) is a SATOSHI-ONLY trait
         // ("Patoshi"/one-address-per-reward → ~220 addresses at the 11,000-BTC floor): Satoshi keeps the
         // default RotateCoinbaseAddress = true.
-        // Step 8 (casino/Hal extension) — Hal ALSO gets a derived wallet, but for CHANGE-only rotation like
-        // the player (RotateCoinbaseAddress = false): his coinbase stays on his single base address (other
-        // early miners reused addresses; coinbase spread stays Satoshi-only), and he only becomes multi-address
-        // when he SENDS (change → fresh address). Hearn stays single-address (no ReceiveWallet). The frontier
-        // is positioned from the chain by RescanFounderReceiveWallets() once the chain is loaded.
-        if (founder.FounderId == "satoshi")
+        // Step 8 (casino/Hal/Hearn extension) — every other founder ALSO gets a derived wallet, but for
+        // CHANGE-only rotation like the player (RotateCoinbaseAddress = false): coinbase/receives stay on the
+        // single base address (coinbase spread stays Satoshi-only), and they become multi-address only when
+        // they SEND (change → fresh address). Hal mines + receives E4; Mike Hearn makes one outgoing tx (E6b
+        // Hearn → Satoshi 32.51, an exact-match send → no change, so rotation is inert today but kept for
+        // consistency/future-proofing). The frontier is positioned from the chain by RescanFounderReceiveWallets().
+        node.ReceiveWallet = new DerivedAddressWallet(seed);
+        if (founder.FounderId != "satoshi")
         {
-            node.ReceiveWallet = new DerivedAddressWallet(seed);
-        }
-        else if (founder.FounderId == "hal")
-        {
-            node.ReceiveWallet = new DerivedAddressWallet(seed);
             node.RotateCoinbaseAddress = false;
         }
 
