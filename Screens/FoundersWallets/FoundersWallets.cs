@@ -84,6 +84,10 @@ public partial class FoundersWallets : Control
 	private VBoxContainer _addressBookPanel = null!;
 	private RichTextLabel _addressBookLabel = null!;
 	private CheckBox _founderShowEmptyToggle = null!;
+	// Transactions history panel (Step 8)
+	private VBoxContainer _txPanel = null!;
+	private RichTextLabel _txLabel = null!;
+	private CheckBox _hideMiningToggle = null!;
 
 	// Runtime state
 	private string? _currentPassphraseAddress;
@@ -162,6 +166,7 @@ public partial class FoundersWallets : Control
 		BuildDerivedAddressDevPanel();
 		BuildAutomaticActivityPanel();
 		BuildAddressBookPanel();
+		BuildTransactionsPanel();
 		BuildFounderEconomicsPanel();
 
 		// Default to Satoshi.
@@ -176,6 +181,7 @@ public partial class FoundersWallets : Control
 		RefreshBalances();
 		RefreshAutomaticActivity();
 		RefreshAddressBook();
+		RefreshTransactions();
 		RefreshFounderEconomics();
 	}
 
@@ -639,7 +645,7 @@ public partial class FoundersWallets : Control
 
 		var book = _networkRoot.GetNodeAddressBook(_currentFounder.FounderId);
 		decimal total = 0m;
-		foreach ((string _, decimal confirmed, bool _) in book) total += confirmed;
+		foreach ((string _, decimal confirmed, bool _, long _) in book) total += confirmed;
 
 		bool showEmpty = _founderShowEmptyToggle.ButtonPressed;
 		var sb = new System.Text.StringBuilder();
@@ -647,14 +653,14 @@ public partial class FoundersWallets : Control
 
 		// Satoshi rotates his COINBASE across fresh addresses; Hal keeps one coinbase and rotates only CHANGE
 		// on send (like the player). Label the derived addresses accordingly.
-		string derivedTag = _currentFounder.FounderId == "satoshi" ? "[color=gray]coinbase[/color]" : "[color=gray]change[/color]";
+		string derivedTag = _currentFounder.FounderId == "satoshi" ? "[color=gray]coinbase[/color]" : "[color=gray]change  [/color]";
 		int shown = 0, hidden = 0;
-		foreach ((string address, decimal confirmed, bool isBase) in book)
+		foreach ((string address, decimal confirmed, bool isBase, long createdMs) in book)
 		{
 			// Hide spent/empty (0-balance) non-base addresses by default — never reused, only kept for history.
 			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
-			string tag = isBase ? "[color=aqua]base[/color]" : derivedTag;
-			sb.AppendLine($"  {tag}  {address}  —  {confirmed:F8} BTC");
+			string tag = isBase ? "[color=aqua]base    [/color]" : derivedTag;
+			sb.AppendLine($"  {tag}  {address}  —  {confirmed:F8} BTC  [color=gray]({FmtDate(createdMs)})[/color]");
 			shown++;
 		}
 		if (hidden > 0) sb.AppendLine($"[color=gray]… {hidden} empty (spent) address(es) hidden — tick to show.[/color]");
@@ -665,6 +671,77 @@ public partial class FoundersWallets : Control
 		_addressBookLabel.Text = sb.ToString();
 		_addressBookLabel.GetVScrollBar().Value = scroll;
 	}
+
+	// ── Transactions panel (Step 8) ───────────────────────────────────────────
+
+	private void BuildTransactionsPanel()
+	{
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootScroll/RootVBox");
+
+		_txPanel = new VBoxContainer();
+		_txPanel.AddThemeConstantOverride("separation", 6);
+
+		var title = new Label { Text = "Transactions [DEV]" };
+		title.AddThemeFontSizeOverride("font_size", 20);
+		_txPanel.AddChild(title);
+
+		_txPanel.AddChild(new Label
+		{
+			Text = "Confirmed sent / received / mined history for the selected founder, with dates.",
+			AutowrapMode = TextServer.AutowrapMode.Word
+		});
+
+		// Satoshi mines thousands of coinbases — hidden by default so the scripted transfers stand out.
+		_hideMiningToggle = new CheckBox { Text = "Hide mining rewards", ButtonPressed = true };
+		_hideMiningToggle.AddThemeFontSizeOverride("font_size", 16);
+		_hideMiningToggle.Toggled += _ => RefreshTransactions();
+		_txPanel.AddChild(_hideMiningToggle);
+
+		_txLabel = new RichTextLabel
+		{
+			BbcodeEnabled = true,
+			FitContent = false,
+			ScrollActive = true,
+			CustomMinimumSize = new Vector2(0, 240)
+		};
+		_txLabel.AddThemeFontSizeOverride("normal_font_size", 14);
+		_txPanel.AddChild(_txLabel);
+
+		rootVBox.AddChild(_txPanel);
+	}
+
+	private void RefreshTransactions()
+	{
+		if (_txLabel == null || _currentFounder == null) return;
+
+		bool hideMining = _hideMiningToggle.ButtonPressed;
+		var history = _networkRoot.GetNodeTransactionHistory(_currentFounder.FounderId);
+		var sb = new System.Text.StringBuilder();
+		int minedHidden = 0;
+		foreach ((long unixMs, string kind, decimal amount, string counterparty) in history)
+		{
+			if (hideMining && kind == "mined") { minedHidden++; continue; }
+			(string color, string sign, string desc) = kind switch
+			{
+				"mined"    => ("lime",   "+", "mined (coinbase)"),
+				"received" => ("lime",   "+", $"received from {Short(counterparty)}"),
+				_          => ("orange", "−", $"sent to {Short(counterparty)}"),
+			};
+			sb.AppendLine($"[color=gray]{FmtDate(unixMs)}[/color]  [color={color}]{sign}{amount:F8} BTC[/color]  {desc}");
+		}
+		if (sb.Length == 0)
+			sb.AppendLine("[color=gray]No transfers yet.[/color]");
+		if (minedHidden > 0)
+			sb.AppendLine($"[color=gray]… {minedHidden} mining reward(s) hidden — untick to show.[/color]");
+		sb.Append("\n\n\n");
+		double scroll = _txLabel.GetVScrollBar().Value;
+		_txLabel.Text = sb.ToString();
+		_txLabel.GetVScrollBar().Value = scroll;
+	}
+
+	private static string Short(string addr) => addr.Length > 16 ? addr[..16] + "…" : addr;
+	private static string FmtDate(long unixMs) =>
+		unixMs <= 0 ? "—" : System.DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
 
 	// ── Balance ───────────────────────────────────────────────────────────────
 
@@ -699,6 +776,7 @@ public partial class FoundersWallets : Control
 		_lotteryDevPanel.Visible         = mode == WalletMode.Base;
 		_derivedDevPanel.Visible         = mode == WalletMode.Base;
 		_addressBookPanel.Visible        = mode == WalletMode.Base;
+		_txPanel.Visible                 = mode == WalletMode.Base;
 
 		if (mode != WalletMode.PassphraseUnlocked && mode != WalletMode.Send)
 			_passphraseInput.Text = string.Empty;
@@ -711,6 +789,7 @@ public partial class FoundersWallets : Control
 
 		RefreshBalances();
 		RefreshAddressBook();
+		RefreshTransactions();
 	}
 
 	// ── Button handlers ───────────────────────────────────────────────────────

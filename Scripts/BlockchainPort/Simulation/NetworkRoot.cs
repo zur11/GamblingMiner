@@ -1221,21 +1221,85 @@ public partial class NetworkRoot : Node
     // addresses), each with its confirmed balance and a flag marking the base/identity address. Lets BTCWallet
     // show that "a wallet = a set of addresses/UTXOs" (OQ-2 educational core). The base is always first; for a
     // single-address node (no ReceiveWallet) the list is just the base. Ordered base-first, then by index.
-    public IReadOnlyList<(string address, decimal confirmed, bool isBase)> GetNodeAddressBook(string nodeId)
+    // Step 8 — a node's address book: base + every derived (change/coinbase) address it owns, each with its
+    // confirmed balance and the Unix-ms timestamp of the block where it FIRST appeared (its "creation" date).
+    // Ordered base-first, then by creation time. `createdUnixMs` is 0 if the address has no on-chain output yet.
+    public IReadOnlyList<(string address, decimal confirmed, bool isBase, long createdUnixMs)> GetNodeAddressBook(string nodeId)
     {
         EnsureInitialized();
         if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node)
             || !SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
             return [];
 
-        var result = new List<(string, decimal, bool)>
+        Dictionary<string, long> firstSeen = BuildAddressFirstSeenMap(player);
+        long Created(string a) => firstSeen.TryGetValue(a, out long ts) ? ts : 0L;
+
+        var result = new List<(string, decimal, bool, long)>
         {
-            (node.WalletAddress, player.Blockchain.GetAddressData(node.WalletAddress).AddressBalance, true)
+            (node.WalletAddress, player.Blockchain.GetAddressData(node.WalletAddress).AddressBalance, true, Created(node.WalletAddress))
         };
         if (node.ReceiveWallet != null)
+        {
+            var derived = new List<(string, decimal, bool, long)>();
             foreach (string addr in node.ReceiveWallet.OwnedAddresses)
                 if (addr != node.WalletAddress)
-                    result.Add((addr, player.Blockchain.GetAddressData(addr).AddressBalance, false));
+                    derived.Add((addr, player.Blockchain.GetAddressData(addr).AddressBalance, false, Created(addr)));
+            derived.Sort((a, b) => a.Item4.CompareTo(b.Item4)); // oldest-first by creation time
+            result.AddRange(derived);
+        }
+        return result;
+    }
+
+    // address → Unix-ms timestamp of the first block in which it appears as an output (its creation time).
+    private static Dictionary<string, long> BuildAddressFirstSeenMap(NodeAgent player)
+    {
+        var firstSeen = new Dictionary<string, long>();
+        foreach (Block block in player.Blockchain.Chain)
+            foreach (Transaction tx in block.Transactions)
+                foreach (TxOutput output in tx.Outputs)
+                    if (!string.IsNullOrEmpty(output.Address) && !firstSeen.ContainsKey(output.Address))
+                        firstSeen[output.Address] = block.Timestamp;
+        return firstSeen;
+    }
+
+    // Step 8 — a node's confirmed transaction history from ITS perspective (for the wallet's "Transactions"
+    // panel): each confirmed tx that touches one of its owned addresses, classified mined / received / sent,
+    // with the block timestamp, the net amount, and the counterparty. Internal change (an owned output of the
+    // node's own send) is netted out, not listed. Newest first.
+    public IReadOnlyList<(long unixMs, string kind, decimal amount, string counterparty)> GetNodeTransactionHistory(string nodeId)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node)
+            || !SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+            return [];
+
+        var owned = new HashSet<string>(node.ReceiveWallet?.OwnedAddresses ?? Enumerable.Empty<string>()) { node.WalletAddress };
+        var result = new List<(long, string, decimal, string)>();
+
+        foreach (Block block in player.Blockchain.Chain)
+            foreach (Transaction tx in block.Transactions)
+            {
+                bool isSender = tx.Inputs.Any(i => owned.Contains(i.Address));
+                if (isSender)
+                {
+                    // We spent — the "amount" is what left the wallet (outputs to addresses we DON'T own).
+                    decimal sent = tx.Outputs.Where(o => !owned.Contains(o.Address)).Sum(o => o.Amount);
+                    if (sent <= 0m) continue; // pure self-consolidation (all outputs owned) → not user-facing
+                    string payee = tx.Outputs.FirstOrDefault(o => !owned.Contains(o.Address))?.Address ?? "—";
+                    result.Add((block.Timestamp, "sent", sent, payee));
+                }
+                else
+                {
+                    decimal received = tx.Outputs.Where(o => owned.Contains(o.Address)).Sum(o => o.Amount);
+                    if (received <= 0m) continue; // not involved
+                    if (tx.IsCoinbase)
+                        result.Add((block.Timestamp, "mined", received, "coinbase"));
+                    else
+                        result.Add((block.Timestamp, "received", received, tx.Inputs.Count > 0 ? tx.Inputs[0].Address : "—"));
+                }
+            }
+
+        result.Sort((a, b) => b.Item1.CompareTo(a.Item1)); // newest first
         return result;
     }
 
@@ -1300,8 +1364,9 @@ public partial class NetworkRoot : Node
         return total;
     }
 
-    // Returns all confirmed transactions involving address (as sender or recipient),
-    // ordered by block index descending. Scans the full player chain.
+    // Returns all confirmed transactions involving address (spent as an input owner, or received in ANY
+    // output incl. change), ordered by block index descending. Scans the full player chain. Iterates the full
+    // Inputs/Outputs lists, not the Sender/Recipient shims (which only expose vout/vin 0 — Step 8 bug fix).
     public IReadOnlyList<(Transaction tx, int blockIndex)> GetAddressConfirmedTransactions(string address)
     {
         EnsureInitialized();
@@ -1312,7 +1377,7 @@ public partial class NetworkRoot : Node
         {
             foreach (Transaction tx in block.Transactions)
             {
-                if (tx.Sender == address || tx.Recipient == address)
+                if (tx.Inputs.Any(i => i.Address == address) || tx.Outputs.Any(o => o.Address == address))
                     result.Add((tx, block.Index));
             }
         }
@@ -1387,20 +1452,28 @@ public partial class NetworkRoot : Node
             : new HashSet<string>();
     }
 
-    // Single-pass scan of every address appearing on a node's confirmed chain (coinbase recipient, tx
-    // recipient, or real tx sender). Static + no EnsureInitialized so it is safe to call from inside
-    // EnsureInitialized (RescanFounderReceiveWallets) without re-entrancy.
+    // Single-pass scan of EVERY address appearing on a node's confirmed chain — every output's recipient
+    // (incl. change outputs at vout ≥ 1) and every input's owner. Static + no EnsureInitialized so it is safe
+    // to call from inside EnsureInitialized (RescanFounderReceiveWallets) without re-entrancy.
+    //
+    // CRITICAL (Step 8 bug fix): must iterate the full Inputs/Outputs lists, NOT the legacy Sender/Recipient
+    // shims (which expose only Inputs[0]/Outputs[0]). A CHANGE output lives at Outputs[1], so the old shim
+    // scan never saw change addresses — after a restart the rescan couldn't mark them owned, and a node's
+    // change-held funds vanished from its wallet (the funds stay on-chain, just unattributed). This also reset
+    // the receive frontier, causing change-address reuse. Satoshi was masked because his funds sit on coinbase
+    // recipients (Outputs[0]); change-rotating nodes (player, Hal, Hearn, casino) were the ones that broke.
     private static HashSet<string> BuildUsedAddressSet(NodeAgent player)
     {
         var used = new HashSet<string>();
         foreach (Block block in player.Blockchain.Chain)
             foreach (Transaction tx in block.Transactions)
             {
-                if (!string.IsNullOrEmpty(tx.Recipient))
-                    used.Add(tx.Recipient);
-                // The coinbase sentinel "00" is never a real address.
-                if (!string.IsNullOrEmpty(tx.Sender) && tx.Sender != BlockchainService.CoinbaseSender)
-                    used.Add(tx.Sender);
+                foreach (TxOutput output in tx.Outputs)
+                    if (!string.IsNullOrEmpty(output.Address))
+                        used.Add(output.Address);
+                foreach (TxInput input in tx.Inputs)
+                    if (!string.IsNullOrEmpty(input.Address) && input.Address != BlockchainService.CoinbaseSender)
+                        used.Add(input.Address);
             }
         return used;
     }

@@ -63,6 +63,11 @@ public partial class BTCWallet : Control
 	private CheckBox _showEmptyAddrToggle = null!;
 	private RichTextLabel _addressListLabel = null!;
 	private bool _addressListExpanded;
+	// Transactions history panel (Step 8)
+	private Button _txToggle = null!;
+	private CheckBox _hideMiningToggle = null!;
+	private RichTextLabel _txLabel = null!;
+	private bool _txExpanded;
 
 	// Notepad
 	private NotepadPopup _notepadPopup = null!;
@@ -131,6 +136,7 @@ public partial class BTCWallet : Control
 
 		BuildSendPanel();
 		BuildAddressListSection();
+		BuildTransactionsSection();
 		InitializeBaseWallet();
 		SetMode(WalletMode.Base);
 		ShowSeedPopupIfNeeded();
@@ -353,13 +359,13 @@ public partial class BTCWallet : Control
 		bool showEmpty = _showEmptyAddrToggle.ButtonPressed;
 		var sb = new System.Text.StringBuilder();
 		int hidden = 0;
-		foreach ((string address, decimal confirmed, bool isBase) in _networkRoot.GetNodeAddressBook("player"))
+		foreach ((string address, decimal confirmed, bool isBase, long createdMs) in _networkRoot.GetNodeAddressBook("player"))
 		{
 			// Hide spent/empty (0-balance) addresses by default — they are never reused, only kept for history.
 			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
 			// Use color-word tags, never literal "[base]" — square brackets are BBCode tags in a RichTextLabel.
-			string tag = isBase ? "[color=aqua]base[/color]  " : "[color=gray]change[/color]";
-			sb.AppendLine($"{tag}  {address}   —   {confirmed:F8} BTC");
+			string tag = isBase ? "[color=aqua]base  [/color]" : "[color=gray]change[/color]";
+			sb.AppendLine($"{tag}  {address}   —   {confirmed:F8} BTC   [color=gray](created {FmtDate(createdMs)})[/color]");
 		}
 		if (hidden > 0 && !showEmpty)
 			sb.AppendLine($"[color=gray]… {hidden} empty (spent) address(es) hidden — tick above to show.[/color]");
@@ -370,6 +376,81 @@ public partial class BTCWallet : Control
 		_addressListLabel.Text = sb.ToString();
 		_addressListLabel.GetVScrollBar().Value = scroll;
 	}
+
+	// ── Transactions panel (Step 8) ───────────────────────────────────────────
+	// Confirmed sent/received/mined history from the wallet's perspective, with dates — so transfers are
+	// legible across sessions. Pattern B scroll (Ch. 29). Expanded via its own toggle, like the address list.
+	private void BuildTransactionsSection()
+	{
+		var panel = GetNode<VBoxContainer>("%BaseWalletPanel");
+
+		_txToggle = new Button { Text = "Show transactions ▸" };
+		_txToggle.AddThemeFontSizeOverride("font_size", 20);
+		_txToggle.Pressed += OnToggleTransactions;
+		panel.AddChild(_txToggle);
+
+		// Mining rewards (coinbases) are many for a mining wallet — hidden by default so transfers stand out.
+		_hideMiningToggle = new CheckBox { Text = "Hide mining rewards", ButtonPressed = true, Visible = false };
+		_hideMiningToggle.AddThemeFontSizeOverride("font_size", 16);
+		_hideMiningToggle.Toggled += _ => RefreshTransactions();
+		panel.AddChild(_hideMiningToggle);
+
+		_txLabel = new RichTextLabel
+		{
+			BbcodeEnabled = true,
+			FitContent = false,
+			ScrollActive = true,
+			CustomMinimumSize = new Vector2(0, 240),
+			Visible = false
+		};
+		_txLabel.AddThemeFontSizeOverride("normal_font_size", 15);
+		panel.AddChild(_txLabel);
+
+		int insertAt = _addressListLabel.GetIndex() + 1;
+		panel.MoveChild(_txToggle, insertAt);
+		panel.MoveChild(_hideMiningToggle, insertAt + 1);
+		panel.MoveChild(_txLabel, insertAt + 2);
+	}
+
+	private void OnToggleTransactions()
+	{
+		_txExpanded = !_txExpanded;
+		_txLabel.Visible = _txExpanded;
+		_hideMiningToggle.Visible = _txExpanded;
+		_txToggle.Text = _txExpanded ? "Hide transactions ▾" : "Show transactions ▸";
+		if (_txExpanded) RefreshTransactions();
+	}
+
+	private void RefreshTransactions()
+	{
+		bool hideMining = _hideMiningToggle.ButtonPressed;
+		var history = _networkRoot.GetNodeTransactionHistory("player");
+		var sb = new System.Text.StringBuilder();
+		int minedHidden = 0;
+		foreach ((long unixMs, string kind, decimal amount, string counterparty) in history)
+		{
+			if (hideMining && kind == "mined") { minedHidden++; continue; }
+			(string color, string sign, string desc) = kind switch
+			{
+				"mined"    => ("lime",   "+", "mined (coinbase)"),
+				"received" => ("lime",   "+", $"received from {Short(counterparty)}"),
+				_          => ("orange", "−", $"sent to {Short(counterparty)}"),
+			};
+			sb.AppendLine($"[color=gray]{FmtDate(unixMs)}[/color]  [color={color}]{sign}{amount:F8} BTC[/color]  {desc}");
+		}
+		if (sb.Length == 0)
+			sb.AppendLine("[color=gray]No transfers yet.[/color]");
+		if (minedHidden > 0)
+			sb.AppendLine($"[color=gray]… {minedHidden} mining reward(s) hidden — untick to show.[/color]");
+		sb.Append("\n\n\n");
+		double scroll = _txLabel.GetVScrollBar().Value;
+		_txLabel.Text = sb.ToString();
+		_txLabel.GetVScrollBar().Value = scroll;
+	}
+
+	private static string Short(string addr) => addr.Length > 16 ? addr[..16] + "…" : addr;
+	private static string FmtDate(long unixMs) =>
+		unixMs <= 0 ? "—" : System.DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
 
 	// ── Balance ───────────────────────────────────────────────────────────────
 
@@ -391,7 +472,7 @@ public partial class BTCWallet : Control
 		var book = _networkRoot.GetNodeAddressBook("player");
 		decimal total = 0m;
 		decimal pendingOut = 0m;
-		foreach ((string address, decimal confirmed, _) in book)
+		foreach ((string address, decimal confirmed, _, _) in book)
 		{
 			total += confirmed;
 			pendingOut += _networkRoot.GetAddressBalanceDetails(address).pendingOutgoing;
@@ -405,6 +486,7 @@ public partial class BTCWallet : Control
 			_basePendingLabel.Text = $"Pending outgoing: {pendingOut:F8} BTC";
 
 		if (_addressListExpanded) RefreshAddressList();
+		if (_txExpanded) RefreshTransactions();
 
 		if (_currentMode == WalletMode.PassphraseUnlocked && !string.IsNullOrEmpty(_currentPassphraseAddress))
 		{

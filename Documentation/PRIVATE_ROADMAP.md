@@ -239,7 +239,19 @@ Goal: establish a test foundation so core logic can be verified without running 
 
 Done when at least the core betting and money logic has automated coverage and a new developer can run tests from the command line.
 
-### Post-Basic Mode — Casino Referral System
+### P10 - Network Fee Activation (~2009-04-26)
+
+Goal: make the simulated network historically faithful to early Bitcoin's **fee-free era**, then switch the whole network to paying fees on one date — resolving the current dev-time contradiction (scripted historical txs are fee-free while bots/casino attach fees from block 1).
+
+- **The whole network is fee-free until a `FeeActivationDate` ≈ 2009-04-26** (the nearest mined block, just after the 18 Apr Hearn round-trip). On/after that block, **every** participant (player, bots, casino, founders) begins paying fees.
+- Gate points to flip to 0 before the date, restore after: the bot fee in `NetworkRoot.ScheduleBotTransactionsAfterBlock` (`MinBotFeeBtc`/`MaxBotFeeBtc`), `CasinoTxFee`, and the player's default/selected fee. The candidate-block fee-collection engine is unchanged (it already collects `ΣFee`); this only gates whether a fee is *attached*.
+- Provisional date `2009-04-26`; resolve to the nearest block by timestamp (dates are the source of truth — Q-E1).
+- **Own branch** (e.g. `network-fee-activation`); does not block other Basic Mode work.
+- Design: `AIHelperFiles/step8-utxo-realism-plan.md` OQ-8.7 + `IMPLEMENTATION_ROADMAP.md` ("What's next"). Tracked in the §6 checklist.
+
+Done when no fee is attached by any participant before the activation block, and all participants attach fees on/after it, validated in-engine across the April 2009 boundary.
+
+### Casino Referral System (Basic Mode)
 
 Goal: give non-miner holder bots (`non_miner_1`..`non_miner_10`) a social and economic role in the casino ecosystem, and give the player an organic reason to donate BTC to them.
 
@@ -266,7 +278,7 @@ See `AIHelperFiles/scheduled-bot-transactions-plan.md` → Future + Resolved Dec
 
 Done when a player can earn a casino referral by donating BTC to a non-miner bot and observe at least one Winning Referral Commission claimable in the `Referrals` scene.
 
-### Post-Basic Mode — Casino Rank System
+### Casino Rank System (Basic Mode)
 
 Goal: a progression ladder for casino participants (player, and notably **Miner Referrals**) that gates and scales rewards.
 
@@ -288,20 +300,20 @@ When revisited, this re-introduces a consensus step (reinstate `RunConsensusRoun
 
 Start when: Basic Mode is complete and stable. Until then, leave mining committing to the single shared chain.
 
+### Post-Basic Mode v1 — Checklist (deferred items)
+
+Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is complete and stable. Each links to its design. (Everything else carried forward — fee activation, casino referral/rank, founder long-term timelines — belongs to **Basic Mode**; see the §6 checklist.)
+
+- [ ] **Patoshi pattern — mining-forensic view (Step 8, Phase 8.5).** An *optional, clearly-labelled cosmetic* Block-Explorer view that highlights Satoshi-mined blocks as a contiguous band (echoing Lerner's ExtraNonce-vs-height plot) with a teaching caption. Our engine can't reproduce the real ExtraNonce/decrementing-nonce/timestamp artifacts (random-nonce search, no ExtraNonce field), so it is an honest stand-in. **This is distinct from address non-reuse** (the many-addresses wallet pattern, already implemented) — the D0 terminology correction already shipped; only this forensic view is deferred. Design: `AIHelperFiles/step8-utxo-realism-plan.md` (Phase 8.5 + OQ-8.5).
+- [ ] **Bots multi-address (Step 8, OQ-8.2).** Give miner/non-miner bots their own seed so they get change-address rotation like the player/casino/founders. Blocked today because bots use random/registry keypairs (no stored seed). Revisit with gradual-miner-spawning. Design: `step8-utxo-realism-plan.md` OQ-8.2.
+- [ ] **Player/casino deposit-address rotation (Step 8, OQ-8.3).** Rotate the *incoming* receive address after each external deposit (full HD behavior). v1 delivers UTXO realism via change-on-send only. Design: `step8-utxo-realism-plan.md` OQ-8.3.
+- [ ] **Divergent Chains / Fork Simulation** — see the "Post-Basic Mode — Divergent Chains / Fork Simulation" section above (`IMPLEMENTATION_ROADMAP.md` Step 10).
+
 ---
 
-## 6. Design Questions Still Open
+## 6. Basic Mode v0.1 Checklist
 
-- What exact threshold lets the casino start repaying bank debt?
-- Should minimum wager requirements be weekly, monthly, or both from the start?
-- How harsh should fee penalties be for missing minimum wager requirements?
-- Should cashback decrease as a penalty, or should penalty design stay focused on conversion fees first?
-- How much bot betting history should the player see for free?
-- Should deeper bot history be a paid service, a level unlock, or a later feature?
-- When exactly should BTC trading unlock in Basic Mode?
-- Should private mempool fees be available in Basic Mode or postponed?
-
-## 7. Basic Mode v0.1 Checklist
+> The running tick-list for the **Basic Mode** feature breakdown in §5 directly above (PH + P0–P10 + Casino Referral/Rank). Post-Basic-Mode items live in the "Post-Basic Mode v1 — Checklist" under §5, not here. Open design questions are in §7 below.
 
 - [x] Canonical initial total balance defined: `40,000 SC`.
 - [x] Specific starting split defined: `39,900 SC Main Balance + 100 SC Bankroll`.
@@ -330,9 +342,12 @@ Start when: Basic Mode is complete and stable. Until then, leave mining committi
   - [x] `FoundersWallets` lists Satoshi's many derived addresses with per-address balances (scrollable address book + "View empty addresses" toggle); BTCWallet + CasinoFinances have the same view.
   - [x] **Clean reset** (`WorldFormatVersion`) instead of an in-place migration (the old chain has no UTXO linkage).
   - [ ] Hal's network-coupled fade (replace the linear `1.0→0` stand-in once gradual miner spawning exists) — *late Basic-Mode tuning, not blocking; unrelated to UTXO.*
-  - [ ] **Carried forward:** bots multi-address (OQ-8.2, needs per-bot seed), player deposit-address rotation (OQ-8.3), Phase 8.5 Patoshi forensic view (OQ-8.5, documented only), network-wide fee activation ≈ 2009-04-26 (OQ-8.7, own branch).
+  - [ ] **Deferred → Post-Basic Mode v1** (see that checklist): bots multi-address (OQ-8.2), player/casino deposit-address rotation (OQ-8.3), Phase 8.5 Patoshi *mining-forensic* view (OQ-8.5).
+- [ ] **P10 — Network Fee Activation ≈ 2009-04-26 (own branch).** Whole network fee-free until a `FeeActivationDate`, then **every** participant pays fees (historically faithful — early Bitcoin had no fees). Full design: **§5 → P10** + `step8-utxo-realism-plan.md` OQ-8.7.
+- [ ] **Founder long-term timelines** — beyond Hal's fade (above): Hal 2013 sell-off / 2014, Mike Hearn 2016; late Basic-Mode tuning. `step7-historical-character-economics-plan.md`.
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
 - [ ] Add Winning Referral Commission scene (list referrals, claimable 1% SC commission per bot, claim button).
+- [ ] **Casino Referral System** + **Casino Rank System** — full systems (design in the "Casino Referral System (Basic Mode)" / "Casino Rank System (Basic Mode)" sections above; referral groundwork is the two items above). `scheduled-bot-transactions-plan.md`.
 - [x] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`). ✅ 2026-06-25 — credit model, individual↔casino split + round-robin routing, dynamic fee + proportional distribution, Buy/Discard hardware, hardware-locked speed, bootstrap 1 individual + 0 casino. Foundation for **P5** is in place (ProjectDesignManual Ch. 27). Also: continuous difficulty regulator (Ch. 26) validated, + DEV 100X→9000X time tool.
 - [x] Add mempool with 24-transaction block cap (`BlockTemplateBuilder`, cap incl. coinbase).
 - [x] Add block template builder (P4 / candidate-block model).
@@ -340,6 +355,17 @@ Start when: Basic Mode is complete and stable. Until then, leave mining committi
 - [x] Update README so future features are not presented as current.
 - [x] Update Player Guide so it describes the actual playable state.
 - [ ] Run longer Basic Mode manual/autobet tests after transaction circulation exists.
+
+## 7. Design Questions Still Open
+
+- What exact threshold lets the casino start repaying bank debt?
+- Should minimum wager requirements be weekly, monthly, or both from the start?
+- How harsh should fee penalties be for missing minimum wager requirements?
+- Should cashback decrease as a penalty, or should penalty design stay focused on conversion fees first?
+- How much bot betting history should the player see for free?
+- Should deeper bot history be a paid service, a level unlock, or a later feature?
+- When exactly should BTC trading unlock in Basic Mode?
+- Should private mempool fees be available in Basic Mode or postponed?
 
 ## 8. Tech-Debt & Cleanup Tasks (2026-06-24 — ✅ all implemented)
 

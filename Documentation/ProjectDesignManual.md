@@ -2616,6 +2616,13 @@ The wallet address lists (FoundersWallets "Address Book", BTCWallet "Show addres
 
 A shared "View empty addresses" `CheckBox` (default **unchecked**) filters spent/0-balance non-base rows in both screens — hidden by default (a real HD wallet keeps but never reuses them), revealed on tick.
 
+### 29.8 — The transactions panel + per-address creation dates (Step 8)
+
+Each non-bot wallet (BTCWallet, CasinoFinances, FoundersWallets) has a **"Transactions"** panel — another Pattern B scrollable `RichTextLabel` — listing the wallet's confirmed history from `NetworkRoot.GetNodeTransactionHistory(nodeId)`: one line per tx, newest-first, `date · ±amount · sent to/received from/mined`, color-coded (orange sent, lime received/mined). The address-book rows also gained a **creation date** on the right (`NetworkRoot.GetNodeAddressBook` now returns the first-seen block timestamp per address). Dates use the Block-Explorer convention: `DateTimeOffset.FromUnixTimeMilliseconds(ms).LocalDateTime.ToString("yyyy-MM-dd HH:mm")`.
+
+- **"Hide mining rewards" `CheckBox` (default checked)** — a mining wallet accrues *hundreds* of coinbase entries that bury the actual transfers, so coinbases are hidden by default with a "… N mining reward(s) hidden — untick to show" note. This is the opposite default polarity from "View empty addresses" (checked = hide), chosen because the noise is the common case for transfers visibility; each label is self-explanatory.
+- Same scroll-preservation + trailing-blank-lines rules as the address book (29.7). FoundersWallets' panel is always-visible in Base mode (with the founder economics/dev panels); BTCWallet/CasinoFinances gate it behind a "Show transactions ▸" expander like the address list.
+
 ---
 
 ## Chapter 30 — UTXO Realism & Address Non-Reuse (Step 8)
@@ -2638,6 +2645,7 @@ addr(i>=1) == CryptoUtils.DeriveGmAddress(seed + " #r" + i)
 `i = 0` reproduces today's base address exactly, so genesis/bootstrap pins and existing balances are untouched; `i ≥ 1` are the fresh receive/change addresses. The `" #r"` namespace keeps these distinct from ordinary passphrase derivation.
 
 - **No persistence (Decision D3):** "a block is the only commit to disk," so an app restart reverts the world to the last block. The wallet must therefore be **reconstructed from the chain**, never read from a side file. `Rescan(appearsOnChain, gapLimit)` derives `addr(0), addr(1), …` and walks until `gapLimit` consecutive unused indices (BIP44 convention = 20, OQ-8.4), setting `NextReceiveIndex` (first gap) and `OwnedAddresses` (the funded/used set). `NetworkRoot.CollectUsedAddressSet()` builds the on-chain address set in **one pass** so each probe is O(1).
+- **⚠️ Bug fix — the used-address scan must read ALL inputs/outputs, not the shims.** `BuildUsedAddressSet`/`CollectUsedAddressSet` originally collected `tx.Sender`/`tx.Recipient`, which are the migration **shims** exposing only `Inputs[0]`/`Outputs[0]`. A **change** output lives at `Outputs[1]`, so the scan never saw change addresses — after a restart the rescan couldn't mark a node's change addresses owned, its change-held funds vanished from the wallet (the funds stayed on-chain, just unattributed), and the receive frontier reset (→ change-address reuse). Satoshi was masked because his funds sit on coinbase recipients (`Outputs[0]`); the change-rotating nodes (player, casino, Hal, Hearn) broke. **Fix:** iterate the full `Inputs`/`Outputs` lists. Same fix applied to `GetAddressConfirmedTransactions`. **General rule: never use the `Sender`/`Recipient`/`Amount` shims to scan the chain for address membership — they only see vin/vout 0.**
 - `NextReceiveAddress()` returns `addr(NextReceiveIndex)` **without advancing**; `MarkReceiveConsumed()` advances the frontier when a rotated receive actually commits (a block mined / a change output created). `TryFindSpendingContext(address)` resolves the per-address keypair so any owned address can sign.
 
 ### 30.2 — The full UTXO transaction model (Appendix A — implemented)
@@ -2687,10 +2695,11 @@ So a Satoshi 5000-BTC send combines ~100 inputs across ~100 *distinct* addresses
 
 **Spent addresses are never reused.** When a spend fully consumes an address's coins, that address keeps a `0.00000000` balance forever — the correct HD-wallet privacy behavior. Addresses are free (deterministically re-derivable), so the wallet always moves to a fresh index; the empty ones are kept only so the wallet still recognizes them, never handed out again.
 
-**UI (both wallets show the wallet *as a set of addresses*):**
-- **BTCWallet** (player): "Wallet total (N addresses)" = aggregate across the owned set + an expandable **"Show addresses ▸"** list (`NetworkRoot.GetNodeAddressBook("player")`), each row tagged `[base]`/`[change]` with its balance.
-- **FoundersWallets**: an **"Address Book [DEV]"** panel mirrors it for the selected founder (`GetNodeAddressBook(founderId)`) — for Satoshi it renders his ~109 `coinbase` addresses + aggregated total, making the address-non-reuse spread as legible as the player's wallet. His scripted txs remain in the separate **"Automatic Activity"** panel (Step 8.2 / OQ-8.6).
-- **"View empty addresses" toggle** (both screens, **default unchecked**): spent/0-balance non-base addresses are hidden by default with a "… N empty (spent) address(es) hidden" note; tick to reveal them. The base/identity address always shows even at 0.
+**UI — every non-bot wallet (BTCWallet, CasinoFinances, FoundersWallets) shows the wallet *as a set of addresses* + its history (full layout rules in §29.7–29.8):**
+- **Address book**: "Wallet total (N addresses)" = aggregate across the owned set + a scrollable list (`NetworkRoot.GetNodeAddressBook(nodeId)`), each row = tag (`base` / `change` / `coinbase` for Satoshi) + balance + **creation date** (the first-seen block's time). For Satoshi this renders his ~109 coinbase addresses, making the address-non-reuse spread legible.
+- **"View empty addresses" toggle** (**default unchecked**): spent/0-balance non-base addresses are hidden by default with a "… N empty (spent) address(es) hidden" note; tick to reveal. The base address always shows even at 0.
+- **Transactions panel** (`GetNodeTransactionHistory(nodeId)`): the wallet's confirmed history from its own perspective — `date · ±amount · sent to / received from / mined` — newest-first, color-coded. Internal change is netted out, not listed as a separate line. A **"Hide mining rewards" toggle (default checked)** hides the many coinbase entries so transfers stand out (untick to show). Founders' scripted historical txs still also appear in the separate **"Automatic Activity"** panel (Step 8.2 / OQ-8.6).
+- These views are how the cross-session UTXO behaviour is *audited from inside the game* — they surfaced the §30.1 rescan bug (a node's change funds appearing in-session but vanishing after restart).
 
 ### 30.5 — Clean reset (no in-place migration)
 
