@@ -49,6 +49,12 @@ public partial class CasinoFinances : Control
 	private Label _sendFeedback = null!;
 	private readonly List<string> _toAddresses = new();
 
+	// Address book (Step 8 — casino has a ReceiveWallet for change-only rotation, like the player)
+	private Button _addressListToggle = null!;
+	private CheckBox _showEmptyAddrToggle = null!;
+	private RichTextLabel _addressListLabel = null!;
+	private bool _addressListExpanded;
+
 	// Runtime state
 	private string? _currentPassphraseAddress;
 	private string _currentPassphraseNodeId = string.Empty;
@@ -110,6 +116,7 @@ public partial class CasinoFinances : Control
 		GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
 		BuildSendPanel();
+		BuildAddressListSection();
 		SetMode(WalletMode.Base);
 	}
 
@@ -236,17 +243,95 @@ public partial class CasinoFinances : Control
 		SetMode(WalletMode.Send);
 	}
 
+	// ── Address book (Step 8 — change-address rotation, mirrors BTCWallet) ─────
+
+	private void BuildAddressListSection()
+	{
+		var panel = _baseWalletPanel;
+
+		_addressListToggle = new Button { Text = "Show addresses ▸" };
+		_addressListToggle.AddThemeFontSizeOverride("font_size", 20);
+		_addressListToggle.Pressed += OnToggleAddressList;
+		panel.AddChild(_addressListToggle);
+
+		// Spent change addresses keep a 0.00000000 balance forever (never reused). Hidden by default.
+		_showEmptyAddrToggle = new CheckBox { Text = "View empty addresses", ButtonPressed = false, Visible = false };
+		_showEmptyAddrToggle.AddThemeFontSizeOverride("font_size", 16);
+		_showEmptyAddrToggle.Toggled += _ => RefreshAddressList();
+		panel.AddChild(_showEmptyAddrToggle);
+
+		// Pattern B (ProjectDesignManual Ch. 29) — own internal scroll, bounded height, lists every address.
+		_addressListLabel = new RichTextLabel
+		{
+			BbcodeEnabled = true,
+			FitContent = false,
+			ScrollActive = true,
+			CustomMinimumSize = new Vector2(0, 240),
+			Visible = false
+		};
+		_addressListLabel.AddThemeFontSizeOverride("normal_font_size", 16);
+		panel.AddChild(_addressListLabel);
+
+		// Position the three just after the pending label.
+		int insertAt = _pendingLabel.GetIndex() + 1;
+		panel.MoveChild(_addressListToggle, insertAt);
+		panel.MoveChild(_showEmptyAddrToggle, insertAt + 1);
+		panel.MoveChild(_addressListLabel, insertAt + 2);
+	}
+
+	private void OnToggleAddressList()
+	{
+		_addressListExpanded = !_addressListExpanded;
+		_addressListLabel.Visible = _addressListExpanded;
+		_showEmptyAddrToggle.Visible = _addressListExpanded;
+		_addressListToggle.Text = _addressListExpanded ? "Hide addresses ▾" : "Show addresses ▸";
+		if (_addressListExpanded) RefreshAddressList();
+	}
+
+	private void RefreshAddressList()
+	{
+		bool showEmpty = _showEmptyAddrToggle.ButtonPressed;
+		var sb = new System.Text.StringBuilder();
+		int hidden = 0;
+		foreach ((string address, decimal confirmed, bool isBase) in _networkRoot.GetNodeAddressBook("casino"))
+		{
+			// Hide spent/empty (0-balance) non-base addresses by default — never reused, only kept for history.
+			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
+			string tag = isBase ? "[color=aqua]base[/color]  " : "[color=gray]change[/color]";
+			sb.AppendLine($"{tag}  {address}   —   {confirmed:F8} BTC");
+		}
+		if (hidden > 0 && !showEmpty)
+			sb.AppendLine($"[color=gray]… {hidden} empty (spent) address(es) hidden — tick above to show.[/color]");
+		sb.Append("\n\n\n"); // trailing blank lines so the last row clears the scroll's bottom edge (Ch. 29)
+
+		double scroll = _addressListLabel.GetVScrollBar().Value;
+		_addressListLabel.Text = sb.ToString();
+		_addressListLabel.GetVScrollBar().Value = scroll;
+	}
+
 	// ── Balance ───────────────────────────────────────────────────────────────
 
 	private void RefreshBalances()
 	{
 		if (_casinoWallet == null) return;
 
-		(decimal confirmed, decimal pendingOut) = _networkRoot.GetAddressBalanceDetails(_casinoWallet.BaseAddress);
-		_balanceLabel.Text = $"Confirmed balance:  {confirmed:F8} BTC";
+		// Step 8 — aggregate across the casino's owned set (base + any change addresses); it becomes
+		// multi-address by spending (change → fresh derived address), like the player.
+		var book = _networkRoot.GetNodeAddressBook("casino");
+		decimal total = 0m, pendingOut = 0m;
+		foreach ((string address, decimal confirmed, bool _) in book)
+		{
+			total += confirmed;
+			pendingOut += _networkRoot.GetAddressBalanceDetails(address).pendingOutgoing;
+		}
+		_balanceLabel.Text = book.Count > 1
+			? $"Wallet total ({book.Count} addresses):  {total:F8} BTC"
+			: $"Confirmed balance:  {total:F8} BTC";
 		_pendingLabel.Visible = pendingOut > 0m;
 		if (pendingOut > 0m)
 			_pendingLabel.Text = $"Pending outgoing:   {pendingOut:F8} BTC";
+
+		if (_addressListExpanded) RefreshAddressList();
 
 		if (_currentPassphraseAddress == null) return;
 		(decimal passConfirmed, decimal passPending) = _networkRoot.GetAddressBalanceDetails(_currentPassphraseAddress);

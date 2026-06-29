@@ -645,12 +645,15 @@ public partial class FoundersWallets : Control
 		var sb = new System.Text.StringBuilder();
 		sb.AppendLine($"[b]Wallet total[/b]  ({book.Count} address(es)):  [b]{total:F8} BTC[/b]");
 
+		// Satoshi rotates his COINBASE across fresh addresses; Hal keeps one coinbase and rotates only CHANGE
+		// on send (like the player). Label the derived addresses accordingly.
+		string derivedTag = _currentFounder.FounderId == "satoshi" ? "[color=gray]coinbase[/color]" : "[color=gray]change[/color]";
 		int shown = 0, hidden = 0;
 		foreach ((string address, decimal confirmed, bool isBase) in book)
 		{
 			// Hide spent/empty (0-balance) non-base addresses by default — never reused, only kept for history.
 			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
-			string tag = isBase ? "[color=aqua]base[/color]" : "[color=gray]coinbase[/color]";
+			string tag = isBase ? "[color=aqua]base[/color]" : derivedTag;
 			sb.AppendLine($"  {tag}  {address}  —  {confirmed:F8} BTC");
 			shown++;
 		}

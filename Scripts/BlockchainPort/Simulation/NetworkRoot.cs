@@ -106,6 +106,11 @@ public partial class NetworkRoot : Node
             string casinoSecp256k1 = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(casinoSeed);
             var casinoNode = new NodeAgent(CasinoNodeId, casinoWalletState.BaseAddress,
                                           casinoSignPub, casinoSignPriv, casinoSecp256k1);
+            // Step 8 (casino/Hal extension) — the casino carries a derived wallet for CHANGE-only rotation
+            // (RotateCoinbaseAddress = false; it does not mine). Receives (pool fees) land on the base; each
+            // send returns change to a fresh derived address, like the player. Rescanned from the chain at init.
+            casinoNode.ReceiveWallet = new DerivedAddressWallet(casinoSeed);
+            casinoNode.RotateCoinbaseAddress = false;
             SharedNetwork.RegisterNode(casinoNode);
             SharedNodesById[CasinoNodeId] = casinoNode;
         }
@@ -182,12 +187,23 @@ public partial class NetworkRoot : Node
         string secp256k1Pub = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seed);
         var node = new NodeAgent(founder.FounderId, founder.BaseAddress, signPub, signPriv, secp256k1Pub);
 
-        // Step 8.2 — address non-reuse is a SATOSHI-ONLY trait ("Patoshi"/one-address-per-reward); other
-        // early miners (Hal) reused a single address, so only Satoshi gets a fresh coinbase address per block
-        // (→ ~220 addresses at the 11,000-BTC floor). Hal/Hearn keep their single base address. The frontier
+        // Step 8.2 — coinbase address spread (a fresh coinbase address per block) is a SATOSHI-ONLY trait
+        // ("Patoshi"/one-address-per-reward → ~220 addresses at the 11,000-BTC floor): Satoshi keeps the
+        // default RotateCoinbaseAddress = true.
+        // Step 8 (casino/Hal extension) — Hal ALSO gets a derived wallet, but for CHANGE-only rotation like
+        // the player (RotateCoinbaseAddress = false): his coinbase stays on his single base address (other
+        // early miners reused addresses; coinbase spread stays Satoshi-only), and he only becomes multi-address
+        // when he SENDS (change → fresh address). Hearn stays single-address (no ReceiveWallet). The frontier
         // is positioned from the chain by RescanFounderReceiveWallets() once the chain is loaded.
         if (founder.FounderId == "satoshi")
+        {
             node.ReceiveWallet = new DerivedAddressWallet(seed);
+        }
+        else if (founder.FounderId == "hal")
+        {
+            node.ReceiveWallet = new DerivedAddressWallet(seed);
+            node.RotateCoinbaseAddress = false;
+        }
 
         SharedNetwork.RegisterNode(node);
         SharedNodesById[founder.FounderId] = node;
@@ -287,8 +303,12 @@ public partial class NetworkRoot : Node
             return true;
         }
 
-        // Recipient lands on a fresh derived address when it is a multi-address founder (address non-reuse).
-        string recipientAddr = recipient.ReceiveWallet?.NextReceiveAddress() ?? recipient.WalletAddress;
+        // Recipient lands on a FRESH derived address only when it is a full address-non-reuse founder
+        // (RotateCoinbaseAddress = Satoshi) — e.g. Satoshi receives E6b at a new address (historically
+        // confirmed). Change-only-rotation nodes (Hal, casino) and single-address nodes (Hearn) receive on
+        // their BASE address — incoming deposit rotation is deferred (OQ-8.3); they only rotate CHANGE on send.
+        bool rotateRecipient = recipient.ReceiveWallet != null && recipient.RotateCoinbaseAddress;
+        string recipientAddr = rotateRecipient ? recipient.ReceiveWallet!.NextReceiveAddress() : recipient.WalletAddress;
 
         Transaction? tx = BuildAndBroadcastUtxoSpend(sender, recipientAddr, amount, fee, deterministicSalt);
         if (tx is null)
@@ -296,7 +316,7 @@ public partial class NetworkRoot : Node
             return false; // not funded yet → caller retries on a later block
         }
 
-        recipient.ReceiveWallet?.MarkReceiveConsumed(); // recipient's fresh address is now used
+        if (rotateRecipient) recipient.ReceiveWallet!.MarkReceiveConsumed(); // the fresh receive address is now used
         return true;
     }
 
