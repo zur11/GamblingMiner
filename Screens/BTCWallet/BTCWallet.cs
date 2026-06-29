@@ -58,6 +58,11 @@ public partial class BTCWallet : Control
 	private Label _sendFeedback = null!;
 	private readonly List<string> _toAddresses = new();
 
+	// Address book (Phase 8.4) — the player's wallet as a collection of addresses (base + change addresses).
+	private Button _addressListToggle = null!;
+	private VBoxContainer _addressListContainer = null!;
+	private bool _addressListExpanded;
+
 	// Notepad
 	private NotepadPopup _notepadPopup = null!;
 
@@ -124,6 +129,7 @@ public partial class BTCWallet : Control
 		GetNode<Button>("%NotepadBtn").Pressed += _notepadPopup.Open;
 
 		BuildSendPanel();
+		BuildAddressListSection();
 		InitializeBaseWallet();
 		SetMode(WalletMode.Base);
 		ShowSeedPopupIfNeeded();
@@ -290,6 +296,54 @@ public partial class BTCWallet : Control
 		SetMode(WalletMode.Send);
 	}
 
+	// ── Address book (Phase 8.4) ──────────────────────────────────────────────
+
+	// An expandable list showing the wallet as a collection of addresses (base + change addresses), so the
+	// player sees that "a wallet is a set of addresses/UTXOs" (OQ-2). Built programmatically and inserted just
+	// above the action row of the base wallet panel.
+	private void BuildAddressListSection()
+	{
+		var panel = GetNode<VBoxContainer>("%BaseWalletPanel");
+
+		_addressListToggle = new Button { Text = "Show addresses ▸" };
+		_addressListToggle.AddThemeFontSizeOverride("font_size", 20);
+		_addressListToggle.Pressed += OnToggleAddressList;
+		panel.AddChild(_addressListToggle);
+
+		_addressListContainer = new VBoxContainer { Visible = false };
+		_addressListContainer.AddThemeConstantOverride("separation", 4);
+		panel.AddChild(_addressListContainer);
+
+		// Position both just after the pending label, before the Send / Open-Passphrase action row.
+		int insertAt = _basePendingLabel.GetIndex() + 1;
+		panel.MoveChild(_addressListToggle, insertAt);
+		panel.MoveChild(_addressListContainer, insertAt + 1);
+	}
+
+	private void OnToggleAddressList()
+	{
+		_addressListExpanded = !_addressListExpanded;
+		_addressListContainer.Visible = _addressListExpanded;
+		_addressListToggle.Text = _addressListExpanded ? "Hide addresses ▾" : "Show addresses ▸";
+		if (_addressListExpanded) RefreshAddressList();
+	}
+
+	private void RefreshAddressList()
+	{
+		foreach (Node child in _addressListContainer.GetChildren())
+			child.QueueFree();
+
+		foreach ((string address, decimal confirmed, bool isBase) in _networkRoot.GetNodeAddressBook("player"))
+		{
+			var row = new Label
+			{
+				Text = $"{(isBase ? "[base]   " : "[change] ")}{address}   —   {confirmed:F8} BTC"
+			};
+			row.AddThemeFontSizeOverride("font_size", 16);
+			_addressListContainer.AddChild(row);
+		}
+	}
+
 	// ── Balance ───────────────────────────────────────────────────────────────
 
 	private void InitializeBaseWallet()
@@ -305,11 +359,25 @@ public partial class BTCWallet : Control
 		var wallet = WalletInitializationService.PlayerWallet;
 		if (wallet == null) return;
 
-		(decimal confirmed, decimal pendingOut) = _networkRoot.GetAddressBalanceDetails(wallet.BaseAddress);
-		_baseBalanceLabel.Text = $"Balance: {confirmed:F8} BTC";
+		// Phase 8.4 — aggregate across the wallet's address set (base + any change addresses). The wallet
+		// becomes multi-address only after a send produces change; until then it is just the base address.
+		var book = _networkRoot.GetNodeAddressBook("player");
+		decimal total = 0m;
+		decimal pendingOut = 0m;
+		foreach ((string address, decimal confirmed, _) in book)
+		{
+			total += confirmed;
+			pendingOut += _networkRoot.GetAddressBalanceDetails(address).pendingOutgoing;
+		}
+
+		_baseBalanceLabel.Text = book.Count > 1
+			? $"Wallet total ({book.Count} addresses): {total:F8} BTC"
+			: $"Balance: {total:F8} BTC";
 		_basePendingLabel.Visible = pendingOut > 0m;
 		if (pendingOut > 0m)
 			_basePendingLabel.Text = $"Pending outgoing: {pendingOut:F8} BTC";
+
+		if (_addressListExpanded) RefreshAddressList();
 
 		if (_currentMode == WalletMode.PassphraseUnlocked && !string.IsNullOrEmpty(_currentPassphraseAddress))
 		{

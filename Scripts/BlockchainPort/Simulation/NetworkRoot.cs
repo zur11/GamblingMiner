@@ -131,6 +131,13 @@ public partial class NetworkRoot : Node
                 var (sigPub, sigPriv) = CryptoUtils.DeriveSigningKeypair(seedPhrase);
                 string secp256k1Pub  = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seedPhrase);
                 node = new(nodeId, playerWallet.BaseAddress, sigPub, sigPriv, secp256k1Pub);
+                // Step 8.4 — the player carries a derived-address wallet for CHANGE outputs + signing any owned
+                // address, but RotateCoinbaseAddress = false keeps every mined reward on the base address (coinbase
+                // spread is a Satoshi-only trait). The player's wallet becomes multi-address only by spending: each
+                // send's change lands on a fresh derived address. addr(0) == BaseAddress, so existing balances and
+                // the chain rescan (RescanFounderReceiveWallets) are untouched.
+                node.ReceiveWallet = new DerivedAddressWallet(seedPhrase);
+                node.RotateCoinbaseAddress = false;
             }
             else if (savedState?.NodeWallets?.TryGetValue(nodeId, out NodeWalletSnapshot? pw) == true && pw?.IsComplete() == true)
                 node = new(nodeId, pw.Address, pw.SigningPublicKeyBase64, pw.SigningPrivateKeyBase64, pw.Secp256k1PublicKeyBase64);
@@ -955,9 +962,14 @@ public partial class NetworkRoot : Node
         return SharedNodesById.Values
             .OrderBy(n => n.NodeId)
             .Select(n =>
-                n.ReceiveWallet != null && n.ReceiveWallet.OwnedAddresses.Count > 1
-                    ? $"{n.NodeId}: {n.WalletAddress}  (base/identity; rewards spread across {n.ReceiveWallet.OwnedAddresses.Count} addresses)"
-                    : $"{n.NodeId}: {n.WalletAddress}")
+            {
+                if (n.ReceiveWallet == null || n.ReceiveWallet.OwnedAddresses.Count <= 1)
+                    return $"{n.NodeId}: {n.WalletAddress}";
+                // Step 8.4 — the player rotates only CHANGE addresses (coinbase stays on base), founders that
+                // rotate spread their REWARDS across fresh addresses (Satoshi). Word it per the node's mode.
+                string kind = n.RotateCoinbaseAddress ? "rewards" : "change";
+                return $"{n.NodeId}: {n.WalletAddress}  (base/identity; {kind} spread across {n.ReceiveWallet.OwnedAddresses.Count} addresses)";
+            })
             .ToList();
     }
 
@@ -1174,6 +1186,28 @@ public partial class NetworkRoot : Node
         return AggregateSpendable(node);
     }
 
+    // Step 8.4 — a node's wallet as the collection of addresses it owns (base + any derived change/receive
+    // addresses), each with its confirmed balance and a flag marking the base/identity address. Lets BTCWallet
+    // show that "a wallet = a set of addresses/UTXOs" (OQ-2 educational core). The base is always first; for a
+    // single-address node (no ReceiveWallet) the list is just the base. Ordered base-first, then by index.
+    public IReadOnlyList<(string address, decimal confirmed, bool isBase)> GetNodeAddressBook(string nodeId)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node)
+            || !SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+            return [];
+
+        var result = new List<(string, decimal, bool)>
+        {
+            (node.WalletAddress, player.Blockchain.GetAddressData(node.WalletAddress).AddressBalance, true)
+        };
+        if (node.ReceiveWallet != null)
+            foreach (string addr in node.ReceiveWallet.OwnedAddresses)
+                if (addr != node.WalletAddress)
+                    result.Add((addr, player.Blockchain.GetAddressData(addr).AddressBalance, false));
+        return result;
+    }
+
     // Step 8.2 — the founder's SCRIPTED historical activity (the automatic, system-driven events: the Hearn
     // round-trip, the 10-BTC Satoshi→Hal tx, …), so the wallet can show these in a panel SEPARATE from the
     // main balance — they are not manual withdrawals the founder ordered. Lists each `hist_*`-salted tx that
@@ -1269,11 +1303,56 @@ public partial class NetworkRoot : Node
         }
         if (sender.WalletAddress == recipientAddress)
             return null;
+
+        // Step 8.4 — a derived-wallet sender (the player) spends UTXO-lite: coin-select one funded owned
+        // address, pay the recipient from it, and return the remainder as a real CHANGE output to a fresh
+        // derived address. Bots/casino/passphrase nodes (no ReceiveWallet) keep the simple single-tx base path.
+        if (sender.ReceiveWallet != null)
+            return CreateSpendWithChange(sender, recipientAddress, amount, fee);
+
         Transaction tx = sender.CreateSignedTransaction(amount, recipientAddress, fee);
         if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
             return null;
         SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
         // No disk write: a block is the only commit (see CreateAndBroadcastTransaction / PersistStateToDisk).
+        return tx;
+    }
+
+    // Step 8.4 — UTXO-lite spend for a derived-wallet sender (the player). Coin-selects ONE funded owned
+    // address (TrySelectSpendSource — exact-match else largest-covering), pays the recipient from it, and
+    // emits the remainder as a real CHANGE output to a FRESH derived address (so the wallet becomes
+    // multi-address by spending, never reusing an address for change). Mirrors the founder scripted-spend
+    // path (InjectHistoricalSignedTxStatic) without salt idempotency or recipient rotation (the payee is an
+    // external address). Returns the main payment tx, or null when no single owned address covers amount+fee
+    // (single-input limit — multi-input consolidation is deferred, OQ-8.1).
+    private static Transaction? CreateSpendWithChange(NodeAgent sender, string recipientAddress, decimal amount, decimal fee)
+    {
+        if (!TrySelectSpendSource(sender, amount + fee, out (string addr, string pub, string priv, string secp) src))
+            return null;
+        if (src.addr == recipientAddress)
+            return null; // never pay the source address itself
+
+        Transaction tx = sender.CreateSignedTransactionFrom(src.addr, src.pub, src.priv, src.secp, amount, recipientAddress, fee);
+        if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
+            return null;
+        SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
+
+        // Real change output to a fresh derived address. The main tx is now pending, so GetAddressSpendableBalance
+        // already nets out amount+fee → the remainder of the consumed UTXO is exactly the change.
+        if (sender.ReceiveWallet != null)
+        {
+            decimal change = sender.Blockchain.GetAddressSpendableBalance(src.addr);
+            if (change > 0m)
+            {
+                string changeAddr = sender.ReceiveWallet.NextReceiveAddress();
+                Transaction changeTx = sender.CreateSignedTransactionFrom(src.addr, src.pub, src.priv, src.secp, change, changeAddr, 0m);
+                if (sender.Blockchain.AddTransactionToPendingTransactions(changeTx))
+                {
+                    SharedNetwork.BroadcastTransaction(sender.NodeId, changeTx);
+                    sender.ReceiveWallet.MarkReceiveConsumed();
+                }
+            }
+        }
         return tx;
     }
 
@@ -1340,9 +1419,10 @@ public partial class NetworkRoot : Node
         return used;
     }
 
-    // Step 8.2 — position each mining founder's derived-address frontier from the chain (Decision D3).
-    // Called at init after the chain is loaded/normalized; in-session the frontier then advances
-    // incrementally via NodeAgent.ReceiveWallet.MarkReceiveConsumed as each founder block is mined.
+    // Step 8.2/8.4 — position every derived-address wallet's frontier from the chain (Decision D3): the
+    // rotating founders (Satoshi's coinbases) and the player (whose frontier advances on change outputs).
+    // Called at init after the chain is loaded/normalized; in-session the frontier then advances incrementally
+    // via NodeAgent.ReceiveWallet.MarkReceiveConsumed as each rotated receive (coinbase / change) is committed.
     private static void RescanFounderReceiveWallets()
     {
         if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
