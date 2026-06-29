@@ -84,7 +84,6 @@ public partial class FoundersWallets : Control
 	private VBoxContainer _addressBookPanel = null!;
 	private RichTextLabel _addressBookLabel = null!;
 	private CheckBox _founderShowEmptyToggle = null!;
-	private const int MaxAddressBookRows = 80;
 
 	// Runtime state
 	private string? _currentPassphraseAddress;
@@ -618,12 +617,15 @@ public partial class FoundersWallets : Control
 		_founderShowEmptyToggle.Toggled += _ => RefreshAddressBook();
 		_addressBookPanel.AddChild(_founderShowEmptyToggle);
 
+		// Pattern B (ProjectDesignManual Ch. 29): a single RichTextLabel with its OWN internal scroll
+		// (ScrollActive = true, FitContent = false, bounded height) so ALL of Satoshi's ~109+ addresses are
+		// listed and scrollable in-place — no row cap, no reliance on the page scroll.
 		_addressBookLabel = new RichTextLabel
 		{
 			BbcodeEnabled = true,
-			FitContent = true,
-			CustomMinimumSize = new Vector2(0, 160),
-			ScrollActive = false
+			FitContent = false,
+			ScrollActive = true,
+			CustomMinimumSize = new Vector2(0, 320)
 		};
 		_addressBookLabel.AddThemeFontSizeOverride("normal_font_size", 14);
 		_addressBookPanel.AddChild(_addressBookLabel);
@@ -643,19 +645,22 @@ public partial class FoundersWallets : Control
 		var sb = new System.Text.StringBuilder();
 		sb.AppendLine($"[b]Wallet total[/b]  ({book.Count} address(es)):  [b]{total:F8} BTC[/b]");
 
-		int rows = 0, hidden = 0, overflow = 0;
+		int shown = 0, hidden = 0;
 		foreach ((string address, decimal confirmed, bool isBase) in book)
 		{
 			// Hide spent/empty (0-balance) non-base addresses by default — never reused, only kept for history.
 			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
-			if (rows >= MaxAddressBookRows) { overflow++; continue; }
 			string tag = isBase ? "[color=aqua]base[/color]" : "[color=gray]coinbase[/color]";
 			sb.AppendLine($"  {tag}  {address}  —  {confirmed:F8} BTC");
-			rows++;
+			shown++;
 		}
-		if (overflow > 0) sb.AppendLine($"  [color=gray]… and {overflow} more funded address(es)[/color]");
-		if (hidden > 0)   sb.AppendLine($"[color=gray]… {hidden} empty (spent) address(es) hidden — tick to show.[/color]");
+		if (hidden > 0) sb.AppendLine($"[color=gray]… {hidden} empty (spent) address(es) hidden — tick to show.[/color]");
+		sb.Append("\n\n\n"); // trailing blank lines so the last row clears the scroll's bottom edge (Ch. 29)
+
+		// Setting Text resets the internal scroll to the top — preserve the user's position across the 2s refresh.
+		double scroll = _addressBookLabel.GetVScrollBar().Value;
 		_addressBookLabel.Text = sb.ToString();
+		_addressBookLabel.GetVScrollBar().Value = scroll;
 	}
 
 	// ── Balance ───────────────────────────────────────────────────────────────

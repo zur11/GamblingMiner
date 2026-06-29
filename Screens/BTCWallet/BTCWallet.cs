@@ -61,7 +61,7 @@ public partial class BTCWallet : Control
 	// Address book (Phase 8.4) — the player's wallet as a collection of addresses (base + change addresses).
 	private Button _addressListToggle = null!;
 	private CheckBox _showEmptyAddrToggle = null!;
-	private VBoxContainer _addressListContainer = null!;
+	private RichTextLabel _addressListLabel = null!;
 	private bool _addressListExpanded;
 
 	// Notepad
@@ -318,21 +318,31 @@ public partial class BTCWallet : Control
 		_showEmptyAddrToggle.Toggled += _ => RefreshAddressList();
 		panel.AddChild(_showEmptyAddrToggle);
 
-		_addressListContainer = new VBoxContainer { Visible = false };
-		_addressListContainer.AddThemeConstantOverride("separation", 4);
-		panel.AddChild(_addressListContainer);
+		// Pattern B (ProjectDesignManual Ch. 29): a single RichTextLabel with its OWN internal scroll
+		// (ScrollActive = true, FitContent = false, bounded height) so every address (base + change) is listed
+		// and scrollable in-place — no row cap, no reliance on an outer scroll (the panel has none).
+		_addressListLabel = new RichTextLabel
+		{
+			BbcodeEnabled = true,
+			FitContent = false,
+			ScrollActive = true,
+			CustomMinimumSize = new Vector2(0, 240),
+			Visible = false
+		};
+		_addressListLabel.AddThemeFontSizeOverride("normal_font_size", 16);
+		panel.AddChild(_addressListLabel);
 
 		// Position all three just after the pending label, before the Send / Open-Passphrase action row.
 		int insertAt = _basePendingLabel.GetIndex() + 1;
 		panel.MoveChild(_addressListToggle, insertAt);
 		panel.MoveChild(_showEmptyAddrToggle, insertAt + 1);
-		panel.MoveChild(_addressListContainer, insertAt + 2);
+		panel.MoveChild(_addressListLabel, insertAt + 2);
 	}
 
 	private void OnToggleAddressList()
 	{
 		_addressListExpanded = !_addressListExpanded;
-		_addressListContainer.Visible = _addressListExpanded;
+		_addressListLabel.Visible = _addressListExpanded;
 		_showEmptyAddrToggle.Visible = _addressListExpanded;
 		_addressListToggle.Text = _addressListExpanded ? "Hide addresses ▾" : "Show addresses ▸";
 		if (_addressListExpanded) RefreshAddressList();
@@ -340,31 +350,25 @@ public partial class BTCWallet : Control
 
 	private void RefreshAddressList()
 	{
-		foreach (Node child in _addressListContainer.GetChildren())
-			child.QueueFree();
-
 		bool showEmpty = _showEmptyAddrToggle.ButtonPressed;
+		var sb = new System.Text.StringBuilder();
 		int hidden = 0;
 		foreach ((string address, decimal confirmed, bool isBase) in _networkRoot.GetNodeAddressBook("player"))
 		{
 			// Hide spent/empty (0-balance) addresses by default — they are never reused, only kept for history.
 			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
-
-			var row = new Label
-			{
-				Text = $"{(isBase ? "[base]   " : "[change] ")}{address}   —   {confirmed:F8} BTC"
-			};
-			row.AddThemeFontSizeOverride("font_size", 16);
-			_addressListContainer.AddChild(row);
+			// Use color-word tags, never literal "[base]" — square brackets are BBCode tags in a RichTextLabel.
+			string tag = isBase ? "[color=aqua]base[/color]  " : "[color=gray]change[/color]";
+			sb.AppendLine($"{tag}  {address}   —   {confirmed:F8} BTC");
 		}
-
 		if (hidden > 0 && !showEmpty)
-		{
-			var note = new Label { Text = $"… {hidden} empty (spent) address(es) hidden — tick above to show." };
-			note.AddThemeFontSizeOverride("font_size", 14);
-			note.Modulate = new Color(1, 1, 1, 0.6f);
-			_addressListContainer.AddChild(note);
-		}
+			sb.AppendLine($"[color=gray]… {hidden} empty (spent) address(es) hidden — tick above to show.[/color]");
+		sb.Append("\n\n\n"); // trailing blank lines so the last row clears the scroll's bottom edge (Ch. 29)
+
+		// Setting Text resets the internal scroll to the top — preserve the user's position across refreshes.
+		double scroll = _addressListLabel.GetVScrollBar().Value;
+		_addressListLabel.Text = sb.ToString();
+		_addressListLabel.GetVScrollBar().Value = scroll;
 	}
 
 	// ── Balance ───────────────────────────────────────────────────────────────

@@ -2604,6 +2604,18 @@ Fixes / rules:
 - **`RichTextLabel` wraps at spaces by default**, so its minimum width = its widest *unbreakable token*. A 42-char `gm1q…` address is one such token (no break points) — keep anything after it (e.g. `  —  50.00000000 BTC`) **after a space** so it wraps onto the next line rather than widening the panel. This is why the address-book label (full addresses + balances) did **not** overflow but the plain description label did.
 - **Diagnosing:** if a panel clips sideways with horizontal scroll disabled, look for the *widest* child's minimum width — it's almost always a non-wrapping `Label`, not the scroll setup. Left-aligned interactive controls (checkbox ticks, radio buttons) are the first to become unclickable, which is the tell.
 
+### 29.7 — The scrollable address-book list (Step 8 — Pattern B in practice)
+
+The wallet address lists (FoundersWallets "Address Book", BTCWallet "Show addresses") are the canonical in-app use of **Pattern B** (29.2): one `RichTextLabel` with its *own* internal scroll. The first cut used a non-scrolling list (a `VBoxContainer` of `Label`s in BTCWallet; a `fit_content` `RichTextLabel` capped at 80 rows in FoundersWallets) — so Satoshi's ~109 coinbase addresses showed only the first rows with a dead "… and N more" note and **no way to reach the rest**. The fix made each a Pattern B label:
+
+- `ScrollActive = true`, `FitContent = false`, and a **bounded** `CustomMinimumSize` height (320 px founders, 240 px player). Bounded-smaller-than-content is exactly what makes it scroll (29.1); the fixed min height bounds it directly, so it works even though BTCWallet's panel has no outer `ScrollContainer`.
+- **No row cap** — list every address; the internal scroll handles 100+.
+- **Preserve the scroll position across the 2 s refresh.** Assigning `RichTextLabel.Text` snaps the internal scroll to the top (29.3 trap #5), which on a timer-refreshed list would yank the user back up every tick. Save `GetVScrollBar().Value` before setting `Text`, restore it after.
+- **Trailing blank lines** (`"\n\n\n"`) so the last address clears the bottom edge (29.3 trap #4).
+- **BBCode tags, not literal brackets.** With `BbcodeEnabled = true`, a literal `[base]`/`[change]` row prefix would be parsed as a (broken) tag. Use color-word tags instead: `[color=aqua]base[/color]`, `[color=gray]change[/color]` / `coinbase`. (The earlier `Label`-row version could use literal `[base]` because a plain `Label` doesn't parse BBCode.)
+
+A shared "View empty addresses" `CheckBox` (default **unchecked**) filters spent/0-balance non-base rows in both screens — hidden by default (a real HD wallet keeps but never reuses them), revealed on tick.
+
 ---
 
 ## Chapter 30 — UTXO Realism & Address Non-Reuse (Step 8)
