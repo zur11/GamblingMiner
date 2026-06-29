@@ -60,6 +60,7 @@ public partial class BTCWallet : Control
 
 	// Address book (Phase 8.4) — the player's wallet as a collection of addresses (base + change addresses).
 	private Button _addressListToggle = null!;
+	private CheckBox _showEmptyAddrToggle = null!;
 	private VBoxContainer _addressListContainer = null!;
 	private bool _addressListExpanded;
 
@@ -310,20 +311,29 @@ public partial class BTCWallet : Control
 		_addressListToggle.Pressed += OnToggleAddressList;
 		panel.AddChild(_addressListToggle);
 
+		// Spent change addresses keep a 0.00000000 balance forever (address non-reuse — a real HD wallet never
+		// reuses them). Hidden by default so the list stays clean; tick to reveal them. Unchecked = unchecked.
+		_showEmptyAddrToggle = new CheckBox { Text = "View empty addresses", ButtonPressed = false, Visible = false };
+		_showEmptyAddrToggle.AddThemeFontSizeOverride("font_size", 16);
+		_showEmptyAddrToggle.Toggled += _ => RefreshAddressList();
+		panel.AddChild(_showEmptyAddrToggle);
+
 		_addressListContainer = new VBoxContainer { Visible = false };
 		_addressListContainer.AddThemeConstantOverride("separation", 4);
 		panel.AddChild(_addressListContainer);
 
-		// Position both just after the pending label, before the Send / Open-Passphrase action row.
+		// Position all three just after the pending label, before the Send / Open-Passphrase action row.
 		int insertAt = _basePendingLabel.GetIndex() + 1;
 		panel.MoveChild(_addressListToggle, insertAt);
-		panel.MoveChild(_addressListContainer, insertAt + 1);
+		panel.MoveChild(_showEmptyAddrToggle, insertAt + 1);
+		panel.MoveChild(_addressListContainer, insertAt + 2);
 	}
 
 	private void OnToggleAddressList()
 	{
 		_addressListExpanded = !_addressListExpanded;
 		_addressListContainer.Visible = _addressListExpanded;
+		_showEmptyAddrToggle.Visible = _addressListExpanded;
 		_addressListToggle.Text = _addressListExpanded ? "Hide addresses ▾" : "Show addresses ▸";
 		if (_addressListExpanded) RefreshAddressList();
 	}
@@ -333,14 +343,27 @@ public partial class BTCWallet : Control
 		foreach (Node child in _addressListContainer.GetChildren())
 			child.QueueFree();
 
+		bool showEmpty = _showEmptyAddrToggle.ButtonPressed;
+		int hidden = 0;
 		foreach ((string address, decimal confirmed, bool isBase) in _networkRoot.GetNodeAddressBook("player"))
 		{
+			// Hide spent/empty (0-balance) addresses by default — they are never reused, only kept for history.
+			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
+
 			var row = new Label
 			{
 				Text = $"{(isBase ? "[base]   " : "[change] ")}{address}   —   {confirmed:F8} BTC"
 			};
 			row.AddThemeFontSizeOverride("font_size", 16);
 			_addressListContainer.AddChild(row);
+		}
+
+		if (hidden > 0 && !showEmpty)
+		{
+			var note = new Label { Text = $"… {hidden} empty (spent) address(es) hidden — tick above to show." };
+			note.AddThemeFontSizeOverride("font_size", 14);
+			note.Modulate = new Color(1, 1, 1, 0.6f);
+			_addressListContainer.AddChild(note);
 		}
 	}
 

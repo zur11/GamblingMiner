@@ -54,6 +54,23 @@ public sealed class BlockchainService
     public List<Block> Chain { get; } = new();
     public List<Transaction> PendingTransactions { get; } = new();
 
+    // ── UTXO set (Step 8 full model, plan Appendix A) ──────────────────────────────────────────────
+    // The set of unspent transaction outputs, rebuilt by replaying the chain (because "a block is the only
+    // commit to disk"). Cached and invalidated whenever the chain mutates (_chainVersion). Key = "txid:vout".
+    private sealed class UtxoEntry
+    {
+        public required string TxId;
+        public required int Vout;
+        public required TxOutput Output;
+        public required int BlockIndex;
+        public required bool IsCoinbase;
+        public required bool IsSpendable;
+    }
+    private Dictionary<string, UtxoEntry>? _utxoCache;
+    private int _utxoCacheVersion = -1;
+    private int _chainVersion;
+    private static string OutPointKey(string txId, int vout) => $"{txId}:{vout}";
+
     public BlockchainService()
     {
         Block genesis = CreateNewBlock(100, "0", "0", GenesisTimestampUnixMs, "0");
@@ -71,14 +88,30 @@ public sealed class BlockchainService
     {
         return new Transaction
         {
-            Amount = 50m,
-            Sender = CoinbaseSender,
-            Recipient = SatoshiAddress,
+            // Input-less coinbase: one 50-BTC output to Satoshi (rewritten to his derived gm1q… address by
+            // NetworkRoot.NormalizeGenesisAcrossNodes). IsSpendable = false → unspendable forever.
+            Inputs = new List<TxInput>(),
+            Outputs = new List<TxOutput> { new() { Address = SatoshiAddress, Amount = 50m } },
             TransactionId = "genesis-coinbase",
             InputDataText = GenesisHeadline,
             InputDataHex = TextToHex(GenesisHeadline),
             IsSpendable = false
         };
+    }
+
+    // Builds an input-less coinbase output (reward + Σfees) to the miner. BIP34-style height in the Salt
+    // keeps each coinbase txid unique even at equal reward (Step 4b.3).
+    public static Transaction CreateCoinbase(string minerAddress, decimal amount, int blockIndex)
+    {
+        var coinbase = new Transaction
+        {
+            Inputs = new List<TxInput>(),
+            Outputs = new List<TxOutput> { new() { Address = minerAddress, Amount = amount } },
+            Salt = $"coinbase:{blockIndex}",
+            IsSpendable = true
+        };
+        coinbase.TransactionId = ComputeTransactionId(coinbase);
+        return coinbase;
     }
 
     public Block CreateNewBlock(long nonce, string previousBlockHash, string hash, long timestamp, string merkleRoot)
@@ -96,6 +129,7 @@ public sealed class BlockchainService
 
         PendingTransactions.Clear();
         Chain.Add(newBlock);
+        _chainVersion++;
         return newBlock;
     }
 
@@ -122,33 +156,39 @@ public sealed class BlockchainService
         }
 
         Chain.Add(newBlock);
+        _chainVersion++;
         return newBlock;
     }
 
     public Block GetLastBlock() => Chain[^1];
 
-    public Transaction CreateUnsignedTransaction(decimal amount, string sender, string recipient)
+    // Builds an unsigned transaction from explicit inputs + outputs (Step 8 full UTXO model). The caller
+    // (NodeAgent) fills in each input's signature/keys and sets the txid. A random Salt keeps the content
+    // hash unique; pass a deterministic salt for scripted historical events.
+    public static Transaction CreateUnsignedTransaction(List<TxInput> inputs, List<TxOutput> outputs, decimal fee, string? salt = null)
     {
         return new Transaction
         {
-            Amount = amount,
-            Sender = sender,
-            Recipient = recipient,
-            Salt = Guid.NewGuid().ToString("N"), // uniqueness nonce; the content-hash txid is set by the signer
+            Inputs = inputs,
+            Outputs = outputs,
+            Fee = fee,
+            Salt = salt ?? Guid.NewGuid().ToString("N"),
             TransactionId = string.Empty
         };
     }
 
-    // Step 4b.3 (OQ-C6): a transaction's id is the double-SHA256 of its canonical content — amount,
-    // parties, fee, input data, spendability and the uniqueness Salt. Excludes the id itself and the
-    // signature, so it is a true fingerprint of *what* the transaction does. Also used as the Merkle leaf.
+    // Step 4b.3 (OQ-C6) / Step 8 (A.6): a transaction's id is the double-SHA256 of its canonical content —
+    // the input outpoints, the output (address, amount) pairs, the fee, input data, spendability and the
+    // uniqueness Salt. Excludes the signatures, so it is a true fingerprint of *what* the tx does. Also the
+    // Merkle leaf, so any reshuffle of inputs/outputs changes the root and invalidates the block.
     public static string ComputeTransactionId(Transaction tx)
     {
+        string inputs = string.Join(",", tx.Inputs.Select(i => $"{i.Source.PrevTxId}:{i.Source.Vout}"));
+        string outputs = string.Join(",", tx.Outputs.Select(o => $"{o.Address}:{o.Amount.ToString(CultureInfo.InvariantCulture)}"));
         string content = string.Join("|", new[]
         {
-            tx.Amount.ToString(CultureInfo.InvariantCulture),
-            tx.Sender,
-            tx.Recipient,
+            "in:" + inputs,
+            "out:" + outputs,
             tx.Fee.ToString(CultureInfo.InvariantCulture),
             tx.InputDataHex,
             tx.IsSpendable ? "1" : "0",
@@ -157,78 +197,147 @@ public sealed class BlockchainService
         return CryptoUtils.Sha256Hex(CryptoUtils.Sha256Hex(content));
     }
 
-    public static string BuildTransactionPayload(Transaction tx)
-    {
-        // The txid already commits to amount/parties/fee/data/salt (ComputeTransactionId); signing a
-        // payload that includes it makes the whole transaction tamper-evident under the signature.
-        return $"{tx.Amount}|{tx.Sender}|{tx.Recipient}|{tx.TransactionId}|{tx.Fee}";
-    }
+    // The per-input signed message (sighash). The txid already commits to every input/output/fee/salt
+    // (ComputeTransactionId), so signing it makes the whole tx tamper-evident and binds each input to this
+    // exact set of inputs/outputs — they cannot be reshuffled without breaking every signature.
+    public static string BuildTransactionPayload(Transaction tx) => tx.TransactionId;
 
+    // Step 8 (A.4) — per-input validation: txid integrity + for EVERY input an ownership proof (the input's
+    // secp256k1 key derives the address recorded on it) and a P-256 signature over the tx sighash. A coinbase
+    // (no inputs) is signature-valid by definition. Enables inputs across several owned addresses.
     public bool ValidateTransactionSignature(Transaction tx)
     {
-        if (tx.Sender == CoinbaseSender)
+        if (tx.IsCoinbase)
         {
             return true;
         }
 
-        if (string.IsNullOrWhiteSpace(tx.PublicKeyBase64) ||
-            string.IsNullOrWhiteSpace(tx.SignatureBase64) ||
-            string.IsNullOrWhiteSpace(tx.Secp256k1PublicKeyBase64))
-        {
-            return false;
-        }
-
-        // Integrity: the txid must be the content hash of the transaction (Step 4b.3).
+        // Integrity: the txid must be the content hash of the transaction (Step 4b.3 / A.6).
         if (!string.Equals(tx.TransactionId, ComputeTransactionId(tx), StringComparison.Ordinal))
         {
             return false;
         }
 
-        // Address ownership check: secp256k1 public key → Hash160 → Bech32 must match Sender
-        if (!string.Equals(tx.Sender, CryptoUtils.DeriveAddressFromPublicKey(tx.Secp256k1PublicKeyBase64), StringComparison.Ordinal))
+        string payload = BuildTransactionPayload(tx);
+        foreach (TxInput input in tx.Inputs)
         {
-            return false;
-        }
+            if (string.IsNullOrWhiteSpace(input.PublicKeyBase64) ||
+                string.IsNullOrWhiteSpace(input.SignatureBase64) ||
+                string.IsNullOrWhiteSpace(input.Secp256k1PublicKeyBase64))
+            {
+                return false;
+            }
 
-        // Signature check: P-256 signing key (game-internal, not visible on the address)
-        return CryptoUtils.Verify(BuildTransactionPayload(tx), tx.SignatureBase64, tx.PublicKeyBase64);
-    }
+            // Ownership: secp256k1 public key → Hash160 → Bech32 must match the input's recorded address.
+            if (!string.Equals(input.Address, CryptoUtils.DeriveAddressFromPublicKey(input.Secp256k1PublicKeyBase64), StringComparison.Ordinal))
+            {
+                return false;
+            }
 
-    public bool AddTransactionToPendingTransactions(Transaction transaction)
-    {
-        if (transaction.Amount <= 0m)
-        {
-            return false;
-        }
-
-        if (ContainsTransactionId(transaction.TransactionId))
-        {
-            return false;
-        }
-
-        // A transaction may never pay its own sender (coinbase sender "00" is never a real address).
-        if (string.Equals(transaction.Sender, transaction.Recipient, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        if (!ValidateTransactionSignature(transaction))
-        {
-            return false;
-        }
-
-        if (transaction.Sender != CoinbaseSender)
-        {
-            // Sender must be able to cover amount + fee (the fee is paid to the miner via the coinbase).
-            decimal spendableBalance = GetAddressSpendableBalance(transaction.Sender);
-            if (spendableBalance < transaction.Amount + transaction.Fee)
+            // Signature: P-256 signing key (game-internal, not visible on the address) over the sighash.
+            if (!CryptoUtils.Verify(payload, input.SignatureBase64, input.PublicKeyBase64))
             {
                 return false;
             }
         }
 
+        return true;
+    }
+
+    // Step 8 (A.4) — admit a spend to the mempool under UTXO rules: every input references a confirmed,
+    // unspent, mature (if coinbase), non-double-spent output it owns; Σinputs ≥ Σoutputs; and the declared
+    // Fee equals Σinputs − Σoutputs. Coinbases never enter here (they are created inside the block template).
+    public bool AddTransactionToPendingTransactions(Transaction transaction)
+    {
+        if (transaction.IsCoinbase || transaction.Inputs.Count == 0)
+        {
+            return false;
+        }
+        if (transaction.Outputs.Count == 0 || transaction.Outputs.Any(o => o.Amount <= 0m))
+        {
+            return false;
+        }
+        if (ContainsTransactionId(transaction.TransactionId))
+        {
+            return false;
+        }
+        if (!ValidateTransactionSignature(transaction))
+        {
+            return false;
+        }
+
+        Dictionary<string, UtxoEntry> utxos = GetUtxoSet();
+        HashSet<string> spentByPending = CollectPendingSpentOutpoints();
+        int tipIndex = Chain.Count > 0 ? Chain[^1].Index : 0;
+
+        decimal inputSum = 0m;
+        var seenInThisTx = new HashSet<string>();
+        foreach (TxInput input in transaction.Inputs)
+        {
+            string key = OutPointKey(input.Source.PrevTxId, input.Source.Vout);
+            if (!seenInThisTx.Add(key)) return false;                       // duplicate input inside the tx
+            if (!utxos.TryGetValue(key, out UtxoEntry? utxo)) return false; // unknown or already-spent output
+            if (!utxo.IsSpendable) return false;                           // genesis (unspendable)
+            if (utxo.IsCoinbase && (tipIndex - utxo.BlockIndex) < CoinbaseMaturity) return false; // immature
+            if (spentByPending.Contains(key)) return false;                // double-spend vs the mempool
+            if (!string.Equals(utxo.Output.Address, input.Address, StringComparison.Ordinal)) return false;
+            inputSum += utxo.Output.Amount;
+        }
+
+        decimal outputSum = transaction.TotalOutput;
+        if (inputSum < outputSum) return false;
+        if (transaction.Fee != inputSum - outputSum) return false; // fee must equal the in/out delta exactly
+
         PendingTransactions.Add(transaction);
         return true;
+    }
+
+    // Every outpoint consumed by a pending mempool transaction (for the double-spend guard).
+    private HashSet<string> CollectPendingSpentOutpoints()
+    {
+        var spent = new HashSet<string>();
+        foreach (Transaction pending in PendingTransactions)
+            foreach (TxInput input in pending.Inputs)
+                spent.Add(OutPointKey(input.Source.PrevTxId, input.Source.Vout));
+        return spent;
+    }
+
+    // The confirmed UTXO set, rebuilt by replaying the chain oldest→newest and cached until the chain
+    // mutates (Step 8 / A.3). Key = "txid:vout". Coinbase maturity and spendability are read from each entry.
+    private Dictionary<string, UtxoEntry> GetUtxoSet()
+    {
+        if (_utxoCache != null && _utxoCacheVersion == _chainVersion)
+        {
+            return _utxoCache;
+        }
+
+        var utxos = new Dictionary<string, UtxoEntry>();
+        foreach (Block block in Chain)
+        {
+            foreach (Transaction tx in block.Transactions)
+            {
+                foreach (TxInput input in tx.Inputs)
+                    utxos.Remove(OutPointKey(input.Source.PrevTxId, input.Source.Vout));
+
+                for (int v = 0; v < tx.Outputs.Count; v++)
+                {
+                    string key = OutPointKey(tx.TransactionId, v);
+                    utxos[key] = new UtxoEntry
+                    {
+                        TxId = tx.TransactionId,
+                        Vout = v,
+                        Output = tx.Outputs[v],
+                        BlockIndex = block.Index,
+                        IsCoinbase = tx.IsCoinbase,
+                        IsSpendable = tx.IsSpendable
+                    };
+                }
+            }
+        }
+
+        _utxoCache = utxos;
+        _utxoCacheVersion = _chainVersion;
+        return utxos;
     }
 
     public bool ContainsTransactionId(string transactionId)
@@ -391,6 +500,7 @@ public sealed class BlockchainService
 
         Chain.Add(newBlock);
         PendingTransactions.Clear();
+        _chainVersion++;
         return true;
     }
 
@@ -419,40 +529,27 @@ public sealed class BlockchainService
     // here). Immature coinbase is excluded from the balance until it matures.
     public const int CoinbaseMaturity = 1;
 
+    // Step 8 — an address's confirmed balance = Σ of its mature, spendable UTXOs (unspendable genesis and
+    // immature coinbase excluded). AddressTransactions = every confirmed tx that references the address as an
+    // input owner or an output recipient (for the explorer / history readers).
     public AddressData GetAddressData(string address)
     {
         int tipIndex = Chain.Count > 0 ? Chain[^1].Index : 0;
+        Dictionary<string, UtxoEntry> utxos = GetUtxoSet();
+
+        decimal balance = 0m;
+        foreach (UtxoEntry utxo in utxos.Values)
+        {
+            if (utxo.Output.Address != address || !utxo.IsSpendable) continue;
+            if (utxo.IsCoinbase && (tipIndex - utxo.BlockIndex) < CoinbaseMaturity) continue;
+            balance += utxo.Output.Amount;
+        }
 
         List<Transaction> addressTransactions = new();
-        decimal balance = 0m;
-
         foreach (Block block in Chain)
-        {
             foreach (Transaction tx in block.Transactions)
-            {
-                if (tx.Sender != address && tx.Recipient != address)
-                {
-                    continue;
-                }
-
-                addressTransactions.Add(tx);
-
-                if (!tx.IsSpendable)
-                {
-                    continue;
-                }
-
-                // Immature coinbase (not enough confirmations) does not count toward the balance yet.
-                bool isCoinbase = tx.Sender == CoinbaseSender;
-                if (isCoinbase && (tipIndex - block.Index) < CoinbaseMaturity)
-                {
-                    continue;
-                }
-
-                if (tx.Recipient == address) balance += tx.Amount;
-                else if (tx.Sender == address) balance -= tx.Amount + tx.Fee; // sender pays amount + fee
-            }
-        }
+                if (tx.Inputs.Any(i => i.Address == address) || tx.Outputs.Any(o => o.Address == address))
+                    addressTransactions.Add(tx);
 
         return new AddressData
         {
@@ -461,20 +558,32 @@ public sealed class BlockchainService
         };
     }
 
+    // Confirmed spendable balance MINUS the value of UTXOs already reserved by a pending outgoing tx
+    // (pending outputs are not spendable until mined). The scalar form of GetSpendableUtxos.
     public decimal GetAddressSpendableBalance(string address)
     {
-        decimal balance = GetAddressData(address).AddressBalance;
-        foreach (Transaction pending in PendingTransactions)
-        {
-            if (pending.Sender == address)
-            {
-                // Pending outgoing transactions reserve funds immediately (amount + fee).
-                // Pending incoming transactions are not spendable until mined.
-                balance -= pending.Amount + pending.Fee;
-            }
-        }
+        return GetSpendableUtxos(new[] { address }).Sum(u => u.amount);
+    }
 
-        return balance;
+    // Step 8 (A.3 / coin selection) — the list of confirmed, mature, spendable, NOT-pending-spent outputs
+    // owned by any of `addresses`. This is the wallet's selectable "coins"; combining several funds a payment
+    // no single one covers (the multi-input case the player hit). Each entry carries the outpoint to spend.
+    public IReadOnlyList<(OutPoint outpoint, string address, decimal amount)> GetSpendableUtxos(IEnumerable<string> addresses)
+    {
+        var owned = new HashSet<string>(addresses);
+        int tipIndex = Chain.Count > 0 ? Chain[^1].Index : 0;
+        Dictionary<string, UtxoEntry> utxos = GetUtxoSet();
+        HashSet<string> spentByPending = CollectPendingSpentOutpoints();
+
+        var result = new List<(OutPoint, string, decimal)>();
+        foreach (UtxoEntry utxo in utxos.Values)
+        {
+            if (!owned.Contains(utxo.Output.Address) || !utxo.IsSpendable) continue;
+            if (utxo.IsCoinbase && (tipIndex - utxo.BlockIndex) < CoinbaseMaturity) continue;
+            if (spentByPending.Contains(OutPointKey(utxo.TxId, utxo.Vout))) continue;
+            result.Add((new OutPoint { PrevTxId = utxo.TxId, Vout = utxo.Vout }, utxo.Output.Address, utxo.Output.Amount));
+        }
+        return result;
     }
 
     public bool TryReplaceChain(List<Block> newChain, List<Transaction> newPendingTransactions)
@@ -488,6 +597,7 @@ public sealed class BlockchainService
         Chain.AddRange(newChain);
         PendingTransactions.Clear();
         PendingTransactions.AddRange(newPendingTransactions);
+        _chainVersion++;
         return true;
     }
 

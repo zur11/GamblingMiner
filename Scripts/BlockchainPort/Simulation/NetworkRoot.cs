@@ -36,6 +36,12 @@ public partial class NetworkRoot : Node
     private const int HalvingIntervalBlocks = 2100;
     private const string BlockchainDir = "user://blockchain";
     private const string StatePath = "user://blockchain/state.json";
+    // Step 8 (full UTXO model) — bumped when the on-disk chain format changes incompatibly. The old
+    // account/balance chain has no input→output (UTXO) linkage, so it cannot be replayed into a UTXO set;
+    // on a version change we wipe the chain + clock + financial state and re-bootstrap a fresh world (the
+    // "clean reset" decision). Increment this whenever the persisted Transaction/Block shape changes.
+    private const int WorldFormatVersion = 2;
+    private const string WorldVersionPath = "user://world_format_version.txt";
     // Casino community pool: fixed per-payout transaction fee (lowest available to the casino),
     // deducted from each contributor's gross share before it is sent (Phase 2).
     private const decimal CasinoTxFee = 0.1m;
@@ -66,6 +72,10 @@ public partial class NetworkRoot : Node
         {
             return;
         }
+
+        // Step 8 — if the on-disk world predates the UTXO model, wipe the incompatible chain/clock/financial
+        // state so this launch re-bootstraps a fresh UTXO world (clean reset). Must run before TryLoadSnapshot.
+        ResetWorldIfFormatChanged();
 
         // Load saved state first so wallets can be restored before nodes are created.
         BlockchainStateSnapshot? savedState = TryLoadSnapshot();
@@ -202,16 +212,10 @@ public partial class NetworkRoot : Node
             return null;
         }
 
-        Transaction tx = sender.CreateSignedTransaction(amount, recipient.WalletAddress, fee);
-        if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
-        {
-            return null;
-        }
-
-        SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
+        // Step 8 — UTXO spend: coin-select the sender's owned UTXOs (combining several if needed) + change.
         // No disk write: a block is the only commit. The tx lives in the in-memory mempool and becomes durable
         // when the next block is mined; if the app closes before that, it is discarded on restart (revert to block).
-        return tx;
+        return BuildAndBroadcastUtxoSpend(sender, recipient.WalletAddress, amount, fee, null);
     }
 
     public bool MineAndBroadcastBlock(string minerNodeId, long? minedAtUnixMs = null)
@@ -259,18 +263,14 @@ public partial class NetworkRoot : Node
         return true;
     }
 
-    // Step 7.3/7.4 + Step 8.3: inject a scripted historical signed transaction between two registered nodes
-    // (e.g. the 12 Jan 2009 Satoshi→Hal 10 BTC tx, or the April 2009 Satoshi↔Hearn round-trip). UTXO-lite:
-    //   • SOURCE  — coin-selects an exact-match UTXO if one exists, else the largest covering one (so E7a
-    //     spends precisely the 32.51 Hearn returned, E7b a whole 50-BTC coinbase, and E6 a pristine 50-BTC
-    //     coinbase → the iconic 17.49 change). Sources from the base address for nodes without a derived
-    //     wallet (Hearn).
-    //   • RECIPIENT — a FRESH derived address when the recipient is a multi-address founder (address
-    //     non-reuse — e.g. Satoshi receives E6b at a new address), else the recipient's base.
-    //   • CHANGE  — for a founder sender, the remainder of the consumed address is sent to a FRESH address
-    //     (a real change output, e.g. E6's 17.49 = E8), fully consuming the source "UTXO".
-    // Idempotency is by SALT (unique per event), not the reconstructed txid, because the source address now
-    // varies (Step 8.3). Chain-derived, so it survives the revert-to-last-block model. Per Q-X4, no InputData.
+    // Step 7.3/7.4 + Step 8: inject a scripted historical signed transaction between two registered nodes
+    // (the 12 Jan 2009 Satoshi→Hal 10 BTC tx, or the April 2009 Satoshi↔Hearn round-trip). Full UTXO model:
+    //   • SOURCE   — coin-selects owned UTXOs (exact single match → no change; else largest-first combine).
+    //   • RECIPIENT — a FRESH derived address when the recipient is a multi-address founder (address non-reuse
+    //     — Satoshi receives E6b at a new address), else the recipient's base.
+    //   • CHANGE   — the remainder is a real change OUTPUT (vout 1) to a FRESH sender address (E6's 17.49 = E8),
+    //     now part of the SAME transaction rather than a separate change tx.
+    // Idempotency is by SALT (unique per event). Chain-derived, surviving the revert-to-last-block model.
     public static bool InjectHistoricalSignedTxStatic(string fromNodeId, string toNodeId, decimal amount, string deterministicSalt, decimal fee = 0m)
     {
         EnsureInitialized();
@@ -287,88 +287,106 @@ public partial class NetworkRoot : Node
             return true;
         }
 
-        // Coin-select the source UTXO (smallest owned address covering amount+fee). Founder senders draw from
-        // their derived set; others (Hearn) from base. Fail → caller retries on a later block (not funded yet).
-        if (!TrySelectSpendSource(sender, amount + fee, out (string addr, string pub, string priv, string secp) src))
-        {
-            return false;
-        }
-
         // Recipient lands on a fresh derived address when it is a multi-address founder (address non-reuse).
         string recipientAddr = recipient.ReceiveWallet?.NextReceiveAddress() ?? recipient.WalletAddress;
-        if (src.addr == recipientAddr)
+
+        Transaction? tx = BuildAndBroadcastUtxoSpend(sender, recipientAddr, amount, fee, deterministicSalt);
+        if (tx is null)
         {
-            return false; // never pay the source address itself
+            return false; // not funded yet → caller retries on a later block
         }
 
-        Transaction tx = sender.CreateSignedTransactionFrom(src.addr, src.pub, src.priv, src.secp, amount, recipientAddr, fee, deterministicSalt);
-        if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
-        {
-            return false;
-        }
-        SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
         recipient.ReceiveWallet?.MarkReceiveConsumed(); // recipient's fresh address is now used
-
-        // Real change output (E8): drain the remainder of the consumed UTXO to a fresh sender address. The
-        // first tx is now pending, so GetAddressSpendableBalance(src) already nets out amount+fee = the change.
-        if (sender.ReceiveWallet != null)
-        {
-            decimal change = sender.Blockchain.GetAddressSpendableBalance(src.addr);
-            if (change > 0m)
-            {
-                string changeAddr = sender.ReceiveWallet.NextReceiveAddress();
-                Transaction changeTx = sender.CreateSignedTransactionFrom(
-                    src.addr, src.pub, src.priv, src.secp, change, changeAddr, 0m, deterministicSalt + "_change");
-                if (sender.Blockchain.AddTransactionToPendingTransactions(changeTx))
-                {
-                    SharedNetwork.BroadcastTransaction(sender.NodeId, changeTx);
-                    sender.ReceiveWallet.MarkReceiveConsumed();
-                }
-            }
-        }
         return true;
     }
 
-    // Coin-selection for a single-input spend: prefer an EXACT-match UTXO (balance == needed → no change, so
-    // E7a spends precisely the 32.51 Hearn returned and E7b a whole 50-BTC coinbase); otherwise the LARGEST
-    // covering UTXO (so E6 spends a pristine 50-BTC coinbase → the iconic 17.49 change, never a smaller
-    // leftover like the 40-BTC E4 change). Founder senders pick across their derived set + base; others use
-    // base only. Returns the chosen address and its signing keys (Step 8.3).
-    private static bool TrySelectSpendSource(NodeAgent sender, decimal needed, out (string addr, string pub, string priv, string secp) src)
+    // Step 8 (full UTXO model) — THE shared spend path for every node (player, founders, bots, casino). Coin-
+    // selects owned UTXOs to cover amount+fee, builds ONE signed transaction with the recipient output plus an
+    // optional change output to a fresh owned address, and broadcasts it. Returns the tx, or null if the
+    // node's total spendable across ALL its addresses can't cover amount+fee. A node with a ReceiveWallet
+    // (player, Satoshi) returns change to a fresh derived address; others return change to their base address.
+    private static Transaction? BuildAndBroadcastUtxoSpend(NodeAgent sender, string recipientAddress, decimal amount, decimal fee, string? deterministicSalt)
     {
-        if (sender.ReceiveWallet == null)
+        decimal need = amount + fee;
+        HashSet<string> owned = sender.ReceiveWallet != null
+            ? new HashSet<string>(sender.ReceiveWallet.OwnedAddresses) { sender.WalletAddress }
+            : new HashSet<string> { sender.WalletAddress };
+
+        IReadOnlyList<(OutPoint outpoint, string address, decimal amount)> available = sender.Blockchain.GetSpendableUtxos(owned);
+        List<(OutPoint outpoint, string address, decimal amount)>? chosen = SelectUtxos(available, need);
+        if (chosen is null)
         {
-            decimal baseBal = sender.Blockchain.GetAddressSpendableBalance(sender.WalletAddress);
-            src = (sender.WalletAddress, sender.WalletPublicKey, sender.WalletPrivateKey, sender.WalletSecp256k1PublicKey);
-            return baseBal >= needed;
+            return null; // insufficient total funds, even combining every UTXO
         }
 
-        var candidates = new HashSet<string>(sender.ReceiveWallet.OwnedAddresses) { sender.WalletAddress };
-        string? exact = null;
-        string? largest = null;
-        decimal largestBal = -1m;
-        foreach (string addr in candidates)
+        var inputs = new List<(OutPoint, string, string, string, string)>(chosen.Count);
+        decimal gathered = 0m;
+        foreach ((OutPoint outpoint, string address, decimal value) in chosen)
         {
-            decimal bal = sender.Blockchain.GetAddressSpendableBalance(addr);
-            if (bal == needed)
-            {
-                exact = addr; // perfect UTXO → no change output
-                break;
-            }
-            if (bal >= needed && bal > largestBal)
-            {
-                largest = addr;
-                largestBal = bal;
-            }
+            if (!TryResolveInputKeys(sender, address, out (string pub, string priv, string secp) keys))
+                return null; // an owned address whose keys we can't derive (should not happen)
+            inputs.Add((outpoint, address, keys.pub, keys.priv, keys.secp));
+            gathered += value;
         }
 
-        string? best = exact ?? largest;
-        if (best != null && sender.ReceiveWallet.TryFindSpendingContext(best, out var ctx))
+        var outputs = new List<TxOutput> { new() { Address = recipientAddress, Amount = amount } };
+        decimal change = gathered - need;
+        bool hasChange = change > 0m;
+        if (hasChange)
         {
-            src = (ctx.address, ctx.signingPublicKeyBase64, ctx.signingPrivateKeyBase64, ctx.secp256k1PublicKeyBase64);
+            string changeAddr = sender.ReceiveWallet?.NextReceiveAddress() ?? sender.WalletAddress;
+            if (changeAddr == recipientAddress) changeAddr = sender.WalletAddress; // never merge change into the payee
+            outputs.Add(new TxOutput { Address = changeAddr, Amount = change });
+        }
+
+        Transaction tx = sender.BuildSignedSpend(inputs, outputs, fee, deterministicSalt);
+        if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
+        {
+            return null;
+        }
+        SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
+        if (hasChange) sender.ReceiveWallet?.MarkReceiveConsumed(); // a fresh change address was used
+        return tx;
+    }
+
+    // Coin selection: prefer an EXACT single-UTXO match (amount+fee → no change; preserves scripted exact-
+    // amount events like E7a's 32.51 and E7b's whole 50-coinbase); otherwise accumulate LARGEST-first until
+    // covered — combining several UTXOs into one transaction (the multi-input consolidation case). Returns
+    // null when even every available UTXO together can't cover `need`.
+    private static List<(OutPoint outpoint, string address, decimal amount)>? SelectUtxos(
+        IReadOnlyList<(OutPoint outpoint, string address, decimal amount)> available, decimal need)
+    {
+        foreach ((OutPoint outpoint, string address, decimal amount) u in available)
+            if (u.amount == need)
+                return new List<(OutPoint, string, decimal)> { u };
+
+        var chosen = new List<(OutPoint, string, decimal)>();
+        decimal gathered = 0m;
+        foreach ((OutPoint outpoint, string address, decimal amount) u in available.OrderByDescending(x => x.amount))
+        {
+            chosen.Add(u);
+            gathered += u.amount;
+            if (gathered >= need) return chosen;
+        }
+        return null;
+    }
+
+    // The signing keys for an owned address: the node's base keypair for WalletAddress, else the per-address
+    // derived context from the ReceiveWallet (Step 8.1 TryFindSpendingContext). Lets one spend pull keys for
+    // several of the sender's own derived addresses (the consolidation case).
+    private static bool TryResolveInputKeys(NodeAgent sender, string address, out (string pub, string priv, string secp) keys)
+    {
+        if (address == sender.WalletAddress)
+        {
+            keys = (sender.WalletPublicKey, sender.WalletPrivateKey, sender.WalletSecp256k1PublicKey);
             return true;
         }
-        src = default;
+        if (sender.ReceiveWallet != null && sender.ReceiveWallet.TryFindSpendingContext(address, out var ctx))
+        {
+            keys = (ctx.signingPublicKeyBase64, ctx.signingPrivateKeyBase64, ctx.secp256k1PublicKeyBase64);
+            return true;
+        }
+        keys = default;
         return false;
     }
 
@@ -627,11 +645,8 @@ public partial class NetworkRoot : Node
         if (amount <= 0m || string.IsNullOrEmpty(recipientAddress)) return null;
         if (casino.WalletAddress == recipientAddress) return null;
 
-        Transaction tx = casino.CreateSignedTransaction(amount, recipientAddress, CasinoTxFee);
-        if (!casino.Blockchain.AddTransactionToPendingTransactions(tx)) return null;
-
-        SharedNetwork.BroadcastTransaction(casino.NodeId, tx);
-        return tx;
+        // Step 8 — UTXO spend (coin-select casino UTXOs + change to its base address).
+        return BuildAndBroadcastUtxoSpend(casino, recipientAddress, amount, CasinoTxFee, null);
     }
 
     private static string GetNodeAddress(string nodeId) =>
@@ -781,9 +796,8 @@ public partial class NetworkRoot : Node
             string recipientAddress = recipientPool[Random.Shared.Next(recipientPool.Count)];
             if (recipientAddress == node.WalletAddress) continue; // never send to self (recipients are non-miners, but be safe)
 
-            Transaction tx = node.CreateSignedTransaction(sendAmount, recipientAddress, fee);
-            if (node.Blockchain.AddTransactionToPendingTransactions(tx))
-                SharedNetwork.BroadcastTransaction(node.NodeId, tx);
+            // Step 8 — UTXO spend (coin-select the bot's base-address UTXOs + change back to its base).
+            BuildAndBroadcastUtxoSpend(node, recipientAddress, sendAmount, fee, null);
         }
     }
 
@@ -1304,56 +1318,11 @@ public partial class NetworkRoot : Node
         if (sender.WalletAddress == recipientAddress)
             return null;
 
-        // Step 8.4 — a derived-wallet sender (the player) spends UTXO-lite: coin-select one funded owned
-        // address, pay the recipient from it, and return the remainder as a real CHANGE output to a fresh
-        // derived address. Bots/casino/passphrase nodes (no ReceiveWallet) keep the simple single-tx base path.
-        if (sender.ReceiveWallet != null)
-            return CreateSpendWithChange(sender, recipientAddress, amount, fee);
-
-        Transaction tx = sender.CreateSignedTransaction(amount, recipientAddress, fee);
-        if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
-            return null;
-        SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
+        // Step 8 (full UTXO model) — coin-select the sender's owned UTXOs (combining several when no single
+        // one covers the amount — the player's multi-input case) and pay the recipient, returning change to a
+        // fresh derived address (player/Satoshi) or the base address (bots/casino/passphrase). One shared path.
         // No disk write: a block is the only commit (see CreateAndBroadcastTransaction / PersistStateToDisk).
-        return tx;
-    }
-
-    // Step 8.4 — UTXO-lite spend for a derived-wallet sender (the player). Coin-selects ONE funded owned
-    // address (TrySelectSpendSource — exact-match else largest-covering), pays the recipient from it, and
-    // emits the remainder as a real CHANGE output to a FRESH derived address (so the wallet becomes
-    // multi-address by spending, never reusing an address for change). Mirrors the founder scripted-spend
-    // path (InjectHistoricalSignedTxStatic) without salt idempotency or recipient rotation (the payee is an
-    // external address). Returns the main payment tx, or null when no single owned address covers amount+fee
-    // (single-input limit — multi-input consolidation is deferred, OQ-8.1).
-    private static Transaction? CreateSpendWithChange(NodeAgent sender, string recipientAddress, decimal amount, decimal fee)
-    {
-        if (!TrySelectSpendSource(sender, amount + fee, out (string addr, string pub, string priv, string secp) src))
-            return null;
-        if (src.addr == recipientAddress)
-            return null; // never pay the source address itself
-
-        Transaction tx = sender.CreateSignedTransactionFrom(src.addr, src.pub, src.priv, src.secp, amount, recipientAddress, fee);
-        if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
-            return null;
-        SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
-
-        // Real change output to a fresh derived address. The main tx is now pending, so GetAddressSpendableBalance
-        // already nets out amount+fee → the remainder of the consumed UTXO is exactly the change.
-        if (sender.ReceiveWallet != null)
-        {
-            decimal change = sender.Blockchain.GetAddressSpendableBalance(src.addr);
-            if (change > 0m)
-            {
-                string changeAddr = sender.ReceiveWallet.NextReceiveAddress();
-                Transaction changeTx = sender.CreateSignedTransactionFrom(src.addr, src.pub, src.priv, src.secp, change, changeAddr, 0m);
-                if (sender.Blockchain.AddTransactionToPendingTransactions(changeTx))
-                {
-                    SharedNetwork.BroadcastTransaction(sender.NodeId, changeTx);
-                    sender.ReceiveWallet.MarkReceiveConsumed();
-                }
-            }
-        }
-        return tx;
+        return BuildAndBroadcastUtxoSpend(sender, recipientAddress, amount, fee, null);
     }
 
     // Derives a NodeAgent for a passphrase wallet on demand and registers it in SharedNetwork
@@ -1638,6 +1607,48 @@ public partial class NetworkRoot : Node
         }
     }
 
+    // Step 8 (clean reset) — when WorldFormatVersion changes, the persisted world is incompatible (the old
+    // account-model chain has no UTXO linkage). Delete the chain, the per-block checkpoint, the game clock,
+    // and the SC balance state so the next steps re-bootstrap a pristine UTXO world from genesis. SC betting
+    // history (cosmetic) is left untouched. Idempotent: writes the new version stamp so it runs once.
+    private static void ResetWorldIfFormatChanged()
+    {
+        int storedVersion = 0;
+        if (FileAccess.FileExists(WorldVersionPath))
+        {
+            using FileAccess vf = FileAccess.Open(WorldVersionPath, FileAccess.ModeFlags.Read);
+            int.TryParse(vf.GetAsText().Trim(), out storedVersion);
+        }
+        if (storedVersion == WorldFormatVersion)
+        {
+            return;
+        }
+
+        GD.Print($"[NetworkRoot] World format {storedVersion} → {WorldFormatVersion}: resetting chain + clock + financial state for the UTXO model (clean reset).");
+
+        DeleteIfExists(StatePath);
+        DeleteIfExists("user://block_session_checkpoint.json");
+        DeleteIfExists("user://calendar_state.json");
+        DeleteIfExists("user://bankroll_state.json");
+        DeleteIfExists("user://principal_balance_state.json");
+        DeleteIfExists("user://bankroll_program_state.json");
+
+        // The monthly block history chunks are likewise old-format — remove them so the explorer rebuilds.
+        string blocksDirAbs = ProjectSettings.GlobalizePath(BlockchainDir);
+        if (System.IO.Directory.Exists(blocksDirAbs))
+            foreach (string staleFile in System.IO.Directory.GetFiles(blocksDirAbs, "blocks-*.json"))
+                try { System.IO.File.Delete(staleFile); } catch { /* best-effort */ }
+
+        using FileAccess stamp = FileAccess.Open(WorldVersionPath, FileAccess.ModeFlags.Write);
+        stamp?.StoreString(WorldFormatVersion.ToString());
+    }
+
+    private static void DeleteIfExists(string userPath)
+    {
+        if (FileAccess.FileExists(userPath))
+            DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(userPath));
+    }
+
     private static BlockchainStateSnapshot? TryLoadSnapshot()
     {
         if (!FileAccess.FileExists(StatePath)) return null;
@@ -1702,9 +1713,11 @@ public partial class NetworkRoot : Node
             {
                 foreach (Transaction tx in genesis.Transactions)
                 {
-                    if (tx.Sender == BlockchainService.CoinbaseSender && tx.Recipient == BlockchainService.SatoshiAddress)
+                    // Rewrite the genesis coinbase output's recipient (base58 placeholder → Satoshi's derived
+                    // gm1q… address). The output list is the source of truth in the Step 8 UTXO model.
+                    if (tx.IsCoinbase && tx.Outputs.Count > 0 && tx.Outputs[0].Address == BlockchainService.SatoshiAddress)
                     {
-                        tx.Recipient = satoshiAddress;
+                        tx.Outputs[0].Address = satoshiAddress;
                     }
                 }
             }
@@ -1730,21 +1743,21 @@ public partial class NetworkRoot : Node
 
         Transaction bootstrapTx = new()
         {
-            Amount = 50m,
-            Sender = BlockchainService.CoinbaseSender,
-            Recipient = satoshiAddress,
+            // An input-less, coinbase-style bootstrap payout (Step 8 UTXO model): one 50-BTC output to Satoshi.
+            Inputs = new List<TxInput>(),
+            Outputs = new List<TxOutput> { new() { Address = satoshiAddress, Amount = 50m } },
             TransactionId = BlockchainService.BootstrapSecondBlockTxId,
+            Salt = "bootstrap-block2",
             InputDataText = "Bootstrap payout to Satoshi address in block 2",
             InputDataHex = BlockchainService.TextToHex("Bootstrap payout to Satoshi address in block 2"),
             IsSpendable = true
         };
 
-        if (!player.Blockchain.AddTransactionToPendingTransactions(bootstrapTx))
-        {
-            return;
-        }
-
-        SharedNetwork.BroadcastTransaction(player.NodeId, bootstrapTx);
+        // System injection: the normal mempool admission path rejects input-less (coinbase-style) txs, so add
+        // it directly to EVERY node's mempool — whichever node mines block 2 then includes it in the template.
+        foreach (NodeAgent node in SharedNodesById.Values)
+            if (!node.Blockchain.ContainsTransactionId(BlockchainService.BootstrapSecondBlockTxId))
+                node.Blockchain.PendingTransactions.Add(bootstrapTx);
     }
 
     private sealed class BlockchainStateSnapshot

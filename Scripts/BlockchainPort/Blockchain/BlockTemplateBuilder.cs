@@ -23,16 +23,8 @@ public static class BlockTemplateBuilder
 
         decimal feeTotal = selected.Sum(t => t.Fee);
 
-        var coinbase = new Transaction
-        {
-            Amount = blockReward + feeTotal,
-            Sender = BlockchainService.CoinbaseSender,
-            Recipient = minerAddress,
-            // BIP34-style height in the Salt makes each coinbase unique even at equal reward (Step 4b.3).
-            Salt = $"coinbase:{blockIndex}",
-            IsSpendable = true
-        };
-        coinbase.TransactionId = BlockchainService.ComputeTransactionId(coinbase); // content-hash txid (OQ-C6)
+        // Input-less coinbase output = block reward + Σ selected fees, to the miner (Step 8 / A.7).
+        Transaction coinbase = BlockchainService.CreateCoinbase(minerAddress, blockReward + feeTotal, blockIndex);
 
         var blockTransactions = new List<Transaction>(selected.Count + 1) { coinbase };
         blockTransactions.AddRange(selected);

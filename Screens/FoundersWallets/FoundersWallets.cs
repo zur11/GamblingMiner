@@ -79,6 +79,13 @@ public partial class FoundersWallets : Control
 	// Automatic-activity panel (Step 8.2 — scripted historical events, built programmatically)
 	private RichTextLabel _activityLabel = null!;
 
+	// Address-book panel (Step 8 — full UTXO model; mirrors the player's BTCWallet address list so Satoshi's
+	// address-non-reuse spread is as legible as the player's wallet).
+	private VBoxContainer _addressBookPanel = null!;
+	private RichTextLabel _addressBookLabel = null!;
+	private CheckBox _founderShowEmptyToggle = null!;
+	private const int MaxAddressBookRows = 80;
+
 	// Runtime state
 	private string? _currentPassphraseAddress;
 	private string _currentPassphraseNodeId = string.Empty;
@@ -155,6 +162,7 @@ public partial class FoundersWallets : Control
 		BuildLotteryDevPanel();
 		BuildDerivedAddressDevPanel();
 		BuildAutomaticActivityPanel();
+		BuildAddressBookPanel();
 		BuildFounderEconomicsPanel();
 
 		// Default to Satoshi.
@@ -168,6 +176,7 @@ public partial class FoundersWallets : Control
 		_refreshTimer = 0d;
 		RefreshBalances();
 		RefreshAutomaticActivity();
+		RefreshAddressBook();
 		RefreshFounderEconomics();
 	}
 
@@ -578,6 +587,77 @@ public partial class FoundersWallets : Control
 		_activityLabel.Text = sb.ToString();
 	}
 
+	// ── Address book panel (Step 8 — full UTXO model) ─────────────────────────
+	// The founder's wallet as its set of addresses, mirroring the player's BTCWallet list. For Satoshi this
+	// makes the address-non-reuse spread legible (one coinbase per fresh derived address — the fractal ~220).
+	// Spent (empty) addresses are hidden by default, exactly like a real HD wallet that never reuses them.
+
+	private void BuildAddressBookPanel()
+	{
+		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootScroll/RootVBox");
+
+		_addressBookPanel = new VBoxContainer();
+		_addressBookPanel.AddThemeConstantOverride("separation", 6);
+
+		var title = new Label { Text = "Address Book [DEV] (Step 8 — UTXO)" };
+		title.AddThemeFontSizeOverride("font_size", 20);
+		_addressBookPanel.AddChild(title);
+
+		_addressBookPanel.AddChild(new Label
+		{
+			Text = "The wallet as its collection of addresses (UTXOs). Satoshi spreads one coinbase per fresh " +
+			       "address (address non-reuse); the player/Hal/Hearn keep one. Spent (empty) addresses are " +
+			       "hidden by default — like a real HD wallet, they are kept for history but never reused.",
+			// Wrap instead of forcing a huge single-line minimum width (which pushed the panel past the
+			// scroll viewport and clipped the toggle's tick box on the left).
+			AutowrapMode = TextServer.AutowrapMode.Word
+		});
+
+		_founderShowEmptyToggle = new CheckBox { Text = "View empty addresses", ButtonPressed = false };
+		_founderShowEmptyToggle.AddThemeFontSizeOverride("font_size", 16);
+		_founderShowEmptyToggle.Toggled += _ => RefreshAddressBook();
+		_addressBookPanel.AddChild(_founderShowEmptyToggle);
+
+		_addressBookLabel = new RichTextLabel
+		{
+			BbcodeEnabled = true,
+			FitContent = true,
+			CustomMinimumSize = new Vector2(0, 160),
+			ScrollActive = false
+		};
+		_addressBookLabel.AddThemeFontSizeOverride("normal_font_size", 14);
+		_addressBookPanel.AddChild(_addressBookLabel);
+
+		rootVBox.AddChild(_addressBookPanel);
+	}
+
+	private void RefreshAddressBook()
+	{
+		if (_addressBookLabel == null || _currentFounder == null) return;
+
+		var book = _networkRoot.GetNodeAddressBook(_currentFounder.FounderId);
+		decimal total = 0m;
+		foreach ((string _, decimal confirmed, bool _) in book) total += confirmed;
+
+		bool showEmpty = _founderShowEmptyToggle.ButtonPressed;
+		var sb = new System.Text.StringBuilder();
+		sb.AppendLine($"[b]Wallet total[/b]  ({book.Count} address(es)):  [b]{total:F8} BTC[/b]");
+
+		int rows = 0, hidden = 0, overflow = 0;
+		foreach ((string address, decimal confirmed, bool isBase) in book)
+		{
+			// Hide spent/empty (0-balance) non-base addresses by default — never reused, only kept for history.
+			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
+			if (rows >= MaxAddressBookRows) { overflow++; continue; }
+			string tag = isBase ? "[color=aqua]base[/color]" : "[color=gray]coinbase[/color]";
+			sb.AppendLine($"  {tag}  {address}  —  {confirmed:F8} BTC");
+			rows++;
+		}
+		if (overflow > 0) sb.AppendLine($"  [color=gray]… and {overflow} more funded address(es)[/color]");
+		if (hidden > 0)   sb.AppendLine($"[color=gray]… {hidden} empty (spent) address(es) hidden — tick to show.[/color]");
+		_addressBookLabel.Text = sb.ToString();
+	}
+
 	// ── Balance ───────────────────────────────────────────────────────────────
 
 	private void RefreshBalances()
@@ -610,6 +690,7 @@ public partial class FoundersWallets : Control
 		_sendPanel.Visible               = mode == WalletMode.Send;
 		_lotteryDevPanel.Visible         = mode == WalletMode.Base;
 		_derivedDevPanel.Visible         = mode == WalletMode.Base;
+		_addressBookPanel.Visible        = mode == WalletMode.Base;
 
 		if (mode != WalletMode.PassphraseUnlocked && mode != WalletMode.Send)
 			_passphraseInput.Text = string.Empty;
@@ -621,6 +702,7 @@ public partial class FoundersWallets : Control
 		}
 
 		RefreshBalances();
+		RefreshAddressBook();
 	}
 
 	// ── Button handlers ───────────────────────────────────────────────────────

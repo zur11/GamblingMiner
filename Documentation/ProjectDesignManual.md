@@ -2593,13 +2593,26 @@ Also add a **visible canary** (e.g. temporarily append a marker to a Title) to c
 5. Dynamic text → preserve scroll across refresh; add trailing blank lines.
 6. If it doesn't scroll, **print the numbers** before changing structure.
 
+### 29.6 — Horizontal overflow: a non-wrapping `Label` forces the panel's min width (Step 8 fix)
+
+Symptom (hit while adding the FoundersWallets "Address Book" panel): the panel **clipped on the left**, so a left-aligned control — a `CheckBox`, whose tick box sits at its left edge — became **unreachable**.
+
+Cause: a **`Label` with `autowrap_mode = Off` (the default) reports a minimum width equal to its FULL single-line text width.** A long description label (~230 chars) therefore demanded a width wider than the scroll viewport. The vertical `ScrollContainer` has `horizontal_scroll_mode = 0` (disabled, correct), so it can't scroll sideways — instead the oversized content is pushed past the left edge and clipped. The widest child sets the whole `VBoxContainer`'s minimum width, so **one** over-long label drags the entire column off-screen.
+
+Fixes / rules:
+- **Long `Label`s in a width-bounded column must wrap:** set `AutowrapMode = TextServer.AutowrapMode.Word` (C#) / `autowrap_mode = 3` (`.tscn`). A wrapping label's minimum width collapses to ~one word, so it fits the viewport and grows in height instead.
+- **`RichTextLabel` wraps at spaces by default**, so its minimum width = its widest *unbreakable token*. A 42-char `gm1q…` address is one such token (no break points) — keep anything after it (e.g. `  —  50.00000000 BTC`) **after a space** so it wraps onto the next line rather than widening the panel. This is why the address-book label (full addresses + balances) did **not** overflow but the plain description label did.
+- **Diagnosing:** if a panel clips sideways with horizontal scroll disabled, look for the *widest* child's minimum width — it's almost always a non-wrapping `Label`, not the scroll setup. Left-aligned interactive controls (checkbox ticks, radio buttons) are the first to become unclickable, which is the tell.
+
 ---
 
 ## Chapter 30 — UTXO Realism & Address Non-Reuse (Step 8)
 
-Refines the **testing-stage account/balance model** toward a realistic wallet: every receive lands on a *fresh* derived address (the historical Satoshi "one address per block reward" practice) and every spend returns change to a *fresh* address. Built on the candidate engine (Ch. 21) and founder economics (Ch. 28). Full plan + decisions + per-phase test log: `AIHelperFiles/step8-utxo-realism-plan.md`.
+Replaces the **testing-stage account/balance model** with a **real, multi-input/multi-output UTXO model** (Bitcoin's actual transaction model): a transaction spends a set of prior outputs ("coins") as **inputs** and creates new **outputs**; balance = the sum of an address's unspent outputs; the fee = Σinputs − Σoutputs. On top of that, every receive can land on a *fresh* derived address (Satoshi's "one address per block reward" practice) and every spend returns change to a *fresh* address. Built on the candidate engine (Ch. 21) and founder economics (Ch. 28). Full plan + decisions + test log: `AIHelperFiles/step8-utxo-realism-plan.md` (core phases 8.1–8.4 in §3; the full model is Appendix A, **now implemented**).
 
 > **Terminology (Decision D0):** the many-addresses mechanic is **address non-reuse** / **one address per receive**, *not* "the Patoshi pattern." The real Patoshi pattern is a **mining-forensic** fingerprint (ExtraNonce/decrementing-nonce/timestamp artifacts) our engine can't reproduce — reserved for the optional, unbuilt Phase 8.5. Address non-reuse is a *wallet/privacy* practice and is what this step implements.
+
+> **History (why two models):** core Step 8 (8.1–8.4) first shipped a **UTXO-lite** stand-in (single-input + a paired change tx) on top of the still-single-sender `Transaction`. The first real multi-address send that no single address could fund (a player consolidating many coinbase UTXOs) hit UTXO-lite's single-input wall — exactly the trigger the plan named — so the **full UTXO model (Appendix A)** was promoted and now supersedes UTXO-lite. This chapter documents the **implemented full model**; the UTXO-lite phrasing survives only in the historical plan notes.
 
 ### 30.1 — `DerivedAddressWallet`: the HD-lite core (Phase 8.1)
 
@@ -2613,37 +2626,93 @@ addr(i>=1) == CryptoUtils.DeriveGmAddress(seed + " #r" + i)
 `i = 0` reproduces today's base address exactly, so genesis/bootstrap pins and existing balances are untouched; `i ≥ 1` are the fresh receive/change addresses. The `" #r"` namespace keeps these distinct from ordinary passphrase derivation.
 
 - **No persistence (Decision D3):** "a block is the only commit to disk," so an app restart reverts the world to the last block. The wallet must therefore be **reconstructed from the chain**, never read from a side file. `Rescan(appearsOnChain, gapLimit)` derives `addr(0), addr(1), …` and walks until `gapLimit` consecutive unused indices (BIP44 convention = 20, OQ-8.4), setting `NextReceiveIndex` (first gap) and `OwnedAddresses` (the funded/used set). `NetworkRoot.CollectUsedAddressSet()` builds the on-chain address set in **one pass** so each probe is O(1).
-- `NextReceiveAddress()` returns `addr(NextReceiveIndex)` **without advancing**; `MarkReceiveConsumed()` advances the frontier when a rotated receive actually commits (a block is mined / a change tx is added). `TryFindSpendingContext(address)` resolves the per-address keypair so any owned address can sign.
+- `NextReceiveAddress()` returns `addr(NextReceiveIndex)` **without advancing**; `MarkReceiveConsumed()` advances the frontier when a rotated receive actually commits (a block mined / a change output created). `TryFindSpendingContext(address)` resolves the per-address keypair so any owned address can sign.
 
-### 30.2 — Satoshi: one address per coinbase (Phase 8.2)
+### 30.2 — The full UTXO transaction model (Appendix A — implemented)
 
-Address non-reuse is a **Satoshi-only** trait in Basic Mode v1 — the source notes other early miners reused addresses constantly. Only the `satoshi` node gets a `ReceiveWallet` (`NetworkRoot.RegisterFounderNode`); Hal/Hearn/bots/casino keep a single base address.
+**Data model** (`Models.cs`):
 
-- Each Satoshi coinbase pays `ReceiveWallet.NextReceiveAddress()` instead of the static base; the frontier advances on commit (`NodeAgent.OnCoinbaseCommitted`), positioned from the chain at init (`RescanFounderReceiveWallets`). **Index 0 is reserved** as the base/identity address (genesis, p2p receives); coinbases use index ≥ 1.
-- **Fractal sizing (§0.1 of the plan):** one fresh address per 50-BTC coinbase yields ~220 addresses by the 11,000-BTC floor — the exact 1% analog of the real ~20,000+, with no extra machinery.
-- Balance displays **aggregate across the derived set** (`AggregateSpendable`), fixing the "Satoshi shows 0 BTC" artifact where coinbases sit on derived addresses, not the base.
+```
+OutPoint { PrevTxId, Vout }                         // references a prior output (the coin being spent)
+TxInput  { OutPoint Source; Address;                // Address = the consumed output's owner (denormalized)
+           SignatureBase64; PublicKeyBase64; Secp256k1PublicKeyBase64 }   // per-input ownership + signature
+TxOutput { Address; Amount }                          // its position in Outputs[] is its vout
+Transaction { List<TxInput> Inputs; List<TxOutput> Outputs; Fee; Salt; TransactionId; InputData*; IsSpendable }
+```
 
-### 30.3 — UTXO-lite spends + real change, and E8 (Phase 8.3)
+`Inputs`/`Outputs` are the **single source of truth**. The legacy `Sender`/`Recipient`/`Amount` (and the single signature fields) survive as **read-only computed shims** (`[JsonIgnore]`) so unported readers (Block Explorer, stats, scripted-activity scans) keep working: `Sender` = first input's address (or `"00"` for a coinbase), `Recipient`/`Amount` = first output. A **coinbase is an input-less tx** (`IsCoinbase => Inputs.Count == 0`); the old `"00"` sentinel is now only a display label.
 
-Our `Transaction` is single-sender → single-recipient (no native multi-output). **UTXO-lite (Decision D1)** delivers genuine change behavior without that refactor: a spend consumes exactly **one** funded derived address (the chosen "UTXO"), pays the recipient, and returns the remainder as a **second** tx to a **fresh** address — a real change output, never a self-send (so it passes the engine's "no paying your own sender" rule). Multi-input consolidation is the explicit deferral (OQ-8.1; full design in plan Appendix A).
+**The UTXO set** (`BlockchainService`, A.3) is rebuilt by **replaying the chain** oldest→newest (`GetUtxoSet`, keyed `"txid:vout"`), cached and invalidated by a `_chainVersion` counter bumped on every chain mutation — never persisted (consistent with revert-to-last-block). Each entry carries its block height, `IsCoinbase` and `IsSpendable`. Balance / spendable / coin-selection all read from it: `GetAddressData` (confirmed mature spendable, excluding the unspendable genesis and immature coinbase) and `GetSpendableUtxos(addresses)` (the selectable coins, minus any reserved by a pending tx).
 
-- `NodeAgent.CreateSignedTransactionFrom` signs from any owned address. `NetworkRoot.TrySelectSpendSource` coin-selects **exact-match UTXO first, else largest-covering**.
-- Scripted founder events were reworked UTXO-correct: **E8** (17.49 change → a fresh Satoshi address, from a pristine 50-BTC coinbase spent in E6=32.51) is now a real change output — **the deferred Step 7 item, resolved**. E7 split into E7a (32.51) + E7b (50.00); E4 sends 40 change. Idempotency is now **salt-based** (the source address varies, so the txid is no longer fixed).
+**Validation** (`AddTransactionToPendingTransactions`, A.4) — per spend: every input's outpoint exists in the confirmed set, is **unspent**, **mature** if coinbase, not **double-spent** by another pending tx, and its referenced output's address matches the input's recorded address; `Σinputs ≥ Σoutputs`; and `Fee == Σinputs − Σoutputs` exactly. Coinbases never enter the mempool (input-less are rejected there; they are minted only inside the block template). The old "a tx may not pay its own sender" rule is **dropped** — change to one's own (fresh) address is now legitimate and expressed as a distinct output.
 
-### 30.4 — Player wallet UTXO realism (Phase 8.4) — verified
+**Signing** (`NodeAgent.BuildSignedSpend`, A.5) is **one signature per input**, each over the tx **sighash = its txid** (the content hash committing to every input/output/fee/salt), so inputs can be drawn from several owned derived addresses and nothing can be reshuffled. `ComputeTransactionId` (A.6) hashes the canonical input-outpoint + output-(address,amount) form; the Merkle leaf is unchanged (still = txid), so `MerkleTree`/header hashing needs no edit.
 
-**Decision (locked):** coinbase address spread is a **Satoshi-only** trait. The player and every other miner keep a **single** coinbase/identity address; the player meets UTXO realism through **change outputs on send**, not coinbase spread.
+### 30.3 — One unified spend path (multi-input coin selection + change)
 
-- **The player carries a `DerivedAddressWallet` but does not rotate its coinbase.** `NodeAgent` gained a `RotateCoinbaseAddress` flag (default `true` for rotating founders; **`false` for the player**). With the flag false, `CoinbaseRecipient` returns the base address and `OnCoinbaseCommitted` does **not** advance the frontier — so mined rewards (and external deposits) always accrue to the base, while the derived wallet is used **only for change addresses + signing any owned address**. Wired in `NetworkRoot.CreateAndRegisterNode` (player branch): `node.ReceiveWallet = new DerivedAddressWallet(seedPhrase); node.RotateCoinbaseAddress = false;`. Because `addr(0) == BaseAddress` (both `CryptoUtils.DeriveGmAddress(seed)`), coin-selection resolves the base address's signing keys via index 0.
-- **Send → UTXO-lite with change.** `NetworkRoot.CreateAndBroadcastTransactionToAddress` routes any sender that has a `ReceiveWallet` (the player) through the new **`CreateSpendWithChange`**: coin-select one owned address, pay the payee, and emit the remainder to a **fresh derived address** (`MarkReceiveConsumed` advances the frontier). Bots/casino/passphrase nodes (no `ReceiveWallet`) keep the simple single-tx base-address path unchanged. This reuses the 8.3 spend primitives — the player's wallet first becomes multi-address here, by spending.
-- **The change math handles fees.** After the main tx is pending, `GetAddressSpendableBalance(src)` already nets out `amount + fee`, so the change tx (fee 0) carries exactly the remainder of the consumed UTXO.
-- **BTCWallet aggregated view.** The base panel shows **"Wallet total (N addresses): X BTC"** = sum across the owned set (base + any change addresses), reverting to a plain "Balance:" when there is just one address. An expandable **"Show addresses ▸"** list (built programmatically, fed by `NetworkRoot.GetNodeAddressBook("player")`) renders each address with a `[base]`/`[change]` tag and its balance — so the player *sees* that a wallet is a collection of addresses/UTXOs (the OQ-2 educational core). Pending-outgoing aggregates across the set.
-- **No persistence.** The player frontier is repositioned from the chain by `RescanFounderReceiveWallets` (which now rescans every derived wallet, founders and player), consistent with the revert-to-last-block model.
+`NetworkRoot.BuildAndBroadcastUtxoSpend(sender, recipient, amount, fee, salt)` is **THE** spend path for *every* node — player, founders, bots, casino, scripted historical injector. It:
 
-**Verified in-engine:** coinbases keep landing on the base address (no spread); a send produces change on a brand-new derived address; the aggregated total is conserved and the address list grows by the change address.
+1. Gathers the sender's owned addresses (`ReceiveWallet.OwnedAddresses ∪ base`, or just base).
+2. **Coin-selects** via `SelectUtxos`: prefer an **exact single-UTXO match** (amount+fee → no change; preserves the scripted exact-amount events); else **accumulate largest-first** until covered — *combining several UTXOs into one transaction* (the multi-input consolidation case).
+3. Resolves each chosen UTXO's signing keys (`TryResolveInputKeys`: base → node keypair; derived → `ReceiveWallet.TryFindSpendingContext`).
+4. Builds one signed tx: output 0 = the payee; output 1 = **change** = `Σselected − amount − fee`, to a **fresh** derived address (player/Satoshi) or the base (bots/casino — single-address reuse, acceptable for them).
 
-### 30.5 — What's deferred
+This replaced the UTXO-lite `CreateSpendWithChange` / `TrySelectSpendSource` and the old per-node `CreateSignedTransaction*`. All the old send entry points (`CreateAndBroadcastTransaction`, `CreateAndBroadcastTransactionToAddress`, `SendFromCasino`, bot recirculation, `InjectHistoricalSignedTxStatic`) now funnel through it. The **scripted historical events** become single 1-in/2-out txs: E6 = Satoshi→Hearn 32.51 with **E8 = the 17.49 change as output 1** (no longer a separate tx); E7a/E7b/E4 likewise; idempotency stays **salt-based**.
+
+### 30.4 — Player vs Satoshi: the one-line difference, and the UI
+
+Both share the *same* spend path; they differ only in **coinbase routing**, governed by `NodeAgent.RotateCoinbaseAddress`:
+
+| | Satoshi | Player |
+|---|---|---|
+| `ReceiveWallet` | yes | yes |
+| `RotateCoinbaseAddress` | **true** | **false** |
+| Coinbase lands on | a **fresh** derived address each block (`CoinbaseRecipient` → `NextReceiveAddress`, frontier advances via `OnCoinbaseCommitted`) | always the **base** address |
+| Becomes multi-address by | **mining** (one address per block) | **spending only** (change → fresh address) |
+| Topology | ~109+ addresses, one 50-BTC coin each (address non-reuse) | many coins piled on one base address |
+
+So a Satoshi 5000-BTC send combines ~100 inputs across ~100 *distinct* addresses; a player big send combines many coins from *few* addresses — **identical coin-selection**, different UTXO topology. Hal/Hearn/bots/casino have no `ReceiveWallet` (single address); the spread is the Satoshi-only "Patoshi" trait.
+
+**Spent addresses are never reused.** When a spend fully consumes an address's coins, that address keeps a `0.00000000` balance forever — the correct HD-wallet privacy behavior. Addresses are free (deterministically re-derivable), so the wallet always moves to a fresh index; the empty ones are kept only so the wallet still recognizes them, never handed out again.
+
+**UI (both wallets show the wallet *as a set of addresses*):**
+- **BTCWallet** (player): "Wallet total (N addresses)" = aggregate across the owned set + an expandable **"Show addresses ▸"** list (`NetworkRoot.GetNodeAddressBook("player")`), each row tagged `[base]`/`[change]` with its balance.
+- **FoundersWallets**: an **"Address Book [DEV]"** panel mirrors it for the selected founder (`GetNodeAddressBook(founderId)`) — for Satoshi it renders his ~109 `coinbase` addresses + aggregated total, making the address-non-reuse spread as legible as the player's wallet. His scripted txs remain in the separate **"Automatic Activity"** panel (Step 8.2 / OQ-8.6).
+- **"View empty addresses" toggle** (both screens, **default unchecked**): spent/0-balance non-base addresses are hidden by default with a "… N empty (spent) address(es) hidden" note; tick to reveal them. The base/identity address always shows even at 0.
+
+### 30.5 — Clean reset (no in-place migration)
+
+The old account-model chain has **no input→output (UTXO) linkage**, so it cannot be replayed into a UTXO set. Rather than a fragile heuristic migration, the format change triggers a **clean reset** (`NetworkRoot.ResetWorldIfFormatChanged`, gated by `WorldFormatVersion`): on a version bump it deletes the chain state, the per-block checkpoint, the game clock (`calendar_state.json`) and the SC balance states, then writes the new version stamp — so the next launch re-bootstraps a pristine UTXO world from genesis to 21 Mar 2009. The block-history chunks (`blocks-*.json`) are wiped too. Idempotent (runs once per version).
+
+### 30.6 — In-engine audit (post-implementation verification)
+
+A 122-block run (player era reached, founders mining, a manual dev send) was audited directly from `state.json`:
+
+| Check | Result |
+|---|---|
+| **Conservation** `Σinputs − Σoutputs == Fee` | ✅ holds on **every** spend |
+| **Total supply** | ✅ 6150.2 BTC = genesis 50 + bootstrap 50 + 121×50 reward + 0.2 fees recirculated |
+| **Double-spends** | ✅ **0** — every outpoint consumed at most once |
+| **Address non-reuse (Satoshi)** | ✅ **109 distinct coinbase addresses** (one 50-BTC coin each; tracking toward the fractal ~220) |
+| **Player / Hal coinbase** | ✅ **one** address each (spread is Satoshi-only) |
+| **Coinbase structure** | ✅ input-less, single output, `salt = coinbase:N` |
+| **Multi-input consolidation** | ✅ a **100-input → 1-output 5000-BTC** Satoshi→player tx: 100 *distinct* input addresses, each matching its referenced output exactly (0 mismatches) — the headline demonstration |
+| **Scripted E4** (12 Jan, Satoshi→Hal 10) | ✅ 1-in/2-out: 10 to Hal + 40 change |
+
+Integrity is impeccable: money is conserved, coinbase maturity is respected, no double-spend is possible, and multi-input consolidation works exactly like real Bitcoin. (The ~18 Apr Hearn round-trip / E6+E8 was not yet reached — the run was still in March 2009.)
+
+### 30.7 — Generalising to casino & bots (sustainability)
+
+The engine is **already general** — `BuildAndBroadcastUtxoSpend` works for any node, and `ReceiveWallet` + `RotateCoinbaseAddress` are per-node config. Separate three capabilities by cost:
+
+- **Multi-input spending (combine UTXOs)** — already applies to **everyone** (shared path). Cost: trivial. Fully sustainable, no limit.
+- **Change-address rotation** (the player's pattern) — cheap and general. **Casino:** easy and recommended — it already has a seed; just give it a `ReceiveWallet` with `RotateCoinbaseAddress = false`, exactly like the player. **Bots:** feasible but blocked by **no stored seed** (OQ-8.2) — `DerivedAddressWallet` needs a seed to derive `addr(i)`; bots are created from random/registry keypairs, so each would need a generated, persisted seed.
+- **Coinbase-address spread (full address non-reuse)** — the **cost driver** and the sustainability line. It is what multiplies the address universe (Satoshi alone ~220). Generalising it to all miners would be **historically wrong** (other early miners reused addresses) *and* would inflate the per-launch chain-rescan (D3, no persistence: `Rescan` derives SHA256 per index up to each rotating wallet's frontier+gap). **Keep it Satoshi-only** — which is simultaneously the faithful choice and the performance safeguard.
+
+**Verdict:** sustainable at a general level *as long as coinbase spread stays Satoshi-only*. The thing to watch as the chain grows is the launch-time chain-replay rescan (today O(chain) cached + O(addresses) derivation — comfortable at fractal scale); if it ever bites, cache the frontier/UTXO set per session and re-scan only on a real revert. A separate future note: there is **no block-weight model** (`SizeVBytes = 1` uniform), so a pathological many-input tx isn't penalised — a per-input cost or auto-consolidation in low-fee periods would be the real-Bitcoin answer if fragmentation ever grows large.
+
+### 30.8 — What's deferred
 
 - **Phase 8.5** (the real Patoshi *mining-forensic* view) — documented only, **not built** in Basic Mode v1 (OQ-8.5).
-- **Phase 8.6** (global D0 terminology rename across all docs; record §6 + E8 resolved) — pending.
-- **Bot multi-address** (OQ-8.2), **player deposit-address rotation** (OQ-8.3), **multi-input consolidation** / full UTXO model (OQ-8.1, plan Appendix A), and **network-wide fee activation ≈ 2009-04-26** (OQ-8.7, its own branch) — all deliberately carried forward.
+- **Phase 8.6** (global D0 terminology rename across the remaining docs) — pending.
+- **Bot multi-address** (OQ-8.2 — needs a per-bot seed), **player deposit-address rotation** (OQ-8.3), **separate receive/change derivation branches** (BIP44 external/internal — we use one index space), and **network-wide fee activation ≈ 2009-04-26** (OQ-8.7, its own branch) — all deliberately carried forward.

@@ -1,4 +1,5 @@
 using GodotBlockchainPort.Blockchain;
+using System.Collections.Generic;
 using System.Linq;
 #nullable enable
 
@@ -56,45 +57,28 @@ public sealed class NodeAgent
         WalletSecp256k1PublicKey = secp256k1PublicKey;
     }
 
-    // deterministicSalt: pass a fixed string (e.g. a historical-event key) to make the content-hash txid
-    // reproducible across runs/frames, so the scripted-history injectors (Step 7.3/7.4) get idempotency for
-    // free via ContainsTransactionId. Default null keeps the random per-tx salt for normal traffic.
-    public Transaction CreateSignedTransaction(decimal amount, string recipientAddress, decimal fee = 0m, string? deterministicSalt = null)
+    // Step 8 (full UTXO model, A.5) — build a signed spend from N inputs to M outputs. Each input carries the
+    // outpoint it consumes + the keys of the address that owns that output; signing is PER INPUT over the tx
+    // sighash (the txid), so inputs across several owned derived addresses can be combined (the consolidation
+    // case). deterministicSalt makes the txid reproducible for scripted historical events (idempotency);
+    // null keeps a random per-tx salt for normal traffic.
+    public Transaction BuildSignedSpend(
+        IReadOnlyList<(OutPoint outpoint, string address, string signingPublicKey, string signingPrivateKey, string secp256k1PublicKey)> inputs,
+        List<TxOutput> outputs, decimal fee, string? deterministicSalt = null)
     {
-        Transaction tx = Blockchain.CreateUnsignedTransaction(amount, WalletAddress, recipientAddress);
-        if (deterministicSalt != null)
+        var txInputs = inputs.Select(i => new TxInput
         {
-            tx.Salt = deterministicSalt;
-        }
-        tx.Fee = fee; // set before computing the id so amount + fee are part of the content hash (Step 4b.2/4b.3)
-        tx.TransactionId = BlockchainService.ComputeTransactionId(tx); // content-hash txid (OQ-C6)
-        string payload = BlockchainService.BuildTransactionPayload(tx);
-        tx.SignatureBase64 = CryptoUtils.Sign(payload, WalletPrivateKey);
-        tx.PublicKeyBase64 = WalletPublicKey;
-        tx.Secp256k1PublicKeyBase64 = WalletSecp256k1PublicKey;
-        return tx;
-    }
+            Source = i.outpoint,
+            Address = i.address,
+            PublicKeyBase64 = i.signingPublicKey,
+            Secp256k1PublicKeyBase64 = i.secp256k1PublicKey
+        }).ToList();
 
-    // Step 8.3 — sign a transaction from an ARBITRARY owned address (a derived coinbase / change / received
-    // output), not just the base WalletAddress, using that address's own keypair. Lets a multi-address founder
-    // spend a chosen "UTXO" and emit change to a fresh address (UTXO-lite). The caller (NetworkRoot) resolves
-    // the per-address keys via DerivedAddressWallet.TryFindSpendingContext. The salt keeps the txid
-    // reproducible for scripted historical events; note the txid now commits to the chosen source address.
-    public Transaction CreateSignedTransactionFrom(
-        string fromAddress, string fromSigningPublicKey, string fromSigningPrivateKey, string fromSecp256k1PublicKey,
-        decimal amount, string recipientAddress, decimal fee = 0m, string? deterministicSalt = null)
-    {
-        Transaction tx = Blockchain.CreateUnsignedTransaction(amount, fromAddress, recipientAddress);
-        if (deterministicSalt != null)
-        {
-            tx.Salt = deterministicSalt;
-        }
-        tx.Fee = fee;
-        tx.TransactionId = BlockchainService.ComputeTransactionId(tx);
-        string payload = BlockchainService.BuildTransactionPayload(tx);
-        tx.SignatureBase64 = CryptoUtils.Sign(payload, fromSigningPrivateKey);
-        tx.PublicKeyBase64 = fromSigningPublicKey;
-        tx.Secp256k1PublicKeyBase64 = fromSecp256k1PublicKey;
+        Transaction tx = BlockchainService.CreateUnsignedTransaction(txInputs, outputs, fee, deterministicSalt);
+        tx.TransactionId = BlockchainService.ComputeTransactionId(tx);   // content-hash txid (OQ-C6 / A.6)
+        string payload = BlockchainService.BuildTransactionPayload(tx);  // sighash = the txid (A.5)
+        for (int k = 0; k < txInputs.Count; k++)
+            txInputs[k].SignatureBase64 = CryptoUtils.Sign(payload, inputs[k].signingPrivateKey);
         return tx;
     }
 
