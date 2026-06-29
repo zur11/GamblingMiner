@@ -2513,7 +2513,7 @@ Mike Hearn is a registered founder node who **never mines** (real history: no do
 
 The famous **~18 Apr 2009 32.51 round-trip** (literal — Hearn sends first; Q-N1):
 - **E6** Satoshi → Hearn 32.51 (seed) → **E6b** Hearn → Satoshi 32.51 (his single outgoing tx) → **E7** Satoshi → Hearn 82.51 (the coin + 50 gift). Net **Hearn +82.51**.
-- **E8** (17.49 change) is **not** modelled here — change is implicit in the account model and a Satoshi→Satoshi self-send is rejected by the engine; it returns as a real change output in **Step 8** (UTXO realism).
+- **E8** (17.49 change) was **not** modelled in Step 7 — change was implicit in the account model and a Satoshi→Satoshi self-send was rejected by the engine. It is **now a real change output** under the **Step 8** UTXO model (a fresh Satoshi address; audited on-chain — see Ch. 30).
 
 ### 28.5 — The 12 Jan 2009 10 BTC Satoshi → Hal tx (E4)
 

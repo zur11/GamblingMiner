@@ -373,12 +373,12 @@ These values are fixed and must be consistent across all docs, UI, and code:
 - Calendar-based history browsing
 - Background simulation: autobet + bots keep running, mining, and recharging across all scenes (SimulationService autoload)
 - Historical founders (Step 7): Satoshi/Hal/Hearn nodes; first-launch bootstrap to 21 Mar 2009; founders as regulated concurrent miners (`FoundersMiningService`); Satoshi 11k-BTC ramp + disappearance logic; Hal drip-fade to 9 Aug 2009; 12 Jan 10 BTC Satoshi→Hal tx; April 2009 Hearn 32.51 round-trip (`HistoricalEventScheduler`); FoundersWallets DEV readout + `founders_trace.csv`
+- UTXO realism (Step 8): real multi-input/multi-output UTXO model (chain-replayed UTXO set, per-input signing, `Fee = Σin − Σout`, multi-input coin selection + change); Satoshi-only coinbase address non-reuse (~220 addresses); change rotation for player/casino/Hal/Hearn; E8 reinstated; clean reset (`WorldFormatVersion`); address-book UIs (BTCWallet/FoundersWallets/CasinoFinances) + "View empty addresses" toggle. In-engine audited (conservation, 0 double-spends, 100-input consolidation, full April round-trip). See `Documentation/ProjectDesignManual.md` Ch. 30.
+- Bot mining + BTC transactions (mine blocks; recirculate BTC via scheduled payouts); ECDSA-signed transactions; mempool (pending transactions)
 
 ### Prototype (Partially Implemented)
 
-- Bot mining nodes (can mine blocks; no wallet transactions yet)
-- Transaction model with ECDSA signatures
-- Mempool data structure (pending transactions)
+- Bots stay single-address (no per-bot seed → no change rotation yet — OQ-8.2)
 
 ### Planned (P0–P8 Roadmap)
 

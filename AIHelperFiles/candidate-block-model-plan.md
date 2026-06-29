@@ -19,7 +19,7 @@ This is the detailed plan for `PRIVATE_ROADMAP.md` **P4 (Block Template Builder)
 - **Difficulty**: hash must start `"00"` and next hex ≤ `'6'` (~585 attempts). Unchanged target.
 - **Coinbase**: created **after** mining and pushed to pending → it lands in the **next** block (matures one block later). `CreateGenesisCoinbase` carries the headline in `InputData`.
 - **No** `MerkleRoot` on `Block`; **no** `Fee` on `Transaction`; **no** 24-tx cap enforced; **no** feerate ordering.
-- **Balance model**: account-based (`GetAddressData` sums per-address txs) — testing-stage; UTXO realism is roadmap Step 8.
+- **Balance model**: account-based at the time of writing — **since replaced by a real UTXO model (Step 8, done)**; `GetAddressData` now reads the chain-replayed UTXO set. See ProjectDesignManual Ch. 30.
 
 ---
 

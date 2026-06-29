@@ -112,11 +112,11 @@ Target model:
 - BTC circulation should begin around block 4 or 5.
 - Basic Mode block cap: `24 transactions`.
 
-### Address & UTXO model
+### Address & UTXO model — ✅ IMPLEMENTED (Step 8)
 
-- Balances are currently **account/balance-based** (sum of confirmed transactions per address) — a **testing-stage** simplification.
-- Target: simulate a **UTXO-style** system as realistically as possible, made tangible through the **passphrase-wallet** system (many addresses from one seed).
-- Direction: derive a **fresh address per receive** (coinbase reward or deposit) — the historical **Patoshi pattern** — so spends produce real change outputs and players learn UTXO mechanics hands-on. Founder nodes (Satoshi especially) adopt this first. See `AIHelperFiles/historical-founders-and-bootstrap-plan.md` and `historical-blockchain-events-research.md`.
+- **Implemented**: a **real multi-input/multi-output UTXO model** (Bitcoin's actual transaction model). A `Transaction` holds `Inputs[]` (each referencing a prior output) and `Outputs[]`; balance = Σ of an address's unspent outputs; fee = Σinputs − Σoutputs. The UTXO set is rebuilt by replaying the chain (never persisted). One unified spend path coin-selects owned UTXOs (exact match, else largest-first **multi-input** combine) and returns **change** to a fresh address.
+- **Address non-reuse** (a fresh derived address per receive) is **Satoshi-only** (his ~220-address "one coinbase per address" spread — the audited fractal analog of the historical ~20,000). The player, casino, Hal, and Mike Hearn keep one coinbase/receive address and become multi-address only via **change outputs on send**; the bots stay single-address (no stored seed — deferred).
+- **Terminology (D0)**: this address mechanic is **address non-reuse**, *not* the "Patoshi pattern" (which is a mining-forensic fingerprint — ExtraNonce/nonce/timestamp artifacts — reserved for an optional, unbuilt forensic view). The deferred Step-7 **E8** (17.49 Hearn change) is now a real change output. See `Documentation/ProjectDesignManual.md` Ch. 30 + `AIHelperFiles/step8-utxo-realism-plan.md`.
 
 The player should see recent bot bets, not full bot strategies. The player can infer strategy parameters from visible behavior.
 

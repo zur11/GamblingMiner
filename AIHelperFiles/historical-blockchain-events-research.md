@@ -1,6 +1,6 @@
 # Historical Blockchain Events — Research & Data Capture
 
-**Status**: **Step 7 roster + events CANONICAL** (implemented; see `step7-historical-character-economics-plan.md`). The v1 roster (Satoshi/Hal/Hearn) and the reproduced events (E1 genesis, E4 10 BTC Satoshi→Hal, E6/E6b/E7 Hearn 32.51 round-trip → +82.51) are frozen and wired in code. **Still open (Step 8):** §6 address-reuse research + E8 (17.49 change) as a real change output. Companion to `historical-founders-and-bootstrap-plan.md`.
+**Status**: **Step 7 roster + events CANONICAL**, **Step 8 (UTXO realism) DONE**. The v1 roster (Satoshi/Hal/Hearn) and the reproduced events (E1 genesis, E4 10 BTC Satoshi→Hal, E6/E6b/E7 Hearn 32.51 round-trip → +82.51) are frozen and wired in code. **§6 address-reuse research RESOLVED** and **E8 (17.49 change) IMPLEMENTED** as a real change output (audited on-chain — see `step8-utxo-realism-plan.md` + ProjectDesignManual Ch. 30). Companion to `historical-founders-and-bootstrap-plan.md`.
 **Purpose**: build one authoritative table of **every early-Bitcoin character** and **every on-chain in/out event** we want to reproduce in the fractal (100X, 1%-supply) replica — grounded in real history wherever possible. This file is filled in two passes:
 
 1. **Questionnaire pass (now)** — list every fact we need, mark what is already known vs. what must be decided/researched. Answer inline under each `❓`.
@@ -51,7 +51,7 @@ From `Los Primeros Mineros de Bitcoin.txt` and `satoshi interactions.txt`:
 - ✅ Target 11,000 BTC, retire ≥ 2011-04-26, exponential ramp if short.
 - ✅ Genesis recipient (unspendable) + dominant bootstrap miner.
 - ❓ **Q-S1**: After retirement, do his coins stay frozen forever (recommended), or can a late-game "Satoshi returns" event ever move them?
-- ✅ **Q-S2 (RESOLVED via Q-X1)**: Model **multiple** Satoshi addresses — a fresh passphrase-derived address per coinbase reward / deposit ("Patoshi pattern"), plus change addresses for E8. One single base address is the testing-only shortcut, not the target. Pending the §6 research on whether any real Satoshi address was reused.
+- ✅ **Q-S2 (RESOLVED via Q-X1; IMPLEMENTED in Step 8)**: Satoshi uses **multiple** addresses — a fresh derived address per coinbase reward (**address non-reuse**, not the "Patoshi" mining fingerprint — D0), plus change addresses for E8. §6 research confirmed strict one-address-per-receive (incl. the receive side). Done & audited (~109 Satoshi coinbase addresses on-chain).
 
 ### 3.2 Hal (`hal`)
 - ✅ Joins 2009-01-11; exactly 3 bootstrap blocks (~12 Jan, ~early Feb, ~early Mar).
@@ -117,10 +117,11 @@ Keep real base58 addresses **as commented references only**; all actual payouts 
 
 ---
 
-## 6. Data still to verify (research TODO)
+## 6. Address-reuse research — ✅ RESOLVED (Step 8 / D4–D5)
 
-- ⭐ **Which address(es) did known humans pay Satoshi to** (Mike Hearn and any others), and was any Satoshi address **reused** (received > once)? Decides whether strict one-address-per-receive holds or needs documented exceptions. (Drives Q-X1 / Q-S2.)
-- ❓ Hal Finney's real receiving address for the 10 BTC (block 170) — for the reference column.
+- ✅ **Which address(es) did humans pay Satoshi to, and was any Satoshi address reused?** **RESOLVED** (from `patoshi pattern.txt` + `Respuesta ¿Hal Finney Envió BTC a Satoshi.txt`): effectively **no reuse** — one address per block reward, the only outgoing was the single 10 BTC → Hal, and **even the address Satoshi used to receive from Mike Hearn was new** (not genesis, not the Hal-related address). ⇒ **strict one-address-per-receive holds on both the receive and change side**; genesis keeps its fixed unspendable treatment. Implemented as **Satoshi-only** coinbase address non-reuse (the other miners reused addresses). (Resolved Q-X1 / Q-S2.)
+- ✅ **Reference base58 addresses captured** (commented reference only — payouts use derived `gm1q…`): Satoshi block-9 coinbase `1HLoD9E4SDFFPDiYfNYnkBLQ85Y51J3Zb1`; Hal's 10-BTC receiving address `1Q2TWHE3GMdB6BZKafqwxXtWAWgFt5Jvm3`; Hearn `1JuEjh9znXwqsy5RrnKqgzqY4Ldg7rnj5n`.
+- ❓ *(still open, non-blocking)* Exact real timestamps for blocks 1–170 to validate bootstrap spacing.
 - ❓ Exact real timestamps for blocks 1–170 to validate our "Satoshi mines ~everything, Hal 3 blocks" bootstrap spacing feels right.
 - ❓ Whether to include the 2010-05-22 pizza (10,000 BTC) and the mid-2010 faucet as player-era flavour events.
 - ❓ Gavin Andresen's first Satoshi interaction date/amount, if we add him.

@@ -740,7 +740,7 @@ The Notepad carries this same warning on every open. Its legitimate use is passp
 
 **OQ-1 — RESOLVED**: secp256k1 for all address derivation; P-256 stays for signing. See Phase 0.3/0.4.
 
-**OQ-2 — RESOLVED (clarified 2026-06-19)**: Balances are currently computed **account/balance-based** — `GetAddressData` sums all confirmed transactions per address. This is a **testing-stage** representation, not the destination. **Design direction: simulate a UTXO-style system as realistically as possible, made tangible through the passphrase-wallet system** (many addresses from one seed). Concretely: derive a **fresh address per receive** (coinbase/deposit) — the real "Patoshi pattern" — so spends produce genuine change outputs and the player learns UTXO mechanics hands-on. See `historical-blockchain-events-research.md` §5 (Q-X1) and `historical-founders-and-bootstrap-plan.md` Phase 2. Confirmed-only balance displayed.
+**OQ-2 — RESOLVED & IMPLEMENTED (Step 8, 2026-06-29)**: Balances were originally account/balance-based (`GetAddressData` summed confirmed txs per address) — a testing-stage representation. **Now a real multi-input/multi-output UTXO model is implemented**: balance = Σ unspent outputs; spends coin-select owned UTXOs (combining several) and emit **change** to a fresh address. The educational "wallet = a set of addresses/UTXOs" is surfaced in BTCWallet/FoundersWallets/CasinoFinances address books. **Terminology (D0):** the fresh-address-per-receive mechanic is **address non-reuse** (Satoshi-only for coinbases), **NOT** the "Patoshi pattern" (a mining-forensic fingerprint). See `step8-utxo-realism-plan.md` + ProjectDesignManual Ch. 30.
 
 **OQ-3 — RESOLVED**: Confirmed-only. Player sees "Available" vs "Pending outgoing" in BTCWallet.
 

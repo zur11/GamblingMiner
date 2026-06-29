@@ -80,14 +80,14 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 - Game start: a first-launch bootstrap pre-mines the chain from genesis (`2009-01-03`) to `2009-03-21` (Satoshi + Hal only), so the player always begins on `21 March 2009`. From player start onward, in-game time always follows player bets — but the founders **mine concurrently in lockstep** with those bets (they add hashrate, never advance the clock themselves).
 - Network-growth model: participants appear over time (`Satoshi → Hal → player → miner bots gradually`), not all at block 1. Autonomous (no-bet) mining happens only during the bootstrap window; reserved otherwise for future expansions/DLC/multiplayer.
 - Coinbase recipients use derived `gm1q…` addresses (real base58 kept only as commented reference; genesis coinbase stays unspendable).
-- Balance model: account/balance-based is a **testing-stage** simplification; the target is a realistic **UTXO** simulation surfaced via passphrase wallets (a fresh address per receive — the "Patoshi pattern").
+- Balance model: a **real multi-input/multi-output UTXO model** (Step 8 — done & audited). Balance = Σ unspent outputs; fee = Σin − Σout; one unified spend path with multi-input coin selection + change. **Address non-reuse** (a fresh address per receive) is **Satoshi-only**; player/casino/Hal/Hearn rotate change-on-send. NOTE: this is **address non-reuse**, *not* the "Patoshi pattern" (a mining-forensic fingerprint — D0).
 - Block-candidate + hashrate model: the **keystone** shared by founder mining, hardware pools, and the block template builder. Minimal weighted-lottery first; full per-node template deferred to P4.
 
 ## 5. Implementation Priorities
 
 > **Authoritative implementation order**: `AIHelperFiles/IMPLEMENTATION_ROADMAP.md`. The priorities below are the *feature* breakdown; the roadmap file holds the *sequencing and dependencies*.
 >
-> **State (2026-06-26):** P0–P2 + the candidate engine (P4/Step 4), difficulty regulator + hardware pools (Step 6), and **founder economics (Step 7)** are all done & verified in-engine. The game starts on **21 Mar 2009** on a Satoshi/Hal-mined chain; founders now mine concurrently in the player era (Satoshi 11,000-BTC ramp + disappearance, Hal drip, Mike Hearn round-trip, 12 Jan 10 BTC tx — see `AIHelperFiles/step7-historical-character-economics-plan.md`). **The active next work is Step 8 — UTXO realism / Patoshi per-receive addresses** (fresh address per receive, real change outputs incl. the deferred E8 17.49 Hearn change), then Step 9 economy/meta (P6–P8).
+> **State (2026-06-29):** P0–P2 + the candidate engine (P4/Step 4), difficulty regulator + hardware pools (Step 6), **founder economics (Step 7)**, and **Step 8 — UTXO realism / address non-reuse** are all done & verified in-engine. The game starts on **21 Mar 2009** on a Satoshi/Hal-mined chain; founders mine concurrently in the player era; the chain now runs a real multi-input/multi-output UTXO model (E8 reinstated, Satoshi address-non-reuse spread, change rotation for player/casino/Hal/Hearn — see `AIHelperFiles/step8-utxo-realism-plan.md` + ProjectDesignManual Ch. 30). **The active next work is Step 9 — economy/meta (P6–P8)**; carried-forward Step-8 deferrals: bots multi-address (OQ-8.2), deposit-address rotation (OQ-8.3), the optional Patoshi forensic view (8.5), and network-wide fee activation (OQ-8.7, own branch).
 
 ### PH - Historical Foundation — ✅ BASELINE REACHED
 
@@ -98,9 +98,9 @@ Goal: establish the historically faithful opening and the network-growth init mo
 - [x] Block-candidate + hashrate model **(minimal weighted lottery)** — the keystone seed for P4.
 - [x] First-launch bootstrap pre-mine to `21 March 2009` (Satoshi dominant, Hal exactly 3). **Verified in-engine.**
 - [x] **DONE (Step 7, on the candidate engine):** Satoshi `11,000`-BTC dynamic ramp (retire ≥ `2011-04-26`); the `12 Jan` 10 BTC Satoshi→Hal tx; April Mike Hearn 32.51 round-trip (+82.51). Built as **regulated concurrent mining** (`FoundersMiningService` + `HistoricalEventScheduler`); Hal `P=1.0` fades to 0 by `9 Aug 2009`. Verified in-engine. See `AIHelperFiles/step7-historical-character-economics-plan.md`.
-- Companion research: `historical-blockchain-events-research.md` (UTXO/Patoshi direction; remaining address-reuse research → Step 8).
+- Companion research: `historical-blockchain-events-research.md` (address-reuse research → resolved in Step 8 §6).
 
-**Baseline reached:** a new game starts on `21 March 2009` with a Satoshi/Hal-mined chain and the player bets from there. ➡ **Step 7 (founder economics) complete; next: Step 8 (UTXO / Patoshi per-receive addresses).**
+**Baseline reached:** a new game starts on `21 March 2009` with a Satoshi/Hal-mined chain and the player bets from there. ➡ **Steps 7 (founder economics) + 8 (UTXO realism / address non-reuse) complete; next: Step 9 (economy/meta, P6–P8).**
 
 ### P0 - Documentation Truth Pass
 
@@ -323,12 +323,14 @@ Start when: Basic Mode is complete and stable. Until then, leave mining committi
 - [x] **PH**: Block-candidate + hashrate model (minimal weighted lottery) — the keystone seed (verified). Full per-node candidate engine = **P4 ✅ DONE**.
 - [x] **PH**: First-launch bootstrap to 21 Mar 2009 (Satoshi dominant, Hal exactly 3) — verified in-engine.
 - [x] **Step 7 (founder economics) — DONE & verified**: founders as **regulated concurrent miners** (`FoundersMiningService`) — Satoshi 11,000-BTC ramp + disappearance (~10% share, retire ≥ 2011-04-26), Hal `P=1.0` drip fading to 0 by 9 Aug 2009, Mike Hearn 32.51 round-trip (+82.51, never mines), 12 Jan 10 BTC Satoshi→Hal tx, `HistoricalEventScheduler`, FoundersWallets DEV readout + `founders_trace.csv`. See `AIHelperFiles/step7-historical-character-economics-plan.md`.
-- [ ] **Step 8 (UTXO realism / Patoshi) — NEXT.** Replace the account/balance model with a realistic UTXO simulation surfaced via passphrase wallets:
-  - [ ] §6 address research first: which address(es) humans paid Satoshi to, and whether any Satoshi address was reused (decides strict one-address-per-receive vs documented exceptions). `historical-blockchain-events-research.md`.
-  - [ ] Fresh derived address **per receive** (coinbase reward + deposit) — the Patoshi pattern; **founders first** (Satoshi), then the player wallet.
-  - [ ] Real **change outputs** on spends — including the deferred **E8** (17.49 BTC Hearn change → a new Satoshi address), upgrading the Step-7 placeholder.
-  - [ ] `FoundersWallets` lists Satoshi's many derived addresses with per-address balances.
-  - [ ] Hal's network-coupled fade (replace the linear `1.0→0` stand-in once gradual miner spawning exists) — *late Basic-Mode tuning, not blocking.*
+- [x] **Step 8 (UTXO realism / address non-reuse) — DONE & in-engine audited.** Replaced the account/balance model with a **real multi-input/multi-output UTXO model** (`Transaction` = `Inputs[]`/`Outputs[]`, chain-replayed UTXO set, per-input signing, `Fee = Σin − Σout`). One unified spend path (`BuildAndBroadcastUtxoSpend`, exact-match else largest-first multi-input coin selection + change). Terminology corrected (D0): the address mechanic is **address non-reuse**, *not* the "Patoshi pattern" (a mining-forensic fingerprint, reserved for the unbuilt Phase 8.5). Plan: `AIHelperFiles/step8-utxo-realism-plan.md`; design: ProjectDesignManual Ch. 30.
+  - [x] §6 address research resolved (D4/D5): strict one-address-per-receive holds incl. the receive side (Satoshi received from Hearn at a *new* address); Satoshi↔Hal unidirectional. `historical-blockchain-events-research.md`.
+  - [x] Fresh derived **coinbase** address per block — **Satoshi-only** (the address-non-reuse spread, ~109 distinct coinbase addresses audited, tracking to the fractal ~220). Player/casino/Hal/Hearn keep one coinbase/receive address and become multi-address only via **change on send**; bots stay single-address (no seed — OQ-8.2).
+  - [x] Real **change outputs** on spends — **E8 reinstated** (17.49 Hearn change → a fresh Satoshi address; audited on-chain in the April round-trip).
+  - [x] `FoundersWallets` lists Satoshi's many derived addresses with per-address balances (scrollable address book + "View empty addresses" toggle); BTCWallet + CasinoFinances have the same view.
+  - [x] **Clean reset** (`WorldFormatVersion`) instead of an in-place migration (the old chain has no UTXO linkage).
+  - [ ] Hal's network-coupled fade (replace the linear `1.0→0` stand-in once gradual miner spawning exists) — *late Basic-Mode tuning, not blocking; unrelated to UTXO.*
+  - [ ] **Carried forward:** bots multi-address (OQ-8.2, needs per-bot seed), player deposit-address rotation (OQ-8.3), Phase 8.5 Patoshi forensic view (OQ-8.5, documented only), network-wide fee activation ≈ 2009-04-26 (OQ-8.7, own branch).
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
 - [ ] Add Winning Referral Commission scene (list referrals, claimable 1% SC commission per bot, claim button).
 - [x] Add hardware credit system with casino community mining pool, per-node pool assignment, and BTCPoolsAndHardwareShop scene (`AIHelperFiles/btc-pools-hardware-plan.md`). ✅ 2026-06-25 — credit model, individual↔casino split + round-robin routing, dynamic fee + proportional distribution, Buy/Discard hardware, hardware-locked speed, bootstrap 1 individual + 0 casino. Foundation for **P5** is in place (ProjectDesignManual Ch. 27). Also: continuous difficulty regulator (Ch. 26) validated, + DEV 100X→9000X time tool.
