@@ -330,7 +330,8 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 - [x] Add player BTC wallet and addresses.
 - [x] Add bot/non-node wallet address model.
 - [x] Add casino BTC addresses.
-- [x] Add `CasinoFinances` development scene.
+- [x] Add `CasinoFinances` development scene (BTC wallet — addresses, passphrase, UTXO sends).
+- [ ] **Step 11 — Casino SC Gambling Finances** — `CasinoScBalanceService` autoload (99M SC Main Balance + 1M SC Bankroll, target-to-fill auto-recharge, 100M SC re-loan on exhaustion, checkpoint-persisted); `CasinoClientLedgerService` autoload (per-client SC deposit/withdrawal ledger with stat snapshots); SC flow wired per settled player bet; `CasinoGamblingFinances` DEV scene from Main Menu (balances, P/L vs total loans, recharge target controls, manual transfers, nav to sub-scenes); `ClientsBetsHistory` DEV scene (global SC wagered all clients live, per-client all-time + since-last-deposit P/L and wagered, game filter, live bet feed); `ClientsTransactions` DEV scene (full SC deposit/withdrawal history per client, wager-base annotations). See `AIHelperFiles/step11-casino-sc-gambling-finances-plan.md`.
 - [x] Add scheduled bot transactions (core scheduler; circulation trigger to be re-aligned for gradual bot introduction).
 - [x] **PH**: Founders Satoshi & Hal (and Mike Hearn) as nodes + `FoundersWallets` dev scene (verified). *They now mine concurrently in the player era — Step 7 below.*
 - [x] **PH**: Fix genesis/early coinbase to derived `gm1q…` addresses (genesis stays unspendable).
