@@ -26,7 +26,8 @@ public partial class UserStatsService : Node
         if (EnableHistoryPersistence)
         {
             BetHistory = new BetHistoryRepository(BetHistoryRepository.ResolveDefaultPath());
-            BetHistory.Load();
+            BetHistory.EnsureAllChunksLoaded();
+            RebuildStatsFromLoadedHistory();
         }
         else
         {

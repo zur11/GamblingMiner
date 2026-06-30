@@ -34,9 +34,14 @@ public partial class BankrollProgramService : Node
 	public event Action TransfersChanged;
 	public event Action AutoRechargeAmountChanged;
 
+	private CasinoClientLedgerService _ledger;
+	private UserStatsService _userStats;
+
 	public override void _Ready()
 	{
 		LoadState();
+		_ledger    = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
+		_userStats = GetNodeOrNull<UserStatsService>("/root/UserStatsService");
 	}
 
 	public void SetAutoRechargeAmount(decimal amount)
@@ -67,6 +72,19 @@ public partial class BankrollProgramService : Node
 
 		bankrollWallet.ApplyTransaction(new Transaction(TransactionType.Deposit, TransactionSource.External, null, amount));
 		AddRecord(amount, "balance_to_bankroll", reason);
+
+		decimal wageredSnapshot = _userStats?.Stats?.TotalAmountWagered ?? 0m;
+		decimal profitSnapshot  = _userStats?.Stats?.TotalProfit ?? 0m;
+
+		// Internal recharges (auto or startup init) are NOT player-initiated deposits.
+		// "deposit" is reserved for future explicit player transfers via the SC wallet screen.
+		bool isInternalRecharge = string.Equals(reason, "auto_recharge", StringComparison.Ordinal)
+		                       || string.Equals(reason, "startup_default", StringComparison.Ordinal);
+		if (isInternalRecharge)
+			_ledger?.RegisterAutoRecharge("player", amount, DateTime.UtcNow, wageredSnapshot, profitSnapshot);
+		else
+			_ledger?.RegisterDeposit("player", amount, DateTime.UtcNow, wageredSnapshot, profitSnapshot);
+
 		return true;
 	}
 
@@ -81,6 +99,7 @@ public partial class BankrollProgramService : Node
 		bankrollWallet.ApplyTransaction(new Transaction(TransactionType.Withdrawal, TransactionSource.External, null, amount));
 		principal.Deposit(amount);
 		AddRecord(amount, "bankroll_to_balance", reason);
+		_ledger?.RegisterWithdrawal("player", amount, DateTime.UtcNow);
 		return true;
 	}
 

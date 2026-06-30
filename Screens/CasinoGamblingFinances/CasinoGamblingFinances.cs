@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Globalization;
 using Scripts.Finance;
 using UI.StatusBar;
 
@@ -80,13 +81,13 @@ public partial class CasinoGamblingFinances : Control
 		_totalLabel.Text       = $"Total SC:      {Money.FormatSignedAdaptive(_casinoSc.TotalSc)} SC";
 
 		decimal pl = _casinoSc.CumulativeProfitSinceLoan;
-		_plLabel.Text = $"P/L vs loan:   {pl:+0.00000000;-0.00000000} SC";
+		_plLabel.Text = string.Create(CultureInfo.InvariantCulture, $"P/L vs loan:   {pl:+0.00000000;-0.00000000} SC");
 		_plLabel.AddThemeColorOverride("font_color", pl >= 0m
 			? new Color(0.4f, 1f, 0.4f)
 			: new Color(1f, 0.4f, 0.4f));
 
-		_loanInfoLabel.Text  = $"Bank loans taken: {_casinoSc.LoanCount}   |   Total loaned: {_casinoSc.TotalLoaned:N8} SC";
-		_targetInfoLabel.Text = $"Bankroll target: {_casinoSc.BankrollTarget:N8} SC   (auto-fills to this level on exhaustion)";
+		_loanInfoLabel.Text  = string.Create(CultureInfo.InvariantCulture, $"Bank loans taken: {_casinoSc.LoanCount}   |   Total loaned: {_casinoSc.TotalLoaned:N8} SC");
+		_targetInfoLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll target: {_casinoSc.BankrollTarget:N8} SC   (auto-fills to this level on exhaustion)");
 	}
 
 	private void OnSetTargetPressed()
@@ -101,7 +102,7 @@ public partial class CasinoGamblingFinances : Control
 		}
 		_casinoSc?.SetBankrollTarget(value);
 		_bankrollTargetInput.Text = "";
-		_targetFeedbackLabel.Text = $"Bankroll target set to {value:N8} SC.";
+		_targetFeedbackLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll target set to {value:N8} SC.");
 		RefreshLabels();
 	}
 
@@ -115,7 +116,7 @@ public partial class CasinoGamblingFinances : Control
 			return;
 		}
 		_transferInput.Text = "";
-		_transferFeedbackLabel.Text = $"Transferred {amount:N8} SC → Bankroll.";
+		_transferFeedbackLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Transferred {amount:N8} SC → Bankroll.");
 		RefreshLabels();
 	}
 
@@ -129,7 +130,7 @@ public partial class CasinoGamblingFinances : Control
 			return;
 		}
 		_transferInput.Text = "";
-		_transferFeedbackLabel.Text = $"Transferred {amount:N8} SC → Main Balance.";
+		_transferFeedbackLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Transferred {amount:N8} SC → Main Balance.");
 		RefreshLabels();
 	}
 

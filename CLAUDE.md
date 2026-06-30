@@ -79,6 +79,7 @@ Hard-won rules (a scroll bug once cost a full session — full write-up + diagno
 - Always use `Money.Normalize()` before storing any decimal result
 - Use `Money.FormatSignedAdaptive()` for display strings
 - Never accumulate fractional profit without using `BetService`'s built-in remainder accumulation
+- **Number locale**: canonical format is `1,000,000.00000000` — comma for thousands separator, period for decimal point. This is `CultureInfo.InvariantCulture`. **Never** use a raw C# interpolated string with a decimal format specifier (`:N8`, `:F2`, `:+0.00000000;-0.00000000`, etc.) — it will invert the separators on Spanish/European locales. Always pass `CultureInfo.InvariantCulture` explicitly: use `string.Create(CultureInfo.InvariantCulture, $"… {value:N8} …")` for compound strings, or `.ToString("N8", CultureInfo.InvariantCulture)` for single values. `Money.FormatSignedAdaptive()` already does this internally.
 
 ### Time
 
@@ -350,6 +351,7 @@ These values are fixed and must be consistent across all docs, UI, and code:
 | Hardware cap | `100 nonce attempts` per time cycle (planned) |
 | Network fee activation | `~2009-04-26` nearest block ✅ **Implemented** — whole network **fee-free before**, all participants (bots/casino/player) pay fees **after**; `NetworkFeePolicy` is the single source of truth. See `AIHelperFiles/step10-network-fee-activation-plan.md` |
 | RTP | `99.02%` |
+| Number format | `1,000,000.00000000` — comma=thousands, period=decimal (`CultureInfo.InvariantCulture`); never use raw `:N8`/`:F2` in string interpolations |
 | Currency for betting | SC only — BTC cannot be wagered directly |
 | Founders | Satoshi (target `11,000 BTC`, retires ≥ `2011-04-26`, then frozen) + Hal (`P=1.0` drip, fades to 0 by `2009-08-09`) + Mike Hearn (joins ~Apr 2009, never mines, +82.51 BTC round-trip) |
 | Player start | `21 Mar 2009` after the first-launch bootstrap |

@@ -306,7 +306,13 @@ public partial class CasinoClientLedgerService : Node
 
 Persisted to `user://casino_client_ledger.json`.
 
-**Wiring**: In `BankrollProgramService` (or in `SimulationService`/`DiceGame`), after any `balance_to_bankroll` transfer, call `RegisterDeposit` with a snapshot of `UserStatsService.TotalWagered` and `UserStatsService.NetProfit`. After any `bankroll_to_balance` transfer, call `RegisterWithdrawal`. On first launch, `RegisterInitialDeposit("player", 40000m, …)` is called with both snapshot fields at 0 (no bets placed yet). See OQ-11.6 for whether auto-recharges count as separate deposit events.
+**Wiring** in `BankrollProgramService._Ready()` (add `_ledger` + `_userStats` via `GetNodeOrNull`), then after each successful `TryTransferBalanceToBankroll`:
+- reason `"auto_recharge"` or `"startup_default"` → `RegisterAutoRecharge` (internal recharge, NOT a player deposit; captures stats snapshots so `ClientsBetsHistory` can display "P/L since last Bankroll Recharge")
+- any other reason → `RegisterDeposit` (reserved for future explicit player transfers via the SC wallet screen — no such path exists in Basic Mode v0.1 yet)
+
+After any `TryTransferBankrollToBalance` → `RegisterWithdrawal`. On first launch, `RegisterInitialDeposit("player", 40000m, …)` is called in `_Ready()` with both snapshot fields at 0. See OQ-11.6 for the auto_recharge / baseline-reset decision.
+
+**Note**: "deposit" in this ledger means exclusively a player-initiated, intentional SC commitment — NOT an internal bankroll top-up. The player currently deposits SC via the popup in DiceGame (adds to Main Balance). A dedicated SC wallet scene (planned, post-Basic Mode) will be the canonical deposit UI. Until then, the `"deposit"` kind is a forward-compatible stub for that future path.
 
 ---
 
@@ -478,8 +484,13 @@ Button  "← Back to Casino Finances"
 **Steps**:
 1. Create `Scripts/Services/CasinoClientLedgerService.cs` per §2.6.
 2. Register in `project.godot` immediately after `CasinoScBalanceService`.
-3. **Initial deposit wiring**: at game start, if no ledger entries exist for `"player"`, call `RegisterInitialDeposit("player", 40000m, gameStartUtc, totalWagered: 0m, netProfit: 0m)`. This hook belongs in `WalletInitializationService` or the equivalent startup path that already knows the player exists and the initial balance has been set.
-4. **Ongoing transfer wiring**: in `BankrollProgramService.TryTransferBalanceToBankroll()` (all call paths — manual deposit and auto-recharge), after a successful transfer, call `CasinoClientLedgerService.RegisterDeposit("player", amount, utcNow, userStats.TotalWagered, userStats.NetProfit)`. In `TryTransferBankrollToBalance()`, call `RegisterWithdrawal("player", amount, utcNow)`.
+3. **Initial deposit wiring**: in `CasinoClientLedgerService._Ready()`, if no entries exist for `"player"`, call `RegisterInitialDeposit("player", 40000m, DateTime.UtcNow, 0m, 0m)` — records the player's total starting capital as the first ledger event.
+4. **Ongoing transfer wiring**: in `BankrollProgramService.TryTransferBalanceToBankroll()`, after a successful transfer:
+   - reason `"auto_recharge"` or `"startup_default"` → `RegisterAutoRecharge("player", amount, utcNow, wageredSnapshot, profitSnapshot)` — internal recharge, does NOT reset the since-last-deposit baseline; snapshots captured so "P/L since last Bankroll Recharge" can be computed in `ClientsBetsHistory`.
+   - any other reason → `RegisterDeposit(...)` — reserved for future explicit player transfers (SC wallet screen, planned post-Basic Mode).
+   - In `TryTransferBankrollToBalance()` → `RegisterWithdrawal("player", amount, utcNow)`.
+   
+   **Key distinction**: "deposit" = player consciously committing funds to play (manual, future UI). Auto-recharges and startup init are internal mechanics invisible to the player as "deposits".
    - Access `CasinoClientLedgerService` from `BankrollProgramService` via `GetNodeOrNull` in `_Ready()`, same pattern as all other autoloads.
 5. Persist to `user://casino_client_ledger.json`.
 
