@@ -344,7 +344,6 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   - [x] `FoundersWallets` lists Satoshi's many derived addresses with per-address balances (scrollable address book + "View empty addresses" toggle); BTCWallet + CasinoFinances have the same view.
   - [x] **Clean reset** (`WorldFormatVersion`) instead of an in-place migration (the old chain has no UTXO linkage).
   - [ ] Hal's network-coupled fade (replace the linear `1.0→0` stand-in once gradual miner spawning exists) — *late Basic-Mode tuning, not blocking; unrelated to UTXO.*
-  - [ ] **Deferred → Post-Basic Mode v1** (see that checklist): bots multi-address (OQ-8.2), player/casino deposit-address rotation (OQ-8.3), Phase 8.5 Patoshi *mining-forensic* view (OQ-8.5).
 - [x] **P10 — Network Fee Activation ≈ 2009-04-26 — ✅ DONE (2026-06-30).** `NetworkFeePolicy`; whole network fee-free before the date, all participants pay after; fee UI in all four wallet send panels; backend bot/casino gates. Also: casino pool atomicity fix; Block Explorer full multi-output display; OQ-8.2 cosmetic filter. Full detail: **§5 → P10** + `AIHelperFiles/step10-network-fee-activation-plan.md`.
 - [ ] **Founder long-term timelines** — beyond Hal's fade (above): Hal 2013 sell-off / 2014, Mike Hearn 2016; late Basic-Mode tuning. `step7-historical-character-economics-plan.md`.
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
