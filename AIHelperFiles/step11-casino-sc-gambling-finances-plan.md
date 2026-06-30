@@ -1,6 +1,6 @@
 # Step 11 — Casino SC Gambling Finances — Implementation Plan
 
-**Status**: 🔲 NOT STARTED — branch `casino-sc-gambling-finances`
+**Status**: ✅ DONE (2026-06-30) — branch `casino-sc-gambling-finances`
 
 **Scope**: Implements the casino's StableCoin (SC) financial layer as an explicit, auditable system. Introduces:
 - **(a)** `CasinoScBalanceService` autoload: SC Main Balance (99M SC) + Bankroll (1M SC from a hypothetical bank loan), persisted and auto-recharged; the casino's balance sheet parallel to the player's `PrincipalBalanceService` + `BankrollStateService`.
@@ -542,13 +542,13 @@ Button  "← Back to Casino Finances"
 
 **Recommended execution order**: 11.1 → 11.2 → 11.3 → 11.6 → 11.4 → 11.7 → 11.8
 
-- [ ] **Phase 11.1** — `CasinoScBalanceService` autoload: new file, project.godot registration, defaults, persist/load, target-to-fill auto-recharge + 100M re-loan, manual transfers, `BalanceChanged` event
-- [ ] **Phase 11.2** — SC flow wiring: `SimulationService` routes `ApplyBetResult` per player bet; `BlockSessionCheckpointService` snapshots/restores casino SC at each block
-- [ ] **Phase 11.3** — `CasinoGamblingFinances` DEV scene: Main Menu navigation, balance/loan panel, `BankrollTarget` controls, manual transfer panel, stub nav buttons for both sub-scenes; `SceneManager` updated for all three scene IDs
-- [ ] **Phase 11.6** — `CasinoClientLedgerService` autoload: new file, initial deposit recording, deposit/withdrawal wiring in `BankrollProgramService`, persist/load, `LedgerChanged` event
-- [ ] **Phase 11.4** — `ClientsBetsHistory` DEV scene: global wager total (live), per-client aggregate rows (all-time + since-last-deposit metrics), game filter, live bet feed, back navigation
-- [ ] **Phase 11.7** — `ClientsTransactions` DEV scene: global deposited/withdrawn totals, per-client ledger view, colour-coded entries with wager-base annotations, client selector; wires "View Clients Transactions →" button in `CasinoGamblingFinances`
-- [ ] **Phase 11.8** — Documentation: PRIVATE_ROADMAP.md, CLAUDE.md (both new autoloads + all three scenes), IMPLEMENTATION_ROADMAP.md
+- [x] **Phase 11.1** — `CasinoScBalanceService` autoload: new file, project.godot registration, defaults, persist/load, target-to-fill auto-recharge + 100M re-loan, manual transfers, `BalanceChanged` event
+- [x] **Phase 11.2** — SC flow wiring: `SimulationService` routes `ApplyBetResult` per player bet; `BlockSessionCheckpointService` snapshots/restores casino SC at each block
+- [x] **Phase 11.3** — `CasinoGamblingFinances` DEV scene: Main Menu navigation, balance/loan panel, `BankrollTarget` controls, manual transfer panel, stub nav buttons for both sub-scenes; `SceneManager` updated for all three scene IDs
+- [x] **Phase 11.6** — `CasinoClientLedgerService` autoload: new file, initial deposit recording, deposit/withdrawal wiring in `BankrollProgramService`, persist/load, `LedgerChanged` event
+- [x] **Phase 11.4** — `ClientsBetsHistory` DEV scene: global wager total (live), per-client aggregate rows (all-time + since-last-deposit metrics), game filter, live bet feed, back navigation
+- [x] **Phase 11.7** — `ClientsTransactions` DEV scene: global deposited/withdrawn totals, per-client ledger view (deposits/withdrawals only — auto-recharges recorded but hidden from the visible list), colour-coded entries with wager-base annotations, client selector; wires "View Clients Transactions →" button in `CasinoGamblingFinances`
+- [x] **Phase 11.8** — Documentation: PRIVATE_ROADMAP.md, CLAUDE.md (both new autoloads + all three scenes), IMPLEMENTATION_ROADMAP.md
 
 ---
 

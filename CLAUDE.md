@@ -98,7 +98,7 @@ Hard-won rules (a scroll bug once cost a full session — full write-up + diagno
 
 ## Key Architecture — Autoload Services
 
-Seven core service singletons registered in `project.godot` (plus `SceneManager`, `NotepadService`, and `FoundersMiningService`, documented in their own sections — **ten autoloads total**). They persist across all scenes and are accessible globally by class name.
+Seven core service singletons registered in `project.godot` (plus `SceneManager`, `NotepadService`, `FoundersMiningService`, `CasinoScBalanceService`, and `CasinoClientLedgerService`, documented in their own sections — **twelve autoloads total**). They persist across all scenes and are accessible globally by class name.
 
 ### `CalendarTimeService`
 **Location**: `Scripts/Services/CalendarTimeService.cs`
@@ -186,6 +186,28 @@ Owns the **player-era mining power of the founders** (Satoshi + Hal) and the reg
 - **Mike Hearn never mines** — he's a receive-only holder driven by `HistoricalEventScheduler` (the static class, like `HistoricalBootstrapService`), which injects player-era scripted txs (the April 2009 32.51 round-trip) when the game clock crosses their date, with chain-derived idempotent state.
 - DEV readout + `user://logs/founders_trace.csv` telemetry surface it in `FoundersWallets`.
 - See `AIHelperFiles/step7-historical-character-economics-plan.md`.
+
+### `CasinoScBalanceService`
+**Location**: `Scripts/Services/CasinoScBalanceService.cs`
+
+Owns the casino's own **StableCoin (SC) balance sheet** (Step 11) — the casino's parallel to the player's `PrincipalBalanceService` + `BankrollStateService` + `BankrollProgramService`, combined into one cohesive autoload.
+
+- Initial allocation: **99,000,000 SC Main Balance + 1,000,000 SC Bankroll = 100,000,000 SC total**, representing a hypothetical bank loan (`TotalLoaned` starts at 100M).
+- `ApplyBetResult(casinoDelta)` is the single write path: called by `SimulationService` after every settled **player** bet with `casinoDelta = -betEvent.CreditedProfit` (player loss → casino gains; player win → casino pays). Bot bets do not route through it yet (OQ-11.1, deferred).
+- **Target-to-fill auto-recharge**: the Bankroll fluctuates freely with each bet result; only when it reaches ≤ 0 does auto-recharge fire, refilling to a configurable `BankrollTarget` (default 1,000,000 SC) from Main Balance.
+- **Bankruptcy flavor event**: if Main Balance can't cover the target-to-fill transfer, the bank injects another 100,000,000 SC loan directly (`LoanCount++`, `TotalLoaned += 100M`) before completing the recharge — the game never blocks a bet on casino insolvency.
+- `CumulativeProfitSinceLoan = TotalSc − TotalLoaned` is the casino's P/L metric — positive when the casino is ahead of all loans taken so far.
+- Persists to `user://casino_sc_balance_state.json`. Extends `BlockSessionCheckpointService` (casino SC is snapshotted/restored at each block, consistent with "a block is the only commit to disk").
+- DEV-only — never surfaced in player-facing UI. See `Screens/CasinoGamblingFinances/CasinoGamblingFinances.cs` and `AIHelperFiles/step11-casino-sc-gambling-finances-plan.md`.
+
+### `CasinoClientLedgerService`
+**Location**: `Scripts/Services/CasinoClientLedgerService.cs`
+
+Tracks each casino client's SC deposit/withdrawal history from the casino's operational perspective (Step 11). Forward-compatible for multiple clients (currently just `"player"`); prerequisite for the since-last-deposit metrics in `ClientsBetsHistory` and the full transaction list in `ClientsTransactions`.
+
+- `LedgerEntry.Kind` ∈ `"initial"` (first-ever deposit, recorded once on first launch), `"deposit"` (future manual SC deposits via a dedicated SC Wallet scene; today routed from `DiceGame`'s `DepositPopup`), `"auto_recharge"` (internal Bankroll Auto-Recharge — **not** a real deposit), `"withdrawal"` (Bankroll → Main Balance).
+- Only `"initial"`/`"deposit"` entries reset the since-last-deposit baseline (`GetLastDeposit`) and count toward "Total SC deposited" in `ClientsTransactions`; `"auto_recharge"` is recorded for operator visibility (DEV scenes) but excluded from both.
+- Persists to `user://casino_client_ledger.json`. See `Documentation/GLOSSARY.md` for the SC Deposit / Bankroll Auto-Recharge / Bankroll Manual Recharge distinction, and `AIHelperFiles/step11-casino-sc-gambling-finances-plan.md` OQ-11.6.
 
 ---
 
@@ -555,6 +577,8 @@ private void OnBackButtonPressed()
 
 All existing main screens have been migrated. Adding a new scene: (1) add entry to `SceneId` enum, (2) add path to `Paths` dictionary, (3) call `_sceneManager?.Go(SceneId.X)` at the call site.
 
+The example above omits several DEV-only scenes for brevity (e.g. `CasinoFinances`, `FoundersWallets`, `BotPlayHistory`). Step 11 added three more, all DEV-only: `CasinoGamblingFinances` (Main Menu → casino SC balances/loans/transfers), `ClientsBetsHistory` (→ from `CasinoGamblingFinances`, per-client P/L + live bet feed), and `ClientsTransactions` (→ from `CasinoGamblingFinances`, per-client SC deposit/withdrawal ledger) — see `Screens/CasinoGamblingFinances/`.
+
 ### `StatusBar` Component
 
 **`UI/StatusBar/StatusBar.cs`** — pure C# `HBoxContainer` (no .tscn needed). Instantiated programmatically in each screen's `_Ready()`.
@@ -581,7 +605,10 @@ MainMenu
 │   ├── BlockExplorer       → Main Menu
 │   └── CalendarsNavigator  → Main Menu / BetsHistoryExplorer
 │       └── BetsHistoryExplorer → Main Menu or CalendarsNavigator
-└── MartingaleCalculator (standalone, full-screen) → Main Menu
+├── MartingaleCalculator (standalone, full-screen) → Main Menu
+└── CasinoGamblingFinances [DEV]  → Main Menu
+    ├── ClientsBetsHistory [DEV]    → Casino Gambling Finances
+    └── ClientsTransactions [DEV]   → Casino Gambling Finances
 ```
 
 DiceGame's MartingaleCalc button opens the **popup version** (`Screens/MartingaleCalculator/`) inline — it does not navigate away. The standalone version (`Screens/MartingaleCalculatorStandalone/`) is a full screen reachable only from MainMenu.

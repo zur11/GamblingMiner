@@ -2,7 +2,7 @@
 
 **Purpose**: single source of truth for *what to build next and why*, across all the plan files in `AIHelperFiles/`. The individual plans hold the detail; this file holds the **order and the dependencies** so overlapping themes (block-candidate model, gradual network growth, UTXO realism) don't collide.
 
-**Last updated**: 2026-06-25.
+**Last updated**: 2026-06-30.
 
 ---
 
@@ -20,6 +20,7 @@
 | `historical-blockchain-events-research.md` | Character/event data + UTXO-realism direction | ✅ Roster + events (E1/E4/E6–E8) canonical; §6 address research **resolved** (Step 8: strict one-address-per-receive, incl. the receive side) |
 | `btc-pools-hardware-plan.md` | Hardware credits, casino community pool, fees, **+ Network Difficulty Regulator** | ✅ **Done & validated** — difficulty regulator (D.1–D.4, power-step validation closed) + hardware credits/pools/shop. ProjectDesignManual Ch. 26–27 |
 | `bot-play-history-plan.md` | Bot Play-History scene (last 260 plays/bot + Notepad) | ✅ Done — `Screens/BotPlayHistory/`, in use |
+| `step11-casino-sc-gambling-finances-plan.md` | Casino SC balance sheet (`CasinoScBalanceService`, `CasinoClientLedgerService`); SC flow per settled player bet; `CasinoGamblingFinances`/`ClientsBetsHistory`/`ClientsTransactions` DEV scenes | ✅ Done (Phases 11.1–11.8, 2026-06-30) |
 
 ---
 
