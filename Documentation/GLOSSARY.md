@@ -2,6 +2,8 @@
 
 - **Autobet**: Automated betting mode that repeats bets using the current strategy.
 - **Bankroll**: Subaccount of Main Balance used for active casino bets.
+- **Bankroll Auto-Recharge**: Internal, automated transfer from the player's Main Balance into Bankroll. Fires when Bankroll reaches ≤ 0 SC. Controlled by `BankrollProgramService`; amount is configurable via `BankrollProgrammer`. Does **not** count as an SC Deposit — it is a movement of funds the player already owns. Recorded in `CasinoClientLedgerService` as `kind = "auto_recharge"` (never resets the since-last-deposit baseline). Symmetric to *Main Balance Auto-Recharge* (planned).
+- **Bankroll Manual Recharge**: User-initiated transfer from Main Balance into Bankroll, performed via the `BankrollProgrammer` scene. Functionally identical to auto-recharge except it is triggered by the player, not by an exhaustion event. Does **not** count as an SC Deposit — it is an internal movement between the player's own sub-accounts. Symmetric to *Main Balance Manual Recharge* (planned).
 - **Block reward**: BTC paid to the miner that finds a valid block.
 - **Block template**: Candidate block assembled by a mining node before nonce attempts.
 - **Bot**: Simulated participant. Some bots are mining nodes; others may only own wallets and transact.
@@ -15,6 +17,8 @@
 - **Hal Finney**: Founder node, the second early miner; keeps one participant's worth of mining power that fades to zero by 9 Aug 2009 (his ALS turning point), then dormant.
 - **Halving**: Reward reduction event. Basic Mode uses a scaled interval of 2,100 blocks (≈ 4 in-game years at 100X scale; initial reward 50 BTC; total supply 210,000 BTC).
 - **Main Balance**: Player reserve outside active betting. This is the preferred user-facing term.
+- **Main Balance Auto-Recharge** *(planned — documentation only, not yet implemented)*: Symmetric counterpart to *Bankroll Auto-Recharge*. An automated transfer from Bankroll back into Main Balance, triggered when Main Balance drops below a configurable threshold. Intended for players who want to lock in winnings automatically. Does not count as an SC Deposit.
+- **Main Balance Manual Recharge** *(planned — documentation only, not yet implemented)*: User-initiated transfer from Bankroll into Main Balance, the reverse direction of *Bankroll Manual Recharge*. Currently exposed as the "Bankroll → Main Balance" control in `BankrollProgrammer`. Does not count as an SC Deposit.
 - **Mempool**: Set of pending BTC transactions waiting to be included in a block.
 - **Merkle root**: Hash root derived from the ordered transactions in a block.
 - **Mike Hearn**: Founder node who never mines (a receive-only holder); enters ~Apr 2009 and does the famous 32.51 BTC round-trip with Satoshi, ending with +82.51 BTC.
@@ -29,5 +33,6 @@
 - **RTP**: Return to Player. Dice currently targets roughly 99.02% RTP.
 - **Satoshi Nakamoto**: Founder node, the dominant early miner; power-regulated to ~10% of blocks toward a 11,000-BTC target by 26 Apr 2011, then retires (coins frozen in Basic Mode).
 - **SC**: Stable Coin, simulated USD-pegged currency.
+- **SC Deposit**: A player-initiated addition of SC funds to their Main Balance from **outside** the system. The only mechanism in Basic Mode v0.1 is the **DepositPopup** accessible from the DiceGame screen. A dedicated **SC Wallet scene** (planned) will be the canonical home for both deposits and withdrawals once it ships. Critically distinct from a *Bankroll Auto-Recharge* or *Bankroll Manual Recharge*: those move funds the player already owns between sub-accounts; an SC Deposit adds new SC to the total. Recorded in `CasinoClientLedgerService` as `kind = "initial"` (first-ever deposit) or `kind = "deposit"` (subsequent manual deposits); these are the only entries that reset the since-last-deposit metric baseline.
 - **Stop on block mined**: Strategy condition that stops betting after a block is mined.
 - **Stop on loss/profit**: Strategy condition that stops betting after session loss or profit reaches a configured value.
