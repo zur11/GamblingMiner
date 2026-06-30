@@ -17,6 +17,8 @@ public partial class BlockSessionCheckpointService : Node
 		public List<BankrollProgramService.TransferRecord> TransferRecords { get; set; } = new();
 		public long? HistoryCheckpointUtcTicks { get; set; }
 		public long? CalendarLocalTicks { get; set; }
+		public decimal CasinoScMainBalance { get; set; }
+		public decimal CasinoScBankroll    { get; set; }
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -40,6 +42,8 @@ public partial class BlockSessionCheckpointService : Node
 			?.SetBalance(CurrentSnapshot.BankrollBalance);
 		GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService")
 			?.SetBalance(CurrentSnapshot.PrincipalBalance);
+		GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
+			?.RestoreCasinoScState(CurrentSnapshot.CasinoScMainBalance, CurrentSnapshot.CasinoScBankroll);
 
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
 		{
@@ -66,6 +70,8 @@ public partial class BlockSessionCheckpointService : Node
 			return;
 		}
 
+		CasinoScBalanceService casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
+
 		CurrentSnapshot = new Snapshot
 		{
 			PrincipalBalance = principal.CurrentBalance,
@@ -80,10 +86,13 @@ public partial class BlockSessionCheckpointService : Node
 			}).ToList(),
 			HistoryCheckpointUtcTicks = DateTime.SpecifyKind(historyCheckpointUtc, DateTimeKind.Utc).Ticks,
 			CalendarLocalTicks = DateTime.SpecifyKind(calendarLocalDateTime, DateTimeKind.Local).Ticks,
+			CasinoScMainBalance = casinoSc?.MainBalance ?? 0m,
+			CasinoScBankroll    = casinoSc?.Bankroll ?? 0m,
 			CapturedAtUtc = DateTime.UtcNow
 		};
 
 		SaveState();
+		GD.Print($"[Checkpoint] CAPTURED — PlayerBankroll={CurrentSnapshot.BankrollBalance:F8}  PlayerMain={CurrentSnapshot.PrincipalBalance:F8}  CasinoMain={CurrentSnapshot.CasinoScMainBalance:F8}  CasinoBankroll={CurrentSnapshot.CasinoScBankroll:F8}");
 	}
 
 	public bool HasCheckpoint() => CurrentSnapshot != null;

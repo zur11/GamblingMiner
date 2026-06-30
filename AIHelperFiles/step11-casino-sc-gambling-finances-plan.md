@@ -28,8 +28,8 @@
 |---|---|---|
 | **D1** | Casino SC as explicit tracked service or implicit math? | **Explicit `CasinoScBalanceService`** autoload. The casino is a first-class economic actor; its SC balance must be auditable from day one, not derived post-hoc. |
 | **D2** | Initial casino SC allocation? | **99,000,000.00 SC Main Balance + 1,000,000.00 SC Bankroll = 100,000,000.00 SC total**. This represents a hypothetical bank loan. The bank mechanics (interest, repayment threshold) are a post–Basic Mode v0.1 design (see §7 OQ-11.2). |
-| **D3** | Auto-recharge model? | **Target-to-fill (model 2)**: auto-recharge brings the bankroll back up to `BankrollTarget` (default **1,000,000.00 SC**). Each event transfers exactly `BankrollTarget − Bankroll` from Main Balance. `BankrollTarget` is configurable from the `CasinoGamblingFinances` scene. |
-| **D4** | Casino auto-recharge: always-on or configurable toggle? | **Always automatic, no toggle**. The casino is an institution, not a player. When the bankroll falls below `BankrollTarget`, it auto-recharges from Main Balance immediately. A toggle would let the casino "close" which is outside Basic Mode scope. |
+| **D3** | Auto-recharge model? | **Target-to-fill on exhaustion**: the Bankroll fluctuates freely with each bet result (up when player loses, down when player wins). Auto-recharge fires only when the Bankroll reaches ≤ 0, then fills back to `BankrollTarget` (default **1,000,000.00 SC**) from Main Balance. `BankrollTarget` is configurable from the `CasinoGamblingFinances` scene. **Correction from original plan**: triggering recharge on every dip below target caused MainBalance to absorb all bet P/L, making the Bankroll always display 1M SC with no meaningful fluctuation. |
+| **D4** | Casino auto-recharge: always-on or configurable toggle? | **Always automatic, no toggle**. The casino is an institution, not a player. Auto-recharge fires when the Bankroll is exhausted (≤ 0), transfers `BankrollTarget − Bankroll` from Main Balance. A toggle would let the casino "close" which is outside Basic Mode scope. |
 | **D5** | Casino SC persistence strategy (checkpoint rule)? | **Extends `BlockSessionCheckpointService`**: casino SC state is snapshotted and restored at each block mining event — consistent with "a block is the only commit to disk". No mid-session saves. |
 | **D6** | Bot bets in casino SC flow? | **Open question (OQ-11.1) — player bets only in Phase 11.2**. Bot SC is a simulation artifact today. The question is tracked and deferred. |
 | **D7** | Casino "bankruptcy" condition? | **Flavor event + automatic 100M SC re-loan**. If Main Balance cannot cover the target-to-fill transfer (i.e., `MainBalance < BankrollTarget − Bankroll`), the bank injects another **100,000,000.00 SC** directly into Main Balance, logs a new debt entry (`LoanCount++`, `TotalLoaned += 100M`), then completes the recharge. Game continues uninterrupted. Full debt mechanics (repayment threshold, interest, bet-coverage caps) are post–Basic Mode v0.1 design (OQ-11.2 below). |
@@ -121,7 +121,7 @@ public partial class CasinoScBalanceService : Node
 `ApplyBetResult` is the single write path from the simulation. Internally:
 ```
 Bankroll += casinoDelta;
-if (Bankroll < BankrollTarget) TryAutoRecharge();
+if (Bankroll <= 0m) TryAutoRecharge();   // only on exhaustion — Bankroll fluctuates freely otherwise
 Bankroll = Math.Max(0m, Bankroll);
 BalanceChanged?.Invoke();
 ```

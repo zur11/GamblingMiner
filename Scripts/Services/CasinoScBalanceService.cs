@@ -10,6 +10,7 @@ public partial class CasinoScBalanceService : Node
 	public const decimal DefaultMainBalance =  99_000_000.00000000m;
 
 	private const string StatePath = "user://casino_sc_balance_state.json";
+	private int _betCount;
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
 	private sealed class Snapshot
@@ -43,24 +44,35 @@ public partial class CasinoScBalanceService : Node
 
 	// Called by BlockSessionCheckpointService.ApplyCheckpointToServices() on restart.
 	// Sets MainBalance and Bankroll directly to checkpoint values — bypasses auto-recharge, does not persist.
+	// Both == 0 means the fields were absent from the JSON (old checkpoint before Phase 11.2) — skip restore.
 	public void RestoreCasinoScState(decimal main, decimal bankroll)
 	{
-		if (main < 0m && bankroll < 0m) return; // ignore invalid checkpoint (e.g. missing fields default to 0)
+		if (main == 0m && bankroll == 0m)
+		{
+			GD.Print("[CasinoSC] RestoreCasinoScState: skipped (no casino SC in checkpoint yet — using initialized defaults)");
+			return;
+		}
 		MainBalance = Money.Normalize(Math.Max(0m, main));
 		Bankroll    = Money.Normalize(Math.Max(0m, bankroll));
+		GD.Print($"[CasinoSC] RESTORED from checkpoint — Main={MainBalance:F8}  Bankroll={Bankroll:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}");
 		BalanceChanged?.Invoke();
 	}
 
 	// Called by SimulationService after each settled player bet.
 	// casinoDelta = −(player's creditedProfit): positive when player loses, negative when player wins.
+	// Bankroll fluctuates freely with each bet result; auto-recharge fires only when it is exhausted.
 	public void ApplyBetResult(decimal casinoDelta)
 	{
 		Bankroll = Money.Normalize(Bankroll + casinoDelta);
-		if (Bankroll < BankrollTarget)
+		if (Bankroll <= 0m)
 			TryAutoRecharge();
 		Bankroll = Money.Normalize(Math.Max(0m, Bankroll));
 		SaveState();
 		BalanceChanged?.Invoke();
+
+		_betCount++;
+		if (_betCount % 100 == 0)
+			GD.Print($"[CasinoSC] bet#{_betCount}  delta={casinoDelta:+0.00000000;-0.00000000}  Bankroll={Bankroll:F8}  Main={MainBalance:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}");
 	}
 
 	// Target-to-fill auto-recharge. If MainBalance is insufficient, injects a 100M SC bank loan first.

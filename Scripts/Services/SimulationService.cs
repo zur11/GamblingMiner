@@ -77,6 +77,7 @@ public partial class SimulationService : Node
 	private BankrollProgramService? _bankrollProgram;
 	private BlockSessionCheckpointService? _checkpoint;
 	private FoundersMiningService? _founders;
+	private CasinoScBalanceService? _casinoSc;
 	private NetworkRoot _networkRoot = null!;
 
 	// Step 7.2: founder powers are recomputed only when a new block appears (Satoshi's confirmed-BTC
@@ -133,6 +134,7 @@ public partial class SimulationService : Node
 		_bankrollProgram = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");
 		_checkpoint = GetNodeOrNull<BlockSessionCheckpointService>("/root/BlockSessionCheckpointService");
 		_founders = GetNodeOrNull<FoundersMiningService>("/root/FoundersMiningService");
+		_casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 
 		_networkRoot = new NetworkRoot();
 		AddChild(_networkRoot); // persistent — lives under this autoload
@@ -383,6 +385,9 @@ public partial class SimulationService : Node
 
 		// Keep the bankroll autoload (the source of truth) in sync so every scene reflects it live.
 		_bankroll?.SetBalance(_wallet.Balance);
+
+		// Route the inverse of the player's profit to/from the casino SC bankroll (player bets only — OQ-11.1).
+		_casinoSc?.ApplyBetResult(-(LastSettledBetEvent?.CreditedProfit ?? 0m));
 
 		EmitSignal(SignalName.BetSettled);
 	}
