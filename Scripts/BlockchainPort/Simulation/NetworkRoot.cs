@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.Json;
 using Godot;
 using GodotBlockchainPort.Blockchain;
@@ -585,7 +586,8 @@ public partial class NetworkRoot : Node
             foreach (NodeHardwareState n in allNodes.Where(n => n.CasinoPoolCredits > 0))
             {
                 decimal share = Scripts.Finance.Money.Normalize(poolAmount * n.CasinoPoolCredits / casinoTotal);
-                decimal net = Scripts.Finance.Money.Normalize(share - CasinoTxFee);
+                decimal serviceFee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp) ? CasinoTxFee : 0m;
+                decimal net = Scripts.Finance.Money.Normalize(share - serviceFee);
                 if (net <= 0m) continue; // reward too small to cover the tx fee → skip (OQ-2)
 
                 string address = GetNodeAddress(n.NodeId);
@@ -613,13 +615,14 @@ public partial class NetworkRoot : Node
         };
 
         CasinoPoolRepository.AddRewardEvent(rewardEvent);
-        TryDistributePendingCasinoRewards();
+        TryDistributePendingCasinoRewards(block.Timestamp);
     }
 
     // Sends queued casino-pool payouts whose backing coinbase has matured (CoinbaseMaturity). Each
-    // event is all-or-nothing: only attempted once the casino can cover every payout in it, so a
-    // partial send can never double-pay on a later retry. Called after every mined block.
-    private static void TryDistributePendingCasinoRewards()
+    // event is distributed as ONE multi-output tx covering all recipients atomically — so a failed
+    // coin selection (insufficient confirmed UTXOs) never produces a partial distribution that would
+    // double-pay some recipients on the next retry. Called after every mined block.
+    private static void TryDistributePendingCasinoRewards(long blockTimestampMs)
     {
         if (!SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
         {
@@ -634,36 +637,68 @@ public partial class NetworkRoot : Node
                 continue;
             }
 
-            decimal required = evt.Payouts.Sum(p => p.NetAmount + CasinoTxFee);
-            decimal spendable = casino.Blockchain.GetAddressSpendableBalance(casino.WalletAddress);
-            if (spendable < required) continue; // coinbase not matured / not enough yet → retry next block
-
-            bool allSent = true;
-            foreach (CasinoPoolPendingPayout payout in evt.Payouts)
-            {
-                if (SendFromCasino(casino, payout.RecipientAddress, payout.NetAmount) is null)
-                {
-                    allSent = false;
-                }
-            }
-
-            if (allSent)
+            if (DistributePoolEventAsSingleTx(casino, evt, blockTimestampMs))
             {
                 CasinoPoolRepository.MarkDistributed(evt.BlockIndex);
             }
         }
     }
 
-    // Broadcasts a single payout from the casino wallet at the fixed casino tx fee. Static mirror of
-    // CreateAndBroadcastTransactionToAddress for the static distribution path. No disk write — the tx
-    // becomes durable when the next block is mined.
-    private static Transaction? SendFromCasino(NodeAgent casino, string recipientAddress, decimal amount)
+    // One atomic multi-output tx covers all payout recipients for a single pool event. The root
+    // cause of the "some participants not paid" bug was 5 separate SendFromCasino calls: the 1st
+    // spend consumed the only large confirmed UTXO (e.g. the fresh coinbase), and sends 2–5 found
+    // nothing spendable (change from send 1 is still pending, not confirmed). A single coin
+    // selection that accumulates enough UTXOs for the TOTAL need resolves this: all recipients
+    // land in one tx whose change is one pending output instead of five. Returns true on success.
+    private static bool DistributePoolEventAsSingleTx(NodeAgent casino, CasinoPoolRewardEvent evt, long blockTimestampMs)
     {
-        if (amount <= 0m || string.IsNullOrEmpty(recipientAddress)) return null;
-        if (casino.WalletAddress == recipientAddress) return null;
+        decimal perFee    = NetworkFeePolicy.IsActiveByTimestamp(blockTimestampMs) ? CasinoTxFee : 0m;
+        decimal totalAmt  = evt.Payouts.Sum(p => p.NetAmount);
+        decimal totalFee  = perFee * evt.Payouts.Count;
+        decimal need      = totalAmt + totalFee;
 
-        // Step 8 — UTXO spend (coin-select casino UTXOs + change to its base address).
-        return BuildAndBroadcastUtxoSpend(casino, recipientAddress, amount, CasinoTxFee, null);
+        // Coin-select across ALL casino addresses (base + all registered change addresses).
+        HashSet<string> owned = casino.ReceiveWallet != null
+            ? new HashSet<string>(casino.ReceiveWallet.OwnedAddresses) { casino.WalletAddress }
+            : new HashSet<string> { casino.WalletAddress };
+
+        IReadOnlyList<(OutPoint outpoint, string address, decimal amount)> available =
+            casino.Blockchain.GetSpendableUtxos(owned);
+        List<(OutPoint outpoint, string address, decimal amount)>? chosen = SelectUtxos(available, need);
+        if (chosen is null) return false; // not enough matured funds yet → retry next block
+
+        var inputs = new List<(OutPoint, string, string, string, string)>(chosen.Count);
+        decimal gathered = 0m;
+        foreach ((OutPoint outpoint, string address, decimal value) in chosen)
+        {
+            if (!TryResolveInputKeys(casino, address, out var keys)) return false;
+            inputs.Add((outpoint, address, keys.pub, keys.priv, keys.secp));
+            gathered += value;
+        }
+
+        // One output per recipient; any invalid payout aborts the whole tx.
+        var outputs = new List<TxOutput>(evt.Payouts.Count + 1);
+        foreach (CasinoPoolPendingPayout payout in evt.Payouts)
+        {
+            if (string.IsNullOrEmpty(payout.RecipientAddress) || payout.NetAmount <= 0m ||
+                payout.RecipientAddress == casino.WalletAddress)
+                return false;
+            outputs.Add(new TxOutput { Address = payout.RecipientAddress, Amount = payout.NetAmount });
+        }
+
+        decimal change   = gathered - need;
+        bool    hasChange = change > 0m;
+        if (hasChange)
+        {
+            string changeAddr = casino.ReceiveWallet?.NextReceiveAddress() ?? casino.WalletAddress;
+            outputs.Add(new TxOutput { Address = changeAddr, Amount = change });
+        }
+
+        Transaction tx = casino.BuildSignedSpend(inputs, outputs, totalFee, null);
+        if (!casino.Blockchain.AddTransactionToPendingTransactions(tx)) return false;
+        SharedNetwork.BroadcastTransaction(casino.NodeId, tx);
+        if (hasChange) casino.ReceiveWallet?.MarkReceiveConsumed();
+        return true;
     }
 
     private static string GetNodeAddress(string nodeId) =>
@@ -705,7 +740,7 @@ public partial class NetworkRoot : Node
             HistoricalEventScheduler.OnBlockMined(block); // Step 7.4: inject scripted player-era txs at their date
             PersistStateToDisk();
             // After every block (any miner), retry casino-pool payouts whose coinbase has now matured.
-            TryDistributePendingCasinoRewards();
+            TryDistributePendingCasinoRewards(block.Timestamp);
         }
     }
 
@@ -806,8 +841,10 @@ public partial class NetworkRoot : Node
             decimal sendAmount = Math.Round(spendable * fraction, 8);
             if (sendAmount <= 0m) continue;
 
-            // Step 4b.2: attach a sender-chosen fee (collected into the miner's coinbase).
-            decimal fee = Math.Round(MinBotFeeBtc + (decimal)Random.Shared.NextDouble() * (MaxBotFeeBtc - MinBotFeeBtc), 8);
+            // Step 4b.2: attach a sender-chosen fee — only after network fee activation (P10.6).
+            decimal fee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp)
+                ? Math.Round(MinBotFeeBtc + (decimal)Random.Shared.NextDouble() * (MaxBotFeeBtc - MinBotFeeBtc), 8)
+                : 0m;
             if (sendAmount + fee > spendable) continue; // must cover amount + fee
 
             string recipientAddress = recipientPool[Random.Shared.Next(recipientPool.Count)];
@@ -1156,36 +1193,34 @@ public partial class NetworkRoot : Node
     {
         EnsureInitialized();
         if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node))
-        {
             return "Node not found.";
-        }
 
         (Transaction? tx, Block? block) = node.Blockchain.GetTransaction(transactionId);
-        if (tx is null || block is null)
+        Transaction? resolved = tx ?? node.Blockchain.GetPendingTransaction(transactionId);
+        if (resolved is null)
+            return "Transaction not found in confirmed or pending sets.";
+
+        return FormatTxDetail(resolved, block);
+    }
+
+    private static string FormatTxDetail(Transaction tx, Block? block)
+    {
+        bool isCoinbase = tx.IsCoinbase;
+        var sb = new StringBuilder();
+        sb.AppendLine($"TxId: {tx.TransactionId}{(isCoinbase ? "  [COINBASE]" : "")}");
+        if (block != null) { sb.AppendLine($"Block: {block.Index}"); sb.AppendLine("Status: confirmed"); }
+        else                  sb.AppendLine("Status: pending");
+        if (!isCoinbase)
         {
-            Transaction? pending = node.Blockchain.GetPendingTransaction(transactionId);
-            if (pending is null)
-            {
-                return "Transaction not found in confirmed or pending sets.";
-            }
-
-            return
-                $"TxId: {pending.TransactionId}\n" +
-                "Status: pending\n" +
-                $"Amount: {pending.Amount:F8}\n" +
-                $"Fee: {pending.Fee:F8}\n" +
-                $"Sender: {pending.Sender}\n" +
-                $"Recipient: {pending.Recipient}";
+            sb.AppendLine($"Fee: {tx.Fee:F8} BTC");
+            sb.AppendLine($"Inputs ({tx.Inputs.Count}):");
+            foreach (TxInput inp in tx.Inputs)
+                sb.AppendLine($"  {inp.Address}");
         }
-
-        return
-            $"TxId: {tx.TransactionId}\n" +
-            "Status: confirmed\n" +
-            $"Block: {block.Index}\n" +
-            $"Amount: {tx.Amount:F8}\n" +
-            $"Fee: {tx.Fee:F8}\n" +
-            $"Sender: {tx.Sender}\n" +
-            $"Recipient: {tx.Recipient}";
+        sb.AppendLine($"Outputs ({tx.Outputs.Count}):");
+        foreach (TxOutput txOut in tx.Outputs)
+            sb.AppendLine($"  {txOut.Address}  {txOut.Amount:F8} BTC");
+        return sb.ToString().TrimEnd();
     }
 
     public string BuildAddressDetailsForNode(string nodeId, string address)

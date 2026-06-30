@@ -2623,6 +2623,19 @@ Each non-bot wallet (BTCWallet, CasinoFinances, FoundersWallets) has a **"Transa
 - **"Hide mining rewards" `CheckBox` (default checked)** — a mining wallet accrues *hundreds* of coinbase entries that bury the actual transfers, so coinbases are hidden by default with a "… N mining reward(s) hidden — untick to show" note. This is the opposite default polarity from "View empty addresses" (checked = hide), chosen because the noise is the common case for transfers visibility; each label is self-explanatory.
 - Same scroll-preservation + trailing-blank-lines rules as the address book (29.7). FoundersWallets' panel is always-visible in Base mode (with the founder economics/dev panels); BTCWallet/CasinoFinances gate it behind a "Show transactions ▸" expander like the address list.
 
+### 29.9 — Block Explorer display filter for OQ-8.2 bot change-to-self (P10 / cosmetic)
+
+**Context:** Bots are single-address — they have no `ReceiveWallet` (no persistent seed, OQ-8.2). Every bot spend therefore produces a change output addressed back to the bot's own input address. This is valid UTXO behaviour, but it creates visual noise in the Block Explorer: a bot donation to a non-miner shows two outputs, one external and one going straight back to the sender's address.
+
+Two helpers in `BlockExplorer.cs` apply a **display-only cosmetic filter** until OQ-8.2 is resolved (bots get simplified seeds + `DerivedAddressWallet`):
+
+- **`IsSelfChangeTransaction(tx)`** — returns `true` when *all* outputs go to addresses that were also inputs (a pure self-loop: no external recipient at all). Such a transaction is hidden entirely from the block lookup panel and the right-column preview.
+- **`ExternalOutputs(tx)`** — returns only the outputs whose address is *not* in the input-address set. Applied to every non-coinbase tx in both display locations, stripping the change-to-self output while leaving the real recipient output visible. The count label (`Outputs (N)`) reflects only the visible outputs.
+
+**What remains visible:** coinbases are never filtered (no inputs → `IsSelfChangeTransaction` is false). A bot donation to a non-miner still appears with `Outputs (1)` showing only the recipient — the change leg is invisible. Casino pool distributions and player/founder sends are unaffected (their change goes to a fresh derived address, so it never matches any input address).
+
+**When to remove:** delete `IsSelfChangeTransaction`, `ExternalOutputs`, and all their callers in `BlockExplorer.cs` once bots have `DerivedAddressWallet` (before the casino referral / rank systems ship). The display will then naturally show all outputs correctly.
+
 ---
 
 ## Chapter 30 — UTXO Realism & Address Non-Reuse (Step 8)

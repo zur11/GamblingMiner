@@ -87,7 +87,7 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 
 > **Authoritative implementation order**: `AIHelperFiles/IMPLEMENTATION_ROADMAP.md`. The priorities below are the *feature* breakdown; the roadmap file holds the *sequencing and dependencies*.
 >
-> **State (2026-06-29):** P0–P2 + the candidate engine (P4/Step 4), difficulty regulator + hardware pools (Step 6), **founder economics (Step 7)**, and **Step 8 — UTXO realism / address non-reuse** are all done & verified in-engine. The game starts on **21 Mar 2009** on a Satoshi/Hal-mined chain; founders mine concurrently in the player era; the chain now runs a real multi-input/multi-output UTXO model (E8 reinstated, Satoshi address-non-reuse spread, change rotation for player/casino/Hal/Hearn — see `AIHelperFiles/step8-utxo-realism-plan.md` + ProjectDesignManual Ch. 30). **The active next work is Step 9 — economy/meta (P6–P8)**; carried-forward Step-8 deferrals: bots multi-address (OQ-8.2), deposit-address rotation (OQ-8.3), the optional Patoshi forensic view (8.5), and network-wide fee activation (OQ-8.7, own branch).
+> **State (2026-06-30):** P0–P2 + the candidate engine (P4/Step 4), difficulty regulator + hardware pools (Step 6), **founder economics (Step 7)**, **Step 8 — UTXO realism / address non-reuse**, and **P10 — network fee activation** are all done & verified in-engine. The game starts on **21 Mar 2009** on a Satoshi/Hal-mined chain; founders mine concurrently in the player era; the chain runs a real multi-input/multi-output UTXO model; the whole network is fee-free before 2009-04-26 and all participants pay fees after (see `AIHelperFiles/step10-network-fee-activation-plan.md` + P10 in §5). **The active next work is Step 9 — economy/meta (P6–P8)**; carried-forward deferrals: bots multi-address (OQ-8.2), deposit-address rotation (OQ-8.3), the optional Patoshi forensic view (8.5).
 
 ### PH - Historical Foundation — ✅ BASELINE REACHED
 
@@ -239,7 +239,7 @@ Goal: establish a test foundation so core logic can be verified without running 
 
 Done when at least the core betting and money logic has automated coverage and a new developer can run tests from the command line.
 
-### P10 - Network Fee Activation (~2009-04-26)
+### P10 - Network Fee Activation (~2009-04-26) ✅ DONE (2026-06-30)
 
 Goal: make the simulated network historically faithful to early Bitcoin's **fee-free era**, then switch the whole network to paying fees on one date — resolving the current dev-time contradiction (scripted historical txs are fee-free while bots/casino attach fees from block 1).
 
@@ -250,6 +250,8 @@ Goal: make the simulated network historically faithful to early Bitcoin's **fee-
 - Design: `AIHelperFiles/step8-utxo-realism-plan.md` OQ-8.7 + `IMPLEMENTATION_ROADMAP.md` ("What's next"). Tracked in the §6 checklist.
 
 Done when no fee is attached by any participant before the activation block, and all participants attach fees on/after it, validated in-engine across the April 2009 boundary.
+
+**Delivered (2026-06-30):** `NetworkFeePolicy` static class (single source of truth: `ActivationDateLocal = 2009-04-26`, `DefaultFee/MinFee/MaxFee`); fee row hidden before the date, default 0.1 BTC after, clamp 0.1–1.0 on send, across all four BTC wallet send panels (BTCWallet, FoundersWallets, CasinoFinances, BotsBtcWallets); sender balance label on every send panel; "Go Back" button rename; backend gates for bot automated fees and casino pool-payout fees (`NetworkFeePolicy.IsActiveByTimestamp`). Also delivered in the same phase: **casino pool distribution atomicity fix** (one multi-output tx per event — eliminates partial/double-payment bug); **Block Explorer full multi-output tx display** (full `Inputs[]`/`Outputs[]` iteration, all txs in a block shown); **OQ-8.2 cosmetic filter** (`IsSelfChangeTransaction` + `ExternalOutputs` in `BlockExplorer.cs` — hides bot change-to-self from display until bots have `DerivedAddressWallet`). Full detail: `AIHelperFiles/step10-network-fee-activation-plan.md`.
 
 ### Casino Referral System (Basic Mode)
 
@@ -343,7 +345,7 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   - [x] **Clean reset** (`WorldFormatVersion`) instead of an in-place migration (the old chain has no UTXO linkage).
   - [ ] Hal's network-coupled fade (replace the linear `1.0→0` stand-in once gradual miner spawning exists) — *late Basic-Mode tuning, not blocking; unrelated to UTXO.*
   - [ ] **Deferred → Post-Basic Mode v1** (see that checklist): bots multi-address (OQ-8.2), player/casino deposit-address rotation (OQ-8.3), Phase 8.5 Patoshi *mining-forensic* view (OQ-8.5).
-- [ ] **P10 — Network Fee Activation ≈ 2009-04-26 (own branch).** Whole network fee-free until a `FeeActivationDate`, then **every** participant pays fees (historically faithful — early Bitcoin had no fees). Full design: **§5 → P10** + `step8-utxo-realism-plan.md` OQ-8.7.
+- [x] **P10 — Network Fee Activation ≈ 2009-04-26 — ✅ DONE (2026-06-30).** `NetworkFeePolicy`; whole network fee-free before the date, all participants pay after; fee UI in all four wallet send panels; backend bot/casino gates. Also: casino pool atomicity fix; Block Explorer full multi-output display; OQ-8.2 cosmetic filter. Full detail: **§5 → P10** + `AIHelperFiles/step10-network-fee-activation-plan.md`.
 - [ ] **Founder long-term timelines** — beyond Hal's fade (above): Hal 2013 sell-off / 2014, Mike Hearn 2016; late Basic-Mode tuning. `step7-historical-character-economics-plan.md`.
 - [ ] Add non-miner bot donation tracking (donor-per-bot ledger; groundwork for casino referral system).
 - [ ] Add Winning Referral Commission scene (list referrals, claimable 1% SC commission per bot, claim button).

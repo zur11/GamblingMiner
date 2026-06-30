@@ -1,6 +1,6 @@
 # P10 — Network Fee Activation — Implementation Plan
 
-**Status**: 🔄 **READY TO IMPLEMENT** — branch `network-fee-activation`. See §5 for the phase checklist.
+**Status**: ✅ **PHASES 10.1–10.6 DONE** — branch `network-fee-activation`. Phase 10.7 (docs) completed 2026-06-30. See §5 for the phase checklist.
 
 **Scope**: Implements the "whole-network fee-free before ~2009-04-26, all participants pay after" rule
 established in `step8-utxo-realism-plan.md` OQ-8.7 and fully specified in `Documentation/PRIVATE_ROADMAP.md` §P10.
@@ -470,15 +470,27 @@ Any unlisted call site must be reviewed and gated if it predates 2009-04-26.
 
 | File | Change type | Phase | Done? |
 |---|---|---|---|
-| `Scripts/BlockchainPort/Blockchain/NetworkFeePolicy.cs` | NEW | 10.1 | ☐ |
-| `Screens/BTCWallet/BTCWallet.cs` | MOD | 10.2 | ☐ |
-| `Screens/FoundersWallets/FoundersWallets.cs` | MOD | 10.3 | ☐ |
-| `Screens/CasinoFinances/CasinoFinances.cs` | MOD | 10.4 | ☐ |
-| `Screens/BotsBtcWallets/BotsBtcWallets.cs` | MOD | 10.5 | ☐ |
-| `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | MOD | 10.6 | ☐ |
-| `CLAUDE.md` | MOD | 10.7 | ☐ |
-| `AIHelperFiles/IMPLEMENTATION_ROADMAP.md` | MOD | 10.7 | ☐ |
-| `Documentation/PRIVATE_ROADMAP.md` | MOD | 10.7 | ☐ |
+| `Scripts/BlockchainPort/Blockchain/NetworkFeePolicy.cs` | NEW | 10.1 | ✅ |
+| `Screens/BTCWallet/BTCWallet.cs` | MOD | 10.2 | ✅ |
+| `Screens/FoundersWallets/FoundersWallets.cs` | MOD | 10.3 | ✅ |
+| `Screens/CasinoFinances/CasinoFinances.cs` | MOD | 10.4 | ✅ |
+| `Screens/BotsBtcWallets/BotsBtcWallets.cs` | MOD | 10.5 | ✅ |
+| `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` | MOD | 10.6 | ✅ |
+| `CLAUDE.md` | MOD | 10.7 | ✅ |
+| `AIHelperFiles/IMPLEMENTATION_ROADMAP.md` | MOD | 10.7 | ✅ |
+| `Documentation/PRIVATE_ROADMAP.md` | MOD | 10.7 | ✅ |
+
+### Phase 10.6 — additional work done beyond the original scope
+
+The following were discovered and fixed during Phase 10.6 validation:
+
+**Casino pool distribution atomicity fix** (`TryDistributePendingCasinoRewards` / `DistributePoolEventAsSingleTx`): the original `SendFromCasino` loop fired one tx per recipient. Send 1 spent the only large confirmed UTXO (fresh coinbase); sends 2–5 found nothing spendable (change from send 1 is still *pending*, excluded by `GetSpendableUtxos`). Result: `allSent=false`, `MarkDistributed` never called, event retried on every subsequent block → partial double-payments. Fix: one atomic multi-output tx per pool event — one coin selection covering `Σrecipients + totalFee`, all N recipients as outputs, one change output, one `AddTransactionToPendingTransactions`. `MarkDistributed` is called only on tx success; failure leaves no partial state, so retry is safe.
+
+**Block Explorer multi-output display** (`BlockExplorer.cs`): block lookup and right-column preview were using the `[JsonIgnore]` shims `tx.Sender`/`tx.Recipient`/`tx.Amount` (expose only `Inputs[0]`/`Outputs[0]`). Replaced with full `tx.Inputs[]` / `tx.Outputs[]` iteration in all three display locations (block lookup loop, `BuildTransactionDetails`/`FormatTxDetail`, `BuildLatestTransactionPreview`). `BuildLatestTransactionPreview` now shows ALL transactions in the block (was only `block.Transactions[0]`). Fee LINQ fixed: `.Where(t => !t.IsCoinbase).Sum(t => t.Fee)`.
+
+**OQ-8.2 cosmetic filter** (`BlockExplorer.cs`): bots are single-address (no `ReceiveWallet` / no persistent seed), so every bot spend produces a change output back to the bot's own input address. Two helpers gate this cosmetically in the Block Explorer until OQ-8.2 (simplified seeds + `DerivedAddressWallet` for bots) is resolved — remove both helpers and all callers at that point (before referral/rank systems ship):
+- `IsSelfChangeTransaction(tx)` — hides the entire tx when ALL outputs go to input addresses (pure self-loop, no external recipient).
+- `ExternalOutputs(tx)` — for txs that DO have external recipients, strips only the change-to-self output from the displayed output list, so the tx remains visible but the self-directed change is invisible. Applied in block lookup and right-column preview.
 
 **Done** = all phases complete and verified in-engine across the April 2009 boundary.
 

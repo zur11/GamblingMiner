@@ -11,6 +11,7 @@
 | Plan file | Scope | Status |
 |---|---|---|
 | `btc-wallet-system-plan.md` | Addresses, seeds, passphrase wallets, dev scenes, notepad | ✅ Done (Phases 0–9) |
+| `step10-network-fee-activation-plan.md` | Network fee activation ≈ 2009-04-26; `NetworkFeePolicy`; fee UI in all BTC wallet send panels; backend bot/casino fee gates; casino pool atomicity fix; Block Explorer multi-output display + OQ-8.2 cosmetic filter | ✅ Done (Phases 10.1–10.7, 2026-06-30) |
 | `100x-time-scale-migration-plan.md` | 100X time scale, 210k supply, 2,100-block halving | ✅ Done (Phase 5 validation is a checklist, not code) |
 | `scheduled-bot-transactions-plan.md` | Miner-bot → holder-bot BTC recirculation | ⏸ Core done (Phase 1); re-aligns onto candidate engine in Step 6 |
 | `historical-founders-and-bootstrap-plan.md` | Satoshi/Hal/Hearn nodes, genesis fix, bootstrap to 21 Mar, Satoshi 11k target | ✅ Phases 1–3 + bootstrap (3a) done; Phases 4/6/7 **implemented in Step 7** |
@@ -83,7 +84,7 @@ Two themes still hold:
 ### Step 8 — UTXO realism / address non-reuse (Satoshi) + change outputs — ✅ DONE & in-engine audited
 - **Implemented** a **real multi-input/multi-output UTXO model** (`Transaction` = `Inputs[]`/`Outputs[]`, chain-replayed UTXO set, per-input signing, `Fee = Σin − Σout`, one unified spend path with multi-input coin selection + change). **Satoshi-only** fresh derived address per coinbase (address non-reuse — ~109 audited, tracking to ~220 at the 11k floor). Real **change outputs** to fresh addresses incl. the reinstated **E8** (17.49 Hearn change, audited on-chain). Player/casino/Hal/Hearn keep a single coinbase/receive address and rotate **change on send**; bots stay single-address (no seed). Account→UTXO via a **clean reset** (`WorldFormatVersion`). Terminology corrected (D0): address non-reuse ≠ the Patoshi mining-forensic fingerprint.
 - Full detail: **`step8-utxo-realism-plan.md`** (Appendix A = the implemented full model) + **ProjectDesignManual Ch. 30**. §6 address-reuse research resolved. Audit: conservation holds everywhere, supply correct, 0 double-spends, a 100-input→5000-BTC consolidation, full April round-trip (E6/E6b/E7a/E7b + E8).
-- **Carried forward:** bots multi-address (OQ-8.2), deposit-address rotation (OQ-8.3), Phase 8.5 forensic view (OQ-8.5), network-wide fee activation (OQ-8.7, own branch).
+- **Carried forward:** bots multi-address (OQ-8.2), deposit-address rotation (OQ-8.3), Phase 8.5 forensic view (OQ-8.5). ~~Network-wide fee activation (OQ-8.7)~~ → **✅ done (P10, 2026-06-30)**.
 
 ### Step 9 — Economy & meta  *(PRIVATE_ROADMAP P6–P8)*
 - P6 casino finances → P7 BTC/SC trading → P8 achievements.
@@ -125,6 +126,6 @@ Two themes still hold:
 
 ## 6. What's next
 - ✅ Steps 1–8 core done & in-engine audited. **Next: Step 9 (economy/meta — P6 casino finances → P7 BTC/SC trading → P8 achievements).** The UTXO model (Step 8) is the foundation BTC/SC trading builds on.
+- ✅ **P10 — Network fee activation done (2026-06-30).** `NetworkFeePolicy`; fee row hidden before 2009-04-26, default 0.1 BTC after; all four BTC wallet send panels updated; bots/casino backend fees gated on `block.Timestamp`. Also delivered in the same phase: casino pool distribution atomicity fix (one multi-output tx per event); Block Explorer full multi-output display; OQ-8.2 cosmetic filter (`IsSelfChangeTransaction` / `ExternalOutputs`). See `step10-network-fee-activation-plan.md`.
 - Step 7 leftover refinements (deferred to late Basic-Mode tuning): Hal's network-coupled fade (currently a linear `1.0→0` stand-in pending gradual miner spawning), the founders' full long-term timelines (Hal 2013 sell-off / 2014, Hearn 2016).
-- **Deferred — network-wide fee activation (own branch, e.g. `network-fee-activation`).** Today scripted historical txs are fee-free while bots/casino attach fees from the start — a dev-time contradiction accepted for now. The fix: make the **whole network fee-free until a `FeeActivationDate` ≈ 2009-04-26** (nearest mined block, just after the 18 Apr Hearn round-trip), then all participants begin paying fees — historically faithful (early Bitcoin had no fees). Gate the bot fee (`NetworkRoot.ScheduleBotTransactionsAfterBlock`), `CasinoTxFee`, and the player's default fee to 0 before the date; the candidate-block fee-collection engine is unchanged. See `step8-utxo-realism-plan.md` OQ-8.7.
 - ✅ Step 9 (economy/meta P6–P8) is now **unblocked** — the UTXO model (Step 8) that underpins BTC/SC trading is in place.

@@ -71,6 +71,7 @@ Hard-won rules (a scroll bug once cost a full session — full write-up + diagno
 - **The last line sits flush against the scroll's bottom edge** (`scroll_active` max = content height). Append a few trailing blank lines (`"\n\n\n"`) so the final real line clears the edge and isn't half-clipped.
 - **Setting `RichTextLabel.Text` resets its internal scroll to the top.** On a timer-refreshed panel, save `GetVScrollBar().Value` before setting `Text` and restore it after.
 - **Diagnose with numbers, never guess.** If a panel won't scroll, print `GetVScrollBar()` `MaxValue`/`Page`/`Value`, `Size`, `GetContentHeight()`, and whether the data is even present — before restructuring. Add a visible canary (e.g. a title marker) to confirm the scene actually reloaded the edited `.tscn` (C# always rebuilds; external `.tscn` edits need a scene reload in the editor).
+- **Block Explorer display filter (OQ-8.2 cosmetic, `BlockExplorer.cs`):** `IsSelfChangeTransaction(tx)` hides a tx entirely when all its outputs go to input addresses (pure self-loop). `ExternalOutputs(tx)` strips only the change-to-self output for txs that have at least one external recipient. Both are temporary cosmetics for bots' single-address change-to-self pattern. Remove them once bots have `DerivedAddressWallet` (before referral / rank systems ship). Detail: `Documentation/ProjectDesignManual.md` §29.9.
 
 ### Money Handling
 
@@ -347,7 +348,7 @@ These values are fixed and must be consistent across all docs, UI, and code:
 | Real Bitcoin halving | `210,000 blocks` — NOT used in Basic Mode |
 | Block transaction cap | `24 transactions` (planned) |
 | Hardware cap | `100 nonce attempts` per time cycle (planned) |
-| Network fee activation | `~2009-04-26` nearest block (planned, own branch) — whole network **fee-free before**, all participants (bots/casino/player) pay fees **after**; matches early-Bitcoin zero-fee history. See `AIHelperFiles/step8-utxo-realism-plan.md` OQ-8.7 |
+| Network fee activation | `~2009-04-26` nearest block ✅ **Implemented** — whole network **fee-free before**, all participants (bots/casino/player) pay fees **after**; `NetworkFeePolicy` is the single source of truth. See `AIHelperFiles/step10-network-fee-activation-plan.md` |
 | RTP | `99.02%` |
 | Currency for betting | SC only — BTC cannot be wagered directly |
 | Founders | Satoshi (target `11,000 BTC`, retires ≥ `2011-04-26`, then frozen) + Hal (`P=1.0` drip, fades to 0 by `2009-08-09`) + Mike Hearn (joins ~Apr 2009, never mines, +82.51 BTC round-trip) |
@@ -375,10 +376,14 @@ These values are fixed and must be consistent across all docs, UI, and code:
 - Historical founders (Step 7): Satoshi/Hal/Hearn nodes; first-launch bootstrap to 21 Mar 2009; founders as regulated concurrent miners (`FoundersMiningService`); Satoshi 11k-BTC ramp + disappearance logic; Hal drip-fade to 9 Aug 2009; 12 Jan 10 BTC Satoshi→Hal tx; April 2009 Hearn 32.51 round-trip (`HistoricalEventScheduler`); FoundersWallets DEV readout + `founders_trace.csv`
 - UTXO realism (Step 8): real multi-input/multi-output UTXO model (chain-replayed UTXO set, per-input signing, `Fee = Σin − Σout`, multi-input coin selection + change); Satoshi-only coinbase address non-reuse (~220 addresses); change rotation for player/casino/Hal/Hearn; E8 reinstated; clean reset (`WorldFormatVersion`); address-book UIs (BTCWallet/FoundersWallets/CasinoFinances) + "View empty addresses" toggle. In-engine audited (conservation, 0 double-spends, 100-input consolidation, full April round-trip). See `Documentation/ProjectDesignManual.md` Ch. 30.
 - Bot mining + BTC transactions (mine blocks; recirculate BTC via scheduled payouts); ECDSA-signed transactions; mempool (pending transactions)
+- Network fee activation (P10): `NetworkFeePolicy` (`ActivationDateLocal = 2009-04-26`, `DefaultFee = 0.1 BTC`, `MinFee/MaxFee`); fee row hidden before activation, default-filled and clamp-validated after, in all four BTC wallet send panels (BTCWallet, FoundersWallets, CasinoFinances, BotsBtcWallets); sender balance label on every send panel; backend bot-automated-fee and casino-pool-payout-fee gates on `block.Timestamp`
+- Casino pool distribution atomicity: one multi-output tx per pool event (`DistributePoolEventAsSingleTx`) — eliminates partial/double-payment bug caused by sequential single sends depleting the only available UTXO before change confirmed
+- Block Explorer multi-output display: full `tx.Inputs[]` / `tx.Outputs[]` iteration in block lookup and right-column preview; `tx.IsCoinbase` for coinbase detection; all transactions in a block shown (was only the first); fee LINQ uses `!t.IsCoinbase`
+- Block Explorer OQ-8.2 cosmetic filter: `IsSelfChangeTransaction(tx)` hides txs whose every output goes back to an input address; `ExternalOutputs(tx)` strips change-to-self outputs from the displayed output list for txs that DO have external recipients. Remove both helpers once bots have `DerivedAddressWallet` (before referral/rank systems). See `Documentation/ProjectDesignManual.md` §29.9
 
 ### Prototype (Partially Implemented)
 
-- Bots stay single-address (no per-bot seed → no change rotation yet — OQ-8.2)
+- Bots stay single-address (no per-bot seed → no change rotation yet — OQ-8.2). The Block Explorer hides the resulting change-to-self outputs cosmetically (`IsSelfChangeTransaction` / `ExternalOutputs` — remove both when OQ-8.2 is resolved)
 
 ### Planned (P0–P8 Roadmap)
 

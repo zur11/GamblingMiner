@@ -212,19 +212,29 @@ public partial class BlockExplorer : Control
         sb.AppendLine($"MerkleRoot: {block.MerkleRoot}");
         sb.AppendLine($"Nonce: {block.Nonce}");
         sb.AppendLine($"Difficulty: {block.Difficulty:F2}  (~{block.Difficulty:F0} attempts/block)");
-        decimal blockFees = block.Transactions
-            .Where(t => t.Sender != BlockchainService.CoinbaseSender)
-            .Sum(t => t.Fee);
-        sb.AppendLine($"Transactions: {block.Transactions.Count}  |  Fees collected: {blockFees:F8} BTC");
-        foreach (Transaction tx in block.Transactions)
+        // OQ-8.2 cosmetic filter: bots are single-address (no ReceiveWallet yet), so their spends
+        // produce change back to the same input address. Hide those transactions from the display
+        // until simplified seeds + address rotation land for bots. Remove this filter when OQ-8.2
+        // is resolved (before referral / rank systems ship).
+        List<Transaction> visible = block.Transactions.Where(t => !IsSelfChangeTransaction(t)).ToList();
+        decimal blockFees = visible.Where(t => !t.IsCoinbase).Sum(t => t.Fee);
+        sb.AppendLine($"Transactions: {visible.Count}  |  Fees collected: {blockFees:F8} BTC");
+        foreach (Transaction tx in visible)
         {
-            bool isCoinbase = tx.Sender == BlockchainService.CoinbaseSender;
+            bool isCoinbase = tx.IsCoinbase;
             sb.AppendLine("-");
             sb.AppendLine($"TxId: {tx.TransactionId}{(isCoinbase ? "  [COINBASE]" : "")}");
-            sb.AppendLine($"Amount: {tx.Amount:F8}");
-            if (!isCoinbase) sb.AppendLine($"Fee: {tx.Fee:F8}");
-            sb.AppendLine($"Sender: {tx.Sender}");
-            sb.AppendLine($"Recipient: {tx.Recipient}");
+            if (!isCoinbase)
+            {
+                sb.AppendLine($"Fee: {tx.Fee:F8} BTC");
+                sb.AppendLine($"Inputs ({tx.Inputs.Count}):");
+                foreach (TxInput inp in tx.Inputs)
+                    sb.AppendLine($"  {inp.Address}");
+            }
+            IReadOnlyList<TxOutput> outs = ExternalOutputs(tx);
+            sb.AppendLine($"Outputs ({outs.Count}):");
+            foreach (TxOutput txOut in outs)
+                sb.AppendLine($"  {txOut.Address}  {txOut.Amount:F8} BTC");
         }
         SetLookupResult(sb.ToString());
     }
@@ -323,17 +333,52 @@ public partial class BlockExplorer : Control
         return days > 0 ? $"{days}d {hours:00}h {mins:00}m" : $"{hours}h {mins:00}m";
     }
 
+    // OQ-8.2 cosmetic filter: hides the entire transaction only when every output goes back to an
+    // input address (no external recipient at all — a pure self-loop). The complementary per-output
+    // filter is ExternalOutputs(), which strips only the change output from transactions that DO have
+    // an external recipient. Remove both methods and all callers once bots have simplified seeds +
+    // DerivedAddressWallet (before referral / rank systems ship).
+    private static bool IsSelfChangeTransaction(Transaction tx)
+    {
+        if (tx.IsCoinbase || tx.Inputs.Count == 0) return false;
+        var inputAddrs = new HashSet<string>(tx.Inputs.Select(i => i.Address));
+        return tx.Outputs.All(o => inputAddrs.Contains(o.Address));
+    }
+
+    // Returns only the outputs that go to an address NOT in the input set, hiding change-to-self
+    // outputs. Coinbase transactions have no inputs so all outputs are returned unchanged.
+    private static IReadOnlyList<TxOutput> ExternalOutputs(Transaction tx)
+    {
+        if (tx.IsCoinbase || tx.Inputs.Count == 0) return tx.Outputs;
+        var inputAddrs = new HashSet<string>(tx.Inputs.Select(i => i.Address));
+        return tx.Outputs.Where(o => !inputAddrs.Contains(o.Address)).ToList();
+    }
+
     private static string BuildLatestTransactionPreview(Block block)
     {
-        if (block.Transactions.Count == 0) return "Last block tx details: none";
-        Transaction tx = block.Transactions[0];
-        bool isCoinbase = tx.Sender == BlockchainService.CoinbaseSender;
-        return
-            "Last block first tx:\n" +
-            $"TxId: {tx.TransactionId}{(isCoinbase ? "  [COINBASE]" : "")}\n" +
-            $"Amount: {tx.Amount:F8}\n" +
-            (isCoinbase ? string.Empty : $"Fee: {tx.Fee:F8}\n") +
-            $"Sender: {tx.Sender}\n" +
-            $"Recipient: {tx.Recipient}";
+        List<Transaction> visible = block.Transactions.Where(t => !IsSelfChangeTransaction(t)).ToList();
+        if (visible.Count == 0) return "Last block tx details: none";
+        var sb = new StringBuilder($"Last block txs ({visible.Count}):\n");
+        foreach (Transaction tx in visible)
+        {
+            bool isCoinbase = tx.IsCoinbase;
+            sb.Append("-\n");
+            sb.Append($"TxId: {tx.TransactionId}{(isCoinbase ? "  [COINBASE]" : "")}\n");
+            if (!isCoinbase)
+            {
+                sb.Append($"Fee: {tx.Fee:F8} BTC\n");
+                foreach (TxInput inp in tx.Inputs)
+                    sb.Append($"From: {inp.Address}\n");
+            }
+            else
+            {
+                sb.Append($"From: {BlockchainService.CoinbaseSender}\n");
+            }
+            IReadOnlyList<TxOutput> outs = ExternalOutputs(tx);
+            sb.Append($"Outputs ({outs.Count}):\n");
+            foreach (TxOutput txOut in outs)
+                sb.Append($"  {txOut.Address}  {txOut.Amount:F8} BTC\n");
+        }
+        return sb.ToString().TrimEnd();
     }
 }
