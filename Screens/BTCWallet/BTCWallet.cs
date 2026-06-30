@@ -1,4 +1,5 @@
 using Godot;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using GodotBlockchainPort.Blockchain;
@@ -51,6 +52,8 @@ public partial class BTCWallet : Control
 
 	// Send panel controls (built programmatically)
 	private Label _sendFromLabel = null!;
+	private Label _sendBalanceLabel = null!;
+	private HBoxContainer _feeRow = null!;
 	private OptionButton _toDropdown = null!;
 	private LineEdit _manualAddressInput = null!;
 	private LineEdit _amountInput = null!;
@@ -80,11 +83,13 @@ public partial class BTCWallet : Control
 	private WalletMode _modeBeforeSend = WalletMode.Base;
 	private double _balanceRefreshTimer = 0d;
 	private const double BalanceRefreshInterval = 2.0;
+	private CalendarTimeService? _calendarTimeService;
 
 	public override void _Ready()
 	{
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
 		_networkRoot = GetNode<NetworkRoot>("NetworkRoot");
+		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 
@@ -191,6 +196,10 @@ public partial class BTCWallet : Control
 		_sendFromLabel.AddThemeFontSizeOverride("font_size", 20);
 		_sendPanel.AddChild(_sendFromLabel);
 
+		_sendBalanceLabel = new Label();
+		_sendBalanceLabel.AddThemeFontSizeOverride("font_size", 18);
+		_sendPanel.AddChild(_sendBalanceLabel);
+
 		var toRow = new HBoxContainer();
 		toRow.AddThemeConstantOverride("separation", 10);
 		var toLabel = new Label { Text = "To:" };
@@ -225,26 +234,27 @@ public partial class BTCWallet : Control
 		amountRow.AddChild(_amountInput);
 		_sendPanel.AddChild(amountRow);
 
-		var feeRow = new HBoxContainer();
-		feeRow.AddThemeConstantOverride("separation", 10);
+		_feeRow = new HBoxContainer();
+		_feeRow.AddThemeConstantOverride("separation", 10);
 		var feeLabel = new Label { Text = "Fee (BTC):" };
 		feeLabel.AddThemeFontSizeOverride("font_size", 22);
 		_feeInput = new LineEdit
 		{
-			PlaceholderText = "0.00000000",
+			PlaceholderText = "0.10000000",
 			CustomMinimumSize = new Vector2(220, 0)
 		};
 		_feeInput.AddThemeFontSizeOverride("font_size", 22);
-		feeRow.AddChild(feeLabel);
-		feeRow.AddChild(_feeInput);
-		_sendPanel.AddChild(feeRow);
+		_feeInput.FocusExited += OnFeeInputFocusExited;
+		_feeRow.AddChild(feeLabel);
+		_feeRow.AddChild(_feeInput);
+		_sendPanel.AddChild(_feeRow);
 
 		var btnRow = new HBoxContainer();
 		btnRow.AddThemeConstantOverride("separation", 12);
 		var sendBtn = new Button { Text = "Send" };
 		sendBtn.AddThemeFontSizeOverride("font_size", 26);
 		sendBtn.Pressed += OnSendConfirmed;
-		var cancelBtn = new Button { Text = "Cancel" };
+		var cancelBtn = new Button { Text = "Go Back" };
 		cancelBtn.AddThemeFontSizeOverride("font_size", 26);
 		cancelBtn.Pressed += OnSendCancelled;
 		_sendFeedback = new Label { Text = string.Empty };
@@ -296,10 +306,11 @@ public partial class BTCWallet : Control
 		_sendFromNodeId = senderNodeId;
 		_modeBeforeSend = returnTo;
 		_sendFromLabel.Text = $"From: {senderAddress[..10]}...";
+		_sendBalanceLabel.Text = BuildSendBalanceText(senderNodeId, senderAddress);
 		PopulateToDropdown(senderAddress);
 		_amountInput.Text = string.Empty;
-		_feeInput.Text = string.Empty;
 		_sendFeedback.Text = string.Empty;
+		ApplyFeeState();
 		SetMode(WalletMode.Send);
 	}
 
@@ -604,6 +615,35 @@ public partial class BTCWallet : Control
 
 	private void OnSendCancelled() => SetMode(_modeBeforeSend);
 
+	private void ApplyFeeState()
+	{
+		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
+		bool active = NetworkFeePolicy.IsActive(gameTime);
+		_feeRow.Visible = active;
+		if (active) _feeInput.Text = NetworkFeePolicy.DefaultFee.ToString("F8");
+	}
+
+	private void OnFeeInputFocusExited()
+	{
+		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
+		if (!NetworkFeePolicy.IsActive(gameTime)) return;
+		_feeInput.Text = NetworkFeePolicy.ClampOrDefault(TryParseFee(_feeInput.Text)).ToString("F8");
+	}
+
+	private static decimal TryParseFee(string text)
+		=> decimal.TryParse(text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out decimal v) ? v : -1m;
+
+	private string BuildSendBalanceText(string senderNodeId, string senderAddress)
+	{
+		if (senderNodeId == "player")
+		{
+			decimal total = _networkRoot.GetNodeSpendableBalance("player");
+			return $"Balance: {total:F8} BTC";
+		}
+		decimal confirmed = _networkRoot.GetAddressBalanceDetails(senderAddress).confirmedBalance;
+		return $"Balance: {confirmed:F8} BTC";
+	}
+
 	private void OnSendConfirmed()
 	{
 		if (string.IsNullOrEmpty(_sendFromNodeId)) return;
@@ -636,13 +676,13 @@ public partial class BTCWallet : Control
 			return;
 		}
 
-		// Fee is optional (blank = 0). The fee goes to whichever miner includes the transaction.
-		string feeText = _feeInput.Text.Trim();
+		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
 		decimal fee = 0m;
-		if (feeText.Length > 0 && (!decimal.TryParse(feeText, NumberStyles.Number, CultureInfo.InvariantCulture, out fee) || fee < 0m))
+		if (NetworkFeePolicy.IsActive(gameTime))
 		{
-			_sendFeedback.Text = "Enter a valid fee (0 or more), or leave it blank.";
-			return;
+			decimal parsed = TryParseFee(_feeInput.Text);
+			fee = NetworkFeePolicy.ClampOrDefault(parsed);
+			_feeInput.Text = fee.ToString("F8");
 		}
 
 		Transaction? tx = _networkRoot.CreateAndBroadcastTransactionToAddress(_sendFromNodeId, recipientAddress, amount, fee);
