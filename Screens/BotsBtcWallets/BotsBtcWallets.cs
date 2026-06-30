@@ -61,6 +61,8 @@ public partial class BotsBtcWallets : Control
 
 	// Send section (miners only)
 	private VBoxContainer _sendSection = null!;
+	private HBoxContainer _feeRow = null!;
+	private LineEdit _feeInput = null!;
 	private OptionButton _toDropdown = null!;
 	private LineEdit _manualAddressInput = null!;
 	private LineEdit _amountInput = null!;
@@ -70,6 +72,7 @@ public partial class BotsBtcWallets : Control
 	// Notepad
 	private NotepadPopup _notepadPopup = null!;
 
+	private CalendarTimeService? _calendarTimeService;
 	private BotWalletRecord? _selectedBot;
 	private double _refreshTimer;
 	private const double RefreshInterval = 3.0;
@@ -78,6 +81,7 @@ public partial class BotsBtcWallets : Control
 	{
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
 		_networkRoot = GetNode<NetworkRoot>("NetworkRoot");
+		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 		GetNode<Button>("%BackBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.MainMenu);
@@ -309,6 +313,18 @@ public partial class BotsBtcWallets : Control
 		amountRow.AddChild(sendBtn);
 		_sendSection.AddChild(amountRow);
 
+		_feeInput = new LineEdit
+		{
+			PlaceholderText = "0.10000000",
+			CustomMinimumSize = new Vector2(180, 0)
+		};
+		_feeInput.FocusExited += OnFeeInputFocusExited;
+		_feeRow = new HBoxContainer();
+		_feeRow.AddThemeConstantOverride("separation", 10);
+		_feeRow.AddChild(new Label { Text = "Fee (BTC):" });
+		_feeRow.AddChild(_feeInput);
+		_sendSection.AddChild(_feeRow);
+
 		_sendFeedbackLabel = new Label();
 		_sendSection.AddChild(_sendFeedbackLabel);
 	}
@@ -366,6 +382,7 @@ public partial class BotsBtcWallets : Control
 
 		// Send section: miners always; non-miners only when active and have a balance to send
 		_sendSection.Visible = bot.HasFullWallet && (isMiner || (bot.IsActive && confirmed > 0m));
+		ApplyFeeState();
 	}
 
 	private (int blocksMined, decimal totalBtc) GetMiningStats(string address)
@@ -493,7 +510,16 @@ public partial class BotsBtcWallets : Control
 			return;
 		}
 
-		Transaction? tx = _networkRoot.CreateAndBroadcastTransactionToAddress(_selectedBot.NodeId, recipientAddress, amount);
+		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
+		decimal fee = 0m;
+		if (NetworkFeePolicy.IsActive(gameTime))
+		{
+			decimal parsed = TryParseFee(_feeInput.Text);
+			fee = NetworkFeePolicy.ClampOrDefault(parsed);
+			_feeInput.Text = fee.ToString("F8");
+		}
+
+		Transaction? tx = _networkRoot.CreateAndBroadcastTransactionToAddress(_selectedBot.NodeId, recipientAddress, amount, fee);
 		if (tx is null)
 		{
 			_sendFeedbackLabel.Text = "Rejected — insufficient balance or invalid route.";
@@ -507,6 +533,26 @@ public partial class BotsBtcWallets : Control
 			RefreshDetailPanel(_selectedBot);
 		}
 	}
+
+	// ── Fee helpers ───────────────────────────────────────────────────────────
+
+	private void ApplyFeeState()
+	{
+		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
+		bool active = NetworkFeePolicy.IsActive(gameTime);
+		_feeRow.Visible = active;
+		if (active) _feeInput.Text = NetworkFeePolicy.DefaultFee.ToString("F8");
+	}
+
+	private void OnFeeInputFocusExited()
+	{
+		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
+		if (!NetworkFeePolicy.IsActive(gameTime)) return;
+		_feeInput.Text = NetworkFeePolicy.ClampOrDefault(TryParseFee(_feeInput.Text)).ToString("F8");
+	}
+
+	private static decimal TryParseFee(string text)
+		=> decimal.TryParse(text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out decimal v) ? v : -1m;
 
 	// ── To-dropdown ───────────────────────────────────────────────────────────
 
