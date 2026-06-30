@@ -352,7 +352,7 @@ Button  "← Back to Casino Finances"
 ```
 
 **Display logic**:
-- **Global totals** are computed across all entries in `CasinoClientLedgerService.Entries` (all clients): `TotalDeposited = Σ Amount where Kind ∈ {initial, deposit, auto_recharge}`; `TotalWithdrawn = Σ Amount where Kind == withdrawal`. Updated on `LedgerChanged`.
+- **Global totals** are computed across all entries in `CasinoClientLedgerService.Entries` (all clients): `TotalDeposited = Σ Amount where Kind ∈ {initial, deposit}` (auto_recharge is excluded — it is an internal movement, not a real deposit); `TotalWithdrawn = Σ Amount where Kind == withdrawal`. Updated on `LedgerChanged`.
 - Entries rendered in reverse chronological order (newest at top) for the selected client.
 - Deposit rows show `TotalWageredSnapshot` as "wager base" (hidden / blank on `auto_recharge` entries since snapshot is not updated).
 - Colour coding: `initial` = cyan, `deposit` = green, `auto_recharge` = gray, `withdrawal` = orange.

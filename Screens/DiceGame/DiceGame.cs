@@ -86,6 +86,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private readonly Dictionary<string, NodeStrategyState> _nodeStrategies = new();
 	private bool _loadingNodeStrategy;
 	private SceneManager _sceneManager;
+	private CasinoClientLedgerService _casinoClientLedger;
 
 	private enum ManualStopGate
 	{
@@ -164,6 +165,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_blockCheckpointService = GetNodeOrNull<BlockSessionCheckpointService>("/root/BlockSessionCheckpointService");
 		_simulationService = GetNodeOrNull<SimulationService>("/root/SimulationService");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
+		_casinoClientLedger = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 		_bankrollStateService?.EnsureInitialized(0m);
 		decimal initialBalance = _bankrollStateService?.CurrentBalance ?? 0m;
 		_wallet = new Wallet(initialBalance);
@@ -1502,6 +1504,9 @@ public partial class DiceGame : Control, IBetEventSource
 		if (IsPlayerActive())
 		{
 			_userStatsService.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
+			decimal wageredSnapshot = _userStatsService?.Stats?.TotalAmountWagered ?? 0m;
+			decimal profitSnapshot  = _userStatsService?.Stats?.TotalProfit ?? 0m;
+			_casinoClientLedger?.RegisterDeposit("player", amount, timestampUtc, wageredSnapshot, profitSnapshot);
 		}
 		SaveActiveNodeFinancialState(false);
 

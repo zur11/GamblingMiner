@@ -83,7 +83,7 @@ public partial class ClientsTransactions : Control
 		if (_ledger == null) return;
 
 		decimal deposited = _ledger.Entries
-			.Where(e => e.Kind == "initial" || e.Kind == "deposit" || e.Kind == "auto_recharge")
+			.Where(e => e.Kind == "initial" || e.Kind == "deposit")
 			.Sum(e => e.Amount);
 		decimal withdrawn = _ledger.Entries
 			.Where(e => e.Kind == "withdrawal")
@@ -116,7 +116,7 @@ public partial class ClientsTransactions : Control
 		DateTime enrolledLocal = entries[0].UtcTimestamp.ToLocalTime();
 
 		decimal deposited = entries
-			.Where(e => e.Kind == "initial" || e.Kind == "deposit" || e.Kind == "auto_recharge")
+			.Where(e => e.Kind == "initial" || e.Kind == "deposit")
 			.Sum(e => e.Amount);
 		decimal withdrawn = entries
 			.Where(e => e.Kind == "withdrawal")
