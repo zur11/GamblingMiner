@@ -147,6 +147,8 @@ public partial class ClientsTransactions : Control
 		for (int i = entries.Count - 1; i >= 0; i--)
 		{
 			CasinoClientLedgerService.LedgerEntry e = entries[i];
+			if (e.Kind == "auto_recharge") continue;
+
 			string ts = e.UtcTimestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm:ss");
 
 			string kindLabel;
@@ -166,10 +168,6 @@ public partial class ClientsTransactions : Control
 					color = new Color(0.4f, 1f, 0.4f);   // green
 					wagersAnnotation = string.Create(CultureInfo.InvariantCulture,
 						$"  │ wager base: {e.TotalWageredSnapshot:N8} SC");
-					break;
-				case "auto_recharge":
-					kindLabel = "[AUTO-RECHARGE  ]";
-					color = new Color(0.7f, 0.7f, 0.7f); // gray
 					break;
 				case "withdrawal":
 					kindLabel = "[WITHDRAWAL     ]";
