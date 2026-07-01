@@ -158,24 +158,24 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   ```csharp
   _bankrollProgramService.AutoRechargeAmountChanged += RenderAll;
   ```
-- [ ] **BP.2.5** In `_ExitTree()`, unsubscribe symmetrically:
+- [x] **BP.2.5** In `_ExitTree()`, unsubscribe symmetrically:
   ```csharp
   _bankrollProgramService.AutoRechargeAmountChanged -= RenderAll;
   ```
-- [ ] **BP.2.6** In `RenderAll()`, add after the `_bankrollValue.Text` line (also add a null guard for `_autoRechargeDoseValue`):
+- [x] **BP.2.6** In `RenderAll()`, add after the `_bankrollValue.Text` line (also add a null guard for `_autoRechargeDoseValue`):
   ```csharp
   _autoRechargeDoseValue.Text = (_bankrollProgramService?.AutoRechargeAmount ?? 0m)
       .ToString("N8", CultureInfo.InvariantCulture);
   ```
-- [ ] **BP.2.7** Add `_autoRechargeDoseValue` to the `GodotObject.IsInstanceValid` guard at the top of `RenderAll()`.
-- [ ] **BP.2.8** Fix all English text in the `.tscn` and `.cs`:
+- [x] **BP.2.7** Add `_autoRechargeDoseValue` to the `GodotObject.IsInstanceValid` guard at the top of `RenderAll()`.
+- [x] **BP.2.8** Fix all English text in the `.tscn` and `.cs`:
   - `placeholder_text`: `"Auto recarga"` → `"Dose amount (SC)"`
   - `"Aplicar auto recarga"` → `"Set Auto-Recharge Dose"`
   - `"Monto BR -> BAL"` → `"Amount (Bankroll → Main Balance)"`
   - `"Transferir a balance"` → `"Transfer to Main Balance"`
   - Status messages in `OnApplyAutoRechargeAmountPressed()`: English, `CultureInfo.InvariantCulture` on all format calls.
   - Status messages in `OnTransferToBalancePressed()`: English, `CultureInfo.InvariantCulture`.
-- [ ] **BP.2.9** In `OnApplyAutoRechargeAmountPressed()`, add a blocking validation after parsing `amount` but before calling `SetAutoRechargeAmount()`. If `amount > _principalBalanceService?.CurrentBalance`, reject immediately:
+- [x] **BP.2.9** In `OnApplyAutoRechargeAmountPressed()`, add a blocking validation after parsing `amount` but before calling `SetAutoRechargeAmount()`. If `amount > _principalBalanceService?.CurrentBalance`, reject immediately:
   ```csharp
   decimal mainBalance = Money.Normalize(_principalBalanceService?.CurrentBalance ?? 0m);
   if (amount > mainBalance)

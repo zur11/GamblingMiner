@@ -66,6 +66,7 @@ public partial class BankrollProgrammer : Control
 		if (_bankrollProgramService != null)
 		{
 			_bankrollProgramService.TransfersChanged -= RenderAll;
+			_bankrollProgramService.AutoRechargeAmountChanged -= RenderAll;
 		}
 	}
 
@@ -73,12 +74,20 @@ public partial class BankrollProgrammer : Control
 	{
 		if (!TryParseAmount(_autoRechargeAmountInput.Text, out decimal amount))
 		{
-			_statusValue.Text = "Monto invalido.";
+			_statusValue.Text = "Invalid amount.";
+			return;
+		}
+
+		decimal mainBalance = Money.Normalize(_principalBalanceService?.CurrentBalance ?? 0m);
+		if (amount > mainBalance)
+		{
+			_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
+				$"Dose exceeds available Main Balance ({mainBalance:N8} SC). Enter a lower amount.");
 			return;
 		}
 
 		_bankrollProgramService?.SetAutoRechargeAmount(amount);
-		_statusValue.Text = $"Auto recarga actualizada: {amount:F8}";
+		_statusValue.Text = string.Create(CultureInfo.InvariantCulture, $"Auto-recharge dose updated: {amount:N8}");
 		RenderAll();
 	}
 
@@ -86,7 +95,7 @@ public partial class BankrollProgrammer : Control
 	{
 		if (!TryParseAmount(_manualTransferToBalanceInput.Text, out decimal amount))
 		{
-			_statusValue.Text = "Monto invalido.";
+			_statusValue.Text = "Invalid amount.";
 			return;
 		}
 
@@ -96,7 +105,7 @@ public partial class BankrollProgrammer : Control
 		decimal effectiveAmount = Money.Normalize(Math.Min(amount, maxTransferLeavingReserve));
 		if (effectiveAmount <= 0m)
 		{
-			_statusValue.Text = $"No hay saldo transferible. Reserva minima: {reserve:F8}.";
+			_statusValue.Text = string.Create(CultureInfo.InvariantCulture, $"No transferable balance. Minimum reserve: {reserve:N8}.");
 			return;
 		}
 
@@ -109,12 +118,13 @@ public partial class BankrollProgrammer : Control
 			_bankrollProgramService.TryTransferBankrollToBalance(_principalBalanceService, _bankrollMirrorWallet, effectiveAmount, "manual_return");
 		if (!ok)
 		{
-			_statusValue.Text = "No se pudo transferir de bankroll a balance.";
+			_statusValue.Text = "Could not transfer from bankroll to Main Balance.";
 			return;
 		}
 
 		_bankrollStateService?.SetBalance(_bankrollMirrorWallet.Balance);
-		_statusValue.Text = $"Transferido {effectiveAmount:F8} de bankroll a balance. Bankroll restante: {_bankrollMirrorWallet.Balance:F8}.";
+		_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
+			$"Transferred {effectiveAmount:N8} from bankroll to Main Balance. Remaining bankroll: {_bankrollMirrorWallet.Balance:N8}.");
 		RenderAll();
 	}
 
@@ -128,6 +138,7 @@ public partial class BankrollProgrammer : Control
 		if (!GodotObject.IsInstanceValid(this) ||
 			!GodotObject.IsInstanceValid(_balanceValue) ||
 			!GodotObject.IsInstanceValid(_bankrollValue) ||
+			!GodotObject.IsInstanceValid(_autoRechargeDoseValue) ||
 			!GodotObject.IsInstanceValid(_performanceValue) ||
 			!GodotObject.IsInstanceValid(_rechargeCountersValue) ||
 			!GodotObject.IsInstanceValid(_transfersList))
@@ -139,6 +150,8 @@ public partial class BankrollProgrammer : Control
 		decimal bankroll = _bankrollStateService?.CurrentBalance ?? 0m;
 		_balanceValue.Text = balance.ToString("F8", CultureInfo.InvariantCulture);
 		_bankrollValue.Text = bankroll.ToString("F8", CultureInfo.InvariantCulture);
+		_autoRechargeDoseValue.Text = (_bankrollProgramService?.AutoRechargeAmount ?? 0m)
+			.ToString("N8", CultureInfo.InvariantCulture);
 
 		decimal perf = _bankrollProgramService?.GetPerformancePercentVsInitial(balance) ?? 0m;
 		_performanceValue.Text = $"{perf:+0.00000000;-0.00000000;0.00000000}% vs 40000.00000000";

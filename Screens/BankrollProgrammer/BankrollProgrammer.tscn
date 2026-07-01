@@ -62,12 +62,12 @@ layout_mode = 2
 [node name="AutoRechargeAmountInput" type="LineEdit" parent="VBox/AutoRechargeRow"]
 unique_name_in_owner = true
 layout_mode = 2
-placeholder_text = "Auto recarga"
+placeholder_text = "Dose amount (SC)"
 
 [node name="ApplyAutoRechargeAmountBtn" type="Button" parent="VBox/AutoRechargeRow"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Aplicar auto recarga"
+text = "Set Auto-Recharge Dose"
 
 [node name="ManualReturnRow" type="HBoxContainer" parent="VBox"]
 layout_mode = 2
@@ -75,12 +75,12 @@ layout_mode = 2
 [node name="ManualTransferToBalanceInput" type="LineEdit" parent="VBox/ManualReturnRow"]
 unique_name_in_owner = true
 layout_mode = 2
-placeholder_text = "Monto BR -> BAL"
+placeholder_text = "Amount (Bankroll → Main Balance)"
 
 [node name="TransferToBalanceBtn" type="Button" parent="VBox/ManualReturnRow"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Transferir a balance"
+text = "Transfer to Main Balance"
 
 [node name="TransfersList" type="ItemList" parent="VBox"]
 unique_name_in_owner = true
