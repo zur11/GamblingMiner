@@ -14,6 +14,7 @@ public partial class BankrollProgrammer : Control
 
 	private Label _balanceValue;
 	private Label _bankrollValue;
+	private Label _autoRechargeDoseValue;
 	private Label _performanceValue;
 	private Label _rechargeCountersValue;
 	private LineEdit _autoRechargeAmountInput;

@@ -152,7 +152,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   theme_override_font_sizes/font_size = 24
   text = "0.00000000"
   ```
-- [ ] **BP.2.2** In `.cs`, add private field `private Label _autoRechargeDoseValue;` alongside `_bankrollValue`.
+- [x] **BP.2.2** In `.cs`, add private field `private Label _autoRechargeDoseValue;` alongside `_bankrollValue`.
 - [ ] **BP.2.3** In `_Ready()`, wire it: `_autoRechargeDoseValue = GetNode<Label>("%AutoRechargeDoseValue");`
 - [ ] **BP.2.4** In `_Ready()`, subscribe to the dose-change event (add after the `TransfersChanged` subscription):
   ```csharp
