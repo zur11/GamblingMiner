@@ -34,6 +34,7 @@ public partial class BankrollProgrammer : Control
 
 		_balanceValue = GetNode<Label>("%BalanceValue");
 		_bankrollValue = GetNode<Label>("%BankrollValue");
+		_autoRechargeDoseValue = GetNode<Label>("%AutoRechargeDoseValue");
 		_performanceValue = GetNode<Label>("%PerformanceValue");
 		_rechargeCountersValue = GetNode<Label>("%RechargeCountersValue");
 		_autoRechargeAmountInput = GetNode<LineEdit>("%AutoRechargeAmountInput");
@@ -53,6 +54,7 @@ public partial class BankrollProgrammer : Control
 		if (_bankrollProgramService != null)
 		{
 			_bankrollProgramService.TransfersChanged += RenderAll;
+			_bankrollProgramService.AutoRechargeAmountChanged += RenderAll;
 			_autoRechargeAmountInput.Text = _bankrollProgramService.AutoRechargeAmount.ToString("F8", CultureInfo.InvariantCulture);
 		}
 
