@@ -1622,6 +1622,12 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void ApplyRealtimeBootstrapFromLoadedHistory()
 	{
+		if (_bootstrapAppliedThisSession)
+		{
+			return;
+		}
+		_bootstrapAppliedThisSession = true;
+
 		if (_userStatsService == null)
 		{
 			return;
@@ -1939,6 +1945,12 @@ public partial class DiceGame : Control, IBetEventSource
 	// existed yet — otherwise a brand-new game (no checkpoint on first load, one captured moments later)
 	// would rewind on its second entry.
 	private static bool _checkpointRestoreSpentThisSession;
+
+	// True once ApplyRealtimeBootstrapFromLoadedHistory() has run for this app process. Static so it survives
+	// DiceGame being freed and rebuilt on each scene change (see BP.1 in player-and-casino-bankroll-programmer-plan.md).
+	// The bootstrap re-reads history to seed balances on a cold app start; re-running it on later re-entries can
+	// silently overwrite the authoritative BankrollStateService value with a stale historical balance.
+	private static bool _bootstrapAppliedThisSession;
 
 	private void RestoreLegacyCheckpointIfNeeded()
 	{

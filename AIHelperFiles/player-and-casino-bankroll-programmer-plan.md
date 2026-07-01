@@ -128,8 +128,8 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
 
 **Files**: `Screens/DiceGame/DiceGame.cs`
 
-- [ ] **BP.1.1** Add static field `private static bool _bootstrapAppliedThisSession;` alongside `_checkpointRestoreSpentThisSession`.
-- [ ] **BP.1.2** At the top of `ApplyRealtimeBootstrapFromLoadedHistory()`, add the guard:
+- [x] **BP.1.1** Add static field `private static bool _bootstrapAppliedThisSession;` alongside `_checkpointRestoreSpentThisSession`.
+- [x] **BP.1.2** At the top of `ApplyRealtimeBootstrapFromLoadedHistory()`, add the guard:
   ```csharp
   if (_bootstrapAppliedThisSession) return;
   _bootstrapAppliedThisSession = true;
