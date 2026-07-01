@@ -100,12 +100,10 @@ public partial class BankrollProgrammer : Control
 		}
 
 		decimal currentBankroll = Money.Normalize(_bankrollStateService?.CurrentBalance ?? 0m);
-		decimal reserve = Money.Normalize(_bankrollProgramService?.AutoRechargeAmount ?? BankrollProgramService.DefaultAutoRechargeAmount);
-		decimal maxTransferLeavingReserve = Money.Normalize(Math.Max(0m, currentBankroll - reserve));
-		decimal effectiveAmount = Money.Normalize(Math.Min(amount, maxTransferLeavingReserve));
+		decimal effectiveAmount = Money.Normalize(Math.Min(amount, currentBankroll));
 		if (effectiveAmount <= 0m)
 		{
-			_statusValue.Text = string.Create(CultureInfo.InvariantCulture, $"No transferable balance. Minimum reserve: {reserve:N8}.");
+			_statusValue.Text = "No transferable balance.";
 			return;
 		}
 
@@ -123,8 +121,11 @@ public partial class BankrollProgrammer : Control
 		}
 
 		_bankrollStateService?.SetBalance(_bankrollMirrorWallet.Balance);
+		string emptyHint = _bankrollMirrorWallet.Balance <= 0m
+			? " Bankroll is now empty — time stops until funds are added."
+			: string.Empty;
 		_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Transferred {effectiveAmount:N8} from bankroll to Main Balance. Remaining bankroll: {_bankrollMirrorWallet.Balance:N8}.");
+			$"Transferred {effectiveAmount:N8} to Main Balance. Bankroll remaining: {_bankrollMirrorWallet.Balance:N8}.{emptyHint}");
 		RenderAll();
 	}
 

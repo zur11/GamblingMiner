@@ -195,7 +195,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
 
 **Files**: `Screens/BankrollProgrammer/BankrollProgrammer.cs`
 
-- [ ] **BP.3.1** In `OnTransferToBalancePressed()`, replace the reserve block:
+- [x] **BP.3.1** In `OnTransferToBalancePressed()`, replace the reserve block:
   ```csharp
   // BEFORE (remove all of this):
   decimal reserve = Money.Normalize(_bankrollProgramService?.AutoRechargeAmount ?? BankrollProgramService.DefaultAutoRechargeAmount);
@@ -217,12 +217,12 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
       return;
   }
   ```
-- [ ] **BP.3.2** Update the success status message to English and `CultureInfo.InvariantCulture`:
+- [x] **BP.3.2** Update the success status message to English and `CultureInfo.InvariantCulture`:
   ```csharp
   _statusValue.Text = string.Create(CultureInfo.InvariantCulture,
       $"Transferred {effectiveAmount:N8} to Main Balance. Bankroll remaining: {_bankrollMirrorWallet.Balance:N8}.");
   ```
-- [ ] **BP.3.3** Optionally, if `effectiveAmount` results in bankroll = 0, append a hint to the status message: `" Bankroll is now empty — time stops until funds are added."` This is cosmetic and non-blocking.
+- [x] **BP.3.3** Optionally, if `effectiveAmount` results in bankroll = 0, append a hint to the status message: `" Bankroll is now empty — time stops until funds are added."` This is cosmetic and non-blocking.
 
 **Verify**: with bankroll at 87.50 SC and dose at 100 SC, transfer 87.50 SC to Main Balance — should succeed and leave bankroll at 0.00.
 
