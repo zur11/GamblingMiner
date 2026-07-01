@@ -38,6 +38,12 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 28
 text = "0.00000000"
 
+[node name="AutoRechargeDoseValue" type="Label" parent="VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "0.00000000"
+
 [node name="PerformanceValue" type="Label" parent="VBox"]
 unique_name_in_owner = true
 layout_mode = 2

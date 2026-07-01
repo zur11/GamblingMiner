@@ -144,7 +144,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
 
 **Files**: `Screens/BankrollProgrammer/BankrollProgrammer.tscn`, `Screens/BankrollProgrammer/BankrollProgrammer.cs`
 
-- [ ] **BP.2.1** In `.tscn`, add a new `Label` node immediately after `BankrollValue` and before `PerformanceValue`:
+- [x] **BP.2.1** In `.tscn`, add a new `Label` node immediately after `BankrollValue` and before `PerformanceValue`:
   ```
   [node name="AutoRechargeDoseValue" type="Label" parent="VBox"]
   unique_name_in_owner = true
