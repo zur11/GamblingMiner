@@ -80,11 +80,22 @@ public partial class CasinoGamblingFinances : Control
 		_bankrollLabel.Text    = $"Bankroll:      {Money.FormatSignedAdaptive(_casinoSc.Bankroll)} SC";
 		_totalLabel.Text       = $"Total SC:      {Money.FormatSignedAdaptive(_casinoSc.TotalSc)} SC";
 
-		decimal pl = _casinoSc.CumulativeProfitSinceLoan;
-		_plLabel.Text = string.Create(CultureInfo.InvariantCulture, $"P/L vs loan:   {pl:+0.00000000;-0.00000000} SC");
-		_plLabel.AddThemeColorOverride("font_color", pl >= 0m
-			? new Color(0.4f, 1f, 0.4f)
-			: new Color(1f, 0.4f, 0.4f));
+		// Pre-genesis, before the casino's foundational loan is booked (LoanCount == 0), TotalLoaned is 0 so
+		// CumulativeProfitSinceLoan would read the full unborrowed 100M as "profit" — a misleading phantom
+		// value (OQ-CG.6). Show a neutral, unsigned 0.00000000 until the first settled bet funds the casino.
+		if (_casinoSc.LoanCount == 0)
+		{
+			_plLabel.Text = string.Create(CultureInfo.InvariantCulture, $"P/L vs loan:   {0m:0.00000000} SC");
+			_plLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.7f));
+		}
+		else
+		{
+			decimal pl = _casinoSc.CumulativeProfitSinceLoan;
+			_plLabel.Text = string.Create(CultureInfo.InvariantCulture, $"P/L vs loan:   {pl:+0.00000000;-0.00000000} SC");
+			_plLabel.AddThemeColorOverride("font_color", pl >= 0m
+				? new Color(0.4f, 1f, 0.4f)
+				: new Color(1f, 0.4f, 0.4f));
+		}
 
 		_loanInfoLabel.Text  = string.Create(CultureInfo.InvariantCulture, $"Bank loans taken: {_casinoSc.LoanCount}   |   Total loaned: {_casinoSc.TotalLoaned:N8} SC");
 		_targetInfoLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll target: {_casinoSc.BankrollTarget:N8} SC   (auto-fills to this level on exhaustion)");

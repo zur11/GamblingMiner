@@ -2802,7 +2802,7 @@ The engine is **already general** — `BuildAndBroadcastUtxoSpend` works for any
 
 ## Chapter 31 — Casino SC Balance Sheet: Pre-Genesis Parity & the Loan Configuration Proposal
 
-**Status (2026-07-01): §31.1 (casino pre-genesis/first-bet parity, Phase CG.0) and the ad-hoc manual-loan text input (Phase CG.2, `ManualLoanInput`) are both confirmed, ready-to-implement designs — checklists in `AIHelperFiles/player-and-casino-bankroll-programmer-plan.md`. Only §31.2 — making the *default dose* amounts for auto-loans and the manual-loan pre-fill persistently configurable — is a further-out proposal (pseudocode + UI sketch only), explicitly deferred by the user until Phase CG.0 is stable.**
+**Status (2026-07-02): §31.1 (casino pre-genesis/first-bet parity, Phase CG.0) is ✅ IMPLEMENTED & manually verified (both case 1 and case 2, plus the mined-block restore). The ad-hoc manual-loan text input (Phase CG.2, `ManualLoanInput`) remains a confirmed, ready-to-implement design — checklist in `AIHelperFiles/player-and-casino-bankroll-programmer-plan.md`. Only §31.2 — making the *default dose* amounts for auto-loans and the manual-loan pre-fill persistently configurable — is a further-out proposal (pseudocode + UI sketch only), explicitly deferred by the user until Phase CG.0 is stable.**
 
 ### 31.1 — Mirroring the player's pre-genesis lifecycle onto the casino (Phase CG.0)
 
@@ -2874,6 +2874,14 @@ GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
 **Closing the checkpoint gap** — today `BlockSessionCheckpointService.Snapshot` only captures `CasinoScMainBalance`/`CasinoScBankroll`; a `BankrollTarget` change made *after* a real block, followed by a restart *without* mining another block, would incorrectly persist instead of reverting — the exact bug fixed for the player's own dose in OQ-BP.6 (Ch. 24.9, Bug 6). `Snapshot` needs `CasinoScBankrollTarget`/`CasinoScLoanCount`/`CasinoScTotalLoaned` alongside the existing two fields, and `RestoreCasinoScState(...)` needs the matching parameters.
 
 Full implementation checklist: `AIHelperFiles/player-and-casino-bankroll-programmer-plan.md`, Phase CG.0.
+
+**✅ Implemented & verified (2026-07-02).** All seven checklist items (CG.0.1–CG.0.7) shipped as designed above. Two things surfaced during implementation/testing, both now resolved:
+
+1. **Manual bets never routed to the casino at all (pre-existing gap, exposed by lazy funding — OQ-CG.7).** The design above keyed "has the casino been funded" off the first call to `ApplyBetResult()`. But that method was only ever invoked by `SimulationService` — i.e. only for **autobet** player bets. **Manual** bets run through `DiceGame.ExecuteBet()` → the DiceGame-owned session, a completely separate path that never touched the casino SC sheet. Under the *old* eager-funding model this was invisible (the casino was already at `Bankroll=1,000,000` from boot); lazy funding made it visible as "place a manual bet, casino Bankroll stays `0`." **Fix:** `DiceGame` now holds a `_casinoSc` reference and `ExecuteBet()` calls `_casinoSc?.ApplyBetResult(-betEvent.CreditedProfit)` for player bets, mirroring `SimulationService`. No double-counting: while autobet is delegated to `SimulationService`, `ExecuteBet` is inert (`TickAutoBet` returns early on `_autobetDelegated`, and manual betting is disabled), so exactly one code path settles any given bet. *(Doc debt: `CLAUDE.md`'s `CasinoScBalanceService` description — "`ApplyBetResult` … called by `SimulationService`" — is now incomplete; it's also called by `DiceGame.ExecuteBet` for manual play. Update on merge to `main`.)*
+
+2. **`LoadState()` guards coerced the new `0` defaults back up.** The pre-existing guards `LoanCount > 0 ? … : 1` and `TotalLoaned > 0 ? … : InitialLoanAmount` treated `0` as "missing, use funded default" — the exact opposite of the new model where `0` is the legitimate pre-genesis value. Changed to `Math.Max(0, …)` so a persisted `0` survives the load. (This is belt-and-suspenders only: `BlockSessionCheckpointService` runs *after* `CasinoScBalanceService` in autoload order and always overrides the loaded state via `ResetToPreGenesisDefaults()` (pre-block) or `RestoreCasinoScState()` (post-block) — but leaving the guards wrong was a latent trap.)
+
+Also note the `RestoreCasinoScState(...)` restore guards the three new fields with `> 0` checks so a legacy checkpoint captured *before* CG.0.6 (which lacks them → deserializes to `0`) doesn't zero out a funded casino's target/loan bookkeeping.
 
 ### 31.2 — PROPOSED (not scheduled): a "loan dosificador" mirroring `BankrollProgrammer`'s Auto-Recharge Dose
 

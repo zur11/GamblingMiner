@@ -43,6 +43,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private BlockSessionCheckpointService _blockCheckpointService;
 	private FinancialBettingStats _financialStats;
 	private SimulationService _simulationService;
+	private CasinoScBalanceService _casinoSc;
 	private bool _autobetDelegated;
 	private BetTransactionEvent _lastLoggedBetEvent;
 	private Timer _autoBetTimer;
@@ -164,6 +165,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_bankrollProgramService = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");
 		_blockCheckpointService = GetNodeOrNull<BlockSessionCheckpointService>("/root/BlockSessionCheckpointService");
 		_simulationService = GetNodeOrNull<SimulationService>("/root/SimulationService");
+		_casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_casinoClientLedger = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 		_bankrollStateService?.EnsureInitialized(0m);
@@ -1347,6 +1349,13 @@ public partial class DiceGame : Control, IBetEventSource
 			if (IsPlayerActive())
 			{
 				_userStatsService?.OnBetExecutedRegisterBet(GameId, betEvent);
+				// Route the inverse of the player's profit to/from the casino SC bankroll, exactly as
+				// SimulationService does for autobet. Manual bets do NOT go through SimulationService, so
+				// without this the casino never funds/settles for manual play (with lazy first-bet funding it
+				// would stay at Bankroll 0 forever). Player bets only (bots don't route to casino SC — OQ-11.1).
+				// Safe from double-counting: while autobet is delegated to SimulationService, ExecuteBet is inert
+				// (TickAutoBet returns early on _autobetDelegated and manual betting is disabled).
+				_casinoSc?.ApplyBetResult(-betEvent.CreditedProfit);
 			}
 			SaveActiveNodeFinancialState(false);
 			ProcessBlockchainAttemptForBet(_activeNodeId, _strategyPanel.StopOnBlockMinedEnabled, _session);

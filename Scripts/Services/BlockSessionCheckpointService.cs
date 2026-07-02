@@ -18,8 +18,11 @@ public partial class BlockSessionCheckpointService : Node
 		public List<BankrollProgramService.TransferRecord> TransferRecords { get; set; } = new();
 		public long? HistoryCheckpointUtcTicks { get; set; }
 		public long? CalendarLocalTicks { get; set; }
-		public decimal CasinoScMainBalance { get; set; }
-		public decimal CasinoScBankroll    { get; set; }
+		public decimal CasinoScMainBalance    { get; set; }
+		public decimal CasinoScBankroll       { get; set; }
+		public decimal CasinoScBankrollTarget { get; set; }
+		public int     CasinoScLoanCount      { get; set; }
+		public decimal CasinoScTotalLoaned    { get; set; }
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -50,6 +53,8 @@ public partial class BlockSessionCheckpointService : Node
 			?.SetBalance(0m);
 		GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService")
 			?.ReplaceState(BankrollProgramService.DefaultAutoRechargeAmount, new List<BankrollProgramService.TransferRecord>());
+		GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
+			?.ResetToPreGenesisDefaults();
 
 		// The clock and bet history leak the same way (CalendarTimeService/UserStatsService self-persist on
 		// every bet, not just on a mined block). Before any real block, the chain tip IS still the historical
@@ -90,7 +95,12 @@ public partial class BlockSessionCheckpointService : Node
 		GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService")
 			?.ReplaceState(CurrentSnapshot.AutoRechargeAmount, CurrentSnapshot.TransferRecords);
 		GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
-			?.RestoreCasinoScState(CurrentSnapshot.CasinoScMainBalance, CurrentSnapshot.CasinoScBankroll);
+			?.RestoreCasinoScState(
+				CurrentSnapshot.CasinoScMainBalance,
+				CurrentSnapshot.CasinoScBankroll,
+				CurrentSnapshot.CasinoScBankrollTarget,
+				CurrentSnapshot.CasinoScLoanCount,
+				CurrentSnapshot.CasinoScTotalLoaned);
 
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
 		{
@@ -133,8 +143,11 @@ public partial class BlockSessionCheckpointService : Node
 			}).ToList(),
 			HistoryCheckpointUtcTicks = DateTime.SpecifyKind(historyCheckpointUtc, DateTimeKind.Utc).Ticks,
 			CalendarLocalTicks = DateTime.SpecifyKind(calendarLocalDateTime, DateTimeKind.Local).Ticks,
-			CasinoScMainBalance = casinoSc?.MainBalance ?? 0m,
-			CasinoScBankroll    = casinoSc?.Bankroll ?? 0m,
+			CasinoScMainBalance    = casinoSc?.MainBalance ?? 0m,
+			CasinoScBankroll       = casinoSc?.Bankroll ?? 0m,
+			CasinoScBankrollTarget = casinoSc?.BankrollTarget ?? 0m,
+			CasinoScLoanCount      = casinoSc?.LoanCount ?? 0,
+			CasinoScTotalLoaned    = casinoSc?.TotalLoaned ?? 0m,
 			CapturedAtUtc = DateTime.UtcNow
 		};
 

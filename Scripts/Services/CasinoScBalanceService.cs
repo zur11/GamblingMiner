@@ -7,7 +7,9 @@ public partial class CasinoScBalanceService : Node
 {
 	public const decimal InitialLoanAmount  = 100_000_000.00000000m;
 	public const decimal DefaultBankroll    =   1_000_000.00000000m;
-	public const decimal DefaultMainBalance =  99_000_000.00000000m;
+	// Pre-genesis / pre-first-bet: the full, unsplit loan sits in Main Balance and nothing is in the
+	// Bankroll yet (the casino self-funds lazily on the first settled bet — EnsureInitialCasinoFundingIfNeeded).
+	public const decimal DefaultMainBalance = InitialLoanAmount;
 
 	private const string StatePath = "user://casino_sc_balance_state.json";
 	private int _betCount;
@@ -24,15 +26,15 @@ public partial class CasinoScBalanceService : Node
 	}
 
 	public decimal MainBalance    { get; private set; } = DefaultMainBalance;
-	public decimal Bankroll       { get; private set; } = DefaultBankroll;
+	public decimal Bankroll       { get; private set; } = 0m;
 	public decimal TotalSc        => Money.Normalize(MainBalance + Bankroll);
 
 	// Positive = casino ahead of all cumulative loans; negative = casino in debt.
 	public decimal CumulativeProfitSinceLoan => Money.Normalize(TotalSc - TotalLoaned);
 
 	public decimal BankrollTarget { get; private set; } = DefaultBankroll;
-	public int     LoanCount      { get; private set; } = 1;
-	public decimal TotalLoaned    { get; private set; } = InitialLoanAmount;
+	public int     LoanCount      { get; private set; } = 0;
+	public decimal TotalLoaned    { get; private set; } = 0m;
 
 	public event Action BalanceChanged;
 
@@ -45,7 +47,7 @@ public partial class CasinoScBalanceService : Node
 	// Called by BlockSessionCheckpointService.ApplyCheckpointToServices() on restart.
 	// Sets MainBalance and Bankroll directly to checkpoint values — bypasses auto-recharge, does not persist.
 	// Both == 0 means the fields were absent from the JSON (old checkpoint before Phase 11.2) — skip restore.
-	public void RestoreCasinoScState(decimal main, decimal bankroll)
+	public void RestoreCasinoScState(decimal main, decimal bankroll, decimal bankrollTarget, int loanCount, decimal totalLoaned)
 	{
 		if (main == 0m && bankroll == 0m)
 		{
@@ -54,8 +56,30 @@ public partial class CasinoScBalanceService : Node
 		}
 		MainBalance = Money.Normalize(Math.Max(0m, main));
 		Bankroll    = Money.Normalize(Math.Max(0m, bankroll));
-		GD.Print($"[CasinoSC] RESTORED from checkpoint — Main={MainBalance:F8}  Bankroll={Bankroll:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}");
+		// BankrollTarget/LoanCount/TotalLoaned were added to the checkpoint in Phase CG.0.6; older checkpoints
+		// lack them and deserialize to 0, so keep the currently-loaded value rather than zeroing a funded
+		// casino's target/loan bookkeeping. Post-first-block checkpoints always carry valid (>0) values.
+		if (bankrollTarget > 0m) BankrollTarget = Money.Normalize(bankrollTarget);
+		if (loanCount      > 0)  LoanCount      = loanCount;
+		if (totalLoaned    > 0m) TotalLoaned    = Money.Normalize(totalLoaned);
+		GD.Print($"[CasinoSC] RESTORED from checkpoint — Main={MainBalance:F8}  Bankroll={Bankroll:F8}  Target={BankrollTarget:F8}  LoanCount={LoanCount}  TotalLoaned={TotalLoaned:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}");
 		BalanceChanged?.Invoke();
+	}
+
+	// Lazy first-bet funding — mirrors DiceGame.EnsureInitialBankrollFunded() for the player.
+	// Pre-genesis the casino holds the full unsplit loan in Main Balance with an empty Bankroll and no
+	// loan booked (LoanCount == 0); the first settled bet books the initial loan and splits off the Bankroll
+	// using whatever BankrollTarget is currently in effect (case 1: dev-configured; case 2: the 1M default).
+	private void EnsureInitialCasinoFundingIfNeeded()
+	{
+		if (LoanCount > 0) return;              // already funded this session
+
+		LoanCount   = 1;
+		TotalLoaned = InitialLoanAmount;
+		decimal transfer = Money.Normalize(Math.Min(BankrollTarget, MainBalance));
+		MainBalance = Money.Normalize(MainBalance - transfer);
+		Bankroll    = Money.Normalize(Bankroll + transfer);
+		// Phase CG.2, once LoanHistory exists: AddLoanRecord(InitialLoanAmount, "startup");
 	}
 
 	// Called by SimulationService after each settled player bet.
@@ -63,6 +87,7 @@ public partial class CasinoScBalanceService : Node
 	// Bankroll fluctuates freely with each bet result; auto-recharge fires only when it is exhausted.
 	public void ApplyBetResult(decimal casinoDelta)
 	{
+		EnsureInitialCasinoFundingIfNeeded();
 		Bankroll = Money.Normalize(Bankroll + casinoDelta);
 		if (Bankroll <= 0m)
 			TryAutoRecharge();
@@ -119,6 +144,22 @@ public partial class CasinoScBalanceService : Node
 		return true;
 	}
 
+	// Called by BlockSessionCheckpointService.ResetToPreGenesisDefaults() on every boot until the first real
+	// block is mined. Forces the casino's SC sheet back to its true "first launch" state — mirrors the player
+	// side, since nothing is committed to disk pre-genesis (a block is the only commit). BankrollTarget also
+	// reverts here: a custom target only "sticks" once a real block captures it into a checkpoint.
+	public void ResetToPreGenesisDefaults()
+	{
+		MainBalance    = DefaultMainBalance; // 100,000,000
+		Bankroll       = 0m;
+		BankrollTarget = DefaultBankroll;    // 1,000,000
+		LoanCount      = 0;
+		TotalLoaned    = 0m;
+		// Phase CG.2, once LoanHistory exists: _loanHistory.Clear();
+		SaveState();
+		BalanceChanged?.Invoke();
+	}
+
 	public void SetBankrollTarget(decimal target)
 	{
 		target = Money.Normalize(target);
@@ -153,8 +194,10 @@ public partial class CasinoScBalanceService : Node
 			MainBalance    = Money.Normalize(Math.Max(0m, snapshot.MainBalance));
 			Bankroll       = Money.Normalize(Math.Max(0m, snapshot.Bankroll));
 			BankrollTarget = snapshot.BankrollTarget > 0m ? Money.Normalize(snapshot.BankrollTarget) : DefaultBankroll;
-			LoanCount      = snapshot.LoanCount > 0 ? snapshot.LoanCount : 1;
-			TotalLoaned    = snapshot.TotalLoaned > 0m ? Money.Normalize(snapshot.TotalLoaned) : InitialLoanAmount;
+			// 0 is now a legitimate pre-genesis value (no loan taken until the first settled bet funds the
+			// casino), so do NOT coerce it up to 1 / InitialLoanAmount as the old funded-from-boot model did.
+			LoanCount      = Math.Max(0, snapshot.LoanCount);
+			TotalLoaned    = Money.Normalize(Math.Max(0m, snapshot.TotalLoaned));
 		}
 		catch (Exception ex)
 		{
@@ -166,11 +209,11 @@ public partial class CasinoScBalanceService : Node
 
 	private void InitializeDefaults()
 	{
-		MainBalance    = DefaultMainBalance;
-		Bankroll       = DefaultBankroll;
-		BankrollTarget = DefaultBankroll;
-		LoanCount      = 1;
-		TotalLoaned    = InitialLoanAmount;
+		MainBalance    = DefaultMainBalance; // 100,000,000 — full unsplit loan
+		Bankroll       = 0m;                 // funded lazily on the first settled bet
+		BankrollTarget = DefaultBankroll;    // 1,000,000 — the casino's "dose"
+		LoanCount      = 0;
+		TotalLoaned    = 0m;
 	}
 
 	private void SaveState()
