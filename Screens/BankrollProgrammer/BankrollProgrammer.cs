@@ -18,6 +18,7 @@ public partial class BankrollProgrammer : Control
 	private Label _performanceValue;
 	private Label _rechargeCountersValue;
 	private LineEdit _autoRechargeAmountInput;
+	private LineEdit _manualRechargeToBankrollInput;
 	private LineEdit _manualTransferToBalanceInput;
 	private ItemList _transfersList;
 	private Label _statusValue;
@@ -38,11 +39,13 @@ public partial class BankrollProgrammer : Control
 		_performanceValue = GetNode<Label>("%PerformanceValue");
 		_rechargeCountersValue = GetNode<Label>("%RechargeCountersValue");
 		_autoRechargeAmountInput = GetNode<LineEdit>("%AutoRechargeAmountInput");
+		_manualRechargeToBankrollInput = GetNode<LineEdit>("%ManualRechargeToBankrollInput");
 		_manualTransferToBalanceInput = GetNode<LineEdit>("%ManualTransferToBalanceInput");
 		_transfersList = GetNode<ItemList>("%TransfersList");
 		_statusValue = GetNode<Label>("%StatusValue");
 
 		GetNode<Button>("%ApplyAutoRechargeAmountBtn").Pressed += OnApplyAutoRechargeAmountPressed;
+		GetNode<Button>("%ManualRechargeToBankrollBtn").Pressed += OnManualRechargeToBankrollPressed;
 		GetNode<Button>("%TransferToBalanceBtn").Pressed += OnTransferToBalancePressed;
 		GetNode<Button>("%BackToDiceBtn").Pressed += OnBackToDicePressed;
 
@@ -88,6 +91,45 @@ public partial class BankrollProgrammer : Control
 
 		_bankrollProgramService?.SetAutoRechargeAmount(amount);
 		_statusValue.Text = string.Create(CultureInfo.InvariantCulture, $"Auto-recharge dose updated: {amount:N8}");
+		RenderAll();
+	}
+
+	private void OnManualRechargeToBankrollPressed()
+	{
+		if (!TryParseAmount(_manualRechargeToBankrollInput.Text, out decimal amount))
+		{
+			_statusValue.Text = "Invalid amount.";
+			return;
+		}
+
+		decimal available = _principalBalanceService?.CurrentBalance ?? 0m;
+		if (amount > available)
+		{
+			_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
+				$"Insufficient Main Balance. Available: {available:N8}.");
+			return;
+		}
+
+		decimal currentBankroll = Money.Normalize(_bankrollStateService?.CurrentBalance ?? 0m);
+		_bankrollMirrorWallet ??= new Wallet(currentBankroll);
+		_bankrollMirrorWallet.SetBalanceForTimeTravel(currentBankroll);
+
+		bool ok = _bankrollProgramService != null &&
+			_principalBalanceService != null &&
+			_bankrollMirrorWallet != null &&
+			_bankrollProgramService.TryTransferBalanceToBankroll(
+				_principalBalanceService, _bankrollMirrorWallet, amount, "manual_recharge");
+
+		if (!ok)
+		{
+			_statusValue.Text = "Transfer failed.";
+			return;
+		}
+
+		_bankrollStateService?.SetBalance(_bankrollMirrorWallet.Balance);
+		_manualRechargeToBankrollInput.Text = "";
+		_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
+			$"Recharged {amount:N8} to Bankroll. Bankroll now: {_bankrollMirrorWallet.Balance:N8}.");
 		RenderAll();
 	}
 

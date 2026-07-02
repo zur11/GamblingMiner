@@ -259,7 +259,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_previousWinnerNumbersGrid.SubscribeTo(this);
 		_betHistoryContainer.SubscribeTo(this);
 		_financialStats.ConnectTo(_userStatsService);
-		ApplyRealtimeBootstrapFromLoadedHistory();
 		_strategyPanel.BetOnceBtnPressed += OnManualBetFromPanel;
 		_strategyPanel.AutoBetToggled += OnAutoBetToggled;
 		_strategyPanel.AutoPauseToggled += OnAutoPauseToggled;
@@ -292,11 +291,14 @@ public partial class DiceGame : Control, IBetEventSource
 		InitializeActiveNodeSelector();
 		bool hadAnyNodeFinancialState = _blockchainNetworkRoot?.HasAnyNodeFinancialState() ?? false;
 		RestoreLegacyCheckpointIfNeeded();
+		// Must run AFTER the checkpoint restore above (it rolls bet history back to the last mined block):
+		// GetLoadedHistoryStats() below reads the currently-loaded history, so calling it before the rollback
+		// would compute "General P/L" / "last deposit P/L" from uncommitted bets the checkpoint just discarded.
+		ApplyRealtimeBootstrapFromLoadedHistory();
 		LoadActiveNodeFinancialState();
 		LoadActiveNodeStrategySnapshot();
 		EnsureInitialBankrollFunded();
 		EnsureMissingNodeFinancialStates(hadAnyNodeFinancialState);
-		CaptureBlockCheckpointIfMissing();
 		RefreshCalculatorFromGameSettings();
 		_resultValue.Text = "Place your bet.";
 
@@ -476,6 +478,17 @@ public partial class DiceGame : Control, IBetEventSource
 			_activeNodeId,
 			fallbackPrincipal,
 			fallbackBankroll);
+
+		// The player's real balances live in PrincipalBalanceService/BankrollStateService/BankrollProgramService
+		// (each persists itself and is the single source of truth — see SimulationService's header comment).
+		// NodeFinancialState only mirrors the player here for the Active Node Selector's bot-viewing UI; applying
+		// this cached snapshot back onto the player would revert any change made in another scene (e.g. a
+		// BankrollProgrammer transfer) the next time DiceGame is entered, since the cache is only refreshed via
+		// SaveActiveNodeFinancialState() on the way OUT of DiceGame and BankrollProgrammer bypasses it entirely.
+		if (IsPlayerActive())
+		{
+			return;
+		}
 
 		_principalBalanceService?.SetBalance(state.PrincipalBalance);
 		_bankrollStateService?.SetBalance(state.BankrollBalance);
@@ -1633,14 +1646,15 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		decimal current = _walletController.Balance;
-		decimal restored = _userStatsService.GetLatestKnownBalance(current);
-		if (restored != current)
-		{
-			_wallet.SetBalanceForTimeTravel(restored);
-			_bankrollStateService?.SetBalance(restored);
-		}
-
+		// Balance restore from bet history used to run here, but it is now provably redundant AND harmful:
+		// BankrollStateService/PrincipalBalanceService already self-persist immediately on every change, and
+		// BlockSessionCheckpointService.ApplyCheckpointToServices() (autoload boot, before any scene loads)
+		// already reverts them to the last mined block — the actual single source of truth (see
+		// SimulationService's header comment). Bet history logs every bet regardless of whether a block was
+		// later mined, so on a cold app restart it can be AHEAD of the checkpoint (containing bets from an
+		// uncommitted period the checkpoint revert correctly discarded); restoring from it here silently
+		// undid that revert on first DiceGame entry after a restart. See OQ-BP.4 in
+		// player-and-casino-bankroll-programmer-plan.md.
 		TimeBasedBetStats loadedStats = _userStatsService.GetLoadedHistoryStats();
 		_financialStats.UpdateFromTimeBased(loadedStats);
 	}
@@ -1907,7 +1921,8 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		TryProgrammedBankrollTransfer(BankrollProgramService.DefaultAutoRechargeAmount, "startup_default");
+		decimal dose = _bankrollProgramService?.AutoRechargeAmount ?? BankrollProgramService.DefaultAutoRechargeAmount;
+		TryProgrammedBankrollTransfer(dose, "startup_default");
 	}
 
 	private bool TryAutoRechargeBankroll()
@@ -2024,16 +2039,6 @@ public partial class DiceGame : Control, IBetEventSource
 			_calendarTimeService.SetExplorerSelectedLocalDateTime(local);
 			_calendarTimeService.PersistCurrentTime();
 		}
-	}
-
-	private void CaptureBlockCheckpointIfMissing()
-	{
-		if (_blockCheckpointService == null || _blockCheckpointService.HasCheckpoint())
-		{
-			return;
-		}
-
-		CaptureBlockCheckpoint();
 	}
 
 	private void CaptureBlockCheckpoint()

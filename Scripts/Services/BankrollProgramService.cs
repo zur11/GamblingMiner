@@ -79,7 +79,8 @@ public partial class BankrollProgramService : Node
 		// Internal recharges (auto or startup init) are NOT player-initiated deposits.
 		// "deposit" is reserved for future explicit player transfers via the SC wallet screen.
 		bool isInternalRecharge = string.Equals(reason, "auto_recharge", StringComparison.Ordinal)
-		                       || string.Equals(reason, "startup_default", StringComparison.Ordinal);
+		                       || string.Equals(reason, "startup_default", StringComparison.Ordinal)
+		                       || string.Equals(reason, "manual_recharge", StringComparison.Ordinal);
 		if (isInternalRecharge)
 			_ledger?.RegisterAutoRecharge("player", amount, DateTime.UtcNow, wageredSnapshot, profitSnapshot);
 		else

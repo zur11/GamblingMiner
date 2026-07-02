@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Godot;
+using GodotBlockchainPort.Simulation;
 
 public partial class BlockSessionCheckpointService : Node
 {
@@ -29,6 +30,46 @@ public partial class BlockSessionCheckpointService : Node
 		LoadState();
 		if (CurrentSnapshot != null)
 			ApplyCheckpointToServices();
+		else
+			ResetToPreGenesisDefaults();
+	}
+
+	// No block has ever been mined in this world, so nothing is committed yet (block = the only commit to
+	// disk): every boot must present a true "first launch" state for the player's balances/ledger/dose/clock,
+	// discarding whatever PrincipalBalanceService/BankrollStateService/BankrollProgramService/
+	// CalendarTimeService/UserStatsService's own self-persisted files accumulated between restarts. The
+	// auto-recharge dose is included in this reset — a dose configured in BankrollProgrammer only "sticks"
+	// once a real block is mined (at which point ApplyCheckpointToServices() above restores the dose from
+	// that checkpoint instead); until then, every restart goes back to DefaultAutoRechargeAmount, same as
+	// the balances and the transfer records.
+	private void ResetToPreGenesisDefaults()
+	{
+		GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService")
+			?.SetBalance(BankrollProgramService.InitialPrincipalBalanceBaseline);
+		GetNodeOrNull<BankrollStateService>("/root/BankrollStateService")
+			?.SetBalance(0m);
+		GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService")
+			?.ReplaceState(BankrollProgramService.DefaultAutoRechargeAmount, new List<BankrollProgramService.TransferRecord>());
+
+		// The clock and bet history leak the same way (CalendarTimeService/UserStatsService self-persist on
+		// every bet, not just on a mined block). Before any real block, the chain tip IS still the historical
+		// bootstrap's last block (see NetworkRoot.GetPlayerLatestBlockTimestampMsStatic), so re-deriving
+		// "player start" from it on every boot is exact and needs no extra persistence of its own. No +1s
+		// offset: every post-bootstrap checkpoint is captured at the calendar instant EQUAL to the mined
+		// block's own timestamp (see HistoricalBootstrapService.Run()), so this matches that same convention.
+		long tipMs = NetworkRoot.GetPlayerLatestBlockTimestampMsStatic();
+		DateTimeOffset playerStart = DateTimeOffset.FromUnixTimeMilliseconds(tipMs);
+
+		CalendarTimeService calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		if (calendar != null)
+		{
+			calendar.SetLocalDateTime(playerStart.LocalDateTime);
+			calendar.SetExplorerSelectedLocalDateTime(playerStart.LocalDateTime);
+			calendar.PersistCurrentTime();
+		}
+
+		GetNodeOrNull<UserStatsService>("/root/UserStatsService")
+			?.RollbackHistoryToUtc(playerStart.UtcDateTime);
 	}
 
 	// Called once on startup after all other autoloads have loaded their own files.
@@ -42,6 +83,8 @@ public partial class BlockSessionCheckpointService : Node
 			?.SetBalance(CurrentSnapshot.BankrollBalance);
 		GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService")
 			?.SetBalance(CurrentSnapshot.PrincipalBalance);
+		GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService")
+			?.ReplaceState(CurrentSnapshot.AutoRechargeAmount, CurrentSnapshot.TransferRecords);
 		GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
 			?.RestoreCasinoScState(CurrentSnapshot.CasinoScMainBalance, CurrentSnapshot.CasinoScBankroll);
 

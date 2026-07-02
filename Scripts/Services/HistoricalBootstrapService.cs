@@ -60,8 +60,11 @@ public static class HistoricalBootstrapService
 	{
 		var rng = new Random();
 
-		DateTime landingLocal = PlayerStartDayLocal.AddSeconds(rng.Next(0, 86400));
-		long landingMs = new DateTimeOffset(landingLocal).ToUnixTimeMilliseconds();
+		// Mine until the tip crosses into 21 Mar 2009 (the block that crosses IS mined, unlike a random
+		// same-day target that would stop just short of it) — the player's start is derived from that
+		// tip below, not from an independently-rolled random time, so there is no dead/idle gap between
+		// the last historical block and the player's first in-game instant.
+		long marchTwentyFirstStartMs = new DateTimeOffset(PlayerStartDayLocal).ToUnixTimeMilliseconds();
 
 		var halTargets = new Queue<long>();
 		foreach (DateTime d in HalBlockDatesLocal)
@@ -70,6 +73,7 @@ public static class HistoricalBootstrapService
 		}
 
 		long ts = BlockchainService.GenesisTimestampUnixMs;
+		long lastMinedTs = ts;
 		long e4DateMs = new DateTimeOffset(E4DateLocal).ToUnixTimeMilliseconds();
 		bool e4Injected = false;
 		int satoshiBlocks = 0;
@@ -83,10 +87,6 @@ public static class HistoricalBootstrapService
 				// Advance by one block interval with ±30% jitter so timestamps look organic.
 				double jitterFactor = 1.0 + (rng.NextDouble() - 0.5) * 0.6; // 0.7 .. 1.3
 				ts += (long)(BlockIntervalMs * jitterFactor);
-				if (ts >= landingMs)
-				{
-					break;
-				}
 
 				// E4: once the clock reaches 12 Jan, inject the Satoshi→Hal 10 BTC tx BEFORE mining this
 				// block so it lands in it. Retries on later blocks if Satoshi isn't funded yet (he is by now).
@@ -96,17 +96,33 @@ public static class HistoricalBootstrapService
 				}
 
 				bool halTurn = halTargets.Count > 0 && ts >= halTargets.Peek();
+				bool mined;
 				if (halTurn)
 				{
 					halTargets.Dequeue();
-					if (NetworkRoot.MineNodeStatic("hal", ts))
+					mined = NetworkRoot.MineNodeStatic("hal", ts);
+					if (mined)
 					{
 						halBlocks++;
 					}
 				}
-				else if (NetworkRoot.MineNodeStatic("satoshi", ts))
+				else
 				{
-					satoshiBlocks++;
+					mined = NetworkRoot.MineNodeStatic("satoshi", ts);
+					if (mined)
+					{
+						satoshiBlocks++;
+					}
+				}
+
+				if (mined)
+				{
+					lastMinedTs = ts;
+				}
+
+				if (ts >= marchTwentyFirstStartMs)
+				{
+					break;
 				}
 			}
 		}
@@ -115,6 +131,11 @@ public static class HistoricalBootstrapService
 			NetworkRoot.EndBulkMiningAndPersist();
 		}
 
+		// Exactly the last mined block's timestamp — every post-bootstrap checkpoint is captured at the
+		// calendar instant equal to the mined block's own timestamp (CaptureCheckpoint reads
+		// CalendarTimeService.CurrentLocalDateTime synchronously right after mining, no clock advance in
+		// between), so the player's start instant matches that same convention exactly (no +1s offset).
+		DateTime landingLocal = DateTimeOffset.FromUnixTimeMilliseconds(lastMinedTs).LocalDateTime;
 		DidRun = true;
 		LandingLocalDateTime = landingLocal;
 		GD.Print($"[HistoricalBootstrap] First launch — mined genesis → {landingLocal:yyyy-MM-dd HH:mm:ss}. " +

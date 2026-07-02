@@ -266,6 +266,14 @@ public partial class NetworkRoot : Node
     public static int GetPlayerChainLengthStatic() =>
         SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player) ? player.Blockchain.Chain.Count : 0;
 
+    // Timestamp of the player chain's tip block. Before any real (post-bootstrap) block is mined, this IS
+    // the last historical-bootstrap block — used by BlockSessionCheckpointService to re-derive the "player
+    // start" instant (tip + 1s) on every pre-genesis restart, without needing to persist it separately.
+    public static long GetPlayerLatestBlockTimestampMsStatic() =>
+        SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)
+            ? player.Blockchain.GetLastBlock().Timestamp
+            : BlockchainService.GenesisTimestampUnixMs;
+
     public static bool MineNodeStatic(string nodeId, long minedAtUnixMs)
     {
         if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? miner))
