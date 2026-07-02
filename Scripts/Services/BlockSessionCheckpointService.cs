@@ -68,8 +68,12 @@ public partial class BlockSessionCheckpointService : Node
 			calendar.PersistCurrentTime();
 		}
 
+		// Full clear, not a timestamp-boundary rollback: nothing is committed pre-genesis, so there is no
+		// legitimate boundary to partially keep — and a boundary comparison is fragile here anyway, since the
+		// very first bet/deposit of a fresh session reads a clock that hasn't advanced yet and can land
+		// exactly on playerStart (see OQ-BP.11).
 		GetNodeOrNull<UserStatsService>("/root/UserStatsService")
-			?.RollbackHistoryToUtc(playerStart.UtcDateTime);
+			?.ClearAllHistory();
 	}
 
 	// Called once on startup after all other autoloads have loaded their own files.

@@ -580,6 +580,15 @@ namespace Scripts.History
 			RebuildJournalFromCurrentState();
 		}
 
+		public void ClearAll()
+		{
+			_records.Clear();
+			_deposits.Clear();
+			_pendingJournalEntries.Clear();
+			_mutationsSinceLastSave = 0;
+			RebuildJournalFromCurrentState();
+		}
+
 		private void MarkDirtyAndSaveIfNeeded()
 		{
 			_mutationsSinceLastSave++;

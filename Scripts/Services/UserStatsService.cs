@@ -102,6 +102,25 @@ public partial class UserStatsService : Node
         EmitStatsChangedImmediate();
     }
 
+    // Used only for the pre-genesis reset (no block has ever been mined): unlike RollbackHistoryToUtc, there
+    // is no legitimate boundary to partially keep — everything before the player's first real block is
+    // discardable by definition, so this clears unconditionally instead of comparing timestamps. Avoids the
+    // class of bug where a record's timestamp exactly equals the reset boundary (the very first bet/deposit
+    // after any reset reads a clock that hasn't advanced yet) and so survives a `>`-based rollback it should
+    // not have (see OQ-BP.11).
+    public void ClearAllHistory()
+    {
+        if (!EnableHistoryPersistence || BetHistory == null)
+        {
+            return;
+        }
+
+        BetHistory.EnsureAllChunksLoaded();
+        BetHistory.ClearAll();
+        RebuildStatsFromLoadedHistory();
+        EmitStatsChangedImmediate();
+    }
+
     public void EnsureFullHistoryLoaded()
     {
         if (!EnableHistoryPersistence || BetHistory == null)

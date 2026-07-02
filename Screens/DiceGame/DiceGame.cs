@@ -856,8 +856,12 @@ public partial class DiceGame : Control, IBetEventSource
 
 		SaveActiveNodeStrategySnapshot();
 		int attempts = GetManualBurstAttemptCount();
-		DateTime burstBaseUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
 		double timePerBet = GameSecondsPerManualBet / Math.Max(1, attempts);
+		// Start one tick AFTER "now", never exactly at it — a bet's timestamp must always land strictly after
+		// whatever the clock was previously (see OQ-BP.11 in player-and-casino-bankroll-programmer-plan.md): an
+		// exact match with a reset/checkpoint boundary is indistinguishable from "part of that boundary" and
+		// can survive a rollback (RollbackToUtc's `TimestampUtc > checkpoint` check) that should have discarded it.
+		DateTime burstBaseUtc = (_calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow).AddSeconds(timePerBet);
 		int executed = 0;
 		for (int i = 0; i < attempts && _session.IsRunning; i++)
 		{
