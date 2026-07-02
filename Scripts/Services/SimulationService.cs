@@ -370,6 +370,14 @@ public partial class SimulationService : Node
 
 		PersistFinancialState(false);
 
+		// Settle THIS bet's balances BEFORE mining/checkpoint (OQ-CG.10): if this same bet mines a block, the
+		// checkpoint it captures must reflect the bet's own result, consistently with the bet-history boundary
+		// (HistoryCheckpointUtcTicks) which already includes this bet. Keep the bankroll autoload (the source of
+		// truth) in sync so every scene reflects it live, and route the inverse of the player's profit to/from
+		// the casino SC bankroll (player bets only — OQ-11.1).
+		_bankroll?.SetBalance(_wallet.Balance);
+		_casinoSc?.ApplyBetResult(-(LastSettledBetEvent?.CreditedProfit ?? 0m));
+
 		// One nonce attempt per bet (1 bet = 1 attempt), routed by the active node's hardware allocation
 		// (individual pool → own chain; casino pool → casino chain). Real PoW on the shared chain.
 		long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
@@ -380,14 +388,9 @@ public partial class SimulationService : Node
 			if (_config.StopOnBlockMined && _session.IsRunning)
 			{
 				_session.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
+				FreezeCalendarAtBlockStop();
 			}
 		}
-
-		// Keep the bankroll autoload (the source of truth) in sync so every scene reflects it live.
-		_bankroll?.SetBalance(_wallet.Balance);
-
-		// Route the inverse of the player's profit to/from the casino SC bankroll (player bets only — OQ-11.1).
-		_casinoSc?.ApplyBetResult(-(LastSettledBetEvent?.CreditedProfit ?? 0m));
 
 		EmitSignal(SignalName.BetSettled);
 	}
@@ -644,7 +647,24 @@ public partial class SimulationService : Node
 		if (_session is { IsRunning: true } && _config?.StopOnBlockMined == true)
 		{
 			_session.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
+			FreezeCalendarAtBlockStop();
 		}
+	}
+
+	// Stop-on-block must leave the game clock EXACTLY at the block it stopped on (canonical rule, OQ-BP.9:
+	// the calendar always equals the timestamp of the block that defines the checkpointed world). Without
+	// this, the session stops but CalendarTimeService.IsRunning stays true for the frame(s) until the next
+	// _Process reaches ClearRunningState — so CalendarTimeService._Process keeps advancing the clock PAST the
+	// block, and that drifted value later gets persisted to calendar_state.json (OQ-CG.9). We freeze it in
+	// place rather than re-setting it: at this synchronous point the clock still equals the value CaptureCheckpoint
+	// just read (no _Process ran in between), so freezing pins it bit-for-bit to the checkpoint. The drift was
+	// normally sub-second, but the casino's on-demand loan (CG.1.8) added real-time latency to the block frame,
+	// inflating the next frame's delta and making the overshoot large enough to notice.
+	private void FreezeCalendarAtBlockStop()
+	{
+		if (_calendar == null) return;
+		_calendar.IsRunning = false;
+		_calendar.PersistCurrentTime();
 	}
 
 	private bool TryAutoRechargeBot(BotRunner runner)

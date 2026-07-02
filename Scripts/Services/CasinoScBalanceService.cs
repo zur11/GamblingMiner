@@ -7,9 +7,11 @@ public partial class CasinoScBalanceService : Node
 {
 	public const decimal InitialLoanAmount  = 100_000_000.00000000m;
 	public const decimal DefaultBankroll    =   1_000_000.00000000m;
-	// Pre-genesis / pre-first-bet: the full, unsplit loan sits in Main Balance and nothing is in the
-	// Bankroll yet (the casino self-funds lazily on the first settled bet — EnsureInitialCasinoFundingIfNeeded).
-	public const decimal DefaultMainBalance = InitialLoanAmount;
+	// Extra-lazy funding (CG.1.8): pre-loan the casino holds NOTHING. The 100M foundational loan is drawn
+	// on demand — only when a player win empties the Bankroll (TryAutoRecharge). Until then the casino just
+	// accumulates player losses in its Bankroll with no loan and no recharge. So all balances start at 0
+	// (only BankrollTarget keeps its 1M dose default). InitialLoanAmount stays 100M as the on-demand draw.
+	public const decimal DefaultMainBalance = 0m;
 
 	private const string StatePath = "user://casino_sc_balance_state.json";
 	private int _betCount;
@@ -56,38 +58,29 @@ public partial class CasinoScBalanceService : Node
 		}
 		MainBalance = Money.Normalize(Math.Max(0m, main));
 		Bankroll    = Money.Normalize(Math.Max(0m, bankroll));
-		// BankrollTarget/LoanCount/TotalLoaned were added to the checkpoint in Phase CG.0.6; older checkpoints
-		// lack them and deserialize to 0, so keep the currently-loaded value rather than zeroing a funded
-		// casino's target/loan bookkeeping. Post-first-block checkpoints always carry valid (>0) values.
-		if (bankrollTarget > 0m) BankrollTarget = Money.Normalize(bankrollTarget);
-		if (loanCount      > 0)  LoanCount      = loanCount;
-		if (totalLoaned    > 0m) TotalLoaned    = Money.Normalize(totalLoaned);
+		// BankrollTarget/LoanCount/TotalLoaned were added to the checkpoint in Phase CG.0.6. Under extra-lazy
+		// funding (CG.1.8), LoanCount==0 / TotalLoaned==0 are now VALID restorable values (a block mined during
+		// a pure loss streak, before any loan), so we must not skip them. Gate on BankrollTarget instead — it
+		// is always >0 in any CG.0.6+ checkpoint and absent/0 only in a legacy pre-CG.0.6 one: when present,
+		// restore all three verbatim; when absent, keep the values LoadState() already loaded (legacy path).
+		if (bankrollTarget > 0m)
+		{
+			BankrollTarget = Money.Normalize(bankrollTarget);
+			LoanCount      = Math.Max(0, loanCount);
+			TotalLoaned    = Money.Normalize(Math.Max(0m, totalLoaned));
+		}
 		GD.Print($"[CasinoSC] RESTORED from checkpoint — Main={MainBalance:F8}  Bankroll={Bankroll:F8}  Target={BankrollTarget:F8}  LoanCount={LoanCount}  TotalLoaned={TotalLoaned:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}");
 		BalanceChanged?.Invoke();
 	}
 
-	// Lazy first-bet funding — mirrors DiceGame.EnsureInitialBankrollFunded() for the player.
-	// Pre-genesis the casino holds the full unsplit loan in Main Balance with an empty Bankroll and no
-	// loan booked (LoanCount == 0); the first settled bet books the initial loan and splits off the Bankroll
-	// using whatever BankrollTarget is currently in effect (case 1: dev-configured; case 2: the 1M default).
-	private void EnsureInitialCasinoFundingIfNeeded()
-	{
-		if (LoanCount > 0) return;              // already funded this session
-
-		LoanCount   = 1;
-		TotalLoaned = InitialLoanAmount;
-		decimal transfer = Money.Normalize(Math.Min(BankrollTarget, MainBalance));
-		MainBalance = Money.Normalize(MainBalance - transfer);
-		Bankroll    = Money.Normalize(Bankroll + transfer);
-		// Phase CG.2, once LoanHistory exists: AddLoanRecord(InitialLoanAmount, "startup");
-	}
-
-	// Called by SimulationService after each settled player bet.
+	// Called by SimulationService (autobet) and DiceGame.ExecuteBet (manual) after each settled player bet.
 	// casinoDelta = −(player's creditedProfit): positive when player loses, negative when player wins.
-	// Bankroll fluctuates freely with each bet result; auto-recharge fires only when it is exhausted.
+	// Extra-lazy funding (CG.1.8): the Bankroll simply accumulates player losses; the foundational loan is
+	// NEVER drawn on a losing streak. Only when a player win pushes the Bankroll ≤ 0 does TryAutoRecharge()
+	// fire — the sole funding trigger — injecting one BankrollTarget dose (drawing the 100M loan iff Main is
+	// short) so the win's overage is absorbed by the recharged Bankroll, not by Main.
 	public void ApplyBetResult(decimal casinoDelta)
 	{
-		EnsureInitialCasinoFundingIfNeeded();
 		Bankroll = Money.Normalize(Bankroll + casinoDelta);
 		if (Bankroll <= 0m)
 			TryAutoRecharge();
@@ -100,24 +93,35 @@ public partial class CasinoScBalanceService : Node
 			GD.Print($"[CasinoSC] bet#{_betCount}  delta={casinoDelta:+0.00000000;-0.00000000}  Bankroll={Bankroll:F8}  Main={MainBalance:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}");
 	}
 
-	// Target-to-fill auto-recharge. If MainBalance is insufficient, injects a 100M SC bank loan first.
+	// On-demand recharge — fixed-DOSE model (CG.1.8 correction). When a player win empties the Bankroll (≤ 0),
+	// inject exactly BankrollTarget (one "dose") from Main into the Bankroll, drawing a 100M loan first if Main
+	// can't cover a dose. Crucially the player's winning payout that pushed the Bankroll negative is absorbed
+	// by the recharged Bankroll itself, NOT by Main — Main only ever loses ONE dose per injection, never
+	// dose + payout overage (the earlier fill-to-target model wrongly made Main pay both). So the Bankroll
+	// lands at target − (payout overage), exactly as the user specified.
+	// Normally one dose suffices (a single win rarely exceeds the whole target); the loop only adds further
+	// doses in the rare case the deficit runs deeper than one dose, guaranteeing the Bankroll returns positive
+	// so ApplyBetResult's Math.Max(0,…) clamp never discards real SC (conservation preserved).
 	// Always succeeds — the casino has an infinite credit line in Basic Mode.
 	public void TryAutoRecharge()
 	{
-		decimal needed = BankrollTarget - Bankroll;
-		if (needed <= 0m) return;
+		if (BankrollTarget <= 0m) return;
 
-		if (MainBalance < needed)
+		while (Bankroll <= 0m)
 		{
-			MainBalance  = Money.Normalize(MainBalance + InitialLoanAmount);
-			LoanCount++;
-			TotalLoaned  = Money.Normalize(TotalLoaned + InitialLoanAmount);
-			GD.Print($"[CasinoScBalanceService] Bank re-loan #{LoanCount} fired — TotalLoaned={TotalLoaned:F8} SC");
-		}
+			if (MainBalance < BankrollTarget)
+			{
+				MainBalance  = Money.Normalize(MainBalance + InitialLoanAmount);
+				LoanCount++;
+				TotalLoaned  = Money.Normalize(TotalLoaned + InitialLoanAmount);
+				GD.Print($"[CasinoScBalanceService] Bank loan #{LoanCount} drawn on demand — TotalLoaned={TotalLoaned:F8} SC");
+			}
 
-		decimal transfer = Money.Normalize(Math.Min(needed, MainBalance));
-		MainBalance = Money.Normalize(MainBalance - transfer);
-		Bankroll    = Money.Normalize(Bankroll + transfer);
+			decimal transfer = Money.Normalize(Math.Min(BankrollTarget, MainBalance));
+			if (transfer <= 0m) break; // safety: a fresh 100M loan always covers a dose, so this never trips
+			MainBalance = Money.Normalize(MainBalance - transfer);
+			Bankroll    = Money.Normalize(Bankroll + transfer);
+		}
 	}
 
 	public bool TryTransferToBankroll(decimal amount)
@@ -150,7 +154,7 @@ public partial class CasinoScBalanceService : Node
 	// reverts here: a custom target only "sticks" once a real block captures it into a checkpoint.
 	public void ResetToPreGenesisDefaults()
 	{
-		MainBalance    = DefaultMainBalance; // 100,000,000
+		MainBalance    = DefaultMainBalance; // 0 — no loan drawn yet (CG.1.8)
 		Bankroll       = 0m;
 		BankrollTarget = DefaultBankroll;    // 1,000,000
 		LoanCount      = 0;
@@ -209,9 +213,9 @@ public partial class CasinoScBalanceService : Node
 
 	private void InitializeDefaults()
 	{
-		MainBalance    = DefaultMainBalance; // 100,000,000 — full unsplit loan
-		Bankroll       = 0m;                 // funded lazily on the first settled bet
-		BankrollTarget = DefaultBankroll;    // 1,000,000 — the casino's "dose"
+		MainBalance    = DefaultMainBalance; // 0 — no loan drawn until on-demand (CG.1.8)
+		Bankroll       = 0m;                 // accumulates player losses; refilled only when a win empties it
+		BankrollTarget = DefaultBankroll;    // 1,000,000 — the casino's "dose" (auto-recharge target)
 		LoanCount      = 0;
 		TotalLoaned    = 0m;
 	}

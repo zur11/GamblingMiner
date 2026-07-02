@@ -875,8 +875,16 @@ public partial class DiceGame : Control, IBetEventSource
 			ExecuteBet(burstBaseUtc.AddSeconds(i * timePerBet), suppressClockAdvance: true);
 			executed++;
 		}
-		if (executed > 0)
+		// Stop-on-block must leave the clock EXACTLY at the block it stopped on (canonical rule, OQ-BP.9 /
+		// OQ-CG.9), mirroring FreezeCalendarAtBlockStop in the autobet path: the block was mined at the current
+		// clock, so DON'T advance one manual tick past it when the burst was halted by a mined block. A normal
+		// burst advances as usual. Persist the pinned instant so calendar_state.json matches the checkpoint.
+		bool stoppedOnBlock = !_session.IsRunning
+			&& _session.LastStopReason == IBettingStrategy.StopReason.StopOnBlockMined;
+		if (executed > 0 && !stoppedOnBlock)
 			AdvanceClockForBet();
+		else if (stoppedOnBlock)
+			_calendarTimeService?.PersistCurrentTime();
 		if (_session.IsRunning || _session.LastStopReason != IBettingStrategy.StopReason.StopOnBlockMined)
 		{
 			RunBotManualBurst();

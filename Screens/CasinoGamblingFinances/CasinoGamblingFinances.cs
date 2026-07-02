@@ -11,10 +11,10 @@ public partial class CasinoGamblingFinances : Control
 
 	private Label _mainBalanceLabel;
 	private Label _bankrollLabel;
+	private Label _bankrollTargetValueLabel;
 	private Label _totalLabel;
 	private Label _plLabel;
 	private Label _loanInfoLabel;
-	private Label _targetInfoLabel;
 
 	private LineEdit _bankrollTargetInput;
 	private Label _targetFeedbackLabel;
@@ -34,10 +34,10 @@ public partial class CasinoGamblingFinances : Control
 
 		_mainBalanceLabel    = GetNode<Label>("%MainBalanceLabel");
 		_bankrollLabel       = GetNode<Label>("%BankrollLabel");
+		_bankrollTargetValueLabel = GetNode<Label>("%BankrollTargetValueLabel");
 		_totalLabel          = GetNode<Label>("%TotalLabel");
 		_plLabel             = GetNode<Label>("%PlLabel");
 		_loanInfoLabel       = GetNode<Label>("%LoanInfoLabel");
-		_targetInfoLabel     = GetNode<Label>("%TargetInfoLabel");
 		_bankrollTargetInput = GetNode<LineEdit>("%BankrollTargetInput");
 		_targetFeedbackLabel = GetNode<Label>("%TargetFeedbackLabel");
 		_transferInput       = GetNode<LineEdit>("%TransferInput");
@@ -51,7 +51,10 @@ public partial class CasinoGamblingFinances : Control
 		GetNode<Button>("%BackBtn").Pressed             += () => _sceneManager?.Go(SceneManager.SceneId.MainMenu);
 
 		if (_casinoSc != null)
+		{
 			_casinoSc.BalanceChanged += RefreshLabels;
+			_bankrollTargetInput.Text = _casinoSc.BankrollTarget.ToString("N8", CultureInfo.InvariantCulture);
+		}
 
 		RefreshLabels();
 	}
@@ -80,25 +83,19 @@ public partial class CasinoGamblingFinances : Control
 		_bankrollLabel.Text    = $"Bankroll:      {Money.FormatSignedAdaptive(_casinoSc.Bankroll)} SC";
 		_totalLabel.Text       = $"Total SC:      {Money.FormatSignedAdaptive(_casinoSc.TotalSc)} SC";
 
-		// Pre-genesis, before the casino's foundational loan is booked (LoanCount == 0), TotalLoaned is 0 so
-		// CumulativeProfitSinceLoan would read the full unborrowed 100M as "profit" — a misleading phantom
-		// value (OQ-CG.6). Show a neutral, unsigned 0.00000000 until the first settled bet funds the casino.
-		if (_casinoSc.LoanCount == 0)
-		{
-			_plLabel.Text = string.Create(CultureInfo.InvariantCulture, $"P/L vs loan:   {0m:0.00000000} SC");
-			_plLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.7f));
-		}
-		else
-		{
-			decimal pl = _casinoSc.CumulativeProfitSinceLoan;
-			_plLabel.Text = string.Create(CultureInfo.InvariantCulture, $"P/L vs loan:   {pl:+0.00000000;-0.00000000} SC");
-			_plLabel.AddThemeColorOverride("font_color", pl >= 0m
-				? new Color(0.4f, 1f, 0.4f)
-				: new Color(1f, 0.4f, 0.4f));
-		}
+		// Under extra-lazy funding (CG.1.8) the casino holds nothing pre-loan (Main 0 / Bankroll 0), so
+		// CumulativeProfitSinceLoan is naturally correct in every state — 0 pre-bet, +winnings after a loss
+		// with no loan yet, real P/L after a loan. No phantom 100M can appear, so the old OQ-CG.6 LoanCount==0
+		// display guard is gone (it would now wrongly hide the post-loss winnings while LoanCount is still 0).
+		decimal pl = _casinoSc.CumulativeProfitSinceLoan;
+		_plLabel.Text = string.Create(CultureInfo.InvariantCulture, $"P/L vs loan:   {pl:+0.00000000;-0.00000000} SC");
+		_plLabel.AddThemeColorOverride("font_color", pl >= 0m
+			? new Color(0.4f, 1f, 0.4f)
+			: new Color(1f, 0.4f, 0.4f));
+
+		_bankrollTargetValueLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll Target:  {_casinoSc.BankrollTarget:N8} SC");
 
 		_loanInfoLabel.Text  = string.Create(CultureInfo.InvariantCulture, $"Bank loans taken: {_casinoSc.LoanCount}   |   Total loaned: {_casinoSc.TotalLoaned:N8} SC");
-		_targetInfoLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll target: {_casinoSc.BankrollTarget:N8} SC   (auto-fills to this level on exhaustion)");
 	}
 
 	private void OnSetTargetPressed()

@@ -51,6 +51,12 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "Bankroll:       1,000,000.00000000 SC"
 
+[node name="BankrollTargetValueLabel" type="Label" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Bankroll Target:  1,000,000.00000000 SC"
+
 [node name="TotalLabel" type="Label" parent="RootMargin/RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -69,11 +75,10 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Bank loans taken: 1   |   Total loaned: 100,000,000.00000000 SC"
 
-[node name="TargetInfoLabel" type="Label" parent="RootMargin/RootVBox"]
-unique_name_in_owner = true
+[node name="TargetHintLabel" type="Label" parent="RootMargin/RootVBox"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 20
-text = "Bankroll target: 1,000,000.00000000 SC   (auto-fills to this level on exhaustion)"
+theme_override_font_sizes/font_size = 18
+text = "(auto-recharge target — fills to this level when bankroll hits 0)"
 
 [node name="Sep1" type="HSeparator" parent="RootMargin/RootVBox"]
 layout_mode = 2
