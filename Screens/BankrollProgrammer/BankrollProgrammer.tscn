@@ -1,6 +1,6 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=2 format=3 uid="uid://dqs1xr4oots4a"]
 
-[ext_resource type="Script" path="res://Screens/BankrollProgrammer/BankrollProgrammer.cs" id="1"]
+[ext_resource type="Script" uid="uid://djcm4gtco55bq" path="res://Screens/BankrollProgrammer/BankrollProgrammer.cs" id="1"]
 
 [node name="BankrollProgrammer" type="Control"]
 layout_mode = 3
@@ -20,6 +20,8 @@ offset_left = 20.0
 offset_top = 20.0
 offset_right = -20.0
 offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 2
 
 [node name="Title" type="Label" parent="VBox"]
 layout_mode = 2
@@ -54,7 +56,7 @@ text = "0.00000000%"
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
-text = "Total: 0 | Dia: 0 | Semana: 0 | Mes: 0"
+text = "Total: 0 | Day: 0 | Week: 0 | Month: 0"
 
 [node name="AutoRechargeRow" type="HBoxContainer" parent="VBox"]
 layout_mode = 2
