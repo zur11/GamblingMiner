@@ -9,6 +9,7 @@ public partial class BankrollProgrammer : Control
 	private PrincipalBalanceService _principalBalanceService;
 	private BankrollStateService _bankrollStateService;
 	private BankrollProgramService _bankrollProgramService;
+	private CalendarTimeService _calendarTimeService;
 	private SceneManager _sceneManager;
 	private Wallet _bankrollMirrorWallet;
 
@@ -28,6 +29,7 @@ public partial class BankrollProgrammer : Control
 		_principalBalanceService = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
 		_bankrollStateService = GetNodeOrNull<BankrollStateService>("/root/BankrollStateService");
 		_bankrollProgramService = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");
+		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
 		_principalBalanceService?.EnsureInitialized();
 		_bankrollStateService?.EnsureInitialized(0m);
@@ -199,7 +201,8 @@ public partial class BankrollProgrammer : Control
 		decimal perf = _bankrollProgramService?.GetPerformancePercentVsInitial(balance) ?? 0m;
 		_performanceValue.Text = $"{perf:+0.00000000;-0.00000000;0.00000000}% vs 40000.00000000";
 
-		var counts = _bankrollProgramService?.GetAutoRechargeCounts(DateTime.UtcNow) ?? (0, 0, 0);
+		DateTime gameUtcNow = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		var counts = _bankrollProgramService?.GetAutoRechargeCounts(gameUtcNow) ?? (0, 0, 0);
 		int total = _bankrollProgramService?.AutoRechargeCount ?? 0;
 		_rechargeCountersValue.Text = $"Total: {total} | Dia: {counts.Item1} | Semana: {counts.Item2} | Mes: {counts.Item3}";
 

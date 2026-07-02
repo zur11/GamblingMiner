@@ -435,7 +435,7 @@ public partial class SimulationService : Node
 
 		if (_config.IsPlayerActive)
 		{
-			_userStats?.RegisterDeposit(amount, _wallet.Balance, DateTime.UtcNow);
+			_userStats?.RegisterDeposit(amount, _wallet.Balance, _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
 		}
 		_bankroll?.SetBalance(_wallet.Balance);
 		PersistFinancialState(false);
@@ -672,7 +672,7 @@ public partial class SimulationService : Node
 		state.TransferRecords ??= new List<BankrollProgramService.TransferRecord>();
 		state.TransferRecords.Add(new BankrollProgramService.TransferRecord
 		{
-			UtcTimestamp = DateTime.UtcNow,
+			UtcTimestamp = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow,
 			Amount = amount,
 			Direction = "balance_to_bankroll",
 			Reason = "auto_recharge"

@@ -36,13 +36,20 @@ public partial class BankrollProgramService : Node
 
 	private CasinoClientLedgerService _ledger;
 	private UserStatsService _userStats;
+	private CalendarTimeService _calendarTime;
 
 	public override void _Ready()
 	{
 		LoadState();
-		_ledger    = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
-		_userStats = GetNodeOrNull<UserStatsService>("/root/UserStatsService");
+		_ledger       = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
+		_userStats    = GetNodeOrNull<UserStatsService>("/root/UserStatsService");
+		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 	}
+
+	// Every persisted/displayed event timestamp in this service must be GAME time, never real wall-clock —
+	// see CLAUDE.md's "canonical rule" note under Important Pattern 2. Falls back to DateTime.UtcNow only if
+	// the autoload is somehow unavailable (defensive null-safety, not an intended code path).
+	private DateTime GameUtcNow() => _calendarTime?.CurrentUtcDateTime ?? DateTime.UtcNow;
 
 	public void SetAutoRechargeAmount(decimal amount)
 	{
@@ -82,9 +89,9 @@ public partial class BankrollProgramService : Node
 		                       || string.Equals(reason, "startup_default", StringComparison.Ordinal)
 		                       || string.Equals(reason, "manual_recharge", StringComparison.Ordinal);
 		if (isInternalRecharge)
-			_ledger?.RegisterAutoRecharge("player", amount, DateTime.UtcNow, wageredSnapshot, profitSnapshot);
+			_ledger?.RegisterAutoRecharge("player", amount, GameUtcNow(), wageredSnapshot, profitSnapshot);
 		else
-			_ledger?.RegisterDeposit("player", amount, DateTime.UtcNow, wageredSnapshot, profitSnapshot);
+			_ledger?.RegisterDeposit("player", amount, GameUtcNow(), wageredSnapshot, profitSnapshot);
 
 		return true;
 	}
@@ -100,7 +107,7 @@ public partial class BankrollProgramService : Node
 		bankrollWallet.ApplyTransaction(new Transaction(TransactionType.Withdrawal, TransactionSource.External, null, amount));
 		principal.Deposit(amount);
 		AddRecord(amount, "bankroll_to_balance", reason);
-		_ledger?.RegisterWithdrawal("player", amount, DateTime.UtcNow);
+		_ledger?.RegisterWithdrawal("player", amount, GameUtcNow());
 		return true;
 	}
 
@@ -132,7 +139,7 @@ public partial class BankrollProgramService : Node
 	{
 		_records.Add(new TransferRecord
 		{
-			UtcTimestamp = DateTime.UtcNow,
+			UtcTimestamp = GameUtcNow(),
 			Amount = amount,
 			Direction = direction,
 			Reason = reason

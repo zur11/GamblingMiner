@@ -30,12 +30,15 @@ public partial class CasinoClientLedgerService : Node
 
 	public event Action LedgerChanged;
 
+	private CalendarTimeService _calendarTime;
+
 	public override void _Ready()
 	{
 		LoadState();
+		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 
 		if (!_entries.Any(e => e.ClientId == "player"))
-			RegisterInitialDeposit("player", 40000m, DateTime.UtcNow, 0m, 0m);
+			RegisterInitialDeposit("player", 40000m, _calendarTime?.CurrentUtcDateTime ?? DateTime.UtcNow, 0m, 0m);
 	}
 
 	public void RegisterInitialDeposit(string clientId, decimal amount, DateTime utc,

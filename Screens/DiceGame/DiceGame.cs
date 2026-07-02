@@ -174,7 +174,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_engine,
 			_wallet,
 			TransactionSource.Bet,
-			() => DateTime.UtcNow
+			() => _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow
 		);
 		// Only (re)initialize the epoch from persisted state when no background autobet is live. While the
 		// SimulationService advances the clock across scenes, the running in-memory time is authoritative;
@@ -1513,7 +1513,7 @@ public partial class DiceGame : Control, IBetEventSource
 		decimal amount = (decimal)amountDouble;
 		_principalBalanceService?.Deposit(amount);
 
-		DateTime timestampUtc = DateTime.UtcNow;
+		DateTime timestampUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
 		if (IsPlayerActive())
 		{
 			_userStatsService.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
@@ -1941,7 +1941,7 @@ public partial class DiceGame : Control, IBetEventSource
 		bool ok = _bankrollProgramService.TryTransferBalanceToBankroll(_principalBalanceService, _wallet, amount, reason);
 		if (ok)
 		{
-			DateTime timestampUtc = DateTime.UtcNow;
+			DateTime timestampUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
 			if (IsPlayerActive())
 			{
 				_userStatsService?.RegisterDeposit(amount, _walletController.Balance, timestampUtc);

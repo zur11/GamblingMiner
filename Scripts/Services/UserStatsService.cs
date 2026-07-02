@@ -15,7 +15,6 @@ public partial class UserStatsService : Node
 
     public UserBettingStats Stats { get; private set; }
     public BetHistoryRepository BetHistory { get; private set; }
-    private CalendarTimeService _calendarTimeService;
     private bool _highFrequencyMode;
     private DateTime _lastStatsEmitUtc = DateTime.MinValue;
     private bool _hasPendingStatsChange;
@@ -32,30 +31,6 @@ public partial class UserStatsService : Node
         else
         {
             BetHistory = null;
-        }
-        _calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
-        ApplyClockJumpToFarthestFutureIfAny();
-    }
-
-    private void ApplyClockJumpToFarthestFutureIfAny()
-    {
-        if (_calendarTimeService == null || BetHistory == null)
-        {
-            return;
-        }
-
-        DateTime? latestUtc = BetHistory.GetLatestTimestampUtc();
-        if (!latestUtc.HasValue)
-        {
-            return;
-        }
-
-        DateTime latestLocal = latestUtc.Value.ToLocalTime();
-        DateTime nowLocal = DateTime.Now;
-
-        if (latestLocal > nowLocal)
-        {
-            _calendarTimeService.SetLocalDateTime(latestLocal);
         }
     }
 

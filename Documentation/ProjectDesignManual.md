@@ -2245,6 +2245,25 @@ Three related clock/balance bugs were fixed together; their resolution defines e
 
 **Net effect.** Pre-genesis (no player/bot/founder block ever mined), the game presents a true first-launch state on **every** restart: Main Balance 40,000.00 SC, Bankroll 0.00 SC, dose 100.00 SC (default), no transfer records, "General P/L" 0.00 SC, and the calendar exactly at the historical bootstrap's last block instant — regardless of how much was played, recharged, or configured in the interim. The player can freely experiment with a custom auto-recharge dose in `BankrollProgrammer` before ever mining a block: it "sticks" for that session's `EnsureInitialBankrollFunded()`, but only survives a restart once a real mined block commits it via the ordinary §24.8 checkpoint model.
 
+### 24.10 — Audit: game time vs. real wall-clock (2026-07-01)
+
+While revising the casino's loan panel (`AIHelperFiles/player-and-casino-bankroll-programmer-plan.md` §1.6), a stale bullet — "dates in the scene are wall-clock, must use `CalendarTimeService`" — prompted the question: does this violation still exist anywhere already *shipped*, not just in the not-yet-built loan panel? A full audit of every `DateTime.Now`/`DateTime.UtcNow` call site under `Scripts/Services/` and `Screens/` found it **already violated in code implemented earlier in this same plan** (Phases BP.2/BP.4) and in pre-existing player-facing code.
+
+**The highest-impact one: manual bets were timestamped with real wall-clock time.** `DiceGame._Ready()` constructed its `BetService` with `() => DateTime.UtcNow` as the timestamp provider — every **manual** bet's `BetTransactionEvent.Timestamp` (and therefore its `BetRecord.TimestampUtc`) was the real system clock, not the in-game 2009 clock. This is the timestamp `UserStatsService.RollbackHistoryToUtc()`/`GetLoadedHistoryStats()` compare against the game-time checkpoint boundary in §24.9's pre-genesis reset — a real-vs-game mismatch here would have silently undermined the history-rollback fixes (Bugs 5/6/8 above) for any session that included manual bets, since "keep records with timestamp ≤ the 2009 checkpoint boundary" would never match a 2026-dated record. Autobet's own `BetService` (`SimulationService`) already correctly used `() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow` — only the manual path was wrong. **Fix:** `DiceGame`'s `BetService` now uses the same game-time-first pattern.
+
+**Also fixed, same class of bug:**
+- `BankrollProgramService.AddRecord()` (every `TransferRecord`, including `manual_recharge`/`auto_recharge`) and its three `CasinoClientLedgerService.Register*()` call sites — all used `DateTime.UtcNow`. `BankrollProgramService` gained a `CalendarTimeService` reference and a `GameUtcNow()` helper.
+- `BankrollProgrammer.cs`'s day/week/month auto-recharge-counter query passed `DateTime.UtcNow` to `GetAutoRechargeCounts()` — now passes game time (the scene gained its own `CalendarTimeService` reference).
+- `DiceGame`'s two `RegisterDeposit()` call sites (`TryProgrammedBankrollTransfer` — startup/auto-recharge — and `OnDepositPopupDepositConfirmed`) both built a `timestampUtc` from `DateTime.UtcNow`.
+- `SimulationService`'s bot-recharge transfer record and player auto-recharge deposit (`TryRechargeAndRestartBot`/`TryPlayerAutoRechargeAndRestart`) both used `DateTime.UtcNow` despite the service already holding a `_calendar` reference used correctly everywhere else in the same file.
+- `CasinoClientLedgerService`'s very first "initial deposit" entry (`RegisterInitialDeposit("player", 40000m, DateTime.UtcNow, ...)` in `_Ready()`) — gained its own `CalendarTimeService` reference (autoload order places it after `CalendarTimeService`, so the real game epoch is already established by then).
+
+**Removed as dead/broken code:** `UserStatsService.ApplyClockJumpToFarthestFutureIfAny()`. It ran inside `UserStatsService._Ready()` — autoload order #1, **before** `CalendarTimeService._Ready()` (order #2) establishes the real game epoch — so any `SetLocalDateTime()` call it made was immediately overwritten moments later; a pure no-op in practice. Its *read* side was also broken under the current architecture: it compared the latest recorded bet's timestamp against real wall-clock `DateTime.Now`, intending to "jump the clock forward" if bet history was ahead — but with the game permanently anchored in 2009 (historical bootstrap) and real "now" always in the present, `latestLocal (2009) > nowLocal (2026+)` can never hold, so the one conditional branch inside it could never fire in the intended direction. A vestigial leftover from an earlier design era, before the historical bootstrap fixed the game clock to 2009; deleted along with its now-unused `_calendarTimeService` field.
+
+**What legitimately stays real wall-clock** (verified case by case, not blanket-exempted): `BlockSessionCheckpointService.CapturedAtUtc` and each service's own `UpdatedAtUtc` snapshot field — pure JSON file-bookkeeping metadata, never read back into any displayed value, confirmed via a repo-wide grep that no `Screens/` file references either field. `UserStatsService`'s `_lastStatsEmitUtc` — the 250ms `StatsChanged` UI-throttle timer (a *real-time* UI-responsiveness concern, unrelated to game-world state). `DiceGame`'s `_autoBetVirtualTimestampUtc` and neighboring fields — intentionally measure real-world bets-per-second throughput for the APS rate display, not game time. `WordlistBootstrapper.GeneratedAt` — a one-time file-generation timestamp. `CalendarTimeService`'s own field initializers — the bootstrap fallback value *before* the real game epoch is established; by definition cannot use itself.
+
+**Canonical rule (added 2026-07-01, `CLAUDE.md` Important Pattern 2): every event timestamp that is persisted, displayed, or compared against a checkpoint boundary must come from `CalendarTimeService`, never `DateTime.Now`/`DateTime.UtcNow` directly.** The only legitimate exception is internal DEV/file bookkeeping metadata a player never sees. When adding a new timestamped record, ask "is this game-world state, or pure DEV telemetry?" — if the player could ever see it, it's game time.
+
 ## Chapter 25 — Bankroll Management: Progression Resets, Insist After Stop, and Auto-Recharge
 
 **Files**: `Scripts/Sessions/BaseBetSession.cs` (`ApplyStopConditions`, `HandleProfitOrLossStop`, `ResetProgressionToBase`), `Scripts/Betting/ProgressiveBettingStrategy.cs`, `Scripts/Services/SimulationService.cs` (`TryPlayerAutoRechargeAndRestart`, `TryRechargeAndRestartBot`)
@@ -2768,3 +2787,171 @@ The engine is **already general** — `BuildAndBroadcastUtxoSpend` works for any
 - **Phase 8.5** (the real Patoshi *mining-forensic* view) — documented only, **not built** in Basic Mode v1 (OQ-8.5).
 - **Phase 8.6** (global D0 terminology rename across the remaining docs) — pending.
 - **Bot multi-address** (OQ-8.2 — needs a per-bot seed), **player deposit-address rotation** (OQ-8.3), **separate receive/change derivation branches** (BIP44 external/internal — we use one index space), and **network-wide fee activation ≈ 2009-04-26** (OQ-8.7, its own branch) — all deliberately carried forward.
+
+## Chapter 31 — Casino SC Balance Sheet: Pre-Genesis Parity & the Loan Configuration Proposal
+
+**Status (2026-07-01): §31.1 (casino pre-genesis/first-bet parity, Phase CG.0) and the ad-hoc manual-loan text input (Phase CG.2, `ManualLoanInput`) are both confirmed, ready-to-implement designs — checklists in `AIHelperFiles/player-and-casino-bankroll-programmer-plan.md`. Only §31.2 — making the *default dose* amounts for auto-loans and the manual-loan pre-fill persistently configurable — is a further-out proposal (pseudocode + UI sketch only), explicitly deferred by the user until Phase CG.0 is stable.**
+
+### 31.1 — Mirroring the player's pre-genesis lifecycle onto the casino (Phase CG.0)
+
+Context: the player-side "block is the only commit" model (Ch. 24.8–24.9) was hardened to also cover the **pre-genesis** window — no player/bot/founder block has ever been mined, only the historical bootstrap has run. Before a real block, *every* restart resets Main Balance/Bankroll/dose/records to true canonical defaults; only mining a block makes progress durable. The casino's own SC balance sheet (`CasinoScBalanceService`) never received this treatment: it eagerly self-funds (`MainBalance=99,000,000` / `Bankroll=1,000,000` / `LoanCount=1` / `TotalLoaned=100,000,000`) the instant the app boots, regardless of whether the player has ever placed a bet, and its checkpoint restore (`RestoreCasinoScState`) only covers `MainBalance`/`Bankroll` — not `BankrollTarget`/`LoanCount`/`TotalLoaned`.
+
+**The trigger is the player's first SETTLED bet, not a mined block** — deliberately different from the player's own trigger (`EnsureInitialBankrollFunded()`, keyed off `DiceGame._Ready()`/wallet balance). The casino's balance sheet only moves inside `ApplyBetResult()`, called once per settled player bet (`SimulationService`, `casinoDelta = -betEvent.CreditedProfit`) — so "has the casino ever been funded" is naturally keyed off the first call to that method, not off opening a scene. Both triggers ultimately answer to the *same* outer boundary though: `BlockSessionCheckpointService.HasCheckpoint()` (has a block ever been mined). Within a pre-genesis session — regardless of how the casino got funded (**case 1**: dev configures `BankrollTarget` in `CasinoGamblingFinances` before ever placing a bet; **case 2**: dev bets first, using whatever `BankrollTarget` was already in effect, normally the default) — closing the app *without* mining a block and reopening *always* reverts to the true pre-genesis state. There is no behavioral difference between case 1 and case 2 after such a restart; the only difference is which `BankrollTarget` value gets used to fund the casino *during* that particular pre-genesis session.
+
+**New true defaults** (`CasinoScBalanceService`):
+
+| Field | Old default | New pre-genesis default | Rationale |
+|---|---|---|---|
+| `MainBalance` | `99,000,000` | `100,000,000` (`InitialLoanAmount`, unsplit) | Mirrors the player: `PrincipalBalanceService` starts at the FULL `InitialPrincipalBalanceBaseline` (`40,000`), not the pre-split `39,900` — the split only appears once the dose actually moves. |
+| `Bankroll` | `1,000,000` | `0` | Mirrors `BankrollStateService` starting at `0`. |
+| `BankrollTarget` | `1,000,000` | `1,000,000` (unchanged) | This is the casino's "dose" — same role as `BankrollProgramService.AutoRechargeAmount`. Still resets to this default every pre-genesis restart (mirrors the rule from OQ-BP.9, Ch. 24.9). |
+| `LoanCount` | `1` | `0` | Mirrors "no transfer records yet" for the player — the foundational loan hasn't *happened* yet in-world. |
+| `TotalLoaned` | `100,000,000` | `0` | Same reasoning as `LoanCount`. |
+
+**Pseudocode — the lazy first-bet funding** (mirrors `DiceGame.EnsureInitialBankrollFunded()`):
+
+```csharp
+// CasinoScBalanceService.cs
+private void EnsureInitialCasinoFundingIfNeeded()
+{
+    if (LoanCount > 0) return;              // already funded this pre-genesis session
+
+    LoanCount   = 1;
+    TotalLoaned = InitialLoanAmount;         // 100,000,000 — materializes the foundational loan's bookkeeping
+    decimal transfer = Money.Normalize(Math.Min(BankrollTarget, MainBalance));
+    MainBalance = Money.Normalize(MainBalance - transfer);
+    Bankroll    = Money.Normalize(Bankroll + transfer);
+    // Once Phase CG.2's LoanHistory exists: AddLoanRecord(InitialLoanAmount, "startup");
+}
+
+public void ApplyBetResult(decimal casinoDelta)
+{
+    EnsureInitialCasinoFundingIfNeeded();     // <-- new: first line of the method
+    Bankroll = Money.Normalize(Bankroll + casinoDelta);
+    if (Bankroll <= 0m) TryAutoRecharge();
+    Bankroll = Money.Normalize(Math.Max(0m, Bankroll));
+    SaveState();
+    BalanceChanged?.Invoke();
+    // ...existing bet-count telemetry unchanged...
+}
+```
+
+With `BankrollTarget` left at its default, this reproduces the familiar `99,000,000` / `1,000,000` split — but only from the player's first settled bet onward, not from app boot, and using whatever `BankrollTarget` was configured at that moment.
+
+**Pseudocode — the pre-genesis reset** (mirrors `BankrollStateService`/`PrincipalBalanceService`/`BankrollProgramService`'s treatment in `BlockSessionCheckpointService.ResetToPreGenesisDefaults()`, Ch. 24.9):
+
+```csharp
+// CasinoScBalanceService.cs
+public void ResetToPreGenesisDefaults()
+{
+    MainBalance    = DefaultMainBalance; // 100,000,000
+    Bankroll       = 0m;
+    BankrollTarget = DefaultBankroll;    // 1,000,000
+    LoanCount      = 0;
+    TotalLoaned    = 0m;
+    // Once Phase CG.2's LoanHistory exists: _loanHistory.Clear();
+    SaveState();
+    BalanceChanged?.Invoke();
+}
+
+// BlockSessionCheckpointService.cs, inside ResetToPreGenesisDefaults()
+GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
+    ?.ResetToPreGenesisDefaults();
+```
+
+**Closing the checkpoint gap** — today `BlockSessionCheckpointService.Snapshot` only captures `CasinoScMainBalance`/`CasinoScBankroll`; a `BankrollTarget` change made *after* a real block, followed by a restart *without* mining another block, would incorrectly persist instead of reverting — the exact bug fixed for the player's own dose in OQ-BP.6 (Ch. 24.9, Bug 6). `Snapshot` needs `CasinoScBankrollTarget`/`CasinoScLoanCount`/`CasinoScTotalLoaned` alongside the existing two fields, and `RestoreCasinoScState(...)` needs the matching parameters.
+
+Full implementation checklist: `AIHelperFiles/player-and-casino-bankroll-programmer-plan.md`, Phase CG.0.
+
+### 31.2 — PROPOSED (not scheduled): a "loan dosificador" mirroring `BankrollProgrammer`'s Auto-Recharge Dose
+
+**Scope — what this section is NOT about.** The ad-hoc **manual-loan text input** (`ManualLoanInput`/`TriggerManualLoan(amount)`, Phase CG.2 in the plan file) — where the dev types *any specific amount* and clicks "Request Loan" for that one loan — is **already confirmed and scheduled** (Phase CG.2, not deferred). This section is only about making the **default/dose amounts** *persistently configurable*, which is deferred.
+
+Deferred by explicit user decision (2026-07-01), until Phase CG.0 (§31.1) is implemented and confirmed stable: "the default start with 100 million SC we don't touch for now, to not complicate things further." This section is a **ready-to-implement proposal**, not a commitment — written up now so a future session can build it quickly without re-deriving the design.
+
+**Today's limitation**: `TryAutoRecharge()`'s auto-loan amount (fired automatically when the casino's bankroll is exhausted) and `TriggerManualLoan()`'s **fallback/pre-fill** amount (used only when `ManualLoanInput` is left blank — the dev can already override it ad-hoc per CG.2) are both **always** `InitialLoanAmount` (`100,000,000`) — there is no persistent, dev-configurable *default dose* for either, unlike the player's `BankrollProgramService.AutoRechargeAmount`. `OQ-CG.3`/`OQ-CG.5` in the plan file already flagged this gap; this section is its elaboration.
+
+**Proposed new fields** (`CasinoScBalanceService`), mirroring `BankrollProgramService.AutoRechargeAmount`:
+
+```csharp
+public decimal AutoLoanAmount          { get; private set; } = InitialLoanAmount; // dose for TryAutoRecharge()'s injections
+public decimal ManualLoanDefaultAmount { get; private set; } = InitialLoanAmount; // pre-fills the manual-loan input
+
+public void SetAutoLoanAmount(decimal amount) { /* validate > 0, Money.Normalize, persist, BalanceChanged?.Invoke() — mirrors SetBankrollTarget() */ }
+public void SetManualLoanDefaultAmount(decimal amount) { /* same shape */ }
+```
+
+`TryAutoRecharge()` would use `AutoLoanAmount` instead of the hardcoded `InitialLoanAmount`:
+
+```csharp
+if (MainBalance < needed)
+{
+    MainBalance  = Money.Normalize(MainBalance + AutoLoanAmount);   // was InitialLoanAmount
+    LoanCount++;
+    TotalLoaned  = Money.Normalize(TotalLoaned + AutoLoanAmount);   // was InitialLoanAmount
+}
+```
+
+`TriggerManualLoan(decimal amount)` (Phase CG.2) would fall back to `ManualLoanDefaultAmount` instead of `InitialLoanAmount` when the input is blank/invalid, mirroring `BankrollProgrammer`'s `TryProgrammedBankrollTransfer` fallback pattern.
+
+**Both new doses follow the SAME "before first bet" rule as `BankrollTarget`** (§31.1) — configurable any time via `CasinoGamblingFinances`, but only "stick" for the current pre-genesis session, and only survive a restart once a real block commits them (extend `BlockSessionCheckpointService.Snapshot`/`ResetToPreGenesisDefaults()`/`ApplyCheckpointToServices()` with two more fields, exactly like `BankrollTarget` in §31.1).
+
+**UI sketch** — a new "Loan Settings" panel in `CasinoGamblingFinances`, positioned between the existing Bankroll Target row and the (Phase CG.2) "Bank Loans" history section, visually mirroring `BankrollProgrammer`'s Auto-Recharge Dose row:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Main Balance             100,000,000.00000000               │
+│  Bankroll                    1,000,000.00000000               │
+│  Bankroll Target              1,000,000.00000000  [ Set ]     │
+│  ...                                                            │
+├─ Loan Settings ─────────────────────────────────────────────────┤
+│  Auto-Loan Amount            100,000,000.00000000              │  ← standalone value label,
+│  [ Amount (SC)         ] [ Set Auto-Loan Amount ]               │     same font weight as
+│                                                                   │     BankrollTargetValueLabel
+│  Manual-Loan Default         100,000,000.00000000              │
+│  [ Amount (SC)         ] [ Set Manual-Loan Default ]            │
+├─ Bank Loans (Phase CG.2) ────────────────────────────────────────┤
+│  Bank loans taken: 0   |   Total loaned: 0.00000000 SC          │
+│  [ Loan amount (SC)    ] [ Request Loan → Main Balance ]         │
+│  (loan history list...)                                          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+`.tscn` sketch (mirrors `BankrollProgrammer`'s `AutoRechargeRow` pattern exactly):
+
+```
+[node name="Sep_LoanSettings" type="HSeparator" parent="RootMargin/RootVBox"]
+[node name="LoanSettingsLabel" type="Label" ...]              text = "Loan Settings"
+
+[node name="AutoLoanAmountValueLabel" type="Label" ...]       # standalone, font 24 — mirrors AutoRechargeDoseValue
+[node name="AutoLoanAmountRow" type="HBoxContainer" ...]
+  [node name="AutoLoanAmountInput" type="LineEdit" ...]         placeholder_text = "Auto-loan amount (SC)"
+  [node name="SetAutoLoanAmountBtn" type="Button" ...]          text = "Set Auto-Loan Amount"
+
+[node name="ManualLoanDefaultValueLabel" type="Label" ...]    # standalone, font 24
+[node name="ManualLoanDefaultRow" type="HBoxContainer" ...]
+  [node name="ManualLoanDefaultInput" type="LineEdit" ...]      placeholder_text = "Manual-loan default (SC)"
+  [node name="SetManualLoanDefaultBtn" type="Button" ...]       text = "Set Manual-Loan Default"
+```
+
+Handler pseudocode (`CasinoGamblingFinances.cs`), mirroring `BankrollProgrammer.OnApplyAutoRechargeAmountPressed()`:
+
+```csharp
+private void OnSetAutoLoanAmountPressed()
+{
+    if (!TryParseAmount(_autoLoanAmountInput.Text, out decimal amount))
+    {
+        _loanSettingsFeedbackLabel.Text = "Invalid amount.";
+        return;
+    }
+    _casinoSc?.SetAutoLoanAmount(amount);
+    _loanSettingsFeedbackLabel.Text = string.Create(CultureInfo.InvariantCulture,
+        $"Auto-loan amount set to {amount:N8} SC.");
+    RefreshLabels();
+}
+// OnSetManualLoanDefaultPressed() — identical shape, calls SetManualLoanDefaultAmount().
+```
+
+Note: unlike the player's `AutoRechargeAmount` (blocked from exceeding Main Balance — D13/BP.2.9), the casino has an infinite credit line, so **no such block applies here** — any positive amount is valid, matching `TryAutoRecharge()`'s existing "always succeeds" design.
+
+Not addressed by this proposal (left for whenever it's actually scheduled): whether `LoanHistory` records (Phase CG.2) should note which dose was in effect at the time of each loan, and whether the two new value labels need their own standalone placement vs. being folded into `LoanSectionLabel`'s row — the sketch above assumes standalone, mirroring `AutoRechargeDoseValue`'s placement exactly.
