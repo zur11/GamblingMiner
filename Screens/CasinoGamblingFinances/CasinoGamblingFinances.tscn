@@ -55,25 +55,25 @@ text = "Game date: 2009-01-03 18:15:06"
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
-text = "Main Balance:  99,000,000.00000000 SC"
+text = "Main Balance:  0.00000000 SC"
 
 [node name="BankrollLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
-text = "Bankroll:       1,000,000.00000000 SC"
+text = "Bankroll:       0.00000000 SC"
 
 [node name="BankrollTargetValueLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
-text = "Bankroll Target:  1,000,000.00000000 SC"
+text = "Bankroll Target:  100.00000000 SC"
 
 [node name="TotalLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
-text = "Total SC:     100,000,000.00000000 SC"
+text = "Total SC:     0.00000000 SC"
 
 [node name="PlLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
 unique_name_in_owner = true
@@ -85,7 +85,7 @@ text = "P/L vs loan:           0.00000000 SC"
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
-text = "Bank loans taken: 1   |   Total loaned: 100,000,000.00000000 SC"
+text = "Bank loans taken: 0   |   Total loaned: 0.00000000 SC"
 
 [node name="TargetHintLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
 layout_mode = 2
@@ -114,7 +114,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(260, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
-placeholder_text = "e.g. 1000000"
+placeholder_text = "e.g. 100"
 
 [node name="SetTargetBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/TargetRow"]
 unique_name_in_owner = true
@@ -199,7 +199,7 @@ text = "Bank Loans"
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
-text = "Auto-loan amount:  100,000,000.00000000 SC"
+text = "Auto-loan amount:  40,000.00000000 SC"
 
 [node name="AutoLoanRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
 layout_mode = 2
@@ -215,7 +215,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(280, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
-placeholder_text = "e.g. 100000000"
+placeholder_text = "e.g. 40000"
 
 [node name="SetAutoLoanBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/AutoLoanRow"]
 unique_name_in_owner = true
@@ -237,7 +237,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(280, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
-placeholder_text = "100000000"
+placeholder_text = "40000"
 
 [node name="ManualLoanBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/ManualLoanRow"]
 unique_name_in_owner = true

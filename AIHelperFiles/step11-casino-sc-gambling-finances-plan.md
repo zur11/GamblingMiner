@@ -2,6 +2,8 @@
 
 **Status**: ✅ DONE (2026-06-30) — branch `casino-sc-gambling-finances`
 
+> ⚠️ **HISTORICAL — the casino financial MODEL and its VALUES below have since been superseded.** This plan describes the *original* Step 11 design: eager boot-time self-funding (`99,000,000` Main + `1,000,000` Bankroll = `100,000,000` loan), target-to-fill auto-recharge, `100M` re-loans. All of that was replaced by the `player-and-casino-bankroll-programmer-plan.md` phases CG.0/CG.1.8 (extra-lazy on-demand funding, fixed-dose recharge) and **CG.3.D (canonical, 2026-07-02): the casino is now an exact mirror of an average player — auto-loan chunk `40,000 SC`, bankroll dose `100 SC`, all balances start at `0` pre-loan.** For the current model see `CLAUDE.md` (`CasinoScBalanceService` + Canonical Decisions) and `Documentation/ProjectDesignManual.md` §31.1.1/§31.1.3. Read the figures below as the historical Step-11 record only.
+
 **Scope**: Implements the casino's StableCoin (SC) financial layer as an explicit, auditable system. Introduces:
 - **(a)** `CasinoScBalanceService` autoload: SC Main Balance (99M SC) + Bankroll (1M SC from a hypothetical bank loan), persisted and auto-recharged; the casino's balance sheet parallel to the player's `PrincipalBalanceService` + `BankrollStateService`.
 - **(b)** SC flow wiring in `SimulationService`: every settled player bet routes the inverse of the player's profit to/from the casino bankroll (player loss → casino gains; player win → casino pays profit).

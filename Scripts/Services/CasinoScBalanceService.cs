@@ -7,12 +7,16 @@ using Scripts.Finance;
 
 public partial class CasinoScBalanceService : Node
 {
-	public const decimal InitialLoanAmount  = 100_000_000.00000000m;
-	public const decimal DefaultBankroll    =   1_000_000.00000000m;
-	// Extra-lazy funding (CG.1.8): pre-loan the casino holds NOTHING. The 100M foundational loan is drawn
+	// CANONICAL (CG.3.D): the casino is an exact mirror of one average player/client. Its foundational loan
+	// equals a player's total starting funds (40,000 SC) and its bankroll dose equals a player's starting
+	// Bankroll (100 SC) — so the first extra-lazy funding (draw a loan, transfer one dose) lands the casino at
+	// 39,900 Main + 100 Bankroll, bit-for-bit the player's canonical 39,900 / 100 split.
+	public const decimal InitialLoanAmount  = 40_000.00000000m;
+	public const decimal DefaultBankroll    =    100.00000000m;
+	// Extra-lazy funding (CG.1.8): pre-loan the casino holds NOTHING. The 40,000 foundational loan is drawn
 	// on demand — only when a player win empties the Bankroll (TryAutoRecharge). Until then the casino just
 	// accumulates player losses in its Bankroll with no loan and no recharge. So all balances start at 0
-	// (only BankrollTarget keeps its 1M dose default). InitialLoanAmount stays 100M as the on-demand draw.
+	// (only BankrollTarget keeps its 100 SC dose default). InitialLoanAmount stays 40,000 as the on-demand draw.
 	public const decimal DefaultMainBalance = 0m;
 
 	private const string StatePath = "user://casino_sc_balance_state.json";
@@ -42,7 +46,7 @@ public partial class CasinoScBalanceService : Node
 	}
 
 	// Recharges fire far more often than loans (every bankroll-empty), so cap the history to keep the JSON /
-	// checkpoint bounded (oldest trimmed). Loans stay uncapped — they're rare (one 100M chunk per depletion).
+	// checkpoint bounded (oldest trimmed). Loans stay uncapped — they're rare (one 40,000 chunk per depletion).
 	private const int MaxRechargeHistory = 500;
 	private readonly List<RechargeRecord> _rechargeHistory = new();
 	public IReadOnlyList<RechargeRecord> RechargeHistory => _rechargeHistory;
@@ -171,7 +175,7 @@ public partial class CasinoScBalanceService : Node
 	// casinoDelta = −(player's creditedProfit): positive when player loses, negative when player wins.
 	// Extra-lazy funding (CG.1.8): the Bankroll simply accumulates player losses; the foundational loan is
 	// NEVER drawn on a losing streak. Only when a player win pushes the Bankroll ≤ 0 does TryAutoRecharge()
-	// fire — the sole funding trigger — injecting one BankrollTarget dose (drawing the 100M loan iff Main is
+	// fire — the sole funding trigger — injecting one BankrollTarget dose (drawing the 40,000 loan iff Main is
 	// short) so the win's overage is absorbed by the recharged Bankroll, not by Main.
 	public void ApplyBetResult(decimal casinoDelta)
 	{
@@ -189,7 +193,7 @@ public partial class CasinoScBalanceService : Node
 
 	// On-demand recharge — fixed-DOSE model (CG.1.8 correction). When a player win empties the Bankroll (≤ 0),
 	// inject a BankrollTarget "dose" from Main into the Bankroll, drawing an AutoLoanAmount loan first if Main
-	// can't cover a dose (CG.3.C — AutoLoanAmount is the dev-configurable loan chunk, default 100M). The player's
+	// can't cover a dose (CG.3.C — AutoLoanAmount is the dev-configurable loan chunk, default 40,000). The player's
 	// winning payout that pushed the Bankroll negative is absorbed by the recharged Bankroll itself, NOT by Main —
 	// Main only ever loses one dose per injection, never dose + payout overage (the old fill-to-target wrongly
 	// made Main pay both). The loop iterates while Bankroll ≤ 0, so it always returns positive (ApplyBetResult's
@@ -224,7 +228,7 @@ public partial class CasinoScBalanceService : Node
 	}
 
 	// Dev-requested loan (CasinoGamblingFinances). Adds funds to Main Balance only — does not auto-recharge the
-	// Bankroll (D16). Blank/invalid input defaults to InitialLoanAmount at the UI layer; here amount ≤ 0 → 100M.
+	// Bankroll (D16). Blank/invalid input defaults to InitialLoanAmount at the UI layer; here amount ≤ 0 → 40,000.
 	public bool TriggerManualLoan(decimal amount)
 	{
 		amount = Money.Normalize(amount);
@@ -272,8 +276,8 @@ public partial class CasinoScBalanceService : Node
 	{
 		MainBalance    = DefaultMainBalance; // 0 — no loan drawn yet (CG.1.8)
 		Bankroll       = 0m;
-		BankrollTarget = DefaultBankroll;    // 1,000,000
-		AutoLoanAmount = InitialLoanAmount;  // 100M dose default (CG.3.C)
+		BankrollTarget = DefaultBankroll;    // 100
+		AutoLoanAmount = InitialLoanAmount;  // 40,000 auto-loan default (CG.3.C)
 		LoanCount      = 0;
 		TotalLoaned    = 0m;
 		_loanHistory.Clear();
@@ -374,8 +378,8 @@ public partial class CasinoScBalanceService : Node
 	{
 		MainBalance    = DefaultMainBalance; // 0 — no loan drawn until on-demand (CG.1.8)
 		Bankroll       = 0m;                 // accumulates player losses; refilled only when a win empties it
-		BankrollTarget = DefaultBankroll;    // 1,000,000 — the casino's "dose" (auto-recharge target)
-		AutoLoanAmount = InitialLoanAmount;  // 100M — the auto-loan chunk (CG.3.C)
+		BankrollTarget = DefaultBankroll;    // 100 — the casino's "dose" (auto-recharge target)
+		AutoLoanAmount = InitialLoanAmount;  // 40,000 — the auto-loan chunk (CG.3.C)
 		LoanCount      = 0;
 		TotalLoaned    = 0m;
 		_loanHistory.Clear();               // no history entry for the (now on-demand) foundational loan — D15
