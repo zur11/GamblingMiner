@@ -23,6 +23,7 @@ public partial class BlockSessionCheckpointService : Node
 		public decimal CasinoScBankrollTarget { get; set; }
 		public int     CasinoScLoanCount      { get; set; }
 		public decimal CasinoScTotalLoaned    { get; set; }
+		public List<CasinoScBalanceService.LoanRecord> CasinoScLoanHistory { get; set; } = new();
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -100,7 +101,8 @@ public partial class BlockSessionCheckpointService : Node
 				CurrentSnapshot.CasinoScBankroll,
 				CurrentSnapshot.CasinoScBankrollTarget,
 				CurrentSnapshot.CasinoScLoanCount,
-				CurrentSnapshot.CasinoScTotalLoaned);
+				CurrentSnapshot.CasinoScTotalLoaned,
+				CurrentSnapshot.CasinoScLoanHistory);
 
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
 		{
@@ -148,6 +150,13 @@ public partial class BlockSessionCheckpointService : Node
 			CasinoScBankrollTarget = casinoSc?.BankrollTarget ?? 0m,
 			CasinoScLoanCount      = casinoSc?.LoanCount ?? 0,
 			CasinoScTotalLoaned    = casinoSc?.TotalLoaned ?? 0m,
+			CasinoScLoanHistory    = casinoSc?.LoanHistory
+				.Select(r => new CasinoScBalanceService.LoanRecord
+				{
+					Amount        = r.Amount,
+					Reason        = r.Reason,
+					GameDateLocal = DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
+				}).ToList() ?? new List<CasinoScBalanceService.LoanRecord>(),
 			CapturedAtUtc = DateTime.UtcNow
 		};
 

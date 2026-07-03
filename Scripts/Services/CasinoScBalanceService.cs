@@ -1,5 +1,7 @@
 using Godot;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using Scripts.Finance;
 
@@ -15,7 +17,20 @@ public partial class CasinoScBalanceService : Node
 
 	private const string StatePath = "user://casino_sc_balance_state.json";
 	private int _betCount;
+	private CalendarTimeService _calendarTime;
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
+	// One bank-loan draw (auto = the on-demand bankruptcy recharge; manual = dev-requested via CasinoGamblingFinances).
+	// GameDateLocal is game-world time (CalendarTimeService), never wall-clock — displayed and persisted.
+	public sealed class LoanRecord
+	{
+		public decimal  Amount        { get; set; }
+		public string   Reason        { get; set; } = string.Empty; // "auto" | "manual"
+		public DateTime GameDateLocal { get; set; }
+	}
+
+	private readonly List<LoanRecord> _loanHistory = new();
+	public IReadOnlyList<LoanRecord> LoanHistory => _loanHistory;
 
 	private sealed class Snapshot
 	{
@@ -24,6 +39,7 @@ public partial class CasinoScBalanceService : Node
 		public decimal  BankrollTarget { get; set; }
 		public int      LoanCount      { get; set; }
 		public decimal  TotalLoaned    { get; set; }
+		public List<LoanRecord> LoanHistory { get; set; } = new();
 		public DateTime UpdatedAtUtc   { get; set; }
 	}
 
@@ -43,13 +59,25 @@ public partial class CasinoScBalanceService : Node
 	public override void _Ready()
 	{
 		LoadState();
+		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		GD.Print($"[CasinoScBalanceService] Ready — MainBalance={MainBalance:F8} SC  Bankroll={Bankroll:F8} SC  BankrollTarget={BankrollTarget:F8} SC  LoanCount={LoanCount}  TotalLoaned={TotalLoaned:F8} SC");
+	}
+
+	// Game-world time for a loan record (never wall-clock). Fallback only if the calendar autoload is absent.
+	private void AddLoanRecord(decimal amount, string reason)
+	{
+		_loanHistory.Add(new LoanRecord
+		{
+			Amount        = Money.Normalize(amount),
+			Reason        = reason,
+			GameDateLocal = _calendarTime?.CurrentLocalDateTime ?? DateTime.Now
+		});
 	}
 
 	// Called by BlockSessionCheckpointService.ApplyCheckpointToServices() on restart.
 	// Sets MainBalance and Bankroll directly to checkpoint values — bypasses auto-recharge, does not persist.
 	// Both == 0 means the fields were absent from the JSON (old checkpoint before Phase 11.2) — skip restore.
-	public void RestoreCasinoScState(decimal main, decimal bankroll, decimal bankrollTarget, int loanCount, decimal totalLoaned)
+	public void RestoreCasinoScState(decimal main, decimal bankroll, decimal bankrollTarget, int loanCount, decimal totalLoaned, IReadOnlyList<LoanRecord> loanHistory)
 	{
 		if (main == 0m && bankroll == 0m)
 		{
@@ -58,16 +86,30 @@ public partial class CasinoScBalanceService : Node
 		}
 		MainBalance = Money.Normalize(Math.Max(0m, main));
 		Bankroll    = Money.Normalize(Math.Max(0m, bankroll));
-		// BankrollTarget/LoanCount/TotalLoaned were added to the checkpoint in Phase CG.0.6. Under extra-lazy
-		// funding (CG.1.8), LoanCount==0 / TotalLoaned==0 are now VALID restorable values (a block mined during
-		// a pure loss streak, before any loan), so we must not skip them. Gate on BankrollTarget instead — it
-		// is always >0 in any CG.0.6+ checkpoint and absent/0 only in a legacy pre-CG.0.6 one: when present,
-		// restore all three verbatim; when absent, keep the values LoadState() already loaded (legacy path).
+		// BankrollTarget/LoanCount/TotalLoaned were added to the checkpoint in Phase CG.0.6, LoanHistory in CG.2.
+		// Under extra-lazy funding (CG.1.8), LoanCount==0 / TotalLoaned==0 / empty history are all VALID restorable
+		// values (a block mined during a pure loss streak, before any loan), so we must not skip them. Gate on
+		// BankrollTarget instead — it is always >0 in any CG.0.6+ checkpoint and absent/0 only in a legacy
+		// pre-CG.0.6 one: when present, restore verbatim; when absent, keep what LoadState() loaded (legacy path).
 		if (bankrollTarget > 0m)
 		{
 			BankrollTarget = Money.Normalize(bankrollTarget);
 			LoanCount      = Math.Max(0, loanCount);
 			TotalLoaned    = Money.Normalize(Math.Max(0m, totalLoaned));
+
+			// Keep the loan history in lockstep with LoanCount/TotalLoaned (block = the only commit): otherwise
+			// a loan drawn after the checkpoint but before a restart would survive as a phantom list entry.
+			_loanHistory.Clear();
+			foreach (var r in loanHistory ?? Array.Empty<LoanRecord>())
+			{
+				if (r == null || r.Amount <= 0m) continue;
+				_loanHistory.Add(new LoanRecord
+				{
+					Amount        = Money.Normalize(r.Amount),
+					Reason        = string.IsNullOrEmpty(r.Reason) ? "auto" : r.Reason,
+					GameDateLocal = DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
+				});
+			}
 		}
 		GD.Print($"[CasinoSC] RESTORED from checkpoint — Main={MainBalance:F8}  Bankroll={Bankroll:F8}  Target={BankrollTarget:F8}  LoanCount={LoanCount}  TotalLoaned={TotalLoaned:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}");
 		BalanceChanged?.Invoke();
@@ -114,6 +156,7 @@ public partial class CasinoScBalanceService : Node
 				MainBalance  = Money.Normalize(MainBalance + InitialLoanAmount);
 				LoanCount++;
 				TotalLoaned  = Money.Normalize(TotalLoaned + InitialLoanAmount);
+				AddLoanRecord(InitialLoanAmount, "auto");
 				GD.Print($"[CasinoScBalanceService] Bank loan #{LoanCount} drawn on demand — TotalLoaned={TotalLoaned:F8} SC");
 			}
 
@@ -122,6 +165,22 @@ public partial class CasinoScBalanceService : Node
 			MainBalance = Money.Normalize(MainBalance - transfer);
 			Bankroll    = Money.Normalize(Bankroll + transfer);
 		}
+	}
+
+	// Dev-requested loan (CasinoGamblingFinances). Adds funds to Main Balance only — does not auto-recharge the
+	// Bankroll (D16). Blank/invalid input defaults to InitialLoanAmount at the UI layer; here amount ≤ 0 → 100M.
+	public bool TriggerManualLoan(decimal amount)
+	{
+		amount = Money.Normalize(amount);
+		if (amount <= 0m) amount = InitialLoanAmount;
+
+		MainBalance = Money.Normalize(MainBalance + amount);
+		LoanCount++;
+		TotalLoaned = Money.Normalize(TotalLoaned + amount);
+		AddLoanRecord(amount, "manual");
+		SaveState();
+		BalanceChanged?.Invoke();
+		return true;
 	}
 
 	public bool TryTransferToBankroll(decimal amount)
@@ -159,7 +218,7 @@ public partial class CasinoScBalanceService : Node
 		BankrollTarget = DefaultBankroll;    // 1,000,000
 		LoanCount      = 0;
 		TotalLoaned    = 0m;
-		// Phase CG.2, once LoanHistory exists: _loanHistory.Clear();
+		_loanHistory.Clear();
 		SaveState();
 		BalanceChanged?.Invoke();
 	}
@@ -202,6 +261,20 @@ public partial class CasinoScBalanceService : Node
 			// casino), so do NOT coerce it up to 1 / InitialLoanAmount as the old funded-from-boot model did.
 			LoanCount      = Math.Max(0, snapshot.LoanCount);
 			TotalLoaned    = Money.Normalize(Math.Max(0m, snapshot.TotalLoaned));
+
+			_loanHistory.Clear();
+			foreach (var r in snapshot.LoanHistory ?? new List<LoanRecord>())
+			{
+				if (r == null || r.Amount <= 0m) continue;
+				_loanHistory.Add(new LoanRecord
+				{
+					Amount        = Money.Normalize(r.Amount),
+					Reason        = string.IsNullOrEmpty(r.Reason) ? "auto" : r.Reason,
+					GameDateLocal = r.GameDateLocal.Kind == DateTimeKind.Unspecified
+						? DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
+						: r.GameDateLocal
+				});
+			}
 		}
 		catch (Exception ex)
 		{
@@ -218,6 +291,7 @@ public partial class CasinoScBalanceService : Node
 		BankrollTarget = DefaultBankroll;    // 1,000,000 — the casino's "dose" (auto-recharge target)
 		LoanCount      = 0;
 		TotalLoaned    = 0m;
+		_loanHistory.Clear();               // no history entry for the (now on-demand) foundational loan — D15
 	}
 
 	private void SaveState()
@@ -231,6 +305,14 @@ public partial class CasinoScBalanceService : Node
 				BankrollTarget = BankrollTarget,
 				LoanCount      = LoanCount,
 				TotalLoaned    = TotalLoaned,
+				LoanHistory    = _loanHistory
+					.Select(r => new LoanRecord
+					{
+						Amount        = r.Amount,
+						Reason        = r.Reason,
+						GameDateLocal = DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
+					})
+					.ToList(),
 				UpdatedAtUtc   = DateTime.UtcNow
 			};
 			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);

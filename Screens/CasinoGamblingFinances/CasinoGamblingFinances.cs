@@ -8,7 +8,9 @@ public partial class CasinoGamblingFinances : Control
 {
 	private CasinoScBalanceService _casinoSc;
 	private SceneManager _sceneManager;
+	private CalendarTimeService _calendarTime;
 
+	private Label _gameDateLabel;
 	private Label _mainBalanceLabel;
 	private Label _bankrollLabel;
 	private Label _bankrollTargetValueLabel;
@@ -22,6 +24,10 @@ public partial class CasinoGamblingFinances : Control
 	private LineEdit _transferInput;
 	private Label _transferFeedbackLabel;
 
+	private LineEdit _manualLoanInput;
+	private Label _loanFeedbackLabel;
+	private ItemList _loanHistoryList;
+
 	private double _fallbackTimer;
 	private const double FallbackInterval = 2.0;
 
@@ -29,9 +35,11 @@ public partial class CasinoGamblingFinances : Control
 	{
 		_casinoSc   = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 
+		_gameDateLabel       = GetNode<Label>("%GameDateLabel");
 		_mainBalanceLabel    = GetNode<Label>("%MainBalanceLabel");
 		_bankrollLabel       = GetNode<Label>("%BankrollLabel");
 		_bankrollTargetValueLabel = GetNode<Label>("%BankrollTargetValueLabel");
@@ -42,10 +50,14 @@ public partial class CasinoGamblingFinances : Control
 		_targetFeedbackLabel = GetNode<Label>("%TargetFeedbackLabel");
 		_transferInput       = GetNode<LineEdit>("%TransferInput");
 		_transferFeedbackLabel = GetNode<Label>("%TransferFeedbackLabel");
+		_manualLoanInput     = GetNode<LineEdit>("%ManualLoanInput");
+		_loanFeedbackLabel   = GetNode<Label>("%LoanFeedbackLabel");
+		_loanHistoryList     = GetNode<ItemList>("%LoanHistoryList");
 
 		GetNode<Button>("%SetTargetBtn").Pressed        += OnSetTargetPressed;
 		GetNode<Button>("%ToBankrollBtn").Pressed       += OnToBankrollPressed;
 		GetNode<Button>("%ToMainBtn").Pressed           += OnToMainPressed;
+		GetNode<Button>("%ManualLoanBtn").Pressed       += OnManualLoanPressed;
 		GetNode<Button>("%ClientsBetsHistoryBtn").Pressed   += () => _sceneManager?.Go(SceneManager.SceneId.ClientsBetsHistory);
 		GetNode<Button>("%ClientsTransactionsBtn").Pressed  += () => _sceneManager?.Go(SceneManager.SceneId.ClientsTransactions);
 		GetNode<Button>("%BackBtn").Pressed             += () => _sceneManager?.Go(SceneManager.SceneId.MainMenu);
@@ -55,6 +67,9 @@ public partial class CasinoGamblingFinances : Control
 			_casinoSc.BalanceChanged += RefreshLabels;
 			_bankrollTargetInput.Text = _casinoSc.BankrollTarget.ToString("N8", CultureInfo.InvariantCulture);
 		}
+
+		// Pre-populate the loan input with the default draw amount (100M).
+		_manualLoanInput.Text = CasinoScBalanceService.InitialLoanAmount.ToString("N0", CultureInfo.InvariantCulture);
 
 		RefreshLabels();
 	}
@@ -67,6 +82,13 @@ public partial class CasinoGamblingFinances : Control
 
 	public override void _Process(double delta)
 	{
+		// Game-date label ticks forward while autobet advances the clock (cheap string format).
+		if (_gameDateLabel != null && _calendarTime != null)
+		{
+			_gameDateLabel.Text = string.Create(CultureInfo.InvariantCulture,
+				$"Game date: {_calendarTime.CurrentLocalDateTime:yyyy-MM-dd HH:mm:ss}");
+		}
+
 		_fallbackTimer += delta;
 		if (_fallbackTimer >= FallbackInterval)
 		{
@@ -95,7 +117,29 @@ public partial class CasinoGamblingFinances : Control
 
 		_bankrollTargetValueLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll Target:  {_casinoSc.BankrollTarget:N8} SC");
 
-		_loanInfoLabel.Text  = string.Create(CultureInfo.InvariantCulture, $"Bank loans taken: {_casinoSc.LoanCount}   |   Total loaned: {_casinoSc.TotalLoaned:N8} SC");
+		// Loan info line — include the most recent loan's game date, and flag any loans drawn before loan-history
+		// logging existed (pre-CG.2 checkpoints) as "(+N pre-log)" so LoanCount and the list can't look inconsistent.
+		var history = _casinoSc.LoanHistory;
+		string lastLoanDate = history.Count > 0
+			? history[^1].GameDateLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+			: "n/a";
+		int unloggedCount = _casinoSc.LoanCount - history.Count;
+		string unloggedNote = unloggedCount > 0 ? $" (+{unloggedCount} pre-log)" : "";
+		_loanInfoLabel.Text = string.Create(CultureInfo.InvariantCulture,
+			$"Bank loans taken: {_casinoSc.LoanCount}{unloggedNote}   |   Total loaned: {_casinoSc.TotalLoaned:N8} SC   |   Last: {lastLoanDate}");
+
+		// Loan history list, newest first. Null/validity guard (CG.2.15): the list can be queried by the fallback
+		// timer during a scene teardown frame.
+		if (GodotObject.IsInstanceValid(_loanHistoryList))
+		{
+			_loanHistoryList.Clear();
+			for (int i = history.Count - 1; i >= 0; i--)
+			{
+				var r = history[i];
+				_loanHistoryList.AddItem(string.Create(CultureInfo.InvariantCulture,
+					$"{r.GameDateLocal:yyyy-MM-dd} | {r.Amount:N8} SC | {r.Reason}"));
+			}
+		}
 	}
 
 	private void OnSetTargetPressed()
@@ -111,6 +155,26 @@ public partial class CasinoGamblingFinances : Control
 		_casinoSc?.SetBankrollTarget(value);
 		_bankrollTargetInput.Text = "";
 		_targetFeedbackLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll target set to {value:N8} SC.");
+		RefreshLabels();
+	}
+
+	private void OnManualLoanPressed()
+	{
+		_loanFeedbackLabel.Text = "";
+		// Type ANY specific amount; blank/invalid falls back to the default draw (InitialLoanAmount = 100M).
+		decimal amount = CasinoScBalanceService.InitialLoanAmount;
+		string raw = (_manualLoanInput.Text ?? string.Empty).Trim().Replace(",", "");
+		if (!string.IsNullOrEmpty(raw) &&
+			decimal.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal parsed) &&
+			parsed > 0m)
+		{
+			amount = Money.Normalize(parsed);
+		}
+
+		_casinoSc?.TriggerManualLoan(amount);
+		_manualLoanInput.Text = CasinoScBalanceService.InitialLoanAmount.ToString("N0", CultureInfo.InvariantCulture);
+		_loanFeedbackLabel.Text = string.Create(CultureInfo.InvariantCulture,
+			$"Loan of {amount:N8} SC added to Main Balance (game: {_calendarTime?.CurrentLocalDateTime:yyyy-MM-dd}).");
 		RefreshLabels();
 	}
 

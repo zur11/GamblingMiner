@@ -509,7 +509,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
 
 ---
 
-### Phase CG.2 — CasinoGamblingFinances: loan history, manual loan button, game-date display
+### Phase CG.2 — CasinoGamblingFinances: loan history, manual loan button, game-date display  ✅ COMPLETE (2026-07-02)
 
 **Scope clarified 2026-07-01 (see OQ-CG.3/CG.5)**: the `ManualLoanInput` text field below (CG.2.9/CG.2.13) is the **confirmed, ready-to-implement** "manual-loans via text input" the user asked for — the dev types **any specific amount** each time and clicks "Request Loan"; it defaults to `InitialLoanAmount` (100M) only when left blank. This is **not** deferred. What *is* still deferred (§31.2, OQ-CG.3) is making that 100M **default** itself a persistent, configurable *dose* — i.e. `AutoLoanAmount` (used when the casino auto-recharges on bankruptcy) and `ManualLoanDefaultAmount` (this field's pre-fill) — held back specifically until Phase CG.0 (pre-genesis/first-bet lifecycle) is implemented and confirmed stable.
 
@@ -517,12 +517,12 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
 
 #### CasinoScBalanceService.cs changes
 
-- [ ] **CG.2.1** Add `CalendarTimeService _calendarTime;` private field. In `_Ready()`, after `LoadState()`:
+- [x] **CG.2.1** Add `CalendarTimeService _calendarTime;` private field. In `_Ready()`, after `LoadState()`:
   ```csharp
   _calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
   ```
 
-- [ ] **CG.2.2** Add the `LoanRecord` inner class (alongside `Snapshot`):
+- [x] **CG.2.2** Add the `LoanRecord` inner class (alongside `Snapshot`):
   ```csharp
   public sealed class LoanRecord
   {
@@ -532,12 +532,12 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   }
   ```
 
-- [ ] **CG.2.3** Add `private readonly List<LoanRecord> _loanHistory = new();` and expose it:
+- [x] **CG.2.3** Add `private readonly List<LoanRecord> _loanHistory = new();` and expose it:
   ```csharp
   public IReadOnlyList<LoanRecord> LoanHistory => _loanHistory;
   ```
 
-- [ ] **CG.2.4** Add a private helper `AddLoanRecord(decimal amount, string reason)`:
+- [x] **CG.2.4** Add a private helper `AddLoanRecord(decimal amount, string reason)`:
   ```csharp
   private void AddLoanRecord(decimal amount, string reason)
   {
@@ -550,7 +550,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   }
   ```
 
-- [ ] **CG.2.5** In `TryAutoRecharge()`, call `AddLoanRecord` immediately after the loan injection (the `LoanCount++` block):
+- [x] **CG.2.5** In `TryAutoRecharge()`, call `AddLoanRecord` immediately after the loan injection (the `LoanCount++` block):
   ```csharp
   // existing code:
   MainBalance = Money.Normalize(MainBalance + InitialLoanAmount);
@@ -560,7 +560,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   AddLoanRecord(InitialLoanAmount, "auto");
   ```
 
-- [ ] **CG.2.6** Add public `TriggerManualLoan(decimal amount)` method (adds funds to Main Balance only — does not auto-recharge Bankroll; see D16):
+- [x] **CG.2.6** Add public `TriggerManualLoan(decimal amount)` method (adds funds to Main Balance only — does not auto-recharge Bankroll; see D16):
   ```csharp
   public bool TriggerManualLoan(decimal amount)
   {
@@ -577,7 +577,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   }
   ```
 
-- [ ] **CG.2.7** Add `LoanHistory` to `Snapshot` and update `SaveState()`/`LoadState()`:
+- [x] **CG.2.7** Add `LoanHistory` to `Snapshot` and update `SaveState()`/`LoadState()`:
 
   In `Snapshot`:
   ```csharp
@@ -617,7 +617,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
 
 #### CasinoGamblingFinances.tscn changes
 
-- [ ] **CG.2.8** Add `GameDateLabel` immediately after `Sep0` (the first separator, below the title), before `MainBalanceLabel`:
+- [x] **CG.2.8** Add `GameDateLabel` immediately after `Sep0` (the first separator, below the title), before `MainBalanceLabel`:
   ```
   [node name="GameDateLabel" type="Label" parent="RootMargin/RootVBox"]
   unique_name_in_owner = true
@@ -626,7 +626,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   text = "Game date: 2009-01-03 18:15:06"
   ```
 
-- [ ] **CG.2.9** After `TransferFeedbackLabel` and before `Sep3` (the navigation separator), add a new loan section:
+- [x] **CG.2.9** After `TransferFeedbackLabel` and before `Sep3` (the navigation separator), add a new loan section:
   ```
   [node name="Sep_Loans" type="HSeparator" parent="RootMargin/RootVBox"]
   layout_mode = 2
@@ -672,7 +672,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
 
 #### CasinoGamblingFinances.cs changes
 
-- [ ] **CG.2.10** Add private fields:
+- [x] **CG.2.10** Add private fields:
   ```csharp
   private CalendarTimeService _calendarTime;
   private Label    _gameDateLabel;
@@ -681,7 +681,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   private ItemList _loanHistoryList;
   ```
 
-- [ ] **CG.2.11** In `_Ready()`, wire all new nodes (after existing wires):
+- [x] **CG.2.11** In `_Ready()`, wire all new nodes (after existing wires):
   ```csharp
   _calendarTime      = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
   _gameDateLabel     = GetNode<Label>("%GameDateLabel");
@@ -696,7 +696,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
       .ToString("N0", CultureInfo.InvariantCulture);
   ```
 
-- [ ] **CG.2.12** Add `_Process` update for the game-date label (replace or extend the existing `_fallbackTimer` block):
+- [x] **CG.2.12** Add `_Process` update for the game-date label (replace or extend the existing `_fallbackTimer` block):
   ```csharp
   public override void _Process(double delta)
   {
@@ -716,7 +716,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   }
   ```
 
-- [ ] **CG.2.13** Implement `OnManualLoanPressed()`:
+- [x] **CG.2.13** Implement `OnManualLoanPressed()`:
   ```csharp
   private void OnManualLoanPressed()
   {
@@ -739,7 +739,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   }
   ```
 
-- [ ] **CG.2.14** In `RefreshLabels()`, update `_loanInfoLabel` to include last loan game date, and populate `_loanHistoryList`:
+- [x] **CG.2.14** In `RefreshLabels()`, update `_loanInfoLabel` to include last loan game date, and populate `_loanHistoryList`:
   ```csharp
   // Update _loanInfoLabel — add last loan date if available
   string lastLoanDate = (_casinoSc.LoanHistory.Count > 0)
@@ -761,7 +761,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
   }
   ```
 
-- [ ] **CG.2.15** Add null guard for `_loanHistoryList` in `RefreshLabels()` (check `GodotObject.IsInstanceValid(_loanHistoryList)` or null-check before `.Clear()`).
+- [x] **CG.2.15** Add null guard for `_loanHistoryList` in `RefreshLabels()` (check `GodotObject.IsInstanceValid(_loanHistoryList)` or null-check before `.Clear()`).
 
 **Verify**:
 - Scene opens showing `Game date: 2009-...` that ticks forward while autobet runs.
@@ -769,6 +769,75 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
 - Run a session until casino bankroll hits 0 — auto-loan fires, history list gets a new `auto` entry with the current game date.
 - Cold-start (restart app) — loan history persists and is shown correctly.
 - Pre-existing loans from before this version show `LoanCount` total with `(+N pre-log)` note in `_loanInfoLabel`.
+
+**Implementation notes (2026-07-02) — adaptations to the post-CG.1.8 world:**
+- **LoanHistory added to the block checkpoint (not in the original CG.2 steps — required for correctness).** `LoanHistory` self-persists to `casino_sc_balance_state.json`, but "a block is the only commit": without checkpointing it, a loan drawn *after* a block but *before* a restart would survive as a phantom list entry while `LoanCount`/`TotalLoaned` correctly revert. Added `CasinoScLoanHistory` to `BlockSessionCheckpointService.Snapshot`, populated in `CaptureCheckpoint()`, and restored in `RestoreCasinoScState(...)` (6th param) inside the same `bankrollTarget > 0` gate as `LoanCount`/`TotalLoaned`, so the list stays in lockstep with the count across the boundary. `LoanRecord` was made `public` for the checkpoint to reference it. Pre-genesis reset clears it; a post-CG.0.6-but-pre-CG.2 checkpoint (no history field) restores an empty list → the `(+N pre-log)` note shows, as intended.
+- **CG.2.5 placement:** `AddLoanRecord(InitialLoanAmount, "auto")` sits *inside* the `TryAutoRecharge()` loop (CG.1.8.5 made it a fixed-dose loop), so each on-demand loan draw logs its own record.
+- **`_loanHistory.Clear()`** added to both `InitializeDefaults()` and `ResetToPreGenesisDefaults()` (the CG.1.8 placeholder comment is now the real call).
+- **UI scroll — ✅ fixed (confirmed overflow 2026-07-02).** Adding the loan section did push the Back button below the fold. Wrapped the whole scene in a `ScrollContainer` (pattern 1, CLAUDE.md UI rules): inserted `RootScroll` (`ScrollContainer`, `horizontal_scroll_mode = 0`) between `RootMargin` and `RootVBox`, reparented every child to `RootMargin/RootScroll/RootVBox`, and set `RootVBox` `size_flags_horizontal = 3` + `mouse_filter = 1` (so the wheel passes up to the scroll; Labels default to `MOUSE_FILTER_IGNORE` so they don't swallow it). `MarginContainer` forces `RootScroll` to fill the bounded screen rect, so `RootVBox` (min-height = content) scrolls when it overflows. No `.cs` changes — all node refs use `%`-unique names. Mirrors the working `BotsBtcWallets` setup.
+
+---
+
+### Phase CG.3 — Bankroll recharge history panel, event timestamps with time, configurable auto-loan amount
+
+**Requested 2026-07-02.** Three additions to `CasinoGamblingFinances`, each mirroring an already-proven pattern (the CG.2 loans panel / the Bankroll Target setter). A **4th point** will be specified by the user after CG.3.A–C land.
+
+**Files**: `Scripts/Services/CasinoScBalanceService.cs`, `Scripts/Services/BlockSessionCheckpointService.cs`, `Screens/CasinoGamblingFinances/CasinoGamblingFinances.cs` + `.tscn`
+
+**Design note — checkpoint fields are growing.** CG.3 adds two more casino checkpoint fields (`CasinoScRechargeHistory`, `CasinoScAutoLoanAmount`), taking `RestoreCasinoScState(...)` from 6 → 8 params. We **keep the flat param-list pattern** (proven, mirrors the loans/target work exactly, zero checkpoint migration). If it ever feels unwieldy, a future cleanup can bundle all casino checkpoint fields into one `CasinoScBalanceService.CheckpointState` DTO (`Snapshot` holds one `CasinoSc` object) — deferred, not needed now.
+
+#### CG.3.A — Bankroll recharge history (mirror the loans panel) [Point 1]
+
+A "Bankroll Recharges" section logging every dose injected into the casino Bankroll — **auto** (the on-demand `TryAutoRecharge` dose) and **manual** (the `Main Balance → Bankroll` transfer). Structurally identical to the loan history (CG.2), which persists/checkpoints correctly. (Note: `Bankroll → Main` is a *withdrawal*, not a recharge — not logged.)
+
+*CasinoScBalanceService.cs:*
+- [ ] **CG.3.A.1** Add `public sealed class RechargeRecord` parallel to `LoanRecord`: `decimal Amount`, `string Reason` ("auto"|"manual"), `DateTime GameDateLocal`.
+- [ ] **CG.3.A.2** Add `private readonly List<RechargeRecord> _rechargeHistory = new();` + `public IReadOnlyList<RechargeRecord> RechargeHistory => _rechargeHistory;`. Add `private const int MaxRechargeHistory = 500;` — recharges can be far more frequent than loans, so trim the oldest beyond this cap to keep the JSON/checkpoint bounded (loans stay uncapped — they're rare).
+- [ ] **CG.3.A.3** Add `AddRechargeRecord(decimal amount, string reason)` (game-time via `_calendarTime`, mirror `AddLoanRecord`); after adding, trim `_rechargeHistory` to the last `MaxRechargeHistory` entries.
+- [ ] **CG.3.A.4** In `TryAutoRecharge()`, after each dose injection (`Bankroll += transfer`), call `AddRechargeRecord(transfer, "auto")`.
+- [ ] **CG.3.A.5** In `TryTransferToBankroll(amount)`, after the successful transfer, call `AddRechargeRecord(amount, "manual")`.
+- [ ] **CG.3.A.6** Persist: add `List<RechargeRecord> RechargeHistory` to `Snapshot`; write it in `SaveState()` (mirror the loan-history `.Select(...)`); load it in `LoadState()` (mirror, with the same `SpecifyKind(Local)`/validity guards, then apply the cap).
+- [ ] **CG.3.A.7** Clear `_rechargeHistory` in `InitializeDefaults()` and `ResetToPreGenesisDefaults()` (mirror loans).
+- [ ] **CG.3.A.8** Checkpoint: add `CasinoScRechargeHistory` to `BlockSessionCheckpointService.Snapshot`; populate in `CaptureCheckpoint()`; restore in `RestoreCasinoScState(...)` (new param, inside the `bankrollTarget > 0` gate, in lockstep with the loan history — same "block is the only commit" reasoning as CG.2's LoanHistory).
+
+*CasinoGamblingFinances.tscn:*
+- [ ] **CG.3.A.9** Add a "Bankroll Recharges" section — `Sep_Recharges` + `RechargeSectionLabel` ("Bankroll Recharges") + `RechargeHistoryList` (`ItemList`, `custom_minimum_size = (0,180)`) — mirroring the loans section. Place it after `TransferFeedbackLabel` and before `Sep_Loans`, grouping Transfers → Recharge history → Loans. (Scene is already `ScrollContainer`-wrapped, so extra height is fine.)
+
+*CasinoGamblingFinances.cs:*
+- [ ] **CG.3.A.10** Field `private ItemList _rechargeHistoryList;`; wire it in `_Ready()`; populate in `RefreshLabels()` (newest first, `GodotObject.IsInstanceValid` guard) mirroring the loan list.
+
+#### CG.3.B — Event timestamps show time, not just date [Point 2]
+
+Records already store full game-time `DateTime` — display-only change.
+- [ ] **CG.3.B.1** Loan history list items: `{r.GameDateLocal:yyyy-MM-dd}` → `{r.GameDateLocal:yyyy-MM-dd HH:mm:ss}`.
+- [ ] **CG.3.B.2** `_loanInfoLabel` "Last:" date → `yyyy-MM-dd HH:mm:ss`.
+- [ ] **CG.3.B.3** Manual-loan feedback `(game: yyyy-MM-dd)` → include time.
+- [ ] **CG.3.B.4** Recharge history list items (CG.3.A.10) use `yyyy-MM-dd HH:mm:ss` from the start.
+
+#### CG.3.C — Configurable auto-loan amount (finishes §31.2's `AutoLoanAmount`) [Point 3]
+
+The dose drawn per auto-loan (bankruptcy recharge), currently hardcoded to `InitialLoanAmount` (100M), becomes a dev-settable, persistent `AutoLoanAmount` mirroring `BankrollTarget` — same setter+button UI, same extra-lazy/checkpoint rules (reverts to the 100M default on every pre-genesis restart; a custom value only "sticks" once a real block commits it). `ManualLoanDefaultAmount` (the manual-loan input's pre-fill) **stays deferred** — the manual input already accepts any typed amount (CG.2), so it is low value.
+
+*CasinoScBalanceService.cs:*
+- [ ] **CG.3.C.1** Add `public decimal AutoLoanAmount { get; private set; } = InitialLoanAmount;`.
+- [ ] **CG.3.C.2** Add `SetAutoLoanAmount(decimal amount)` mirroring `SetBankrollTarget` (validate > 0, `Money.Normalize`, persist, `BalanceChanged?.Invoke()`).
+- [ ] **CG.3.C.3** In `TryAutoRecharge()`, replace the hardcoded `InitialLoanAmount` loan draw with `AutoLoanAmount` (the `MainBalance +=`, `TotalLoaned +=`, and the `AddLoanRecord(..., "auto")` amount). **Interaction note:** restructure the loan draw as an inner `while (MainBalance < BankrollTarget) { draw AutoLoanAmount }` so it always funds at least one dose — finite, but if the dev sets `AutoLoanAmount` far *below* `BankrollTarget` it will draw (and log) many small loans per recharge. Acceptable in a DEV scene; recommend `AutoLoanAmount ≥ BankrollTarget`.
+- [ ] **CG.3.C.4** Persist `AutoLoanAmount` in `Snapshot`/`SaveState`/`LoadState` (fallback to `InitialLoanAmount` when ≤ 0 or absent, mirroring the `BankrollTarget` guard).
+- [ ] **CG.3.C.5** Checkpoint: add `CasinoScAutoLoanAmount` to `Snapshot`; capture; restore in `RestoreCasinoScState(...)` inside the `bankrollTarget > 0` gate (mirrors `BankrollTarget` — reverts to default pre-genesis, sticks only at a block).
+- [ ] **CG.3.C.6** Reset to `InitialLoanAmount` in `InitializeDefaults()` and `ResetToPreGenesisDefaults()`.
+
+*CasinoGamblingFinances.tscn:*
+- [ ] **CG.3.C.7** Add an "Auto-loan amount" control mirroring the Bankroll Target block: a value label (`AutoLoanValueLabel`) and a row (`AutoLoanRow`: label + `AutoLoanInput` + `SetAutoLoanBtn`) inside the loans section (near the manual-loan row). Pre-populate the input.
+
+*CasinoGamblingFinances.cs:*
+- [ ] **CG.3.C.8** Fields `_autoLoanValueLabel`, `_autoLoanInput`; wire; `OnSetAutoLoanPressed()` (mirror `OnSetTargetPressed`); write the value label in `RefreshLabels()`; pre-populate the input in `_Ready()`.
+
+**Verify (all CG.3):**
+- A "Bankroll Recharges" list appears. Run autobet until the casino bankroll hits 0 → an `auto` entry (dose amount + full timestamp) appears; click "Main Balance → Bankroll" → a `manual` entry appears. Both persist across restart and revert with the checkpoint.
+- Loan + recharge entries and the loan feedback all show `yyyy-MM-dd HH:mm:ss`.
+- Set Auto-loan amount to e.g. `50000000` → value label updates; trigger a bankruptcy auto-loan → it draws 50M chunks (LoanCount/history reflect it). Restart without mining a block → auto-loan amount reverts to 100M default; mine a block first → it sticks.
+
+**Point 4**: TBD — user will specify after CG.3.A–C are implemented and verified.
 
 ---
 
@@ -815,7 +884,7 @@ Neither trigger has anything to do with absolute zero: the loan fires based on r
 | **OQ-BP.3** | Should setting a dose larger than Main Balance be blocked? | ✅ **Yes — blocking at set time.** Error message shown, dose not saved. See D13, implemented in BP.2.9. |
 | **OQ-CG.1** | Casino: add a transfer history list (like player's `TransfersList`)? | ⏸ **Deferred.** Requires new `List<TransferRecord>` on `CasinoScBalanceService`. Observable via `ClientsTransactions` for now. |
 | **OQ-CG.2** | Casino: show auto-recharge event counters (day/week/month)? | ⏸ **Deferred.** Requires tracking recharge timestamps in `CasinoScBalanceService.ApplyBetResult()`. Post-scope. |
-| **OQ-CG.3** | Casino: configurable *default dose* for auto-loans (bankruptcy recharge) and for the manual-loan input's pre-fill — as opposed to the manual loan's own ad-hoc, type-any-amount text input (CG.2, **not** deferred — see the Phase CG.2 scope note above and OQ-CG.5)? | ⏸ **Deferred — until Phase CG.0 is implemented and confirmed stable, per the user (2026-07-01).** A future "loan dosificador" would expose: (a) `AutoLoanAmount` (default 100M) — the amount injected per auto-loan when the casino is exhausted during live play (`TryAutoRecharge()`), replacing the hardcoded `InitialLoanAmount`; (b) `ManualLoanDefaultAmount` (default 100M) — the value `ManualLoanInput` (CG.2) pre-fills with / falls back to when left blank. Both would be configurable from this scene and persisted, following the exact same "before first bet" rule as `BankrollTarget` (OQ-CG.4). **Full pseudocode + UI sketch, ready to implement once CG.0 is stable: `Documentation/ProjectDesignManual.md` §31.2.** Do not implement without being asked. |
+| **OQ-CG.3** | Casino: configurable *default dose* for auto-loans (bankruptcy recharge) and for the manual-loan input's pre-fill — as opposed to the manual loan's own ad-hoc, type-any-amount text input (CG.2, **not** deferred — see the Phase CG.2 scope note above and OQ-CG.5)? | 🔵 **Split (2026-07-02): (a) scheduled as Phase CG.3.C, (b) still deferred.** (a) `AutoLoanAmount` (default 100M) — the amount injected per auto-loan when the casino is exhausted (`TryAutoRecharge()`), replacing the hardcoded `InitialLoanAmount` — is now **Phase CG.3.C** (dev-settable, persistent, checkpoint-committed, mirroring `BankrollTarget`), since CG.0 is stable and verified. (b) `ManualLoanDefaultAmount` (default 100M) — the value `ManualLoanInput` (CG.2) pre-fills with / falls back to when left blank — **stays deferred** (low value: the manual input already accepts any typed amount). Both follow the "before first bet" rule as `BankrollTarget` (OQ-CG.4). Design writeup: `Documentation/ProjectDesignManual.md` §31.2. |
 | **OQ-CG.4** (canonical decision) | Confirming the exact pre-genesis defaults for Phase CG.0: should the casino's Main Balance start at the pre-split `99,000,000` or the full unsplit `100,000,000`? Should `LoanCount`/`TotalLoaned` start at `1`/`100,000,000` (as today) or `0`/`0`? | ✅ **`MainBalance = 100,000,000` (full, unsplit) and `LoanCount = 0` / `TotalLoaned = 0`, confirmed with the user 2026-07-01.** Mirrors the player exactly: `PrincipalBalanceService` starts at the FULL `InitialPrincipalBalanceBaseline` (`40,000`), not the pre-split `39,900` — the split only appears once the dose actually moves (on the first bet, via `EnsureInitialCasinoFundingIfNeeded()`). `LoanCount=0`/`TotalLoaned=0` mirrors "no transfer records yet" for the player — the foundational loan is a bookkeeping event that only "happens" once betting starts, materializing to `1`/`100,000,000` at that point. See `Documentation/ProjectDesignManual.md` §31.1 for the full defaults table and rationale. |
 | **OQ-CG.5** (scope clarification) | Follow-up (2026-07-01): does "manual-loans y auto-loans via text input" mean the *whole* loan panel (including the ad-hoc manual-loan amount box) is deferred along with the dose-configurability proposal (§31.2)? | ✅ **No.** Two genuinely different things got bundled in the initial write-up and needed separating: **(1) the ad-hoc manual-loan text input** — `ManualLoanInput`/`TriggerManualLoan(amount)`, CG.2.9/CG.2.13, where the dev types **any specific amount** for *that one* loan request — is **confirmed, ready to implement**, not deferred; it already satisfies "manual-loans via text input." **(2) Making the *default* amounts configurable** — `AutoLoanAmount` (the bankruptcy auto-recharge dose) and `ManualLoanDefaultAmount` (this input's pre-fill) as *persistent settings* — is the part that stays deferred (OQ-CG.3), specifically until Phase CG.0's casino lifecycle rework is implemented and stable. The Phase CG.2 scope note above and OQ-CG.3's wording were both revised to make this split explicit. |
 | **OQ-CG.6** (cosmetic display quirk, found implementing CG.0) | The casino's P/L metric shown in `CasinoGamblingFinances` — `CumulativeProfitSinceLoan = TotalSc − TotalLoaned` (how far the casino's total SC is ahead of every loan it has taken) — now displays a misleading **+100,000,000** *before the player's first bet*, then snaps back to ≈0 the moment the first bet fires. **Why:** with CG.0's new defaults the casino boots with `TotalSc = 100,000,000` (all in Main Balance) but `TotalLoaned = 0` (the foundational loan isn't booked until the first settled bet), so the subtraction reads the full 100M as "profit." On the first bet, `EnsureInitialCasinoFundingIfNeeded()` books `TotalLoaned = 100,000,000` and the metric drops to ≈0. The number is technically correct (no loan taken yet ⇒ all capital is "above loans") but reads like a phantom 100M profit on the pre-first-bet screen. **Decision (user, 2026-07-02): show a neutral, unsigned `0.00000000 SC` while `LoanCount == 0`.** ✅ Fixed 2026-07-02, then **⤴ SUPERSEDED same day by CG.1.8** — under extra-lazy funding the casino holds nothing pre-loan (Main 0 / Bankroll 0), so the phantom +100M can no longer occur and the raw `CumulativeProfitSinceLoan` is correct in every state; the `LoanCount == 0` display guard was **removed** (it would now wrongly hide the post-loss winnings the user wants visible while `LoanCount` is still 0). The P/L label is back to a single signed/coloured line. |
