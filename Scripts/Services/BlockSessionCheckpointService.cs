@@ -21,9 +21,11 @@ public partial class BlockSessionCheckpointService : Node
 		public decimal CasinoScMainBalance    { get; set; }
 		public decimal CasinoScBankroll       { get; set; }
 		public decimal CasinoScBankrollTarget { get; set; }
+		public decimal CasinoScAutoLoanAmount { get; set; }
 		public int     CasinoScLoanCount      { get; set; }
 		public decimal CasinoScTotalLoaned    { get; set; }
-		public List<CasinoScBalanceService.LoanRecord> CasinoScLoanHistory { get; set; } = new();
+		public List<CasinoScBalanceService.LoanRecord>     CasinoScLoanHistory     { get; set; } = new();
+		public List<CasinoScBalanceService.RechargeRecord> CasinoScRechargeHistory { get; set; } = new();
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -100,9 +102,11 @@ public partial class BlockSessionCheckpointService : Node
 				CurrentSnapshot.CasinoScMainBalance,
 				CurrentSnapshot.CasinoScBankroll,
 				CurrentSnapshot.CasinoScBankrollTarget,
+				CurrentSnapshot.CasinoScAutoLoanAmount,
 				CurrentSnapshot.CasinoScLoanCount,
 				CurrentSnapshot.CasinoScTotalLoaned,
-				CurrentSnapshot.CasinoScLoanHistory);
+				CurrentSnapshot.CasinoScLoanHistory,
+				CurrentSnapshot.CasinoScRechargeHistory);
 
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
 		{
@@ -148,6 +152,7 @@ public partial class BlockSessionCheckpointService : Node
 			CasinoScMainBalance    = casinoSc?.MainBalance ?? 0m,
 			CasinoScBankroll       = casinoSc?.Bankroll ?? 0m,
 			CasinoScBankrollTarget = casinoSc?.BankrollTarget ?? 0m,
+			CasinoScAutoLoanAmount = casinoSc?.AutoLoanAmount ?? 0m,
 			CasinoScLoanCount      = casinoSc?.LoanCount ?? 0,
 			CasinoScTotalLoaned    = casinoSc?.TotalLoaned ?? 0m,
 			CasinoScLoanHistory    = casinoSc?.LoanHistory
@@ -157,6 +162,13 @@ public partial class BlockSessionCheckpointService : Node
 					Reason        = r.Reason,
 					GameDateLocal = DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
 				}).ToList() ?? new List<CasinoScBalanceService.LoanRecord>(),
+			CasinoScRechargeHistory = casinoSc?.RechargeHistory
+				.Select(r => new CasinoScBalanceService.RechargeRecord
+				{
+					Amount        = r.Amount,
+					Reason        = r.Reason,
+					GameDateLocal = DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
+				}).ToList() ?? new List<CasinoScBalanceService.RechargeRecord>(),
 			CapturedAtUtc = DateTime.UtcNow
 		};
 

@@ -174,6 +174,19 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = ""
 
+[node name="Sep_Recharges" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
+layout_mode = 2
+
+[node name="RechargeSectionLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Bankroll Recharges"
+
+[node name="RechargeHistoryList" type="ItemList" parent="RootMargin/RootScroll/RootVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 180)
+layout_mode = 2
+
 [node name="Sep_Loans" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
 layout_mode = 2
 
@@ -181,6 +194,34 @@ layout_mode = 2
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Bank Loans"
+
+[node name="AutoLoanValueLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Auto-loan amount:  100,000,000.00000000 SC"
+
+[node name="AutoLoanRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="AutoLoanSetLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/AutoLoanRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Set auto-loan amount (SC):"
+
+[node name="AutoLoanInput" type="LineEdit" parent="RootMargin/RootScroll/RootVBox/AutoLoanRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(280, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+placeholder_text = "e.g. 100000000"
+
+[node name="SetAutoLoanBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/AutoLoanRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Set"
 
 [node name="ManualLoanRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
 layout_mode = 2

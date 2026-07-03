@@ -17,12 +17,16 @@ public partial class CasinoGamblingFinances : Control
 	private Label _totalLabel;
 	private Label _plLabel;
 	private Label _loanInfoLabel;
+	private Label _autoLoanValueLabel;
 
 	private LineEdit _bankrollTargetInput;
 	private Label _targetFeedbackLabel;
 
+	private LineEdit _autoLoanInput;
+
 	private LineEdit _transferInput;
 	private Label _transferFeedbackLabel;
+	private ItemList _rechargeHistoryList;
 
 	private LineEdit _manualLoanInput;
 	private Label _loanFeedbackLabel;
@@ -46,15 +50,19 @@ public partial class CasinoGamblingFinances : Control
 		_totalLabel          = GetNode<Label>("%TotalLabel");
 		_plLabel             = GetNode<Label>("%PlLabel");
 		_loanInfoLabel       = GetNode<Label>("%LoanInfoLabel");
+		_autoLoanValueLabel  = GetNode<Label>("%AutoLoanValueLabel");
 		_bankrollTargetInput = GetNode<LineEdit>("%BankrollTargetInput");
 		_targetFeedbackLabel = GetNode<Label>("%TargetFeedbackLabel");
+		_autoLoanInput       = GetNode<LineEdit>("%AutoLoanInput");
 		_transferInput       = GetNode<LineEdit>("%TransferInput");
 		_transferFeedbackLabel = GetNode<Label>("%TransferFeedbackLabel");
+		_rechargeHistoryList = GetNode<ItemList>("%RechargeHistoryList");
 		_manualLoanInput     = GetNode<LineEdit>("%ManualLoanInput");
 		_loanFeedbackLabel   = GetNode<Label>("%LoanFeedbackLabel");
 		_loanHistoryList     = GetNode<ItemList>("%LoanHistoryList");
 
 		GetNode<Button>("%SetTargetBtn").Pressed        += OnSetTargetPressed;
+		GetNode<Button>("%SetAutoLoanBtn").Pressed      += OnSetAutoLoanPressed;
 		GetNode<Button>("%ToBankrollBtn").Pressed       += OnToBankrollPressed;
 		GetNode<Button>("%ToMainBtn").Pressed           += OnToMainPressed;
 		GetNode<Button>("%ManualLoanBtn").Pressed       += OnManualLoanPressed;
@@ -66,6 +74,7 @@ public partial class CasinoGamblingFinances : Control
 		{
 			_casinoSc.BalanceChanged += RefreshLabels;
 			_bankrollTargetInput.Text = _casinoSc.BankrollTarget.ToString("N8", CultureInfo.InvariantCulture);
+			_autoLoanInput.Text = _casinoSc.AutoLoanAmount.ToString("N8", CultureInfo.InvariantCulture);
 		}
 
 		// Pre-populate the loan input with the default draw amount (100M).
@@ -116,20 +125,22 @@ public partial class CasinoGamblingFinances : Control
 			: new Color(1f, 0.4f, 0.4f));
 
 		_bankrollTargetValueLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll Target:  {_casinoSc.BankrollTarget:N8} SC");
+		_autoLoanValueLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Auto-loan amount:  {_casinoSc.AutoLoanAmount:N8} SC");
 
-		// Loan info line — include the most recent loan's game date, and flag any loans drawn before loan-history
-		// logging existed (pre-CG.2 checkpoints) as "(+N pre-log)" so LoanCount and the list can't look inconsistent.
+		// Loan info line — include the most recent loan's game date+time, and flag any loans drawn before
+		// loan-history logging existed (pre-CG.2 checkpoints) as "(+N pre-log)" so LoanCount and the list can't
+		// look inconsistent.
 		var history = _casinoSc.LoanHistory;
 		string lastLoanDate = history.Count > 0
-			? history[^1].GameDateLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+			? history[^1].GameDateLocal.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
 			: "n/a";
 		int unloggedCount = _casinoSc.LoanCount - history.Count;
 		string unloggedNote = unloggedCount > 0 ? $" (+{unloggedCount} pre-log)" : "";
 		_loanInfoLabel.Text = string.Create(CultureInfo.InvariantCulture,
 			$"Bank loans taken: {_casinoSc.LoanCount}{unloggedNote}   |   Total loaned: {_casinoSc.TotalLoaned:N8} SC   |   Last: {lastLoanDate}");
 
-		// Loan history list, newest first. Null/validity guard (CG.2.15): the list can be queried by the fallback
-		// timer during a scene teardown frame.
+		// Loan history list, newest first (full game timestamp — CG.3.B). Validity guard (CG.2.15): the list can
+		// be queried by the fallback timer during a scene teardown frame.
 		if (GodotObject.IsInstanceValid(_loanHistoryList))
 		{
 			_loanHistoryList.Clear();
@@ -137,7 +148,20 @@ public partial class CasinoGamblingFinances : Control
 			{
 				var r = history[i];
 				_loanHistoryList.AddItem(string.Create(CultureInfo.InvariantCulture,
-					$"{r.GameDateLocal:yyyy-MM-dd} | {r.Amount:N8} SC | {r.Reason}"));
+					$"{r.GameDateLocal:yyyy-MM-dd HH:mm:ss} | {r.Amount:N8} SC | {r.Reason}"));
+			}
+		}
+
+		// Bankroll recharge history list, newest first (CG.3.A), mirroring the loans list.
+		if (GodotObject.IsInstanceValid(_rechargeHistoryList))
+		{
+			var recharges = _casinoSc.RechargeHistory;
+			_rechargeHistoryList.Clear();
+			for (int i = recharges.Count - 1; i >= 0; i--)
+			{
+				var r = recharges[i];
+				_rechargeHistoryList.AddItem(string.Create(CultureInfo.InvariantCulture,
+					$"{r.GameDateLocal:yyyy-MM-dd HH:mm:ss} | {r.Amount:N8} SC | {r.Reason}"));
 			}
 		}
 	}
@@ -158,6 +182,21 @@ public partial class CasinoGamblingFinances : Control
 		RefreshLabels();
 	}
 
+	private void OnSetAutoLoanPressed()
+	{
+		_loanFeedbackLabel.Text = "";
+		string raw = (_autoLoanInput.Text ?? string.Empty).Trim().Replace(",", "");
+		if (!decimal.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal value) || value <= 0m)
+		{
+			_loanFeedbackLabel.Text = "Invalid auto-loan amount — enter a positive number.";
+			return;
+		}
+		_casinoSc?.SetAutoLoanAmount(value);
+		_autoLoanInput.Text = "";
+		_loanFeedbackLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Auto-loan amount set to {value:N8} SC.");
+		RefreshLabels();
+	}
+
 	private void OnManualLoanPressed()
 	{
 		_loanFeedbackLabel.Text = "";
@@ -174,7 +213,7 @@ public partial class CasinoGamblingFinances : Control
 		_casinoSc?.TriggerManualLoan(amount);
 		_manualLoanInput.Text = CasinoScBalanceService.InitialLoanAmount.ToString("N0", CultureInfo.InvariantCulture);
 		_loanFeedbackLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Loan of {amount:N8} SC added to Main Balance (game: {_calendarTime?.CurrentLocalDateTime:yyyy-MM-dd}).");
+			$"Loan of {amount:N8} SC added to Main Balance (game: {_calendarTime?.CurrentLocalDateTime:yyyy-MM-dd HH:mm:ss}).");
 		RefreshLabels();
 	}
 
