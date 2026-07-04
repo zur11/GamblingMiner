@@ -59,6 +59,14 @@ size_flags_horizontal = 0
 theme_override_font_sizes/font_size = 26
 text = "Dice Game"
 
+[node name="ScFinancesBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 26
+text = "SC Finances"
+
 [node name="BlockExplorerBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)

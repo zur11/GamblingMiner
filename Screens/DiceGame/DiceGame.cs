@@ -270,7 +270,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
 		_strategyPanel.StopOnBlockMinedDoubleClicked += OnStopOnBlockMinedDoubleClicked;
 		_strategyPanel.ProfitStopModeDoubleClicked += OnProfitStopModeDoubleClicked;
-		_strategyPanel.AutoRechargeToggled += _ => UpdateBalanceUI();
+		_strategyPanel.AutoRechargeToggled += OnAutoRechargeToggledFromPanel;
 		InitializeApsSelector();
 		RefreshHardwareDrivenSpeed();
 		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
@@ -687,6 +687,10 @@ public partial class DiceGame : Control, IBetEventSource
 		_highLowToggleBtn.Text = saved.BetHigh ? "HIGH" : "LOW";
 		ApplyAutoBetSpeedSettings(saved.BetsPerSecond);
 		_loadingNodeStrategy = false;
+		// A saved strategy's stored auto-recharge value does NOT override the player's service-level flag — the
+		// panel toggle is only an access point to BankrollProgramService.AutoRechargeEnabled (SF.2.8). Re-seed
+		// from the service before snapshotting so the per-node snapshot captures the authoritative value.
+		SyncPlayerAutoRechargeToggleFromService();
 		SaveActiveNodeStrategySnapshot();
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
@@ -784,7 +788,38 @@ public partial class DiceGame : Control, IBetEventSource
 		// Only the player may place bets / autobet; bots can be configured but not bet manually.
 		_strategyPanel.SetBettingControlsEnabled(IsPlayerActive());
 
+		// For the player, the panel's auto-recharge toggle is only an access point to the service-level flag —
+		// reflect the service value (single source of truth), overriding whatever the per-node snapshot set.
+		SyncPlayerAutoRechargeToggleFromService();
+
 		UpdateStrategySaveLoadButtons();
+	}
+
+	// The auto-recharge toggle in the StrategyControlPanel used to be a stand-alone per-run control (a coupling
+	// that was convenient for testing). Since Step 12 (SF.2.8) the PLAYER's Bankroll auto-recharge is owned by
+	// BankrollProgramService.AutoRechargeEnabled — the same flag the new Bankroll Programmer toggle sets. So for
+	// the player the panel toggle is now merely a second access point to that service flag: it seeds FROM the
+	// service on load (here) and writes TO the service on user interaction (OnAutoRechargeToggledFromPanel).
+	// Bots keep their own per-node AutoRechargeEnabled (always ON — BuildBotStrategyConfig / bot strategy mode),
+	// so this proxy is a no-op unless the player node is active.
+	private void SyncPlayerAutoRechargeToggleFromService()
+	{
+		if (IsPlayerActive() && _bankrollProgramService != null)
+		{
+			_strategyPanel?.SetAutoRechargeEnabled(_bankrollProgramService.AutoRechargeEnabled);
+		}
+	}
+
+	// User flipped the panel's auto-recharge toggle. For the player, push it into the service (single source of
+	// truth). Skips writes during a snapshot/saved-strategy load (ApplyStrategySettings itself raises this event)
+	// and in bot strategy mode, so only genuine player interaction updates the shared flag.
+	private void OnAutoRechargeToggledFromPanel(bool enabled)
+	{
+		if (IsPlayerActive() && !_loadingNodeStrategy)
+		{
+			_bankrollProgramService?.SetAutoRechargeEnabled(enabled);
+		}
+		UpdateBalanceUI();
 	}
 
 	private static BettingStrategyConfig CloneConfig(BettingStrategyConfig config)

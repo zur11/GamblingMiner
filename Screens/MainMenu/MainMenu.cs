@@ -13,6 +13,7 @@ public partial class MainMenu : Control
 		statusBarSlot.AddChild(new StatusBar());
 
 		GetNode<Button>("%DiceGameBtn").Pressed         += () => _sceneManager?.Go(SceneManager.SceneId.DiceGame);
+		GetNode<Button>("%ScFinancesBtn").Pressed       += () => _sceneManager?.Go(SceneManager.SceneId.ScFinances);
 		GetNode<Button>("%BlockExplorerBtn").Pressed    += () => _sceneManager?.Go(SceneManager.SceneId.BlockExplorer);
 		GetNode<Button>("%BankrollProgrammerBtn").Pressed     += () => _sceneManager?.Go(SceneManager.SceneId.BankrollProgrammer);
 		GetNode<Button>("%CalendarsNavigatorBtn").Pressed  += () => _sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);

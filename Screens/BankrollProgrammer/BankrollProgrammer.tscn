@@ -71,6 +71,13 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Set Auto-Recharge Dose"
 
+[node name="AutoRechargeEnabledToggle" type="CheckBox" parent="VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+button_pressed = true
+text = "Auto-recharge enabled (OFF = bankroll is not auto-topped-up; betting stops and waits for a manual recharge)"
+
 [node name="ManualRechargeToBankrollRow" type="HBoxContainer" parent="VBox"]
 layout_mode = 2
 
@@ -107,6 +114,11 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "-"
+
+[node name="ScFinancesBtn" type="Button" parent="VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "SC Finances →"
 
 [node name="BackToDiceBtn" type="Button" parent="VBox"]
 unique_name_in_owner = true

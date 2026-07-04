@@ -23,6 +23,8 @@ public partial class BankrollProgrammer : Control
 	private LineEdit _manualTransferToBalanceInput;
 	private ItemList _transfersList;
 	private Label _statusValue;
+	private CheckBox _autoRechargeEnabledToggle;
+	private bool _syncingToggle;
 
 	public override void _Ready()
 	{
@@ -45,11 +47,14 @@ public partial class BankrollProgrammer : Control
 		_manualTransferToBalanceInput = GetNode<LineEdit>("%ManualTransferToBalanceInput");
 		_transfersList = GetNode<ItemList>("%TransfersList");
 		_statusValue = GetNode<Label>("%StatusValue");
+		_autoRechargeEnabledToggle = GetNode<CheckBox>("%AutoRechargeEnabledToggle");
 
 		GetNode<Button>("%ApplyAutoRechargeAmountBtn").Pressed += OnApplyAutoRechargeAmountPressed;
 		GetNode<Button>("%ManualRechargeToBankrollBtn").Pressed += OnManualRechargeToBankrollPressed;
 		GetNode<Button>("%TransferToBalanceBtn").Pressed += OnTransferToBalancePressed;
+		GetNode<Button>("%ScFinancesBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.ScFinances);
 		GetNode<Button>("%BackToDiceBtn").Pressed += OnBackToDicePressed;
+		_autoRechargeEnabledToggle.Toggled += OnAutoRechargeEnabledToggled;
 
 		var vbox = GetNode<VBoxContainer>("VBox");
 		var statusBar = new StatusBar();
@@ -61,6 +66,9 @@ public partial class BankrollProgrammer : Control
 			_bankrollProgramService.TransfersChanged += RenderAll;
 			_bankrollProgramService.AutoRechargeAmountChanged += RenderAll;
 			_autoRechargeAmountInput.Text = _bankrollProgramService.AutoRechargeAmount.ToString("F8", CultureInfo.InvariantCulture);
+			_syncingToggle = true;
+			_autoRechargeEnabledToggle.ButtonPressed = _bankrollProgramService.AutoRechargeEnabled;
+			_syncingToggle = false;
 		}
 
 		RenderAll();
@@ -176,6 +184,16 @@ public partial class BankrollProgrammer : Control
 	private void OnBackToDicePressed()
 	{
 		_sceneManager?.Go(SceneManager.SceneId.MainMenu);
+	}
+
+	// SF.2.8 (D-SF.4): the service-level off-switch for the Bankroll dose recharge. Persists + snapshots at a block.
+	private void OnAutoRechargeEnabledToggled(bool pressed)
+	{
+		if (_syncingToggle) return;
+		_bankrollProgramService?.SetAutoRechargeEnabled(pressed);
+		_statusValue.Text = pressed
+			? "Auto-recharge ENABLED — bankroll auto-tops-up from Main Balance when it runs low."
+			: "Auto-recharge DISABLED — betting stops on an empty bankroll and waits for a manual recharge.";
 	}
 
 	private void RenderAll()

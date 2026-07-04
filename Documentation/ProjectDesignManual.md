@@ -2383,6 +2383,19 @@ Because the restart reuses the same `BettingStrategyConfig`, **Insist After Stop
 
 On every settled bet: **profit/loss threshold reset (insist)** → else **bankroll-limit reset to base (insist, if base fits)** → else **stop `InsufficientBalance`** → then, post-stop, **auto-recharge + restart from base** (if enabled). Resets are free; recharges are the last resort. This logic lives in the shared `BaseBetSession`, so **player and bot sessions behave identically**.
 
+### 25.8 — The auto-recharge ENABLE toggle: one flag, two access points (Step 12, SF.2.8)
+
+"Auto-recharge enabled" is the on/off switch for the whole last-resort step above (§25.6). Before Step 12 the player had only **one** control for it — the **`Auto Recharge: ON/OFF` toggle inside the DiceGame `StrategyControlPanel`** — and it was a stand-alone per-run UI flag (`_strategyPanel.AutoRechargeEnabled`), read directly wherever the recharge decision was made. That coupling was convenient for testing but meant the switch lived *inside a strategy panel*, not with the account it governs.
+
+Step 12 (D-SF.4) gave `BankrollProgramService` a real, persisted **`AutoRechargeEnabled`** flag (default ON), snapshotted at each block and reverted to ON pre-genesis — exactly like the auto-recharge dose (`AutoRechargeAmount`). This flag is now the **single source of truth** for the player's Bankroll auto-recharge, and it has **two access points** that stay in sync:
+
+1. **Bankroll Programmer** — the canonical home: an `AutoRechargeEnabledToggle` checkbox wired straight to `BankrollProgramService.SetAutoRechargeEnabled` (seeded from the service on entry).
+2. **DiceGame `StrategyControlPanel`** — the original toggle, **kept in place** (the testing coupling survives) but re-purposed for the player into a *proxy* of the same service flag:
+   - it **seeds FROM** the service on every player-side load (`SyncPlayerAutoRechargeToggleFromService()` — called after `LoadActiveNodeStrategySnapshot` and after a saved-strategy load, so a saved strategy's stored auto-recharge value never overrides the account-level flag), and
+   - it **writes TO** the service on genuine player interaction (`OnAutoRechargeToggledFromPanel` → `SetAutoRechargeEnabled`), skipping writes during a load (the load itself raises `AutoRechargeToggled`) and in bot strategy mode.
+
+**Bots are unchanged**: each bot keeps its own per-node `NodeStrategyState.AutoRechargeEnabled` (forced ON in bot strategy mode), so the proxy is a no-op unless the player node is active. Both recharge call sites also gate on the service flag directly (`SimulationService.TryPlayerAutoRechargeAndRestart` and DiceGame's manual-path `OnSessionStopped`), so the service flag wins even if a panel value were momentarily stale — defense in depth. Turning it **OFF** makes an empty Bankroll simply stop betting and wait for a manual recharge (today's `InsufficientBalance` path, now player-chosen). See `Documentation/GLOSSARY.md` and `AIHelperFiles/step12-player-sc-finances-plan.md` (SF.2.8).
+
 ## Chapter 26 — Network Difficulty (continuous, persisted, validated)
 
 **Files**: `Scripts/BlockchainPort/Blockchain/Models.cs` (`Block.Difficulty`), `Scripts/BlockchainPort/Blockchain/BlockchainService.cs`, `Scripts/BlockchainPort/Simulation/NodeAgent.cs`, `Screens/BlockExplorer/BlockExplorer.cs`

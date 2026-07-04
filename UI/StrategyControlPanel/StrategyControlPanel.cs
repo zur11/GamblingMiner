@@ -358,6 +358,25 @@ namespace UI.StrategyControlPanel
 			AutoRechargeToggled?.Invoke(enabled);
 		}
 
+		// Seed the auto-recharge toggle from an EXTERNAL source of truth without raising AutoRechargeToggled.
+		// For the player this panel toggle is only an access point to the service-level
+		// BankrollProgramService.AutoRechargeEnabled (the same flag the Bankroll Programmer toggle owns — Step 12
+		// SF.2.8 follow-up); DiceGame calls this to reflect the service value into the panel. A programmatic
+		// ButtonPressed write does not raise the Button's Pressed signal, so OnAutoRechargeTogglePressed is not
+		// re-entered; _internalUpdate is set anyway for consistency with the panel's other silent-set paths.
+		public void SetAutoRechargeEnabled(bool enabled)
+		{
+			if (_autoRechargeToggle == null)
+			{
+				return;
+			}
+
+			_internalUpdate = true;
+			_autoRechargeToggle.ButtonPressed = enabled;
+			_autoRechargeToggle.Text = enabled ? "Auto Recharge: ON" : "Auto Recharge: OFF";
+			_internalUpdate = false;
+		}
+
 		private void OnProfitOrLossStopInputChanged()
 		{
 			if (_internalUpdate)

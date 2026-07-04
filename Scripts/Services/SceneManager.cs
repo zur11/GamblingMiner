@@ -21,6 +21,8 @@ public partial class SceneManager : Node
 		CasinoGamblingFinances,
 		ClientsBetsHistory,
 		ClientsTransactions,
+		ScFinances,
+		ScTransactions,
 	}
 
 	private static readonly Dictionary<SceneId, string> Paths = new()
@@ -41,13 +43,23 @@ public partial class SceneManager : Node
 		[SceneId.CasinoGamblingFinances]   = "res://Screens/CasinoGamblingFinances/CasinoGamblingFinances.tscn",
 		[SceneId.ClientsBetsHistory]       = "res://Screens/CasinoGamblingFinances/ClientsBetsHistory.tscn",
 		[SceneId.ClientsTransactions]      = "res://Screens/CasinoGamblingFinances/ClientsTransactions.tscn",
+		[SceneId.ScFinances]               = "res://Screens/ScFinances/ScFinances.tscn",
+		[SceneId.ScTransactions]           = "res://Screens/ScFinances/ScTransactions.tscn",
 	};
 
 	// Overlay stack: scenes added on top without replacing the current scene.
 	private readonly List<Node> _overlayStack = new();
 
+	// One-deep navigation memory (SF.2.7): the scene we navigated FROM on the last Go(). Lets an origin-aware
+	// back button (e.g. BetsHistoryExplorer, SF.4.2) return to whichever hub launched it. Null before the first
+	// Go() (app boots straight into MainMenu without a Go call).
+	public SceneId? PreviousScene { get; private set; }
+	private SceneId? _currentScene;
+
 	public void Go(SceneId scene)
 	{
+		PreviousScene = _currentScene;
+		_currentScene = scene;
 		GetTree().ChangeSceneToFile(Paths[scene]);
 	}
 
