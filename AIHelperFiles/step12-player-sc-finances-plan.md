@@ -375,7 +375,7 @@ Player sign convention: **P/L = +TotalProfit** (the player's own gain), unlike `
 - [ ] `ScTransactions`: unchanged behavior; `Back` always visible.
 - [ ] `ScFinances.cs` required **no** code changes (unique names preserved); all buttons still wired.
 
-### Phase SF.4D — UI fix (the real one): the window's bottom band falls off-screen; keep critical controls out of it
+### Phase SF.4D — UI fix (the real one): the window's bottom band falls off-screen; keep critical controls out of it — ✅ COMPLETED (user-tested)
 
 **Added after SF.4C (which relocated the footer but did not fix the overflow).**
 
@@ -385,16 +385,18 @@ Player sign convention: **P/L = +TotalProfit** (the player's own gain), unlike `
 
 **Files**: `project.godot` (window mode) and/or `Main.cs`; `Screens/ScFinances/ScFinances.tscn`, `Screens/ScFinances/ScTransactions.tscn`; `Documentation/ProjectDesignManual.md` (Ch. 29); optionally `CLAUDE.md`.
 
-- [ ] **SF.4D.1 — Root fix: start the game window MAXIMIZED** so the client area fits within the physical screen (title bar/taskbar included) and the **entire 1080 canvas is visible** (letterboxed if the screen isn't 16:9). Implement the more reliable of: (a) `project.godot` → `window/size/mode=3` (Maximized) [+ `window/size/resizable` left default], or (b) a one-liner in `Main._Ready()`: `DisplayServer.WindowSetMode(DisplayServer.WindowMode.Maximized)`. This fixes **every** scene at once — present and future — since nothing is pushed off-screen anymore. **Verify against the user's actual run setup** (external window vs. editor-embedded game); if embedded behaves oddly, prefer the code path or a fixed initial `window/size` that fits the screen.
-- [ ] **SF.4D.2 — Defensive belt-and-suspenders: a bottom "safe area"** so no critical control lives in the last ~60–80 px even if someone runs a non-maximized window. For the two fixed-footer scenes, bump the `RootMargin` `margin_bottom` from `30` to **~70** (or add an equivalent bottom spacer below the footer). Cheap, and keeps the footers readable independent of window mode.
-- [ ] **SF.4D.3 — Document the real lesson** in `ProjectDesignManual.md` Ch. 29 (new short subsection, e.g. §29.11 "The canvas bottom band can fall off-screen"): (a) the game runs a fixed 1080 canvas with no forced window mode, so in a plain window the bottom ~30–70 px is off-screen; (b) **keep critical/interactive controls — especially bottom-pinned footers — out of the bottom safe area (~60–80 px)**; (c) prefer running **maximized/fullscreen**; (d) note that an *expanding* child (`size_flags_vertical = 3`) pins the following siblings to the very bottom, straight into the danger band — pair a fixed footer with a bottom safe margin (link §29.10). Reinforce one line in `CLAUDE.md`'s UI block if warranted.
-- [ ] **SF.4D.4** Correct the SF.4C write-up cross-references so the manual/CLAUDE don't over-claim that the fixed-footer change alone guarantees readability (it needs the SF.4D safe-area / maximize to actually clear the screen edge).
+- [x] **SF.4D.1 — Root fix: start the game window MAXIMIZED** so the client area fits within the physical screen (title bar/taskbar included) and the **entire 1080 canvas is visible** (letterboxed if the screen isn't 16:9). Implement the more reliable of: (a) `project.godot` → `window/size/mode=2` (Maximized — value **2**, not 3 which is Fullscreen) [+ `window/size/resizable` left default], or (b) a one-liner in `Main._Ready()`: `DisplayServer.WindowSetMode(DisplayServer.WindowMode.Maximized)`. This fixes **every** scene at once — present and future — since nothing is pushed off-screen anymore. **Verify against the user's actual run setup** (external window vs. editor-embedded game); if embedded behaves oddly, prefer the code path or a fixed initial `window/size` that fits the screen.
+> **⚠️ SF.4D.1 finding (2026-07-04).** Setting `window/size/mode=2` **breaks the editor's Game embedding** ("Game embedding not available when the game starts maximized"). Godot's fix — applied — is a feature-tag override: `window/size/mode.editor=0` (Windowed in the editor, Maximized in exports). **Consequence:** maximize now only helps the **standalone/exported** build; the developer's **editor-embedded** test window still runs Windowed and still shows the bottom overflow. So SF.4D.1 is **not sufficient for the in-editor workflow** — **SF.4D.2 (bottom safe-area) is the actual fix** for the embedded case and is now promoted from optional to required.
+
+- [x] **SF.4D.2 — Defensive belt-and-suspenders: a bottom "safe area"** so no critical control lives in the last ~50 px even if someone runs a non-maximized window. Bumped the `RootMargin` `margin_bottom` from `30` to **`50`** on both `ScFinances.tscn` and `ScTransactions.tscn` (user-tuned: 70 was tried first and felt too large). This is the fix that actually clears the overflow in the **editor-embedded** test view (where maximize doesn't apply). Cheap, window-mode-independent.
+- [x] **SF.4D.3 — Document the real lesson** in `ProjectDesignManual.md` Ch. 29 → **new §29.11 "The canvas bottom band can fall off-screen"**: fixed 1080 canvas + plain/embedded window ⇒ bottom ~30–70 px off-screen; keep critical controls out of the bottom ~50 px; the `size_flags_vertical = 3` "pins the footer to the bottom edge" trap (fixed footer + bottom safe area are a pair); Maximized export via `window/size/mode=2` with the `mode.editor=0` embedding caveat. Reinforced one bullet in `CLAUDE.md`'s UI block.
+- [x] **SF.4D.4** Corrected the SF.4C write-ups: §29.10 gained a "⚠️ Refinement (SF.4D)" callout + a qualifier on the "stays readable at any scroll position" claim (now "provided it also clears the bottom safe area §29.11"); the CLAUDE.md fixed-footer bullet is paired with the new bottom-safe-area bullet.
 
 #### Testing (SF.4D)
 
-- [ ] Launch the game (user's normal way): `ScFinances` and `ScTransactions` **Back/nav rows are fully visible and readable**, not touching/under the screen's bottom edge.
-- [ ] Try a **non-maximized / smaller** window too (if SF.4D.2 applied): footers still clear the bottom.
-- [ ] Regression: other scenes (DiceGame, BankrollProgrammer, MainMenu, BlockExplorer) unaffected; nothing important now hidden by letterbox bars.
+- [x] Launch the game (editor-embedded): `ScFinances` and `ScTransactions` **Back/nav rows fully visible and readable** — user-confirmed successful with `margin_bottom = 50`.
+- [x] `margin_bottom` tuned: 70 was too much, 50 is right.
+- [ ] *(optional/later)* verify the standalone exported build starts Maximized and other scenes are unaffected.
 
 ### Phase SF.5 — Documentation truth pass
 

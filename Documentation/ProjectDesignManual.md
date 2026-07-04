@@ -2700,7 +2700,9 @@ Two helpers in `BlockExplorer.cs` apply a **display-only cosmetic filter** until
 
 ### 29.10 — Persistent nav / footer buttons live OUTSIDE the scroll (Step 12 fix)
 
-**Symptom (recurring):** a full-page scrollable screen's **Back / nav buttons overflow off the bottom** — you can click them but not read them, because they sit flush/clipped at the very bottom edge of the scroll. Seen on `ScFinances` (Step 12).
+**Symptom (recurring):** a full-page scrollable screen's **Back / nav buttons overflow off the bottom** — you can click them but not read them. Seen on `ScFinances` (Step 12).
+
+> **⚠️ Refinement (Step 12, SF.4D) — read together with §29.11.** The fixed-footer move below is correct practice and is **kept**, but on `ScFinances`/`ScTransactions` it turned out **not** to be the actual cause of *this* overflow: the tell was that `ScTransactions` overflowed **even with no active scroll** (content far shorter than the viewport can't be clipped by a scroll). The real cause was the **canvas bottom band falling off-screen** (§29.11). A fixed footer only stays readable if it *also* clears the bottom safe area — the two rules go together.
 
 **Cause — two compounding mistakes, both in the same anti-pattern:**
 1. **`MarginContainer → ScrollContainer` *directly*** (no intermediate `VBoxContainer`, no `size_flags_vertical = 3` on the scroll). This is **not** the canonical bounding chain of §29.1 (`MarginContainer → VBoxContainer → expand element`). It can still bound, but it's fragile and offers nowhere to anchor a fixed footer.
@@ -2724,13 +2726,27 @@ RootMargin (MarginContainer, anchors_preset = 15)
     BackBtn (Button)                             ← … never clipped
 ```
 
-The footer nodes are **siblings of `ContentScroll`, not children of it**, so they're pinned to the bottom of the bounded `RootVBox` and stay fully readable at any scroll position. `ScTransactions` is the reference implementation (list scrolls, `BackBtn` pinned).
+The footer nodes are **siblings of `ContentScroll`, not children of it**, so they're pinned to the bottom of the bounded `RootVBox` and stay readable at any scroll position — **provided the footer also clears the bottom safe area (§29.11); a bottom-pinned footer sits exactly where the off-screen band bites.** `ScTransactions` is the reference implementation (list scrolls, `BackBtn` pinned).
 
 **Reparenting is safe for the controller:** scene scripts resolve widgets by `%UniqueName` (`unique_name_in_owner = true`), which is path-independent — moving nodes between the scroll and the footer needs **zero** `.cs` changes as long as the unique names are preserved.
 
 **Checklist addition (extends §29.5):** *7. Persistent nav/Back buttons go in a fixed footer OUTSIDE the scroll (bounded `VBox` → `ScrollContainer(size_flags_vertical = 3)` for content, then the footer row as a sibling). Never leave them as the last child inside the `ScrollContainer`.*
 
 **Not-yet-fixed mirrors:** the DEV scenes `CasinoGamblingFinances` and `ClientsBetsHistory` still use the old inside-scroll-footer anti-pattern; fix them the same way if the overflow is observed (they're DEV-only, so left as-is for now).
+
+### 29.11 — The canvas bottom band can fall off-screen (the real Step 12 overflow) — keep a bottom safe area
+
+**This was the actual cause of the `ScFinances`/`ScTransactions` "Back button overflows the bottom" bug** — not the scroll (§29.10). Symptom that pins it down: the overflow appeared **even in a scene with no active scroll** (`ScTransactions`, few rows), so nothing was being *scroll*-clipped; the whole canvas bottom was simply not on-screen.
+
+**Cause.** The project renders a fixed **1920×1080** design canvas (`project.godot [display]`: `viewport_width/height`, `stretch/mode = "canvas_items"`). In a **plain window** (the default, and how the editor's embedded Game view runs), the OS title bar + taskbar make the window taller than the visible area, so the **bottom ~30–70 px of the 1080 canvas is pushed off-screen**. Any control in that band is cut off — clickable but unreadable. Scenes are affected **only** when a control sits in that band; a content-driven Back button that floats higher (e.g. `BankrollProgrammer`, ~y 750) never notices, which is why only the new scenes showed it.
+
+**The `size_flags_vertical = 3` trap.** An *expanding* child (a `ScrollContainer` or list set to Fill+Expand) eats all the free vertical space and **pins the following siblings to the very bottom** of the bounded area — driving a fixed footer straight into the off-screen band, *regardless of how little content there is*. So a fixed footer (§29.10) and a bottom safe area (this section) are a **pair**; doing only one leaves the button clipped.
+
+**Fixes (both applied in Step 12 / SF.4D):**
+1. **Window mode = Maximized for the shipped game.** `project.godot` → `window/size/mode=2` (Maximized; value **2**, *not* 3 = Fullscreen) so the client area fits the screen and the whole canvas is visible. **Caveat:** the editor's **Game embedding is disabled when the game starts maximized** ("Game embedding not available when the game starts maximized"). Keep embedding working with a **feature-tag override**: `window/size/mode.editor=0` (Windowed in the editor, Maximized in exports). Because the editor then runs Windowed, maximize alone does **not** fix the in-editor test view — hence fix #2.
+2. **Bottom safe area.** Keep critical/interactive controls — **especially bottom-pinned footers** — out of the bottom ~50 px. In practice: set the page's `MarginContainer` `margin_bottom` to **~50** (Step 12 used 50; 70 was tried but felt too large). This lifts a bottom-pinned footer above the danger band and works in **every** context (windowed, embedded, maximized).
+
+**Rule of thumb:** the game runs a fixed 1080 canvas with no guaranteed full-height window, so **treat the bottom ~50 px as unsafe**. Prefer running maximized/fullscreen, and never place a must-read/must-click control flush against the canvas bottom — give it a ≥ ~50 px bottom margin (or don't pin it to the bottom at all).
 
 ---
 
