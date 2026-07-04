@@ -17,6 +17,10 @@ public partial class PrincipalBalanceService : Node
 
 	public decimal CurrentBalance { get; private set; } = DefaultInitialBalance;
 
+	// Fired on every Main Balance mutation (D-SF.7). Consumers: ScFinances labels, PlayerBankAccountService's
+	// auto-withdraw hook, StatusBar, and future scenes. Invoked AFTER the balance is updated and persisted.
+	public event Action BalanceChanged;
+
 	public override void _Ready()
 	{
 		LoadState();
@@ -45,6 +49,7 @@ public partial class PrincipalBalanceService : Node
 		CurrentBalance = Money.Normalize(CurrentBalance - amount);
 		_initialized = true;
 		SaveState();
+		BalanceChanged?.Invoke();
 		return true;
 	}
 
@@ -59,6 +64,7 @@ public partial class PrincipalBalanceService : Node
 		CurrentBalance = Money.Normalize(CurrentBalance + amount);
 		_initialized = true;
 		SaveState();
+		BalanceChanged?.Invoke();
 	}
 
 	public void SetBalance(decimal amount)
@@ -66,6 +72,7 @@ public partial class PrincipalBalanceService : Node
 		CurrentBalance = Money.Normalize(Math.Max(0m, amount));
 		_initialized = true;
 		SaveState();
+		BalanceChanged?.Invoke();
 	}
 
 	private void LoadState()

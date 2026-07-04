@@ -26,6 +26,9 @@ public partial class BlockSessionCheckpointService : Node
 		public decimal CasinoScTotalLoaned    { get; set; }
 		public List<CasinoScBalanceService.LoanRecord>     CasinoScLoanHistory     { get; set; } = new();
 		public List<CasinoScBalanceService.RechargeRecord> CasinoScRechargeHistory { get; set; } = new();
+		// Step 12 (SF.0.7): the player's Private Bank Account, bundled as one DTO. Null in a legacy pre-Step-12
+		// checkpoint → PlayerBankAccountService keeps its loaded state (no migration, D-SF2.8).
+		public PlayerBankAccountService.CheckpointState PlayerBankState { get; set; }
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -58,6 +61,8 @@ public partial class BlockSessionCheckpointService : Node
 			?.ReplaceState(BankrollProgramService.DefaultAutoRechargeAmount, new List<BankrollProgramService.TransferRecord>());
 		GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
 			?.ResetToPreGenesisDefaults();
+		GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")
+			?.ResetToPreGenesisDefaults(); // Step 12 (SF.0.8): bank → 0, settings default, history cleared
 
 		// The clock and bet history leak the same way (CalendarTimeService/UserStatsService self-persist on
 		// every bet, not just on a mined block). Before any real block, the chain tip IS still the historical
@@ -107,6 +112,8 @@ public partial class BlockSessionCheckpointService : Node
 				CurrentSnapshot.CasinoScTotalLoaned,
 				CurrentSnapshot.CasinoScLoanHistory,
 				CurrentSnapshot.CasinoScRechargeHistory);
+		GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")
+			?.RestoreFromCheckpoint(CurrentSnapshot.PlayerBankState); // null DTO (legacy) → keeps loaded state
 
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
 		{
@@ -169,6 +176,7 @@ public partial class BlockSessionCheckpointService : Node
 					Reason        = r.Reason,
 					GameDateLocal = DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
 				}).ToList() ?? new List<CasinoScBalanceService.RechargeRecord>(),
+			PlayerBankState = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")?.CaptureCheckpointState(),
 			CapturedAtUtc = DateTime.UtcNow
 		};
 
