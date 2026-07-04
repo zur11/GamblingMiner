@@ -166,13 +166,13 @@ public partial class ClientsTransactions : Control
 						$"  │ wager base: {e.TotalWageredSnapshot:N8} SC");
 					break;
 				case "deposit":
-					kindLabel = "[DEPOSIT        ]";
+					kindLabel = $"[DEPOSIT {e.Method}]"; // SF.3.3: manual/auto tag (D-SF2.3)
 					color = new Color(0.4f, 1f, 0.4f);   // green
 					wagersAnnotation = string.Create(CultureInfo.InvariantCulture,
 						$"  │ wager base: {e.TotalWageredSnapshot:N8} SC");
 					break;
 				case "withdrawal":
-					kindLabel = "[WITHDRAWAL     ]";
+					kindLabel = $"[WITHDRAWAL {e.Method}]"; // SF.3.3: manual/auto tag
 					color = new Color(1f, 0.65f, 0.2f);  // orange
 					break;
 				default:
