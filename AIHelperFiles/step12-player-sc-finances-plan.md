@@ -302,7 +302,7 @@ MainMenu
 - [ ] **SF.4.1** DiceGame Deposit button → ScFinances; popup node + handlers removed; delete `UI/DepositPopup/` when unreferenced.
 - [ ] **SF.4.2** `BetsHistoryExplorer` origin-aware back.
 
-### Phase SF.4B — Centralized player betting stats (3 groups) + persistent in-DiceGame bet history
+### Phase SF.4B — Centralized player betting stats (3 groups) + persistent in-DiceGame bet history — ✅ COMPLETED (user-tested)
 
 **Added after SF.4 (not in the original plan; SF.5 documentation is postponed until after this).** Two DiceGame components surfaced as out-of-date now that deposits flow through `PlayerBankAccountService` instead of the retired `DepositPopup`. Both are fixed by pointing them at the **already-centralized** data (`UserStatsService` lifetime stats + `CasinoClientLedgerService` snapshots + `BetHistoryRepository` records) and reusing it across surfaces.
 
@@ -351,6 +351,27 @@ Player sign convention: **P/L = +TotalProfit** (the player's own gain), unlike `
 - [ ] Numbers identical between ScFinances and DiceGame's `FinancialBettingStats` at all times.
 - [ ] Re-enter DiceGame ⇒ most-recent bet rows reappear; keep betting ⇒ new rows prepend; no duplication of the seeded rows.
 - [ ] InvariantCulture / English / colors on all new labels; `_ExitTree` unsubscribes (no dangling events on scene free).
+
+### Phase SF.4C — UI layout fix: nav/back buttons as a fixed footer outside the scroll (+ manual/CLAUDE/memory reinforcement)
+
+**Added after SF.4B (not in the original plan).** A recurring layout bug: on the full-page scroll scenes the **Back / nav buttons overflow off the bottom of the scroll** — clickable but not readable.
+
+**Root cause (diagnosed).** `ScFinances` was mirrored from `CasinoGamblingFinances`, which uses `MarginContainer → ScrollContainer` **directly** (no intermediate bounding `VBoxContainer`, no `size_flags_vertical = 3` on the scroll — i.e. NOT the canonical bounding chain of ProjectDesignManual §29.1) **and keeps the `NavRow` + `BackBtn` as the last children *inside* the scroll**. So the footer is only reachable by scrolling and sits flush/clipped at the viewport's bottom edge. By contrast `ScTransactions` was mirrored from `ClientsTransactions`, which already does it right — a bounded outer `RootVBox` → inner `ScrollContainer` (`size_flags_vertical = 3`) → **`BackBtn` as a fixed footer** (always visible). **`ScTransactions` is therefore already correct; only `ScFinances` needs the structural fix.** This is a new lesson not yet in Chapter 29 (which covers *making* panels scroll, not where persistent footers go), which is why it keeps recurring.
+
+**Files**: `Screens/ScFinances/ScFinances.tscn`, `Screens/ScFinances/ScTransactions.tscn` (verify only), `Documentation/ProjectDesignManual.md` (Ch. 29), `CLAUDE.md`, `memory/` (new feedback memory).
+
+- [ ] **SF.4C.1** Restructure `ScFinances.tscn` to the **fixed-footer** pattern (mirror `ScTransactions`/`ClientsTransactions`): `RootMargin (MarginContainer, anchors 15)` → `RootVBox (VBoxContainer, bounded by the margin)` → { `StatusBarPlaceholder` (fixed top) · `ContentScroll (ScrollContainer, size_flags_vertical = 3, horizontal_scroll_mode = 0)` → `FormVBox (size_flags_horizontal = 3, mouse_filter = 1)` holding ALL the currently-scrollable content (title/game-date/balances/stats/deposit/withdraw/history) · then `Sep` + `NavRow (HBox)` + `BackBtn` as a **fixed footer** outside `ContentScroll` }. **Preserve every `unique_name_in_owner` name** so `ScFinances.cs`'s `%`-based `GetNode` wiring needs **zero** code changes (reparenting is invisible to unique-name lookup). Confirm the embedded `FinancialBettingStats` scrolls inside the form and the mouse wheel reaches `ContentScroll` (whole chain `mouse_filter = PASS` per §29.3.3).
+- [ ] **SF.4C.2** Verify `ScTransactions.tscn` (already the correct pattern — bounded VBox + inner scroll + fixed `BackBtn`). Structural change **not expected**; only add a tiny separator/breathing room before `BackBtn` if it looks cramped.
+- [ ] **SF.4C.3** *(Optional, flagged not scheduled)* The DEV mirrors `CasinoGamblingFinances` and `ClientsBetsHistory` share `ScFinances`' old inside-scroll-footer anti-pattern; they can be fixed the same way later if the same overflow is observed. Out of scope unless requested (they're DEV-only).
+- [ ] **SF.4C.4** `ProjectDesignManual.md` Ch. 29: add a new subsection — **"Persistent nav/footer buttons live OUTSIDE the scroll"** — documenting (a) the fixed-footer structure above, (b) the `MarginContainer → ScrollContainer` *direct* anti-pattern vs. the canonical `MarginContainer → VBoxContainer → ScrollContainer(size_flags_vertical = 3)` chain, and (c) the symptom ("back button overflows the bottom / is flush-clipped, clickable but unreadable") so it's greppable next time. Cross-link from §29.1/§29.5 checklist.
+- [ ] **SF.4C.5** `CLAUDE.md`: **strengthen the pointer** in the "UI Layout & Scrolling" block — a prominent, imperative line: *"Before creating OR editing ANY scene that contains a `ScrollContainer`, read `Documentation/ProjectDesignManual.md` Chapter 29 first. Put persistent nav/Back buttons in a fixed footer OUTSIDE the scroll (bounded `VBox` → `ScrollContainer(size_flags_vertical=3)` for content + fixed footer row)."* — because this error has recurred without the manual being consulted.
+- [ ] **SF.4C.6** Add a **feedback** memory ("read ProjectDesignManual Ch. 29 before any scrollable-scene work; nav/Back buttons go in a fixed footer outside the scroll") with **Why** (recurring overflow bug) / **How to apply** (consult Ch. 29 + fixed-footer structure) so it surfaces on future scene work.
+
+#### Testing (SF.4C)
+
+- [ ] `ScFinances`: the form scrolls; `NavRow` + `Back` are **always fully visible and readable** at the bottom regardless of scroll position; mouse wheel scrolls the form (works over labels); a 500-entry `BankTransferHistoryList` still scrolls within the form.
+- [ ] `ScTransactions`: unchanged behavior; `Back` always visible.
+- [ ] `ScFinances.cs` required **no** code changes (unique names preserved); all buttons still wired.
 
 ### Phase SF.5 — Documentation truth pass
 
