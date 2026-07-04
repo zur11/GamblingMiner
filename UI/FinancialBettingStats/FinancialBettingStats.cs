@@ -1,72 +1,75 @@
 using Godot;
-using Scripts.User;
 using Scripts.History;
 using Scripts.Finance;
 using System.Globalization;
 
-public partial class FinancialBettingStats : Control
+// SF.4B.2 — compact 3-scope betting-stats panel (General / Since last bank deposit / Since last bankroll
+// recharge), each with P/L + Gambled. Content-sized (a VBox + GridContainer), so the same scene drops into both
+// DiceGame (absolute placement) and ScFinances (scroll VBox) unchanged. Numbers come from the shared
+// PlayerFinancialStatsCalculator (single source of truth), driven by UserStatsService + CasinoClientLedgerService.
+public partial class FinancialBettingStats : VBoxContainer
 {
-	[Export] private Label _lastDepositProfitLabel;
-	[Export] private Label _lastDepositGambledLabel;
 	[Export] private Label _generalProfitLabel;
-	[Export] private Label _totalGambledLabel;
+	[Export] private Label _generalGambledLabel;
+	[Export] private Label _sinceDepositProfitLabel;
+	[Export] private Label _sinceDepositGambledLabel;
+	[Export] private Label _sinceRechargeProfitLabel;
+	[Export] private Label _sinceRechargeGambledLabel;
 
 	[Export] private Color _winColor = Colors.Green;
 	[Export] private Color _lossColor = Colors.Red;
 
-	private UserStatsService _connectedService;
+	private UserStatsService _userStats;
+	private CasinoClientLedgerService _ledger;
 
-	public void UpdateFrom(UserBettingStats stats)
+	// Wire both data sources: StatsChanged (every bet, throttled) refreshes lifetime; LedgerChanged moves the
+	// since-deposit / since-recharge baselines. Both recompute the same summary.
+	public void ConnectTo(UserStatsService userStats, CasinoClientLedgerService ledger)
 	{
-		_lastDepositProfitLabel.Text =
-			Money.FormatSignedAdaptive(stats.ProfitSinceDeposit);
+		_userStats = userStats;
+		_ledger    = ledger;
 
-		_generalProfitLabel.Text =
-			Money.FormatSignedAdaptive(stats.TotalProfit);
+		if (_userStats != null) _userStats.StatsChanged += OnStatsChanged;
+		if (_ledger != null)    _ledger.LedgerChanged += Refresh;
 
-		_lastDepositGambledLabel.Text =
-			stats.AmountWageredSinceDeposit.ToString("F8", CultureInfo.InvariantCulture);
-
-		_totalGambledLabel.Text =
-			stats.TotalAmountWagered.ToString("F8", CultureInfo.InvariantCulture);
-
-		UpdateColor(_lastDepositProfitLabel, stats.ProfitSinceDeposit);
-		UpdateColor(_generalProfitLabel, stats.TotalProfit);
+		Refresh();
 	}
 
-	public void ConnectTo(UserStatsService service)
+	private void OnStatsChanged(Scripts.User.UserBettingStats _) => Refresh();
+
+	public void Refresh()
 	{
-		_connectedService = service;
-		service.StatsChanged += UpdateFrom;
-		UpdateFrom(service.Stats);
+		if (!GodotObject.IsInstanceValid(this) || _userStats == null) return;
+		UpdateFrom(PlayerFinancialStatsCalculator.Compute(_userStats.Stats, _ledger));
 	}
 
-	public void UpdateFromTimeBased(TimeBasedBetStats stats)
+	public void UpdateFrom(PlayerFinancialSummary s)
 	{
-		_lastDepositProfitLabel.Text =
-			Money.FormatSignedAdaptive(stats.NetProfitSinceLastDeposit);
+		SetProfit(_generalProfitLabel, s.TotalProfit);
+		SetProfit(_sinceDepositProfitLabel, s.ProfitSinceDeposit);
+		SetProfit(_sinceRechargeProfitLabel, s.ProfitSinceRecharge);
 
-		_generalProfitLabel.Text =
-			Money.FormatSignedAdaptive(stats.NetProfit);
-
-		_lastDepositGambledLabel.Text =
-			stats.WageredSinceLastDeposit.ToString("F8", CultureInfo.InvariantCulture);
-
-		_totalGambledLabel.Text =
-			stats.TotalWagered.ToString("F8", CultureInfo.InvariantCulture);
-
-		UpdateColor(_lastDepositProfitLabel, stats.NetProfitSinceLastDeposit);
-		UpdateColor(_generalProfitLabel, stats.NetProfit);
+		SetGambled(_generalGambledLabel, s.TotalWagered);
+		SetGambled(_sinceDepositGambledLabel, s.WageredSinceDeposit);
+		SetGambled(_sinceRechargeGambledLabel, s.WageredSinceRecharge);
 	}
 
-	private void UpdateColor(Label label, decimal value)
+	private void SetProfit(Label label, decimal value)
 	{
-		label.Modulate = value >= 0 ? _winColor : _lossColor;
+		if (label == null) return;
+		label.Text = Money.FormatSignedAdaptive(value);
+		label.Modulate = value >= 0m ? _winColor : _lossColor;
+	}
+
+	private static void SetGambled(Label label, decimal value)
+	{
+		if (label == null) return;
+		label.Text = value.ToString("N8", CultureInfo.InvariantCulture);
 	}
 
 	public override void _ExitTree()
 	{
-		if (_connectedService != null)
-			_connectedService.StatsChanged -= UpdateFrom;
+		if (_userStats != null) _userStats.StatsChanged -= OnStatsChanged;
+		if (_ledger != null)    _ledger.LedgerChanged -= Refresh;
 	}
 }

@@ -14,6 +14,8 @@ public partial class ScFinances : Control
 	private PrincipalBalanceService  _principal;
 	private BankrollStateService     _bankroll;
 	private BankrollProgramService   _bankrollProgram;
+	private UserStatsService         _userStats;
+	private CasinoClientLedgerService _ledger;
 	private SceneManager             _sceneManager;
 	private CalendarTimeService      _calendarTime;
 
@@ -52,10 +54,15 @@ public partial class ScFinances : Control
 		_principal       = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
 		_bankroll        = GetNodeOrNull<BankrollStateService>("/root/BankrollStateService");
 		_bankrollProgram = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");
+		_userStats       = GetNodeOrNull<UserStatsService>("/root/UserStatsService");
+		_ledger          = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 		_sceneManager    = GetNodeOrNull<SceneManager>("/root/SceneManager");
 		_calendarTime    = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
+
+		// SF.4B.3: the SAME redesigned component DiceGame uses — one calculator, two scenes ⇒ identical numbers.
+		GetNode<FinancialBettingStats>("%FinancialBettingStats").ConnectTo(_userStats, _ledger);
 
 		_gameDateLabel        = GetNode<Label>("%GameDateLabel");
 		_privateBankLabel     = GetNode<Label>("%PrivateBankLabel");

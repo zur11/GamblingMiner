@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://Screens/ScFinances/ScFinances.cs" id="1"]
+[ext_resource type="PackedScene" uid="uid://c2crwe1sryeto" path="res://UI/FinancialBettingStats/FinancialBettingStats.tscn" id="2"]
 
 [node name="ScFinances" type="Control"]
 layout_mode = 3
@@ -86,6 +87,13 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = "Auto-recharge dose:    100.00000000 SC  (read-only — managed in Bankroll Programmer)"
+
+[node name="SepStats" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
+layout_mode = 2
+
+[node name="FinancialBettingStats" parent="RootMargin/RootScroll/RootVBox" instance=ExtResource("2")]
+unique_name_in_owner = true
+layout_mode = 2
 
 [node name="Sep1" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
 layout_mode = 2

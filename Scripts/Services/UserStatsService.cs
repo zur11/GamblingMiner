@@ -131,6 +131,26 @@ public partial class UserStatsService : Node
         BetHistory.EnsureAllChunksLoaded();
     }
 
+    // SF.4B.5: the most recent `max` bet records from the centralized persistent history, oldest-first (so a
+    // consumer's TakeLast / newest-first prepend works). Used to seed DiceGame's in-game bet-history list on
+    // entry so it reproduces the recent history instead of starting empty. Loads all chunks once (cached).
+    public IReadOnlyList<BetRecord> GetRecentBets(int max)
+    {
+        if (!EnableHistoryPersistence || BetHistory == null || max <= 0)
+        {
+            return Array.Empty<BetRecord>();
+        }
+
+        BetHistory.EnsureAllChunksLoaded();
+        IReadOnlyList<BetRecord> records = BetHistory.Records;
+        if (records.Count <= max)
+        {
+            return records;
+        }
+
+        return records.Skip(records.Count - max).ToList();
+    }
+
     public decimal GetLatestKnownBalance(decimal fallbackBalance)
     {
         if (!EnableHistoryPersistence || BetHistory == null)

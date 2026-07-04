@@ -6,7 +6,7 @@ using System.Linq;
 
 public partial class BetHistoryContainer : VBoxContainer
 {
-	private const int MaxRecentEntries = 260;
+	public const int MaxRecentEntries = 260;
 	private DiceGame _game;
 	private BetHistoryItem[] _pool;
 	private int _poolIndex;

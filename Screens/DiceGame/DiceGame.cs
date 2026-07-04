@@ -88,6 +88,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private bool _loadingNodeStrategy;
 	private SceneManager _sceneManager;
 	private PlayerBankAccountService _playerBankAccountService;
+	private CasinoClientLedgerService _casinoClientLedger; // SF.4B: feeds FinancialBettingStats' since-X baselines
 
 	private enum ManualStopGate
 	{
@@ -167,6 +168,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_playerBankAccountService = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService");
+		_casinoClientLedger = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 		_bankrollStateService?.EnsureInitialized(0m);
 		decimal initialBalance = _bankrollStateService?.CurrentBalance ?? 0m;
 		_wallet = new Wallet(initialBalance);
@@ -256,7 +258,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_wallet.BalanceDeltaChanged += (_, _) => _bankrollStateService?.SetBalance(_wallet.Balance);
 		_previousWinnerNumbersGrid.SubscribeTo(this);
 		_betHistoryContainer.SubscribeTo(this);
-		_financialStats.ConnectTo(_userStatsService);
+		_financialStats.ConnectTo(_userStatsService, _casinoClientLedger);
 		_strategyPanel.BetOnceBtnPressed += OnManualBetFromPanel;
 		_strategyPanel.AutoBetToggled += OnAutoBetToggled;
 		_strategyPanel.AutoPauseToggled += OnAutoPauseToggled;
@@ -293,6 +295,11 @@ public partial class DiceGame : Control, IBetEventSource
 		// GetLoadedHistoryStats() below reads the currently-loaded history, so calling it before the rollback
 		// would compute "General P/L" / "last deposit P/L" from uncommitted bets the checkpoint just discarded.
 		ApplyRealtimeBootstrapFromLoadedHistory();
+		// SF.4B.6: seed the in-game bet-history list from the centralized persistent store so the most-recent
+		// history reproduces on entry (before, it started empty on re-entry). Runs AFTER the checkpoint rollback
+		// above so it reflects committed history; live BetExecuted events keep prepending after this.
+		_betHistoryContainer?.LoadFromHistoricalRecords(
+			_userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries));
 		LoadActiveNodeFinancialState();
 		LoadActiveNodeStrategySnapshot();
 		EnsureInitialBankrollFunded();
@@ -1681,8 +1688,10 @@ public partial class DiceGame : Control, IBetEventSource
 		// uncommitted period the checkpoint revert correctly discarded); restoring from it here silently
 		// undid that revert on first DiceGame entry after a restart. See OQ-BP.4 in
 		// player-and-casino-bankroll-programmer-plan.md.
-		TimeBasedBetStats loadedStats = _userStatsService.GetLoadedHistoryStats();
-		_financialStats.UpdateFromTimeBased(loadedStats);
+		// SF.4B.2: FinancialBettingStats is now event-driven (ConnectTo → StatsChanged/LedgerChanged, recomputed
+		// via the shared calculator). Force one recompute here now that the on-entry history rollback has settled,
+		// so the panel reflects committed history immediately rather than waiting for the next event.
+		_financialStats?.Refresh();
 	}
 
 	// --- UI Updates ---
