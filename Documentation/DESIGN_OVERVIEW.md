@@ -31,23 +31,31 @@ Canonical terms:
 - `SC`: Stable Coin, simulated USD-pegged currency.
 - `Main Balance`: reserve outside active betting.
 - `Bankroll`: subaccount used for active betting.
+- `Private Bank Account`: **[Implemented — Step 12]** optional SC reserve *outside* the casino; starts at `0`, automation OFF by default; managed in `ScFinances`.
 - `BTC`: mined currency, not directly usable in casino games.
 
 Canonical starting funds:
 
 - General docs: `40,000 SC`.
-- Specific economy docs: `39,900 SC Main Balance + 100 SC Bankroll`.
+- Specific economy docs: `39,900 SC Main Balance + 100 SC Bankroll` (unchanged by Step 12 — the Private Bank Account starts empty).
 
 Game over:
 
-- Game over occurs when `Main Balance + Bankroll = 0`.
-- If Bankroll is zero but Main Balance has funds, the player can continue by recharging Bankroll.
+- **[Updated — Step 12]** Game over occurs when all three SC accounts are empty: `Private Bank Account + Main Balance + Bankroll = 0`.
+- If Bankroll is zero but Main Balance (or the bank) has funds, the player can continue by recharging Bankroll / depositing from the bank. Written to allow a future BTC→SC coin-swap rescue.
 
 Naming migration:
 
 - User-facing text should use `Main Balance`.
 - Some internal code names still use the older principal-balance wording.
 - Internal class renames can happen later if they are not worth the immediate risk.
+
+Player SC Finances hub — ✅ IMPLEMENTED (Step 12):
+
+- The **`ScFinances`** scene is the player's canonical home for SC flows (replacing the retired DiceGame `DepositPopup`): Private Bank Account balance, Main/Bankroll, **Net Worth** (`Bank + Main + Bankroll`) and **Overall P/L** (`Net Worth − 40,000`), deposit/withdraw controls, a 3-scope betting-stats panel, and the bank transfer history. `ScTransactions` shows the player's own Bank↔Main ledger.
+- **Private Bank Account** (`PlayerBankAccountService`): an optional reserve outside the casino, starting at `0`, all automation OFF by default — a new player can ignore it for months/years of in-game time. Four flows: manual/auto **deposit** (Bank→Main, bring reserve into play) and manual/auto **withdrawal** (Main→Bank, park winnings safe). Auto-Deposit is a rarely-hit fallback; Auto-Withdraw is the shipped "lock in winnings automatically" mechanism.
+- **Bankroll auto-recharge off-switch** (`AutoRechargeEnabled`, default ON): a `BankrollProgrammer` toggle (mirrored by the DiceGame strategy-panel toggle, now a proxy to the same flag).
+- See `ProjectDesignManual.md` Ch. 32 and `AIHelperFiles/step12-player-sc-finances-plan.md`.
 
 ## 4. Dice And Betting
 
@@ -178,7 +186,9 @@ The casino needs internal accounting:
 - Later repayment once casino reserves reach a TBD threshold.
 - Interest is postponed.
 
-A development-only `CasinoFinances` scene should be accessible from DiceGame while building and testing. It can be hidden from normal players later.
+**P6 note (Step 12):** casino repayment can adopt the player's **Auto-Withdraw threshold/surplus mechanism** verbatim — `TryAutoWithdraw()` runs against a floor + installment; the casino would run the identical shape against its *debt* instead of an account (one mechanism, two semantics: equity vs. repayment). The one blocker is an insolvency policy ("the game never blocks a bet on casino insolvency" would break if the casino's auto-loan could be toggled off) — design that alongside P6. See `ProjectDesignManual.md` Ch. 32 §32.2.
+
+The DEV casino-SC scenes (`CasinoGamblingFinances` / `ClientsBetsHistory` / `ClientsTransactions`, Step 11) already track the casino's SC balance sheet, loans, and per-client ledger. A development-only `CasinoFinances` scene (BTC side) is also accessible while building and testing. These can be hidden from normal players later.
 
 ## 11. Achievements
 

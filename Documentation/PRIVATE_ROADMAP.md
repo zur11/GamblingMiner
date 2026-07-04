@@ -136,7 +136,8 @@ Goal: make money flow obvious.
 - If Bankroll reaches zero and Main Balance has funds, the player can continue by recharging.
 - If auto-recharge is enabled, the game attempts to recharge automatically.
 - If auto-recharge is disabled, `ResultLabel` should warn the player that Main Balance can be moved into Bankroll.
-- Game over only happens when Main Balance plus Bankroll reaches zero.
+- Game over only happens when Main Balance plus Bankroll reaches zero. **[Updated — Step 12: now `Private Bank Account + Main Balance + Bankroll = 0`.]**
+- **[Implemented — Step 12]** `BankrollProgramService.AutoRechargeEnabled` off-switch (default ON), with a real UI toggle in `BankrollProgrammer` and a proxy toggle in DiceGame's strategy panel (single source of truth). The remaining P2 gap is the *warning-label* UX when it's OFF.
 
 Done when a player can explain where money moved after a 15-minute session.
 
@@ -189,20 +190,19 @@ Goal: make speed upgrades meaningful without breaking the learned rule.
 
 Done when buying hardware feels like an economic decision, not just a UI speed setting.
 
-### P6 - Casino Finances
+### P6 - Casino Finances  ✅ MOSTLY DONE (Step 11 + Step 12)
 
 Goal: track the casino as an economic actor.
 
-- Track casino SC income from player and bot losses.
-- Track casino SC expenses from player and bot wins.
-- Model an infinite bank credit line at first.
-- Track casino debt to the bank.
-- Once reserves pass a TBD threshold, the casino can start repaying bank debt.
+- Track casino SC income from player and bot losses. ✅ (`CasinoScBalanceService`, Step 11)
+- Track casino SC expenses from player and bot wins. ✅
+- Model an infinite bank credit line at first. ✅ (on-demand `40,000` loan draw)
+- Track casino debt to the bank. ✅ (`TotalLoaned`, `CumulativeProfitSinceLoan`)
+- DEV scenes shipped: `CasinoGamblingFinances` / `ClientsBetsHistory` / `ClientsTransactions` (Step 11).
+- **Repayment (still open):** once reserves pass a TBD threshold, the casino can start repaying bank debt. **Step 12 gives this a ready mechanism** — the player's **Auto-Withdraw threshold/surplus** model (`PlayerBankAccountService.TryAutoWithdraw`: keep a floor, move one installment per event) applies verbatim to the casino, running against its *debt* instead of an account. Blocker: an **insolvency policy** first (the "never block a bet on casino insolvency" rule breaks if the auto-loan can be toggled off) — design alongside this. See `ProjectDesignManual.md` Ch. 32 §32.2.
 - Interest is postponed.
-- Add a `CasinoFinances` scene accessible from `DiceGame` during development.
-- Later, hide this scene from normal players.
 
-Done when casino profit/loss can be audited internally.
+Done when casino profit/loss can be audited internally ✅ — remaining: the repayment/insolvency policy above.
 
 ### P7 - BTC Trading Minimum
 

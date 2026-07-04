@@ -3088,3 +3088,80 @@ private void OnSetAutoLoanAmountPressed()
 Note: unlike the player's `AutoRechargeAmount` (blocked from exceeding Main Balance — D13/BP.2.9), the casino has an infinite credit line, so **no such block applies here** — any positive amount is valid, matching `TryAutoRecharge()`'s existing "always succeeds" design.
 
 Not addressed by this proposal (left for whenever it's actually scheduled): whether `LoanHistory` records (Phase CG.2) should note which dose was in effect at the time of each loan, and whether the two new value labels need their own standalone placement vs. being folded into `LoanSectionLabel`'s row — the sketch above assumes standalone, mirroring `AutoRechargeDoseValue`'s placement exactly.
+
+---
+
+## Chapter 32 — Player SC Finances Hub & the Private Bank Account (Step 12)
+
+Closes the player↔casino symmetry opened by Step 11 (Ch. 31) — but on the **player** side the relationship is **ownership, not credit**. The casino borrows on demand (starts all-zero, draws loans); the player *owns* their money and gains an **optional savings reserve** they opt into. Full plan + decisions: `AIHelperFiles/step12-player-sc-finances-plan.md`.
+
+### 32.1 — The three-account topology
+
+```
+┌─────────────────────────┐  deposit  Bank→Main (opt) ┌───────────── CASINO SC ACCOUNT ─┐
+│  PRIVATE BANK ACCOUNT   │ ────────────────────────► │  MAIN BALANCE   ⇄   BANKROLL    │──► bets
+│  (optional SC reserve)  │ ◄──────────────────────── │  (funded as today)  recharge     │
+│  start: 0 SC            │  withdraw Main→Bank (opt) │  39,900 → 100 @ DiceGame entry   │
+└─────────────────────────┘                           └──────────────────────────────────┘
+        managed in ScFinances                                managed in BankrollProgrammer
+```
+
+- **Private Bank Account** (`PlayerBankAccountService.BankAccountBalance`) — an optional SC reserve **outside** the casino. **Starts EMPTY (`0`)** (D-SF3.1); the canonical `40,000` stays in the Casino SC Account, funded exactly as before Step 12 (no migration, no "extra-lazy" seeding — the abandoned v2/v3 model that seeded the whole `40,000` at the bank was dropped, §7.3 of the plan).
+- **Casino SC Account** = Main Balance + Bankroll — the player's money **inside** the casino. Unchanged mechanics: `EnsureInitialBankrollFunded` still splits the current dose off Main at DiceGame entry (default `100` → `39,900`/`100`).
+- One **bank** entity, two relationship types: it *lends* to the casino (credit/debt) and merely *holds savings* for the player (ownership, no debt).
+
+### 32.2 — The four transfer flows (all built now; automation OFF by default)
+
+| Flow | API | Direction | Default |
+|---|---|---|---|
+| Manual deposit | `TriggerManualDeposit(amount)` | Bank → Main (bring reserve into play) | — (on demand) |
+| Auto deposit | `TryAutoDeposit(needed)` | Bank → Main (fallback refill) | `AutoDepositEnabled = false` |
+| Manual withdrawal | `TriggerManualWithdrawal(amount)` | Main → Bank (park winnings safe) | — (on demand) |
+| Auto withdrawal | `TryAutoWithdraw()` | Main → Bank (surplus sweep) | `AutoWithdrawEnabled = false` |
+
+- **Limits** (D-SF.2): a deposit is capped by the bank balance, a withdrawal by Main. The UI (`ScFinances`) validates-then-**rejects** over-amounts with the available figure (D-SF2.5); the service `min(...)` clamp is the final safety net.
+- **Auto-Deposit is a fallback, not the primary path** (D-SF3.3): it fires only when a recharge finds Main short **and** `AutoDepositEnabled` **and** the bank holds SC — essentially never in early game (empty bank, toggle OFF). Wired into both the autobet recharge (`SimulationService.TryPlayerAutoRechargeAndRestart`) and the manual-bet recharge (`DiceGame.TryAutoRechargeBankroll`): when Main < dose → `TryAutoDeposit(dose)` → retry. With the player opting in (banked reserve + Auto-Deposit ON at a valid amount, `0 < amount ≤ bank`), this fallback *is* the opt-in "extra-lazy" streaming.
+- **Auto-Withdraw** (threshold/surplus, Model A): `effectiveFloor = max(AutoWithdrawThreshold, live recharge dose)` is the **anti-ping-pong guard** — an auto-deposit fires precisely when Main can't cover a dose, so auto-withdraw must never drain Main back below one dose. Moves one `AutoWithdrawAmount` installment per trigger event. This is exactly the shape `CasinoScBalanceService` can adopt for P6 debt repayments (one mechanism, two semantics: equity vs. repayment).
+
+### 32.3 — Safe reserve vs. gamblable reserve (the Auto-Deposit trade-off)
+
+With **Auto-Deposit OFF (default)** the bank is a *safe vault*: running Main+Bankroll to `0` stops betting and prompts a manual retrieval, but it is **not** game-over while the bank holds SC. With **Auto-Deposit ON** the reserve auto-refills Main when low — convenient, but the banked SC becomes gamblable. `ScFinances` must explain this in the UI (D-SF3.2). **Game over** is now total ruin across all three accounts: `Bank + Main + Bankroll = 0` (D-SF2.1), written to leave room for a future BTC→SC coin-swap rescue (plan §7.4).
+
+### 32.4 — Metrics: NetWorthSc / OverallPl (computed in the controller, service stays pure)
+
+`NetWorthSc = BankAccountBalance + Main + Bankroll`; `OverallPl = NetWorthSc − 40,000` (the canonical start — **not** `InitialBankAccountBalance`, which is `0`). Both are computed in the **`ScFinances` controller** from the three balance sources (D-SF2.7) — `PlayerBankAccountService` never reaches into the other two to expose a derived total. `BankrollProgramService.GetPerformancePercentVsInitial` still measures **Main Balance alone** vs `40,000` (relabeled in the `BankrollProgrammer` UI to avoid confusion with net worth).
+
+### 32.5 — Ledger taxonomy fix (the `withdrawal` reclaim)
+
+Before Step 12, `CasinoClientLedgerService` filed the internal **Bankroll → Main** movement under `kind = "withdrawal"` — a mislabel (GLOSSARY calls its mirror "not an SC Deposit"; by symmetry Bankroll→Main is not an SC Withdrawal). Step 12 reclaims `"withdrawal"` for its true meaning (**Main → bank**, SC leaving the casino) and re-kinds the internal movement to **`"bankroll_withdrawal"`**, excluded from "Total SC withdrawn" the way `"auto_recharge"` is excluded from deposits. A new **`LedgerEntry.Method`** (`"manual"` | `"auto"`, D-SF2.3) distinguishes automatic from player-initiated flows without new kinds, so every existing `Kind ==` filter keeps working. `ClientsTransactions` renders the method tag and hides both internal kinds; `ScTransactions` is the player's own view of the same flows.
+
+### 32.6 — Lifecycle matrix (block = the only commit; pre-genesis resets everything)
+
+The Private Bank Account and the client ledger are **player-facing persisted values**, so both were brought fully into the checkpoint lifecycle (D-SF2.4) — the same leak class §24.8–24.10 fixed for the other services. `ApplyCheckpointToServices()` now restores **six** services (adds `PlayerBankAccountService` via a `CheckpointState` DTO, and `CasinoClientLedgerService` entries); `ResetToPreGenesisDefaults()` clears the bank to `0` / settings to default / history empty, and clears the player's ledger entries + re-establishes the `initial` stake.
+
+| Event | Private Bank state |
+|---|---|
+| App restart, no block ever mined | `ResetToPreGenesisDefaults()` — bank `0`, settings default, history empty; Main/Bankroll to canonical start as today |
+| Block mined | `CaptureCheckpoint` snapshots the `CheckpointState` DTO (post-bet, inside the same group as the balances) |
+| App restart, checkpoint exists | `RestoreFromCheckpoint(...)` — balance/settings/history revert to the last block |
+| Legacy checkpoint (pre-Step 12) | DTO null → **seed bank at `0`, no migration** (D-SF2.8); Main restores its checkpointed value |
+
+### 32.7 — Scenes, navigation, retirements
+
+- **`ScFinances`** (player-facing hub, MainMenu + DiceGame's "Deposit Balance" button): balances (Bank/Main/Bankroll/NetWorth/OverallPl/dose), a compact 3-scope betting-stats panel (the shared `FinancialBettingStats`, §32.9), deposit & withdrawal sections (with the Auto-Deposit/Auto-Withdraw toggles + validated setters), and the `BankTransferHistory` list. Uses the **fixed-footer + bottom-safe-area** layout (§29.10–29.11).
+- **`ScTransactions`** (→ from `ScFinances`): the player's own Bank↔Main flow history + header totals (deposited/withdrawn/net inside casino/net worth). No `[INITIAL]` row — the starting `40,000` is funded directly into Main, never a bank transfer (D-SF3.4).
+- **`DepositPopup` retired**: DiceGame's Deposit button now opens `ScFinances`; `UI/DepositPopup/` deleted.
+- **`SceneManager.PreviousScene`**: one-deep memory so `BetsHistoryExplorer`'s back button is origin-aware (returns to `CalendarsNavigator` **or** `ScFinances`).
+- The **`AutoRechargeEnabled`** off-switch and its two access points (BankrollProgrammer toggle + the DiceGame StrategyControlPanel proxy) are documented in §25.8.
+
+### 32.8 — Future: the `ScBank` scene (documented only)
+
+The bank is deliberately deferred to *later* in-game (it starts empty, automation OFF), so Main↔Bankroll alone carries the first in-game months/years and the learning curve stays manageable. A future **`ScBank`** scene is where the bank finally *does something* with the player's equity: **fixed-term deposits** (freeze SC for a game-time span at interest, early-withdrawal penalty), a **savings rate** on the free balance, and casino-side **push factors** (minimum-wager / inactivity fees on idle Main) that together make the auto-withdraw toggle a genuinely strategic choice. `ScFinances` (flows) / `ScBank` (products) / `BankrollProgrammer` (casino-side doses) become the three siblings. See plan §7.1.
+
+### 32.9 — Betting statistics: the shared 3-scope panel + the live-sync timer (SF.4B)
+
+The `FinancialBettingStats` panel shows **three scopes**, each with **P/L** and **Gambled**: **General** (lifetime), **Since last bank deposit**, and **Since last bankroll recharge**. It is a compact, content-sized `VBoxContainer + GridContainer` so the *same* scene node drops into both DiceGame (absolute placement) and `ScFinances` (inside the scroll) unchanged.
+
+- **Single source of truth = `PlayerFinancialStatsCalculator`** (`Scripts/History/`). A pure `Compute(UserBettingStats, CasinoClientLedgerService)` returns all six numbers; both host scenes render the *same* struct, so they are byte-identical by construction. Lifetime P/L/Gambled come from `UserStatsService.Stats`; the two "since-X" baselines come from the **client-ledger snapshots** (`GetLastDeposit` → kind `initial`|`deposit`, `GetLastAutoRecharge` → kind `auto_recharge`), each carrying the lifetime wagered/profit captured at that event. This deliberately does **not** use `UserBettingStats.ProfitSinceDeposit`, whose baseline is reset on every recharge (it conflates deposit with recharge). Player sign convention: P/L = **+**`TotalProfit` (the player's own gain), unlike `ClientsBetsHistory` which negates it for the casino.
+- **Live-sync (why it also refreshes on a timer, not only on events).** `UserStatsService` throttles `StatsChanged` to 250 ms in high-frequency (autobet) mode and **defers the final batch** until the next bet or a `SetHighFrequencyMode(false)` flush. DiceGame recovers (it toggles that flag and re-`Refresh()`s on entry), but a **passive subscriber** — e.g. `ScFinances`, which never touches that flag — could be left showing the last throttled value when betting pauses, producing a *live-only* discrepancy between the two panels that self-heals on restart (the persisted data was always consistent). The fix: `FinancialBettingStats._Process` also calls `Refresh()` on a **0.75 s timer** (converge-to-live), in addition to the `StatsChanged`/`LedgerChanged` subscriptions — so the panel is correct in any host scene regardless of which events it caught. **The timer runs ONLY while `SimulationService.IsRunning`** (an autobet is actively advancing time): that is the only window where `StatsChanged` is throttled AND the only time stats move without a discrete player action — when idle, game time doesn't advance and every manual bet / deposit / recharge fires an *immediate* event, so the reconcile would be pure waste (the `Compute` reads `Stats` + two small ledger scans). **Rule for future live-data panels:** don't rely solely on a throttled event to stay current — add a cheap periodic reconcile *gated on the activity that causes the throttling*, or ensure every pause path flushes.
+- The same panel also seeds DiceGame's **in-game bet-history list** from the centralized persistent store on entry (`UserStatsService.GetRecentBets`), so recent history reproduces on re-entry instead of starting empty.

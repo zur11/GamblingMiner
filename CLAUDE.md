@@ -102,7 +102,7 @@ Hard-won rules (a scroll bug once cost a full session — full write-up + diagno
 
 ## Key Architecture — Autoload Services
 
-Seven core service singletons registered in `project.godot` (plus `SceneManager`, `NotepadService`, `FoundersMiningService`, `CasinoScBalanceService`, and `CasinoClientLedgerService`, documented in their own sections — **twelve autoloads total**). They persist across all scenes and are accessible globally by class name.
+Seven core service singletons registered in `project.godot` (plus `SceneManager`, `NotepadService`, `FoundersMiningService`, `CasinoScBalanceService`, `CasinoClientLedgerService`, and `PlayerBankAccountService`, documented in their own sections — **thirteen autoloads total**). They persist across all scenes and are accessible globally by class name.
 
 ### `CalendarTimeService`
 **Location**: `Scripts/Services/CalendarTimeService.cs`
@@ -150,8 +150,10 @@ Manages transfers between Main Balance and Bankroll.
 
 - Tracks auto-recharge events and transfer history
 - Records direction and reason for each transfer
-- Calculates performance metrics vs. initial `40,000 SC` baseline
+- Calculates performance metrics vs. initial `40,000 SC` baseline (this is **Main Balance alone**, not net worth — relabeled in Step 12; the all-accounts figure is `OverallPl` in `ScFinances`)
 - Provides daily / weekly / monthly auto-recharge counters
+- **`AutoRechargeEnabled`** (Step 12 / D-SF.4, default **ON**) — the off-switch for the (formerly always-on) Bankroll dose recharge; persisted + checkpoint-covered (reverts to ON pre-genesis). Respected by `SimulationService.TryPlayerAutoRechargeAndRestart` and the manual-bet recharge path. Two UI access points to the **same** flag: the `BankrollProgrammer` toggle (canonical) and the DiceGame `StrategyControlPanel` toggle (now a proxy — see ProjectDesignManual §25.8)
+- **Session-start invariant** (D-SF2.6): no user (bot or human) may begin an auto/manual bet session while the Bankroll is below the required bet. With `AutoRechargeEnabled` ON a running session refills from Main so play continues; with it OFF, betting stops on `InsufficientBalance` and waits for a manual recharge. Bots follow the identical rule against `NodeFinancialState.PrincipalBalance`
 - Persists to `user://bankroll_program_state.json`
 
 ### `BlockSessionCheckpointService`
@@ -163,8 +165,8 @@ Saves the full financial state at each block mining event.
 - Stores calendar local time + history checkpoint UTC time independently
 - Enables rollback to pre-mined-block state
 - Persists to `user://block_session_checkpoint.json`
-- **On startup**, `ApplyCheckpointToServices()` restores **all four** — `BankrollStateService`, `PrincipalBalanceService`, `BankrollProgramService` (dose + transfer records), `CasinoScBalanceService` — **and** the game clock (+ the `_gamePresent` frontier) to the last block. This is the only place the clock reverts on app restart, so it applies before any scene loads. A block is the only commit to disk (see Important Pattern 2)
-- **Pre-genesis (no checkpoint exists yet — no player/bot/founder block has ever been mined)**: `ResetToPreGenesisDefaults()` runs instead, on **every** boot — Main Balance → `40,000.00`, Bankroll → `0.00`, dose → `BankrollProgramService.DefaultAutoRechargeAmount`, transfer records → cleared, calendar → exactly the historical bootstrap's last mined block's timestamp (`NetworkRoot.GetPlayerLatestBlockTimestampMsStatic()`, no offset — see Canonical Decisions), bet history → rolled back to that same instant. A checkpoint is captured **only** by a real block-mined event (`DiceGame.CaptureBlockCheckpoint()` / `SimulationService.CaptureCheckpoint()`) — never merely by opening the app — so the world genuinely resets to a first-launch state every restart until the player's first real block. See `Documentation/ProjectDesignManual.md` §24.9
+- **On startup**, `ApplyCheckpointToServices()` restores (Step 12: **six services**) — `BankrollStateService`, `PrincipalBalanceService`, `BankrollProgramService` (dose + `AutoRechargeEnabled` toggle + transfer records), `CasinoScBalanceService`, `PlayerBankAccountService` (bank balance + settings + transfer history), `CasinoClientLedgerService` (entries) — **and** the game clock (+ the `_gamePresent` frontier) to the last block. This is the only place the clock reverts on app restart, so it applies before any scene loads. A block is the only commit to disk (see Important Pattern 2)
+- **Pre-genesis (no checkpoint exists yet — no player/bot/founder block has ever been mined)**: `ResetToPreGenesisDefaults()` runs instead, on **every** boot — Main Balance → `40,000.00`, Bankroll → `0.00`, dose → `BankrollProgramService.DefaultAutoRechargeAmount` (+ `AutoRechargeEnabled` → ON), transfer records → cleared, **`PlayerBankAccountService` → bank `0` / settings default / history cleared, `CasinoClientLedgerService` player entries cleared + `initial` re-established** (Step 12), calendar → exactly the historical bootstrap's last mined block's timestamp (`NetworkRoot.GetPlayerLatestBlockTimestampMsStatic()`, no offset — see Canonical Decisions), bet history → rolled back to that same instant. A checkpoint is captured **only** by a real block-mined event (`DiceGame.CaptureBlockCheckpoint()` / `SimulationService.CaptureCheckpoint()`) — never merely by opening the app — so the world genuinely resets to a first-launch state every restart until the player's first real block. See `Documentation/ProjectDesignManual.md` §24.9
 
 ### `SimulationService`
 **Location**: `Scripts/Services/SimulationService.cs`
@@ -210,9 +212,21 @@ Owns the casino's own **StableCoin (SC) balance sheet** (Step 11) — the casino
 
 Tracks each casino client's SC deposit/withdrawal history from the casino's operational perspective (Step 11). Forward-compatible for multiple clients (currently just `"player"`); prerequisite for the since-last-deposit metrics in `ClientsBetsHistory` and the full transaction list in `ClientsTransactions`.
 
-- `LedgerEntry.Kind` ∈ `"initial"` (first-ever deposit, recorded once on first launch), `"deposit"` (future manual SC deposits via a dedicated SC Wallet scene; today routed from `DiceGame`'s `DepositPopup`), `"auto_recharge"` (internal Bankroll Auto-Recharge — **not** a real deposit), `"withdrawal"` (Bankroll → Main Balance).
-- Only `"initial"`/`"deposit"` entries reset the since-last-deposit baseline (`GetLastDeposit`) and count toward "Total SC deposited" in `ClientsTransactions`; `"auto_recharge"` is recorded for operator visibility (DEV scenes) but excluded from both.
-- Persists to `user://casino_client_ledger.json`. See `Documentation/GLOSSARY.md` for the SC Deposit / Bankroll Auto-Recharge / Bankroll Manual Recharge distinction, and `AIHelperFiles/step11-casino-sc-gambling-finances-plan.md` OQ-11.6.
+- `LedgerEntry.Kind` ∈ `"initial"` (the player's starting `40,000` stake, recorded once on first launch / re-established on each pre-genesis reset), `"deposit"` (SC entering Main Balance from outside — since Step 12 this is a **Bank → Main deposit** made in `ScFinances`, replacing the retired `DepositPopup`), `"auto_recharge"` (internal Bankroll Auto-Recharge — **not** a real deposit), `"withdrawal"` (**Main → Private Bank Account**, SC leaving the casino — Step 12), and `"bankroll_withdrawal"` (the **internal** Bankroll → Main movement — re-kinded in Step 12 so the plain `"withdrawal"` kind now means only real client↔casino outflows). Each entry also carries **`Method`** (`"manual"` | `"auto"`, Step 12 / D-SF2.3) so automatic and player-initiated flows are distinguishable without new kinds.
+- Only `"initial"`/`"deposit"` entries reset the since-last-deposit baseline (`GetLastDeposit`) and count toward "Total SC deposited" in `ClientsTransactions` (auto-deposits reset it too — they are real SC re-entering play, D-SF2.2); `"auto_recharge"` and `"bankroll_withdrawal"` are internal movements — recorded for operator visibility (DEV scenes) but excluded from the deposited/withdrawn totals.
+- Persists to `user://casino_client_ledger.json`; **checkpoint-covered** since Step 12 (snapshotted at each block, player entries cleared + `initial` re-established on each pre-genesis reset — D-SF2.4). See `Documentation/GLOSSARY.md` for the SC Deposit / SC Withdrawal / Bankroll Auto-Recharge / Bankroll Manual Recharge distinctions, and `AIHelperFiles/step11-casino-sc-gambling-finances-plan.md` OQ-11.6.
+
+### `PlayerBankAccountService`
+**Location**: `Scripts/Services/PlayerBankAccountService.cs`
+
+Owns the player's **Private Bank Account** — an **optional SC reserve outside the casino** (Step 12). Unlike the casino's credit relationship (`CasinoScBalanceService` draws loans), the player **owns** this money; the bank account is a savings/reserve they opt into. **Starts EMPTY (`0`)** — the canonical `40,000` stays in Main Balance, funded exactly as today (D-SF3.1) — and **all its automation defaults OFF**, so a new player can ignore the bank entirely for the first in-game months/years and play pure Main↔Bankroll.
+
+- **Four transfer flows**, all built and functional now: manual/auto **deposit** (`TriggerManualDeposit` / `TryAutoDeposit`, Bank → Main, bring the reserve back into play) and manual/auto **withdrawal** (`TriggerManualWithdrawal` / `TryAutoWithdraw`, Main → Bank, park a reserve safe from the casino). Mutates `PrincipalBalanceService` for the Main side; **never** touches the Bankroll (that stays `BankrollProgramService`'s job).
+- **Settings** (all revert pre-genesis, stick only at a block): `BankAccountBalance` (starts `0`), `AutoDepositEnabled` (default **OFF** — banked SC is a *safe reserve*, D-SF3.2), `AutoDepositAmount` (`1,000` refill chunk), `AutoWithdrawEnabled` (OFF), `AutoWithdrawThreshold` (`1,000` Main floor), `AutoWithdrawAmount` (`100` installment). Enabling Auto-Deposit / setting its amount is validated against the live bank balance (`0 < amount ≤ bank`).
+- **`TryAutoDeposit` is a fallback, not the primary funding path** (D-SF3.3): normal early play funds Main→Bankroll exactly as today; the bank→Main auto-deposit only fires when Main can't cover a recharge **and** Auto-Deposit is ON **and** the bank holds SC — essentially never in early game. With the player opting in (banked reserve + Auto-Deposit ON at a valid amount), this fallback *is* the opt-in "extra-lazy" streaming.
+- **`TryAutoWithdraw`** uses a threshold/surplus model with an anti-ping-pong floor (`max(AutoWithdrawThreshold, live recharge dose)`), moving one installment per trigger event — the shape `CasinoScBalanceService` can adopt for P6 repayments.
+- **History**: one `BankTransferRecord` list (both directions, `Method` manual/auto, game-time `GameDateLocal`), capped at 500; player metrics `NetWorthSc` (`= Bank + Main + Bankroll`) and `OverallPl` (`= NetWorthSc − 40,000`) are computed in the **`ScFinances` controller** from the three balance sources (the service stays pure — D-SF2.7). Bank→Main deposits also register a `"deposit"` ledger entry (`CasinoClientLedgerService`); Main→Bank withdrawals register `"withdrawal"`.
+- Persists to `user://player_bank_account_state.json`; **checkpoint-covered** (a `CheckpointState` DTO snapshotted at each block; `ResetToPreGenesisDefaults()` → bank `0` / settings default / history cleared on every pre-genesis boot — mirrors the casino's pre-genesis rule). Player-facing (managed in `ScFinances`). See `AIHelperFiles/step12-player-sc-finances-plan.md` and `Documentation/ProjectDesignManual.md` Ch. 32.
 
 ---
 
@@ -328,16 +342,18 @@ GamblingMiner/
 │   ├── BetsHistoryExplorer/    # Historical stats browser
 │   ├── CalendarsNavigator/     # Time-based history browsing
 │   ├── MartingaleCalculator/   # Strategy planner
+│   ├── ScFinances/             # Player SC-flows hub + ScTransactions (Step 12)
+│   ├── CasinoGamblingFinances/ # Casino SC finances [DEV] + ClientsBetsHistory/ClientsTransactions
 │   └── Shared/                 # Reusable UI components
 │
 ├── Scripts/                    # Core logic (~50 C# files)
-│   ├── Services/               # Autoload singletons (6 services)
+│   ├── Services/               # Autoload singletons (13 services)
 │   ├── Betting/                # Strategy config, interface, progression logic
 │   ├── Sessions/               # Bet loop controllers (Base, Auto, Manual)
 │   ├── Dice/                   # DiceEngine, DiceResult
 │   ├── Finance/                # Wallet, Money, Transaction, BetTransactionEvent
 │   ├── Game/                   # BetService, IBetEventSource
-│   ├── History/                # BetHistoryRepository, BetRecord, stats
+│   ├── History/                # BetHistoryRepository, BetRecord, stats, PlayerFinancialStatsCalculator
 │   ├── BlockchainPort/
 │   │   ├── Blockchain/         # BlockchainService, Models, CryptoUtils
 │   │   └── Simulation/         # NodeAgent, NetworkSimulator
@@ -348,8 +364,8 @@ GamblingMiner/
 │
 ├── UI/                         # Reusable UI component scripts
 │   ├── StrategyControlPanel/
-│   ├── FinancialBettingStats/
-│   └── DepositPopup/
+│   ├── FinancialBettingStats/  # Compact 3-scope betting stats (redesigned Step 12); reused in DiceGame + ScFinances
+│   └── StatusBar/              # (DepositPopup/ retired in Step 12 — deposits now flow through ScFinances)
 │
 ├── GamblingMiner.csproj        # .NET 8.0, Godot.NET.Sdk 4.5.1
 ├── GamblingMiner.sln
@@ -367,9 +383,10 @@ These values are fixed and must be consistent across all docs, UI, and code:
 | Decision | Canonical Value |
 |---|---|
 | General initial balance | `40,000 SC` |
-| Specific split | `39,900 SC Main Balance + 100 SC Bankroll` |
+| Specific split | `39,900 SC Main Balance + 100 SC Bankroll` (unchanged by Step 12 — the `40,000` stays in the casino accounts, funded as today) |
+| Private Bank Account (Step 12) | Starts at `0` — an **optional SC reserve outside the casino**, all automation OFF by default. The player *owns* it (no debt); withdraw Main→Bank to park SC safe, deposit Bank→Main to bring it back. Managed in `ScFinances`. See `PlayerBankAccountService` |
 | Player-facing term | `Main Balance` (not "Principal Balance") |
-| Game over condition | `Main Balance + Bankroll = 0` |
+| Game over condition | `Private Bank Account + Main Balance + Bankroll = 0` (Step 12 / D-SF2.1 — total ruin across all three SC accounts; while the bank holds anything it is **not** game over, since the player can always deposit it back). Written to leave room for a future **BTC→SC coin-swap escape hatch** (§7.4) — the check must be interceptable by a later exchange layer, not an irreversible terminal |
 | Current mining rule | `1 bet = 1 nonce attempt` |
 | Basic Mode halving | `2,100 blocks` (≈ 4 in-game years at 100X scale) |
 | Total BTC supply | `210,000 BTC` — converges to in-game year ~2141 |
@@ -410,6 +427,8 @@ These values are fixed and must be consistent across all docs, UI, and code:
 - Casino pool distribution atomicity: one multi-output tx per pool event (`DistributePoolEventAsSingleTx`) — eliminates partial/double-payment bug caused by sequential single sends depleting the only available UTXO before change confirmed
 - Block Explorer multi-output display: full `tx.Inputs[]` / `tx.Outputs[]` iteration in block lookup and right-column preview; `tx.IsCoinbase` for coinbase detection; all transactions in a block shown (was only the first); fee LINQ uses `!t.IsCoinbase`
 - Block Explorer OQ-8.2 cosmetic filter: `IsSelfChangeTransaction(tx)` hides txs whose every output goes back to an input address; `ExternalOutputs(tx)` strips change-to-self outputs from the displayed output list for txs that DO have external recipients. Remove both helpers once bots have `DerivedAddressWallet` (before referral/rank systems). See `Documentation/ProjectDesignManual.md` §29.9
+- Player SC Finances hub + Private Bank Account (Step 12): new `PlayerBankAccountService` autoload (#13) — an optional, initially-empty SC reserve outside the casino with four transfer flows (manual/auto deposit Bank→Main, manual/auto withdrawal Main→Bank), all automation OFF by default; checkpoint-covered + pre-genesis reset. New player-facing `ScFinances` hub (balances, Net Worth / Overall P/L, deposit/withdraw sections, 3-scope betting stats, transfer history) + `ScTransactions` (own bank↔Main ledger view). `BankrollProgramService.AutoRechargeEnabled` off-switch (BankrollProgrammer toggle + DiceGame StrategyControlPanel toggle now a proxy to it). `CasinoClientLedgerService` gains `Method` (manual/auto) + `bankroll_withdrawal` taxonomy fix + checkpoint coverage. `DepositPopup` retired (Deposit button → ScFinances). `FinancialBettingStats` redesigned compact (3 scopes: general / since deposit / since recharge) via shared `PlayerFinancialStatsCalculator`, reused in DiceGame + ScFinances; DiceGame bet-history list now seeds from the persistent store on entry. Window starts Maximized (`window/size/mode=2`, `mode.editor=0` for editor embedding). See `AIHelperFiles/step12-player-sc-finances-plan.md` + `Documentation/ProjectDesignManual.md` Ch. 32
+- Game-over redefined to total ruin across all three SC accounts (`Private Bank Account + Main Balance + Bankroll = 0`, D-SF2.1)
 
 ### Prototype (Partially Implemented)
 
@@ -591,7 +610,7 @@ private void OnBackButtonPressed()
 
 All existing main screens have been migrated. Adding a new scene: (1) add entry to `SceneId` enum, (2) add path to `Paths` dictionary, (3) call `_sceneManager?.Go(SceneId.X)` at the call site.
 
-The example above omits several DEV-only scenes for brevity (e.g. `CasinoFinances`, `FoundersWallets`, `BotPlayHistory`). Step 11 added three more, all DEV-only: `CasinoGamblingFinances` (Main Menu → casino SC balances/loans/transfers), `ClientsBetsHistory` (→ from `CasinoGamblingFinances`, per-client P/L + live bet feed), and `ClientsTransactions` (→ from `CasinoGamblingFinances`, per-client SC deposit/withdrawal ledger) — see `Screens/CasinoGamblingFinances/`.
+The example above omits several DEV-only scenes for brevity (e.g. `CasinoFinances`, `FoundersWallets`, `BotPlayHistory`). Step 11 added three more, all DEV-only: `CasinoGamblingFinances` (Main Menu → casino SC balances/loans/transfers), `ClientsBetsHistory` (→ from `CasinoGamblingFinances`, per-client P/L + live bet feed), and `ClientsTransactions` (→ from `CasinoGamblingFinances`, per-client SC deposit/withdrawal ledger) — see `Screens/CasinoGamblingFinances/`. Step 12 added two **player-facing** scenes: `ScFinances` (MainMenu → the player's SC-flows hub: Private Bank Account balances, deposit/withdraw, betting stats) and `ScTransactions` (→ from `ScFinances`, the player's own Bank↔Main transfer history) — see `Screens/ScFinances/`. `SceneManager.Go()` also records a one-deep `PreviousScene` for origin-aware back navigation.
 
 ### `StatusBar` Component
 
@@ -615,15 +634,22 @@ GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 ```
 MainMenu
 ├── DiceGame          (also reachable directly; DiceGame has its own "Main Menu" button)
+│   ├── ScFinances          → Main Menu   (DiceGame's "Deposit Balance" button opens ScFinances; DepositPopup retired in Step 12)
 │   ├── BankrollProgrammer  → Main Menu
 │   ├── BlockExplorer       → Main Menu
 │   └── CalendarsNavigator  → Main Menu / BetsHistoryExplorer
-│       └── BetsHistoryExplorer → Main Menu or CalendarsNavigator
+│       └── BetsHistoryExplorer → origin-aware back (Main Menu / CalendarsNavigator / ScFinances)
+├── ScFinances [player-facing]  → Main Menu   (Step 12 — the player's SC-flows hub)
+│   ├── ScTransactions              → ScFinances
+│   ├── BetsHistoryExplorer         → (origin-aware back to its launcher)
+│   └── BankrollProgrammer          → ScFinances / (its own Main Menu back)
 ├── MartingaleCalculator (standalone, full-screen) → Main Menu
 └── CasinoGamblingFinances [DEV]  → Main Menu
     ├── ClientsBetsHistory [DEV]    → Casino Gambling Finances
     └── ClientsTransactions [DEV]   → Casino Gambling Finances
 ```
+
+`BetsHistoryExplorer`'s back button is **origin-aware** (Step 12 / SF.4.2): it returns to `SceneManager.PreviousScene ?? MainMenu`, so it goes back to whichever hub launched it (`CalendarsNavigator` or `ScFinances`).
 
 DiceGame's MartingaleCalc button opens the **popup version** (`Screens/MartingaleCalculator/`) inline — it does not navigate away. The standalone version (`Screens/MartingaleCalculatorStandalone/`) is a full screen reachable only from MainMenu.
 
