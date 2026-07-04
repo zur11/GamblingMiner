@@ -15,6 +15,9 @@ public partial class BankrollProgramService : Node
 	private sealed class Snapshot
 	{
 		public decimal AutoRechargeAmount { get; set; }
+		// Nullable so a legacy state file (written before SF.1.2 added the toggle) deserializes to null and
+		// defaults to ON — never OFF (which would silently disable the always-on recharge on upgrade).
+		public bool? AutoRechargeEnabled { get; set; }
 		public List<TransferRecord> Records { get; set; } = new();
 	}
 
@@ -29,6 +32,11 @@ public partial class BankrollProgramService : Node
 	private readonly List<TransferRecord> _records = new();
 	public IReadOnlyList<TransferRecord> Records => _records;
 	public decimal AutoRechargeAmount { get; private set; } = DefaultAutoRechargeAmount;
+	// D-SF.4: the off-switch for the (formerly always-on) Bankroll dose recharge. Default ON = today's behavior.
+	// When OFF, SimulationService/DiceGame skip the auto top-up on InsufficientBalance and let the session stop,
+	// waiting for a manual Bankroll recharge. UI toggle lives in BankrollProgrammer (SF.2.8). Snapshotted at each
+	// block, reverted to ON pre-genesis (a custom setting sticks only once a real block commits it).
+	public bool AutoRechargeEnabled { get; private set; } = true;
 	public int AutoRechargeCount => _records.Count(r => r.Direction == "balance_to_bankroll" && r.Reason == "auto_recharge");
 
 	public event Action TransfersChanged;
@@ -60,6 +68,15 @@ public partial class BankrollProgramService : Node
 		}
 
 		AutoRechargeAmount = amount;
+		AutoRechargeAmountChanged?.Invoke();
+		SaveState();
+	}
+
+	// D-SF.4 off-switch. Reuses AutoRechargeAmountChanged as the "recharge settings changed" notification the
+	// BankrollProgrammer UI already listens to.
+	public void SetAutoRechargeEnabled(bool enabled)
+	{
+		AutoRechargeEnabled = enabled;
 		AutoRechargeAmountChanged?.Invoke();
 		SaveState();
 	}
@@ -107,7 +124,10 @@ public partial class BankrollProgramService : Node
 		bankrollWallet.ApplyTransaction(new Transaction(TransactionType.Withdrawal, TransactionSource.External, null, amount));
 		principal.Deposit(amount);
 		AddRecord(amount, "bankroll_to_balance", reason);
-		_ledger?.RegisterWithdrawal("player", amount, GameUtcNow());
+		// §3.7 taxonomy fix: Bankroll → Main is an INTERNAL movement, not an SC Withdrawal (that term is now
+		// reserved for Main → Private Bank Account, SC leaving the casino). Register it as "bankroll_withdrawal"
+		// so it is excluded from the casino's "Total SC withdrawn" the way "auto_recharge" is excluded from deposits.
+		_ledger?.RegisterBankrollWithdrawal("player", amount, GameUtcNow());
 		return true;
 	}
 
@@ -148,11 +168,17 @@ public partial class BankrollProgramService : Node
 		TransfersChanged?.Invoke();
 	}
 
-	public void ReplaceState(decimal autoRechargeAmount, IEnumerable<TransferRecord> records)
+	// autoRechargeEnabled: null (default) leaves the current toggle untouched — used by in-session node-state
+	// restores (DiceGame) that don't track it. The block checkpoint restore passes the stored value; the
+	// pre-genesis reset passes true. This keeps the toggle out of per-node snapshots yet checkpoint-covered.
+	public void ReplaceState(decimal autoRechargeAmount, IEnumerable<TransferRecord> records, bool? autoRechargeEnabled = null)
 	{
 		AutoRechargeAmount = autoRechargeAmount > 0m
 			? Money.Normalize(autoRechargeAmount)
 			: DefaultAutoRechargeAmount;
+
+		if (autoRechargeEnabled.HasValue)
+			AutoRechargeEnabled = autoRechargeEnabled.Value;
 
 		_records.Clear();
 		if (records != null)
@@ -199,6 +225,7 @@ public partial class BankrollProgramService : Node
 			AutoRechargeAmount = snapshot.AutoRechargeAmount > 0m
 				? Money.Normalize(snapshot.AutoRechargeAmount)
 				: DefaultAutoRechargeAmount;
+			AutoRechargeEnabled = snapshot.AutoRechargeEnabled ?? true; // legacy file (null) → ON
 
 			_records.Clear();
 			foreach (TransferRecord record in snapshot.Records ?? new List<TransferRecord>())
@@ -230,6 +257,7 @@ public partial class BankrollProgramService : Node
 			var snapshot = new Snapshot
 			{
 				AutoRechargeAmount = AutoRechargeAmount,
+				AutoRechargeEnabled = AutoRechargeEnabled,
 				Records = _records
 					.Select(r => new TransferRecord
 					{

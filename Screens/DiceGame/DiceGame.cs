@@ -88,6 +88,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private bool _loadingNodeStrategy;
 	private SceneManager _sceneManager;
 	private CasinoClientLedgerService _casinoClientLedger;
+	private PlayerBankAccountService _playerBankAccountService;
 
 	private enum ManualStopGate
 	{
@@ -168,6 +169,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_casinoClientLedger = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
+		_playerBankAccountService = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService");
 		_bankrollStateService?.EnsureInitialized(0m);
 		decimal initialBalance = _bankrollStateService?.CurrentBalance ?? 0m;
 		_wallet = new Wallet(initialBalance);
@@ -1135,6 +1137,7 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		if (session.LastStopReason == IBettingStrategy.StopReason.InsufficientBalance &&
 			_strategyPanel.AutoRechargeEnabled &&
+			(_bankrollProgramService?.AutoRechargeEnabled ?? true) && // SF.1.2: service-level off-switch (D-SF.4)
 			TryAutoRechargeBankroll())
 		{
 			_resultValue.Text = "Bankroll recharged. Restarting progression from base bet.";
@@ -1949,6 +1952,10 @@ public partial class DiceGame : Control, IBetEventSource
 	private bool TryAutoRechargeBankroll()
 	{
 		decimal amount = _bankrollProgramService?.AutoRechargeAmount ?? BankrollProgramService.DefaultAutoRechargeAmount;
+		// SF.1.3 fallback (D-SF3.3): if Main can't cover the dose, stream it from the player's bank reserve first.
+		// No-op unless Auto-Deposit is ON and the bank holds SC — so early game (empty bank, toggle OFF) is unchanged.
+		if ((_principalBalanceService?.CurrentBalance ?? 0m) < amount)
+			_playerBankAccountService?.TryAutoDeposit(amount);
 		return TryProgrammedBankrollTransfer(amount, "auto_recharge");
 	}
 

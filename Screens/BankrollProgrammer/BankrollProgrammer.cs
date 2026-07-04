@@ -199,7 +199,10 @@ public partial class BankrollProgrammer : Control
 			.ToString("N8", CultureInfo.InvariantCulture);
 
 		decimal perf = _bankrollProgramService?.GetPerformancePercentVsInitial(balance) ?? 0m;
-		_performanceValue.Text = $"{perf:+0.00000000;-0.00000000;0.00000000}% vs 40000.00000000";
+		// SF.1.6 / D-SF2.7: this measures MAIN BALANCE alone vs its 40,000 start — NOT net worth (which now
+		// includes the Private Bank Account, computed in ScFinances). Labeled explicitly to avoid confusion.
+		_performanceValue.Text = string.Create(CultureInfo.InvariantCulture,
+			$"{perf:+0.00000000;-0.00000000;0.00000000}% (Main Balance vs 40,000.00000000 start)");
 
 		DateTime gameUtcNow = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
 		var counts = _bankrollProgramService?.GetAutoRechargeCounts(gameUtcNow) ?? (0, 0, 0);

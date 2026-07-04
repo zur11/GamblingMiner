@@ -147,7 +147,9 @@ public partial class ClientsTransactions : Control
 		for (int i = entries.Count - 1; i >= 0; i--)
 		{
 			CasinoClientLedgerService.LedgerEntry e = entries[i];
-			if (e.Kind == "auto_recharge") continue;
+			// Internal movements are not client↔casino boundary flows — hide them (§3.7): auto_recharge (Main→
+			// Bankroll dose) and bankroll_withdrawal (the re-kinded Bankroll→Main internal transfer).
+			if (e.Kind == "auto_recharge" || e.Kind == "bankroll_withdrawal") continue;
 
 			string ts = e.UtcTimestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm:ss");
 

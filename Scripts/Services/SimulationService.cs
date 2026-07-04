@@ -78,6 +78,7 @@ public partial class SimulationService : Node
 	private BlockSessionCheckpointService? _checkpoint;
 	private FoundersMiningService? _founders;
 	private CasinoScBalanceService? _casinoSc;
+	private PlayerBankAccountService? _playerBank;
 	private NetworkRoot _networkRoot = null!;
 
 	// Step 7.2: founder powers are recomputed only when a new block appears (Satoshi's confirmed-BTC
@@ -135,6 +136,7 @@ public partial class SimulationService : Node
 		_checkpoint = GetNodeOrNull<BlockSessionCheckpointService>("/root/BlockSessionCheckpointService");
 		_founders = GetNodeOrNull<FoundersMiningService>("/root/FoundersMiningService");
 		_casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
+		_playerBank = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService");
 
 		_networkRoot = new NetworkRoot();
 		AddChild(_networkRoot); // persistent — lives under this autoload
@@ -426,10 +428,19 @@ public partial class SimulationService : Node
 		if (!_config.AutoRecharge) return false;
 		if (_session.LastStopReason != IBettingStrategy.StopReason.InsufficientBalance) return false;
 		if (_bankrollProgram == null || _principal == null) return false;
+		// SF.1.2 (D-SF.4): the service-level off-switch. When OFF, no auto top-up — the session stops and waits
+		// for a manual Bankroll recharge (today's InsufficientBalance path, now player-chosen).
+		if (!_bankrollProgram.AutoRechargeEnabled) return false;
 
 		decimal amount = _bankrollProgram.AutoRechargeAmount > 0m
 			? _bankrollProgram.AutoRechargeAmount
 			: BankrollProgramService.DefaultAutoRechargeAmount;
+
+		// SF.1.3 fallback (D-SF3.3): if Main can't cover the dose, try to stream it from the player's bank
+		// reserve. No-op unless Auto-Deposit is ON and the bank holds SC — so in early game (empty bank, toggle
+		// OFF) this changes nothing and the transfer below simply fails as it does today.
+		if (_principal.CurrentBalance < amount)
+			_playerBank?.TryAutoDeposit(amount);
 
 		if (!_bankrollProgram.TryTransferBalanceToBankroll(_principal, _wallet, amount, "auto_recharge"))
 		{

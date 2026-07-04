@@ -40,9 +40,11 @@ public partial class PlayerBankAccountService : Node
 	// draws take 1–2 iterations; this only trips under a pathological dev misconfiguration to avoid a freeze.
 	private const int MaxAutoDepositIterations = 100_000;
 
-	private PrincipalBalanceService _principalBalance;
-	private BankrollProgramService  _bankrollProgram;
-	private CalendarTimeService     _calendarTime;
+	private PrincipalBalanceService  _principalBalance;
+	private BankrollProgramService   _bankrollProgram;
+	private CalendarTimeService      _calendarTime;
+	private CasinoClientLedgerService _ledger;
+	private UserStatsService         _userStats;
 
 	// One Bank↔Main transfer. Direction ∈ {bank_to_main, main_to_bank}; Method ∈ {manual, auto}. GameDateLocal
 	// is game-world time (CalendarTimeService), never wall-clock — displayed and persisted (CLAUDE.md Pattern 2).
@@ -81,6 +83,8 @@ public partial class PlayerBankAccountService : Node
 		_principalBalance = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
 		_bankrollProgram  = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");
 		_calendarTime     = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		_ledger           = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
+		_userStats        = GetNodeOrNull<UserStatsService>("/root/UserStatsService");
 		GD.Print($"[PlayerBankAccountService] Ready — BankAccountBalance={BankAccountBalance:F8} SC  AutoDeposit={AutoDepositEnabled}({AutoDepositAmount:F8})  AutoWithdraw={AutoWithdrawEnabled}(floor={AutoWithdrawThreshold:F8}, amt={AutoWithdrawAmount:F8})");
 	}
 
@@ -88,6 +92,16 @@ public partial class PlayerBankAccountService : Node
 
 	// Game-world time for a transfer record (never wall-clock). Fallback only if the calendar autoload is absent.
 	private DateTime GameLocalNow() => _calendarTime?.CurrentLocalDateTime ?? DateTime.Now;
+	private DateTime GameUtcNow()   => _calendarTime?.CurrentUtcDateTime ?? DateTime.UtcNow;
+
+	// Bank → Main deposits register kind "deposit" in the casino client ledger (SF.1.5 / D-SF3.4) — real SC
+	// (re-)entering play, which resets the since-last-deposit baseline for both manual and auto (D-SF2.2).
+	private void RegisterLedgerDeposit(decimal amount, string method)
+	{
+		decimal wagered = _userStats?.Stats?.TotalAmountWagered ?? 0m;
+		decimal profit  = _userStats?.Stats?.TotalProfit ?? 0m;
+		_ledger?.RegisterDeposit("player", amount, GameUtcNow(), wagered, profit, method);
+	}
 
 	private void AddTransferRecord(decimal amount, string direction, string method)
 	{
@@ -118,6 +132,7 @@ public partial class PlayerBankAccountService : Node
 		_inTransfer = false;
 		TotalDepositedToCasino = Money.Normalize(TotalDepositedToCasino + effective);
 		AddTransferRecord(effective, DirectionBankToMain, MethodManual);
+		RegisterLedgerDeposit(effective, MethodManual);
 		SaveState();
 		BankStateChanged?.Invoke();
 		return true;
@@ -138,6 +153,7 @@ public partial class PlayerBankAccountService : Node
 		BankAccountBalance = Money.Normalize(BankAccountBalance + effective);
 		TotalWithdrawnFromCasino = Money.Normalize(TotalWithdrawnFromCasino + effective);
 		AddTransferRecord(effective, DirectionMainToBank, MethodManual);
+		_ledger?.RegisterWithdrawal("player", effective, GameUtcNow(), MethodManual);
 		SaveState();
 		BankStateChanged?.Invoke();
 		return true;
@@ -156,7 +172,7 @@ public partial class PlayerBankAccountService : Node
 		if (!AutoDepositEnabled || BankAccountBalance <= 0m)
 			return MainBalance >= neededInMain;
 
-		bool moved = false;
+		decimal totalDrawn = 0m;
 		int safety = 0;
 		while (MainBalance < neededInMain && BankAccountBalance > 0m && safety++ < MaxAutoDepositIterations)
 		{
@@ -168,11 +184,14 @@ public partial class PlayerBankAccountService : Node
 			_inTransfer = false;
 			TotalDepositedToCasino = Money.Normalize(TotalDepositedToCasino + draw);
 			AddTransferRecord(draw, DirectionBankToMain, MethodAuto);
-			moved = true;
+			totalDrawn = Money.Normalize(totalDrawn + draw);
 		}
 
-		if (moved)
+		if (totalDrawn > 0m)
 		{
+			// One ledger deposit for the whole streamed amount (the baseline reset is what matters, D-SF2.2) —
+			// the per-draw BankTransferRecords above keep the fine-grained ScTransactions detail.
+			RegisterLedgerDeposit(totalDrawn, MethodAuto);
 			SaveState();
 			BankStateChanged?.Invoke();
 		}
@@ -203,6 +222,7 @@ public partial class PlayerBankAccountService : Node
 		BankAccountBalance = Money.Normalize(BankAccountBalance + move);
 		TotalWithdrawnFromCasino = Money.Normalize(TotalWithdrawnFromCasino + move);
 		AddTransferRecord(move, DirectionMainToBank, MethodAuto);
+		_ledger?.RegisterWithdrawal("player", move, GameUtcNow(), MethodAuto);
 		SaveState();
 		BankStateChanged?.Invoke();
 		return true;

@@ -15,6 +15,8 @@ public partial class BlockSessionCheckpointService : Node
 		public decimal PrincipalBalance { get; set; }
 		public decimal BankrollBalance { get; set; }
 		public decimal AutoRechargeAmount { get; set; }
+		// Nullable: legacy checkpoint (pre-SF.1.2) → null → restored as ON, never OFF.
+		public bool? AutoRechargeEnabled { get; set; }
 		public List<BankrollProgramService.TransferRecord> TransferRecords { get; set; } = new();
 		public long? HistoryCheckpointUtcTicks { get; set; }
 		public long? CalendarLocalTicks { get; set; }
@@ -29,6 +31,9 @@ public partial class BlockSessionCheckpointService : Node
 		// Step 12 (SF.0.7): the player's Private Bank Account, bundled as one DTO. Null in a legacy pre-Step-12
 		// checkpoint → PlayerBankAccountService keeps its loaded state (no migration, D-SF2.8).
 		public PlayerBankAccountService.CheckpointState PlayerBankState { get; set; }
+		// Step 12 (SF.1.5 / D-SF2.4): the casino client ledger is a player-facing persisted list, so it is
+		// snapshotted at each block. Null in a legacy checkpoint → keep loaded entries.
+		public List<CasinoClientLedgerService.LedgerEntry> ClientLedgerEntries { get; set; }
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -58,7 +63,7 @@ public partial class BlockSessionCheckpointService : Node
 		GetNodeOrNull<BankrollStateService>("/root/BankrollStateService")
 			?.SetBalance(0m);
 		GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService")
-			?.ReplaceState(BankrollProgramService.DefaultAutoRechargeAmount, new List<BankrollProgramService.TransferRecord>());
+			?.ReplaceState(BankrollProgramService.DefaultAutoRechargeAmount, new List<BankrollProgramService.TransferRecord>(), true); // toggle → ON
 		GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
 			?.ResetToPreGenesisDefaults();
 		GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")
@@ -87,6 +92,12 @@ public partial class BlockSessionCheckpointService : Node
 		// exactly on playerStart (see OQ-BP.11).
 		GetNodeOrNull<UserStatsService>("/root/UserStatsService")
 			?.ClearAllHistory();
+
+		// SF.1.5 / D-SF2.4: the client ledger self-persists on every deposit/withdrawal/recharge, so it leaks
+		// across restarts the same way. Discard the accumulated player entries and re-establish the single clean
+		// "initial" 40,000 stake (uses the just-set playerStart clock for its game-time timestamp).
+		GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService")
+			?.ResetToPreGenesisDefaults();
 	}
 
 	// Called once on startup after all other autoloads have loaded their own files.
@@ -101,7 +112,7 @@ public partial class BlockSessionCheckpointService : Node
 		GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService")
 			?.SetBalance(CurrentSnapshot.PrincipalBalance);
 		GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService")
-			?.ReplaceState(CurrentSnapshot.AutoRechargeAmount, CurrentSnapshot.TransferRecords);
+			?.ReplaceState(CurrentSnapshot.AutoRechargeAmount, CurrentSnapshot.TransferRecords, CurrentSnapshot.AutoRechargeEnabled ?? true);
 		GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
 			?.RestoreCasinoScState(
 				CurrentSnapshot.CasinoScMainBalance,
@@ -114,6 +125,8 @@ public partial class BlockSessionCheckpointService : Node
 				CurrentSnapshot.CasinoScRechargeHistory);
 		GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")
 			?.RestoreFromCheckpoint(CurrentSnapshot.PlayerBankState); // null DTO (legacy) → keeps loaded state
+		GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService")
+			?.RestoreFromCheckpoint(CurrentSnapshot.ClientLedgerEntries); // null (legacy) → keeps loaded entries
 
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
 		{
@@ -176,7 +189,9 @@ public partial class BlockSessionCheckpointService : Node
 					Reason        = r.Reason,
 					GameDateLocal = DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
 				}).ToList() ?? new List<CasinoScBalanceService.RechargeRecord>(),
+			AutoRechargeEnabled = program.AutoRechargeEnabled,
 			PlayerBankState = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")?.CaptureCheckpointState(),
+			ClientLedgerEntries = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService")?.CaptureEntriesForCheckpoint(),
 			CapturedAtUtc = DateTime.UtcNow
 		};
 
