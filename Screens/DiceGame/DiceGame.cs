@@ -87,7 +87,6 @@ public partial class DiceGame : Control, IBetEventSource
 	private readonly Dictionary<string, NodeStrategyState> _nodeStrategies = new();
 	private bool _loadingNodeStrategy;
 	private SceneManager _sceneManager;
-	private CasinoClientLedgerService _casinoClientLedger;
 	private PlayerBankAccountService _playerBankAccountService;
 
 	private enum ManualStopGate
@@ -141,7 +140,6 @@ public partial class DiceGame : Control, IBetEventSource
 	private Slider _chanceSlider;
 	private Button _highLowToggleBtn;
 
-	private DepositPopup _depositPopup;
 	private Button _depositBtn;
 	private Button _openCalculatorBtn;
 	private Button _openBankrollProgrammerBtn;
@@ -168,7 +166,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_simulationService = GetNodeOrNull<SimulationService>("/root/SimulationService");
 		_casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
-		_casinoClientLedger = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 		_playerBankAccountService = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService");
 		_bankrollStateService?.EnsureInitialized(0m);
 		decimal initialBalance = _bankrollStateService?.CurrentBalance ?? 0m;
@@ -225,7 +222,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_apsSelector = GetNode<OptionButton>("%ApsSelector");
 		_chanceSlider = GetNode<Slider>("%ChanceSlider");
 		_highLowToggleBtn = GetNode<Button>("%HighLowToggleBtn");
-		_depositPopup = GetNode<DepositPopup>("%DepositPopup");
 		_depositBtn = GetNode<Button>("%DepositBtn");
 		_openCalculatorBtn = GetNode<Button>("%OpenCalculatorBtn");
 		_openBankrollProgrammerBtn = GetNode<Button>("%OpenBankrollProgrammerBtn");
@@ -255,8 +251,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyNameInput.TextChanged += _ => UpdateStrategySaveLoadButtons();
 		_saveStrategyBtn.Pressed += OnSaveStrategyPressed;
 		_loadStrategyBtn.Pressed += OnLoadStrategyPressed;
-		_depositPopup.DepositConfirmed += OnDepositPopupDepositConfirmed;
-		_depositPopup.DepositCanceled += OnDepositCanceled;
 		_martingaleCalculator.CloseRequested += OnCalculatorCloseRequested;
 		_wallet.BalanceDeltaChanged += OnBalanceDeltaChanged;
 		_wallet.BalanceDeltaChanged += (_, _) => _bankrollStateService?.SetBalance(_wallet.Balance);
@@ -1561,40 +1555,13 @@ public partial class DiceGame : Control, IBetEventSource
 
 	public bool IsHighFrequencyAutoMode() => false;
 
-	// --- Depositos ---
+	// --- Deposits ---
+	// SF.4.1: the inline DepositPopup is retired. The "Deposit Balance" button now opens the canonical SC-flows
+	// hub (ScFinances), where the player moves SC between the Private Bank Account and Main Balance. All deposit
+	// handling (balance mutation, ledger, stats) lives in PlayerBankAccountService, not here anymore.
 	private void OnDepositBtnPressed()
 	{
-		_depositPopup.Open();
-	}
-
-	private void OnDepositPopupDepositConfirmed(double amountDouble)
-	{
-		decimal amount = (decimal)amountDouble;
-		_principalBalanceService?.Deposit(amount);
-
-		DateTime timestampUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
-		if (IsPlayerActive())
-		{
-			_userStatsService.RegisterDeposit(amount, _walletController.Balance, timestampUtc);
-			decimal wageredSnapshot = _userStatsService?.Stats?.TotalAmountWagered ?? 0m;
-			decimal profitSnapshot  = _userStatsService?.Stats?.TotalProfit ?? 0m;
-			_casinoClientLedger?.RegisterDeposit("player", amount, timestampUtc, wageredSnapshot, profitSnapshot);
-		}
-		SaveActiveNodeFinancialState(false);
-
-		_resultValue.Text = $"Balance principal +{amount:F8}";
-
-		UpdateBalanceUI();
-
-		if (_walletFSM.State == WalletState.Bankrupt)
-		{
-			_walletFSM.Fire(WalletEvent.BalanceRestored);
-		}
-	}
-
-	private void OnDepositCanceled()
-	{
-		_resultValue.Text = "Deposit canceled.";
+		_sceneManager?.Go(SceneManager.SceneId.ScFinances);
 	}
 
 	private void OnOpenCalculatorPressed()

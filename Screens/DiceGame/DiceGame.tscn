@@ -1,8 +1,7 @@
-[gd_scene load_steps=8 format=3 uid="uid://c711y35rvk5gf"]
+[gd_scene load_steps=7 format=3 uid="uid://c711y35rvk5gf"]
 
 [ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame/DiceGame.cs" id="1_k3ff0"]
 [ext_resource type="PackedScene" uid="uid://dcj5ru0ys536m" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/PreviousWinnerNumbersGrid.tscn" id="2_5hi04"]
-[ext_resource type="PackedScene" uid="uid://c3gxcrrobecpj" path="res://UI/DepositPopup/DepositPopup.tscn" id="3_gu5sn"]
 [ext_resource type="PackedScene" uid="uid://cc4mcdfki2u7r" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.tscn" id="3_usic0"]
 [ext_resource type="PackedScene" uid="uid://c2crwe1sryeto" path="res://UI/FinancialBettingStats/FinancialBettingStats.tscn" id="5_ne2vn"]
 [ext_resource type="PackedScene" uid="uid://drs5mewqvl7kt" path="res://UI/StrategyControlPanel/StrategyControlPanel.tscn" id="6_8x8ps"]
@@ -337,7 +336,7 @@ offset_top = 215.0
 offset_right = 199.0
 offset_bottom = 277.0
 theme_override_font_sizes/font_size = 38
-text = "Deposit Balance"
+text = "Go to SC Finances"
 
 [node name="OpenCalculatorBtn" type="Button" parent="."]
 unique_name_in_owner = true
@@ -403,13 +402,6 @@ offset_left = 349.0
 offset_top = -7.0
 offset_right = 348.19995
 offset_bottom = -6.76001
-
-[node name="DepositPopup" parent="." instance=ExtResource("3_gu5sn")]
-unique_name_in_owner = true
-visible = false
-layout_mode = 1
-offset_left = 861.0
-offset_right = 860.9199
 
 [node name="MartingaleCalculator" parent="." instance=ExtResource("7_k23np")]
 unique_name_in_owner = true

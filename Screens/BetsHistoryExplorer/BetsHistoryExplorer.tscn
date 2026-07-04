@@ -51,7 +51,7 @@ text = "Speed 1x"
 [node name="BackToCalendarButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Back to Calendar"
+text = "← Back"
 
 [node name="BackToDiceButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
 unique_name_in_owner = true

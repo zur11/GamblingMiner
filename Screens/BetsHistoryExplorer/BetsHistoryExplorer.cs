@@ -307,11 +307,15 @@ public partial class BetsHistoryExplorer : Control
 	// The background sim is an autoload and survives scene changes → always navigate normally. In live mode
 	// the clock is owned by the running autobet, so we don't touch it; only the time-travel (non-live)
 	// browsing resets the clock before leaving.
+	// SF.4.2: origin-aware back — BetsHistoryExplorer is now reachable from more than one hub (CalendarsNavigator
+	// AND ScFinances), so return to whichever scene launched it (SceneManager.PreviousScene), falling back to
+	// Main Menu if that memory is empty (e.g. deep-linked or first navigation).
 	private void OnBackToCalendarPressed()
 	{
 		if (!_liveMode && _calendarTimeService != null)
 			_calendarTimeService.IsRunning = false;
-		_sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
+		SceneManager.SceneId target = _sceneManager?.PreviousScene ?? SceneManager.SceneId.MainMenu;
+		_sceneManager?.Go(target);
 	}
 
 	private void OnBackToDicePressed()
