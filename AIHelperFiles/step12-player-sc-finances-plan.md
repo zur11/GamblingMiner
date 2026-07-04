@@ -302,6 +302,56 @@ MainMenu
 - [ ] **SF.4.1** DiceGame Deposit button → ScFinances; popup node + handlers removed; delete `UI/DepositPopup/` when unreferenced.
 - [ ] **SF.4.2** `BetsHistoryExplorer` origin-aware back.
 
+### Phase SF.4B — Centralized player betting stats (3 groups) + persistent in-DiceGame bet history
+
+**Added after SF.4 (not in the original plan; SF.5 documentation is postponed until after this).** Two DiceGame components surfaced as out-of-date now that deposits flow through `PlayerBankAccountService` instead of the retired `DepositPopup`. Both are fixed by pointing them at the **already-centralized** data (`UserStatsService` lifetime stats + `CasinoClientLedgerService` snapshots + `BetHistoryRepository` records) and reusing it across surfaces.
+
+**Files**: `Scripts/History/PlayerFinancialStatsCalculator.cs` (new), `UI/FinancialBettingStats/FinancialBettingStats.cs` + `.tscn`, `Screens/ScFinances/ScFinances.tscn` + `.cs`, `Scripts/Services/UserStatsService.cs`, `Screens/DiceGame/DiceGame.cs`.
+
+#### Task 1 — Three-group financial betting stats, shared by ScFinances + DiceGame
+
+**Problem.** `FinancialBettingStats` (shown in DiceGame) renders "last deposit profit/loss" and "last deposit gambled" from `UserBettingStats.ProfitSinceDeposit` / `AmountWageredSinceDeposit`. That baseline is reset by `UserStatsService.RegisterDeposit()`, which is currently called on **every Bankroll recharge** (`SimulationService.TryPlayerAutoRechargeAndRestart`, `DiceGame.TryProgrammedBankrollTransfer`) — so it actually means "since last recharge", conflates *deposit* with *recharge*, and no longer reflects real SC deposits (which now go Bank→Main via `PlayerBankAccountService`). The correct, already-separated data lives in the **client ledger**: `GetLastDeposit` (kind `initial`|`deposit`) and `GetLastAutoRecharge` (kind `auto_recharge`), each carrying `TotalWageredSnapshot` / `NetProfitSnapshot` — exactly what `ClientsBetsHistory` already uses for the casino's "since last deposit / since last recharge" rows.
+
+**Target: three stat groups**, each with **P/L** and **Gambled**:
+| Group | P/L | Gambled | Source |
+|---|---|---|---|
+| **General** (lifetime) | `Stats.TotalProfit` | `Stats.TotalAmountWagered` | UserStatsService |
+| **Since last bank deposit** | `TotalProfit − lastDeposit.NetProfitSnapshot` | `TotalAmountWagered − lastDeposit.TotalWageredSnapshot` | ledger `GetLastDeposit("player")` (initial/deposit) |
+| **Since last bankroll recharge** *(NEW)* | `TotalProfit − lastRecharge.NetProfitSnapshot` | `TotalAmountWagered − lastRecharge.TotalWageredSnapshot` | ledger `GetLastAutoRecharge("player")` |
+
+Player sign convention: **P/L = +TotalProfit** (the player's own gain), unlike `ClientsBetsHistory` which negates it for the casino. Before a real bank deposit, `GetLastDeposit` returns the `initial` (snapshots `0`/`0`) ⇒ "since deposit" == lifetime; before any recharge, `GetLastAutoRecharge` is null ⇒ "since recharge" == lifetime (mirror `ClientsBetsHistory`'s null-fallback). Amounts clamped at `≥ 0` (mirror `ClientsBetsHistory`'s `Math.Max(0m, …)`).
+
+- [ ] **SF.4B.1** New pure calculator `Scripts/History/PlayerFinancialStatsCalculator.cs`: `readonly struct PlayerFinancialSummary { TotalProfit, TotalWagered, ProfitSinceDeposit, WageredSinceDeposit, ProfitSinceRecharge, WageredSinceRecharge; DateTime? LastDepositUtc, LastRechargeUtc; }` + `static PlayerFinancialSummary Compute(UserBettingStats stats, CasinoClientLedgerService ledger, string clientId = "player")`. No Godot/UI/state — single source of truth for the numbers (both surfaces call it; the casino's `ClientsBetsHistory` can optionally adopt it later, not required now).
+- [ ] **SF.4B.2** **Redesign `FinancialBettingStats` compactly (≈ half the current footprint) AND upgrade it to the 3 groups.** The current layout is two tall side-by-side `VBoxContainer`s (font 27, separation 30, ~466×238 px) holding 4 stacked label pairs; adding a third group would overflow DiceGame's bottom-left slot. Replace it with a **content-sized table** — a `VBoxContainer` root: a small "Betting Statistics" title + a `GridContainer` (`columns = 3`) laid out scope×metric:
+
+  ```
+  Betting Statistics
+                    P/L                 Gambled
+  General           +0.00000000         0.00000000
+  Since deposit     +0.00000000         0.00000000
+  Since recharge    +0.00000000         0.00000000
+  ```
+
+  Header row (`""` | `P/L` | `Gambled`) + 3 scope rows = 12 cells; **font ~16–18** (vs 27) with tight separation ⇒ roughly half the area. Root **sizes to content** (no `anchors_preset = 15` fill, no fixed child offsets), so the exact same scene drops cleanly into both a fixed-offset slot (DiceGame) and a scroll `VBox` (ScFinances) — this is what removes SF.4B.3's old layout risk. The `.cs` keeps 6 `[Export]` value-label refs (3 scopes × {P/L, Gambled}), replaces `UpdateFrom(UserBettingStats)` / `UpdateFromTimeBased(...)` with `UpdateFrom(PlayerFinancialSummary)` (green/red on the three P/L cells via `Money.FormatSignedAdaptive`; gambled via `N8` InvariantCulture), and adds `ConnectTo(UserStatsService, CasinoClientLedgerService)` subscribing **both** `StatsChanged` **and** `LedgerChanged` (the since-X baselines move on ledger events), recomputing via the calculator, unsubscribing both in `_ExitTree`. English-only labels. DiceGame's instance offsets get re-tuned to the smaller block.
+- [ ] **SF.4B.3** Show the same block in **ScFinances**: reuse the *same* redesigned component — add a "Betting Statistics" section (separator + the instanced `FinancialBettingStats.tscn`, now content-sized so it flows natively) to `ScFinances.tscn` and `ConnectTo(...)` it in `ScFinances.cs`. One component, one calculator, two host scenes ⇒ DiceGame and ScFinances show byte-identical numbers ("FinancialBettingStats muestra lo mismo de ScFinances"). *(The old fixed-offset fallback is no longer needed — SF.4B.2's content-sized redesign makes the component VBox-friendly by construction.)*
+- [ ] **SF.4B.4** Update `DiceGame` to call `_financialStats.ConnectTo(_userStatsService, <ledger>)` (re-add a `CasinoClientLedgerService` ref — it was removed in SF.4.1 as unused; now used again) instead of the old `ConnectTo(UserStatsService)`. Leave `UserBettingStats.ProfitSinceDeposit`/`AmountWageredSinceDeposit` and the recharge-time `RegisterDeposit()` reset **in place but unused by the panel** (cosmetic legacy; a deeper cleanup of that conflation is out of scope here — note it for later).
+
+#### Task 2 — Persistent in-DiceGame bet history on entry
+
+**Problem.** `BetHistoryContainer` fills only from live `BetExecuted` events; on **re-entering** DiceGame it starts empty even though the full history is persisted in `UserStatsService.BetHistory` (`BetHistoryRepository`). The container **already** has `LoadFromHistoricalRecords(IReadOnlyList<BetRecord>)` — DiceGame just never calls it. Mirror how CalendarsNavigator / BetsHistoryExplorer / (now) ScFinances read the same centralized store.
+
+- [ ] **SF.4B.5** Add `UserStatsService.GetRecentBets(int max)` → the last `max` `BetRecord`s from the loaded history (`BetHistory.Records`, after `EnsureFullHistoryLoaded()` or at least the latest chunk), newest-last to match `LoadFromHistoricalRecords`' `TakeLast`. Centralized query, reusing the existing repository.
+- [ ] **SF.4B.6** In `DiceGame`, after the container pool exists and **after** the on-entry checkpoint restore / history rollback settles (so it reflects the committed history, not a pre-rollback view — see the existing `GetLoadedHistoryStats()` ordering note ~line 293), seed once: `_betHistoryContainer.LoadFromHistoricalRecords(_userStatsService.GetRecentBets(MaxRecentEntries))`. Live `BetExecuted` appends continue unchanged.
+- [ ] **SF.4B.7** Verify: (a) leave DiceGame → return ⇒ recent history reproduces; (b) bets placed by the **delegated autobet while in another scene** are in the store ⇒ shown on return; (c) newest-first ordering preserved (pool `MoveChild(item, 0)`); (d) pre-genesis / block-rollback semantics unchanged (the store already rolls back — the seed just reads whatever survived).
+
+#### Testing (SF.4B)
+
+- [ ] Deposit via ScFinances (Bank→Main) ⇒ "since last deposit" P/L & Gambled reset to `0` in **both** ScFinances and DiceGame; General unchanged.
+- [ ] Trigger a Bankroll recharge ⇒ "since last recharge" resets; "since last deposit" does **not** (distinct baselines).
+- [ ] Numbers identical between ScFinances and DiceGame's `FinancialBettingStats` at all times.
+- [ ] Re-enter DiceGame ⇒ most-recent bet rows reappear; keep betting ⇒ new rows prepend; no duplication of the seeded rows.
+- [ ] InvariantCulture / English / colors on all new labels; `_ExitTree` unsubscribes (no dangling events on scene free).
+
 ### Phase SF.5 — Documentation truth pass
 
 - [ ] **SF.5.1** `CLAUDE.md`: autoloads 12 → 13 + `PlayerBankAccountService` section; navigation map; Canonical Decisions — **keep the `39,900/100` split unchanged**, add one row: **"Private Bank Account starts at `0`" (optional reserve, all automation OFF by default)**; game-over row per D-SF2.1 (`Bank + Main + Bankroll = 0`, worded to leave room for the future BTC→SC coin-swap escape hatch §7.4); session-start invariant note (D-SF2.6); Implementation Status.
