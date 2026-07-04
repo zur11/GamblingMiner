@@ -352,9 +352,11 @@ Player sign convention: **P/L = +TotalProfit** (the player's own gain), unlike `
 - [ ] Re-enter DiceGame ⇒ most-recent bet rows reappear; keep betting ⇒ new rows prepend; no duplication of the seeded rows.
 - [ ] InvariantCulture / English / colors on all new labels; `_ExitTree` unsubscribes (no dangling events on scene free).
 
-### Phase SF.4C — UI layout fix: nav/back buttons as a fixed footer outside the scroll (+ manual/CLAUDE/memory reinforcement)
+### Phase SF.4C — UI layout fix: nav/back buttons as a fixed footer outside the scroll (+ manual/CLAUDE/memory reinforcement) — ✅ COMPLETED (changes kept) — but did NOT fix the primordial bug (see SF.4D)
 
 **Added after SF.4B (not in the original plan).** A recurring layout bug: on the full-page scroll scenes the **Back / nav buttons overflow off the bottom of the scroll** — clickable but not readable.
+
+> **⚠️ Post-mortem (why SF.4C didn't fix it, 2026-07-04).** The fixed-footer restructure is a genuine improvement and is **kept**, but the user confirmed the Back buttons are **still a little overflowed at the bottom in BOTH `ScFinances` AND `ScTransactions`** — even in `ScTransactions`, where the scroll isn't even active (few entries). That last fact **falsifies SF.4C's "footer inside the scroll" diagnosis**: a scene whose content is far shorter than the viewport cannot be clipped *by a scroll*. The real cause is lower down the stack — the window itself — and is addressed in **SF.4D**. In short: SF.4C fixed a real but *secondary* problem (footer reachability inside a scroll) and correctly documented the fixed-footer pattern; it just wasn't the cause of *this* overflow.
 
 **Root cause (diagnosed).** `ScFinances` was mirrored from `CasinoGamblingFinances`, which uses `MarginContainer → ScrollContainer` **directly** (no intermediate bounding `VBoxContainer`, no `size_flags_vertical = 3` on the scroll — i.e. NOT the canonical bounding chain of ProjectDesignManual §29.1) **and keeps the `NavRow` + `BackBtn` as the last children *inside* the scroll**. So the footer is only reachable by scrolling and sits flush/clipped at the viewport's bottom edge. By contrast `ScTransactions` was mirrored from `ClientsTransactions`, which already does it right — a bounded outer `RootVBox` → inner `ScrollContainer` (`size_flags_vertical = 3`) → **`BackBtn` as a fixed footer** (always visible). **`ScTransactions` is therefore already correct; only `ScFinances` needs the structural fix.** This is a new lesson not yet in Chapter 29 (which covers *making* panels scroll, not where persistent footers go), which is why it keeps recurring.
 
@@ -372,6 +374,27 @@ Player sign convention: **P/L = +TotalProfit** (the player's own gain), unlike `
 - [ ] `ScFinances`: the form scrolls; `NavRow` + `Back` are **always fully visible and readable** at the bottom regardless of scroll position; mouse wheel scrolls the form (works over labels); a 500-entry `BankTransferHistoryList` still scrolls within the form.
 - [ ] `ScTransactions`: unchanged behavior; `Back` always visible.
 - [ ] `ScFinances.cs` required **no** code changes (unique names preserved); all buttons still wired.
+
+### Phase SF.4D — UI fix (the real one): the window's bottom band falls off-screen; keep critical controls out of it
+
+**Added after SF.4C (which relocated the footer but did not fix the overflow).**
+
+**Root cause (studied & confirmed).** The project renders a **1920×1080** design canvas (`project.godot [display]`: `viewport_width=1920`, `viewport_height=1080`, `stretch/mode="canvas_items"`), and there is **no window-mode / maximize / fullscreen configuration anywhere** (`grep` of `project.godot`, `Main.cs`, `Scripts/` for `window/size/mode`, `fullscreen`, `maximized`, `DisplayServer`, `WindowMode` → **nothing**). So the game opens as a **plain 1920×1080 window**. On a 1080p (or shorter) display, the OS title bar + taskbar make the window taller than the visible screen, so the **bottom band (~30–70 px) of the 1080 canvas is pushed off-screen**. Any control sitting in that band is cut off — "clickable but a bit overflowed below."
+
+**Why only the new scenes show it.** `ScFinances` and `ScTransactions` both have an **expanding element** (`ContentScroll` / `TxScroll` with `size_flags_vertical = 3`) that **pins the Back/nav footer to the absolute bottom** of the canvas (y ≈ 1010–1050) — *regardless of how little content there is* (this is exactly why `ScTransactions` overflows even with no active scroll). Other scenes (e.g. `BankrollProgrammer`) have a **content-driven** Back button that sits much higher (y ≈ 700–800), safely above the off-screen band — so they're unaffected. SF.4C's fixed footer is still bottom-pinned, so the symptom persisted.
+
+**Files**: `project.godot` (window mode) and/or `Main.cs`; `Screens/ScFinances/ScFinances.tscn`, `Screens/ScFinances/ScTransactions.tscn`; `Documentation/ProjectDesignManual.md` (Ch. 29); optionally `CLAUDE.md`.
+
+- [ ] **SF.4D.1 — Root fix: start the game window MAXIMIZED** so the client area fits within the physical screen (title bar/taskbar included) and the **entire 1080 canvas is visible** (letterboxed if the screen isn't 16:9). Implement the more reliable of: (a) `project.godot` → `window/size/mode=3` (Maximized) [+ `window/size/resizable` left default], or (b) a one-liner in `Main._Ready()`: `DisplayServer.WindowSetMode(DisplayServer.WindowMode.Maximized)`. This fixes **every** scene at once — present and future — since nothing is pushed off-screen anymore. **Verify against the user's actual run setup** (external window vs. editor-embedded game); if embedded behaves oddly, prefer the code path or a fixed initial `window/size` that fits the screen.
+- [ ] **SF.4D.2 — Defensive belt-and-suspenders: a bottom "safe area"** so no critical control lives in the last ~60–80 px even if someone runs a non-maximized window. For the two fixed-footer scenes, bump the `RootMargin` `margin_bottom` from `30` to **~70** (or add an equivalent bottom spacer below the footer). Cheap, and keeps the footers readable independent of window mode.
+- [ ] **SF.4D.3 — Document the real lesson** in `ProjectDesignManual.md` Ch. 29 (new short subsection, e.g. §29.11 "The canvas bottom band can fall off-screen"): (a) the game runs a fixed 1080 canvas with no forced window mode, so in a plain window the bottom ~30–70 px is off-screen; (b) **keep critical/interactive controls — especially bottom-pinned footers — out of the bottom safe area (~60–80 px)**; (c) prefer running **maximized/fullscreen**; (d) note that an *expanding* child (`size_flags_vertical = 3`) pins the following siblings to the very bottom, straight into the danger band — pair a fixed footer with a bottom safe margin (link §29.10). Reinforce one line in `CLAUDE.md`'s UI block if warranted.
+- [ ] **SF.4D.4** Correct the SF.4C write-up cross-references so the manual/CLAUDE don't over-claim that the fixed-footer change alone guarantees readability (it needs the SF.4D safe-area / maximize to actually clear the screen edge).
+
+#### Testing (SF.4D)
+
+- [ ] Launch the game (user's normal way): `ScFinances` and `ScTransactions` **Back/nav rows are fully visible and readable**, not touching/under the screen's bottom edge.
+- [ ] Try a **non-maximized / smaller** window too (if SF.4D.2 applied): footers still clear the bottom.
+- [ ] Regression: other scenes (DiceGame, BankrollProgrammer, MainMenu, BlockExplorer) unaffected; nothing important now hidden by letterbox bars.
 
 ### Phase SF.5 — Documentation truth pass
 
