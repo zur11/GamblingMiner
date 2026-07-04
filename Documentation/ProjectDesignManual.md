@@ -2698,6 +2698,40 @@ Two helpers in `BlockExplorer.cs` apply a **display-only cosmetic filter** until
 
 **When to remove:** delete `IsSelfChangeTransaction`, `ExternalOutputs`, and all their callers in `BlockExplorer.cs` once bots have `DerivedAddressWallet` (before the casino referral / rank systems ship). The display will then naturally show all outputs correctly.
 
+### 29.10 — Persistent nav / footer buttons live OUTSIDE the scroll (Step 12 fix)
+
+**Symptom (recurring):** a full-page scrollable screen's **Back / nav buttons overflow off the bottom** — you can click them but not read them, because they sit flush/clipped at the very bottom edge of the scroll. Seen on `ScFinances` (Step 12).
+
+**Cause — two compounding mistakes, both in the same anti-pattern:**
+1. **`MarginContainer → ScrollContainer` *directly*** (no intermediate `VBoxContainer`, no `size_flags_vertical = 3` on the scroll). This is **not** the canonical bounding chain of §29.1 (`MarginContainer → VBoxContainer → expand element`). It can still bound, but it's fragile and offers nowhere to anchor a fixed footer.
+2. **The `NavRow` + `BackBtn` are the last children *inside* the scroll.** So they're only reachable by scrolling to the very end, and the scroll's max offset ends exactly at the content edge — the footer is flush-clipped (the button-analog of the §29.3 trap #4 "last line flush against the bottom edge").
+
+`ScFinances` inherited this from its DEV mirror `CasinoGamblingFinances`. Its sibling `ScTransactions` (mirrored from `ClientsTransactions`) did **not** have the bug because it already used the correct pattern.
+
+**Rule — persistent nav/Back buttons belong in a FIXED FOOTER, outside the scroll:**
+
+```
+RootMargin (MarginContainer, anchors_preset = 15)
+  RootVBox (VBoxContainer)                     ← bounded by the margin
+    [ StatusBar / fixed header, optional ]      ← fixed top
+    ContentScroll (ScrollContainer,             ← the ONLY thing that scrolls
+        size_flags_vertical = 3,                 ← expand: eats all space between header & footer
+        horizontal_scroll_mode = 0)
+      FormVBox (size_flags_horizontal = 3,       ← all the scrollable content
+        mouse_filter = 1)
+    [ HSeparator ]                              ← fixed footer …
+    NavRow (HBoxContainer)                       ← … always visible …
+    BackBtn (Button)                             ← … never clipped
+```
+
+The footer nodes are **siblings of `ContentScroll`, not children of it**, so they're pinned to the bottom of the bounded `RootVBox` and stay fully readable at any scroll position. `ScTransactions` is the reference implementation (list scrolls, `BackBtn` pinned).
+
+**Reparenting is safe for the controller:** scene scripts resolve widgets by `%UniqueName` (`unique_name_in_owner = true`), which is path-independent — moving nodes between the scroll and the footer needs **zero** `.cs` changes as long as the unique names are preserved.
+
+**Checklist addition (extends §29.5):** *7. Persistent nav/Back buttons go in a fixed footer OUTSIDE the scroll (bounded `VBox` → `ScrollContainer(size_flags_vertical = 3)` for content, then the footer row as a sibling). Never leave them as the last child inside the `ScrollContainer`.*
+
+**Not-yet-fixed mirrors:** the DEV scenes `CasinoGamblingFinances` and `ClientsBetsHistory` still use the old inside-scroll-footer anti-pattern; fix them the same way if the overflow is observed (they're DEV-only, so left as-is for now).
+
 ---
 
 ## Chapter 30 — UTXO Realism & Address Non-Reuse (Step 8)

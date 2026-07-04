@@ -24,273 +24,278 @@ theme_override_constants/margin_top = 30
 theme_override_constants/margin_right = 40
 theme_override_constants/margin_bottom = 30
 
-[node name="RootScroll" type="ScrollContainer" parent="RootMargin"]
+[node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
 layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="StatusBarPlaceholder" type="HBoxContainer" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="ContentScroll" type="ScrollContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="RootVBox" type="VBoxContainer" parent="RootMargin/RootScroll"]
+[node name="FormVBox" type="VBoxContainer" parent="RootMargin/RootVBox/ContentScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 1
 theme_override_constants/separation = 10
 
-[node name="StatusBarPlaceholder" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
-unique_name_in_owner = true
-layout_mode = 2
-
-[node name="Title" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="Title" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 36
 text = "SC Finances"
 
-[node name="Sep0" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
+[node name="Sep0" type="HSeparator" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 
-[node name="GameDateLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="GameDateLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = "Game date: 2009-01-03 18:15:06"
 
-[node name="PrivateBankLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="PrivateBankLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "Private Bank Account:  0.00000000 SC"
 
-[node name="MainBalanceLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="MainBalanceLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "Main Balance:          0.00000000 SC"
 
-[node name="BankrollLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="BankrollLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "Bankroll:              0.00000000 SC"
 
-[node name="NetWorthLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="NetWorthLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "Net Worth (all):       0.00000000 SC"
 
-[node name="OverallPlLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="OverallPlLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "Overall P/L:           +0.00000000 SC"
 
-[node name="DoseLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="DoseLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = "Auto-recharge dose:    100.00000000 SC  (read-only — managed in Bankroll Programmer)"
 
-[node name="SepStats" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
+[node name="SepStats" type="HSeparator" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 
-[node name="FinancialBettingStats" parent="RootMargin/RootScroll/RootVBox" instance=ExtResource("2")]
+[node name="FinancialBettingStats" parent="RootMargin/RootVBox/ContentScroll/FormVBox" instance=ExtResource("2")]
 unique_name_in_owner = true
 layout_mode = 2
 
-[node name="Sep1" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
+[node name="Sep1" type="HSeparator" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 
-[node name="DepositsSectionLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="DepositsSectionLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Deposits — Private Bank Account → Main Balance   (bring reserve back into play)"
 
-[node name="AutoDepositRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
+[node name="AutoDepositRow" type="HBoxContainer" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="AutoDepositToggle" type="CheckBox" parent="RootMargin/RootScroll/RootVBox/AutoDepositRow"]
+[node name="AutoDepositToggle" type="CheckBox" parent="RootMargin/RootVBox/ContentScroll/FormVBox/AutoDepositRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Auto-deposit"
 
-[node name="RefillChunkLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/AutoDepositRow"]
+[node name="RefillChunkLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox/AutoDepositRow"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Refill chunk (SC):"
 
-[node name="RefillChunkInput" type="LineEdit" parent="RootMargin/RootScroll/RootVBox/AutoDepositRow"]
+[node name="RefillChunkInput" type="LineEdit" parent="RootMargin/RootVBox/ContentScroll/FormVBox/AutoDepositRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(220, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 placeholder_text = "e.g. 1000"
 
-[node name="SetRefillChunkBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/AutoDepositRow"]
+[node name="SetRefillChunkBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/FormVBox/AutoDepositRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Set"
 
-[node name="AutoDepositInfoLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="AutoDepositInfoLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "OFF = your reserve stays safe (retrieve it manually) · ON = Main auto-refills from the reserve when low (reserve becomes gamblable)"
 
-[node name="DepositRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
+[node name="DepositRow" type="HBoxContainer" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="DepositAmountLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/DepositRow"]
+[node name="DepositAmountLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox/DepositRow"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Deposit amount (SC):"
 
-[node name="DepositAmountInput" type="LineEdit" parent="RootMargin/RootScroll/RootVBox/DepositRow"]
+[node name="DepositAmountInput" type="LineEdit" parent="RootMargin/RootVBox/ContentScroll/FormVBox/DepositRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(260, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 placeholder_text = "e.g. 2000"
 
-[node name="DepositBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/DepositRow"]
+[node name="DepositBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/FormVBox/DepositRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Deposit → Main Balance"
 
-[node name="DepositAvailableLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="DepositAvailableLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "Available: 0.00000000 SC"
 
-[node name="DepositFeedbackLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="DepositFeedbackLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = ""
 
-[node name="Sep2" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
+[node name="Sep2" type="HSeparator" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 
-[node name="WithdrawalsSectionLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="WithdrawalsSectionLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Withdrawals — Main Balance → Private Bank Account"
 
-[node name="AutoWithdrawRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
+[node name="AutoWithdrawRow" type="HBoxContainer" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="AutoWithdrawToggle" type="CheckBox" parent="RootMargin/RootScroll/RootVBox/AutoWithdrawRow"]
+[node name="AutoWithdrawToggle" type="CheckBox" parent="RootMargin/RootVBox/ContentScroll/FormVBox/AutoWithdrawRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Auto-withdraw"
 
-[node name="FloorLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/AutoWithdrawRow"]
+[node name="FloorLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox/AutoWithdrawRow"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Keep at least (SC):"
 
-[node name="FloorInput" type="LineEdit" parent="RootMargin/RootScroll/RootVBox/AutoWithdrawRow"]
+[node name="FloorInput" type="LineEdit" parent="RootMargin/RootVBox/ContentScroll/FormVBox/AutoWithdrawRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(180, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 placeholder_text = "e.g. 1000"
 
-[node name="InstallmentLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/AutoWithdrawRow"]
+[node name="InstallmentLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox/AutoWithdrawRow"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Installment (SC):"
 
-[node name="InstallmentInput" type="LineEdit" parent="RootMargin/RootScroll/RootVBox/AutoWithdrawRow"]
+[node name="InstallmentInput" type="LineEdit" parent="RootMargin/RootVBox/ContentScroll/FormVBox/AutoWithdrawRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(180, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 placeholder_text = "e.g. 100"
 
-[node name="SetAutoWithdrawBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/AutoWithdrawRow"]
+[node name="SetAutoWithdrawBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/FormVBox/AutoWithdrawRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Set"
 
-[node name="WithdrawRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
+[node name="WithdrawRow" type="HBoxContainer" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="WithdrawAmountLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/WithdrawRow"]
+[node name="WithdrawAmountLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox/WithdrawRow"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Withdraw amount (SC):"
 
-[node name="WithdrawAmountInput" type="LineEdit" parent="RootMargin/RootScroll/RootVBox/WithdrawRow"]
+[node name="WithdrawAmountInput" type="LineEdit" parent="RootMargin/RootVBox/ContentScroll/FormVBox/WithdrawRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(260, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 placeholder_text = "e.g. 5000"
 
-[node name="WithdrawBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/WithdrawRow"]
+[node name="WithdrawBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/FormVBox/WithdrawRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Withdraw → Private Bank Account"
 
-[node name="WithdrawAvailableLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="WithdrawAvailableLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "Available: 0.00000000 SC"
 
-[node name="WithdrawFeedbackLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="WithdrawFeedbackLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = ""
 
-[node name="Sep3" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
+[node name="Sep3" type="HSeparator" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 
-[node name="TransfersSectionLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+[node name="TransfersSectionLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Bank Account Transfers"
 
-[node name="BankTransferHistoryList" type="ItemList" parent="RootMargin/RootScroll/RootVBox"]
+[node name="BankTransferHistoryList" type="ItemList" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 220)
 layout_mode = 2
 
-[node name="Sep4" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
+[node name="Sep4" type="HSeparator" parent="RootMargin/RootVBox"]
 layout_mode = 2
 
-[node name="NavRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
+[node name="NavRow" type="HBoxContainer" parent="RootMargin/RootVBox"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="ScTransactionsBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/NavRow"]
+[node name="ScTransactionsBtn" type="Button" parent="RootMargin/RootVBox/NavRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "View SC Transactions →"
 
-[node name="BetsHistoryBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/NavRow"]
+[node name="BetsHistoryBtn" type="Button" parent="RootMargin/RootVBox/NavRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Bets History →"
 
-[node name="BankrollProgrammerBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/NavRow"]
+[node name="BankrollProgrammerBtn" type="Button" parent="RootMargin/RootVBox/NavRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Bankroll Programmer →"
 
-[node name="BackBtn" type="Button" parent="RootMargin/RootScroll/RootVBox"]
+[node name="BackBtn" type="Button" parent="RootMargin/RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 22
