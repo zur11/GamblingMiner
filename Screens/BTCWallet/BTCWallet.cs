@@ -24,6 +24,7 @@ public partial class BTCWallet : Control
 	// Base wallet
 	private Label _baseAddressLabel = null!;
 	private Label _baseBalanceLabel = null!;
+	private Label _baseValuationLabel = null!;
 	private Label _basePendingLabel = null!;
 
 	// Passphrase locked
@@ -84,12 +85,14 @@ public partial class BTCWallet : Control
 	private double _balanceRefreshTimer = 0d;
 	private const double BalanceRefreshInterval = 2.0;
 	private CalendarTimeService? _calendarTimeService;
+	private BtcMarketDataService? _btcMarketDataService;
 
 	public override void _Ready()
 	{
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
 		_networkRoot = GetNode<NetworkRoot>("NetworkRoot");
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		_btcMarketDataService = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 
@@ -99,6 +102,7 @@ public partial class BTCWallet : Control
 
 		_baseAddressLabel = GetNode<Label>("%BaseAddressLabel");
 		_baseBalanceLabel = GetNode<Label>("%BaseBalanceLabel");
+		_baseValuationLabel = GetNode<Label>("%BaseValuationLabel");
 		_basePendingLabel = GetNode<Label>("%BasePendingLabel");
 
 		_passphraseInput = GetNode<LineEdit>("%PassphraseInput");
@@ -496,6 +500,8 @@ public partial class BTCWallet : Control
 		if (pendingOut > 0m)
 			_basePendingLabel.Text = $"Pending outgoing: {pendingOut:F8} BTC";
 
+		UpdateValuationLabel(total);
+
 		if (_addressListExpanded) RefreshAddressList();
 		if (_txExpanded) RefreshTransactions();
 
@@ -507,6 +513,24 @@ public partial class BTCWallet : Control
 			if (pPending > 0m)
 				_passphrasePendingLabel.Text = $"Pending outgoing: {pPending:F8} BTC";
 		}
+	}
+
+	// Step 13 (MD.2 / D-13.3-a) — the BTC amount never changes here, only its SC valuation via the day's
+	// step-function price (BtcMarketDataService). Locked message before the market exists (§2).
+	private const string NoMarketYetMessage = "— no market price yet (first exchange opens 18 Jul 2010)";
+
+	private void UpdateValuationLabel(decimal totalBtc)
+	{
+		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
+		decimal? price = _btcMarketDataService?.GetEffectivePriceUsd(gameTime);
+		if (price is not decimal p)
+		{
+			_baseValuationLabel.Text = NoMarketYetMessage;
+			return;
+		}
+
+		decimal scValue = Scripts.Finance.Money.Normalize(totalBtc * p);
+		_baseValuationLabel.Text = string.Create(CultureInfo.InvariantCulture, $"≈ {scValue:N8} SC @ {p:N8} SC/BTC");
 	}
 
 	// ── Mode management ───────────────────────────────────────────────────────

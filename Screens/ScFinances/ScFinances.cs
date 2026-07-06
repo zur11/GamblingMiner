@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Globalization;
+using GodotBlockchainPort.Simulation;
 using Scripts.Finance;
 using UI.StatusBar;
 
@@ -18,6 +19,8 @@ public partial class ScFinances : Control
 	private CasinoClientLedgerService _ledger;
 	private SceneManager             _sceneManager;
 	private CalendarTimeService      _calendarTime;
+	private BtcMarketDataService     _btcMarketData;
+	private NetworkRoot              _networkRoot;
 
 	private Label _gameDateLabel;
 	private Label _privateBankLabel;
@@ -26,6 +29,8 @@ public partial class ScFinances : Control
 	private Label _netWorthLabel;
 	private Label _overallPlLabel;
 	private Label _doseLabel;
+	private CheckBox _includeBtcToggle;
+	private Label _btcValueLabel;
 
 	private CheckBox _autoDepositToggle;
 	private LineEdit _refillChunkInput;
@@ -58,6 +63,8 @@ public partial class ScFinances : Control
 		_ledger          = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 		_sceneManager    = GetNodeOrNull<SceneManager>("/root/SceneManager");
 		_calendarTime    = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		_btcMarketData   = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
+		_networkRoot     = GetNode<NetworkRoot>("NetworkRoot");
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 
@@ -71,6 +78,8 @@ public partial class ScFinances : Control
 		_netWorthLabel        = GetNode<Label>("%NetWorthLabel");
 		_overallPlLabel       = GetNode<Label>("%OverallPlLabel");
 		_doseLabel            = GetNode<Label>("%DoseLabel");
+		_includeBtcToggle     = GetNode<CheckBox>("%IncludeBtcToggle");
+		_btcValueLabel        = GetNode<Label>("%BtcValueLabel");
 
 		_autoDepositToggle    = GetNode<CheckBox>("%AutoDepositToggle");
 		_refillChunkInput     = GetNode<LineEdit>("%RefillChunkInput");
@@ -93,6 +102,7 @@ public partial class ScFinances : Control
 		GetNode<Button>("%WithdrawBtn").Pressed         += OnWithdrawPressed;
 		_autoDepositToggle.Toggled  += OnAutoDepositToggled;
 		_autoWithdrawToggle.Toggled += OnAutoWithdrawToggled;
+		_includeBtcToggle.Toggled   += _ => RefreshAll();
 
 		GetNode<Button>("%ScTransactionsBtn").Pressed     += () => _sceneManager?.Go(SceneManager.SceneId.ScTransactions);
 		GetNode<Button>("%BetsHistoryBtn").Pressed        += () => _sceneManager?.Go(SceneManager.SceneId.BetsHistoryExplorer);
@@ -118,6 +128,7 @@ public partial class ScFinances : Control
 			_bankrollProgram.TransfersChanged += RefreshAll;
 			_bankrollProgram.AutoRechargeAmountChanged += RefreshAll;
 		}
+		if (_btcMarketData != null)  _btcMarketData.MarketDayChanged += OnMarketDayChanged;
 
 		RefreshAll();
 	}
@@ -131,7 +142,10 @@ public partial class ScFinances : Control
 			_bankrollProgram.TransfersChanged -= RefreshAll;
 			_bankrollProgram.AutoRechargeAmountChanged -= RefreshAll;
 		}
+		if (_btcMarketData != null) _btcMarketData.MarketDayChanged -= OnMarketDayChanged;
 	}
+
+	private void OnMarketDayChanged(MarketDay day) => RefreshAll();
 
 	public override void _Process(double delta)
 	{
@@ -165,15 +179,19 @@ public partial class ScFinances : Control
 		_privateBankLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Private Bank Account:  {bank:N8} SC");
 		_mainBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Main Balance:          {main:N8} SC");
 		_bankrollLabel.Text    = string.Create(CultureInfo.InvariantCulture, $"Bankroll:              {bankrollBal:N8} SC");
-		_netWorthLabel.Text    = string.Create(CultureInfo.InvariantCulture, $"Net Worth (all):       {netWorth:N8} SC");
+		// D-13.3-c: this SC-only figure — not the BTC-inclusive one below — is what Game Over checks (D-SF2.1),
+		// so it keeps top visual prominence (bigger font, explicit tag) regardless of the BTC toggle's state.
+		_netWorthLabel.Text    = string.Create(CultureInfo.InvariantCulture, $"Net Worth (all) — game-over metric:  {netWorth:N8} SC");
 
-		_overallPlLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Overall P/L:           {overallPl:+0.00000000;-0.00000000} SC");
+		_overallPlLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Overall P/L — game-over metric:      {overallPl:+0.00000000;-0.00000000} SC");
 		_overallPlLabel.AddThemeColorOverride("font_color", overallPl >= 0m
 			? new Color(0.4f, 1f, 0.4f)
 			: new Color(1f, 0.4f, 0.4f));
 
 		_doseLabel.Text = string.Create(CultureInfo.InvariantCulture,
 			$"Auto-recharge dose:    {dose:N8} SC  (read-only — managed in Bankroll Programmer)");
+
+		RefreshBtcValueLabel(netWorth);
 
 		_depositAvailableLabel.Text  = string.Create(CultureInfo.InvariantCulture, $"Available: {bank:N8} SC");
 		_withdrawAvailableLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Available: {main:N8} SC");
@@ -192,6 +210,38 @@ public partial class ScFinances : Control
 					$"{r.GameDateLocal:yyyy-MM-dd HH:mm:ss} | {sign}{r.Amount:N8} SC | {dirWord} | {r.Method}"));
 			}
 		}
+	}
+
+	// Step 13 (MD.2 / D-13.3-c) — ONE label whose content the toggle switches: ON → total net worth
+	// including BTC (SC-denominated); OFF → the player's BTC valuation alone. Always SC-denominated either
+	// way — the BTC amount itself never changes, only its SC price via BtcMarketDataService's step function.
+	// This figure is NEVER the game-over metric (that stays the SC-only NetWorthLabel above, D-SF2.1).
+	private void RefreshBtcValueLabel(decimal netWorth)
+	{
+		if (_networkRoot == null || _btcValueLabel == null)
+		{
+			return;
+		}
+
+		decimal totalBtc = 0m;
+		foreach ((_, decimal confirmed, _, _) in _networkRoot.GetNodeAddressBook("player"))
+		{
+			totalBtc += confirmed;
+		}
+
+		DateTime gameTime = _calendarTime?.CurrentLocalDateTime ?? DateTime.MinValue;
+		decimal? price = _btcMarketData?.GetEffectivePriceUsd(gameTime);
+		if (price is not decimal p)
+		{
+			_btcValueLabel.Text = string.Create(CultureInfo.InvariantCulture,
+				$"BTC holdings: {totalBtc:N8} BTC — no market price yet (first exchange opens 18 Jul 2010)");
+			return;
+		}
+
+		decimal btcValueSc = Money.Normalize(totalBtc * p);
+		_btcValueLabel.Text = _includeBtcToggle.ButtonPressed
+			? string.Create(CultureInfo.InvariantCulture, $"Total Net Worth (incl. BTC):  {Money.Normalize(netWorth + btcValueSc):N8} SC")
+			: string.Create(CultureInfo.InvariantCulture, $"BTC holdings value:           {btcValueSc:N8} SC");
 	}
 
 	// ---- Deposits (Bank → Main) ---------------------------------------------------------------------------------

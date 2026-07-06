@@ -1,7 +1,8 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://Screens/ScFinances/ScFinances.cs" id="1"]
 [ext_resource type="PackedScene" uid="uid://c2crwe1sryeto" path="res://UI/FinancialBettingStats/FinancialBettingStats.tscn" id="2"]
+[ext_resource type="Script" path="res://Scripts/BlockchainPort/Simulation/NetworkRoot.cs" id="3"]
 
 [node name="ScFinances" type="Control"]
 layout_mode = 3
@@ -11,6 +12,9 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1")
+
+[node name="NetworkRoot" type="Node" parent="."]
+script = ExtResource("3")
 
 [node name="RootMargin" type="MarginContainer" parent="."]
 layout_mode = 1
@@ -78,20 +82,36 @@ text = "Bankroll:              0.00000000 SC"
 [node name="NetWorthLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_font_sizes/font_size = 24
-text = "Net Worth (all):       0.00000000 SC"
+theme_override_font_sizes/font_size = 32
+text = "Net Worth (all) — game-over metric:  0.00000000 SC"
 
 [node name="OverallPlLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_font_sizes/font_size = 24
-text = "Overall P/L:           +0.00000000 SC"
+theme_override_font_sizes/font_size = 32
+text = "Overall P/L — game-over metric:      +0.00000000 SC"
 
 [node name="DoseLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = "Auto-recharge dose:    100.00000000 SC  (read-only — managed in Bankroll Programmer)"
+
+[node name="BtcValueRow" type="HBoxContainer" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="IncludeBtcToggle" type="CheckBox" parent="RootMargin/RootVBox/ContentScroll/FormVBox/BtcValueRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Include BTC"
+
+[node name="BtcValueLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/FormVBox/BtcValueRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "BTC holdings value: 0.00000000 SC"
 
 [node name="SepStats" type="HSeparator" parent="RootMargin/RootVBox/ContentScroll/FormVBox"]
 layout_mode = 2
