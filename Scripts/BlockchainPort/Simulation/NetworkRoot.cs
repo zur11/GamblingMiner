@@ -43,6 +43,11 @@ public partial class NetworkRoot : Node
     // "clean reset" decision). Increment this whenever the persisted Transaction/Block shape changes.
     private const int WorldFormatVersion = 2;
     private const string WorldVersionPath = "user://world_format_version.txt";
+    // Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
+    // A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
+    // chain tip paired with a 2010 fee-activation date), so a tag mismatch triggers the same clean reset
+    // as a format-version bump. See ResetWorldIfIncompatible.
+    private const string WorldTimelinePath = "user://world_timeline.stamp";
     // Casino community pool: fixed per-payout transaction fee (lowest available to the casino),
     // deducted from each contributor's gross share before it is sent (Phase 2).
     private const decimal CasinoTxFee = 0.1m;
@@ -74,9 +79,10 @@ public partial class NetworkRoot : Node
             return;
         }
 
-        // Step 8 — if the on-disk world predates the UTXO model, wipe the incompatible chain/clock/financial
-        // state so this launch re-bootstraps a fresh UTXO world (clean reset). Must run before TryLoadSnapshot.
-        ResetWorldIfFormatChanged();
+        // Step 8 / Step 13 (TL.1) — if the on-disk world predates the UTXO model OR was built under the
+        // other timeline (canon vs. the DEV alt-timeline simulacrum), wipe the incompatible chain/clock/
+        // financial state so this launch re-bootstraps a fresh, consistent world. Must run before TryLoadSnapshot.
+        ResetWorldIfIncompatible();
 
         // Load saved state first so wallets can be restored before nodes are created.
         BlockchainStateSnapshot? savedState = TryLoadSnapshot();
@@ -1740,11 +1746,21 @@ public partial class NetworkRoot : Node
         }
     }
 
-    // Step 8 (clean reset) — when WorldFormatVersion changes, the persisted world is incompatible (the old
-    // account-model chain has no UTXO linkage). Delete the chain, the per-block checkpoint, the game clock,
-    // and the SC balance state so the next steps re-bootstrap a pristine UTXO world from genesis. SC betting
-    // history (cosmetic) is left untouched. Idempotent: writes the new version stamp so it runs once.
-    private static void ResetWorldIfFormatChanged()
+    // Step 8 (clean reset) + Step 13 (TL.1, D-13.7) — the persisted world is wiped whenever EITHER the
+    // format version OR the timeline tag (TimelineConfig.Tag) no longer matches what's stamped on disk.
+    // A stale format version means old account-model data with no UTXO linkage; a stale timeline tag means
+    // a save built under the other calendar (canon vs. the DEV alt-timeline simulacrum) — a canon/alt
+    // hybrid would be corrupt (e.g. a 2009 chain tip paired with a 2010 fee-activation date). Both triggers
+    // share the SAME complete delete list — no divergent partial resets (D-13.7 extends the Step-8 list
+    // with the full Step-11/12 state set + bet-history chunks, which are no longer spared as "cosmetic":
+    // canon-dated rows would sit before an alt world's genesis and permanently pollute its since-deposit/
+    // since-recharge stat scopes). Idempotent: re-stamps both on exit so it runs once per change.
+    //
+    // The timeline stamp file not existing at all (upgrading from a pre-TL.1 save) is NOT itself treated as
+    // a mismatch — the timeline concept didn't exist yet, so an existing save is assumed canon-compatible
+    // and the stamp is simply backfilled, rather than surprise-wiping a developer's current playthrough the
+    // moment this phase lands.
+    private static void ResetWorldIfIncompatible()
     {
         int storedVersion = 0;
         if (FileAccess.FileExists(WorldVersionPath))
@@ -1752,12 +1768,30 @@ public partial class NetworkRoot : Node
             using FileAccess vf = FileAccess.Open(WorldVersionPath, FileAccess.ModeFlags.Read);
             int.TryParse(vf.GetAsText().Trim(), out storedVersion);
         }
-        if (storedVersion == WorldFormatVersion)
+        bool formatChanged = storedVersion != WorldFormatVersion;
+
+        bool timelineStampExists = FileAccess.FileExists(WorldTimelinePath);
+        string storedTimelineTag = TimelineConfig.Tag;
+        if (timelineStampExists)
         {
+            using FileAccess tf = FileAccess.Open(WorldTimelinePath, FileAccess.ModeFlags.Read);
+            storedTimelineTag = tf.GetAsText().Trim();
+        }
+        bool timelineChanged = timelineStampExists && storedTimelineTag != TimelineConfig.Tag;
+
+        if (!formatChanged && !timelineChanged)
+        {
+            if (!timelineStampExists)
+            {
+                using FileAccess backfill = FileAccess.Open(WorldTimelinePath, FileAccess.ModeFlags.Write);
+                backfill?.StoreString(TimelineConfig.Tag);
+            }
             return;
         }
 
-        GD.Print($"[NetworkRoot] World format {storedVersion} → {WorldFormatVersion}: resetting chain + clock + financial state for the UTXO model (clean reset).");
+        GD.Print($"[NetworkRoot] World reset triggered (format {storedVersion} → {WorldFormatVersion}" +
+                 (timelineChanged ? $", timeline '{storedTimelineTag}' → '{TimelineConfig.Tag}'" : string.Empty) +
+                 "): resetting chain + clock + financial state (clean reset).");
 
         DeleteIfExists(StatePath);
         DeleteIfExists("user://block_session_checkpoint.json");
@@ -1765,15 +1799,28 @@ public partial class NetworkRoot : Node
         DeleteIfExists("user://bankroll_state.json");
         DeleteIfExists("user://principal_balance_state.json");
         DeleteIfExists("user://bankroll_program_state.json");
+        DeleteIfExists("user://casino_sc_balance_state.json");
+        DeleteIfExists("user://player_bank_account_state.json");
+        DeleteIfExists("user://casino_client_ledger.json");
+        DeleteIfExists("user://bet_history.jsonl");
 
-        // The monthly block history chunks are likewise old-format — remove them so the explorer rebuilds.
+        // The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
+        // and the betting stats rebuild from a pristine world.
         string blocksDirAbs = ProjectSettings.GlobalizePath(BlockchainDir);
         if (System.IO.Directory.Exists(blocksDirAbs))
             foreach (string staleFile in System.IO.Directory.GetFiles(blocksDirAbs, "blocks-*.json"))
                 try { System.IO.File.Delete(staleFile); } catch { /* best-effort */ }
 
-        using FileAccess stamp = FileAccess.Open(WorldVersionPath, FileAccess.ModeFlags.Write);
-        stamp?.StoreString(WorldFormatVersion.ToString());
+        string userDirAbs = ProjectSettings.GlobalizePath("user://");
+        if (System.IO.Directory.Exists(userDirAbs))
+            foreach (string staleFile in System.IO.Directory.GetFiles(userDirAbs, "bet_history_*.jsonl"))
+                try { System.IO.File.Delete(staleFile); } catch { /* best-effort */ }
+
+        using FileAccess versionStamp = FileAccess.Open(WorldVersionPath, FileAccess.ModeFlags.Write);
+        versionStamp?.StoreString(WorldFormatVersion.ToString());
+
+        using FileAccess timelineStamp = FileAccess.Open(WorldTimelinePath, FileAccess.ModeFlags.Write);
+        timelineStamp?.StoreString(TimelineConfig.Tag);
     }
 
     private static void DeleteIfExists(string userPath)
