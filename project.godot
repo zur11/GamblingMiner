@@ -30,6 +30,7 @@ SceneManager="*res://Scripts/Services/SceneManager.cs"
 NotepadService="*res://Scripts/Services/NotepadService.cs"
 FoundersMiningService="*res://Scripts/Services/FoundersMiningService.cs"
 SimulationService="*res://Scripts/Services/SimulationService.cs"
+BtcMarketDataService="*res://Scripts/Services/BtcMarketDataService.cs"
 
 [display]
 
