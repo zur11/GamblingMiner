@@ -16,14 +16,15 @@ using GodotBlockchainPort.Simulation;
 public static class HistoricalBootstrapService
 {
 	// Player always begins on this calendar day; the exact time-of-day is randomised per run.
-	private static readonly DateTime PlayerStartDayLocal = new(2009, 3, 21, 0, 0, 0, DateTimeKind.Local);
+	// Shared with FoundersMiningService.HalDecayStart via TimelineConfig.PlayerStartDayLocal (§3.2).
+	private static readonly DateTime PlayerStartDayLocal = TimelineConfig.PlayerStartDayLocal;
 
 	// Hal joins 11 Jan 2009 and mines exactly 3 spaced bootstrap blocks near these dates.
 	private static readonly DateTime[] HalBlockDatesLocal =
 	{
-		new(2009, 1, 12, 0, 0, 0, DateTimeKind.Local),
-		new(2009, 2,  5, 0, 0, 0, DateTimeKind.Local),
-		new(2009, 3,  5, 0, 0, 0, DateTimeKind.Local),
+		TimelineConfig.Shift(new DateTime(2009, 1, 12, 0, 0, 0, DateTimeKind.Local)),
+		TimelineConfig.Shift(new DateTime(2009, 2,  5, 0, 0, 0, DateTimeKind.Local)),
+		TimelineConfig.Shift(new DateTime(2009, 3,  5, 0, 0, 0, DateTimeKind.Local)),
 	};
 
 	// ~16h 40m in-game per block at 100X (≈585 attempts/block × 100 in-game seconds).
@@ -32,7 +33,7 @@ public static class HistoricalBootstrapService
 	// Step 7.3 (E4): the famous first person-to-person tx — Satoshi → Hal, 10 BTC, ~12 Jan 2009.
 	// Injected into the mempool once the bootstrap clock reaches this date, so it confirms in the
 	// block whose timestamp ≈ 12 Jan (real block 170; ~block 13 here — dates, not heights, rule).
-	private static readonly DateTime E4DateLocal = new(2009, 1, 12, 0, 0, 0, DateTimeKind.Local);
+	private static readonly DateTime E4DateLocal = TimelineConfig.Shift(new DateTime(2009, 1, 12, 0, 0, 0, DateTimeKind.Local));
 	private const decimal E4AmountBtc = 10m;
 	private const string E4Salt = "hist_E4_satoshi_hal_10";
 

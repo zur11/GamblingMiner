@@ -27,7 +27,7 @@ public static class HistoricalEventScheduler
 	// All ~18 Apr 2009. The later steps also gate on the previous step being confirmed, so the shared
 	// date is fine — they fan out across consecutive blocks once the date is crossed.
 	private static readonly long HearnDealDateMs =
-		new DateTimeOffset(new DateTime(2009, 4, 18, 0, 0, 0, DateTimeKind.Local)).ToUnixTimeMilliseconds();
+		new DateTimeOffset(TimelineConfig.Shift(new DateTime(2009, 4, 18, 0, 0, 0, DateTimeKind.Local))).ToUnixTimeMilliseconds();
 
 	// One scripted transfer. `Salt` makes the content-hash txid reproducible → idempotent + chain-checkable.
 	private sealed record Step(string FromNodeId, string ToNodeId, decimal Amount, long DateMs, string Salt);

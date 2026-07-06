@@ -3,7 +3,7 @@ using System;
 
 public partial class CalendarTimeService : Node
 {
-	private static readonly DateTime GameStartLocal = new DateTime(2009, 1, 3, 18, 15, 6, DateTimeKind.Local);
+	private static readonly DateTime GameStartLocal = TimelineConfig.Shift(new DateTime(2009, 1, 3, 18, 15, 6, DateTimeKind.Local));
 	private static readonly DateTime LegacyStartLocal = new DateTime(2009, 10, 3, 0, 0, 0, DateTimeKind.Local);
 
 	public DateTime CurrentLocalDateTime { get; private set; } = DateTime.Now;

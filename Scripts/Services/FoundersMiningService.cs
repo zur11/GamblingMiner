@@ -30,7 +30,7 @@ public partial class FoundersMiningService : Node
 	// ~10% block share this implies is a HISTORICAL requirement, not a tunable (Q-A1).
 	public const decimal SatoshiTargetBtc = 11000m;
 	// Never retire before this floor; if still short, ramp exponentially past it, then retire (OQ-3).
-	private static readonly DateTime SatoshiEarliestDisappearance = new(2011, 4, 26, 0, 0, 0, DateTimeKind.Local);
+	private static readonly DateTime SatoshiEarliestDisappearance = TimelineConfig.Shift(new DateTime(2011, 4, 26, 0, 0, 0, DateTimeKind.Local));
 	// ≈585 attempts/block × 100 in-game s = 58,500 in-game s/block ⇒ 1.477 blocks per in-game day.
 	private const double BlocksPerInGameDay = 1.477;
 	// Exponential ramp base used only when past the floor date and still short of target.
@@ -45,8 +45,8 @@ public partial class FoundersMiningService : Node
 	// less as August nears, then goes dormant" (his real ALS turning point). Full network-coupled model awaits
 	// the postponed gradual-miner-spawning feature.
 	private const double HalBaselinePower = 1.0;
-	private static readonly DateTime HalDecayStart = new(2009, 3, 21, 0, 0, 0, DateTimeKind.Local); // player start day
-	private static readonly DateTime HalDecayEnd = new(2009, 8, 9, 0, 0, 0, DateTimeKind.Local);    // ~ALS turning point
+	private static readonly DateTime HalDecayStart = TimelineConfig.PlayerStartDayLocal; // player start day
+	private static readonly DateTime HalDecayEnd = TimelineConfig.Shift(new DateTime(2009, 8, 9, 0, 0, 0, DateTimeKind.Local));    // ~ALS turning point
 
 	private sealed class FounderRuntime
 	{

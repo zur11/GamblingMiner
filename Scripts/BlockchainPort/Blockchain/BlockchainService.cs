@@ -49,7 +49,7 @@ public sealed class BlockchainService
     public const string GenesisHeadline = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks.";
     public const string BootstrapSecondBlockTxId = "bootstrap-satoshi-second-block-50btc";
     public static readonly long GenesisTimestampUnixMs =
-        new DateTimeOffset(2009, 1, 3, 18, 15, 5, TimeSpan.Zero).ToUnixTimeMilliseconds();
+        TimelineConfig.Shift(new DateTimeOffset(2009, 1, 3, 18, 15, 5, TimeSpan.Zero)).ToUnixTimeMilliseconds();
 
     public List<Block> Chain { get; } = new();
     public List<Transaction> PendingTransactions { get; } = new();

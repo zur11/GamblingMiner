@@ -277,11 +277,11 @@ The key conceptual line: **the price never changes the BTC amount, only its SC v
 
 Ordering rationale: TL.0/MD.0/MD.1 are canon-safe and land first (they're `main`-mergeable at any time); the flag flip is the **last** switch before swap work begins, and the **first** thing reverted when it ends.
 
-### Phase TL.0 — `TimelineConfig` + anchor refactor (canon-safe, zero behavior change)
-- [ ] Add `TimelineConfig` (`DevAltTimeline = false`, `Offset = Zero`, `Tag = CANON…`).
-- [ ] Route the 7 anchor sites (§3.2 table) through `TimelineConfig.Shift(...)` / offset-aware ms constants. `LegacyStartLocal` untouched.
-- [ ] `NetworkFeePolicy` routes through the D-13.9 special case (`DevAltTimeline ? AltPlayerStartDay : 2009-04-26`) — canon value unchanged while the flag is false.
-- [ ] Verify canon world is bit-identical: bootstrap landing date, founder trace, fee date, Hearn dates.
+### Phase TL.0 — `TimelineConfig` + anchor refactor (canon-safe, zero behavior change) ✅ COMPLETE (2026-07-05)
+- [x] Add `TimelineConfig` (`DevAltTimeline = false`, `Offset = Zero`, `Tag = CANON…`). New file `Scripts/Services/TimelineConfig.cs`.
+- [x] Route the 7 anchor sites (§3.2 table) through `TimelineConfig.Shift(...)` / offset-aware ms constants. `LegacyStartLocal` untouched. Sites: `BlockchainService.GenesisTimestampUnixMs`, `CalendarTimeService.GameStartLocal`, `HistoricalBootstrapService.PlayerStartDayLocal`/`HalBlockDatesLocal`/`E4DateLocal`, `FoundersMiningService.SatoshiEarliestDisappearance`/`HalDecayStart`/`HalDecayEnd`, `HistoricalEventScheduler.HearnDealDateMs`. `PlayerStartDayLocal` and `HalDecayStart` both now read `TimelineConfig.PlayerStartDayLocal` (single shared anchor, per §3.2's footnote) instead of two independent literals.
+- [x] `NetworkFeePolicy` routes through the D-13.9 special case (`TimelineConfig.FeeActivationLocal` = `DevAltTimeline ? PlayerStartDayLocal : 2009-04-26`) — canon value unchanged while the flag is false. Side-fix: `ActivationDateMs`'s `DateTimeOffset(dt, TimeSpan.Zero)` conversion now strips the dt's Kind to `Unspecified` first — `TimelineConfig`'s dates carry `DateTimeKind.Local` (the original literal was bare `Unspecified`), and `DateTimeOffset(Local dt, TimeSpan.Zero)` throws unless the machine's real UTC offset is zero. Only matters once `DevAltTimeline` flips true (TL.2); inert today.
+- [x] Verify canon world is bit-identical: all `Shift()` calls add `TimeSpan.Zero` while `DevAltTimeline == false`, so every shifted constant has identical `Ticks` to its pre-refactor literal (reasoned through by inspection — `DateTime`/`DateTimeOffset` arithmetic, not zone conversion). `dotnet build` succeeds with 0 warnings/errors. Full in-editor bootstrap replay left to the developer's verification pass (no test framework configured yet — see CLAUDE.md "Testing").
 
 ### Phase TL.1 — timeline stamp + generalized clean-reset guard (canon-safe)
 - [ ] `ResetWorldIfFormatChanged` → `ResetWorldIfIncompatible` (format version **or** timeline tag mismatch ⇒ reset ⇒ re-stamp both).
