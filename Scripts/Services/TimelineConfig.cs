@@ -7,9 +7,14 @@ using System;
 // date) instead of the canonical ~16-in-game-month wait for a BTC/SC exchange to exist. With Offset
 // == TimeSpan.Zero this file is behavior-identical to hardcoding the canonical dates directly.
 // See AIHelperFiles/step13-btc-market-data-and-dev-alt-timeline-plan.md §3.
+//
+// Step 13 (TL.2) — BRANCH-ONLY FLIP. true here means the NEXT app launch wipes the current world
+// (ResetWorldIfIncompatible, D-13.7) and regenerates a fresh alt-timeline bootstrap landing on
+// 2010-07-18. This must be false again before merging back to main (TL.3) — see the warning box at
+// plan §0. A permanent visible watermark (StatusBar) is required for as long as this is true.
 public static class TimelineConfig
 {
-	public const bool DevAltTimeline = false;
+	public const bool DevAltTimeline = true;
 
 	public static readonly TimeSpan Offset = DevAltTimeline ? TimeSpan.FromDays(484) : TimeSpan.Zero;
 	public static readonly string Tag = DevAltTimeline ? "ALT-2010-07-18" : "CANON-2009-01-03";

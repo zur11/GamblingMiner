@@ -21,6 +21,18 @@ namespace UI.StatusBar
 		{
 			AddThemeConstantOverride("separation", 40);
 
+			// Step 13 (TL.2) — a permanent, unmissable watermark whenever the DEV alt-timeline simulacrum is
+			// active, so no screenshot/session can ever be mistaken for canon (plan §0 warning box). Leftmost
+			// for maximum visibility. DevAltTimeline is a compile-time const — this branch either always
+			// renders or never does, for a given build.
+			if (TimelineConfig.DevAltTimeline)
+			{
+				var watermark = BuildLabel();
+				watermark.Text = "[ALT-TIMELINE DEV]";
+				watermark.AddThemeColorOverride("font_color", new Color(1f, 0.15f, 0.15f));
+				watermark.AddThemeFontSizeOverride("font_size", 24);
+			}
+
 			_mainBalanceLabel = BuildLabel();
 			_bankrollLabel = BuildLabel();
 			_clockLabel = BuildLabel();
