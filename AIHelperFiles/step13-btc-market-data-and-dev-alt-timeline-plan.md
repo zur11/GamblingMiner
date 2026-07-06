@@ -289,9 +289,9 @@ Ordering rationale: TL.0/MD.0/MD.1 are canon-safe and land first (they're `main`
 - [x] Refinement beyond the plan's literal wording: a **missing** timeline stamp (upgrading an existing pre-TL.1 save, which by definition predates the alt timeline ever existing) is treated as compatible and silently backfilled, NOT as a mismatch — so landing this phase doesn't itself wipe a developer's in-progress canon playthrough the moment the stamp file is introduced. Only an actual differing tag (i.e. `DevAltTimeline` flipped on the branch, or reverted back) triggers the reset.
 - [x] `dotnet build` succeeds, 0 warnings/errors. Test (fake a stale tag ⇒ clean re-bootstrap; matching tag ⇒ untouched) reasoned through by code inspection for all cases (first-ever launch, pre-TL.1 upgrade, canon↔alt switch both directions) — actual in-editor exercise of the reset path left to the developer's verification pass, same caveat as TL.0 (no test framework configured).
 
-### Phase MD.0 — dataset commit + provenance
-- [ ] Developer commits `Data/HistoricalPrices/btc_usd_daily_2010_2025.csv` (manual, per git policy).
-- [ ] Provenance/caveats documented (this plan §1 is the source of truth; ProjectDesignManual chapter at Step-13 completion).
+### Phase MD.0 — dataset commit + provenance ✅ COMPLETE (already done, confirmed 2026-07-05)
+- [x] Developer commits `Data/HistoricalPrices/btc_usd_daily_2010_2025.csv` (manual, per git policy) — was committed in `f962866` (the plan's own commit), before Step 13 implementation began.
+- [x] Provenance/caveats documented (this plan §1 is the source of truth; ProjectDesignManual chapter deferred to the Step-13 completion docs pass, TL.3).
 
 ### Phase MD.1 — `BtcMarketDataService` (canon-safe)
 - [ ] Autoload #14 registered in `project.godot`; CSV loaded once; API of §4.1; day-change event.

@@ -1,17 +1,8 @@
 [remap]
 
-importer="csv_translation"
-type="Translation"
+importer="keep"
 uid="uid://n6enkdxpj0ci"
 
 [deps]
 
-files=["res://Data/HistoricalPrices/btc_usd_daily_2010_2025.price.translation", "res://Data/HistoricalPrices/btc_usd_daily_2010_2025.volume.translation", "res://Data/HistoricalPrices/btc_usd_daily_2010_2025.num.translation", "res://Data/HistoricalPrices/btc_usd_daily_2010_2025.source.translation"]
-
 source_file="res://Data/HistoricalPrices/btc_usd_daily_2010_2025.csv"
-dest_files=["res://Data/HistoricalPrices/btc_usd_daily_2010_2025.price.translation", "res://Data/HistoricalPrices/btc_usd_daily_2010_2025.volume.translation", "res://Data/HistoricalPrices/btc_usd_daily_2010_2025.num.translation", "res://Data/HistoricalPrices/btc_usd_daily_2010_2025.source.translation"]
-
-[params]
-
-compress=true
-delimiter=0
