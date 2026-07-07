@@ -107,6 +107,7 @@ public partial class ScFinances : Control
 		GetNode<Button>("%ScTransactionsBtn").Pressed     += () => _sceneManager?.Go(SceneManager.SceneId.ScTransactions);
 		GetNode<Button>("%BetsHistoryBtn").Pressed        += () => _sceneManager?.Go(SceneManager.SceneId.BetsHistoryExplorer);
 		GetNode<Button>("%BankrollProgrammerBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.BankrollProgrammer);
+		GetNode<Button>("%CoinSwapsBtn").Pressed          += () => _sceneManager?.Go(SceneManager.SceneId.CasinoCoinSwaps);
 		GetNode<Button>("%BackBtn").Pressed               += () => _sceneManager?.Go(SceneManager.SceneId.MainMenu);
 
 		if (_playerBank != null)

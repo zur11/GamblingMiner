@@ -35,6 +35,7 @@ public partial class CasinoCoinSwapService : Node
 	public const decimal MinSwapGrossBtc = 1m;
 
 	private const string CasinoNodeId = "casino";
+	private const string PlayerNodeId = "player";
 
 	public const string DirectionScToBtc = "sc_to_btc"; // Panel A — player buys BTC with SC (casino sells)
 	public const string DirectionBtcToSc = "btc_to_sc"; // Panel B — player sells BTC for SC (casino buys)
@@ -49,9 +50,10 @@ public partial class CasinoCoinSwapService : Node
 	// MaxRechargeHistory on the other financial services.
 	private const int MaxSwapHistory = 500;
 
-	private CasinoScBalanceService _casinoSc;
-	private CalendarTimeService    _calendarTime;
-	private BtcMarketDataService   _market;
+	private CasinoScBalanceService  _casinoSc;
+	private CalendarTimeService     _calendarTime;
+	private BtcMarketDataService    _market;
+	private PrincipalBalanceService _principalBalance;
 	// Cheap facade over NetworkRoot's static world (the SimulationService pattern). Only touched from
 	// RecomputeAvailability, which never runs before the deferred init — so the blockchain's lazy
 	// EnsureInitialized is never triggered mid-autoload-boot (checkpoint restore order stays untouched).
@@ -101,10 +103,11 @@ public partial class CasinoCoinSwapService : Node
 	public override void _Ready()
 	{
 		LoadState();
-		_casinoSc     = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
-		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
-		_market       = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
-		_networkRoot  = new NetworkRoot();
+		_casinoSc         = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
+		_calendarTime     = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		_market           = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
+		_principalBalance = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
+		_networkRoot      = new NetworkRoot();
 
 		// §1.1 event set — availability is event-driven, never per-frame. Handlers no-op until the deferred
 		// initial recompute has run (the checkpoint restore fires BalanceChanged during autoload boot, before
@@ -136,6 +139,8 @@ public partial class CasinoCoinSwapService : Node
 		MarketNotBornYet, // game clock < BtcMarketDataService.FirstDataDateLocal — no exchange exists yet
 		HaltDay,          // D-13.11 — real historical trading halt closes the whole desk
 		NoCasinoBtc,      // Panel A: casino offered BTC below the smallest legal swap (MinDeliverableBtc)
+		BtcSettling,      // Panel A: the casino OWNS enough BTC but it is settling (coinbase/payout change
+		                  // awaiting its confirming block) — swaps unlock at the next block(s)
 		NoCasinoSc        // Panel B: casino offered SC below the minimum swap's net payout
 	}
 
@@ -143,6 +148,27 @@ public partial class CasinoCoinSwapService : Node
 	// any UTXO already reserved by a pending outgoing tx — GetNodeSpendableBalance/GetSpendableUtxos semantics,
 	// the same figure the CasinoFinances send panel shows. Cached; recomputed on the §1.1 event set only.
 	public decimal CasinoBtcBalance { get; private set; }
+
+	// UNBACKED pool payouts — owed by events whose backing coinbase is gone from the canonical chain (e.g.
+	// lost a consensus race). The distribution retry will claim these from ANY spendable casino UTXO, so
+	// the desk must treat them as already spent. (This raid is what made the desk briefly offer 30+ BTC
+	// and then collapse to ~10 in the first playtest — SW.1 hardening.) Normally 0.
+	public decimal CasinoBtcPoolObligation { get; private set; }
+
+	// The casino's OWN BTC that exists economically but is not yet a spendable UTXO: its fee share still
+	// locked inside an unspent pool coinbase, or the payout tx's change (or any incoming BTC) awaiting its
+	// confirming block. Displayed as "settling" and counted in CasinoBtcOwnedTotal, but NEVER offered —
+	// a Panel A swap must spend a CONFIRMED UTXO now (the engine does not chain unconfirmed spends).
+	public decimal CasinoBtcSettling { get; private set; }
+
+	// What the casino actually OWNS and can spend NOW — the only BTC the desk may offer or reserve against.
+	public decimal CasinoBtcEquity =>
+		Money.Normalize(Math.Max(0m, CasinoBtcBalance - CasinoBtcPoolObligation));
+
+	// The casino's full economic BTC position (spendable equity + settling) — the honest "owned" display
+	// figure, so the fee share of a freshly mined pool block reads as the casino's from block one.
+	public decimal CasinoBtcOwnedTotal =>
+		Money.Normalize(CasinoBtcEquity + CasinoBtcSettling);
 
 	// The market-day step-function price (SC per BTC, D-13.2), carried forward over halts and frozen
 	// post-history (D-13.5). Null before market birth. Cached at each availability recompute.
@@ -165,7 +191,7 @@ public partial class CasinoCoinSwapService : Node
 		Money.Normalize(Math.Max(ScReserve.ReserveFor(CasinoScMainBalance), ScAutoFloor));
 
 	public decimal OfferedBtc =>
-		Money.Normalize(Math.Max(0m, CasinoBtcBalance - BtcReserve.ReserveFor(CasinoBtcBalance)));
+		Money.Normalize(Math.Max(0m, CasinoBtcEquity - BtcReserve.ReserveFor(CasinoBtcEquity)));
 
 	public decimal OfferedSc =>
 		Money.Normalize(Math.Max(0m, CasinoScMainBalance - EffectiveScReserve));
@@ -209,10 +235,11 @@ public partial class CasinoCoinSwapService : Node
 	// balances subscribe to CasinoScBalanceService.BalanceChanged themselves; this event is for desk state).
 	private void RecomputeAvailability(bool notify)
 	{
-		var before = (CasinoBtcBalance, CurrentPriceSc, IsPanelAEnabled, PanelAReason, IsPanelBEnabled, PanelBReason);
+		var before = (CasinoBtcBalance, CasinoBtcPoolObligation, CasinoBtcSettling, CurrentPriceSc, IsPanelAEnabled, PanelAReason, IsPanelBEnabled, PanelBReason);
 
 		DateTime nowLocal = _calendarTime?.CurrentLocalDateTime ?? DateTime.Now;
 		CasinoBtcBalance  = Money.Normalize(_networkRoot?.GetNodeSpendableBalance(CasinoNodeId) ?? 0m);
+		(CasinoBtcSettling, CasinoBtcPoolObligation) = _networkRoot?.GetCasinoBtcSettlement() ?? (0m, 0m);
 		CurrentPriceSc    = _market?.GetEffectivePriceUsd(nowLocal);
 
 		if (_market == null || !_market.IsMarketBorn(nowLocal) || CurrentPriceSc is not decimal price)
@@ -225,12 +252,21 @@ public partial class CasinoCoinSwapService : Node
 		}
 		else
 		{
+			// Panel A: distinguish "no BTC at all" from "owned BTC is settling" — with the settling funds
+			// counted the offer WOULD clear the minimum, so tell the player it unlocks at the next block(s).
+			decimal ownedIfSettled   = CasinoBtcOwnedTotal;
+			decimal offeredIfSettled = Money.Normalize(Math.Max(0m, ownedIfSettled - BtcReserve.ReserveFor(ownedIfSettled)));
+			PanelDisableReason panelA =
+				OfferedBtc >= MinDeliverableBtc     ? PanelDisableReason.None :
+				offeredIfSettled >= MinDeliverableBtc ? PanelDisableReason.BtcSettling :
+				PanelDisableReason.NoCasinoBtc;
+
 			SetPanelStates(
-				OfferedBtc >= MinDeliverableBtc ? PanelDisableReason.None : PanelDisableReason.NoCasinoBtc,
+				panelA,
 				OfferedSc >= MinScPayoutAt(price) ? PanelDisableReason.None : PanelDisableReason.NoCasinoSc);
 		}
 
-		var after = (CasinoBtcBalance, CurrentPriceSc, IsPanelAEnabled, PanelAReason, IsPanelBEnabled, PanelBReason);
+		var after = (CasinoBtcBalance, CasinoBtcPoolObligation, CasinoBtcSettling, CurrentPriceSc, IsPanelAEnabled, PanelAReason, IsPanelBEnabled, PanelBReason);
 		if (notify && !before.Equals(after))
 			SwapDeskChanged?.Invoke();
 	}
@@ -241,6 +277,106 @@ public partial class CasinoCoinSwapService : Node
 		PanelBReason    = panelB;
 		IsPanelAEnabled = panelA == PanelDisableReason.None;
 		IsPanelBEnabled = panelB == PanelDisableReason.None;
+	}
+
+	// ---- Quotes (§4.1/§4.2 — pure, the UI calls these per keystroke; execution re-checks in SW.3/SW.4) -------------
+
+	// One live quote. InputAmount/GrossConverted/FeeCharged/NetOut are in each side's natural asset (Panel A:
+	// SC in → BTC figures; Panel B: BTC in → SC figures). MaxInput is the binding maximum for the input field
+	// with MaxLimitedBy naming WHOSE balance binds (§4.3 — players must understand whose balance runs out).
+	public sealed class SwapQuote
+	{
+		public decimal InputAmount    { get; init; }
+		public decimal PriceUsed      { get; init; }
+		public decimal GrossConverted { get; init; }
+		public decimal FeeCharged     { get; init; }
+		public decimal NetOut         { get; init; }
+		public decimal MinInput       { get; init; }   // the §3.2 1-BTC-gross floor, in the input's asset
+		public decimal MaxInput       { get; init; }
+		public string  MaxLimitedBy   { get; init; } = string.Empty;
+		public bool    IsValid        { get; init; }
+		public PanelDisableReason PanelState { get; init; } // != None → the desk itself refuses the panel
+	}
+
+	public decimal PlayerScMainBalance   => _principalBalance?.CurrentBalance ?? 0m;
+	public decimal PlayerSpendableBtc    => Money.Normalize(_networkRoot?.GetNodeSpendableBalance(PlayerNodeId) ?? 0m);
+
+	// Panel A — player pays S SC, casino delivers net BTC on-chain (§4.1).
+	public SwapQuote QuoteScToBtc(string clientId, decimal scAmount)
+	{
+		decimal price = CurrentPriceSc ?? 0m;
+		decimal fee   = GetSwapFeePercentFor(clientId) / 100m;
+		if (PanelAReason != PanelDisableReason.None || price <= 0m)
+			return new SwapQuote { InputAmount = scAmount, PanelState = PanelAReason };
+
+		decimal grossBtc = Money.Normalize(scAmount / price);
+		decimal feeBtc   = Money.Normalize(Math.Max(fee * grossBtc, NetworkFeePolicy.MinFee));
+		decimal netBtc   = Money.Normalize(grossBtc - feeBtc);
+
+		// Casino-side cap: netBtc + 0.1 network fee must fit in OfferedBtc; player-side cap: his Main Balance.
+		decimal casinoMaxSc = Money.Normalize(MaxGrossForNet(OfferedBtc - NetworkFeePolicy.MinFee, fee) * price);
+		decimal playerMaxSc = PlayerScMainBalance;
+		bool casinoBinds    = casinoMaxSc < playerMaxSc;
+		decimal minSc       = Money.Normalize(MinSwapGrossBtc * price);
+
+		return new SwapQuote
+		{
+			InputAmount    = scAmount,
+			PriceUsed      = price,
+			GrossConverted = grossBtc,
+			FeeCharged     = feeBtc,
+			NetOut         = netBtc,
+			MinInput       = minSc,
+			MaxInput       = Money.Normalize(Math.Min(playerMaxSc, casinoMaxSc)),
+			MaxLimitedBy   = casinoBinds ? "casino BTC available" : "your Main Balance",
+			IsValid        = scAmount >= minSc && scAmount <= Math.Min(playerMaxSc, casinoMaxSc) && netBtc > 0m,
+			PanelState     = PanelDisableReason.None
+		};
+	}
+
+	// Panel B — player parts with B BTC TOTAL (0.1 network fee inside it), casino credits net SC (§4.2).
+	public SwapQuote QuoteBtcToSc(string clientId, decimal btcAmount)
+	{
+		decimal price = CurrentPriceSc ?? 0m;
+		decimal fee   = GetSwapFeePercentFor(clientId) / 100m;
+		if (PanelBReason != PanelDisableReason.None || price <= 0m)
+			return new SwapQuote { InputAmount = btcAmount, PanelState = PanelBReason };
+
+		decimal grossSc = Money.Normalize(btcAmount * price);
+		decimal feeSc   = Money.Normalize(Math.Max(fee * grossSc, NetworkFeePolicy.MinFee * price));
+		decimal netSc   = Money.Normalize(grossSc - feeSc);
+
+		// Casino-side cap: netSc ≤ OfferedSc (invert the same net-of-fee curve, in BTC terms); player-side
+		// cap: his spendable BTC (confirmed − pending outgoing).
+		decimal casinoMaxBtc = Money.Normalize(MaxGrossForNet(OfferedSc / price, fee));
+		decimal playerMaxBtc = PlayerSpendableBtc;
+		bool casinoBinds     = casinoMaxBtc < playerMaxBtc;
+
+		return new SwapQuote
+		{
+			InputAmount    = btcAmount,
+			PriceUsed      = price,
+			GrossConverted = grossSc,
+			FeeCharged     = feeSc,
+			NetOut         = netSc,
+			MinInput       = MinSwapGrossBtc,
+			MaxInput       = Money.Normalize(Math.Min(playerMaxBtc, casinoMaxBtc)),
+			MaxLimitedBy   = casinoBinds ? "casino SC available" : "your BTC balance",
+			IsValid        = btcAmount >= MinSwapGrossBtc && btcAmount <= Math.Min(playerMaxBtc, casinoMaxBtc) && netSc > 0m,
+			PanelState     = PanelDisableReason.None
+		};
+	}
+
+	// Inverts net(g) = g − max(fee·g, MinFee): the largest gross amount whose net stays within targetNet.
+	// Piecewise because the 0.1 floor binds below gross = MinFee/fee and the percent above it (§3.2).
+	private static decimal MaxGrossForNet(decimal targetNet, decimal fee)
+	{
+		if (targetNet <= 0m || fee >= 1m) return 0m;
+		decimal floorRegionEnd = NetworkFeePolicy.MinFee / Math.Max(fee, 0.0001m);
+		decimal netAtRegionEnd = floorRegionEnd - NetworkFeePolicy.MinFee;
+		return targetNet <= netAtRegionEnd
+			? targetNet + NetworkFeePolicy.MinFee
+			: targetNet / (1m - fee);
 	}
 
 	// ---- Setters (§2.2 — the single mutation API the DEV scenes AND the future scheduler share) -------------------
@@ -342,8 +478,8 @@ public partial class CasinoCoinSwapService : Node
 				"{0:yyyy-MM-dd HH:mm:ss},{1},{2},{3:F8},{4:F8},{5:F8},{6:F8},{7:F2},{8:F8},{9:F8},{10:F8},{11:F8},{12:F8},{13:F8}",
 				gameLocal, eventName, clientId,
 				grossIn, feeCharged, netOut, priceUsed, SwapFeePercent,
-				CasinoScMainBalance, CasinoBtcBalance,
-				EffectiveScReserve, BtcReserve.ReserveFor(CasinoBtcBalance),
+				CasinoScMainBalance, CasinoBtcEquity,
+				EffectiveScReserve, BtcReserve.ReserveFor(CasinoBtcEquity),
 				OfferedSc, OfferedBtc));
 		}
 		catch (Exception e)

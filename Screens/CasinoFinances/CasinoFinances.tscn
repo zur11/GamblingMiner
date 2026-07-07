@@ -105,6 +105,41 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Send BTC"
 
+[node name="SwapReserveSep" type="HSeparator" parent="RootMargin/RootVBox/BaseWalletPanel"]
+layout_mode = 2
+
+[node name="SwapReserveTitle" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "BTC Swap Reserve [DEV]  (held back from the swap desk — % is of the WHOLE wallet, base + change)"
+
+[node name="SwapReserveRow" type="HBoxContainer" parent="RootMargin/RootVBox/BaseWalletPanel"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BtcReserveModeOption" type="OptionButton" parent="RootMargin/RootVBox/BaseWalletPanel/SwapReserveRow"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="BtcReserveSpin" type="SpinBox" parent="RootMargin/RootVBox/BaseWalletPanel/SwapReserveRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+min_value = 0.0
+max_value = 100.0
+step = 0.00000001
+
+[node name="SetBtcReserveBtn" type="Button" parent="RootMargin/RootVBox/BaseWalletPanel/SwapReserveRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Apply"
+
+[node name="BtcReserveInfoLabel" type="Label" parent="RootMargin/RootVBox/BaseWalletPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+text = ""
+
 [node name="PassphraseLockedPanel" type="VBoxContainer" parent="RootMargin/RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2

@@ -256,6 +256,72 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 180)
 layout_mode = 2
 
+[node name="Sep_SwapDesk" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
+layout_mode = 2
+
+[node name="SwapDeskSectionLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Swap Desk [DEV]  (fee + SC reserve — BTC reserve lives in Casino Finances)"
+
+[node name="SwapFeeRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="SwapFeeLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/SwapFeeRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Swap fee (%, both directions):"
+
+[node name="SwapFeeSpin" type="SpinBox" parent="RootMargin/RootScroll/RootVBox/SwapFeeRow"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 1.0
+max_value = 10.0
+step = 0.1
+value = 10.0
+
+[node name="SetSwapFeeBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/SwapFeeRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Apply"
+
+[node name="ScReserveRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="ScReserveLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/ScReserveRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "SC swap reserve:"
+
+[node name="ScReserveModeOption" type="OptionButton" parent="RootMargin/RootScroll/RootVBox/ScReserveRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+
+[node name="ScReserveSpin" type="SpinBox" parent="RootMargin/RootScroll/RootVBox/ScReserveRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 0)
+layout_mode = 2
+min_value = 0.0
+max_value = 100.0
+step = 0.00000001
+
+[node name="SetScReserveBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/ScReserveRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Apply"
+
+[node name="SwapDeskInfoLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 18
+text = ""
+
 [node name="Sep3" type="HSeparator" parent="RootMargin/RootScroll/RootVBox"]
 layout_mode = 2
 

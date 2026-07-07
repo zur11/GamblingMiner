@@ -32,6 +32,14 @@ public partial class CasinoGamblingFinances : Control
 	private Label _loanFeedbackLabel;
 	private ItemList _loanHistoryList;
 
+	// Swap Desk [DEV] row (Step 13 / SW.2, D-SW.9): the fee knob + the SC swap-reserve selector live HERE
+	// (CasinoCoinSwaps itself carries no DEV controls). The BTC reserve selector lives in CasinoFinances.
+	private CasinoCoinSwapService _swapService;
+	private SpinBox _swapFeeSpin;
+	private OptionButton _scReserveModeOption;
+	private SpinBox _scReserveSpin;
+	private Label _swapDeskInfoLabel;
+
 	private double _fallbackTimer;
 	private const double FallbackInterval = 2.0;
 
@@ -60,6 +68,24 @@ public partial class CasinoGamblingFinances : Control
 		_manualLoanInput     = GetNode<LineEdit>("%ManualLoanInput");
 		_loanFeedbackLabel   = GetNode<Label>("%LoanFeedbackLabel");
 		_loanHistoryList     = GetNode<ItemList>("%LoanHistoryList");
+
+		_swapService         = GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService");
+		_swapFeeSpin         = GetNode<SpinBox>("%SwapFeeSpin");
+		_scReserveModeOption = GetNode<OptionButton>("%ScReserveModeOption");
+		_scReserveSpin       = GetNode<SpinBox>("%ScReserveSpin");
+		_swapDeskInfoLabel   = GetNode<Label>("%SwapDeskInfoLabel");
+
+		_scReserveModeOption.AddItem("% of Main Balance", 0);
+		_scReserveModeOption.AddItem("SC amount", 1);
+		if (_swapService != null)
+		{
+			_swapFeeSpin.Value = (double)_swapService.SwapFeePercent;
+			_scReserveModeOption.Selected = _swapService.ScReserve.UsePercent ? 0 : 1;
+			SyncScReserveSpinToMode();
+		}
+		_scReserveModeOption.ItemSelected += _ => SyncScReserveSpinToMode();
+		GetNode<Button>("%SetSwapFeeBtn").Pressed   += OnApplySwapFeePressed;
+		GetNode<Button>("%SetScReserveBtn").Pressed += OnApplyScReservePressed;
 
 		GetNode<Button>("%SetTargetBtn").Pressed        += OnSetTargetPressed;
 		GetNode<Button>("%SetAutoLoanBtn").Pressed      += OnSetAutoLoanPressed;
@@ -152,6 +178,8 @@ public partial class CasinoGamblingFinances : Control
 			}
 		}
 
+		RefreshSwapDeskInfo();
+
 		// Bankroll recharge history list, newest first (CG.3.A), mirroring the loans list.
 		if (GodotObject.IsInstanceValid(_rechargeHistoryList))
 		{
@@ -164,6 +192,46 @@ public partial class CasinoGamblingFinances : Control
 					$"{r.GameDateLocal:yyyy-MM-dd HH:mm:ss} | {r.Amount:N8} SC | {r.Reason}"));
 			}
 		}
+	}
+
+	// ── Swap Desk [DEV] (Step 13 / SW.2, D-SW.9) ─────────────────────────────────
+
+	// Mode switch reloads the SpinBox with the mode's current stored value and range (% → 0–100; amount → open).
+	private void SyncScReserveSpinToMode()
+	{
+		if (_swapService == null) return;
+		bool percentMode = _scReserveModeOption.Selected == 0;
+		_scReserveSpin.MaxValue = percentMode ? 100d : 1_000_000_000_000d;
+		_scReserveSpin.Value    = percentMode ? (double)_swapService.ScReserve.Percent : (double)_swapService.ScReserve.Amount;
+	}
+
+	private void OnApplySwapFeePressed()
+	{
+		// SpinBox already refuses values outside 1–10; the service setter clamps again as the safety net.
+		_swapService?.SetSwapFeePercent((decimal)_swapFeeSpin.Value);
+		RefreshLabels();
+	}
+
+	private void OnApplyScReservePressed()
+	{
+		if (_swapService == null) return;
+		bool percentMode = _scReserveModeOption.Selected == 0;
+		decimal value = (decimal)_scReserveSpin.Value;
+		// Only the active mode's field changes; the other keeps its stored value for a clean round-trip.
+		_swapService.SetScReserve(percentMode,
+			percentMode ? value : _swapService.ScReserve.Percent,
+			percentMode ? _swapService.ScReserve.Amount : value);
+		RefreshLabels();
+	}
+
+	private void RefreshSwapDeskInfo()
+	{
+		if (_swapService == null || !GodotObject.IsInstanceValid(_swapDeskInfoLabel)) return;
+		string reserveDesc = _swapService.ScReserve.UsePercent
+			? string.Create(CultureInfo.InvariantCulture, $"{_swapService.ScReserve.Percent:0.##}% of Main")
+			: string.Create(CultureInfo.InvariantCulture, $"{_swapService.ScReserve.Amount:N8} SC");
+		_swapDeskInfoLabel.Text = string.Create(CultureInfo.InvariantCulture,
+			$"Fee {_swapService.SwapFeePercent:0.##}% (both directions)   |   SC reserve: {reserveDesc}  →  effective {_swapService.EffectiveScReserve:N8} SC   |   Offered SC: {_swapService.OfferedSc:N8}");
 	}
 
 	private void OnSetTargetPressed()

@@ -65,6 +65,14 @@ public partial class CasinoFinances : Control
 	private RichTextLabel _txLabel = null!;
 	private bool _txExpanded;
 
+	// BTC Swap Reserve [DEV] (Step 13 / SW.2, D-SW.9): the BTC reserve selector lives HERE — the reserve is a
+	// wallet-level property, so it sits with the wallet. Percent is of the casino's WHOLE wallet (base + change
+	// addresses — confirmed, §0.5 note). Fee + SC reserve live in CasinoGamblingFinances.
+	private CasinoCoinSwapService? _swapService;
+	private OptionButton _btcReserveModeOption = null!;
+	private SpinBox _btcReserveSpin = null!;
+	private Label _btcReserveInfoLabel = null!;
+
 	// Runtime state
 	private string? _currentPassphraseAddress;
 	private string _currentPassphraseNodeId = string.Empty;
@@ -97,6 +105,21 @@ public partial class CasinoFinances : Control
 		GetNode<Button>("%ShowSeedWordsBtn").Pressed  += OnShowSeedWordsPressed;
 		GetNode<Button>("%OpenPassphraseBtn").Pressed += () => SetMode(WalletMode.PassphraseLocked);
 		GetNode<Button>("%SendBtcBtn").Pressed        += OnSendBtcBasePressed;
+
+		// BTC Swap Reserve [DEV] (SW.2, D-SW.9)
+		_swapService          = GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService");
+		_btcReserveModeOption = GetNode<OptionButton>("%BtcReserveModeOption");
+		_btcReserveSpin       = GetNode<SpinBox>("%BtcReserveSpin");
+		_btcReserveInfoLabel  = GetNode<Label>("%BtcReserveInfoLabel");
+		_btcReserveModeOption.AddItem("% of wallet", 0);
+		_btcReserveModeOption.AddItem("BTC amount", 1);
+		if (_swapService != null)
+		{
+			_btcReserveModeOption.Selected = _swapService.BtcReserve.UsePercent ? 0 : 1;
+			SyncBtcReserveSpinToMode();
+		}
+		_btcReserveModeOption.ItemSelected += _ => SyncBtcReserveSpinToMode();
+		GetNode<Button>("%SetBtcReserveBtn").Pressed += OnApplyBtcReservePressed;
 
 		// Passphrase locked
 		_passphraseLockedPanel = GetNode<VBoxContainer>("%PassphraseLockedPanel");
@@ -438,6 +461,8 @@ public partial class CasinoFinances : Control
 		if (pendingOut > 0m)
 			_pendingLabel.Text = $"Pending outgoing:   {pendingOut:F8} BTC";
 
+		RefreshBtcReserveInfo();
+
 		if (_addressListExpanded) RefreshAddressList();
 		if (_txExpanded) RefreshTransactions();
 
@@ -447,6 +472,39 @@ public partial class CasinoFinances : Control
 		_passPendingLabel.Visible = passPending > 0m;
 		if (passPending > 0m)
 			_passPendingLabel.Text = $"Pending outgoing:   {passPending:F8} BTC";
+	}
+
+	// ── BTC Swap Reserve [DEV] (Step 13 / SW.2, D-SW.9) ───────────────────────
+
+	// Mode switch reloads the SpinBox with the mode's stored value and range (% → 0–100; amount → open).
+	private void SyncBtcReserveSpinToMode()
+	{
+		if (_swapService == null) return;
+		bool percentMode = _btcReserveModeOption.Selected == 0;
+		_btcReserveSpin.MaxValue = percentMode ? 100d : 1_000_000_000d;
+		_btcReserveSpin.Value    = percentMode ? (double)_swapService.BtcReserve.Percent : (double)_swapService.BtcReserve.Amount;
+	}
+
+	private void OnApplyBtcReservePressed()
+	{
+		if (_swapService == null) return;
+		bool percentMode = _btcReserveModeOption.Selected == 0;
+		decimal value = (decimal)_btcReserveSpin.Value;
+		// Only the active mode's field changes; the other keeps its stored value for a clean round-trip.
+		_swapService.SetBtcReserve(percentMode,
+			percentMode ? value : _swapService.BtcReserve.Percent,
+			percentMode ? _swapService.BtcReserve.Amount : value);
+		RefreshBtcReserveInfo();
+	}
+
+	private void RefreshBtcReserveInfo()
+	{
+		if (_swapService == null || !GodotObject.IsInstanceValid(_btcReserveInfoLabel)) return;
+		string reserveDesc = _swapService.BtcReserve.UsePercent
+			? string.Create(CultureInfo.InvariantCulture, $"{_swapService.BtcReserve.Percent:0.##}% of wallet")
+			: string.Create(CultureInfo.InvariantCulture, $"{_swapService.BtcReserve.Amount:N8} BTC");
+		_btcReserveInfoLabel.Text = string.Create(CultureInfo.InvariantCulture,
+			$"Reserve: {reserveDesc}  →  held back {_swapService.BtcReserve.ReserveFor(_swapService.CasinoBtcEquity):N8} BTC   |   Offered for swaps: {_swapService.OfferedBtc:N8} BTC (owned {_swapService.CasinoBtcOwnedTotal:N8} = spendable {_swapService.CasinoBtcBalance:N8} + settling {_swapService.CasinoBtcSettling:N8} − pool payouts due {_swapService.CasinoBtcPoolObligation:N8})");
 	}
 
 	// ── Mode management ───────────────────────────────────────────────────────

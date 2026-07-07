@@ -1,0 +1,280 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Screens/CasinoCoinSwaps/CasinoCoinSwaps.cs" id="1"]
+
+[node name="CasinoCoinSwaps" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="RootMargin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 40
+theme_override_constants/margin_top = 30
+theme_override_constants/margin_right = 40
+theme_override_constants/margin_bottom = 50
+
+[node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="StatusBarPlaceholder" type="HBoxContainer" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="Title" type="Label" parent="RootMargin/RootVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Casino Coin Swaps"
+
+[node name="HeaderInfoRow" type="HBoxContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+theme_override_constants/separation = 30
+
+[node name="PriceLabel" type="Label" parent="RootMargin/RootVBox/HeaderInfoRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "1 BTC = —"
+
+[node name="DeskStateLabel" type="Label" parent="RootMargin/RootVBox/HeaderInfoRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "—"
+
+[node name="FeeLabel" type="Label" parent="RootMargin/RootVBox/HeaderInfoRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Swap fee: —"
+
+[node name="Sep0" type="HSeparator" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="ContentScroll" type="ScrollContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="ContentVBox" type="VBoxContainer" parent="RootMargin/RootVBox/ContentScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme_override_constants/separation = 12
+
+[node name="PanelsRow" type="HBoxContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox"]
+layout_mode = 2
+mouse_filter = 1
+theme_override_constants/separation = 20
+
+[node name="PanelA" type="PanelContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+
+[node name="PanelAMargin" type="MarginContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA"]
+layout_mode = 2
+mouse_filter = 1
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 12
+
+[node name="PanelAVBox" type="VBoxContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin"]
+layout_mode = 2
+mouse_filter = 1
+theme_override_constants/separation = 8
+
+[node name="PanelATitle" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "PANEL A — Buy BTC (pay SC)"
+
+[node name="PanelAAvailLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 17
+text = "Casino BTC available: —"
+
+[node name="PanelAInputRow" type="HBoxContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox"]
+layout_mode = 2
+mouse_filter = 1
+theme_override_constants/separation = 8
+
+[node name="PanelAPayLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox/PanelAInputRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "You pay:"
+
+[node name="PanelAInput" type="LineEdit" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox/PanelAInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 18
+placeholder_text = "SC amount"
+
+[node name="PanelAMaxBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox/PanelAInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "MAX"
+
+[node name="PanelAMaxLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 16
+text = "Max: —"
+
+[node name="PanelAQuoteLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 17
+text = "Quote: —"
+
+[node name="PanelAPendingLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+visible = false
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 16
+text = ""
+
+[node name="PanelASwapBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+disabled = true
+theme_override_font_sizes/font_size = 20
+text = "SWAP  (execution lands in SW.3)"
+
+[node name="PanelAReasonLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+visible = false
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 16
+text = ""
+
+[node name="PanelB" type="PanelContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+
+[node name="PanelBMargin" type="MarginContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB"]
+layout_mode = 2
+mouse_filter = 1
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 12
+
+[node name="PanelBVBox" type="VBoxContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin"]
+layout_mode = 2
+mouse_filter = 1
+theme_override_constants/separation = 8
+
+[node name="PanelBTitle" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "PANEL B — Sell BTC (receive SC)"
+
+[node name="PanelBAvailLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 17
+text = "Casino SC available: —"
+
+[node name="PanelBInputRow" type="HBoxContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
+layout_mode = 2
+mouse_filter = 1
+theme_override_constants/separation = 8
+
+[node name="PanelBSendLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox/PanelBInputRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "You send:"
+
+[node name="PanelBInput" type="LineEdit" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox/PanelBInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 18
+placeholder_text = "BTC amount (total, incl. 0.1 network fee)"
+
+[node name="PanelBMaxBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox/PanelBInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "MAX"
+
+[node name="PanelBMaxLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 16
+text = "Max: —"
+
+[node name="PanelBQuoteLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 17
+text = "Quote: —"
+
+[node name="PanelBPendingLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+visible = false
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 16
+text = ""
+
+[node name="PanelBSwapBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+disabled = true
+theme_override_font_sizes/font_size = 20
+text = "SWAP  (execution lands in SW.4)"
+
+[node name="PanelBReasonLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+visible = false
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 16
+text = ""
+
+[node name="Sep1" type="HSeparator" parent="RootMargin/RootVBox/ContentScroll/ContentVBox"]
+layout_mode = 2
+
+[node name="RecentSwapsTitle" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Recent swaps (newest first)"
+
+[node name="SwapsListVBox" type="VBoxContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 1
+
+[node name="SepFooter" type="HSeparator" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="BackBtn" type="Button" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "← Back"

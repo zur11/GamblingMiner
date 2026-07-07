@@ -292,6 +292,11 @@ public sealed class BlockchainService
         return true;
     }
 
+    // Step 13 (SW.1 hardening) — membership probe: is this output still unspent on the CONFIRMED chain?
+    // (Maturity/pending state is ignored — this asks only "does the coin still exist".)
+    public bool IsUnspentOutput(string txId, int vout) =>
+        GetUtxoSet().ContainsKey(OutPointKey(txId, vout));
+
     // Every outpoint consumed by a pending mempool transaction (for the double-spend guard).
     private HashSet<string> CollectPendingSpentOutpoints()
     {

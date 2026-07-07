@@ -725,6 +725,124 @@ public partial class NetworkRoot : Node
         return CasinoPoolRepository.Current.RewardHistory.ToList();
     }
 
+    // Step 13 (SW.1 hardening) — the casino wallet's pool-settlement picture, for the swap desk. A pool
+    // block's coinbase is mostly the CONTRIBUTORS' money (the casino keeps only its fee share), and the
+    // payout lifecycle holds the casino's own share hostage for 1–2 blocks: coinbase immature → payout tx
+    // pending → fee-share change confirmed. Two figures let CasinoCoinSwapService be both honest and stable:
+    //
+    //   settling — the casino's OWN BTC that exists economically but is not yet a spendable UTXO:
+    //     (a) fee share still inside an event's unspent on-chain backing coinbase (immature or mature):
+    //         coinbase value − what the distribution will pay out;
+    //     (b) any pending-tx output addressed to a casino-owned address (the payout tx's fee-share change
+    //         in flight — and, later, any other incoming BTC awaiting its confirming block).
+    //     A backed event that broadcasts its payout moves seamlessly from (a) to (b) at the same value.
+    //
+    //   unbackedObligation — payouts owed by events whose backing coinbase is GONE from the canonical
+    //     chain (e.g. lost a consensus race after queueing). TryDistributePendingCasinoRewards will retry
+    //     these every block, coin-selecting from the casino's accumulated fee income — a live liability
+    //     against the wallet's spendable balance, so the desk must treat it as already spent.
+    // One diagnostic line per surprising pool event per session (the recompute runs per bet — must not spam).
+    private static readonly HashSet<int> _poolSettlementDiagPrinted = new();
+
+    public (decimal settling, decimal obligationVsSpendable) GetCasinoBtcSettlement()
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
+        {
+            return (0m, 0m);
+        }
+
+        var chain = casino.Blockchain.Chain;
+        if (chain.Count == 0)
+        {
+            return (0m, 0m);
+        }
+
+        int tipIndex = chain[^1].Index;
+        decimal perFee = NetworkFeePolicy.IsActiveByTimestamp(chain[^1].Timestamp) ? CasinoTxFee : 0m;
+
+        // Identity test for "this is our pool block's coinbase": it PAYS a casino-owned address (casino
+        // coinbases always pay the base address — RotateCoinbaseAddress = false). More robust than
+        // MinedByNodeId, which is stamped post-hash and is not guaranteed to survive block replication.
+        HashSet<string> owned = casino.ReceiveWallet != null
+            ? new HashSet<string>(casino.ReceiveWallet.OwnedAddresses) { casino.WalletAddress }
+            : new HashSet<string> { casino.WalletAddress };
+
+        decimal settling = 0m;
+        decimal obligation = 0m;
+        foreach (CasinoPoolRewardEvent evt in CasinoPoolRepository.GetUndistributed())
+        {
+            if (evt.Payouts.Count == 0)
+            {
+                continue; // nothing owed — MarkDistributed'd on the next block pass anyway
+            }
+
+            // What the distribution tx will take from the wallet: Σ net payouts + per-payout network fees.
+            decimal need = evt.Payouts.Sum(p => p.NetAmount) + perFee * evt.Payouts.Count;
+
+            // Locate the event's backing coinbase on the canonical chain, and whether it is still unspent.
+            // List position ≠ Block.Index in every world (playtest DIAG: tip Index 121 with chain.Count 121 —
+            // this chain does not start at Index 0), so resolve by the chain's base-index OFFSET and verify.
+            Transaction? coinbase = null;
+            int pos = evt.BlockIndex - chain[0].Index;
+            if (pos >= 0 && pos < chain.Count)
+            {
+                Block backing = chain[pos];
+                if (backing.Index == evt.BlockIndex)
+                {
+                    Transaction? cb = backing.Transactions.FirstOrDefault(t => t.IsCoinbase);
+                    if (cb != null && cb.Outputs.Count > 0
+                        && (owned.Contains(cb.Outputs[0].Address) || backing.MinedByNodeId == CasinoNodeId))
+                    {
+                        coinbase = cb;
+                    }
+                }
+            }
+            bool backedUnspent = coinbase != null && casino.Blockchain.IsUnspentOutput(coinbase.TransactionId, 0);
+
+            if (backedUnspent && tipIndex - evt.BlockIndex < BlockchainService.CoinbaseMaturity)
+            {
+                // Immature backing coinbase: excluded from spendable, so the casino's fee share inside it
+                // is pure settling money.
+                settling += Math.Max(0m, coinbase!.Outputs[0].Amount - need);
+            }
+            else if (backedUnspent)
+            {
+                // Mature-but-undistributed (retry window): the whole coinbase IS in spendable, but `need`
+                // of it belongs to the contributors — count the debt so equity nets to the fee share only.
+                obligation += need;
+            }
+            else
+            {
+                // No unspent backing coinbase on the canonical chain (orphaned / already consumed): the
+                // distribution retry will raid the casino's spendable fee income for this — price it in.
+                obligation += need;
+                if (_poolSettlementDiagPrinted.Add(evt.BlockIndex))
+                {
+                    string blockInfo = pos >= 0 && pos < chain.Count
+                        ? $"blockAtPos(Index={chain[pos].Index}, miner='{chain[pos].MinedByNodeId}', cbFound={chain[pos].Transactions.Any(t => t.IsCoinbase)})"
+                        : "position OUT OF CHAIN BOUNDS";
+                    GD.Print($"[SwapDesk][DIAG] pool event #{evt.BlockIndex} has no unspent backing coinbase — tip={tipIndex} chainCount={chain.Count} baseIndex={chain[0].Index} pos={pos} {blockInfo} need={need:F8} → counted as obligation");
+                }
+            }
+        }
+
+        // Incoming BTC in flight: pending-tx outputs addressed to a casino-owned address (the payout tx's
+        // fee-share change rotating to a fresh derived address is in OwnedAddresses via MarkReceiveConsumed).
+        foreach (Transaction pending in casino.Blockchain.PendingTransactions)
+        {
+            foreach (TxOutput output in pending.Outputs)
+            {
+                if (owned.Contains(output.Address))
+                {
+                    settling += output.Amount;
+                }
+            }
+        }
+
+        return (Scripts.Finance.Money.Normalize(settling), Scripts.Finance.Money.Normalize(obligation));
+    }
+
     // Step 13 (SW.1) — fired for every LIVE accepted block (bootstrap bulk-mining excluded), after broadcast
     // and the post-block side effects. Confirmations change every node's spendable set, so event-driven
     // consumers (CasinoCoinSwapService availability) recompute here instead of polling per-frame (§1.1).

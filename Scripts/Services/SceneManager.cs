@@ -23,6 +23,7 @@ public partial class SceneManager : Node
 		ClientsTransactions,
 		ScFinances,
 		ScTransactions,
+		CasinoCoinSwaps,
 	}
 
 	private static readonly Dictionary<SceneId, string> Paths = new()
@@ -45,6 +46,7 @@ public partial class SceneManager : Node
 		[SceneId.ClientsTransactions]      = "res://Screens/CasinoGamblingFinances/ClientsTransactions.tscn",
 		[SceneId.ScFinances]               = "res://Screens/ScFinances/ScFinances.tscn",
 		[SceneId.ScTransactions]           = "res://Screens/ScFinances/ScTransactions.tscn",
+		[SceneId.CasinoCoinSwaps]          = "res://Screens/CasinoCoinSwaps/CasinoCoinSwaps.tscn",
 	};
 
 	// Overlay stack: scenes added on top without replacing the current scene.
