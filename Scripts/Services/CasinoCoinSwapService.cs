@@ -26,16 +26,43 @@ public partial class CasinoCoinSwapService : Node
 	public const decimal MinSwapFeePercent     = 1m;   // D-SW.9 clamp range
 	public const decimal MaxSwapFeePercent     = 10m;
 
+	// D-SW.12 (2026-07-08) — max fee deviation, in PERCENTAGE POINTS above SwapFeePercent. Dev feedback: the
+	// additive model's effective margin can run considerably above nominal on swaps near the minimum size
+	// (e.g. ~13.6% at the §3.2 minimum when nominal is 10% — the flat 0.1 BTC network fee dominates a small
+	// base). This caps how far the EFFECTIVE % is allowed to stray above SwapFeePercent; see ComputeScToBtcCore/
+	// ComputeBtcToScCore for the clamp math. 0 points ⇒ effective % locked to nominal exactly (the casino then
+	// absorbs 100% of the network cost on small swaps, like the pre-D-SW.11 inclusive model).
+	public const decimal DefaultMaxFeeDeviationPoints = 2m;
+	public const decimal MinMaxFeeDeviationPoints     = 0m;
+	public const decimal MaxMaxFeeDeviationPoints     = 20m;
+
 	// §2.3 R2 (SW.5) — the recharge-pace auto floor, superseding the R1 static-multiple placeholder (SW.0).
 	// Sizes the SC floor to what the betting pace has ACTUALLY drawn recently: SafetyFactor × doses consumed
-	// via auto-recharge in the last WindowHours of GAME time × BankrollTarget. Both dev-tunable; default OFF.
+	// via auto-recharge in the last WindowDays of GAME time × BankrollTarget. Both dev-tunable; default OFF.
+	// Window is in whole GAME days (dev feedback 2026-07-07 — days read more naturally than raw hours).
 	// See ProjectDesignManual Ch. 33 for the full rationale + the R3 (drawdown-based) alternative.
 	public const decimal DefaultScAutoFloorSafetyFactor = 1.5m;
-	public const decimal DefaultScAutoFloorWindowHours  = 24m;
+	public const decimal DefaultScAutoFloorWindowDays   = 1m;
 
-	// §3.2 — minimum swap size of 1 BTC gross: at the 10% max fee, fee ≥ NetworkFeePolicy.MinFee (0.1) exactly
-	// at 1 BTC, so the casino never swaps at a loss. Surfaced as an honest "minimum swap is X" UI message (SW.6).
-	public const decimal MinSwapGrossBtc = 1m;
+	// §3.2 — minimum swap size, redefined AGAIN under dev feedback (2026-07-08, same day as D-SW.11): a pure
+	// "net > 0" floor (the first D-SW.11 cut) is mathematically valid but economically absurd — it lets a
+	// player pay almost entirely in fees to receive a handful of satoshi (e.g. paying ~0.275 BTC-equivalent
+	// to net a few satoshi back). The new floor is a VALUE guarantee: the player must receive AT LEAST as
+	// much as they pay in total fees — i.e. net(gross) ≥ totalFee(gross), equivalently net ≥ gross/2 (since
+	// gross = net + fee, net ≥ fee ⟺ net ≥ gross − net ⟺ 2×net ≥ gross). Solving net(gross) = totalFee(gross)
+	// for gross directly (algebra, not reused from BaseFromNet — this is a different equation, "net equals
+	// the fee" rather than "net equals a fixed target"):
+	//   gross = 2×totalFee(gross) = 2×[MinFee×(1+fee) + fee×gross]
+	//   gross×(1 − 2×fee) = 2×MinFee×(1+fee)
+	//   gross = 2×MinFee×(1+fee) / (1 − 2×fee)
+	// At the 10% default this is ≈0.275 BTC (up from the "net>0" floor's ≈0.1222 BTC, down from the original
+	// D-SW.1 flat 1.0 BTC). The `fee >= 0.5m` guard is defensive only — SwapFeePercent is clamped to [1%,10%]
+	// (D-SW.9), so `2×fee` never approaches 1 in practice.
+	private static decimal MinSwapGrossBtcFor(decimal fee)
+	{
+		if (fee >= 0.5m) return 0m;
+		return Money.Normalize(2m * NetworkFeePolicy.MinFee * (1m + fee) / (1m - 2m * fee));
+	}
 
 	private const string CasinoNodeId = "casino";
 	private const string PlayerNodeId = "player";
@@ -104,9 +131,10 @@ public partial class CasinoCoinSwapService : Node
 	public ReserveSetting BtcReserve { get; private set; } = new();
 	public ReserveSetting ScReserve  { get; private set; } = new();
 	public decimal SwapFeePercent    { get; private set; } = DefaultSwapFeePercent;
+	public decimal MaxFeeDeviationPoints { get; private set; } = DefaultMaxFeeDeviationPoints;
 	public bool    ScFloorEnabled          { get; private set; } = false;
 	public decimal ScAutoFloorSafetyFactor { get; private set; } = DefaultScAutoFloorSafetyFactor;
-	public decimal ScAutoFloorWindowHours  { get; private set; } = DefaultScAutoFloorWindowHours;
+	public decimal ScAutoFloorWindowDays   { get; private set; } = DefaultScAutoFloorWindowDays;
 
 	public event Action SwapDeskChanged;
 
@@ -128,7 +156,7 @@ public partial class CasinoCoinSwapService : Node
 		NetworkRoot.BlockAccepted += OnBlockAccepted;
 		CallDeferred(nameof(InitializeAvailability));
 
-		GD.Print($"[CasinoCoinSwapService] Ready — Fee={SwapFeePercent:F2}%  BtcReserve={(BtcReserve.UsePercent ? BtcReserve.Percent + "%" : BtcReserve.Amount + " BTC")}  ScReserve={(ScReserve.UsePercent ? ScReserve.Percent + "%" : ScReserve.Amount + " SC")}  ScFloor={(ScFloorEnabled ? $"ON (safety={ScAutoFloorSafetyFactor:F2}, window={ScAutoFloorWindowHours:F1}h)" : "OFF")}  history={_swapHistory.Count}");
+		GD.Print($"[CasinoCoinSwapService] Ready — Fee={SwapFeePercent:F2}%  BtcReserve={(BtcReserve.UsePercent ? BtcReserve.Percent + "%" : BtcReserve.Amount + " BTC")}  ScReserve={(ScReserve.UsePercent ? ScReserve.Percent + "%" : ScReserve.Amount + " SC")}  ScFloor={(ScFloorEnabled ? $"ON (safety={ScAutoFloorSafetyFactor:F2}, window={ScAutoFloorWindowDays:F1}d)" : "OFF")}  history={_swapHistory.Count}");
 	}
 
 	public override void _ExitTree()
@@ -192,23 +220,32 @@ public partial class CasinoCoinSwapService : Node
 
 	public decimal CasinoScMainBalance => _casinoSc?.MainBalance ?? 0m;
 
-	// §2.3 R2 (SW.5) — the recharge-pace auto floor: SafetyFactor × dosesConsumedInWindow × BankrollTarget,
-	// window = the last ScAutoFloorWindowHours of GAME time (never wall-clock — CLAUDE.md Pattern 2).
-	// "Doses consumed" = the count of AUTO-recharge events (CasinoScBalanceService.RechargeHistory, Reason ==
-	// "auto") whose GameDateLocal falls in that window — each is one BankrollTarget-sized dose the betting
-	// pace actually drew from Main Balance, so the floor sizes itself to what play has recently needed, with
-	// SafetyFactor as the margin above that raw historical draw. 0 when disabled or data is unavailable.
-	// Full rationale + the R3 (drawdown-based) alternative: Documentation/ProjectDesignManual.md Ch. 33.
-	public decimal ScAutoFloor
+	// §2.3 R2 (SW.5) — "doses consumed" = the count of AUTO-recharge events (CasinoScBalanceService.
+	// RechargeHistory, Reason == "auto") whose GameDateLocal falls within the last ScAutoFloorWindowDays of
+	// GAME time (never wall-clock — CLAUDE.md Pattern 2). Exposed on its own (independent of ScFloorEnabled)
+	// so the DEV UI can show the live breakdown BEHIND the final ScAutoFloor number — SafetyFactor alone is
+	// unreadable without knowing this count and BankrollTarget too (dev feedback 2026-07-07: the same
+	// SafetyFactor produces wildly different SC amounts depending on both). 0 if data is unavailable.
+	public int ScAutoFloorDosesConsumed => GetScAutoFloorDosesConsumedFor(ScAutoFloorWindowDays);
+
+	// Parameterized so the DEV UI can preview the doses count for a SpinBox value the dev hasn't applied
+	// yet (SetScFloor), not only for the currently-committed ScAutoFloorWindowDays.
+	public int GetScAutoFloorDosesConsumedFor(decimal windowDays)
 	{
-		get
-		{
-			if (!ScFloorEnabled || _casinoSc == null || _calendarTime == null) return 0m;
-			DateTime windowStart = _calendarTime.CurrentLocalDateTime.AddHours(-(double)ScAutoFloorWindowHours);
-			int dosesConsumed = _casinoSc.RechargeHistory.Count(r => r.Reason == "auto" && r.GameDateLocal >= windowStart);
-			return Money.Normalize(ScAutoFloorSafetyFactor * dosesConsumed * _casinoSc.BankrollTarget);
-		}
+		if (_casinoSc == null || _calendarTime == null) return 0;
+		DateTime windowStart = _calendarTime.CurrentLocalDateTime.AddDays(-(double)windowDays);
+		return _casinoSc.RechargeHistory.Count(r => r.Reason == "auto" && r.GameDateLocal >= windowStart);
 	}
+
+	// §2.3 R2 (SW.5) — the recharge-pace auto floor: SafetyFactor × ScAutoFloorDosesConsumed × BankrollTarget.
+	// Each dose is one BankrollTarget-sized draw the betting pace actually made, so the floor sizes itself to
+	// what play has recently needed, with SafetyFactor as the margin above that raw historical draw. 0 when
+	// disabled or data is unavailable. Full rationale + the R3 (drawdown-based) alternative: Documentation/
+	// ProjectDesignManual.md Ch. 33.
+	public decimal ScAutoFloor =>
+		ScFloorEnabled && _casinoSc != null
+			? Money.Normalize(ScAutoFloorSafetyFactor * ScAutoFloorDosesConsumed * _casinoSc.BankrollTarget)
+			: 0m;
 
 	// Effective SC floor = max(manual reserve, R2 auto floor when enabled) — the same max() composition as
 	// TryAutoWithdraw's anti-ping-pong guard (§2.3).
@@ -221,23 +258,30 @@ public partial class CasinoCoinSwapService : Node
 	public decimal OfferedSc =>
 		Money.Normalize(Math.Max(0m, CasinoScMainBalance - EffectiveScReserve));
 
-	// §4.1 — the smallest OfferedBtc for which any legal swap exists: the minimum swap's net delivery plus the
-	// 0.1 network fee the casino pays on the send. At the 10% default fee: 0.9 + 0.1 = 1.0 BTC exactly.
+	// §4.1 — the smallest OfferedBtc for which any legal swap exists: the minimum swap's net delivery plus
+	// the 0.1 network fee the casino pays on the send. Re-derived for the VALUE floor (2026-07-08, §3.2):
+	// net(minGross) = minGross/2 = MinFee×(1+fee)/(1−2×fee) (half of MinSwapGrossBtcFor, by the floor's own
+	// definition net = totalFee = gross − net). Unlike the superseded "net>0" floor this is fee-DEPENDENT
+	// again — a higher casino cut requires a bigger minimum to still guarantee net ≥ fee — so it must read
+	// the live fee (the player is the only client today; the rank system will parameterize this by client).
 	public decimal MinDeliverableBtc
 	{
 		get
 		{
-			decimal feeBtc = Math.Max(GetSwapFeePercentFor("player") / 100m * MinSwapGrossBtc, NetworkFeePolicy.MinFee);
-			return Money.Normalize(MinSwapGrossBtc - feeBtc + NetworkFeePolicy.MinFee);
+			decimal fee = GetSwapFeePercentFor(PlayerNodeId) / 100m;
+			if (fee >= 0.5m) return 0m;
+			return Money.Normalize(NetworkFeePolicy.MinFee * (2m - fee) / (1m - 2m * fee));
 		}
 	}
 
-	// §1.1 — Panel B's enable threshold: the net SC the minimum legal swap (1 BTC gross) would pay out at the
-	// given price. Below this, no swap the desk accepts can be honored.
+	// §1.1 — Panel B's enable threshold: the net SC the minimum legal swap would pay out at the given price.
+	// Same value-floor derivation as MinDeliverableBtc, expressed in SC: netSc(minGross) = priceSc ×
+	// MinFee×(1+fee)/(1−2×fee) (ComputeBtcToScCore's netSc is exactly priceSc × the BTC-side net).
 	public decimal MinScPayoutAt(decimal priceSc)
 	{
-		decimal feeBtc = Math.Max(GetSwapFeePercentFor("player") / 100m * MinSwapGrossBtc, NetworkFeePolicy.MinFee);
-		return Money.Normalize(priceSc * (MinSwapGrossBtc - feeBtc));
+		decimal fee = GetSwapFeePercentFor(PlayerNodeId) / 100m;
+		if (fee >= 0.5m) return 0m;
+		return Money.Normalize(priceSc * NetworkFeePolicy.MinFee * (1m + fee) / (1m - 2m * fee));
 	}
 
 	// Deferred one frame past autoload boot (see _Ready) — the first legitimate touch of the blockchain world.
@@ -319,7 +363,7 @@ public partial class CasinoCoinSwapService : Node
 		public decimal GrossConverted { get; init; }
 		public decimal FeeCharged     { get; init; }
 		public decimal NetOut         { get; init; }
-		public decimal MinInput       { get; init; }   // the §3.2 1-BTC-gross floor, in the input's asset
+		public decimal MinInput       { get; init; }   // §3.2 minimum swap size (net > 0 floor), in the input's asset
 		public decimal MaxInput       { get; init; }
 		public string  MaxLimitedBy   { get; init; } = string.Empty;
 		public bool    IsValid        { get; init; }
@@ -334,18 +378,23 @@ public partial class CasinoCoinSwapService : Node
 	{
 		decimal price = CurrentPriceSc ?? 0m;
 		decimal fee   = GetSwapFeePercentFor(clientId) / 100m;
+		decimal maxDev = MaxFeeDeviationPoints / 100m;
 		if (PanelAReason != PanelDisableReason.None || price <= 0m)
 			return new SwapQuote { InputAmount = scAmount, PanelState = PanelAReason };
 
-		decimal grossBtc = Money.Normalize(scAmount / price);
-		decimal feeBtc   = Money.Normalize(Math.Max(fee * grossBtc, NetworkFeePolicy.MinFee));
-		decimal netBtc   = Money.Normalize(grossBtc - feeBtc);
+		(decimal grossBtc, decimal feeBtc, decimal netBtc) = ComputeScToBtcCore(scAmount, price, fee, maxDev);
 
 		// Casino-side cap: netBtc + 0.1 network fee must fit in OfferedBtc; player-side cap: his Main Balance.
-		decimal casinoMaxSc = Money.Normalize(MaxGrossForNet(OfferedBtc - NetworkFeePolicy.MinFee, fee) * price);
+		decimal minSc       = FindMinScInput(price, fee, maxDev);
+		// Floor at minSc (dev feedback 2026-07-08): this cap and the panel's own enable gate (RecomputeAvailability,
+		// OfferedBtc >= MinDeliverableBtc) are two INDEPENDENT derivations of "can the casino cover the minimum
+		// swap" — each with its own Money.Normalize truncation — so they can disagree by a few satoshi right at
+		// the boundary. Since PanelAReason == None here already proves (via the enable gate) that the casino can
+		// afford at least minSc, never let this independently-truncated estimate report LESS than that — only
+		// the (untouched, exact, no-formula-involved) player-side cap below may legitimately keep Max < Min.
+		decimal casinoMaxSc = Money.Normalize(Math.Max(BaseFromNet(OfferedBtc - NetworkFeePolicy.MinFee, fee) * price, minSc));
 		decimal playerMaxSc = PlayerScMainBalance;
 		bool casinoBinds    = casinoMaxSc < playerMaxSc;
-		decimal minSc       = Money.Normalize(MinSwapGrossBtc * price);
 
 		return new SwapQuote
 		{
@@ -367,16 +416,20 @@ public partial class CasinoCoinSwapService : Node
 	{
 		decimal price = CurrentPriceSc ?? 0m;
 		decimal fee   = GetSwapFeePercentFor(clientId) / 100m;
+		decimal maxDev = MaxFeeDeviationPoints / 100m;
 		if (PanelBReason != PanelDisableReason.None || price <= 0m)
 			return new SwapQuote { InputAmount = btcAmount, PanelState = PanelBReason };
 
-		decimal grossSc = Money.Normalize(btcAmount * price);
-		decimal feeSc   = Money.Normalize(Math.Max(fee * grossSc, NetworkFeePolicy.MinFee * price));
-		decimal netSc   = Money.Normalize(grossSc - feeSc);
+		(decimal grossSc, decimal feeSc, decimal netSc) = ComputeBtcToScCore(btcAmount, price, fee, maxDev);
 
 		// Casino-side cap: netSc ≤ OfferedSc (invert the same net-of-fee curve, in BTC terms); player-side
 		// cap: his spendable BTC (confirmed − pending outgoing).
-		decimal casinoMaxBtc = Money.Normalize(MaxGrossForNet(OfferedSc / price, fee));
+		decimal minGross     = FindMinBtcInput(price, fee, maxDev);
+		// Floor at minGross — same reasoning as Panel A above: the enable gate (OfferedSc >= MinScPayoutAt)
+		// and this independent BaseFromNet inversion can disagree by a few satoshi at the boundary, worse at
+		// low BTC prices (a single BTC-satoshi moves the SC-side net by less than one SC-satoshi there, so the
+		// truncation gap is wider). PanelBReason == None already proves the casino can cover minGross.
+		decimal casinoMaxBtc = Money.Normalize(Math.Max(BaseFromNet(OfferedSc / price, fee), minGross));
 		decimal playerMaxBtc = PlayerSpendableBtc;
 		bool casinoBinds     = casinoMaxBtc < playerMaxBtc;
 
@@ -387,24 +440,178 @@ public partial class CasinoCoinSwapService : Node
 			GrossConverted = grossSc,
 			FeeCharged     = feeSc,
 			NetOut         = netSc,
-			MinInput       = MinSwapGrossBtc,
+			MinInput       = minGross,
 			MaxInput       = Money.Normalize(Math.Min(playerMaxBtc, casinoMaxBtc)),
 			MaxLimitedBy   = casinoBinds ? "casino SC available" : "your BTC balance",
-			IsValid        = btcAmount >= MinSwapGrossBtc && btcAmount <= Math.Min(playerMaxBtc, casinoMaxBtc) && netSc > 0m,
+			IsValid        = btcAmount >= minGross && btcAmount <= Math.Min(playerMaxBtc, casinoMaxBtc) && netSc > 0m,
 			PanelState     = PanelDisableReason.None
 		};
 	}
 
-	// Inverts net(g) = g − max(fee·g, MinFee): the largest gross amount whose net stays within targetNet.
-	// Piecewise because the 0.1 floor binds below gross = MinFee/fee and the percent above it (§3.2).
-	private static decimal MaxGrossForNet(decimal targetNet, decimal fee)
+	// ---- Reverse quotes — "I want to receive exactly X" reactive inputs (dev feedback 2026-07-07) -------------------
+	// Both invert the forward quote's net(base) curve via BaseFromNet (linear under the additive fee model,
+	// 2026-07-08 — mathematically exact: net(base) is strictly increasing in base for fee<1, so BaseFromNet
+	// returns the ONE base whose net equals the target precisely, no piecewise regions needed), then replay
+	// the result through the FORWARD quote. Every clamp/IsValid/MaxLimitedBy rule is therefore evaluated in
+	// exactly one place — the reverse quote can never disagree with the forward one, and a desired amount the
+	// casino/player can't actually cover surfaces the normal invalid state (correct MaxLimitedBy reason)
+	// instead of a second, possibly-inconsistent set of rules.
+
+	// Smallest representable unit in either currency (8-decimal convention, CLAUDE.md Money Handling).
+	private const decimal OneSatoshi = 0.00000001m;
+	// Safety bound on the exact-match nudge loops below — normal convergence takes 1–3 iterations; this
+	// only trips if the desired amount is unreachable at all (the loop still terminates safely either way).
+	private const int MaxExactMatchIterations = 10;
+
+	// Panel A reverse — "I want to receive exactly this much BTC" → the SC I'd need to pay.
+	public SwapQuote QuoteScToBtcForReceivedBtc(string clientId, decimal desiredNetBtc)
+	{
+		decimal price = CurrentPriceSc ?? 0m;
+		decimal fee   = GetSwapFeePercentFor(clientId) / 100m;
+		if (PanelAReason != PanelDisableReason.None || price <= 0m || desiredNetBtc <= 0m)
+			return QuoteScToBtc(clientId, 0m);
+
+		decimal grossBtc   = BaseFromNet(desiredNetBtc, fee);
+		decimal requiredSc = Money.Normalize(grossBtc * price);
+		SwapQuote quote = QuoteScToBtc(clientId, requiredSc);
+
+		// Exact-match nudge (dev feedback 2026-07-07): the SC↔BTC round-trip through two independent
+		// 8-decimal Money.Normalize steps can under-deliver by a few satoshi (worse at low market prices —
+		// see ProjectDesignManual Ch. 33's rounding note). Rather than silently shortchanging the requested
+		// receive amount, nudge requiredSc up by the BTC shortfall's SC-equivalent (or one SC-satoshi,
+		// whichever is larger) until NetOut is AT LEAST desiredNetBtc — the negligible surplus folds
+		// invisibly into the pay amount, exactly as intended: the player always gets what they asked for.
+		int iterations = 0;
+		while (quote.NetOut < desiredNetBtc && iterations++ < MaxExactMatchIterations)
+		{
+			decimal shortfall = desiredNetBtc - quote.NetOut;
+			decimal bump = Math.Max(Money.Normalize(shortfall * price), OneSatoshi);
+			requiredSc = Money.Normalize(requiredSc + bump);
+			quote = QuoteScToBtc(clientId, requiredSc);
+		}
+		return quote;
+	}
+
+	// Panel B reverse — "I want to receive exactly this much SC" → the BTC (total, network fee included) I'd
+	// need to send. desiredNetSc is converted to its BTC-equivalent before inverting, since §4.2's curve is
+	// naturally expressed in BTC (B is BTC; netSc = price × net(B)).
+	public SwapQuote QuoteBtcToScForReceivedSc(string clientId, decimal desiredNetSc)
+	{
+		decimal price = CurrentPriceSc ?? 0m;
+		decimal fee   = GetSwapFeePercentFor(clientId) / 100m;
+		if (PanelBReason != PanelDisableReason.None || price <= 0m || desiredNetSc <= 0m)
+			return QuoteBtcToSc(clientId, 0m);
+
+		decimal targetBtcEquivalent = Money.Normalize(desiredNetSc / price);
+		decimal requiredBtc = BaseFromNet(targetBtcEquivalent, fee);
+		SwapQuote quote = QuoteBtcToSc(clientId, requiredBtc);
+
+		// Exact-match nudge — same rationale as Panel A's, mirrored: nudge requiredBtc up by the SC
+		// shortfall's BTC-equivalent (or one BTC-satoshi) until NetOut is AT LEAST desiredNetSc.
+		int iterations = 0;
+		while (quote.NetOut < desiredNetSc && iterations++ < MaxExactMatchIterations)
+		{
+			decimal shortfallSc = desiredNetSc - quote.NetOut;
+			decimal bumpBtc = Math.Max(Money.Normalize(shortfallSc / price), OneSatoshi);
+			requiredBtc = Money.Normalize(requiredBtc + bumpBtc);
+			quote = QuoteBtcToSc(clientId, requiredBtc);
+		}
+		return quote;
+	}
+
+	// Inverts net(base) = base×(1−fee) − MinFee×(1+fee) — the additive fee model (2026-07-08, supersedes
+	// D-SW.1's max()-based formula). net(base) is strictly increasing in base for fee<1, so for a POSITIVE
+	// targetNet this returns the EXACT base whose net equals it, not merely a bound — one linear line covers
+	// every case (the old model needed a piecewise floor-region/percentage-region split; this one doesn't,
+	// since there is no more max() to create a kink in the curve). The `targetNet <= 0m` guard is still
+	// required for the Max-clamp callers (e.g. "the casino's offered BTC minus the network fee it must pay"
+	// can itself be ≤ 0 when the casino is nearly out of funds) — that means literally no swap is affordable,
+	// so the correct answer is 0, not the small positive base the raw inversion would otherwise imply.
+	private static decimal BaseFromNet(decimal targetNet, decimal fee)
 	{
 		if (targetNet <= 0m || fee >= 1m) return 0m;
-		decimal floorRegionEnd = NetworkFeePolicy.MinFee / Math.Max(fee, 0.0001m);
-		decimal netAtRegionEnd = floorRegionEnd - NetworkFeePolicy.MinFee;
-		return targetNet <= netAtRegionEnd
-			? targetNet + NetworkFeePolicy.MinFee
-			: targetNet / (1m - fee);
+		return Money.Normalize((targetNet + NetworkFeePolicy.MinFee * (1m + fee)) / (1m - fee));
+	}
+
+	// ---- Pure core math (no clamps, no validity) — shared by the public quotes AND the minimum-finder
+	// helpers below, so the latter can verify a candidate WITHOUT calling back into QuoteScToBtc/QuoteBtcToSc
+	// (which would recurse: those methods call FindMin*Input for their own MinInput field).
+
+	// maxDeviationFraction = MaxFeeDeviationPoints/100 (D-SW.12). The cap is applied to the CASINO'S OWN CUT
+	// only — never to the flat network cost, which is always charged in full (it's a real pass-through cost,
+	// not margin). This is deliberate: clamping the network fee itself into a percentage cap would create an
+	// unavoidable conflict near the minimum swap size (the flat fee alone can exceed nominal% of a tiny base,
+	// so a "never below cost" floor and a "never above nominal+points" ceiling on the SAME combined total
+	// would sometimes be mutually impossible to satisfy). Capping only the casino's cut sidesteps that: the
+	// floor (casino margin ≥ 0) and the ceiling (casino margin ≤ (fee+maxDeviationFraction)×gross) can never
+	// conflict since maxDeviationFraction ≥ 0. `effectiveMarginPercent = casinoFee/gross×100` (the UI's own
+	// metric, which already excludes the network fee) is therefore bounded in [0, SwapFeePercent+MaxFeeDeviationPoints]
+	// by construction, for every swap size — see ProjectDesignManual Ch. 34 §34.4.
+	private static (decimal grossBtc, decimal feeBtc, decimal netBtc) ComputeScToBtcCore(decimal scAmount, decimal price, decimal fee, decimal maxDeviationFraction)
+	{
+		decimal grossBtc = Money.Normalize(scAmount / price);
+		decimal networkFee = NetworkFeePolicy.MinFee;
+		// Additive fee model (2026-07-08, supersedes D-SW.1): the casino's %-cut is fee×(gross+networkFee) —
+		// its own cut ON TOP of the network cost, summed, never max()'d. See ProjectDesignManual Ch. 34 / plan §3.1a.
+		decimal casinoFeeUncapped = Money.Normalize(fee * (grossBtc + networkFee));
+		decimal casinoFeeCap      = Money.Normalize((fee + maxDeviationFraction) * grossBtc);
+		decimal casinoFee = Math.Max(0m, Math.Min(casinoFeeUncapped, casinoFeeCap));
+		decimal feeBtc = Money.Normalize(networkFee + casinoFee);
+		decimal netBtc = Money.Normalize(grossBtc - feeBtc);
+		return (grossBtc, feeBtc, netBtc);
+	}
+
+	private static (decimal grossSc, decimal feeSc, decimal netSc) ComputeBtcToScCore(decimal btcAmount, decimal price, decimal fee, decimal maxDeviationFraction)
+	{
+		decimal grossSc = Money.Normalize(btcAmount * price);
+		// Additive fee model — same logic as Panel A, expressed in SC: the network cost's SC-equivalent
+		// (MinFee × price) is a flat pass-through; the casino's %-cut is capped the same way, in SC terms.
+		decimal networkFeeSc = Money.Normalize(NetworkFeePolicy.MinFee * price);
+		decimal casinoFeeUncapped = Money.Normalize(fee * (grossSc + networkFeeSc));
+		decimal casinoFeeCap      = Money.Normalize((fee + maxDeviationFraction) * grossSc);
+		decimal casinoFee = Math.Max(0m, Math.Min(casinoFeeUncapped, casinoFeeCap));
+		decimal feeSc = Money.Normalize(networkFeeSc + casinoFee);
+		decimal netSc = Money.Normalize(grossSc - feeSc);
+		return (grossSc, feeSc, netSc);
+	}
+
+	// ---- Minimum-input finders (dev feedback 2026-07-08) — the MIN button/quote gap fix -----------------------------
+	// `MinSwapGrossBtcFor`'s analytical estimate assumes exact arithmetic, but `Money.Normalize` TRUNCATES
+	// (MidpointRounding.ToZero, never rounds up) at every step of the grossBtc→feeBtc→netBtc chain — three
+	// compounding truncations can shave the intended "net = fee" value-floor target to just under it. Verify
+	// the analytical estimate against the REAL (truncating) core math and nudge up by one satoshi until the
+	// value floor (net ≥ feeCharged, i.e. the player nets back at least as much as they paid in fees) is
+	// actually satisfied — the same exact-match pattern the reverse "receive X" quotes already use, just
+	// targeting "net covers its own fee" instead of a specific desired net.
+	// D-SW.12's deviation cap only ever REDUCES the charged fee relative to the pure additive model (never
+	// increases it — see the two-sided clamp in ComputeScToBtcCore/ComputeBtcToScCore), so a gross that
+	// satisfies "net ≥ fee" under the uncapped additive formula still satisfies it (with more slack) once the
+	// cap is applied — MinSwapGrossBtcFor's analytical estimate (derived from the uncapped formula) therefore
+	// remains a safe, if occasionally slightly conservative, starting point under the cap too.
+	private static decimal FindMinScInput(decimal price, decimal fee, decimal maxDeviationFraction)
+	{
+		decimal scAmount = Money.Normalize(MinSwapGrossBtcFor(fee) * price);
+		int iterations = 0;
+		while (iterations++ < MaxExactMatchIterations)
+		{
+			var (_, feeBtc, netBtc) = ComputeScToBtcCore(scAmount, price, fee, maxDeviationFraction);
+			if (netBtc > 0m && netBtc >= feeBtc) break;
+			scAmount = Money.Normalize(scAmount + OneSatoshi);
+		}
+		return scAmount;
+	}
+
+	private static decimal FindMinBtcInput(decimal price, decimal fee, decimal maxDeviationFraction)
+	{
+		decimal btcAmount = MinSwapGrossBtcFor(fee);
+		int iterations = 0;
+		while (iterations++ < MaxExactMatchIterations)
+		{
+			var (_, feeSc, netSc) = ComputeBtcToScCore(btcAmount, price, fee, maxDeviationFraction);
+			if (netSc > 0m && netSc >= feeSc) break;
+			btcAmount = Money.Normalize(btcAmount + OneSatoshi);
+		}
+		return btcAmount;
 	}
 
 	// ---- Execution — Panel A (SC → BTC, §4.1 / SW.3) ---------------------------------------------------------------
@@ -466,7 +673,7 @@ public partial class CasinoCoinSwapService : Node
 		if (!quote.IsValid || quote.NetOut <= 0m)
 		{
 			error = string.Create(CultureInfo.InvariantCulture,
-				$"Minimum swap is {quote.MinInput:N8} SC (1 BTC gross).");
+				$"Minimum swap is {quote.MinInput:N8} SC.");
 			return false;
 		}
 
@@ -613,12 +820,20 @@ public partial class CasinoCoinSwapService : Node
 		CommitKnobChange("fee_set");
 	}
 
+	// D-SW.12 — clamps to [0,20] points. 0 locks the effective % to nominal exactly (casino absorbs the full
+	// network cost on small swaps); higher values allow more deviation before the cap engages.
+	public void SetMaxFeeDeviationPoints(decimal points)
+	{
+		MaxFeeDeviationPoints = Math.Clamp(Money.Normalize(points), MinMaxFeeDeviationPoints, MaxMaxFeeDeviationPoints);
+		CommitKnobChange("max_fee_deviation_set");
+	}
+
 	// R2 auto-floor toggle + tunables (§2.3, SW.5). Non-positive inputs fall back to their defaults.
-	public void SetScFloor(bool enabled, decimal safetyFactor, decimal windowHours)
+	public void SetScFloor(bool enabled, decimal safetyFactor, decimal windowDays)
 	{
 		ScFloorEnabled          = enabled;
 		ScAutoFloorSafetyFactor = safetyFactor > 0m ? Money.Normalize(safetyFactor) : DefaultScAutoFloorSafetyFactor;
-		ScAutoFloorWindowHours  = windowHours > 0m ? Money.Normalize(windowHours) : DefaultScAutoFloorWindowHours;
+		ScAutoFloorWindowDays   = windowDays > 0m ? Money.Normalize(windowDays) : DefaultScAutoFloorWindowDays;
 		CommitKnobChange("sc_floor_set");
 	}
 
@@ -711,9 +926,10 @@ public partial class CasinoCoinSwapService : Node
 		public ReserveSetting BtcReserve { get; set; } = new();
 		public ReserveSetting ScReserve  { get; set; } = new();
 		public decimal SwapFeePercent    { get; set; } = DefaultSwapFeePercent;
+		public decimal MaxFeeDeviationPoints { get; set; } = DefaultMaxFeeDeviationPoints;
 		public bool    ScFloorEnabled    { get; set; }
 		public decimal ScAutoFloorSafetyFactor { get; set; } = DefaultScAutoFloorSafetyFactor;
-		public decimal ScAutoFloorWindowHours  { get; set; } = DefaultScAutoFloorWindowHours;
+		public decimal ScAutoFloorWindowDays   { get; set; } = DefaultScAutoFloorWindowDays;
 		public List<SwapRecord> SwapHistory { get; set; } = new();
 	}
 
@@ -723,9 +939,10 @@ public partial class CasinoCoinSwapService : Node
 		BtcReserve        = CloneReserve(BtcReserve),
 		ScReserve         = CloneReserve(ScReserve),
 		SwapFeePercent    = SwapFeePercent,
+		MaxFeeDeviationPoints = MaxFeeDeviationPoints,
 		ScFloorEnabled    = ScFloorEnabled,
 		ScAutoFloorSafetyFactor = ScAutoFloorSafetyFactor,
-		ScAutoFloorWindowHours  = ScAutoFloorWindowHours,
+		ScAutoFloorWindowDays   = ScAutoFloorWindowDays,
 		SwapHistory       = _swapHistory.Select(CloneRecord).ToList()
 	};
 
@@ -742,9 +959,10 @@ public partial class CasinoCoinSwapService : Node
 		BtcReserve        = SanitizeReserve(state.BtcReserve?.UsePercent ?? true, state.BtcReserve?.Percent ?? 0m, state.BtcReserve?.Amount ?? 0m);
 		ScReserve         = SanitizeReserve(state.ScReserve?.UsePercent ?? true, state.ScReserve?.Percent ?? 0m, state.ScReserve?.Amount ?? 0m);
 		SwapFeePercent    = Math.Clamp(Money.Normalize(state.SwapFeePercent), MinSwapFeePercent, MaxSwapFeePercent);
+		MaxFeeDeviationPoints = Math.Clamp(Money.Normalize(state.MaxFeeDeviationPoints), MinMaxFeeDeviationPoints, MaxMaxFeeDeviationPoints);
 		ScFloorEnabled          = state.ScFloorEnabled;
 		ScAutoFloorSafetyFactor = state.ScAutoFloorSafetyFactor > 0m ? Money.Normalize(state.ScAutoFloorSafetyFactor) : DefaultScAutoFloorSafetyFactor;
-		ScAutoFloorWindowHours  = state.ScAutoFloorWindowHours > 0m ? Money.Normalize(state.ScAutoFloorWindowHours) : DefaultScAutoFloorWindowHours;
+		ScAutoFloorWindowDays   = state.ScAutoFloorWindowDays > 0m ? Money.Normalize(state.ScAutoFloorWindowDays) : DefaultScAutoFloorWindowDays;
 
 		_swapHistory.Clear();
 		foreach (var r in state.SwapHistory ?? new List<SwapRecord>())
@@ -757,7 +975,7 @@ public partial class CasinoCoinSwapService : Node
 
 		SaveState();
 		if (_availabilityReady) RecomputeAvailability(notify: false); // boot-time restore precedes the deferred init — skipped there
-		GD.Print($"[CasinoCoinSwapService] RESTORED from checkpoint — Fee={SwapFeePercent:F2}%  ScFloor={(ScFloorEnabled ? $"ON (safety={ScAutoFloorSafetyFactor:F2}, window={ScAutoFloorWindowHours:F1}h)" : "OFF")}  history={_swapHistory.Count}");
+		GD.Print($"[CasinoCoinSwapService] RESTORED from checkpoint — Fee={SwapFeePercent:F2}%  ScFloor={(ScFloorEnabled ? $"ON (safety={ScAutoFloorSafetyFactor:F2}, window={ScAutoFloorWindowDays:F1}d)" : "OFF")}  history={_swapHistory.Count}");
 		SwapDeskChanged?.Invoke();
 	}
 
@@ -769,9 +987,10 @@ public partial class CasinoCoinSwapService : Node
 		BtcReserve        = new ReserveSetting();
 		ScReserve         = new ReserveSetting();
 		SwapFeePercent    = DefaultSwapFeePercent;
+		MaxFeeDeviationPoints = DefaultMaxFeeDeviationPoints;
 		ScFloorEnabled          = false;
 		ScAutoFloorSafetyFactor = DefaultScAutoFloorSafetyFactor;
-		ScAutoFloorWindowHours  = DefaultScAutoFloorWindowHours;
+		ScAutoFloorWindowDays   = DefaultScAutoFloorWindowDays;
 		_swapHistory.Clear();
 		SaveState();
 		if (_availabilityReady) RecomputeAvailability(notify: false); // boot-time reset precedes the deferred init — skipped there
@@ -785,9 +1004,10 @@ public partial class CasinoCoinSwapService : Node
 		public ReserveSetting BtcReserve { get; set; } = new();
 		public ReserveSetting ScReserve  { get; set; } = new();
 		public decimal  SwapFeePercent    { get; set; } = DefaultSwapFeePercent;
+		public decimal  MaxFeeDeviationPoints { get; set; } = DefaultMaxFeeDeviationPoints;
 		public bool     ScFloorEnabled    { get; set; }
 		public decimal  ScAutoFloorSafetyFactor { get; set; } = DefaultScAutoFloorSafetyFactor;
-		public decimal  ScAutoFloorWindowHours  { get; set; } = DefaultScAutoFloorWindowHours;
+		public decimal  ScAutoFloorWindowDays   { get; set; } = DefaultScAutoFloorWindowDays;
 		public List<SwapRecord> SwapHistory { get; set; } = new();
 		public DateTime UpdatedAtUtc { get; set; }
 	}
@@ -816,9 +1036,10 @@ public partial class CasinoCoinSwapService : Node
 			BtcReserve        = SanitizeReserve(snapshot.BtcReserve?.UsePercent ?? true, snapshot.BtcReserve?.Percent ?? 0m, snapshot.BtcReserve?.Amount ?? 0m);
 			ScReserve         = SanitizeReserve(snapshot.ScReserve?.UsePercent ?? true, snapshot.ScReserve?.Percent ?? 0m, snapshot.ScReserve?.Amount ?? 0m);
 			SwapFeePercent    = Math.Clamp(Money.Normalize(snapshot.SwapFeePercent), MinSwapFeePercent, MaxSwapFeePercent);
+			MaxFeeDeviationPoints = Math.Clamp(Money.Normalize(snapshot.MaxFeeDeviationPoints), MinMaxFeeDeviationPoints, MaxMaxFeeDeviationPoints);
 			ScFloorEnabled          = snapshot.ScFloorEnabled;
 			ScAutoFloorSafetyFactor = snapshot.ScAutoFloorSafetyFactor > 0m ? Money.Normalize(snapshot.ScAutoFloorSafetyFactor) : DefaultScAutoFloorSafetyFactor;
-			ScAutoFloorWindowHours  = snapshot.ScAutoFloorWindowHours > 0m ? Money.Normalize(snapshot.ScAutoFloorWindowHours) : DefaultScAutoFloorWindowHours;
+			ScAutoFloorWindowDays   = snapshot.ScAutoFloorWindowDays > 0m ? Money.Normalize(snapshot.ScAutoFloorWindowDays) : DefaultScAutoFloorWindowDays;
 
 			_swapHistory.Clear();
 			foreach (var r in snapshot.SwapHistory ?? new List<SwapRecord>())
@@ -842,9 +1063,10 @@ public partial class CasinoCoinSwapService : Node
 		BtcReserve        = new ReserveSetting();
 		ScReserve         = new ReserveSetting();
 		SwapFeePercent    = DefaultSwapFeePercent;
+		MaxFeeDeviationPoints = DefaultMaxFeeDeviationPoints;
 		ScFloorEnabled          = false;
 		ScAutoFloorSafetyFactor = DefaultScAutoFloorSafetyFactor;
-		ScAutoFloorWindowHours  = DefaultScAutoFloorWindowHours;
+		ScAutoFloorWindowDays   = DefaultScAutoFloorWindowDays;
 		_swapHistory.Clear();
 	}
 
@@ -857,9 +1079,10 @@ public partial class CasinoCoinSwapService : Node
 				BtcReserve        = CloneReserve(BtcReserve),
 				ScReserve         = CloneReserve(ScReserve),
 				SwapFeePercent    = SwapFeePercent,
+				MaxFeeDeviationPoints = MaxFeeDeviationPoints,
 				ScFloorEnabled    = ScFloorEnabled,
 				ScAutoFloorSafetyFactor = ScAutoFloorSafetyFactor,
-				ScAutoFloorWindowHours  = ScAutoFloorWindowHours,
+				ScAutoFloorWindowDays   = ScAutoFloorWindowDays,
 				SwapHistory       = _swapHistory.Select(CloneRecord).ToList(),
 				UpdatedAtUtc      = DateTime.UtcNow
 			};

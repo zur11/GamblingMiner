@@ -36,6 +36,7 @@ public partial class CasinoGamblingFinances : Control
 	// (CasinoCoinSwaps itself carries no DEV controls). The BTC reserve selector lives in CasinoFinances.
 	private CasinoCoinSwapService _swapService;
 	private SpinBox _swapFeeSpin;
+	private SpinBox _maxFeeDeviationSpin;
 	private OptionButton _scReserveModeOption;
 	private SpinBox _scReserveSpin;
 	private Label _swapDeskInfoLabel;
@@ -43,6 +44,13 @@ public partial class CasinoGamblingFinances : Control
 	private CheckBox _scAutoFloorToggle;
 	private SpinBox _scAutoFloorSafetySpin;
 	private SpinBox _scAutoFloorWindowSpin;
+	private Label _scAutoFloorBreakdownLabel;
+	// Colored binding dots (dev feedback 2026-07-07): which side of max(manual, auto) currently applies.
+	private Label _manualReserveIndicator;
+	private Label _autoFloorIndicator;
+	private static readonly Color IndicatorGreen = new Color(0.3f, 0.9f, 0.3f);
+	private static readonly Color IndicatorRed   = new Color(0.95f, 0.3f, 0.3f);
+	private static readonly Color IndicatorGrey  = new Color(0.55f, 0.55f, 0.55f);
 
 	private double _fallbackTimer;
 	private const double FallbackInterval = 2.0;
@@ -75,6 +83,7 @@ public partial class CasinoGamblingFinances : Control
 
 		_swapService         = GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService");
 		_swapFeeSpin         = GetNode<SpinBox>("%SwapFeeSpin");
+		_maxFeeDeviationSpin = GetNode<SpinBox>("%MaxFeeDeviationSpin");
 		_scReserveModeOption = GetNode<OptionButton>("%ScReserveModeOption");
 		_scReserveSpin       = GetNode<SpinBox>("%ScReserveSpin");
 		_swapDeskInfoLabel   = GetNode<Label>("%SwapDeskInfoLabel");
@@ -84,23 +93,34 @@ public partial class CasinoGamblingFinances : Control
 		if (_swapService != null)
 		{
 			_swapFeeSpin.Value = (double)_swapService.SwapFeePercent;
+			_maxFeeDeviationSpin.Value = (double)_swapService.MaxFeeDeviationPoints;
 			_scReserveModeOption.Selected = _swapService.ScReserve.UsePercent ? 0 : 1;
 			SyncScReserveSpinToMode();
 		}
 		_scReserveModeOption.ItemSelected += _ => SyncScReserveSpinToMode();
 		GetNode<Button>("%SetSwapFeeBtn").Pressed   += OnApplySwapFeePressed;
+		GetNode<Button>("%SetMaxFeeDeviationBtn").Pressed += OnApplyMaxFeeDeviationPressed;
 		GetNode<Button>("%SetScReserveBtn").Pressed += OnApplyScReservePressed;
 
 		_scAutoFloorToggle     = GetNode<CheckBox>("%ScAutoFloorToggle");
-		_scAutoFloorSafetySpin = GetNode<SpinBox>("%ScAutoFloorSafetySpin");
-		_scAutoFloorWindowSpin = GetNode<SpinBox>("%ScAutoFloorWindowSpin");
+		_scAutoFloorSafetySpin     = GetNode<SpinBox>("%ScAutoFloorSafetySpin");
+		_scAutoFloorWindowSpin     = GetNode<SpinBox>("%ScAutoFloorWindowSpin");
+		_scAutoFloorBreakdownLabel = GetNode<Label>("%ScAutoFloorBreakdownLabel");
+		_manualReserveIndicator    = GetNode<Label>("%ManualReserveIndicator");
+		_autoFloorIndicator        = GetNode<Label>("%AutoFloorIndicator");
 		if (_swapService != null)
 		{
 			_scAutoFloorToggle.ButtonPressed = _swapService.ScFloorEnabled;
 			_scAutoFloorSafetySpin.Value     = (double)_swapService.ScAutoFloorSafetyFactor;
-			_scAutoFloorWindowSpin.Value     = (double)_swapService.ScAutoFloorWindowHours;
+			_scAutoFloorWindowSpin.Value     = (double)_swapService.ScAutoFloorWindowDays;
 		}
 		GetNode<Button>("%SetScAutoFloorBtn").Pressed += OnApplyScAutoFloorPressed;
+		// Live preview (dev feedback 2026-07-07): the breakdown must update as the SpinBoxes move, BEFORE
+		// Apply — SafetyFactor alone is unreadable without seeing doses × BankrollTarget alongside it.
+		_scAutoFloorToggle.Toggled          += _ => RefreshScAutoFloorBreakdown();
+		_scAutoFloorSafetySpin.ValueChanged += _ => RefreshScAutoFloorBreakdown();
+		_scAutoFloorWindowSpin.ValueChanged += _ => RefreshScAutoFloorBreakdown();
+		RefreshScAutoFloorBreakdown();
 
 		GetNode<Button>("%SetTargetBtn").Pressed        += OnSetTargetPressed;
 		GetNode<Button>("%SetAutoLoanBtn").Pressed      += OnSetAutoLoanPressed;
@@ -194,6 +214,7 @@ public partial class CasinoGamblingFinances : Control
 		}
 
 		RefreshSwapDeskInfo();
+		RefreshScAutoFloorBreakdown(); // doses-in-window ages with game time even without a new recharge
 
 		// Bankroll recharge history list, newest first (CG.3.A), mirroring the loans list.
 		if (GodotObject.IsInstanceValid(_rechargeHistoryList))
@@ -227,6 +248,13 @@ public partial class CasinoGamblingFinances : Control
 		RefreshLabels();
 	}
 
+	private void OnApplyMaxFeeDeviationPressed()
+	{
+		// SpinBox already refuses values outside 0–20 (D-SW.12); the service setter clamps again as the safety net.
+		_swapService?.SetMaxFeeDeviationPoints((decimal)_maxFeeDeviationSpin.Value);
+		RefreshLabels();
+	}
+
 	private void OnApplyScReservePressed()
 	{
 		if (_swapService == null) return;
@@ -245,6 +273,28 @@ public partial class CasinoGamblingFinances : Control
 	{
 		_swapService?.SetScFloor(_scAutoFloorToggle.ButtonPressed, (decimal)_scAutoFloorSafetySpin.Value, (decimal)_scAutoFloorWindowSpin.Value);
 		RefreshLabels();
+		RefreshScAutoFloorBreakdown();
+	}
+
+	// Live preview of the R2 formula using the SpinBoxes' CURRENT (possibly not-yet-applied) values, so the
+	// dev sees exactly what SafetyFactor "weighs" — in SC, broken into its three factors — before hitting
+	// Apply (dev feedback 2026-07-07: SafetyFactor alone is meaningless without doses-consumed and
+	// BankrollTarget alongside it, since the same SafetyFactor produces very different SC amounts depending
+	// on both). Uses GetScAutoFloorDosesConsumedFor(previewWindow) so the doses count itself previews
+	// correctly even when the Window spinner hasn't been applied yet.
+	private void RefreshScAutoFloorBreakdown()
+	{
+		if (_swapService == null || !GodotObject.IsInstanceValid(_scAutoFloorBreakdownLabel)) return;
+
+		decimal safety = (decimal)_scAutoFloorSafetySpin.Value;
+		decimal windowDays = (decimal)_scAutoFloorWindowSpin.Value;
+		int doses = _swapService.GetScAutoFloorDosesConsumedFor(windowDays);
+		decimal bankrollTarget = _casinoSc?.BankrollTarget ?? 0m;
+		decimal previewFloor = Money.Normalize(safety * doses * bankrollTarget);
+		string appliedNote = _scAutoFloorToggle.ButtonPressed ? "" : "  (toggle is OFF — not currently applied)";
+
+		_scAutoFloorBreakdownLabel.Text = string.Create(CultureInfo.InvariantCulture,
+			$"Preview: {safety:0.##} safety × {doses} dose(s) consumed in last {windowDays:0.#} day(s) × {bankrollTarget:N8} SC (BankrollTarget) = {previewFloor:N8} SC{appliedNote}");
 	}
 
 	private void RefreshSwapDeskInfo()
@@ -254,10 +304,27 @@ public partial class CasinoGamblingFinances : Control
 			? string.Create(CultureInfo.InvariantCulture, $"{_swapService.ScReserve.Percent:0.##}% of Main")
 			: string.Create(CultureInfo.InvariantCulture, $"{_swapService.ScReserve.Amount:N8} SC");
 		string autoFloorDesc = _swapService.ScFloorEnabled
-			? string.Create(CultureInfo.InvariantCulture, $"ON (safety ×{_swapService.ScAutoFloorSafetyFactor:0.##}, {_swapService.ScAutoFloorWindowHours:0.#}h window) → {_swapService.ScAutoFloor:N8} SC")
+			? string.Create(CultureInfo.InvariantCulture, $"ON (safety ×{_swapService.ScAutoFloorSafetyFactor:0.##}, {_swapService.ScAutoFloorWindowDays:0.#}d window) → {_swapService.ScAutoFloor:N8} SC")
 			: "OFF";
+
+		// Which side of max(manual, auto) is currently binding (dev feedback 2026-07-07: running both at
+		// once was confusing without this) — composition itself is unchanged, just made visible.
+		decimal manualAbs = _swapService.ScReserve.ReserveFor(_swapService.CasinoScMainBalance);
+		decimal autoAbs   = _swapService.ScAutoFloor;
+		bool autoBinds = autoAbs > manualAbs;
+		string bindingNote = autoBinds ? " [auto floor binds]" : " [manual reserve binds]";
+
+		// Colored dot per selector (dev feedback 2026-07-07: text alone wasn't fast enough to scan at a
+		// glance). Green = this side is currently the effective reserve; red = the other side overrides it;
+		// grey = auto floor is off entirely (not a candidate right now).
+		if (GodotObject.IsInstanceValid(_manualReserveIndicator))
+			_manualReserveIndicator.AddThemeColorOverride("font_color", autoBinds ? IndicatorRed : IndicatorGreen);
+		if (GodotObject.IsInstanceValid(_autoFloorIndicator))
+			_autoFloorIndicator.AddThemeColorOverride("font_color",
+				!_swapService.ScFloorEnabled ? IndicatorGrey : autoBinds ? IndicatorGreen : IndicatorRed);
+
 		_swapDeskInfoLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Fee {_swapService.SwapFeePercent:0.##}% (both directions)   |   SC reserve: {reserveDesc}   |   Auto floor (R2): {autoFloorDesc}   |   Effective reserve: {_swapService.EffectiveScReserve:N8} SC   |   Offered SC: {_swapService.OfferedSc:N8}");
+			$"Fee {_swapService.SwapFeePercent:0.##}% (both directions, capped ≤{_swapService.SwapFeePercent + _swapService.MaxFeeDeviationPoints:0.##}% effective — D-SW.12)   |   SC reserve: {reserveDesc}   |   Auto floor (R2): {autoFloorDesc}   |   Effective reserve: {_swapService.EffectiveScReserve:N8} SC{bindingNote}   |   Offered SC: {_swapService.OfferedSc:N8}");
 	}
 
 	private void OnSetTargetPressed()

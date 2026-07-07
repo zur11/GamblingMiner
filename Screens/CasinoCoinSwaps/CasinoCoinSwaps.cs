@@ -3,6 +3,7 @@ using System;
 using System.Globalization;
 using Scripts.Finance;
 using UI.StatusBar;
+using GodotBlockchainPort.Blockchain;
 
 // Step 13 (SW.2) — the casino's swap desk (D-13.6, plan §6): two panels (A: SC→BTC "Buy BTC", B: BTC→SC
 // "Sell BTC"), casino-as-dealer. DISPLAY-ONLY in SW.2: availability, offered/reserve readouts, live quote
@@ -11,6 +12,13 @@ using UI.StatusBar;
 // execution. NO DEV controls here (D-SW.9 as amended): the fee knob + SC reserve live in
 // CasinoGamblingFinances, the BTC reserve in CasinoFinances — this scene only displays the results.
 // Layout: Ch. 29 fixed-footer pattern (ScTransactions reference) — footer Back OUTSIDE the scroll.
+//
+// Reactive dual inputs (dev feedback 2026-07-07): each panel has a "pay" AND a "receive" field; editing
+// either recomputes the other via CasinoCoinSwapService's reverse quotes (QuoteScToBtcForReceivedBtc /
+// QuoteBtcToScForReceivedSc), which invert the forward quote's fee curve exactly. Programmatically setting
+// LineEdit.Text does NOT raise TextChanged in this Godot binding (confirmed by the existing FillMax method,
+// which has always needed a manual EmitSignal to "replay" a MAX fill through the normal handler) — so
+// syncing the OTHER field from a computed quote is inert and needs no reentrancy guard.
 public partial class CasinoCoinSwaps : Control
 {
 	private CasinoCoinSwapService  _swapService;
@@ -25,7 +33,11 @@ public partial class CasinoCoinSwaps : Control
 
 	private Label    _panelAAvailLabel;
 	private LineEdit _panelAInput;
+	private LineEdit _panelAReceiveInput;
 	private Button   _panelAMaxBtn;
+	private Button   _panelAMinBtn;
+	private Button   _panelAReceiveMaxBtn;
+	private Button   _panelAReceiveMinBtn;
 	private Label    _panelAMaxLabel;
 	private Label    _panelAQuoteLabel;
 	private Button   _panelASwapBtn;
@@ -35,13 +47,23 @@ public partial class CasinoCoinSwaps : Control
 
 	private Label    _panelBAvailLabel;
 	private LineEdit _panelBInput;
+	private LineEdit _panelBReceiveInput;
 	private Button   _panelBMaxBtn;
+	private Button   _panelBMinBtn;
+	private Button   _panelBReceiveMaxBtn;
+	private Button   _panelBReceiveMinBtn;
 	private Label    _panelBMaxLabel;
 	private Label    _panelBQuoteLabel;
 	private Button   _panelBSwapBtn;
 	private Label    _panelBReasonLabel;
 
 	private VBoxContainer _swapsListVBox;
+
+	// Which field is the SOURCE right now (the other one is derived/overwritten) — set by whichever field's
+	// TextChanged last fired. Prevents the periodic/event RefreshAll() from clobbering a field the user is
+	// actively typing into: the source field is only ever READ, never written, by either refresh path.
+	private bool _panelALastEditedReceive;
+	private bool _panelBLastEditedReceive;
 
 	private double _refreshTimer;
 	private const double RefreshInterval = 2.0;
@@ -68,33 +90,49 @@ public partial class CasinoCoinSwaps : Control
 		_deskStateLabel = GetNode<Label>("%DeskStateLabel");
 		_feeLabel       = GetNode<Label>("%FeeLabel");
 
-		_panelAAvailLabel  = GetNode<Label>("%PanelAAvailLabel");
-		_panelAInput       = GetNode<LineEdit>("%PanelAInput");
-		_panelAMaxBtn      = GetNode<Button>("%PanelAMaxBtn");
-		_panelAMaxLabel    = GetNode<Label>("%PanelAMaxLabel");
+		_panelAAvailLabel     = GetNode<Label>("%PanelAAvailLabel");
+		_panelAInput          = GetNode<LineEdit>("%PanelAInput");
+		_panelAReceiveInput   = GetNode<LineEdit>("%PanelAReceiveInput");
+		_panelAMaxBtn         = GetNode<Button>("%PanelAMaxBtn");
+		_panelAMinBtn         = GetNode<Button>("%PanelAMinBtn");
+		_panelAReceiveMaxBtn  = GetNode<Button>("%PanelAReceiveMaxBtn");
+		_panelAReceiveMinBtn  = GetNode<Button>("%PanelAReceiveMinBtn");
+		_panelAMaxLabel     = GetNode<Label>("%PanelAMaxLabel");
 		_panelAQuoteLabel   = GetNode<Label>("%PanelAQuoteLabel");
 		_panelASwapBtn      = GetNode<Button>("%PanelASwapBtn");
 		_panelAReasonLabel  = GetNode<Label>("%PanelAReasonLabel");
 		_panelAPendingLabel = GetNode<Label>("%PanelAPendingLabel");
 		_panelBPendingLabel = GetNode<Label>("%PanelBPendingLabel");
 
-		_panelBAvailLabel  = GetNode<Label>("%PanelBAvailLabel");
-		_panelBInput       = GetNode<LineEdit>("%PanelBInput");
-		_panelBMaxBtn      = GetNode<Button>("%PanelBMaxBtn");
-		_panelBMaxLabel    = GetNode<Label>("%PanelBMaxLabel");
-		_panelBQuoteLabel  = GetNode<Label>("%PanelBQuoteLabel");
-		_panelBSwapBtn     = GetNode<Button>("%PanelBSwapBtn");
-		_panelBReasonLabel = GetNode<Label>("%PanelBReasonLabel");
+		_panelBAvailLabel     = GetNode<Label>("%PanelBAvailLabel");
+		_panelBInput          = GetNode<LineEdit>("%PanelBInput");
+		_panelBReceiveInput   = GetNode<LineEdit>("%PanelBReceiveInput");
+		_panelBMaxBtn         = GetNode<Button>("%PanelBMaxBtn");
+		_panelBMinBtn         = GetNode<Button>("%PanelBMinBtn");
+		_panelBReceiveMaxBtn  = GetNode<Button>("%PanelBReceiveMaxBtn");
+		_panelBReceiveMinBtn  = GetNode<Button>("%PanelBReceiveMinBtn");
+		_panelBMaxLabel     = GetNode<Label>("%PanelBMaxLabel");
+		_panelBQuoteLabel   = GetNode<Label>("%PanelBQuoteLabel");
+		_panelBSwapBtn      = GetNode<Button>("%PanelBSwapBtn");
+		_panelBReasonLabel  = GetNode<Label>("%PanelBReasonLabel");
 
 		_swapsListVBox = GetNode<VBoxContainer>("%SwapsListVBox");
 
 		_panelAReasonLabel.AddThemeColorOverride("font_color", DisabledReasonColor);
 		_panelBReasonLabel.AddThemeColorOverride("font_color", DisabledReasonColor);
 
-		_panelAInput.TextChanged += _ => RefreshPanelAQuote();
-		_panelBInput.TextChanged += _ => RefreshPanelBQuote();
-		_panelAMaxBtn.Pressed += () => FillMax(_panelAInput, _swapService?.QuoteScToBtc("player", 0m));
-		_panelBMaxBtn.Pressed += () => FillMax(_panelBInput, _swapService?.QuoteBtcToSc("player", 0m));
+		_panelAInput.TextChanged        += _ => { _panelALastEditedReceive = false; RefreshPanelAQuote(); };
+		_panelAReceiveInput.TextChanged += _ => { _panelALastEditedReceive = true;  RefreshPanelAQuoteFromReceive(); };
+		_panelBInput.TextChanged        += _ => { _panelBLastEditedReceive = false; RefreshPanelBQuote(); };
+		_panelBReceiveInput.TextChanged += _ => { _panelBLastEditedReceive = true;  RefreshPanelBQuoteFromReceive(); };
+		_panelAMaxBtn.Pressed        += () => { if (_swapService != null) FillPayExtreme(_panelAInput, _swapService.QuoteScToBtc, useMax: true); };
+		_panelAMinBtn.Pressed        += () => { if (_swapService != null) FillPayExtreme(_panelAInput, _swapService.QuoteScToBtc, useMax: false); };
+		_panelAReceiveMaxBtn.Pressed += () => { if (_swapService != null) FillReceiveExtreme(_panelAReceiveInput, _swapService.QuoteScToBtc, useMax: true); };
+		_panelAReceiveMinBtn.Pressed += () => { if (_swapService != null) FillReceiveExtreme(_panelAReceiveInput, _swapService.QuoteScToBtc, useMax: false); };
+		_panelBMaxBtn.Pressed        += () => { if (_swapService != null) FillPayExtreme(_panelBInput, _swapService.QuoteBtcToSc, useMax: true); };
+		_panelBMinBtn.Pressed        += () => { if (_swapService != null) FillPayExtreme(_panelBInput, _swapService.QuoteBtcToSc, useMax: false); };
+		_panelBReceiveMaxBtn.Pressed += () => { if (_swapService != null) FillReceiveExtreme(_panelBReceiveInput, _swapService.QuoteBtcToSc, useMax: true); };
+		_panelBReceiveMinBtn.Pressed += () => { if (_swapService != null) FillReceiveExtreme(_panelBReceiveInput, _swapService.QuoteBtcToSc, useMax: false); };
 		_panelASwapBtn.Pressed += OnPanelASwapPressed;
 		_panelBSwapBtn.Pressed += OnPanelBSwapPressed;
 
@@ -139,8 +177,10 @@ public partial class CasinoCoinSwaps : Control
 
 		RefreshHeader();
 		RefreshPanelStates();
-		RefreshPanelAQuote();
-		RefreshPanelBQuote();
+		// Recompute from whichever field is the current SOURCE (§ above) — never the field the user might
+		// be actively typing into right now.
+		if (_panelALastEditedReceive) RefreshPanelAQuoteFromReceive(); else RefreshPanelAQuote();
+		if (_panelBLastEditedReceive) RefreshPanelBQuoteFromReceive(); else RefreshPanelBQuote();
 		BuildRecentSwapsList();
 	}
 
@@ -179,9 +219,10 @@ public partial class CasinoCoinSwaps : Control
 			_deskStateLabel.AddThemeColorOverride("font_color", NormalColor);
 		}
 
-		// Read-only — the knob lives in CasinoGamblingFinances (D-SW.9).
+		// Read-only — the knob lives in CasinoGamblingFinances (D-SW.9). Additive model (2026-07-08,
+		// supersedes D-SW.1): the network fee is charged SEPARATELY, on top of the %, never absorbed inside it.
 		_feeLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Swap fee: {_swapService.GetSwapFeePercentFor("player"):0.##}% (both directions, incl. 0.1 BTC network fee)");
+			$"Swap fee: {_swapService.GetSwapFeePercentFor("player"):0.##}% + 0.1 BTC network fee (both directions, both charged)");
 	}
 
 	// D-13.11 — the two real historical halts the dataset carries (Source == "none" ranges).
@@ -206,9 +247,11 @@ public partial class CasinoCoinSwaps : Control
 			$"Casino SC available: {_swapService.OfferedSc:N8}  (Main {_swapService.CasinoScMainBalance:N8} − reserve {_swapService.EffectiveScReserve:N8} — set in Casino Gambling Finances [DEV])");
 
 		ApplyPanelState(_swapService.IsPanelAEnabled, _swapService.PanelAReason,
-			_panelAInput, _panelAMaxBtn, _panelAReasonLabel, isPanelA: true);
+			_panelAInput, _panelAReceiveInput, _panelAReasonLabel, isPanelA: true,
+			_panelAMaxBtn, _panelAMinBtn, _panelAReceiveMaxBtn, _panelAReceiveMinBtn);
 		ApplyPanelState(_swapService.IsPanelBEnabled, _swapService.PanelBReason,
-			_panelBInput, _panelBMaxBtn, _panelBReasonLabel, isPanelA: false);
+			_panelBInput, _panelBReceiveInput, _panelBReasonLabel, isPanelA: false,
+			_panelBMaxBtn, _panelBMinBtn, _panelBReceiveMaxBtn, _panelBReceiveMinBtn);
 
 		_panelASwapBtn.Disabled = !_swapService.IsPanelAEnabled;
 		_panelBSwapBtn.Disabled = !_swapService.IsPanelBEnabled;
@@ -242,17 +285,19 @@ public partial class CasinoCoinSwaps : Control
 	}
 
 	private void ApplyPanelState(bool enabled, CasinoCoinSwapService.PanelDisableReason reason,
-		LineEdit input, Button maxBtn, Label reasonLabel, bool isPanelA)
+		LineEdit payInput, LineEdit receiveInput, Label reasonLabel, bool isPanelA, params Button[] extremeButtons)
 	{
-		input.Editable  = enabled;
-		maxBtn.Disabled = !enabled;
+		payInput.Editable     = enabled;
+		receiveInput.Editable = enabled;
+		foreach (Button b in extremeButtons)
+			b.Disabled = !enabled;
 		reasonLabel.Visible = !enabled;
 		if (!enabled)
 			reasonLabel.Text = DisableReasonText(reason, isPanelA);
 	}
 
 	// SWAP (Panel A) — the service re-validates every clamp and hard-clamps to the binding max (§4.3);
-	// the UI just relays the outcome. Success clears the input; the pending row is the visible receipt.
+	// the UI just relays the outcome. Success clears both inputs; the pending row is the visible receipt.
 	private void OnPanelASwapPressed()
 	{
 		if (_swapService == null) return;
@@ -266,6 +311,7 @@ public partial class CasinoCoinSwaps : Control
 		if (_swapService.TryExecuteScToBtc("player", sc, out string error))
 		{
 			_panelAInput.Text = string.Empty;
+			_panelAReceiveInput.Text = string.Empty;
 			RefreshAll();
 		}
 		else
@@ -290,6 +336,7 @@ public partial class CasinoCoinSwaps : Control
 		if (_swapService.TryExecuteBtcToSc("player", btc, out string error))
 		{
 			_panelBInput.Text = string.Empty;
+			_panelBReceiveInput.Text = string.Empty;
 			RefreshAll();
 		}
 		else
@@ -310,6 +357,9 @@ public partial class CasinoCoinSwaps : Control
 	};
 
 	// ── Quotes (pure service calls per keystroke, §4.3) ─────────────────────────
+	// Each panel has a FORWARD path (pay input → quote → syncs the receive input) and a REVERSE path
+	// (receive input → reverse quote → syncs the pay input). Both share the same rendering/Max-label
+	// helpers so the two paths can never disagree about what a given quote looks like.
 
 	private void RefreshPanelAQuote()
 	{
@@ -321,9 +371,7 @@ public partial class CasinoCoinSwaps : Control
 			_panelAQuoteLabel.Text = "Quote: —";
 			return;
 		}
-
-		_panelAMaxLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Max: {probe.MaxInput:N8} SC ({probe.MaxLimitedBy})  ·  Min: {probe.MinInput:N8} SC (1 BTC gross)");
+		UpdatePanelAMaxLabel(probe);
 
 		if (!TryParseAmount(_panelAInput.Text, out decimal sc))
 		{
@@ -333,8 +381,60 @@ public partial class CasinoCoinSwaps : Control
 		}
 
 		var q = _swapService.QuoteScToBtc("player", sc);
+		RenderPanelAQuote(q);
+		SetText(_panelAReceiveInput, q.NetOut);
+	}
+
+	// Reverse path — "I want to receive this much BTC" → back-solve the SC needed to pay (§3.2's fee-floor
+	// inversion, via CasinoCoinSwapService.QuoteScToBtcForReceivedBtc) and sync the pay field.
+	private void RefreshPanelAQuoteFromReceive()
+	{
+		if (_swapService == null) return;
+		var probe = _swapService.QuoteScToBtc("player", 0m);
+		if (probe.PanelState != CasinoCoinSwapService.PanelDisableReason.None)
+		{
+			_panelAMaxLabel.Text   = "Max: —";
+			_panelAQuoteLabel.Text = "Quote: —";
+			return;
+		}
+		UpdatePanelAMaxLabel(probe);
+
+		if (!TryParseAmount(_panelAReceiveInput.Text, out decimal desiredBtc))
+		{
+			_panelAQuoteLabel.Text = "Quote: enter a BTC amount to receive";
+			_panelAQuoteLabel.AddThemeColorOverride("font_color", NormalColor);
+			return;
+		}
+
+		var q = _swapService.QuoteScToBtcForReceivedBtc("player", desiredBtc);
+		RenderPanelAQuote(q);
+		SetText(_panelAInput, q.InputAmount);
+	}
+
+	private void UpdatePanelAMaxLabel(CasinoCoinSwapService.SwapQuote probe)
+	{
+		// The minimum's BTC-gross equivalent moves with the current swap fee (§3.2 — a lower fee % needs a
+		// bigger gross swap before it clears the flat 0.1 BTC network-fee floor); never hardcode "1 BTC".
+		decimal minGrossBtc = probe.PriceUsed > 0m ? probe.MinInput / probe.PriceUsed : 0m;
+		_panelAMaxLabel.Text = string.Create(CultureInfo.InvariantCulture,
+			$"Max: {probe.MaxInput:N8} SC ({probe.MaxLimitedBy})  ·  Min: {probe.MinInput:N8} SC ({minGrossBtc:N8} BTC gross)");
+	}
+
+	private void RenderPanelAQuote(CasinoCoinSwapService.SwapQuote q)
+	{
+		// Fee breakdown (dev feedback 2026-07-07): FeeCharged = max(fee% × gross, NetworkFeePolicy.MinFee),
+		// so the network's flat share is always exactly MinFee and the casino's margin is whatever remains
+		// (0 in the fee-floor regime near the minimum swap size — the casino breaks even, by design, §3.2).
+		decimal networkFeeBtc = NetworkFeePolicy.MinFee;
+		decimal casinoFeeBtc  = Math.Max(0m, Money.Normalize(q.FeeCharged - networkFeeBtc));
+		// Effective casino margin % (dev feedback 2026-07-07): the flat network fee eats into the nominal
+		// SwapFeePercent for any swap not far past the minimum size — e.g. at 10% nominal, a swap at 1.1×
+		// the minimum size nets the casino only ~1% real margin (the true margin only approaches the
+		// nominal rate for swaps many times larger than the minimum). This is correct/by-design (§34.4),
+		// not a bug — shown here so it's never re-derived by hand mid-playtest.
+		decimal effectiveMarginPctA = q.GrossConverted > 0m ? casinoFeeBtc / q.GrossConverted * 100m : 0m;
 		_panelAQuoteLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"You give {q.InputAmount:N8} SC → gross {q.GrossConverted:N8} BTC − fee {q.FeeCharged:N8} BTC → you receive ≈ {q.NetOut:N8} BTC (at next block)");
+			$"You give {q.InputAmount:N8} SC → gross {q.GrossConverted:N8} BTC − fee {q.FeeCharged:N8} BTC (network {networkFeeBtc:N8} + casino {casinoFeeBtc:N8}, {effectiveMarginPctA:0.##}% effective) → you receive ≈ {q.NetOut:N8} BTC (at next block)");
 		if (!q.IsValid)
 			_panelAQuoteLabel.Text += string.Create(CultureInfo.InvariantCulture,
 				$"   ✖ {(q.InputAmount < q.MinInput ? $"minimum swap is {q.MinInput:N8} SC" : $"exceeds max ({q.MaxLimitedBy})")}");
@@ -351,9 +451,7 @@ public partial class CasinoCoinSwaps : Control
 			_panelBQuoteLabel.Text = "Quote: —";
 			return;
 		}
-
-		_panelBMaxLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Max: {probe.MaxInput:N8} BTC ({probe.MaxLimitedBy})  ·  Min: {probe.MinInput:N8} BTC");
+		UpdatePanelBMaxLabel(probe);
 
 		if (!TryParseAmount(_panelBInput.Text, out decimal btc))
 		{
@@ -363,20 +461,99 @@ public partial class CasinoCoinSwaps : Control
 		}
 
 		var q = _swapService.QuoteBtcToSc("player", btc);
+		RenderPanelBQuote(q);
+		SetText(_panelBReceiveInput, q.NetOut);
+	}
+
+	// Reverse path — "I want to receive this much SC" → back-solve the total BTC to send (via
+	// CasinoCoinSwapService.QuoteBtcToScForReceivedSc) and sync the send field.
+	private void RefreshPanelBQuoteFromReceive()
+	{
+		if (_swapService == null) return;
+		var probe = _swapService.QuoteBtcToSc("player", 0m);
+		if (probe.PanelState != CasinoCoinSwapService.PanelDisableReason.None)
+		{
+			_panelBMaxLabel.Text   = "Max: —";
+			_panelBQuoteLabel.Text = "Quote: —";
+			return;
+		}
+		UpdatePanelBMaxLabel(probe);
+
+		if (!TryParseAmount(_panelBReceiveInput.Text, out decimal desiredSc))
+		{
+			_panelBQuoteLabel.Text = "Quote: enter an SC amount to receive";
+			_panelBQuoteLabel.AddThemeColorOverride("font_color", NormalColor);
+			return;
+		}
+
+		var q = _swapService.QuoteBtcToScForReceivedSc("player", desiredSc);
+		RenderPanelBQuote(q);
+		SetText(_panelBInput, q.InputAmount);
+	}
+
+	private void UpdatePanelBMaxLabel(CasinoCoinSwapService.SwapQuote probe)
+	{
+		_panelBMaxLabel.Text = string.Create(CultureInfo.InvariantCulture,
+			$"Max: {probe.MaxInput:N8} BTC ({probe.MaxLimitedBy})  ·  Min: {probe.MinInput:N8} BTC");
+	}
+
+	private void RenderPanelBQuote(CasinoCoinSwapService.SwapQuote q)
+	{
+		// Fee breakdown (dev feedback 2026-07-07) — same logic as Panel A, expressed in SC at this quote's
+		// price: the network's flat share is NetworkFeePolicy.MinFee converted at PriceUsed; the rest is the
+		// casino's margin (0 in the fee-floor regime near the minimum swap size — breaks even, by design).
+		decimal networkFeeSc = Money.Normalize(NetworkFeePolicy.MinFee * q.PriceUsed);
+		decimal casinoFeeSc  = Math.Max(0m, Money.Normalize(q.FeeCharged - networkFeeSc));
+		// Effective casino margin % — see Panel A's identical note.
+		decimal effectiveMarginPctB = q.GrossConverted > 0m ? casinoFeeSc / q.GrossConverted * 100m : 0m;
 		_panelBQuoteLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"You send {q.InputAmount:N8} BTC (0.1 network fee inside) → gross {q.GrossConverted:N8} SC − fee {q.FeeCharged:N8} SC → you receive {q.NetOut:N8} SC (instant)");
+			$"You send {q.InputAmount:N8} BTC (0.1 network fee inside) → gross {q.GrossConverted:N8} SC − fee {q.FeeCharged:N8} SC (network {networkFeeSc:N8} + casino {casinoFeeSc:N8}, {effectiveMarginPctB:0.##}% effective) → you receive {q.NetOut:N8} SC (instant)");
 		if (!q.IsValid)
 			_panelBQuoteLabel.Text += string.Create(CultureInfo.InvariantCulture,
 				$"   ✖ {(q.InputAmount < q.MinInput ? $"minimum swap is {q.MinInput:N8} BTC" : $"exceeds max ({q.MaxLimitedBy})")}");
 		_panelBQuoteLabel.AddThemeColorOverride("font_color", q.IsValid ? QuoteOkColor : QuoteBadColor);
 	}
 
-	private void FillMax(LineEdit input, CasinoCoinSwapService.SwapQuote probe)
+	// MAX/MIN buttons (dev feedback 2026-07-07) — both the pay AND receive fields get one of each, for all
+	// four inputs across the two panels. `quoteFn` is whichever panel's FORWARD quote method (QuoteScToBtc /
+	// QuoteBtcToSc) — its signature (clientId, amount) => SwapQuote matches both, so one pair of helpers
+	// covers all eight buttons.
+
+	// Fills the PAY field directly with the forward quote's own Max/MinInput.
+	private void FillPayExtreme(LineEdit payInput, Func<string, decimal, CasinoCoinSwapService.SwapQuote> quoteFn, bool useMax)
 	{
-		if (probe == null || probe.PanelState != CasinoCoinSwapService.PanelDisableReason.None) return;
-		input.Text = probe.MaxInput.ToString("0.00000000", CultureInfo.InvariantCulture);
-		input.EmitSignal(LineEdit.SignalName.TextChanged, input.Text); // refresh the quote through the same path
+		if (quoteFn == null) return;
+		var probe = quoteFn("player", 0m);
+		if (probe.PanelState != CasinoCoinSwapService.PanelDisableReason.None) return;
+		FillAmount(payInput, useMax ? probe.MaxInput : probe.MinInput);
 	}
+
+	// Fills the RECEIVE field with the NET amount actually delivered when paying the pay-side Max/Min —
+	// i.e. "what you'd get if you paid the most/least you legally can," not a separately-clamped figure.
+	private void FillReceiveExtreme(LineEdit receiveInput, Func<string, decimal, CasinoCoinSwapService.SwapQuote> quoteFn, bool useMax)
+	{
+		if (quoteFn == null) return;
+		var probe = quoteFn("player", 0m);
+		if (probe.PanelState != CasinoCoinSwapService.PanelDisableReason.None) return;
+		var atExtreme = quoteFn("player", useMax ? probe.MaxInput : probe.MinInput);
+		FillAmount(receiveInput, atExtreme.NetOut);
+	}
+
+	// Replays the fill through the normal reactive TextChanged path (LineEdit.Text alone does not raise it
+	// in this Godot binding — see the class doc comment), so the OTHER field of the pair syncs automatically.
+	private static void FillAmount(LineEdit input, decimal amount)
+	{
+		if (amount <= 0m) return;
+		input.Text = amount.ToString("0.00000000", CultureInfo.InvariantCulture);
+		input.EmitSignal(LineEdit.SignalName.TextChanged, input.Text);
+	}
+
+	// Programmatic sync of the OTHER field from a computed quote. Setting LineEdit.Text does NOT raise
+	// TextChanged in this Godot binding (see the class doc comment / FillMax above), so this is inert —
+	// no reentrancy guard needed, and no EmitSignal here (that would re-trigger a redundant, double-rounded
+	// recompute in the opposite direction while the user is mid-keystroke).
+	private static void SetText(LineEdit input, decimal amount) =>
+		input.Text = amount > 0m ? amount.ToString("0.00000000", CultureInfo.InvariantCulture) : string.Empty;
 
 	private static bool TryParseAmount(string raw, out decimal value)
 	{

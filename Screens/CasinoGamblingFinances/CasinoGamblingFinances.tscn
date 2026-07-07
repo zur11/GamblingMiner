@@ -287,6 +287,29 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Apply"
 
+[node name="MaxFeeDeviationRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="MaxFeeDeviationLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/MaxFeeDeviationRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Max fee deviation (points above nominal):"
+
+[node name="MaxFeeDeviationSpin" type="SpinBox" parent="RootMargin/RootScroll/RootVBox/MaxFeeDeviationRow"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 0.0
+max_value = 20.0
+step = 0.1
+value = 2.0
+
+[node name="SetMaxFeeDeviationBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/MaxFeeDeviationRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Apply"
+
 [node name="ScReserveRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
 layout_mode = 2
 theme_override_constants/separation = 10
@@ -315,6 +338,12 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Apply"
 
+[node name="ManualReserveIndicator" type="Label" parent="RootMargin/RootScroll/RootVBox/ScReserveRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "●"
+
 [node name="ScAutoFloorRow" type="HBoxContainer" parent="RootMargin/RootScroll/RootVBox"]
 layout_mode = 2
 theme_override_constants/separation = 10
@@ -335,29 +364,42 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(110, 0)
 layout_mode = 2
 min_value = 0.1
-max_value = 20.0
+max_value = 1000.0
 step = 0.1
 value = 1.5
 
 [node name="ScAutoFloorWindowLabel" type="Label" parent="RootMargin/RootScroll/RootVBox/ScAutoFloorRow"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
-text = "Window (game hours)"
+text = "Window (game days)"
 
 [node name="ScAutoFloorWindowSpin" type="SpinBox" parent="RootMargin/RootScroll/RootVBox/ScAutoFloorRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(110, 0)
 layout_mode = 2
 min_value = 1.0
-max_value = 720.0
+max_value = 30.0
 step = 1.0
-value = 24.0
+value = 1.0
+
+[node name="AutoFloorIndicator" type="Label" parent="RootMargin/RootScroll/RootVBox/ScAutoFloorRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "●"
 
 [node name="SetScAutoFloorBtn" type="Button" parent="RootMargin/RootScroll/RootVBox/ScAutoFloorRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "Apply"
+
+[node name="ScAutoFloorBreakdownLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 17
+text = ""
 
 [node name="SwapDeskInfoLabel" type="Label" parent="RootMargin/RootScroll/RootVBox"]
 unique_name_in_owner = true

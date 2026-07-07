@@ -130,6 +130,41 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "MAX"
 
+[node name="PanelAMinBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox/PanelAInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "MIN"
+
+[node name="PanelAReceiveInputRow" type="HBoxContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox"]
+layout_mode = 2
+mouse_filter = 1
+theme_override_constants/separation = 8
+
+[node name="PanelAReceiveLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox/PanelAReceiveInputRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "You receive:"
+
+[node name="PanelAReceiveInput" type="LineEdit" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox/PanelAReceiveInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 18
+placeholder_text = "BTC amount (net, after fees)"
+
+[node name="PanelAReceiveMaxBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox/PanelAReceiveInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "MAX"
+
+[node name="PanelAReceiveMinBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox/PanelAReceiveInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "MIN"
+
 [node name="PanelAMaxLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelA/PanelAMargin/PanelAVBox"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -220,6 +255,41 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "MAX"
 
+[node name="PanelBMinBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox/PanelBInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "MIN"
+
+[node name="PanelBReceiveInputRow" type="HBoxContainer" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
+layout_mode = 2
+mouse_filter = 1
+theme_override_constants/separation = 8
+
+[node name="PanelBReceiveLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox/PanelBReceiveInputRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "You receive:"
+
+[node name="PanelBReceiveInput" type="LineEdit" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox/PanelBReceiveInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 18
+placeholder_text = "SC amount (net, after fees)"
+
+[node name="PanelBReceiveMaxBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox/PanelBReceiveInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "MAX"
+
+[node name="PanelBReceiveMinBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox/PanelBReceiveInputRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "MIN"
+
 [node name="PanelBMaxLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -269,6 +339,10 @@ text = "Recent swaps (newest first)"
 unique_name_in_owner = true
 layout_mode = 2
 mouse_filter = 1
+
+[node name="BottomSpacer" type="Control" parent="RootMargin/RootVBox/ContentScroll/ContentVBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 24)
 
 [node name="SepFooter" type="HSeparator" parent="RootMargin/RootVBox"]
 layout_mode = 2
