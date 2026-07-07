@@ -39,6 +39,10 @@ public partial class CasinoGamblingFinances : Control
 	private OptionButton _scReserveModeOption;
 	private SpinBox _scReserveSpin;
 	private Label _swapDeskInfoLabel;
+	// R2 auto-floor toggle (Step 13 / SW.5, §2.3): recharge-pace SC floor, composed as max(manual, auto).
+	private CheckBox _scAutoFloorToggle;
+	private SpinBox _scAutoFloorSafetySpin;
+	private SpinBox _scAutoFloorWindowSpin;
 
 	private double _fallbackTimer;
 	private const double FallbackInterval = 2.0;
@@ -86,6 +90,17 @@ public partial class CasinoGamblingFinances : Control
 		_scReserveModeOption.ItemSelected += _ => SyncScReserveSpinToMode();
 		GetNode<Button>("%SetSwapFeeBtn").Pressed   += OnApplySwapFeePressed;
 		GetNode<Button>("%SetScReserveBtn").Pressed += OnApplyScReservePressed;
+
+		_scAutoFloorToggle     = GetNode<CheckBox>("%ScAutoFloorToggle");
+		_scAutoFloorSafetySpin = GetNode<SpinBox>("%ScAutoFloorSafetySpin");
+		_scAutoFloorWindowSpin = GetNode<SpinBox>("%ScAutoFloorWindowSpin");
+		if (_swapService != null)
+		{
+			_scAutoFloorToggle.ButtonPressed = _swapService.ScFloorEnabled;
+			_scAutoFloorSafetySpin.Value     = (double)_swapService.ScAutoFloorSafetyFactor;
+			_scAutoFloorWindowSpin.Value     = (double)_swapService.ScAutoFloorWindowHours;
+		}
+		GetNode<Button>("%SetScAutoFloorBtn").Pressed += OnApplyScAutoFloorPressed;
 
 		GetNode<Button>("%SetTargetBtn").Pressed        += OnSetTargetPressed;
 		GetNode<Button>("%SetAutoLoanBtn").Pressed      += OnSetAutoLoanPressed;
@@ -224,14 +239,25 @@ public partial class CasinoGamblingFinances : Control
 		RefreshLabels();
 	}
 
+	// R2 auto-floor (§2.3, SW.5): recharge-pace SC floor. Non-positive spin values fall back to defaults
+	// service-side; the toggle can be ON with the manual reserve still binding (max() composition).
+	private void OnApplyScAutoFloorPressed()
+	{
+		_swapService?.SetScFloor(_scAutoFloorToggle.ButtonPressed, (decimal)_scAutoFloorSafetySpin.Value, (decimal)_scAutoFloorWindowSpin.Value);
+		RefreshLabels();
+	}
+
 	private void RefreshSwapDeskInfo()
 	{
 		if (_swapService == null || !GodotObject.IsInstanceValid(_swapDeskInfoLabel)) return;
 		string reserveDesc = _swapService.ScReserve.UsePercent
 			? string.Create(CultureInfo.InvariantCulture, $"{_swapService.ScReserve.Percent:0.##}% of Main")
 			: string.Create(CultureInfo.InvariantCulture, $"{_swapService.ScReserve.Amount:N8} SC");
+		string autoFloorDesc = _swapService.ScFloorEnabled
+			? string.Create(CultureInfo.InvariantCulture, $"ON (safety ×{_swapService.ScAutoFloorSafetyFactor:0.##}, {_swapService.ScAutoFloorWindowHours:0.#}h window) → {_swapService.ScAutoFloor:N8} SC")
+			: "OFF";
 		_swapDeskInfoLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Fee {_swapService.SwapFeePercent:0.##}% (both directions)   |   SC reserve: {reserveDesc}  →  effective {_swapService.EffectiveScReserve:N8} SC   |   Offered SC: {_swapService.OfferedSc:N8}");
+			$"Fee {_swapService.SwapFeePercent:0.##}% (both directions)   |   SC reserve: {reserveDesc}   |   Auto floor (R2): {autoFloorDesc}   |   Effective reserve: {_swapService.EffectiveScReserve:N8} SC   |   Offered SC: {_swapService.OfferedSc:N8}");
 	}
 
 	private void OnSetTargetPressed()

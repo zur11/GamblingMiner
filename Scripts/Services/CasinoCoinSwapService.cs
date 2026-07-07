@@ -26,9 +26,12 @@ public partial class CasinoCoinSwapService : Node
 	public const decimal MinSwapFeePercent     = 1m;   // D-SW.9 clamp range
 	public const decimal MaxSwapFeePercent     = 10m;
 
-	// §2.3 R1 placeholder SC floor: effective SC reserve ≥ N × CasinoScBalanceService.BankrollTarget when
-	// enabled — a static stand-in for the SW.5 recharge-pace floor (R2). Dev-tunable N, default OFF.
-	public const decimal DefaultScFloorMultiplier = 10m;
+	// §2.3 R2 (SW.5) — the recharge-pace auto floor, superseding the R1 static-multiple placeholder (SW.0).
+	// Sizes the SC floor to what the betting pace has ACTUALLY drawn recently: SafetyFactor × doses consumed
+	// via auto-recharge in the last WindowHours of GAME time × BankrollTarget. Both dev-tunable; default OFF.
+	// See ProjectDesignManual Ch. 33 for the full rationale + the R3 (drawdown-based) alternative.
+	public const decimal DefaultScAutoFloorSafetyFactor = 1.5m;
+	public const decimal DefaultScAutoFloorWindowHours  = 24m;
 
 	// §3.2 — minimum swap size of 1 BTC gross: at the 10% max fee, fee ≥ NetworkFeePolicy.MinFee (0.1) exactly
 	// at 1 BTC, so the casino never swaps at a loss. Surfaced as an honest "minimum swap is X" UI message (SW.6).
@@ -101,8 +104,9 @@ public partial class CasinoCoinSwapService : Node
 	public ReserveSetting BtcReserve { get; private set; } = new();
 	public ReserveSetting ScReserve  { get; private set; } = new();
 	public decimal SwapFeePercent    { get; private set; } = DefaultSwapFeePercent;
-	public bool    ScFloorEnabled    { get; private set; } = false;
-	public decimal ScFloorMultiplier { get; private set; } = DefaultScFloorMultiplier;
+	public bool    ScFloorEnabled          { get; private set; } = false;
+	public decimal ScAutoFloorSafetyFactor { get; private set; } = DefaultScAutoFloorSafetyFactor;
+	public decimal ScAutoFloorWindowHours  { get; private set; } = DefaultScAutoFloorWindowHours;
 
 	public event Action SwapDeskChanged;
 
@@ -124,7 +128,7 @@ public partial class CasinoCoinSwapService : Node
 		NetworkRoot.BlockAccepted += OnBlockAccepted;
 		CallDeferred(nameof(InitializeAvailability));
 
-		GD.Print($"[CasinoCoinSwapService] Ready — Fee={SwapFeePercent:F2}%  BtcReserve={(BtcReserve.UsePercent ? BtcReserve.Percent + "%" : BtcReserve.Amount + " BTC")}  ScReserve={(ScReserve.UsePercent ? ScReserve.Percent + "%" : ScReserve.Amount + " SC")}  ScFloor={(ScFloorEnabled ? $"ON (N={ScFloorMultiplier:F2})" : "OFF")}  history={_swapHistory.Count}");
+		GD.Print($"[CasinoCoinSwapService] Ready — Fee={SwapFeePercent:F2}%  BtcReserve={(BtcReserve.UsePercent ? BtcReserve.Percent + "%" : BtcReserve.Amount + " BTC")}  ScReserve={(ScReserve.UsePercent ? ScReserve.Percent + "%" : ScReserve.Amount + " SC")}  ScFloor={(ScFloorEnabled ? $"ON (safety={ScAutoFloorSafetyFactor:F2}, window={ScAutoFloorWindowHours:F1}h)" : "OFF")}  history={_swapHistory.Count}");
 	}
 
 	public override void _ExitTree()
@@ -188,11 +192,25 @@ public partial class CasinoCoinSwapService : Node
 
 	public decimal CasinoScMainBalance => _casinoSc?.MainBalance ?? 0m;
 
-	// §2.3 — the R1 static floor value (0 when disabled). SW.5 composes the R2 auto floor into the same max().
-	public decimal ScAutoFloor =>
-		ScFloorEnabled ? Money.Normalize(ScFloorMultiplier * (_casinoSc?.BankrollTarget ?? 0m)) : 0m;
+	// §2.3 R2 (SW.5) — the recharge-pace auto floor: SafetyFactor × dosesConsumedInWindow × BankrollTarget,
+	// window = the last ScAutoFloorWindowHours of GAME time (never wall-clock — CLAUDE.md Pattern 2).
+	// "Doses consumed" = the count of AUTO-recharge events (CasinoScBalanceService.RechargeHistory, Reason ==
+	// "auto") whose GameDateLocal falls in that window — each is one BankrollTarget-sized dose the betting
+	// pace actually drew from Main Balance, so the floor sizes itself to what play has recently needed, with
+	// SafetyFactor as the margin above that raw historical draw. 0 when disabled or data is unavailable.
+	// Full rationale + the R3 (drawdown-based) alternative: Documentation/ProjectDesignManual.md Ch. 33.
+	public decimal ScAutoFloor
+	{
+		get
+		{
+			if (!ScFloorEnabled || _casinoSc == null || _calendarTime == null) return 0m;
+			DateTime windowStart = _calendarTime.CurrentLocalDateTime.AddHours(-(double)ScAutoFloorWindowHours);
+			int dosesConsumed = _casinoSc.RechargeHistory.Count(r => r.Reason == "auto" && r.GameDateLocal >= windowStart);
+			return Money.Normalize(ScAutoFloorSafetyFactor * dosesConsumed * _casinoSc.BankrollTarget);
+		}
+	}
 
-	// Effective SC floor = max(manual reserve, R1 floor when enabled) — the same max() composition as
+	// Effective SC floor = max(manual reserve, R2 auto floor when enabled) — the same max() composition as
 	// TryAutoWithdraw's anti-ping-pong guard (§2.3).
 	public decimal EffectiveScReserve =>
 		Money.Normalize(Math.Max(ScReserve.ReserveFor(CasinoScMainBalance), ScAutoFloor));
@@ -595,11 +613,12 @@ public partial class CasinoCoinSwapService : Node
 		CommitKnobChange("fee_set");
 	}
 
-	// R1 placeholder floor toggle + multiplier (§2.3). Non-positive N falls back to the default.
-	public void SetScFloor(bool enabled, decimal multiplier)
+	// R2 auto-floor toggle + tunables (§2.3, SW.5). Non-positive inputs fall back to their defaults.
+	public void SetScFloor(bool enabled, decimal safetyFactor, decimal windowHours)
 	{
-		ScFloorEnabled    = enabled;
-		ScFloorMultiplier = multiplier > 0m ? Money.Normalize(multiplier) : DefaultScFloorMultiplier;
+		ScFloorEnabled          = enabled;
+		ScAutoFloorSafetyFactor = safetyFactor > 0m ? Money.Normalize(safetyFactor) : DefaultScAutoFloorSafetyFactor;
+		ScAutoFloorWindowHours  = windowHours > 0m ? Money.Normalize(windowHours) : DefaultScAutoFloorWindowHours;
 		CommitKnobChange("sc_floor_set");
 	}
 
@@ -693,7 +712,8 @@ public partial class CasinoCoinSwapService : Node
 		public ReserveSetting ScReserve  { get; set; } = new();
 		public decimal SwapFeePercent    { get; set; } = DefaultSwapFeePercent;
 		public bool    ScFloorEnabled    { get; set; }
-		public decimal ScFloorMultiplier { get; set; } = DefaultScFloorMultiplier;
+		public decimal ScAutoFloorSafetyFactor { get; set; } = DefaultScAutoFloorSafetyFactor;
+		public decimal ScAutoFloorWindowHours  { get; set; } = DefaultScAutoFloorWindowHours;
 		public List<SwapRecord> SwapHistory { get; set; } = new();
 	}
 
@@ -704,7 +724,8 @@ public partial class CasinoCoinSwapService : Node
 		ScReserve         = CloneReserve(ScReserve),
 		SwapFeePercent    = SwapFeePercent,
 		ScFloorEnabled    = ScFloorEnabled,
-		ScFloorMultiplier = ScFloorMultiplier,
+		ScAutoFloorSafetyFactor = ScAutoFloorSafetyFactor,
+		ScAutoFloorWindowHours  = ScAutoFloorWindowHours,
 		SwapHistory       = _swapHistory.Select(CloneRecord).ToList()
 	};
 
@@ -721,8 +742,9 @@ public partial class CasinoCoinSwapService : Node
 		BtcReserve        = SanitizeReserve(state.BtcReserve?.UsePercent ?? true, state.BtcReserve?.Percent ?? 0m, state.BtcReserve?.Amount ?? 0m);
 		ScReserve         = SanitizeReserve(state.ScReserve?.UsePercent ?? true, state.ScReserve?.Percent ?? 0m, state.ScReserve?.Amount ?? 0m);
 		SwapFeePercent    = Math.Clamp(Money.Normalize(state.SwapFeePercent), MinSwapFeePercent, MaxSwapFeePercent);
-		ScFloorEnabled    = state.ScFloorEnabled;
-		ScFloorMultiplier = state.ScFloorMultiplier > 0m ? Money.Normalize(state.ScFloorMultiplier) : DefaultScFloorMultiplier;
+		ScFloorEnabled          = state.ScFloorEnabled;
+		ScAutoFloorSafetyFactor = state.ScAutoFloorSafetyFactor > 0m ? Money.Normalize(state.ScAutoFloorSafetyFactor) : DefaultScAutoFloorSafetyFactor;
+		ScAutoFloorWindowHours  = state.ScAutoFloorWindowHours > 0m ? Money.Normalize(state.ScAutoFloorWindowHours) : DefaultScAutoFloorWindowHours;
 
 		_swapHistory.Clear();
 		foreach (var r in state.SwapHistory ?? new List<SwapRecord>())
@@ -735,20 +757,21 @@ public partial class CasinoCoinSwapService : Node
 
 		SaveState();
 		if (_availabilityReady) RecomputeAvailability(notify: false); // boot-time restore precedes the deferred init — skipped there
-		GD.Print($"[CasinoCoinSwapService] RESTORED from checkpoint — Fee={SwapFeePercent:F2}%  ScFloor={(ScFloorEnabled ? "ON" : "OFF")}  history={_swapHistory.Count}");
+		GD.Print($"[CasinoCoinSwapService] RESTORED from checkpoint — Fee={SwapFeePercent:F2}%  ScFloor={(ScFloorEnabled ? $"ON (safety={ScAutoFloorSafetyFactor:F2}, window={ScAutoFloorWindowHours:F1}h)" : "OFF")}  history={_swapHistory.Count}");
 		SwapDeskChanged?.Invoke();
 	}
 
 	// Called by BlockSessionCheckpointService.ResetToPreGenesisDefaults() on every boot until the first real
 	// block is mined. Forces the desk back to its true "first launch" state — reserves 0 (100% offered), fee
-	// 10%, R1 floor OFF, no history. Settings stick only at a block, like every other knob.
+	// 10%, auto floor OFF, no history. Settings stick only at a block, like every other knob.
 	public void ResetToPreGenesisDefaults()
 	{
 		BtcReserve        = new ReserveSetting();
 		ScReserve         = new ReserveSetting();
 		SwapFeePercent    = DefaultSwapFeePercent;
-		ScFloorEnabled    = false;
-		ScFloorMultiplier = DefaultScFloorMultiplier;
+		ScFloorEnabled          = false;
+		ScAutoFloorSafetyFactor = DefaultScAutoFloorSafetyFactor;
+		ScAutoFloorWindowHours  = DefaultScAutoFloorWindowHours;
 		_swapHistory.Clear();
 		SaveState();
 		if (_availabilityReady) RecomputeAvailability(notify: false); // boot-time reset precedes the deferred init — skipped there
@@ -763,7 +786,8 @@ public partial class CasinoCoinSwapService : Node
 		public ReserveSetting ScReserve  { get; set; } = new();
 		public decimal  SwapFeePercent    { get; set; } = DefaultSwapFeePercent;
 		public bool     ScFloorEnabled    { get; set; }
-		public decimal  ScFloorMultiplier { get; set; } = DefaultScFloorMultiplier;
+		public decimal  ScAutoFloorSafetyFactor { get; set; } = DefaultScAutoFloorSafetyFactor;
+		public decimal  ScAutoFloorWindowHours  { get; set; } = DefaultScAutoFloorWindowHours;
 		public List<SwapRecord> SwapHistory { get; set; } = new();
 		public DateTime UpdatedAtUtc { get; set; }
 	}
@@ -792,8 +816,9 @@ public partial class CasinoCoinSwapService : Node
 			BtcReserve        = SanitizeReserve(snapshot.BtcReserve?.UsePercent ?? true, snapshot.BtcReserve?.Percent ?? 0m, snapshot.BtcReserve?.Amount ?? 0m);
 			ScReserve         = SanitizeReserve(snapshot.ScReserve?.UsePercent ?? true, snapshot.ScReserve?.Percent ?? 0m, snapshot.ScReserve?.Amount ?? 0m);
 			SwapFeePercent    = Math.Clamp(Money.Normalize(snapshot.SwapFeePercent), MinSwapFeePercent, MaxSwapFeePercent);
-			ScFloorEnabled    = snapshot.ScFloorEnabled;
-			ScFloorMultiplier = snapshot.ScFloorMultiplier > 0m ? Money.Normalize(snapshot.ScFloorMultiplier) : DefaultScFloorMultiplier;
+			ScFloorEnabled          = snapshot.ScFloorEnabled;
+			ScAutoFloorSafetyFactor = snapshot.ScAutoFloorSafetyFactor > 0m ? Money.Normalize(snapshot.ScAutoFloorSafetyFactor) : DefaultScAutoFloorSafetyFactor;
+			ScAutoFloorWindowHours  = snapshot.ScAutoFloorWindowHours > 0m ? Money.Normalize(snapshot.ScAutoFloorWindowHours) : DefaultScAutoFloorWindowHours;
 
 			_swapHistory.Clear();
 			foreach (var r in snapshot.SwapHistory ?? new List<SwapRecord>())
@@ -817,8 +842,9 @@ public partial class CasinoCoinSwapService : Node
 		BtcReserve        = new ReserveSetting();
 		ScReserve         = new ReserveSetting();
 		SwapFeePercent    = DefaultSwapFeePercent;
-		ScFloorEnabled    = false;
-		ScFloorMultiplier = DefaultScFloorMultiplier;
+		ScFloorEnabled          = false;
+		ScAutoFloorSafetyFactor = DefaultScAutoFloorSafetyFactor;
+		ScAutoFloorWindowHours  = DefaultScAutoFloorWindowHours;
 		_swapHistory.Clear();
 	}
 
@@ -832,7 +858,8 @@ public partial class CasinoCoinSwapService : Node
 				ScReserve         = CloneReserve(ScReserve),
 				SwapFeePercent    = SwapFeePercent,
 				ScFloorEnabled    = ScFloorEnabled,
-				ScFloorMultiplier = ScFloorMultiplier,
+				ScAutoFloorSafetyFactor = ScAutoFloorSafetyFactor,
+				ScAutoFloorWindowHours  = ScAutoFloorWindowHours,
 				SwapHistory       = _swapHistory.Select(CloneRecord).ToList(),
 				UpdatedAtUtc      = DateTime.UtcNow
 			};

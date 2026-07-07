@@ -3165,3 +3165,99 @@ The `FinancialBettingStats` panel shows **three scopes**, each with **P/L** and 
 - **Single source of truth = `PlayerFinancialStatsCalculator`** (`Scripts/History/`). A pure `Compute(UserBettingStats, CasinoClientLedgerService)` returns all six numbers; both host scenes render the *same* struct, so they are byte-identical by construction. Lifetime P/L/Gambled come from `UserStatsService.Stats`; the two "since-X" baselines come from the **client-ledger snapshots** (`GetLastDeposit` → kind `initial`|`deposit`, `GetLastAutoRecharge` → kind `auto_recharge`), each carrying the lifetime wagered/profit captured at that event. This deliberately does **not** use `UserBettingStats.ProfitSinceDeposit`, whose baseline is reset on every recharge (it conflates deposit with recharge). Player sign convention: P/L = **+**`TotalProfit` (the player's own gain), unlike `ClientsBetsHistory` which negates it for the casino.
 - **Live-sync (why it also refreshes on a timer, not only on events).** `UserStatsService` throttles `StatsChanged` to 250 ms in high-frequency (autobet) mode and **defers the final batch** until the next bet or a `SetHighFrequencyMode(false)` flush. DiceGame recovers (it toggles that flag and re-`Refresh()`s on entry), but a **passive subscriber** — e.g. `ScFinances`, which never touches that flag — could be left showing the last throttled value when betting pauses, producing a *live-only* discrepancy between the two panels that self-heals on restart (the persisted data was always consistent). The fix: `FinancialBettingStats._Process` also calls `Refresh()` on a **0.75 s timer** (converge-to-live), in addition to the `StatsChanged`/`LedgerChanged` subscriptions — so the panel is correct in any host scene regardless of which events it caught. **The timer runs ONLY while `SimulationService.IsRunning`** (an autobet is actively advancing time): that is the only window where `StatsChanged` is throttled AND the only time stats move without a discrete player action — when idle, game time doesn't advance and every manual bet / deposit / recharge fires an *immediate* event, so the reconcile would be pure waste (the `Compute` reads `Stats` + two small ledger scans). **Rule for future live-data panels:** don't rely solely on a throttled event to stay current — add a cheap periodic reconcile *gated on the activity that causes the throttling*, or ensure every pause path flushes.
 - The same panel also seeds DiceGame's **in-game bet-history list** from the centralized persistent store on entry (`UserStatsService.GetRecentBets`), so recent history reproduces on re-entry instead of starting empty.
+
+---
+
+## Chapter 33 — The Swap Desk's SC Auto-Floor: R2 (Implemented) and R3 (Documented Alternative)
+
+The casino's swap desk (Step 13, `CasinoCoinSwapService`) lets the player trade SC for BTC and back — the desk itself gets its own manual chapter once SW.6 (polish + docs) lands. This chapter is scoped to one narrow but important question inside it: **how much SC should the casino always refuse to sell, no matter how attractive a swap looks?** Full plan: `AIHelperFiles/step13-sw-casino-coin-swaps-plan.md` §2.3.
+
+### 33.1 — The problem in plain terms
+
+The casino's SC "Main Balance" does two jobs at once:
+
+1. It is the **float that feeds the betting Bankroll** — every time a player win empties the Bankroll, `CasinoScBalanceService.TryAutoRecharge()` pulls one `BankrollTarget`-sized "dose" out of Main and drops it into the Bankroll so betting can continue uninterrupted.
+2. Since Step 13, it is also **the SC the swap desk is allowed to sell for BTC** (Panel A: player pays SC, casino delivers BTC).
+
+Those two jobs compete for the same pool of money. If the swap desk is naive and offers *all* of Main Balance, a big BTC purchase can drain Main to zero — and the very next time a player wins big enough to empty the Bankroll, there is nothing left to recharge it with. The betting loop would stall waiting on a dose that isn't there.
+
+The fix is a **reserve**: a floor under Main Balance that swaps are never allowed to eat into. `OfferedSc = max(0, MainBalance − EffectiveReserve)` — only the surplus above the floor is ever offered (§2.2/§2.3 of the swap plan). The **manual** half of that reserve is a dev-set percentage or flat SC amount (`CasinoGamblingFinances`'s "SC swap reserve" knob) — a human has to guess a number and keep it updated as the game's economy grows. The **auto floor** is the interesting part: a formula that *computes* a sensible reserve from the casino's own recent history, so the dev doesn't have to guess. Two designs were considered for that formula — **R2**, now implemented, and **R3**, kept as a documented (not yet built) alternative.
+
+Both compose with the manual reserve the same way `PlayerBankAccountService.TryAutoWithdraw` composes its threshold with the live recharge dose — **`EffectiveScReserve = max(manual reserve, auto floor)`** — so turning the auto floor on can only ever *raise* the protection, never lower whatever the dev already set by hand. This is the same anti-ping-pong shape documented in §32.2 for the bank account, reused here for the same reason: two independent safety nets should stack, not fight each other.
+
+### 33.2 — R2: Recharge Pace (implemented, SW.5)
+
+**The idea, in one sentence:** *look at how much SC the betting pace has actually drawn out of Main recently, and keep at least that much (times a safety margin) in reserve.*
+
+**Why this is the natural first choice:** the whole point of the reserve is "don't sell SC the Bankroll is about to need." The Bankroll's need is not abstract — it shows up as a concrete, already-logged event every time it happens: an **auto-recharge**, i.e. one `BankrollTarget`-sized dose moving from Main to Bankroll. `CasinoScBalanceService.RechargeHistory` already records every one of these (amount, reason `"auto"` vs `"manual"`, and the **game-world** timestamp) — it existed before the swap desk did, capped at 500 entries, and needs no new plumbing. R2 just reads that list.
+
+**The formula:**
+
+```
+AutoFloor = SafetyFactor × dosesConsumedInWindow × BankrollTarget
+```
+
+- **`dosesConsumedInWindow`** — the number of `RechargeHistory` entries with `Reason == "auto"` whose `GameDateLocal` falls within the last `WindowHours` of **game time** (never wall-clock — the whole game runs on an accelerated clock, so "hours" here means in-game hours, consistent with every other timestamp in this codebase, CLAUDE.md Important Pattern 2). Each such entry represents one dose the betting pace genuinely needed — this is a *measured* fact, not a guess.
+- **`BankrollTarget`** — the casino's own dose size (`CasinoScBalanceService.BankrollTarget`, defaults to 100 SC). Multiplying by it converts "how many doses were drawn" back into an SC amount.
+- **`SafetyFactor`** — a dev-tunable multiplier (default **1.5**) that pads the raw historical draw with a margin, so the floor isn't shaved paper-thin against exactly what happened last window — a plausible worse-than-average burst is still covered.
+- **`WindowHours`** — how far back to look, in **game-time** hours (default **24**). A short window reacts fast to a hot losing streak but forgets it fast too; a long window smooths over noise but reacts slower to a genuine change in pace.
+
+**Worked example.** Say `BankrollTarget = 100 SC`, `SafetyFactor = 1.5`, `WindowHours = 24`, and in the last 24 in-game hours the Bankroll needed recharging 6 times (a rough losing patch for the house). Then:
+
+```
+AutoFloor = 1.5 × 6 × 100 = 900 SC
+```
+
+If the dev's manual reserve was set to, say, 500 SC, the *effective* reserve is `max(500, 900) = 900` — the desk automatically holds back more than the manual setting because recent play has shown it needs to, without anyone having to notice and adjust the manual number.
+
+**Where it lives:** `CasinoCoinSwapService.ScAutoFloor` (a computed property, re-evaluated live — it is not cached/frozen at the last knob change) composes into `EffectiveScReserve` exactly as described in §33.1. The DEV toggle ("Auto floor (R2, recharge pace)", plus the `SafetyFactor` and `WindowHours` SpinBoxes) sits in `CasinoGamblingFinances`, directly beside the manual SC reserve selector it composes with (D-SW.9 — every swap-desk DEV knob lives in the two existing casino DEV scenes, never in `CasinoCoinSwaps` itself). Default **OFF**, like every other swap-desk knob — the dev opts in once ready to test it.
+
+**Cost / complexity: small.** No new state, no new subscriptions, no new persisted list — it is a pure read over data that already exists and was already checkpoint-covered before Step 13 began. This is why it was the recommended first implementation (§2.3 of the swap plan) and why it shipped in SW.5.
+
+**A known coarseness (why R3 exists as an alternative).** R2 only sees *whole recharge events* — it has no idea whether a single recharge happened because the Bankroll dripped down slowly over hundreds of small losing bets, or because one enormous win emptied it in a single bet. Both look identical to R2 (one `RechargeHistory` entry each), even though the second case might represent a much larger, faster swing in the casino's exposure. If testing ever shows R2's floor feels "too coarse" — reacting to the wrong signal, or lagging behind real risk — R3 is the documented next step.
+
+### 33.3 — R3: Drawdown-Based (documented alternative — NOT implemented, no plan yet)
+
+**The idea, in one sentence:** *instead of counting how many times the Bankroll got refilled, measure directly how far the Bankroll's balance actually swung down from its recent peak, and keep enough reserve to absorb a swing that size again.*
+
+This is the concept of a **drawdown** borrowed from finance/trading risk management: if a balance climbs to a high point and then falls, the drawdown is the size of that fall (peak minus trough), *before* it recovers. It answers a subtly different question than R2's dose-count: R2 asks "how often did we need to top up," R3 asks "how deep did the hole get before we topped up." A single catastrophic loss that empties the Bankroll in one bet produces a *big* drawdown but only *one* R2-counted dose — R3 would see the danger that R2 undercounts; conversely, many tiny doses drawn during a long, shallow losing drip produce a *small* per-event drawdown each time but a large R2 dose-count — R3 would size the floor smaller than R2 in that case, correctly recognizing that no single swing was ever actually dangerous.
+
+**The formula:**
+
+```
+AutoFloor = k × maxBankrollDrawdown(last M bets)
+```
+
+- **`maxBankrollDrawdown(last M bets)`** — track the Bankroll's balance over a trailing window of the last `M` bets (or, alternatively, the last `W` game-hours, mirroring R2's windowing choice), and compute the largest peak-to-trough drop observed in that window. This is the standard "running max, running max-drawdown" pattern: keep a running high-water mark of the balance; every time the balance sits below that high-water mark, compare the gap to the largest gap seen so far.
+- **`k`** — a dev-tunable multiplier (R3's equivalent of R2's `SafetyFactor`), sizing the floor as some multiple of the worst recent swing rather than exactly matching it.
+
+**Worked example (illustrative, not implemented).** Suppose over the last 500 bets the Bankroll's balance history looked like: starts at 100, climbs to 340 (a hot streak), then a bad run drags it down to 60 before recovering — that is a drawdown of `340 − 60 = 280 SC`. Later in the same window it climbs to 200 and drops to 150 (a drawdown of only 50). The *max* drawdown in the window is the larger of the two: 280 SC. With `k = 1.2`:
+
+```
+AutoFloor = 1.2 × 280 = 336 SC
+```
+
+**What building it would require (the honest cost comparison with R2):** unlike R2, this data does **not** already exist anywhere in the codebase. It would need:
+
+1. **A new ring buffer** inside `CasinoCoinSwapService` (or a small new helper it owns), subscribed to `CasinoScBalanceService.BalanceChanged`, sampling the Bankroll balance on every change (or every settled bet) and retaining the last `M` samples.
+2. **Running high-water-mark / max-drawdown bookkeeping** over that buffer — cheap per-sample, but it is new logic that has to be gotten right (in particular: what happens at a restart, given "a block is the only commit" — CLAUDE.md Important Pattern 2 — means this buffer, like the pending BTC deliveries in §4.4 of the swap plan, would almost certainly need to be **in-memory only, never persisted**, and would legitimately reset to "no history yet" on every restart until it re-accumulates from live play).
+3. **A choice of windowing units** (bet-count `M` vs. game-hours `W`) that R2 didn't have to make, because `RechargeHistory` is already timestamped and R2 just filters it.
+
+This is why the swap plan calls R3 "medium cost — new telemetry" versus R2's "small — pure read," and why R2 was built first. R3 is not hard, conceptually — it is a well-understood pattern — but it is genuinely new plumbing, not a re-read of data that already exists.
+
+### 33.4 — Choosing between them (for whoever writes R3's implementation plan later)
+
+| Question | R2 (recharge pace) | R3 (drawdown-based) |
+|---|---|---|
+| What it measures | *How often* the Bankroll needed refilling | *How far* the Bankroll actually fell before recovering |
+| Data source | `CasinoScBalanceService.RechargeHistory` (already exists) | A new balance-sample ring buffer (does not exist yet) |
+| Blind spot | Can't tell a big single loss from many small ones — both look like "N doses" | None of R2's blind spot, but needs its own tuning of `M`/`W` and `k` |
+| Cost to build | Already done (SW.5) | New subscription + buffer + drawdown bookkeeping + restart-safety design |
+| Reacts fastest to | A *change in frequency* of recharges | A *single large swing*, even if it's the first one in a long time |
+| Good fallback signal if | The betting pace is roughly steady-sized bets | Bet sizes vary a lot, or whales/streaks matter more than frequency |
+
+**When to actually build R3:** only if real testing sessions (using the `swap_desk_trace.csv` telemetry the swap plan already logs, §2.4) show R2's floor either reacting to the wrong signal (e.g. staying low through a single huge loss because it was "only one dose") or lagging behind genuine changes in the casino's risk exposure. Until that evidence exists, R2 stays the shipped default and R3 remains this chapter — a fully-explained idea, deliberately **not** turned into an implementation plan yet, so that whoever picks it up later can go straight from "why" to "how" without re-deriving the reasoning above.
+
+### 33.5 — Testing notes
+
+Both the manual reserve and R2's auto floor can be exercised without waiting for organic play: `CasinoScBalanceService.RechargeHistory` fills up naturally the moment bots/player start losing bets fast enough to empty the Bankroll repeatedly (see the funding-timeline note in the swap plan, SW.1). To see the auto floor move, toggle it on in `CasinoGamblingFinances`, watch the "Auto floor (R2)" readout in the same panel's info line update as `RechargeHistory` accumulates auto entries, and confirm `EffectiveScReserve`/`OfferedSc` on the `CasinoCoinSwaps` scene track it live (`ScAutoFloor` is a computed property, so it is always current — no stale cache to worry about). Widening `WindowHours` or lowering `SafetyFactor` should visibly shrink the floor for the same history; the reverse should grow it.
