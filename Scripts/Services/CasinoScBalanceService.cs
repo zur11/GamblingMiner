@@ -256,6 +256,29 @@ public partial class CasinoScBalanceService : Node
 		return true;
 	}
 
+	// Step 13 (SW.3/SW.4) — the swap desk's casino SC legs (D-SW.3: a swap touches the casino's Main Balance
+	// only; the Bankroll stays ApplyBetResult's bet float). Called by CasinoCoinSwapService only.
+	public void ReceiveSwapSc(decimal amount)
+	{
+		amount = Money.Normalize(amount);
+		if (amount <= 0m) return;
+
+		MainBalance = Money.Normalize(MainBalance + amount);
+		SaveState();
+		BalanceChanged?.Invoke();
+	}
+
+	public bool TryPaySwapSc(decimal amount)
+	{
+		amount = Money.Normalize(amount);
+		if (amount <= 0m || amount > MainBalance) return false;
+
+		MainBalance = Money.Normalize(MainBalance - amount);
+		SaveState();
+		BalanceChanged?.Invoke();
+		return true;
+	}
+
 	public bool TryTransferToMainBalance(decimal amount)
 	{
 		amount = Money.Normalize(amount);

@@ -30,6 +30,8 @@ public partial class CasinoCoinSwaps : Control
 	private Label    _panelAQuoteLabel;
 	private Button   _panelASwapBtn;
 	private Label    _panelAReasonLabel;
+	private Label    _panelAPendingLabel;
+	private Label    _panelBPendingLabel;
 
 	private Label    _panelBAvailLabel;
 	private LineEdit _panelBInput;
@@ -46,6 +48,7 @@ public partial class CasinoCoinSwaps : Control
 	private const int MaxRecentSwapsShown = 20;
 
 	private static readonly Color DisabledReasonColor = new Color(1f, 0.45f, 0.35f);
+	private static readonly Color PendingColor        = new Color(1f, 0.9f, 0.4f);
 	private static readonly Color QuoteOkColor        = new Color(0.6f, 1f, 0.6f);
 	private static readonly Color QuoteBadColor       = new Color(1f, 0.75f, 0.4f);
 	private static readonly Color GreyedColor         = new Color(0.6f, 0.6f, 0.6f);
@@ -69,9 +72,11 @@ public partial class CasinoCoinSwaps : Control
 		_panelAInput       = GetNode<LineEdit>("%PanelAInput");
 		_panelAMaxBtn      = GetNode<Button>("%PanelAMaxBtn");
 		_panelAMaxLabel    = GetNode<Label>("%PanelAMaxLabel");
-		_panelAQuoteLabel  = GetNode<Label>("%PanelAQuoteLabel");
-		_panelASwapBtn     = GetNode<Button>("%PanelASwapBtn");
-		_panelAReasonLabel = GetNode<Label>("%PanelAReasonLabel");
+		_panelAQuoteLabel   = GetNode<Label>("%PanelAQuoteLabel");
+		_panelASwapBtn      = GetNode<Button>("%PanelASwapBtn");
+		_panelAReasonLabel  = GetNode<Label>("%PanelAReasonLabel");
+		_panelAPendingLabel = GetNode<Label>("%PanelAPendingLabel");
+		_panelBPendingLabel = GetNode<Label>("%PanelBPendingLabel");
 
 		_panelBAvailLabel  = GetNode<Label>("%PanelBAvailLabel");
 		_panelBInput       = GetNode<LineEdit>("%PanelBInput");
@@ -90,6 +95,10 @@ public partial class CasinoCoinSwaps : Control
 		_panelBInput.TextChanged += _ => RefreshPanelBQuote();
 		_panelAMaxBtn.Pressed += () => FillMax(_panelAInput, _swapService?.QuoteScToBtc("player", 0m));
 		_panelBMaxBtn.Pressed += () => FillMax(_panelBInput, _swapService?.QuoteBtcToSc("player", 0m));
+		_panelASwapBtn.Pressed += OnPanelASwapPressed;
+
+		_panelAPendingLabel.AddThemeColorOverride("font_color", PendingColor);
+		_panelBPendingLabel.AddThemeColorOverride("font_color", PendingColor);
 
 		// Origin-aware back (the BetsHistoryExplorer / SF.4.2 pattern) — MainMenu and ScFinances both link here.
 		GetNode<Button>("%BackBtn").Pressed += () =>
@@ -199,6 +208,26 @@ public partial class CasinoCoinSwaps : Control
 			_panelAInput, _panelAMaxBtn, _panelAReasonLabel, isPanelA: true);
 		ApplyPanelState(_swapService.IsPanelBEnabled, _swapService.PanelBReason,
 			_panelBInput, _panelBMaxBtn, _panelBReasonLabel, isPanelA: false);
+
+		// Panel A executes since SW.3; Panel B's button stays hard-disabled until SW.4.
+		_panelASwapBtn.Disabled = !_swapService.IsPanelAEnabled;
+
+		RefreshPendingRows();
+	}
+
+	// §4.4 — the in-flight BTC leg row: visible while a swap's on-chain send awaits its confirming block,
+	// honest about what an app restart would do (both legs unwind together).
+	private void RefreshPendingRows()
+	{
+		decimal pendingA = 0m;
+		foreach (var d in _swapService.PendingBtcDeliveries)
+			if (d.Direction == CasinoCoinSwapService.DirectionScToBtc && d.ClientId == "player")
+				pendingA += d.AmountBtc;
+
+		_panelAPendingLabel.Visible = pendingA > 0m;
+		if (pendingA > 0m)
+			_panelAPendingLabel.Text = string.Create(CultureInfo.InvariantCulture,
+				$"⏳ {pendingA:N8} BTC incoming — confirms at the next mined block (a restart before then unwinds the swap)");
 	}
 
 	private void ApplyPanelState(bool enabled, CasinoCoinSwapService.PanelDisableReason reason,
@@ -206,10 +235,33 @@ public partial class CasinoCoinSwaps : Control
 	{
 		input.Editable  = enabled;
 		maxBtn.Disabled = !enabled;
-		// SWAP buttons stay hard-disabled in SW.2 regardless — execution lands in SW.3/SW.4.
 		reasonLabel.Visible = !enabled;
 		if (!enabled)
 			reasonLabel.Text = DisableReasonText(reason, isPanelA);
+	}
+
+	// SWAP (Panel A) — the service re-validates every clamp and hard-clamps to the binding max (§4.3);
+	// the UI just relays the outcome. Success clears the input; the pending row is the visible receipt.
+	private void OnPanelASwapPressed()
+	{
+		if (_swapService == null) return;
+		if (!TryParseAmount(_panelAInput.Text, out decimal sc))
+		{
+			_panelAQuoteLabel.Text = "✖ Enter a valid SC amount first.";
+			_panelAQuoteLabel.AddThemeColorOverride("font_color", QuoteBadColor);
+			return;
+		}
+
+		if (_swapService.TryExecuteScToBtc("player", sc, out string error))
+		{
+			_panelAInput.Text = string.Empty;
+			RefreshAll();
+		}
+		else
+		{
+			_panelAQuoteLabel.Text = $"✖ Swap rejected: {error}";
+			_panelAQuoteLabel.AddThemeColorOverride("font_color", QuoteBadColor);
+		}
 	}
 
 	private string DisableReasonText(CasinoCoinSwapService.PanelDisableReason reason, bool isPanelA) => reason switch

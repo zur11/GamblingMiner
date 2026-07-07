@@ -39,6 +39,11 @@ public partial class CasinoCoinSwapService : Node
 
 	public const string DirectionScToBtc = "sc_to_btc"; // Panel A — player buys BTC with SC (casino sells)
 	public const string DirectionBtcToSc = "btc_to_sc"; // Panel B — player sells BTC for SC (casino buys)
+
+	// On-chain display memos (Transaction.InputDataText) so wallet history panels can tell swap txs apart
+	// from ordinary sends / pool payouts. The "swap:" prefix is the machine check; keep it stable.
+	public const string SwapTxMemoScToBtc = "swap: casino desk SC→BTC";
+	public const string SwapTxMemoBtcToSc = "swap: casino desk BTC→SC";
 	public const string MethodManual     = "manual";
 	public const string MethodAuto       = "auto";      // reserved for the future auto-swaps-scheduler / bots
 
@@ -50,10 +55,11 @@ public partial class CasinoCoinSwapService : Node
 	// MaxRechargeHistory on the other financial services.
 	private const int MaxSwapHistory = 500;
 
-	private CasinoScBalanceService  _casinoSc;
-	private CalendarTimeService     _calendarTime;
-	private BtcMarketDataService    _market;
-	private PrincipalBalanceService _principalBalance;
+	private CasinoScBalanceService    _casinoSc;
+	private CalendarTimeService       _calendarTime;
+	private BtcMarketDataService      _market;
+	private PrincipalBalanceService   _principalBalance;
+	private CasinoClientLedgerService _ledger;
 	// Cheap facade over NetworkRoot's static world (the SimulationService pattern). Only touched from
 	// RecomputeAvailability, which never runs before the deferred init — so the blockchain's lazy
 	// EnsureInitialized is never triggered mid-autoload-boot (checkpoint restore order stays untouched).
@@ -107,6 +113,7 @@ public partial class CasinoCoinSwapService : Node
 		_calendarTime     = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		_market           = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
 		_principalBalance = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
+		_ledger           = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 		_networkRoot      = new NetworkRoot();
 
 		// §1.1 event set — availability is event-driven, never per-frame. Handlers no-op until the deferred
@@ -235,12 +242,15 @@ public partial class CasinoCoinSwapService : Node
 	// balances subscribe to CasinoScBalanceService.BalanceChanged themselves; this event is for desk state).
 	private void RecomputeAvailability(bool notify)
 	{
-		var before = (CasinoBtcBalance, CasinoBtcPoolObligation, CasinoBtcSettling, CurrentPriceSc, IsPanelAEnabled, PanelAReason, IsPanelBEnabled, PanelBReason);
+		var before = (CasinoBtcBalance, CasinoBtcPoolObligation, CasinoBtcSettling, CurrentPriceSc, IsPanelAEnabled, PanelAReason, IsPanelBEnabled, PanelBReason, _pendingDeliveries.Count);
 
 		DateTime nowLocal = _calendarTime?.CurrentLocalDateTime ?? DateTime.Now;
 		CasinoBtcBalance  = Money.Normalize(_networkRoot?.GetNodeSpendableBalance(CasinoNodeId) ?? 0m);
 		(CasinoBtcSettling, CasinoBtcPoolObligation) = _networkRoot?.GetCasinoBtcSettlement() ?? (0m, 0m);
 		CurrentPriceSc    = _market?.GetEffectivePriceUsd(nowLocal);
+
+		// Drop deliveries whose confirming block arrived (§4.4 — the pending row clears itself).
+		_pendingDeliveries.RemoveAll(d => !(_networkRoot?.IsTransactionPending(d.TxId) ?? false));
 
 		if (_market == null || !_market.IsMarketBorn(nowLocal) || CurrentPriceSc is not decimal price)
 		{
@@ -266,7 +276,7 @@ public partial class CasinoCoinSwapService : Node
 				OfferedSc >= MinScPayoutAt(price) ? PanelDisableReason.None : PanelDisableReason.NoCasinoSc);
 		}
 
-		var after = (CasinoBtcBalance, CasinoBtcPoolObligation, CasinoBtcSettling, CurrentPriceSc, IsPanelAEnabled, PanelAReason, IsPanelBEnabled, PanelBReason);
+		var after = (CasinoBtcBalance, CasinoBtcPoolObligation, CasinoBtcSettling, CurrentPriceSc, IsPanelAEnabled, PanelAReason, IsPanelBEnabled, PanelBReason, _pendingDeliveries.Count);
 		if (notify && !before.Equals(after))
 			SwapDeskChanged?.Invoke();
 	}
@@ -377,6 +387,91 @@ public partial class CasinoCoinSwapService : Node
 		return targetNet <= netAtRegionEnd
 			? targetNet + NetworkFeePolicy.MinFee
 			: targetNet / (1m - fee);
+	}
+
+	// ---- Execution — Panel A (SC → BTC, §4.1 / SW.3) ---------------------------------------------------------------
+
+	// A swap's on-chain BTC leg awaiting its confirming block (§4.4). In-memory only, deliberately: an app
+	// restart discards the mempool AND reverts the SC balances to the last block, so both legs unwind
+	// together — persisting this list would fabricate deliveries the restarted world never made.
+	public sealed class PendingBtcDelivery
+	{
+		public string  TxId      { get; init; } = string.Empty;
+		public string  ClientId  { get; init; } = "player";
+		public string  Direction { get; init; } = DirectionScToBtc;
+		public decimal AmountBtc { get; init; }
+	}
+
+	private readonly List<PendingBtcDelivery> _pendingDeliveries = new();
+	public IReadOnlyList<PendingBtcDelivery> PendingBtcDeliveries => _pendingDeliveries;
+
+	// The full §4.1 pipeline. Clamps are re-validated service-side (the UI validates first): the input is
+	// hard-clamped to the binding maximum (§4.3, TriggerManualDeposit's Math.Min safety) and the §3.2
+	// minimum swap size is enforced. Legs: player Main −S (instant) → casino Main +S (instant, D-SW.3) →
+	// casino → player base address on-chain send of netBtc with the 0.1 network fee paid by the casino out
+	// of its margin (D-SW.1/D-SW.6). A failed broadcast unwinds both SC legs — no partial swap ever commits.
+	public bool TryExecuteScToBtc(string clientId, decimal scAmount, out string error)
+	{
+		error = string.Empty;
+		if (_networkRoot == null || _principalBalance == null || _casinoSc == null)
+		{
+			error = "Swap desk unavailable.";
+			return false;
+		}
+
+		// Re-gate on fresh state before committing money (§1.1 — a panel can run dry mid-session).
+		RecomputeAvailability(notify: false);
+		SwapQuote probe = QuoteScToBtc(clientId, 0m);
+		if (probe.PanelState != PanelDisableReason.None)
+		{
+			error = "The swap desk is closed for this panel.";
+			return false;
+		}
+
+		scAmount = Money.Normalize(Math.Min(Money.Normalize(scAmount), probe.MaxInput));
+		SwapQuote quote = QuoteScToBtc(clientId, scAmount);
+		if (!quote.IsValid || quote.NetOut <= 0m)
+		{
+			error = string.Create(CultureInfo.InvariantCulture,
+				$"Minimum swap is {quote.MinInput:N8} SC (1 BTC gross).");
+			return false;
+		}
+
+		// 1. Player SC leg (instant).
+		if (!_principalBalance.TryWithdraw(scAmount))
+		{
+			error = "Insufficient Main Balance.";
+			return false;
+		}
+
+		// 2. Casino SC leg (instant, Main only — D-SW.3).
+		_casinoSc.ReceiveSwapSc(scAmount);
+
+		// 3. On-chain BTC leg: casino → the client node's BASE address (D-SW.6 — no fresh-address-per-swap).
+		var tx = _networkRoot.CreateAndBroadcastTransaction(CasinoNodeId, clientId, quote.NetOut, NetworkFeePolicy.MinFee, SwapTxMemoScToBtc);
+		if (tx == null)
+		{
+			// Unwind both SC legs — the swap never happened.
+			if (!_casinoSc.TryPaySwapSc(scAmount))
+				GD.PushWarning("[CasinoCoinSwapService] Rollback anomaly: casino could not return the SC leg.");
+			_principalBalance.Deposit(scAmount);
+			error = "On-chain send failed — swap aborted, no funds moved.";
+			RecomputeAvailability(notify: true);
+			return false;
+		}
+
+		_pendingDeliveries.Add(new PendingBtcDelivery
+		{
+			TxId      = tx.TransactionId,
+			ClientId  = clientId,
+			Direction = DirectionScToBtc,
+			AmountBtc = quote.NetOut
+		});
+
+		// 4. Ledger (D-SW.4) + SwapRecord + trace + re-gate + SwapDeskChanged (inside RegisterSwap).
+		_ledger?.RegisterSwapScOut(clientId, scAmount, _calendarTime?.CurrentUtcDateTime ?? DateTime.UtcNow, MethodManual);
+		RegisterSwap(clientId, DirectionScToBtc, scAmount, quote.FeeCharged, quote.NetOut, quote.PriceUsed, MethodManual);
+		return true;
 	}
 
 	// ---- Setters (§2.2 — the single mutation API the DEV scenes AND the future scheduler share) -------------------

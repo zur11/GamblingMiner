@@ -213,7 +213,10 @@ public partial class NetworkRoot : Node
         SharedNodesById[founder.FounderId] = node;
     }
 
-    public Transaction? CreateAndBroadcastTransaction(string fromNodeId, string recipientNodeId, decimal amount, decimal fee = 0m)
+    // memo (Step 13 / SW.3): a display-only on-chain label (Transaction.InputDataText — NOT part of the
+    // content-hash txid or the sighash, so it never affects validation). The swap desk tags its txs
+    // "swap:…" so wallet history panels can color them apart from ordinary sends / pool payouts.
+    public Transaction? CreateAndBroadcastTransaction(string fromNodeId, string recipientNodeId, decimal amount, decimal fee = 0m, string? memo = null)
     {
         EnsureInitialized();
         if (amount <= 0m)
@@ -235,7 +238,7 @@ public partial class NetworkRoot : Node
         // Step 8 — UTXO spend: coin-select the sender's owned UTXOs (combining several if needed) + change.
         // No disk write: a block is the only commit. The tx lives in the in-memory mempool and becomes durable
         // when the next block is mined; if the app closes before that, it is discarded on restart (revert to block).
-        return BuildAndBroadcastUtxoSpend(sender, recipient.WalletAddress, amount, fee, null);
+        return BuildAndBroadcastUtxoSpend(sender, recipient.WalletAddress, amount, fee, null, memo);
     }
 
     public bool MineAndBroadcastBlock(string minerNodeId, long? minedAtUnixMs = null)
@@ -337,7 +340,7 @@ public partial class NetworkRoot : Node
     // optional change output to a fresh owned address, and broadcasts it. Returns the tx, or null if the
     // node's total spendable across ALL its addresses can't cover amount+fee. A node with a ReceiveWallet
     // (player, Satoshi) returns change to a fresh derived address; others return change to their base address.
-    private static Transaction? BuildAndBroadcastUtxoSpend(NodeAgent sender, string recipientAddress, decimal amount, decimal fee, string? deterministicSalt)
+    private static Transaction? BuildAndBroadcastUtxoSpend(NodeAgent sender, string recipientAddress, decimal amount, decimal fee, string? deterministicSalt, string? memo = null)
     {
         decimal need = amount + fee;
         HashSet<string> owned = sender.ReceiveWallet != null
@@ -372,6 +375,10 @@ public partial class NetworkRoot : Node
         }
 
         Transaction tx = sender.BuildSignedSpend(inputs, outputs, fee, deterministicSalt);
+        if (!string.IsNullOrEmpty(memo))
+        {
+            tx.InputDataText = memo; // display-only label; excluded from the txid/sighash so safe post-signing
+        }
         if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
         {
             return null;
@@ -741,6 +748,16 @@ public partial class NetworkRoot : Node
     //     chain (e.g. lost a consensus race after queueing). TryDistributePendingCasinoRewards will retry
     //     these every block, coin-selecting from the casino's accumulated fee income — a live liability
     //     against the wallet's spendable balance, so the desk must treat it as already spent.
+    // Step 13 (SW.3) — is this tx still awaiting its confirming block? Queried against the player node's
+    // mempool (the authoritative chain after consensus). False once mined (or dropped by a chain replace).
+    public bool IsTransactionPending(string transactionId)
+    {
+        EnsureInitialized();
+        return !string.IsNullOrEmpty(transactionId)
+            && SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? node)
+            && node.Blockchain.PendingTransactions.Any(t => t.TransactionId == transactionId);
+    }
+
     // One diagnostic line per surprising pool event per session (the recompute runs per bet — must not spam).
     private static readonly HashSet<int> _poolSettlementDiagPrinted = new();
 
@@ -1439,7 +1456,11 @@ public partial class NetworkRoot : Node
     // panel): each confirmed tx that touches one of its owned addresses, classified mined / received / sent,
     // with the block timestamp, the net amount, and the counterparty. Internal change (an owned output of the
     // node's own send) is netted out, not listed. Newest first.
-    public IReadOnlyList<(long unixMs, string kind, decimal amount, string counterparty)> GetNodeTransactionHistory(string nodeId)
+    // `recipients` (Step 13 / SW.3 display fix) = distinct external payees of a "sent" row, so a multi-output
+    // send (a casino pool distribution pays every contributor in ONE tx) renders as "sent X to addr (+N more)"
+    // instead of looking like the whole amount went to the first payee. `memo` = the tx's display label
+    // (InputDataText — the swap desk tags its txs "swap:…" so wallet panels can color them apart).
+    public IReadOnlyList<(long unixMs, string kind, decimal amount, string counterparty, int recipients, string memo)> GetNodeTransactionHistory(string nodeId)
     {
         EnsureInitialized();
         if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node)
@@ -1447,28 +1468,31 @@ public partial class NetworkRoot : Node
             return [];
 
         var owned = new HashSet<string>(node.ReceiveWallet?.OwnedAddresses ?? Enumerable.Empty<string>()) { node.WalletAddress };
-        var result = new List<(long, string, decimal, string)>();
+        var result = new List<(long, string, decimal, string, int, string)>();
 
         foreach (Block block in player.Blockchain.Chain)
             foreach (Transaction tx in block.Transactions)
             {
+                string memo = tx.InputDataText ?? string.Empty;
                 bool isSender = tx.Inputs.Any(i => owned.Contains(i.Address));
                 if (isSender)
                 {
                     // We spent — the "amount" is what left the wallet (outputs to addresses we DON'T own).
-                    decimal sent = tx.Outputs.Where(o => !owned.Contains(o.Address)).Sum(o => o.Amount);
+                    var external = tx.Outputs.Where(o => !owned.Contains(o.Address)).ToList();
+                    decimal sent = external.Sum(o => o.Amount);
                     if (sent <= 0m) continue; // pure self-consolidation (all outputs owned) → not user-facing
-                    string payee = tx.Outputs.FirstOrDefault(o => !owned.Contains(o.Address))?.Address ?? "—";
-                    result.Add((block.Timestamp, "sent", sent, payee));
+                    string payee = external[0].Address;
+                    int recipients = external.Select(o => o.Address).Distinct().Count();
+                    result.Add((block.Timestamp, "sent", sent, payee, recipients, memo));
                 }
                 else
                 {
                     decimal received = tx.Outputs.Where(o => owned.Contains(o.Address)).Sum(o => o.Amount);
                     if (received <= 0m) continue; // not involved
                     if (tx.IsCoinbase)
-                        result.Add((block.Timestamp, "mined", received, "coinbase"));
+                        result.Add((block.Timestamp, "mined", received, "coinbase", 1, memo));
                     else
-                        result.Add((block.Timestamp, "received", received, tx.Inputs.Count > 0 ? tx.Inputs[0].Address : "—"));
+                        result.Add((block.Timestamp, "received", received, tx.Inputs.Count > 0 ? tx.Inputs[0].Address : "—", 1, memo));
                 }
             }
 

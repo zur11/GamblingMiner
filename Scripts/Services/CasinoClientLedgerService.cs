@@ -12,7 +12,7 @@ public partial class CasinoClientLedgerService : Node
 		public string   ClientId             { get; set; } = string.Empty;
 		public DateTime UtcTimestamp         { get; set; }
 		public decimal  Amount               { get; set; }
-		public string   Kind                 { get; set; } = string.Empty; // initial | deposit | withdrawal | auto_recharge | bankroll_withdrawal
+		public string   Kind                 { get; set; } = string.Empty; // initial | deposit | withdrawal | auto_recharge | bankroll_withdrawal | swap_sc_out | swap_sc_in
 		// SF.1.5 / D-SF2.3: distinguishes automatic from player-initiated flows WITHOUT new kinds (every existing
 		// Kind== filter keeps working). Absent/legacy → "manual".
 		public string   Method               { get; set; } = "manual"; // manual | auto
@@ -71,6 +71,20 @@ public partial class CasinoClientLedgerService : Node
 	public void RegisterBankrollWithdrawal(string clientId, decimal amount, DateTime utc)
 	{
 		AddEntry(clientId, amount, "bankroll_withdrawal", "auto", utc, 0m, 0m);
+	}
+
+	// Step 13 (SW.3/SW.4, D-SW.4) — swap-desk SC flows, from the casino's operational perspective:
+	// swap_sc_out = the client's SC paid INTO the casino buying BTC (Panel A); swap_sc_in = SC credited to
+	// the client selling BTC (Panel B). Own kinds so they are excluded from the deposited/withdrawn totals
+	// AND from the since-last-deposit baseline (GetLastDeposit filters initial|deposit) by construction.
+	public void RegisterSwapScOut(string clientId, decimal amount, DateTime utc, string method = "manual")
+	{
+		AddEntry(clientId, amount, "swap_sc_out", method, utc, 0m, 0m);
+	}
+
+	public void RegisterSwapScIn(string clientId, decimal amount, DateTime utc, string method = "manual")
+	{
+		AddEntry(clientId, amount, "swap_sc_in", method, utc, 0m, 0m);
 	}
 
 	// auto_recharge and startup_default are both internal recharges, not player-initiated deposits.

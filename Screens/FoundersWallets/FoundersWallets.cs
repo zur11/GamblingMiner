@@ -742,15 +742,20 @@ public partial class FoundersWallets : Control
 		var history = _networkRoot.GetNodeTransactionHistory(_currentFounder.FounderId);
 		var sb = new System.Text.StringBuilder();
 		int minedHidden = 0;
-		foreach ((long unixMs, string kind, decimal amount, string counterparty) in history)
+		foreach ((long unixMs, string kind, decimal amount, string counterparty, int recipients, string memo) in history)
 		{
 			if (hideMining && kind == "mined") { minedHidden++; continue; }
+			// Multi-output sends name the first payee + how many more; swap-desk txs (memo "swap:…") get
+			// their own color so they never read as ordinary transfers (Step 13 / SW.3).
+			bool isSwap = memo.StartsWith("swap:");
+			string extra = recipients > 1 ? $" (+{recipients - 1} more)" : "";
 			(string color, string sign, string desc) = kind switch
 			{
-				"mined"    => ("lime",   "+", "mined (coinbase)"),
-				"received" => ("lime",   "+", $"received from {Short(counterparty)}"),
-				_          => ("orange", "−", $"sent to {Short(counterparty)}"),
+				"mined"    => ("lime", "+", "mined (coinbase)"),
+				"received" => (isSwap ? "aqua" : "lime",   "+", $"received from {Short(counterparty)}{extra}"),
+				_          => (isSwap ? "aqua" : "orange", "−", $"sent to {Short(counterparty)}{extra}"),
 			};
+			if (isSwap) desc += " · SWAP";
 			sb.AppendLine($"[color=gray]{FmtDate(unixMs)}[/color]  [color={color}]{sign}{amount:F8} BTC[/color]  {desc}");
 		}
 		if (sb.Length == 0)
