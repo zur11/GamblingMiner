@@ -5,6 +5,8 @@ using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using Scripts.Finance;
+using GodotBlockchainPort.Blockchain;
+using GodotBlockchainPort.Simulation;
 
 // Autoload #15 (Step 13 / SW.0). Owns the casino SWAP DESK's state and policy — per-asset strategic reserves,
 // the rank-ready swap fee, and the swap history — for the CasinoCoinSwaps scene (SW.2). Execution legs (SW.3/SW.4)
@@ -28,6 +30,12 @@ public partial class CasinoCoinSwapService : Node
 	// enabled — a static stand-in for the SW.5 recharge-pace floor (R2). Dev-tunable N, default OFF.
 	public const decimal DefaultScFloorMultiplier = 10m;
 
+	// §3.2 — minimum swap size of 1 BTC gross: at the 10% max fee, fee ≥ NetworkFeePolicy.MinFee (0.1) exactly
+	// at 1 BTC, so the casino never swaps at a loss. Surfaced as an honest "minimum swap is X" UI message (SW.6).
+	public const decimal MinSwapGrossBtc = 1m;
+
+	private const string CasinoNodeId = "casino";
+
 	public const string DirectionScToBtc = "sc_to_btc"; // Panel A — player buys BTC with SC (casino sells)
 	public const string DirectionBtcToSc = "btc_to_sc"; // Panel B — player sells BTC for SC (casino buys)
 	public const string MethodManual     = "manual";
@@ -43,6 +51,12 @@ public partial class CasinoCoinSwapService : Node
 
 	private CasinoScBalanceService _casinoSc;
 	private CalendarTimeService    _calendarTime;
+	private BtcMarketDataService   _market;
+	// Cheap facade over NetworkRoot's static world (the SimulationService pattern). Only touched from
+	// RecomputeAvailability, which never runs before the deferred init — so the blockchain's lazy
+	// EnsureInitialized is never triggered mid-autoload-boot (checkpoint restore order stays untouched).
+	private NetworkRoot            _networkRoot;
+	private bool _availabilityReady;
 
 	// §2.2 — one per asset. Percent-of-balance OR absolute amount, toggleable; the reserve is the floor the
 	// casino keeps back, only the surplus above it is offered for swaps (the TryAutoWithdraw threshold/surplus
@@ -89,18 +103,55 @@ public partial class CasinoCoinSwapService : Node
 		LoadState();
 		_casinoSc     = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		_market       = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
+		_networkRoot  = new NetworkRoot();
+
+		// §1.1 event set — availability is event-driven, never per-frame. Handlers no-op until the deferred
+		// initial recompute has run (the checkpoint restore fires BalanceChanged during autoload boot, before
+		// the blockchain world should be touched).
+		if (_casinoSc != null) _casinoSc.BalanceChanged += OnAvailabilityInputChanged;
+		if (_market != null)   _market.MarketDayChanged += OnMarketDayChanged;
+		NetworkRoot.BlockAccepted += OnBlockAccepted;
+		CallDeferred(nameof(InitializeAvailability));
+
 		GD.Print($"[CasinoCoinSwapService] Ready — Fee={SwapFeePercent:F2}%  BtcReserve={(BtcReserve.UsePercent ? BtcReserve.Percent + "%" : BtcReserve.Amount + " BTC")}  ScReserve={(ScReserve.UsePercent ? ScReserve.Percent + "%" : ScReserve.Amount + " SC")}  ScFloor={(ScFloorEnabled ? $"ON (N={ScFloorMultiplier:F2})" : "OFF")}  history={_swapHistory.Count}");
+	}
+
+	public override void _ExitTree()
+	{
+		if (_casinoSc != null) _casinoSc.BalanceChanged -= OnAvailabilityInputChanged;
+		if (_market != null)   _market.MarketDayChanged -= OnMarketDayChanged;
+		NetworkRoot.BlockAccepted -= OnBlockAccepted; // static event — must not outlive the autoload
 	}
 
 	// THE accessor every quote/execution path uses (§3.1). Today it ignores clientId and returns the global
 	// value; the rank system (future step) overrides per client HERE and nowhere else.
 	public decimal GetSwapFeePercentFor(string clientId) => SwapFeePercent;
 
-	// ---- Availability skeleton (fully wired in SW.1) --------------------------------------------------------------
+	// ---- Availability + first-funds gating (§1.1, SW.1) -----------------------------------------------------------
 
-	// SW.1 replaces this with the NetworkRoot helper: casino confirmed UTXOs − pending outgoing. Until then the
-	// desk sees zero casino BTC, which is also the true simulacrum starting state (extra-lazy, §1.1).
-	public decimal CasinoBtcBalance => 0m;
+	public enum PanelDisableReason
+	{
+		None,             // panel enabled
+		MarketNotBornYet, // game clock < BtcMarketDataService.FirstDataDateLocal — no exchange exists yet
+		HaltDay,          // D-13.11 — real historical trading halt closes the whole desk
+		NoCasinoBtc,      // Panel A: casino offered BTC below the smallest legal swap (MinDeliverableBtc)
+		NoCasinoSc        // Panel B: casino offered SC below the minimum swap's net payout
+	}
+
+	// Casino spendable BTC = confirmed, mature UTXOs across ALL its addresses (base + change rotation) minus
+	// any UTXO already reserved by a pending outgoing tx — GetNodeSpendableBalance/GetSpendableUtxos semantics,
+	// the same figure the CasinoFinances send panel shows. Cached; recomputed on the §1.1 event set only.
+	public decimal CasinoBtcBalance { get; private set; }
+
+	// The market-day step-function price (SC per BTC, D-13.2), carried forward over halts and frozen
+	// post-history (D-13.5). Null before market birth. Cached at each availability recompute.
+	public decimal? CurrentPriceSc { get; private set; }
+
+	public bool IsPanelAEnabled { get; private set; }
+	public bool IsPanelBEnabled { get; private set; }
+	public PanelDisableReason PanelAReason { get; private set; } = PanelDisableReason.MarketNotBornYet;
+	public PanelDisableReason PanelBReason { get; private set; } = PanelDisableReason.MarketNotBornYet;
 
 	public decimal CasinoScMainBalance => _casinoSc?.MainBalance ?? 0m;
 
@@ -119,31 +170,98 @@ public partial class CasinoCoinSwapService : Node
 	public decimal OfferedSc =>
 		Money.Normalize(Math.Max(0m, CasinoScMainBalance - EffectiveScReserve));
 
+	// §4.1 — the smallest OfferedBtc for which any legal swap exists: the minimum swap's net delivery plus the
+	// 0.1 network fee the casino pays on the send. At the 10% default fee: 0.9 + 0.1 = 1.0 BTC exactly.
+	public decimal MinDeliverableBtc
+	{
+		get
+		{
+			decimal feeBtc = Math.Max(GetSwapFeePercentFor("player") / 100m * MinSwapGrossBtc, NetworkFeePolicy.MinFee);
+			return Money.Normalize(MinSwapGrossBtc - feeBtc + NetworkFeePolicy.MinFee);
+		}
+	}
+
+	// §1.1 — Panel B's enable threshold: the net SC the minimum legal swap (1 BTC gross) would pay out at the
+	// given price. Below this, no swap the desk accepts can be honored.
+	public decimal MinScPayoutAt(decimal priceSc)
+	{
+		decimal feeBtc = Math.Max(GetSwapFeePercentFor("player") / 100m * MinSwapGrossBtc, NetworkFeePolicy.MinFee);
+		return Money.Normalize(priceSc * (MinSwapGrossBtc - feeBtc));
+	}
+
+	// Deferred one frame past autoload boot (see _Ready) — the first legitimate touch of the blockchain world.
+	private void InitializeAvailability()
+	{
+		_availabilityReady = true;
+		RecomputeAvailability(notify: true);
+	}
+
+	private void OnAvailabilityInputChanged()
+	{
+		if (_availabilityReady) RecomputeAvailability(notify: true);
+	}
+
+	private void OnMarketDayChanged(MarketDay day) => OnAvailabilityInputChanged();
+	private void OnBlockAccepted(Block block)      => OnAvailabilityInputChanged();
+
+	// Recomputes the cached balance/price/panel states. With notify, fires SwapDeskChanged only when the
+	// enablement snapshot actually changed (OfferedSc moves on every settled bet — consumers that want live
+	// balances subscribe to CasinoScBalanceService.BalanceChanged themselves; this event is for desk state).
+	private void RecomputeAvailability(bool notify)
+	{
+		var before = (CasinoBtcBalance, CurrentPriceSc, IsPanelAEnabled, PanelAReason, IsPanelBEnabled, PanelBReason);
+
+		DateTime nowLocal = _calendarTime?.CurrentLocalDateTime ?? DateTime.Now;
+		CasinoBtcBalance  = Money.Normalize(_networkRoot?.GetNodeSpendableBalance(CasinoNodeId) ?? 0m);
+		CurrentPriceSc    = _market?.GetEffectivePriceUsd(nowLocal);
+
+		if (_market == null || !_market.IsMarketBorn(nowLocal) || CurrentPriceSc is not decimal price)
+		{
+			SetPanelStates(PanelDisableReason.MarketNotBornYet, PanelDisableReason.MarketNotBornYet);
+		}
+		else if (_market.IsHaltDay(nowLocal))
+		{
+			SetPanelStates(PanelDisableReason.HaltDay, PanelDisableReason.HaltDay);
+		}
+		else
+		{
+			SetPanelStates(
+				OfferedBtc >= MinDeliverableBtc ? PanelDisableReason.None : PanelDisableReason.NoCasinoBtc,
+				OfferedSc >= MinScPayoutAt(price) ? PanelDisableReason.None : PanelDisableReason.NoCasinoSc);
+		}
+
+		var after = (CasinoBtcBalance, CurrentPriceSc, IsPanelAEnabled, PanelAReason, IsPanelBEnabled, PanelBReason);
+		if (notify && !before.Equals(after))
+			SwapDeskChanged?.Invoke();
+	}
+
+	private void SetPanelStates(PanelDisableReason panelA, PanelDisableReason panelB)
+	{
+		PanelAReason    = panelA;
+		PanelBReason    = panelB;
+		IsPanelAEnabled = panelA == PanelDisableReason.None;
+		IsPanelBEnabled = panelB == PanelDisableReason.None;
+	}
+
 	// ---- Setters (§2.2 — the single mutation API the DEV scenes AND the future scheduler share) -------------------
 
 	public void SetBtcReserve(bool usePercent, decimal percent, decimal amount)
 	{
 		BtcReserve = SanitizeReserve(usePercent, percent, amount);
-		SaveState();
-		AppendTrace("btc_reserve_set", string.Empty, 0m, 0m, 0m, 0m);
-		SwapDeskChanged?.Invoke();
+		CommitKnobChange("btc_reserve_set");
 	}
 
 	public void SetScReserve(bool usePercent, decimal percent, decimal amount)
 	{
 		ScReserve = SanitizeReserve(usePercent, percent, amount);
-		SaveState();
-		AppendTrace("sc_reserve_set", string.Empty, 0m, 0m, 0m, 0m);
-		SwapDeskChanged?.Invoke();
+		CommitKnobChange("sc_reserve_set");
 	}
 
 	// Clamps to [1,10] (D-SW.9) — the UI SpinBox refuses out-of-range values first; this is the safety net.
 	public void SetSwapFeePercent(decimal percent)
 	{
 		SwapFeePercent = Math.Clamp(Money.Normalize(percent), MinSwapFeePercent, MaxSwapFeePercent);
-		SaveState();
-		AppendTrace("fee_set", string.Empty, 0m, 0m, 0m, 0m);
-		SwapDeskChanged?.Invoke();
+		CommitKnobChange("fee_set");
 	}
 
 	// R1 placeholder floor toggle + multiplier (§2.3). Non-positive N falls back to the default.
@@ -151,8 +269,16 @@ public partial class CasinoCoinSwapService : Node
 	{
 		ScFloorEnabled    = enabled;
 		ScFloorMultiplier = multiplier > 0m ? Money.Normalize(multiplier) : DefaultScFloorMultiplier;
+		CommitKnobChange("sc_floor_set");
+	}
+
+	// Shared knob-change tail: persist, re-gate (a reserve/fee change moves the offered figures and can flip a
+	// panel), trace the new state, notify once.
+	private void CommitKnobChange(string traceEvent)
+	{
 		SaveState();
-		AppendTrace("sc_floor_set", string.Empty, 0m, 0m, 0m, 0m);
+		if (_availabilityReady) RecomputeAvailability(notify: false);
+		AppendTrace(traceEvent, string.Empty, 0m, 0m, 0m, 0m);
 		SwapDeskChanged?.Invoke();
 	}
 
@@ -175,6 +301,7 @@ public partial class CasinoCoinSwapService : Node
 			_swapHistory.RemoveRange(0, _swapHistory.Count - MaxSwapHistory);
 
 		SaveState();
+		if (_availabilityReady) RecomputeAvailability(notify: false); // a swap consumes offered funds — re-gate now
 		AppendTrace(direction, clientId, grossIn, feeCharged, netOut, priceUsed);
 		SwapDeskChanged?.Invoke();
 	}
@@ -276,6 +403,7 @@ public partial class CasinoCoinSwapService : Node
 			_swapHistory.RemoveRange(0, _swapHistory.Count - MaxSwapHistory);
 
 		SaveState();
+		if (_availabilityReady) RecomputeAvailability(notify: false); // boot-time restore precedes the deferred init — skipped there
 		GD.Print($"[CasinoCoinSwapService] RESTORED from checkpoint — Fee={SwapFeePercent:F2}%  ScFloor={(ScFloorEnabled ? "ON" : "OFF")}  history={_swapHistory.Count}");
 		SwapDeskChanged?.Invoke();
 	}
@@ -292,6 +420,7 @@ public partial class CasinoCoinSwapService : Node
 		ScFloorMultiplier = DefaultScFloorMultiplier;
 		_swapHistory.Clear();
 		SaveState();
+		if (_availabilityReady) RecomputeAvailability(notify: false); // boot-time reset precedes the deferred init — skipped there
 		SwapDeskChanged?.Invoke();
 	}
 

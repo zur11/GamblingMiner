@@ -725,6 +725,11 @@ public partial class NetworkRoot : Node
         return CasinoPoolRepository.Current.RewardHistory.ToList();
     }
 
+    // Step 13 (SW.1) — fired for every LIVE accepted block (bootstrap bulk-mining excluded), after broadcast
+    // and the post-block side effects. Confirmations change every node's spendable set, so event-driven
+    // consumers (CasinoCoinSwapService availability) recompute here instead of polling per-frame (§1.1).
+    public static event Action<Block>? BlockAccepted;
+
     private static void HandleMinedBlock(NodeAgent miner, Block block)
     {
         // Step 4b: the coinbase now lives inside the block (BlockTemplateBuilder), so it propagates
@@ -755,6 +760,7 @@ public partial class NetworkRoot : Node
             PersistStateToDisk();
             // After every block (any miner), retry casino-pool payouts whose coinbase has now matured.
             TryDistributePendingCasinoRewards(block.Timestamp);
+            BlockAccepted?.Invoke(block); // last — subscribers see the post-payout spendable state
         }
     }
 
