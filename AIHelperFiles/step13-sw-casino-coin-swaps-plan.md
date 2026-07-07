@@ -316,11 +316,11 @@ MarginContainer (full-rect, margin_bottom ≥ 50)
 
 ## 7. Phases
 
-### SW.0 — `CasinoCoinSwapService` skeleton (no UI)
-- [ ] Autoload #15 registered; `ReserveSetting` ×2 (defaults 0 ⇒ 100% offered); `SwapFeePercent` + `GetSwapFeePercentFor` (§3.1); R1 placeholder SC floor (§2.3, dev-tunable N, default OFF).
-- [ ] Persistence + `CheckpointState` DTO into `BlockSessionCheckpointService` + `ResetToPreGenesisDefaults()` (Important Pattern 2 — both paths, day one).
-- [ ] `SwapRecord` history (cap 500) + `swap_desk_trace.csv` appender (§2.4).
-- [ ] `dotnet build` clean. (No headless game launch — per standing rule, in-editor verification is the developer's.)
+### SW.0 — `CasinoCoinSwapService` skeleton (no UI) — ✅ implemented (2026-07-06, pending in-editor verification)
+- [x] Autoload #15 registered (inserted **before** `BlockSessionCheckpointService` in `project.godot`, so it is in the tree when the checkpoint restore / pre-genesis reset runs at boot — same ordering as `PlayerBankAccountService`); `ReserveSetting` ×2 (defaults 0 ⇒ 100% offered); `SwapFeePercent` + `GetSwapFeePercentFor` (§3.1); R1 placeholder SC floor (§2.3): `SetScFloor(enabled, N)`, dev-tunable N default 10, default OFF, composed as `EffectiveScReserve = max(manual, floor)`.
+- [x] Persistence (`user://casino_coin_swap_state.json`) + `CheckpointState` DTO bundled into `BlockSessionCheckpointService.Snapshot` (capture/restore, null = legacy → keep loaded state) + `ResetToPreGenesisDefaults()` (Important Pattern 2 — both paths, day one).
+- [x] `SwapRecord` history (cap 500, `RegisterSwap(...)` for the SW.3/SW.4 pipelines) + `swap_desk_trace.csv` appender (§2.4 — one row per swap and per knob change; SW.1 fills the `casinoBtc`/`offeredBtc` columns via the `CasinoBtcBalance` stub, currently 0).
+- [x] `dotnet build` clean (0 warnings, 0 errors). (No headless game launch — per standing rule, in-editor verification is the developer's.)
 
 ### SW.1 — availability plumbing + first-funds gating
 - [ ] `NetworkRoot` helper: casino spendable BTC = confirmed UTXOs − pending outgoing (reuse/extract from the existing CasinoFinances balance readout if one exists; verify pending-out subtraction).

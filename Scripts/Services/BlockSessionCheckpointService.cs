@@ -34,6 +34,9 @@ public partial class BlockSessionCheckpointService : Node
 		// Step 12 (SF.1.5 / D-SF2.4): the casino client ledger is a player-facing persisted list, so it is
 		// snapshotted at each block. Null in a legacy checkpoint → keep loaded entries.
 		public List<CasinoClientLedgerService.LedgerEntry> ClientLedgerEntries { get; set; }
+		// Step 13 (SW.0): the casino swap desk's reserves/fee/floor/history, bundled as one DTO. Null in a
+		// legacy pre-SW.0 checkpoint → CasinoCoinSwapService keeps its loaded state (no migration).
+		public CasinoCoinSwapService.CheckpointState CasinoCoinSwapState { get; set; }
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -68,6 +71,8 @@ public partial class BlockSessionCheckpointService : Node
 			?.ResetToPreGenesisDefaults();
 		GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")
 			?.ResetToPreGenesisDefaults(); // Step 12 (SF.0.8): bank → 0, settings default, history cleared
+		GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")
+			?.ResetToPreGenesisDefaults(); // Step 13 (SW.0): reserves 0, fee 10%, floor OFF, history cleared
 
 		// The clock and bet history leak the same way (CalendarTimeService/UserStatsService self-persist on
 		// every bet, not just on a mined block). Before any real block, the chain tip IS still the historical
@@ -127,6 +132,8 @@ public partial class BlockSessionCheckpointService : Node
 			?.RestoreFromCheckpoint(CurrentSnapshot.PlayerBankState); // null DTO (legacy) → keeps loaded state
 		GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService")
 			?.RestoreFromCheckpoint(CurrentSnapshot.ClientLedgerEntries); // null (legacy) → keeps loaded entries
+		GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")
+			?.RestoreFromCheckpoint(CurrentSnapshot.CasinoCoinSwapState); // null DTO (legacy) → keeps loaded state
 
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
 		{
@@ -192,6 +199,7 @@ public partial class BlockSessionCheckpointService : Node
 			AutoRechargeEnabled = program.AutoRechargeEnabled,
 			PlayerBankState = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")?.CaptureCheckpointState(),
 			ClientLedgerEntries = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService")?.CaptureEntriesForCheckpoint(),
+			CasinoCoinSwapState = GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")?.CaptureCheckpointState(),
 			CapturedAtUtc = DateTime.UtcNow
 		};
 
