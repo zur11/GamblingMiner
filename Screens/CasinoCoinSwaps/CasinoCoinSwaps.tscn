@@ -247,7 +247,7 @@ unique_name_in_owner = true
 layout_mode = 2
 disabled = true
 theme_override_font_sizes/font_size = 20
-text = "SWAP  (execution lands in SW.4)"
+text = "SWAP"
 
 [node name="PanelBReasonLabel" type="Label" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox"]
 unique_name_in_owner = true

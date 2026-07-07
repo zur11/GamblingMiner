@@ -96,6 +96,7 @@ public partial class CasinoCoinSwaps : Control
 		_panelAMaxBtn.Pressed += () => FillMax(_panelAInput, _swapService?.QuoteScToBtc("player", 0m));
 		_panelBMaxBtn.Pressed += () => FillMax(_panelBInput, _swapService?.QuoteBtcToSc("player", 0m));
 		_panelASwapBtn.Pressed += OnPanelASwapPressed;
+		_panelBSwapBtn.Pressed += OnPanelBSwapPressed;
 
 		_panelAPendingLabel.AddThemeColorOverride("font_color", PendingColor);
 		_panelBPendingLabel.AddThemeColorOverride("font_color", PendingColor);
@@ -209,25 +210,35 @@ public partial class CasinoCoinSwaps : Control
 		ApplyPanelState(_swapService.IsPanelBEnabled, _swapService.PanelBReason,
 			_panelBInput, _panelBMaxBtn, _panelBReasonLabel, isPanelA: false);
 
-		// Panel A executes since SW.3; Panel B's button stays hard-disabled until SW.4.
 		_panelASwapBtn.Disabled = !_swapService.IsPanelAEnabled;
+		_panelBSwapBtn.Disabled = !_swapService.IsPanelBEnabled;
 
 		RefreshPendingRows();
 	}
 
 	// §4.4 — the in-flight BTC leg row: visible while a swap's on-chain send awaits its confirming block,
-	// honest about what an app restart would do (both legs unwind together).
+	// honest about what an app restart would do (both legs unwind together). Panel A's leg is BTC arriving
+	// at the player; Panel B's leg is BTC the player already sent (their SC is credited already, but a
+	// restart before confirmation reverts both the mempool send AND that SC credit together).
 	private void RefreshPendingRows()
 	{
-		decimal pendingA = 0m;
+		decimal pendingA = 0m, pendingB = 0m;
 		foreach (var d in _swapService.PendingBtcDeliveries)
-			if (d.Direction == CasinoCoinSwapService.DirectionScToBtc && d.ClientId == "player")
-				pendingA += d.AmountBtc;
+		{
+			if (d.ClientId != "player") continue;
+			if (d.Direction == CasinoCoinSwapService.DirectionScToBtc) pendingA += d.AmountBtc;
+			else if (d.Direction == CasinoCoinSwapService.DirectionBtcToSc) pendingB += d.AmountBtc;
+		}
 
 		_panelAPendingLabel.Visible = pendingA > 0m;
 		if (pendingA > 0m)
 			_panelAPendingLabel.Text = string.Create(CultureInfo.InvariantCulture,
 				$"⏳ {pendingA:N8} BTC incoming — confirms at the next mined block (a restart before then unwinds the swap)");
+
+		_panelBPendingLabel.Visible = pendingB > 0m;
+		if (pendingB > 0m)
+			_panelBPendingLabel.Text = string.Create(CultureInfo.InvariantCulture,
+				$"⏳ {pendingB:N8} BTC sent — confirms at the next mined block (a restart before then unwinds the swap, incl. your SC credit)");
 	}
 
 	private void ApplyPanelState(bool enabled, CasinoCoinSwapService.PanelDisableReason reason,
@@ -261,6 +272,30 @@ public partial class CasinoCoinSwaps : Control
 		{
 			_panelAQuoteLabel.Text = $"✖ Swap rejected: {error}";
 			_panelAQuoteLabel.AddThemeColorOverride("font_color", QuoteBadColor);
+		}
+	}
+
+	// SWAP (Panel B) — mirrors Panel A's handler; the service re-validates every clamp and hard-clamps to
+	// the binding max (§4.3).
+	private void OnPanelBSwapPressed()
+	{
+		if (_swapService == null) return;
+		if (!TryParseAmount(_panelBInput.Text, out decimal btc))
+		{
+			_panelBQuoteLabel.Text = "✖ Enter a valid BTC amount first.";
+			_panelBQuoteLabel.AddThemeColorOverride("font_color", QuoteBadColor);
+			return;
+		}
+
+		if (_swapService.TryExecuteBtcToSc("player", btc, out string error))
+		{
+			_panelBInput.Text = string.Empty;
+			RefreshAll();
+		}
+		else
+		{
+			_panelBQuoteLabel.Text = $"✖ Swap rejected: {error}";
+			_panelBQuoteLabel.AddThemeColorOverride("font_color", QuoteBadColor);
 		}
 	}
 

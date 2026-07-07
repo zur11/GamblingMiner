@@ -428,7 +428,22 @@ public partial class CasinoCoinSwapService : Node
 			return false;
 		}
 
-		scAmount = Money.Normalize(Math.Min(Money.Normalize(scAmount), probe.MaxInput));
+		scAmount = Money.Normalize(scAmount);
+		if (scAmount <= 0m)
+		{
+			error = "Enter a positive SC amount.";
+			return false;
+		}
+		if (probe.MaxInput < probe.MinInput)
+		{
+			error = string.Create(CultureInfo.InvariantCulture,
+				$"No swap currently possible — minimum is {probe.MinInput:N8} SC but only {probe.MaxInput:N8} SC is available.");
+			return false;
+		}
+		// Clamp into the legal range in BOTH directions (user feedback 2026-07-07): an amount above the max
+		// already clamped down and executed — a positive amount below the minimum now clamps UP to the
+		// minimum and executes too, instead of being rejected. Symmetric with the MAX-side behavior (§4.3).
+		scAmount = Math.Clamp(scAmount, probe.MinInput, probe.MaxInput);
 		SwapQuote quote = QuoteScToBtc(clientId, scAmount);
 		if (!quote.IsValid || quote.NetOut <= 0m)
 		{
@@ -471,6 +486,91 @@ public partial class CasinoCoinSwapService : Node
 		// 4. Ledger (D-SW.4) + SwapRecord + trace + re-gate + SwapDeskChanged (inside RegisterSwap).
 		_ledger?.RegisterSwapScOut(clientId, scAmount, _calendarTime?.CurrentUtcDateTime ?? DateTime.UtcNow, MethodManual);
 		RegisterSwap(clientId, DirectionScToBtc, scAmount, quote.FeeCharged, quote.NetOut, quote.PriceUsed, MethodManual);
+		return true;
+	}
+
+	// ---- Execution — Panel B (BTC → SC, §4.2 / SW.4) -----------------------------------------------------------
+
+	// The full §4.2 pipeline. Clamps are re-validated service-side (input hard-clamped to the binding max,
+	// §4.3; the §3.2 minimum swap size enforced). Legs run in the OPPOSITE order from Panel A: the on-chain
+	// send is the CLIENT's own broadcast, so it goes FIRST — client → casino base address of (B − 0.1) with
+	// the 0.1 network fee, the client paying exactly B total (D-SW.1). The SC leg then fires INSTANTLY
+	// without waiting for confirmation (§4.4 — a restart before the block reverts the mempool AND the SC
+	// balances together, so crediting ahead of confirmation carries no real risk). Doing the broadcast first
+	// means a failed send never needs a rollback — nothing has moved yet.
+	public bool TryExecuteBtcToSc(string clientId, decimal btcAmount, out string error)
+	{
+		error = string.Empty;
+		if (_networkRoot == null || _principalBalance == null || _casinoSc == null)
+		{
+			error = "Swap desk unavailable.";
+			return false;
+		}
+
+		// Re-gate on fresh state before committing money (§1.1 — a panel can run dry mid-session).
+		RecomputeAvailability(notify: false);
+		SwapQuote probe = QuoteBtcToSc(clientId, 0m);
+		if (probe.PanelState != PanelDisableReason.None)
+		{
+			error = "The swap desk is closed for this panel.";
+			return false;
+		}
+
+		btcAmount = Money.Normalize(btcAmount);
+		if (btcAmount <= 0m)
+		{
+			error = "Enter a positive BTC amount.";
+			return false;
+		}
+		if (probe.MaxInput < probe.MinInput)
+		{
+			error = string.Create(CultureInfo.InvariantCulture,
+				$"No swap currently possible — minimum is {probe.MinInput:N8} BTC but only {probe.MaxInput:N8} BTC is available.");
+			return false;
+		}
+		// Clamp into the legal range in BOTH directions (user feedback 2026-07-07) — symmetric with Panel A.
+		btcAmount = Math.Clamp(btcAmount, probe.MinInput, probe.MaxInput);
+		SwapQuote quote = QuoteBtcToSc(clientId, btcAmount);
+		if (!quote.IsValid || quote.NetOut <= 0m)
+		{
+			error = string.Create(CultureInfo.InvariantCulture,
+				$"Minimum swap is {quote.MinInput:N8} BTC.");
+			return false;
+		}
+
+		// 1. On-chain BTC leg: client → the casino's BASE address. `amount` = quote.InputAmount − 0.1 (what
+		// the casino receives); `fee` = 0.1 (the client's UTXOs cover need = amount + fee = the full B),
+		// matching the §3.3 worked example exactly.
+		decimal sendAmount = Money.Normalize(quote.InputAmount - NetworkFeePolicy.MinFee);
+		var tx = _networkRoot.CreateAndBroadcastTransaction(clientId, CasinoNodeId, sendAmount, NetworkFeePolicy.MinFee, SwapTxMemoBtcToSc);
+		if (tx == null)
+		{
+			error = "On-chain send failed — swap aborted, no funds moved.";
+			return false;
+		}
+
+		// 2. Casino SC leg (instant, Main only — D-SW.3). Cannot fail in practice: quote.NetOut ≤ OfferedSc ≤
+		// CasinoScMainBalance by construction (freshly re-gated above), but guard anyway — if it somehow did,
+		// the on-chain send is already broadcast and cannot be un-sent (logged, not silently swallowed).
+		if (!_casinoSc.TryPaySwapSc(quote.NetOut))
+		{
+			GD.PushWarning("[CasinoCoinSwapService] TryExecuteBtcToSc: casino could not pay the SC leg after the BTC send was already broadcast — desk state may be inconsistent.");
+			error = "Swap failed after broadcasting — please check your balances.";
+			return false;
+		}
+		_principalBalance.Deposit(quote.NetOut);
+
+		_pendingDeliveries.Add(new PendingBtcDelivery
+		{
+			TxId      = tx.TransactionId,
+			ClientId  = clientId,
+			Direction = DirectionBtcToSc,
+			AmountBtc = quote.InputAmount
+		});
+
+		// 3. Ledger (D-SW.4) + SwapRecord + trace + re-gate + SwapDeskChanged (inside RegisterSwap).
+		_ledger?.RegisterSwapScIn(clientId, quote.NetOut, _calendarTime?.CurrentUtcDateTime ?? DateTime.UtcNow, MethodManual);
+		RegisterSwap(clientId, DirectionBtcToSc, quote.InputAmount, quote.FeeCharged, quote.NetOut, quote.PriceUsed, MethodManual);
 		return true;
 	}
 
