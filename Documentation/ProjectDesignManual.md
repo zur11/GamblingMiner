@@ -3344,3 +3344,62 @@ totalFee     = networkFee + casinoFee
 This has no floor/ceiling conflict — `casinoFee`'s floor (`0`) and ceiling (`casinoFeeCap`, itself always `≥ 0`) can never contradict each other, for any `maxDeviationFraction ≥ 0`. Below the crossover point where `casinoFeeRaw = casinoFeeCap` (solves to `base = fee×NetworkFeePolicy.MinFee/maxDeviationFraction`, ≈0.5 BTC at the 10%/2pt defaults), the cap binds and `effectiveMarginPercent` holds flat at exactly `SwapFeePercent + MaxFeeDeviationPoints`; above it, the uncapped additive formula from §34.4 governs unchanged, and margin decays toward nominal as `base` grows, exactly as before. At the ≈0.275 BTC minimum swap size, effective margin is now capped to 12% (at the 10%/2pt defaults) instead of the uncapped model's ~13.6%.
 
 **Interaction with the §34.3 value-floor minimum swap size.** The cap only ever *reduces* `casinoFee` (hence `totalFee`) relative to the uncapped value — it never increases it — so `net = base − totalFee` only ever *increases* relative to the uncapped case. The value floor's defining inequality (`net ≥ totalFee`) was derived from the uncapped formula and therefore still holds (with strictly more slack) at the same ≈0.275 BTC minimum under the cap; the minimum was not re-derived for the capped case, which would need its own piecewise solve.
+
+## Chapter 35 — The DEV Alt-Timeline Bootstrap (Simulacrum): How to Re-Mount It and How to Design New Ones
+
+Step 13's swap desk was developed against a **DEV-only alternative timeline** (the "simulacrum world"): the entire early-Bitcoin bootstrap shifted forward by a constant offset so the player lands on **2010-07-18** — the first day of the BTC/USD market dataset — instead of the canonical 2009-03-21, eliminating a ~484-in-game-day grind before swap tooling could be exercised against live prices. The full design is in `AIHelperFiles/step13-btc-market-data-and-dev-alt-timeline-plan.md` (§0, §3); this chapter is the **operational guide** written at TL.3 (exit) time, so the simulacrum — or a sibling targeting a different era — can be re-mounted in minutes without re-deriving anything.
+
+**The single most important fact**: the simulacrum is NOT a branch, a save file, or a separate build. It is **one `const bool`** plus an automatic world-wipe guard. Everything else in this chapter is detail.
+
+### 35.1 — The machinery (all of it already merged to `main`, permanently)
+
+Four pieces, all timeline-agnostic while the flag is `false`:
+
+1. **`TimelineConfig`** (`Scripts/Services/TimelineConfig.cs`) — a pure static class (not a Node, like `NetworkFeePolicy`):
+	- `DevAltTimeline` — the flag. `false` on `main`, forever.
+	- `Offset` — `TimeSpan.FromDays(484)` when true, `TimeSpan.Zero` when false. With `Zero`, every shifted date is bit-identical to the canonical literal — that is why the refactor lives safely on `main`.
+	- `Tag` — `"ALT-2010-07-18"` / `"CANON-2009-01-03"` — the world-compatibility stamp (see #3).
+	- `Shift(DateTime)` / `Shift(DateTimeOffset)` — the one operation every anchor routes through.
+	- `PlayerStartDayLocal` — the shifted 2009-03-21, shared by `HistoricalBootstrapService` and `FoundersMiningService.HalDecayStart` so two consumers can never drift apart.
+	- `FeeActivationLocal` — the **one deliberate functional divergence** (D-13.9): under the alt flag, fees activate on the landing day itself (not the uniformly-shifted date), because canon is long fee-active by the time trading unlocks and swap tooling had to be born fee-aware. Canon path reads exactly `2009-04-26`, untouched.
+2. **The seven anchor sites** — every calendar-dated world anchor routes its `static readonly` date through `TimelineConfig.Shift(...)`: `BlockchainService.GenesisTimestampUnixMs`, `CalendarTimeService.GameStartLocal`, `HistoricalBootstrapService` (player start + Hal block dates + E4), `FoundersMiningService` (Satoshi disappearance + Hal decay start/end), `HistoricalEventScheduler.HearnDealDateMs`, `NetworkFeePolicy.ActivationDateLocal`. Everything **not** anchored to a calendar date is timeline-agnostic by construction and needs no change: halving (block-height 2,100), the difficulty regulator (solvetimes), the pre-genesis reset and the player-start instant (both chain-tip-derived), the §24.9 clock rule, bot scheduling (block-relative). This is why the uniform-offset approach is cheap and safe.
+3. **The incompatibility guard** — `NetworkRoot.ResetWorldIfIncompatible()` (the generalized `ResetWorldIfFormatChanged`) compares `user://world_timeline.stamp` against `TimelineConfig.Tag` at every boot. A mismatch (either direction) triggers the **full clean reset** (D-13.7): chain state + monthly block chunks, checkpoint, calendar, bankroll, principal, bankroll-program, casino SC state, player bank account, client ledger, the bet-history file + monthly chunks, **hardware allocation, casino-pool ledger, swap-desk state** (the last three added at TL.3 — see the incident below), and the three DEV trace CSVs (`difficulty`/`founders`/`swap_desk`) — then re-stamps. **Deliberately spared** (identity/personal data, not world state): the wallet seed/address files (player/casino/satoshi/hal/mike_hearn, `bot_wallet_registry` — a fresh bootstrap reuses the same identities), `saved_betting_strategies`, `notepad_notes`, `wordlist_256`. A *missing* stamp is backfilled silently, never treated as a mismatch (protects pre-TL.1 saves). Net effect: **flipping the flag and launching is the entire migration procedure, both ways. No manual file surgery exists, by design.**
+	- **Ordering is load-bearing (TL.3 incident, 2026-07-07)**: the guard MUST run before ANY service/repository loads its `user://` file into a static cache — a file deleted *after* being loaded lives on in memory and re-persists later. The first canon relaunch leaked alt-world hardware credits, bot pool shares, and a casino-pool ledger referencing wiped blocks, precisely because `CalendarTimeService` (an early autoload) loads hardware/pool state via `WalletInitializationService.EnsureAll()` long before `NetworkRoot`'s own initialization ran the guard (the checkpoint-covered services masked the same ordering hole only because the pre-genesis reset overwrites them in memory afterwards). Fix: **`WorldGuardService` — the FIRST autoload in `project.godot` (#1, autoload #16 overall)** — calls `NetworkRoot.RunWorldCompatibilityGuard()` (idempotent) so the wipe precedes every load; the original call inside `EnsureInitialized` remains as a safety net.
+	- **Maintenance rule**: every NEW persisted world-state file must be added to the delete list when it ships (`casino_coin_swap_state.json` was created *after* the list was written and missed it). The rule is recorded in code, above `ResetWorldIfIncompatible` itself.
+4. **The watermark** — `StatusBar` prepends a red `[ALT-TIMELINE DEV]` label on every screen whenever `DevAltTimeline` is true. Non-negotiable: it is the guard against alt-world screenshots leaking into design docs as canon.
+
+### 35.2 — Re-mounting THIS simulacrum (the 2010-07-18 / Mt. Gox landing)
+
+1. Be on a feature branch (never `main` — see §35.5).
+2. Flip `TimelineConfig.DevAltTimeline = true` (one line).
+3. `dotnet build`, then launch **in the editor yourself** (never headless via the assistant — it writes to the real `user://`).
+4. The guard wipes the world and the bootstrap regenerates the alt world automatically. Verify against the known-good TL.2 log signature (`godot.log`):
+	- `[NetworkRoot] World reset triggered (format N → N, timeline 'CANON-2009-01-03' → 'ALT-2010-07-18')`
+	- `[HistoricalBootstrap] First launch — mined genesis → 2010-07-18 …. Satoshi ~110 blocks, Hal 3 blocks. E4 … on-chain.` (block counts jitter by ±1–2)
+	- `[BtcMarketDataService] Day changed → 2010-07-18 price=0.0678842 source=mtgox`
+	- Red `[ALT-TIMELINE DEV]` watermark visible on every screen.
+5. To exit: flip the flag back to `false`, launch → the guard wipes again → pristine canon 2009 world. That is TL.3's whole mechanical content (plus re-verifying the swap desk sits locked until the clock crosses 2010-07-18).
+
+Both wipes are **total and unconditional** — whatever playtest world exists at flip time is destroyed. This is a feature (worlds across timelines are corrupt hybrids if mixed), but check you're not sitting on a playthrough you care about before flipping.
+
+### 35.3 — Designing a NEW simulacrum for a different era (the recipe)
+
+To land the player on some other historically interesting day `L` (a halving, the 2013 bubble, a halt week…):
+
+1. **Compute the offset**: `Offset = L − 2009-03-21` in whole days (`TimeSpan` arithmetic absorbs leap years automatically — the 484-day original spans none between the anchors, but Satoshi's disappearance date does cross the 2012 leap day and shifts correctly for free).
+2. **Edit `TimelineConfig` only**: set `DevAltTimeline = true`, change `TimeSpan.FromDays(484)` to the new day count, and change the `Tag` to a unique string (e.g. `"ALT-2013-11-29"`). **The tag must differ from every tag previously stamped on this machine's save** — the guard fires on *difference*, so even alt→alt switches reset correctly as long as tags are unique per timeline.
+3. **Decide the functional divergences deliberately.** The uniform shift reproduces canon's *shape*; anything that should instead match canon's *state at era L* needs an explicit special case in `TimelineConfig`, following the `FeeActivationLocal` precedent (D-13.9): a named `static readonly` with a comment, never a silent shift. For any post-2009-04-26 era, keeping fee activation = landing day (as D-13.9 already does via `PlayerStartDayLocal`) is almost certainly what you want.
+4. **Touch nothing else.** The seven anchor sites already read `TimelineConfig`; the guard already handles the wipe; the watermark already reads the flag. If a new anchor was added to the game since Step 13 (any new `static readonly` calendar date that positions a world event), route it through `Shift()` first — that is the only maintenance this system needs.
+5. **Verify with the §3.5-style acceptance checklist**, re-derived for the new offset: ~113 bootstrap blocks with Hal exactly 3 (the 76.24-day genesis→landing arc is preserved verbatim, just translated); E4 on-chain near `2009-01-12 + Offset`; landing block timestamp ≥ `L` 00:00 local; `calendar_state.json` == landing block timestamp exactly (the §24.9 rule is chain-derived and holds under any offset, unmodified); a pre-first-block restart resets to the landing instant, not to any canonical date; `BtcMarketDataService` returns era-appropriate data on day `L` (halt days show the desk closed).
+
+### 35.4 — What the uniform offset can and CANNOT give you
+
+The offset **translates** the canonical 76-day / ~113-block bootstrap arc; it does not fabricate the intervening history. A simulacrum landing in 2013 still hands the player a *newborn* network: Satoshi holding ~110 blocks (not his full arc), difficulty at bootstrap levels, ~5,650 BTC ever mined, no bots' years of transactions — while the market feed confidently reports the real 2013 price of a five-year-old Bitcoin. For a **dev scaffold** this mismatch is exactly as acceptable as the genesis-headline anachronism (D-13.0: cosmetic noise in a throwaway world, never worth patching). For the **player-facing** "start in the Mt. Gox era / the first bubble" feature (plan §9.1), it is disqualifying — those bootstraps must keep genesis at 2009-01-03 and fast-build the *real* intervening chain/founder/difficulty history to produce canon-compatible worlds. Do not conflate the two: the simulacrum moves genesis itself and its worlds are always throwaway.
+
+### 35.5 — Rules that must never be broken
+
+- `DevAltTimeline` is **`false` on `main`, forever**. Flip it only on a feature branch; revert it (and confirm `Tag` reverts) before merging back. The flip commit and the revert commit should both be explicit, greppable one-liners.
+- **Never bypass the guard** (hand-editing the stamp, restoring `user://` backups across timelines): a canon save under the alt flag is a corrupt hybrid (2009 chain tip vs. 2010 fee gate, bets dated before genesis).
+- **The watermark ships with the flag.** If a future refactor moves StatusBar, the `[ALT-TIMELINE DEV]` label moves with it.
+- No alt-world screenshot, log excerpt, or balance figure may be presented as canon in any design doc — label them.
+- Date-anachronistic cosmetics inside a simulacrum are **accepted, never patched** (D-13.0). Time spent polishing a throwaway world is time wasted.

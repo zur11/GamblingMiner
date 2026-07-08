@@ -82,7 +82,9 @@ public partial class NetworkRoot : Node
         // Step 8 / Step 13 (TL.1) — if the on-disk world predates the UTXO model OR was built under the
         // other timeline (canon vs. the DEV alt-timeline simulacrum), wipe the incompatible chain/clock/
         // financial state so this launch re-bootstraps a fresh, consistent world. Must run before TryLoadSnapshot.
-        ResetWorldIfIncompatible();
+        // Normally a no-op by now: WorldGuardService (autoload #1) already ran the guard BEFORE any other
+        // autoload could load state files into memory (the TL.3 ordering fix) — kept here as a safety net.
+        RunWorldCompatibilityGuard();
 
         // Load saved state first so wallets can be restored before nodes are created.
         BlockchainStateSnapshot? savedState = TryLoadSnapshot();
@@ -1908,6 +1910,34 @@ public partial class NetworkRoot : Node
     // a mismatch — the timeline concept didn't exist yet, so an existing save is assumed canon-compatible
     // and the stamp is simply backfilled, rather than surprise-wiping a developer's current playthrough the
     // moment this phase lands.
+    //
+    // ORDERING (the second TL.3 lesson): this guard MUST run before ANY service/repository loads its
+    // user:// file into a static cache — a file deleted AFTER being loaded lives on in memory and gets
+    // re-persisted later (exactly how alt-world hardware/pool state survived the first canon relaunch:
+    // CalendarTimeService (autoload #2) → WalletInitializationService.EnsureAll() loaded them long before
+    // BlockSessionCheckpointService reached NetworkRoot). WorldGuardService — the FIRST autoload in
+    // project.godot — calls RunWorldCompatibilityGuard() so the wipe precedes every load, and the
+    // EnsureInitialized call site remains as an idempotent safety net.
+    private static bool _worldGuardRan;
+
+    public static void RunWorldCompatibilityGuard()
+    {
+        if (_worldGuardRan)
+        {
+            return;
+        }
+        _worldGuardRan = true;
+        ResetWorldIfIncompatible();
+    }
+
+    // MAINTENANCE RULE (learned at TL.3, 2026-07-07): every NEW persisted world-state file MUST be added
+    // to this delete list when it ships — the TL.3 canon-relaunch verification found hardware credits,
+    // casino-pool shares, and swap-desk state leaking across the timeline wipe because their files
+    // (hardware_allocation / casino_pool_state / casino_coin_swap_state — the last one created AFTER this
+    // list was written) were never listed. Deliberately SPARED, by design (identity/personal data, not
+    // world state): the wallet seed/address files (wallet_state, casino/satoshi/hal/mike_hearn_wallet_state,
+    // bot_wallet_registry — a fresh bootstrap reuses the same identities), saved_betting_strategies,
+    // notepad_notes, and wordlist_256. See ProjectDesignManual Ch. 35 (§35.1).
     private static void ResetWorldIfIncompatible()
     {
         int storedVersion = 0;
@@ -1951,6 +1981,19 @@ public partial class NetworkRoot : Node
         DeleteIfExists("user://player_bank_account_state.json");
         DeleteIfExists("user://casino_client_ledger.json");
         DeleteIfExists("user://bet_history.jsonl");
+
+        // TL.3 gap fix (2026-07-07): hardware/pool/swap world state — found leaking across the timeline
+        // wipe during the canon-relaunch verification (alt-bought hardware, bot pool shares, and a casino
+        // pool ledger referencing blocks of the wiped chain all survived into the fresh canon world).
+        DeleteIfExists("user://hardware_allocation.json");
+        DeleteIfExists("user://casino_pool_state.json");
+        DeleteIfExists("user://casino_coin_swap_state.json");
+
+        // DEV trace telemetry: not player-visible, but rows dated under the other timeline would make the
+        // traces unreadable (founders_trace is actively used to verify founder pacing) — start them fresh.
+        DeleteIfExists("user://logs/difficulty_trace.csv");
+        DeleteIfExists("user://logs/founders_trace.csv");
+        DeleteIfExists("user://logs/swap_desk_trace.csv");
 
         // The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
         // and the betting stats rebuild from a pristine world.

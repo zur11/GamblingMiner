@@ -8,13 +8,14 @@ using System;
 // == TimeSpan.Zero this file is behavior-identical to hardcoding the canonical dates directly.
 // See AIHelperFiles/step13-btc-market-data-and-dev-alt-timeline-plan.md §3.
 //
-// Step 13 (TL.2) — BRANCH-ONLY FLIP. true here means the NEXT app launch wipes the current world
-// (ResetWorldIfIncompatible, D-13.7) and regenerates a fresh alt-timeline bootstrap landing on
-// 2010-07-18. This must be false again before merging back to main (TL.3) — see the warning box at
-// plan §0. A permanent visible watermark (StatusBar) is required for as long as this is true.
+// Step 13 (TL.2/TL.3) — BRANCH-ONLY FLIP. true here means the NEXT app launch wipes the current
+// world (ResetWorldIfIncompatible, D-13.7) and regenerates a fresh alt-timeline bootstrap landing on
+// 2010-07-18. It must be false again before merging back to main (TL.3, executed 2026-07-07) — see
+// the warning box at plan §0. A permanent visible watermark (StatusBar) is required for as long as
+// this is true. Re-mount instructions / designing new alt bootstraps: ProjectDesignManual Ch. 35.
 public static class TimelineConfig
 {
-	public const bool DevAltTimeline = true;
+	public const bool DevAltTimeline = false;
 
 	public static readonly TimeSpan Offset = DevAltTimeline ? TimeSpan.FromDays(484) : TimeSpan.Zero;
 	public static readonly string Tag = DevAltTimeline ? "ALT-2010-07-18" : "CANON-2009-01-03";

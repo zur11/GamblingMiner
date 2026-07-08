@@ -24,7 +24,9 @@ namespace UI.StatusBar
 			// Step 13 (TL.2) — a permanent, unmissable watermark whenever the DEV alt-timeline simulacrum is
 			// active, so no screenshot/session can ever be mistaken for canon (plan §0 warning box). Leftmost
 			// for maximum visibility. DevAltTimeline is a compile-time const — this branch either always
-			// renders or never does, for a given build.
+			// renders or never does, for a given build (hence the CS0162 suppression: the block is deliberate
+			// dead code on canon builds and must stay for the next simulacrum re-mount — ProjectDesignManual Ch. 35).
+#pragma warning disable CS0162
 			if (TimelineConfig.DevAltTimeline)
 			{
 				var watermark = BuildLabel();
@@ -32,6 +34,7 @@ namespace UI.StatusBar
 				watermark.AddThemeColorOverride("font_color", new Color(1f, 0.15f, 0.15f));
 				watermark.AddThemeFontSizeOverride("font_size", 24);
 			}
+#pragma warning restore CS0162
 
 			_mainBalanceLabel = BuildLabel();
 			_bankrollLabel = BuildLabel();
