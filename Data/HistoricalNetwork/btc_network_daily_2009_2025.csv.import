@@ -1,0 +1,7 @@
+[remap]
+
+importer="keep"
+
+[deps]
+
+source_file="res://Data/HistoricalNetwork/btc_network_daily_2009_2025.csv"
