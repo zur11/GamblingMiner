@@ -23,24 +23,55 @@ public static class BotWalletRegistry
 
 	public static IReadOnlyList<BotWalletRecord> MinerBots { get; private set; } = [];
 	public static IReadOnlyList<BotWalletRecord> NonMinerBots { get; private set; } = [];
-	public static IReadOnlyList<BotWalletRecord> AllBots => [..MinerBots, ..NonMinerBots];
+	// Step 14 (ND.2) — the scheduler-spawned visible cast (P-14.A). Deliberately a THIRD list, never
+	// merged into MinerBots: MinerBots feeds GetBettableNodeIds/BuildBotConfigs (betting runners) and the
+	// per-block donation loop, none of which cast miners join in v1 (they mine founder-style via drained
+	// attempts, no SC finances; their sell-flow arrives with ND.3). Identity-only, like everything here.
+	public static IReadOnlyList<BotWalletRecord> CastMiners { get; private set; } = [];
+	public static IReadOnlyList<BotWalletRecord> AllBots => [..MinerBots, ..NonMinerBots, ..CastMiners];
 
 	public static void EnsureAll()
 	{
 		if (FileAccess.FileExists(RegistryPath))
 		{
 			LoadRegistry();
-			GD.Print($"[BotWalletRegistry] Loaded — {MinerBots.Count} miner bots, {NonMinerBots.Count} non-miner bots.");
+			GD.Print($"[BotWalletRegistry] Loaded — {MinerBots.Count} miner bots, {NonMinerBots.Count} non-miner bots, {CastMiners.Count} cast miners.");
 			return;
 		}
 
 		CreateRegistry();
 		SaveRegistry();
-		GD.Print($"[BotWalletRegistry] Created — {MinerBots.Count} miner bots, {NonMinerBots.Count} non-miner bots.");
+		GD.Print($"[BotWalletRegistry] Created — {MinerBots.Count} miner bots, {NonMinerBots.Count} non-miner bots, {CastMiners.Count} cast miners.");
 	}
 
 	public static BotWalletRecord? GetBot(string nodeId) =>
 		AllBots.FirstOrDefault(b => b.NodeId == nodeId);
+
+	// Step 14 (ND.2) — appends one scheduler-spawned cast miner (fresh wallet) and re-saves. Idempotent
+	// per nodeId: an existing record is returned unchanged (spawn decisions are chain/date-derived and may
+	// re-fire across restarts).
+	public static BotWalletRecord AddCastMiner(string nodeId)
+	{
+		BotWalletRecord? existing = CastMiners.FirstOrDefault(b => b.NodeId == nodeId);
+		if (existing != null)
+		{
+			return existing;
+		}
+
+		var (address, sigPub, sigPriv, secp256k1Pub) = CryptoUtils.GenerateWallet();
+		var record = new BotWalletRecord(
+			NodeId: nodeId,
+			Address: address,
+			SigningPublicKeyBase64: sigPub,
+			SigningPrivateKeyBase64: sigPriv,
+			Secp256k1PublicKeyBase64: secp256k1Pub,
+			IsMinerNode: true
+		);
+		CastMiners = [..CastMiners, record];
+		SaveRegistry();
+		GD.Print($"[BotWalletRegistry] Cast miner {nodeId} — {address}");
+		return record;
+	}
 
 	// Updates IsActive and ReactivationBlockHeight for a non-miner bot and re-saves the registry.
 	public static void SetBotStatus(string nodeId, bool isActive, int? reactivationBlockHeight)
@@ -109,6 +140,14 @@ public static class BotWalletRegistry
 				d.SigningPublicKeyBase64, d.SigningPrivateKeyBase64, d.Secp256k1PublicKeyBase64,
 				d.IsActive, d.ReactivationBlockHeight, IsMinerNode: false))
 			.ToList();
+
+		// Pre-ND.2 registry files have no Cast array — loads as empty, backward compatible.
+		CastMiners = (dto.Cast ?? [])
+			.Select(d => new BotWalletRecord(
+				d.NodeId, d.Address,
+				d.SigningPublicKeyBase64, d.SigningPrivateKeyBase64, d.Secp256k1PublicKeyBase64,
+				d.IsActive, d.ReactivationBlockHeight, IsMinerNode: true))
+			.ToList();
 	}
 
 	private static void SaveRegistry()
@@ -126,6 +165,16 @@ public static class BotWalletRegistry
 				ReactivationBlockHeight = b.ReactivationBlockHeight
 			}).ToList(),
 			NonMiners = NonMinerBots.Select(b => new BotDto
+			{
+				NodeId = b.NodeId,
+				Address = b.Address,
+				SigningPublicKeyBase64 = b.SigningPublicKeyBase64,
+				SigningPrivateKeyBase64 = b.SigningPrivateKeyBase64,
+				Secp256k1PublicKeyBase64 = b.Secp256k1PublicKeyBase64,
+				IsActive = b.IsActive,
+				ReactivationBlockHeight = b.ReactivationBlockHeight
+			}).ToList(),
+			Cast = CastMiners.Select(b => new BotDto
 			{
 				NodeId = b.NodeId,
 				Address = b.Address,
@@ -155,5 +204,6 @@ public static class BotWalletRegistry
 	{
 		public List<BotDto> Miners { get; set; } = [];
 		public List<BotDto> NonMiners { get; set; } = [];
+		public List<BotDto>? Cast { get; set; }
 	}
 }

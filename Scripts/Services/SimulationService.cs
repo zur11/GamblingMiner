@@ -86,6 +86,11 @@ public partial class SimulationService : Node
 	// every frame. -1 forces a recompute on the first frame of a run.
 	private int _lastFounderChainLen = -1;
 
+	// Step 14 (ND.2): same per-new-block guard for the population scheduler (spawn check + power
+	// recompute + telemetry row happen once per block, mirroring the founder pattern).
+	private BtcNetworkDataService? _networkData;
+	private int _lastPopulationChainLen = -1;
+
 	// Service-owned autobet engine (built from config; not handed from any scene).
 	private DiceEngine? _engine;
 	private Wallet? _wallet;
@@ -137,6 +142,7 @@ public partial class SimulationService : Node
 		_founders = GetNodeOrNull<FoundersMiningService>("/root/FoundersMiningService");
 		_casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 		_playerBank = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService");
+		_networkData = GetNodeOrNull<BtcNetworkDataService>("/root/BtcNetworkDataService");
 
 		_networkRoot = new NetworkRoot();
 		AddChild(_networkRoot); // persistent — lives under this autoload
@@ -162,6 +168,7 @@ public partial class SimulationService : Node
 
 		_accumulatorSeconds = 0d;
 		_lastFounderChainLen = -1; // force a founder-power recompute on the first frame of this run
+		_lastPopulationChainLen = -1; // and a population-scheduler recompute (Step 14)
 		IsRunning = true;
 
 		if (_calendar != null)
@@ -238,11 +245,14 @@ public partial class SimulationService : Node
 		}
 
 		// Step 7.2: founders mine concurrently with the player (no autonomous clock). Recompute their
-		// power only when a new block appeared (cheap-guard around Satoshi's full-chain BTC scan), then
-		// feed player+bots+founders power to the difficulty regulator so block pacing stays constant.
+		// power only when a new block appeared (cheap-guard around Satoshi's full-chain BTC scan). Step 14
+		// adds the population scheduler's two layers (visible cast + invisible mass) the same way, then
+		// feeds player+bots+founders+scheduled power to the difficulty regulator so block pacing stays
+		// constant while SHARES follow the historical curve (step14 plan §3.0).
 		double otherMinersPower = GetTotalActiveMiningPower();
 		RecomputeFoundersOnNewBlock(otherMinersPower);
-		_networkRoot?.SetActiveMiningPower(otherMinersPower + (_founders?.TotalActiveFounderPower ?? 0d));
+		RecomputePopulationOnNewBlock(otherMinersPower);
+		_networkRoot?.SetActiveMiningPower(otherMinersPower + (_founders?.TotalActiveFounderPower ?? 0d) + NetworkPopulationScheduler.TotalScheduledPower);
 
 		// The session may have stopped itself (profit/loss/block/insufficient) while we were away.
 		if (!_session.IsRunning)
@@ -284,6 +294,10 @@ public partial class SimulationService : Node
 		// Step 7.2: drive the founders' concurrent attempts in lockstep with the time the player just
 		// advanced (one founder attempt per its power-share of the player+bot attempts this frame).
 		DriveFounderMining(executed + botExecuted, otherMinersPower);
+
+		// Step 14 (ND.2): drive the scheduled network (visible cast + invisible mass) the same way —
+		// concurrent miners in lockstep with the player's time advancement, never clock movers.
+		DriveScheduledMining(executed + botExecuted, otherMinersPower);
 	}
 
 	// Recompute founder powers exactly once per new block on the canonical chain. Satoshi's confirmed-BTC
@@ -304,7 +318,11 @@ public partial class SimulationService : Node
 		_lastFounderChainLen = chainLen;
 		decimal satoshiBtc = _networkRoot.GetNodeSpendableBalance(FoundersMiningService.SatoshiNodeId);
 		DateTime nowLocal = _calendar?.CurrentLocalDateTime ?? DateTime.Now;
-		_founders.RecomputeFounderPowers(otherMinersPower, nowLocal, satoshiBtc);
+		// Step 14: Satoshi's SHARE regulator competes against the WHOLE non-founder network — player+bots
+		// plus the scheduled cast/invisible mass (last block's cached total; one-block lag is fine, both
+		// sides are feedback regulators). The founders' DRAIN denominator stays player+bots only (it must
+		// match the attempt basis actually counted in DriveFounderMining).
+		_founders.RecomputeFounderPowers(otherMinersPower + NetworkPopulationScheduler.TotalScheduledPower, nowLocal, satoshiBtc);
 
 		// Phase 7.5 telemetry: one row per new block, so the founder ramp/decay tests can be measured.
 		Block latest = _networkRoot.GetPlayerLatestBlock();
@@ -336,6 +354,84 @@ public partial class SimulationService : Node
 				_networkRoot.TryMineSingleNonceAttempt(founderId, out Block? block, tsMs);
 				if (block != null)
 				{
+					CaptureCheckpoint();
+					StopPlayerOnExternalBlockMined();
+				}
+			}
+		}
+	}
+
+	// Step 14 (ND.2) — once per new block: spawn-drip check (at most ONE new cast miner per block, so a
+	// backlog never mass-spawns), power recompute for both scheduled layers, and the telemetry row.
+	private void RecomputePopulationOnNewBlock(double otherMinersPower)
+	{
+		if (_networkData == null || _networkRoot == null)
+		{
+			return;
+		}
+
+		int chainLen = _networkRoot.GetPlayerChainLength();
+		if (chainLen == _lastPopulationChainLen)
+		{
+			return;
+		}
+
+		_lastPopulationChainLen = chainLen;
+		DateTime nowLocal = _calendar?.CurrentLocalDateTime ?? DateTime.Now;
+
+		string? spawned = null;
+		int target = _networkData.GetTargetVisibleMiners(nowLocal);
+		if (BtcNetworkDataService.BaseCast + BotWalletRegistry.CastMiners.Count < target)
+		{
+			spawned = NetworkPopulationScheduler.NextCastName();
+			BotWalletRegistry.AddCastMiner(spawned);
+			if (!_networkRoot.RegisterCastMinerNode(spawned))
+			{
+				spawned = null;
+			}
+		}
+
+		NetworkPopulationScheduler.Recompute(_networkData, nowLocal, otherMinersPower, _founders?.TotalActiveFounderPower ?? 0d);
+
+		Block latest = _networkRoot.GetPlayerLatestBlock();
+		NetworkPopulationScheduler.AppendTelemetry(latest.Index, latest.MinedByNodeId ?? string.Empty, latest.Timestamp,
+			otherMinersPower, _founders?.TotalActiveFounderPower ?? 0d, spawned);
+	}
+
+	// Step 14 (ND.2) — the scheduled network's owed attempts, mined exactly like the founders': on each
+	// miner's own candidate, external-block semantics (checkpoint + stop-on-block). Ghost blocks advance
+	// the pseudonym rotation so consecutive invisible-mass blocks read as different anonymous rigs.
+	private void DriveScheduledMining(int nonScheduledAttempts, double otherMinersPower)
+	{
+		if (_networkRoot == null || nonScheduledAttempts <= 0)
+		{
+			return;
+		}
+
+		IReadOnlyList<(string minerId, int attempts, bool isGhost)> drained =
+			NetworkPopulationScheduler.DrainScheduledAttempts(nonScheduledAttempts, otherMinersPower);
+		if (drained.Count == 0)
+		{
+			return;
+		}
+
+		long tsMs = new DateTimeOffset(_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
+		foreach ((string minerId, int attempts, bool isGhost) in drained)
+		{
+			if (isGhost)
+			{
+				_networkRoot.EnsureGhostNodeRegistered(minerId);
+			}
+
+			for (int i = 0; i < attempts; i++)
+			{
+				_networkRoot.TryMineSingleNonceAttempt(minerId, out Block? block, tsMs);
+				if (block != null)
+				{
+					if (isGhost)
+					{
+						NetworkPopulationScheduler.AdvanceGhostRotation();
+					}
 					CaptureCheckpoint();
 					StopPlayerOnExternalBlockMined();
 				}
@@ -841,6 +937,17 @@ public partial class SimulationService : Node
 		{
 			if (_founders.SatoshiPower > 0d) rates[FoundersMiningService.SatoshiNodeId] = _founders.SatoshiPower;
 			if (_founders.HalPower > 0d) rates[FoundersMiningService.HalNodeId] = _founders.HalPower;
+		}
+
+		// Step 14 (ND.2): the scheduled network — each powered cast miner at the era-standard power, plus
+		// one aggregate "network" row for the invisible mass (its blocks carry rotating ghost names).
+		foreach (string castId in NetworkPopulationScheduler.PoweredCastIds)
+		{
+			rates[castId] = NetworkPopulationScheduler.CastPowerEach;
+		}
+		if (NetworkPopulationScheduler.LastInvisiblePower > 0d)
+		{
+			rates["network"] = NetworkPopulationScheduler.LastInvisiblePower;
 		}
 
 		return rates;

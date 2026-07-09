@@ -105,6 +105,15 @@ public partial class NetworkRoot : Node
                 SharedNetwork.RegisterNode(CreateAndRegisterNode(nonMiner.NodeId, savedState));
         }
 
+        // Step 14 (ND.2) — scheduler-spawned cast miners (registry-backed identities): re-register every
+        // launch so their mined BTC stays visible/spendable. Their POWER comes from
+        // NetworkPopulationScheduler each block, not hardware credits — no betting runners.
+        foreach (BotWalletRecord castMiner in BotWalletRegistry.CastMiners)
+        {
+            if (castMiner.HasFullWallet)
+                SharedNetwork.RegisterNode(CreateAndRegisterNode(castMiner.NodeId, savedState));
+        }
+
         // Casino wallet node — keys derived deterministically from seed phrase each launch.
         // Registered here so CasinoFinances can call CreateAndBroadcastTransactionToAddress("casino", ...).
         CasinoWalletState? casinoWalletState = WalletInitializationService.CasinoWallet;
@@ -1626,6 +1635,51 @@ public partial class NetworkRoot : Node
         return nodeId;
     }
 
+    // Step 14 (ND.2) — registers a freshly-spawned cast miner mid-session (its BotWalletRegistry record
+    // must already exist). Same shape as RegisterPassphraseWallet: sync the canonical chain into the new
+    // node so its candidate blocks build on the live tip. Idempotent per nodeId.
+    public bool RegisterCastMinerNode(string nodeId)
+    {
+        EnsureInitialized();
+        if (SharedNodesById.ContainsKey(nodeId))
+        {
+            return true;
+        }
+
+        BotWalletRecord? record = BotWalletRegistry.GetBot(nodeId);
+        if (record?.HasFullWallet != true)
+        {
+            GD.PushWarning($"[NetworkRoot] Cast miner '{nodeId}' has no registry wallet — not registered.");
+            return false;
+        }
+
+        var node = new NodeAgent(nodeId, record.Address, record.SigningPublicKeyBase64!, record.SigningPrivateKeyBase64!, record.Secp256k1PublicKeyBase64!);
+        if (SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+            node.Blockchain.TryReplaceChain(player.Blockchain.Chain, player.Blockchain.PendingTransactions);
+        SharedNetwork.RegisterNode(node);
+        SharedNodesById[nodeId] = node;
+        return true;
+    }
+
+    // Step 14 (ND.2) — lazily registers a GHOST miner for the invisible mass's blocks (D-14.9): a
+    // session-transient NodeAgent with a random one-off wallet. Deliberately NOT persisted anywhere —
+    // the keys die with the process, so ghost-mined coinbases are frozen forever (D-14.11); only the
+    // pseudonym survives, stamped into Block.MinedByNodeId.
+    public void EnsureGhostNodeRegistered(string ghostId)
+    {
+        EnsureInitialized();
+        if (SharedNodesById.ContainsKey(ghostId))
+        {
+            return;
+        }
+
+        var node = new NodeAgent(ghostId);
+        if (SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+            node.Blockchain.TryReplaceChain(player.Blockchain.Chain, player.Blockchain.PendingTransactions);
+        SharedNetwork.RegisterNode(node);
+        SharedNodesById[ghostId] = node;
+    }
+
     // Returns confirmed balance and total pending-outgoing for any gm1q... address,
     // queried against the player node's blockchain (the authoritative chain after consensus).
     public (decimal confirmedBalance, decimal pendingOutgoing) GetAddressBalanceDetails(string address)
@@ -1994,6 +2048,7 @@ public partial class NetworkRoot : Node
         DeleteIfExists("user://logs/difficulty_trace.csv");
         DeleteIfExists("user://logs/founders_trace.csv");
         DeleteIfExists("user://logs/swap_desk_trace.csv");
+        DeleteIfExists("user://logs/network_population_trace.csv");
 
         // The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
         // and the betting stats rebuild from a pristine world.
