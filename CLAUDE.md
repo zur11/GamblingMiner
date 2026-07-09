@@ -102,7 +102,7 @@ Hard-won rules (a scroll bug once cost a full session — full write-up + diagno
 
 ## Key Architecture — Autoload Services
 
-Seven core service singletons registered in `project.godot` (plus `SceneManager`, `NotepadService`, `FoundersMiningService`, `CasinoScBalanceService`, `CasinoClientLedgerService`, `PlayerBankAccountService`, `BtcMarketDataService`, `CasinoCoinSwapService`, and `WorldGuardService`, documented in their own sections — **sixteen autoloads total**). They persist across all scenes and are accessible globally by class name.
+Seven core service singletons registered in `project.godot` (plus `SceneManager`, `NotepadService`, `FoundersMiningService`, `CasinoScBalanceService`, `CasinoClientLedgerService`, `PlayerBankAccountService`, `BtcMarketDataService`, `BtcNetworkDataService`, `CasinoCoinSwapService`, and `WorldGuardService`, documented in their own sections — **seventeen autoloads total**). They persist across all scenes and are accessible globally by class name. (`BtcNetworkDataService` — Step 14 ND.1, historical network metrics + the population/tx scheduler's target accessors — is documented in `AIHelperFiles/step14-historical-network-population-scheduler-plan.md`; its dedicated subsection lands with that plan's ND.4 docs pass.)
 
 **`WorldGuardService`** (`Scripts/Services/WorldGuardService.cs`) is deliberately the **FIRST** autoload: its only job is running `NetworkRoot.RunWorldCompatibilityGuard()` (format-version OR timeline-tag mismatch ⇒ full clean world reset, D-13.7) **before any other autoload can load a `user://` state file into a static cache** — a file deleted after being loaded survives in memory and re-persists, which is how alt-timeline hardware/pool state once leaked across a timeline wipe (TL.3 incident). Keep it first; see `Documentation/ProjectDesignManual.md` Ch. 35 §35.1.
 
@@ -377,7 +377,7 @@ GamblingMiner/
 │   └── Shared/                 # Reusable UI components
 │
 ├── Scripts/                    # Core logic (~50 C# files)
-│   ├── Services/               # Autoload singletons (16 services)
+│   ├── Services/               # Autoload singletons (17 services)
 │   ├── Betting/                # Strategy config, interface, progression logic
 │   ├── Sessions/               # Bet loop controllers (Base, Auto, Manual)
 │   ├── Dice/                   # DiceEngine, DiceResult

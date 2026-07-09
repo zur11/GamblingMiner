@@ -1,0 +1,301 @@
+using Godot;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using GodotBlockchainPort.Blockchain;
+using Scripts.Finance;
+#nullable enable
+
+// Step 14 (ND.1) — autoload #17. Loads the historical BTC network dataset once and exposes O(1) day
+// lookups + the scheduler's derived target accessors (§3.1/§3.2 of the step14 plan). Mirrors
+// BtcMarketDataService exactly: load once in _Ready, day-indexed array, a day-change event, no timers,
+// no per-frame parsing, read-only over a static asset (no persistence, no checkpoint coverage).
+//
+// Dataset provenance (ND.0, 2026-07-07): Coin Metrics Community API v4, cross-checked against
+// blockchain.com (tx_count median rel-diff 0.81%, hashrate shape median 0.00%). IMPORTANT semantics:
+// TxCount EXCLUDES coinbase transactions (proven empirically at ND.0) — it is exactly the non-coinbase
+// numerator the fullness-parity target wants, so GetTargetTxPerBlock must NOT subtract coinbase again.
+// FeeTotalBtc is the raw daily TOTAL in BTC (mean per tx = total / count, derived when the fee-replay
+// step consumes it); fees are fractal-exempt like price_usd (D-14.6 — never /100).
+public sealed record NetworkDay(
+	DateTime DateLocal,
+	long? TxCount,
+	double? HashRate,
+	long? ActiveAddresses,
+	long? BlockCount,
+	decimal? FeeTotalBtc);
+
+public partial class BtcNetworkDataService : Node
+{
+	private const string CsvPath = "res://Data/HistoricalNetwork/btc_network_daily_2009_2025.csv";
+
+	// D-14.8 model constants (§3.1). BaseCast = today's bot_1..4. CastPerDecade = 2 is LOCKED by the
+	// D-14.8 arithmetic itself (28 visible miners at the ~12-decade historical max ⇒ the 1/28 ≈ 3.6%
+	// player-share anchor). EraMaxHardwareCredits mirrors the canonical (planned) 100-attempt hardware
+	// cap — no code constant exists for it yet (Ch. 27 hardware credits have no max); when P5 lands one,
+	// route this through it.
+	public const int BaseCast = 4;
+	public const double CastPerDecade = 2.0;
+	public const double EraMaxHardwareCredits = 100.0;
+
+	private CalendarTimeService? _calendarTimeService;
+	private List<NetworkDay> _days = new();
+	private DateTime _lastSeenDateLocal = DateTime.MinValue;
+	private bool _lastSeenDateInitialized;
+
+	public DateTime FirstDataDateLocal { get; private set; }
+	public DateTime LastDataDateLocal { get; private set; }
+
+	// The decades() anchor (§3.1): the real-world hashrate on the player-start day — routed through
+	// TimelineConfig (D-14.7) so an alt-timeline world anchors decades = 0 at its own landing day.
+	private double _anchorHashRate;
+	private double _decadesAtDatasetEnd;
+
+	// Fired when the game clock (CalendarTimeService) crosses a calendar-day boundary. Payload is null
+	// if the new day falls outside the dataset's range.
+	public event Action<NetworkDay?>? NetworkDayChanged;
+
+	public override void _Ready()
+	{
+		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		LoadCsv();
+		InitializeAnchors();
+	}
+
+	public override void _Process(double delta)
+	{
+		if (_calendarTimeService == null)
+		{
+			return;
+		}
+
+		DateTime nowDateLocal = _calendarTimeService.CurrentLocalDateTime.Date;
+		if (_lastSeenDateInitialized && nowDateLocal == _lastSeenDateLocal)
+		{
+			return;
+		}
+
+		_lastSeenDateLocal = nowDateLocal;
+		_lastSeenDateInitialized = true;
+
+		TryGetDay(nowDateLocal, out NetworkDay? day);
+		NetworkDayChanged?.Invoke(day);
+	}
+
+	public bool TryGetDay(DateTime dateLocal, out NetworkDay? day)
+	{
+		int index = DayIndex(dateLocal);
+		if (index < 0 || index >= _days.Count)
+		{
+			day = null;
+			return false;
+		}
+
+		day = _days[index];
+		return true;
+	}
+
+	// ── Derived scheduler accessors (§3.1 / §3.2 — ALL gameplay consumption goes through these; the
+	// raw NetworkDay fields are DEV/provenance-only) ─────────────────────────────────────────────────
+
+	// decades(date) = log10(H(date) / H(playerStart)) — the one era-agnostic growth quantity (P-14.A).
+	// Clamped to ≥ 0 (the pre-player bootstrap era reads as baseline); frozen at the last value past the
+	// dataset end (D-14.3); 0 while hashrate data is missing (genesis week).
+	public double GetDecades(DateTime dateLocal)
+	{
+		if (_days.Count == 0 || _anchorHashRate <= 0.0)
+		{
+			return 0.0;
+		}
+
+		int index = dateLocal.Date > LastDataDateLocal ? _days.Count - 1 : DayIndex(dateLocal);
+		if (index < 0 || index >= _days.Count)
+		{
+			return 0.0;
+		}
+
+		double? hashRate = LastKnownHashRateAt(index);
+		if (hashRate is not double h || h <= 0.0)
+		{
+			return 0.0;
+		}
+
+		return Math.Max(0.0, Math.Log10(h / _anchorHashRate));
+	}
+
+	// §3.1 visible cast target: BaseCast + round(CastPerDecade × decades).
+	public int GetTargetVisibleMiners(DateTime dateLocal)
+	{
+		return BaseCast + (int)Math.Round(CastPerDecade * GetDecades(dateLocal), MidpointRounding.AwayFromZero);
+	}
+
+	// §3.1 D-14.8 derivation: TotalNetworkUnits = EraStandardPower × cast size, where EraStandardPower
+	// ramps 1 → EraMaxHardwareCredits along the decades scale. A player wielding the era-standard power
+	// therefore always holds one cast member's share (1/28 ≈ 3.6% at the historical max).
+	public double GetEraStandardPower(DateTime dateLocal)
+	{
+		if (_decadesAtDatasetEnd <= 0.0)
+		{
+			return 1.0;
+		}
+
+		double fraction = Math.Min(1.0, GetDecades(dateLocal) / _decadesAtDatasetEnd);
+		return Math.Pow(EraMaxHardwareCredits, fraction);
+	}
+
+	public double GetTotalNetworkUnits(DateTime dateLocal)
+	{
+		return GetEraStandardPower(dateLocal) * GetTargetVisibleMiners(dateLocal);
+	}
+
+	// §3.2 fullness parity (P-14.B): target AUTOMATED txs per block = real txs-per-block ÷ 100, clamped
+	// to the non-coinbase block capacity. TxCount already excludes coinbase (ND.0 finding) — do not
+	// subtract again. Freezes at the last data row past the dataset end; 0 when data is missing or no
+	// blocks were mined that day.
+	public decimal GetTargetTxPerBlock(DateTime dateLocal)
+	{
+		if (_days.Count == 0)
+		{
+			return 0m;
+		}
+
+		int index = dateLocal.Date > LastDataDateLocal ? _days.Count - 1 : DayIndex(dateLocal);
+		if (index < 0 || index >= _days.Count)
+		{
+			return 0m;
+		}
+
+		NetworkDay day = _days[index];
+		if (day.TxCount is not long tx || day.BlockCount is not long blocks || blocks <= 0)
+		{
+			return 0m;
+		}
+
+		decimal target = Money.Normalize(tx / (decimal)blocks / 100m);
+		return Math.Clamp(target, 0m, BlockTemplateBuilder.MaxBlockTransactions - 1);
+	}
+
+	private int DayIndex(DateTime dateLocal) => _days.Count == 0 ? -1 : (int)(dateLocal.Date - FirstDataDateLocal).TotalDays;
+
+	// Genesis week has null hashrate; a handful of later cells could in principle be blank too. For a
+	// growth-ratio quantity the honest gap policy is carry-forward of the last known value (same shape
+	// as the market service's halt-day carry-forward).
+	private double? LastKnownHashRateAt(int index)
+	{
+		for (int i = index; i >= 0; i--)
+		{
+			if (_days[i].HashRate is double h)
+			{
+				return h;
+			}
+		}
+
+		return null;
+	}
+
+	private void InitializeAnchors()
+	{
+		if (_days.Count == 0)
+		{
+			return;
+		}
+
+		int anchorIndex = DayIndex(TimelineConfig.PlayerStartDayLocal.Date);
+		anchorIndex = Math.Clamp(anchorIndex, 0, _days.Count - 1);
+		_anchorHashRate = LastKnownHashRateAt(anchorIndex) ?? 0.0;
+		_decadesAtDatasetEnd = _anchorHashRate <= 0.0
+			? 0.0
+			: Math.Max(0.0, Math.Log10((LastKnownHashRateAt(_days.Count - 1) ?? _anchorHashRate) / _anchorHashRate));
+
+		GD.Print(string.Create(CultureInfo.InvariantCulture,
+			$"[BtcNetworkDataService] Anchors: H(playerStart {TimelineConfig.PlayerStartDayLocal:yyyy-MM-dd}) = {_anchorHashRate}, decades(end) = {_decadesAtDatasetEnd:F3}, cast(end) = {GetTargetVisibleMiners(LastDataDateLocal)}, units(end) = {GetTotalNetworkUnits(LastDataDateLocal):F0}"));
+	}
+
+	private void LoadCsv()
+	{
+		using FileAccess file = FileAccess.Open(CsvPath, FileAccess.ModeFlags.Read);
+		if (file == null)
+		{
+			GD.PushWarning($"[BtcNetworkDataService] Could not open {CsvPath} — network data unavailable.");
+			return;
+		}
+
+		string[] lines = file.GetAsText().Split('\n');
+		var days = new List<NetworkDay>(lines.Length);
+
+		// Header row (date,tx_count,hashrate,active_addresses,block_count,fee_total_btc,source) skipped.
+		for (int i = 1; i < lines.Length; i++)
+		{
+			string line = lines[i].TrimEnd('\r', '\n');
+			if (string.IsNullOrWhiteSpace(line))
+			{
+				continue;
+			}
+
+			string[] cols = line.Split(',');
+			if (cols.Length < 7)
+			{
+				continue;
+			}
+
+			DateTime dateLocal = DateTime.SpecifyKind(
+				DateTime.ParseExact(cols[0].Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None),
+				DateTimeKind.Local);
+
+			days.Add(new NetworkDay(
+				dateLocal,
+				ParseNullableLong(cols[1]),
+				ParseNullableDouble(cols[2]),
+				ParseNullableLong(cols[3]),
+				ParseNullableLong(cols[4]),
+				ParseNullableDecimal(cols[5])));
+		}
+
+		days.Sort((a, b) => a.DateLocal.CompareTo(b.DateLocal));
+		_days = days;
+
+		if (_days.Count > 0)
+		{
+			FirstDataDateLocal = _days[0].DateLocal;
+			LastDataDateLocal = _days[^1].DateLocal;
+		}
+
+		GD.Print($"[BtcNetworkDataService] Loaded {_days.Count} network days ({FirstDataDateLocal:yyyy-MM-dd} → {LastDataDateLocal:yyyy-MM-dd}).");
+	}
+
+	// Empty cell = no data, never zero (ND.0 parsing rule — same as BtcMarketDataService).
+	private static long? ParseNullableLong(string raw)
+	{
+		string trimmed = raw.Trim();
+		if (trimmed.Length == 0)
+		{
+			return null;
+		}
+
+		return long.Parse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture);
+	}
+
+	// Hashrate is a physical measure consumed only through log-ratios — double, not decimal (the raw
+	// CSV strings carry more digits than decimal can hold, and money rules don't apply to it).
+	private static double? ParseNullableDouble(string raw)
+	{
+		string trimmed = raw.Trim();
+		if (trimmed.Length == 0)
+		{
+			return null;
+		}
+
+		return double.Parse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture);
+	}
+
+	private static decimal? ParseNullableDecimal(string raw)
+	{
+		string trimmed = raw.Trim();
+		if (trimmed.Length == 0)
+		{
+			return null;
+		}
+
+		return Money.Normalize(decimal.Parse(trimmed, NumberStyles.Number, CultureInfo.InvariantCulture));
+	}
+}
