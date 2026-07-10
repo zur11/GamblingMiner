@@ -37,7 +37,10 @@ public static class NetworkPopulationScheduler
 	};
 
 	// Rotating pseudonym pool for the invisible mass's blocks (D-14.9) — anonymous flavor, deliberately
-	// distinct from the cast pool. The rotation advances once per ghost-mined block.
+	// distinct from the cast pool. ND.4a: the next name is drawn AT RANDOM after each ghost-mined block —
+	// the original fixed round-robin kept all twelve names permanently tied in blocks mined (a perfectly
+	// flat leaderboard reads synthetic); a random draw spreads the SAME ghost-block total organically,
+	// some names ahead, some behind, without changing the invisible mass's share by one attempt.
 	private static readonly string[] GhostNamePool =
 	{
 		"unknown_miner", "anon_cpu_rig", "garage_gpu", "dorm_room_rig", "mystery_hasher",
@@ -55,7 +58,9 @@ public static class NetworkPopulationScheduler
 
 	private static readonly Dictionary<string, double> _castAccumulators = new();
 	private static double _invisibleAccumulator;
-	private static int _ghostIndex;
+	// Random initial pick too (ND.4a) — a constant 0 start would overrepresent GhostNamePool[0] by one
+	// block every session/bootstrap.
+	private static int _ghostIndex = Random.Shared.Next(GhostNamePool.Length);
 
 	// Cached by Recompute (once per new block); read by SimulationService every frame.
 	private static readonly List<string> _poweredCastIds = new();
@@ -116,7 +121,7 @@ public static class NetworkPopulationScheduler
 
 	public static string CurrentGhostId => GhostNamePool[_ghostIndex];
 
-	public static void AdvanceGhostRotation() => _ghostIndex = (_ghostIndex + 1) % GhostNamePool.Length;
+	public static void AdvanceGhostRotation() => _ghostIndex = Random.Shared.Next(GhostNamePool.Length);
 
 	// ── The lockstep drain (founder accumulator pattern) ───────────────────────────────────────────────
 	// For every player+bot nonce attempt executed this frame, each powered cast member and the invisible
@@ -225,7 +230,7 @@ public static class NetworkPopulationScheduler
 	{
 		_castAccumulators.Clear();
 		_invisibleAccumulator = 0d;
-		_ghostIndex = 0;
+		_ghostIndex = Random.Shared.Next(GhostNamePool.Length);
 		_poweredCastIds.Clear();
 		_castPowerEach = 0d;
 		_invisiblePower = 0d;

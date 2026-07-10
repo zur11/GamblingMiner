@@ -58,6 +58,14 @@ public partial class NetworkRoot : Node
     private const decimal MinBotSpendableBalanceBtc = 1.0m;
     // (BotSendProbabilityPerBlock = 0.5 retired at Step 14 ND.3 — bot sends are now budgeted per block
     // by the historical fullness-parity target; see ScheduleBotTransactionsAfterBlock.)
+    // ND.4a — the casino-miner-bots' (bot_1..4) own donation cadence: on average one send per this many
+    // live blocks (geometric draw per block), INDEPENDENT of the historical fullness-parity budget, so
+    // their referral-auction bid stream stays era-stable (~1.5 bids per 100-day window) even where the
+    // historical tx target is near zero (D-14.10's "auction-bid exemption" knob, made real). Their
+    // in-flight txids are exempted from the budget's organic-pending accounting via _casinoBotCycleTxIds
+    // (in-memory only, deliberately: a restart reverts the mempool itself, so it correctly starts empty).
+    private const int CasinoBotSellFlowMeanBlocks = 100;
+    private static readonly HashSet<string> _casinoBotCycleTxIds = new();
     private const decimal MinSendFractionDecimal = 0.10m;
     private const decimal MaxSendFractionDecimal = 0.40m;
     // Step 4b.2: bot-chosen fee range (BTC), collected into the winning miner's coinbase.
@@ -998,78 +1006,122 @@ public partial class NetworkRoot : Node
 
     private static void ScheduleBotTransactionsAfterBlock(Block block)
     {
-        // The mempool is primed to hover AT the target level, so the next block template (which takes up
-        // to MaxBlockTransactions − 1 pending txs by fee) carries ≈ target non-coinbase txs. ORGANIC
-        // traffic counts first — every already-pending tx (player sends, swap legs, pool payouts) reduces
-        // the budget 1:1; automation only tops up the remainder (D-14.2: real sends only, under-shooting
-        // accepted when balances can't sustain the rate). The fractional carry realizes sub-1 targets —
-        // e.g. 2010's ≈0.01 tx/block becomes one automated tx every ~100 blocks, historically faithful
-        // near-empty blocks (D-14.10). Replaces the flat BotSendProbabilityPerBlock = 0.5 model.
-        double owed = (double)_scheduledTxTargetPerBlock + _scheduledTxCarry;
-        int wholeOwed = (int)Math.Floor(owed);
-        _scheduledTxCarry = owed - wholeOwed;
-
-        int pending = SharedNodesById[PlayerNodeId].Blockchain.PendingTransactions.Count;
-        int budget = wholeOwed - pending;
-        if (budget <= 0) return;
-
-        // Canonical chain (the player's synced view) — used to measure each bot's mining warmup.
+        // Canonical chain (the player's synced view) — used to measure each miner's mining warmup.
         List<Block> chain = SharedNodesById[PlayerNodeId].Blockchain.Chain;
 
-        int created = TryMinerSellFlow(block, chain, budget);
+        // ND.4a — the casino-bots' own cycle runs first and OUTSIDE the budget (its txids are exempted
+        // from the organic-pending count below).
+        TryCasinoBotDonation(block, chain);
+
+        // The mempool is primed to hover AT the target level, so the next block template (which takes up
+        // to MaxBlockTransactions − 1 pending txs by fee) carries ≈ target non-coinbase txs. ORGANIC
+        // traffic counts first — every already-pending tx (player sends, swap legs, pool payouts) cancels
+        // accrued demand 1:1 BEFORE flooring (ND.4a fix: the old post-floor `wholeOwed - pending` both
+        // erased up to a whole block's accumulated carry on a collision AND ignored organic txs entirely
+        // on sub-1-owed blocks); automation only tops up the remainder (D-14.2: real sends only,
+        // under-shooting accepted when balances can't sustain the rate). The fractional carry realizes
+        // sub-1 targets — e.g. 2010's ≈0.01 tx/block becomes one automated tx every ~100 blocks,
+        // historically faithful near-empty blocks (D-14.10). Replaces BotSendProbabilityPerBlock = 0.5.
+        List<Transaction> pendingTxs = SharedNodesById[PlayerNodeId].Blockchain.PendingTransactions;
+        _casinoBotCycleTxIds.IntersectWith(pendingTxs.Select(t => t.TransactionId)); // prune confirmed
+        int pending = pendingTxs.Count - _casinoBotCycleTxIds.Count;
+
+        double owed = Math.Max(0d, (double)_scheduledTxTargetPerBlock + _scheduledTxCarry - pending);
+        int budget = (int)Math.Floor(owed);
+        _scheduledTxCarry = owed - budget;
+        if (budget <= 0) return;
+
+        int created = TryCastSellFlow(block, chain, budget);
         if (created < budget)
             TryNonMinerExchanges(block, budget - created);
     }
 
-    // Miner sell-flow (D-14.2): miners naturally sell/distribute mined BTC to non-miners — the four
-    // betting bots AND the Step-14 cast miners (their sell-flow starts here, ND.3). EB.2 (D-EB.7,
-    // corrected 2026-07-09): bot_1..4's sends here DO qualify as auction bids in ComputeAuctionLedger
-    // (they have a real casino relationship — bet-driven mining, same as the player) — no special-casing
-    // needed here, the eligibility filter lives entirely in ComputeAuctionLedger. The Step-14 CAST
-    // miners' sends stay economy-only (no casino relationship — drained-attempt mining). Recipients here
-    // are simply the non-miners already introduced by the historical schedule, regardless of auction
-    // status. Returns how many sends were actually created.
-    private static int TryMinerSellFlow(Block block, List<Block> chain, int budget)
+    // ND.4a — the casino-miner-bots' (bot_1..4) donation/bid cycle: rotates ONLY among the four classic
+    // casino bots (random start offset, first eligible sends, one send max per cycle hit), on its own
+    // ~1-per-CasinoBotSellFlowMeanBlocks cadence independent of the historical budget. These are the
+    // only automated sends that qualify as referral-auction bids (D-EB.7 — the eligibility filter itself
+    // lives entirely in ComputeAuctionLedger); decoupling them from the near-zero early-era tx target is
+    // the "auction-bid exemption" knob ND.3 flagged under D-14.10, made real after the first ND.4
+    // playtest showed the shared budget + fixed iteration order handing every send slot to bot_1.
+    private static void TryCasinoBotDonation(Block block, List<Block> chain)
+    {
+        if (Random.Shared.NextDouble() >= 1d / CasinoBotSellFlowMeanBlocks) return;
+
+        List<string> recipientPool = IntroducedActiveNonMinerAddresses(block.Timestamp);
+        if (recipientPool.Count == 0) return;
+
+        IReadOnlyList<BotWalletRecord> bots = BotWalletRegistry.MinerBots;
+        int offset = bots.Count > 0 ? Random.Shared.Next(bots.Count) : 0;
+        for (int i = 0; i < bots.Count; i++)
+        {
+            Transaction? tx = TrySellFlowSend(bots[(offset + i) % bots.Count], block, chain, recipientPool);
+            if (tx != null)
+            {
+                _casinoBotCycleTxIds.Add(tx.TransactionId);
+                return;
+            }
+        }
+    }
+
+    // Cast-miner sell-flow (D-14.2, split out at ND.4a — this WAS TryMinerSellFlow, which iterated
+    // MinerBots + CastMiners in fixed order and so handed every budget slot to bot_1 forever): the
+    // Step-14 cast circulate mined BTC to non-miners under the historical fullness-parity budget,
+    // rotating with a random start offset (TryNonMinerExchanges' fairness pattern). Their sends stay
+    // economy-only — never auction bids (D-EB.7: no casino relationship; the classic bot_1..4 donate
+    // via TryCasinoBotDonation instead). Recipients are simply the non-miners already introduced by the
+    // historical schedule, regardless of auction status. Returns how many sends were actually created.
+    private static int TryCastSellFlow(Block block, List<Block> chain, int budget)
     {
         List<string> recipientPool = IntroducedActiveNonMinerAddresses(block.Timestamp);
         if (recipientPool.Count == 0) return 0;
 
+        IReadOnlyList<BotWalletRecord> senders = BotWalletRegistry.CastMiners;
+        if (senders.Count == 0) return 0;
+
         int created = 0;
-        foreach (BotWalletRecord record in BotWalletRegistry.MinerBots.Concat(BotWalletRegistry.CastMiners))
+        int offset = Random.Shared.Next(senders.Count);
+        for (int i = 0; i < senders.Count && created < budget; i++)
         {
-            if (created >= budget) break;
-            if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? node)) continue;
-
-            // Warmup measured PER BOT from the block it first mined — so circulation starts a few
-            // blocks after a miner actually begins mining (works for miners introduced gradually,
-            // not an absolute chain index that the historical bootstrap would have already passed).
-            int? firstMinedHeight = FirstBlockHeightMinedBy(record.NodeId, chain);
-            if (firstMinedHeight is null) continue; // hasn't mined yet → nothing to circulate
-            if (block.Index - firstMinedHeight.Value < CirculationWarmupBlocks) continue;
-
-            decimal spendable = node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
-            if (spendable < MinBotSpendableBalanceBtc) continue;
-
-            decimal fraction = MinSendFractionDecimal
-                + (decimal)Random.Shared.NextDouble() * (MaxSendFractionDecimal - MinSendFractionDecimal);
-            decimal sendAmount = Math.Round(spendable * fraction, 8);
-            if (sendAmount <= 0m) continue;
-
-            // Step 4b.2: attach a sender-chosen fee — only after network fee activation (P10.6).
-            decimal fee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp)
-                ? Math.Round(MinBotFeeBtc + (decimal)Random.Shared.NextDouble() * (MaxBotFeeBtc - MinBotFeeBtc), 8)
-                : 0m;
-            if (sendAmount + fee > spendable) continue; // must cover amount + fee
-
-            string recipientAddress = recipientPool[Random.Shared.Next(recipientPool.Count)];
-            if (recipientAddress == node.WalletAddress) continue; // never send to self
-
-            // Step 8 — UTXO spend (coin-select the bot's base-address UTXOs + change back to its base).
-            if (BuildAndBroadcastUtxoSpend(node, recipientAddress, sendAmount, fee, null) != null)
+            if (TrySellFlowSend(senders[(offset + i) % senders.Count], block, chain, recipientPool) != null)
                 created++;
         }
 
         return created;
+    }
+
+    // One sell-flow send attempt for a single miner record — the shared gate/spend logic of the two
+    // cycles above (TryCasinoBotDonation and TryCastSellFlow). Returns the broadcast transaction, or
+    // null if any gate failed.
+    private static Transaction? TrySellFlowSend(BotWalletRecord record, Block block, List<Block> chain, List<string> recipientPool)
+    {
+        if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? node)) return null;
+
+        // Warmup measured PER BOT from the block it first mined — so circulation starts a few
+        // blocks after a miner actually begins mining (works for miners introduced gradually,
+        // not an absolute chain index that the historical bootstrap would have already passed).
+        int? firstMinedHeight = FirstBlockHeightMinedBy(record.NodeId, chain);
+        if (firstMinedHeight is null) return null; // hasn't mined yet → nothing to circulate
+        if (block.Index - firstMinedHeight.Value < CirculationWarmupBlocks) return null;
+
+        decimal spendable = node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
+        if (spendable < MinBotSpendableBalanceBtc) return null;
+
+        decimal fraction = MinSendFractionDecimal
+            + (decimal)Random.Shared.NextDouble() * (MaxSendFractionDecimal - MinSendFractionDecimal);
+        decimal sendAmount = Math.Round(spendable * fraction, 8);
+        if (sendAmount <= 0m) return null;
+
+        // Step 4b.2: attach a sender-chosen fee — only after network fee activation (P10.6).
+        decimal fee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp)
+            ? Math.Round(MinBotFeeBtc + (decimal)Random.Shared.NextDouble() * (MaxBotFeeBtc - MinBotFeeBtc), 8)
+            : 0m;
+        if (sendAmount + fee > spendable) return null; // must cover amount + fee
+
+        string recipientAddress = recipientPool[Random.Shared.Next(recipientPool.Count)];
+        if (recipientAddress == node.WalletAddress) return null; // never send to self
+
+        // Step 8 — UTXO spend (coin-select the miner's base-address UTXOs + change back to its base).
+        return BuildAndBroadcastUtxoSpend(node, recipientAddress, sendAmount, fee, null);
     }
 
     // Non-miner ↔ non-miner exchange scheduler (D-14.2, new at ND.3): fills the remaining automated-tx
@@ -1361,7 +1413,7 @@ public partial class NetworkRoot : Node
         // node whose mining REQUIRES casino play (bet-driven, HardwareRate-locked), exactly like the
         // player. This is the real eligibility test, not "is the player": bot_1..4 already have a
         // casino relationship today (StartBots/BuildBotConfigs — the same hardware-credit betting
-        // sessions as the player), so their sell-flow donations (TryMinerSellFlow) count as bids without
+        // sessions as the player), so their sell-flow donations (TryCasinoBotDonation) count as bids without
         // needing new machinery. The Step-14 CAST miners (BotWalletRegistry.CastMiners, ND.2) do NOT
         // qualify — they mine via drained attempts (founder-style, concurrent with the player's time
         // advancement), never place a bet, and so never form a casino relationship; their sell-flow
@@ -1462,8 +1514,9 @@ public partial class NetworkRoot : Node
     }
 
     // (FirstLiveBlockTimestamp + InAuctionNonMinerAddresses retired at Step 14 EB.2 — introduction is
-    // schedule-driven, and the sell-flow's recipients no longer depend on auction status, since bot
-    // sends are economy, never bids: see IntroducedActiveNonMinerAddresses / D-EB.4/7.)
+    // schedule-driven, and the sell-flow's recipients don't depend on auction status (funding flows
+    // before, during, and after a window); whether a send COUNTS as a bid is decided entirely by
+    // ComputeAuctionLedger's qualifying-bidder set: see IntroducedActiveNonMinerAddresses / D-EB.4/7.)
 
     // Addresses of ACTIVE non-miners already introduced by the historical schedule at the given time —
     // the sell-flow/economy recipient pool. Auction status is irrelevant here (funding continues before,
