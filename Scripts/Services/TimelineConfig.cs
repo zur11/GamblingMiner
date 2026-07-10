@@ -18,7 +18,14 @@ public static class TimelineConfig
 	public const bool DevAltTimeline = false;
 
 	public static readonly TimeSpan Offset = DevAltTimeline ? TimeSpan.FromDays(484) : TimeSpan.Zero;
-	public static readonly string Tag = DevAltTimeline ? "ALT-2010-07-18" : "CANON-2009-01-03";
+
+	// EB.1 (D-EB.11) — the world-compatibility stamp gains an "+ENTRY-{year}" suffix whenever
+	// DevEntryYear is set. Any change to the suffix (switching entry years, or turning it on/off) makes
+	// this Tag differ from what's on disk, so NetworkRoot.ResetWorldIfIncompatible's EXISTING guard
+	// auto-wipes and rebuilds — zero new machinery, the identical mechanism TL.1 already built for
+	// DevAltTimeline switches.
+	public static readonly string Tag = (DevAltTimeline ? "ALT-2010-07-18" : "CANON-2009-01-03")
+		+ (DevEntryYear == 0 ? string.Empty : $"+ENTRY-{DevEntryYear}");
 
 	public static DateTime Shift(DateTime canonicalLocal) => canonicalLocal + Offset;
 	public static DateTimeOffset Shift(DateTimeOffset canonicalUtc) => canonicalUtc + Offset;
@@ -34,4 +41,17 @@ public static class TimelineConfig
 	// Canon (DevAltTimeline == false) is untouched — this reads exactly 2009-04-26 as before.
 	public static readonly DateTime FeeActivationLocal =
 		DevAltTimeline ? PlayerStartDayLocal : new DateTime(2009, 4, 26, 0, 0, 0, DateTimeKind.Local);
+
+	// Step 14 (EB.1, §5.1) — DEV entry-year bootstrap generator. UNLIKE DevAltTimeline (which MOVES
+	// genesis and the whole founder crew forward), this leaves genesis and the founders at their true
+	// canonical dates and instead FAST-BUILDS real intervening history (founder arcs, cast spawns,
+	// halvings) up to a landing on 21 Mar of the chosen year — a canon-compatible world, never a second
+	// timeline. `0` on `main` FOREVER (canonical 2009-03-21 start, HistoricalBootstrapService behavior
+	// unchanged bit-for-bit); a DEV branch may set 2010-2025 to land directly in that year for testing.
+	// Orthogonal to DevAltTimeline — never set both to a non-default value at once.
+	public const int DevEntryYear = 0;
+
+	public static readonly DateTime EntryDayLocal = DevEntryYear == 0
+		? PlayerStartDayLocal
+		: new DateTime(DevEntryYear, 3, 21, 0, 0, 0, DateTimeKind.Local);
 }

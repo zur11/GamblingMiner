@@ -68,9 +68,29 @@ public partial class BtcNetworkDataService : Node
 	// if the new day falls outside the dataset's range.
 	public event Action<NetworkDay?>? NetworkDayChanged;
 
+	private bool _loaded;
+
 	public override void _Ready()
 	{
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		EnsureLoaded();
+	}
+
+	// EB.1 (§5.1) — the load/anchor/schedule work extracted from _Ready so it can also run on a
+	// THROWAWAY instance (`new BtcNetworkDataService()`) created directly by HistoricalBootstrapService,
+	// which runs from CalendarTimeService._Ready() — long before this autoload's own _Ready() would
+	// otherwise fire (it is autoload #17, near the end of the list). Idempotent: safe to call more than
+	// once on the same instance (the real autoload calls it once via _Ready; a bootstrap-time throwaway
+	// instance calls it explicitly and is then discarded — the two never share state, by design, since
+	// each is a fresh `_days`/anchor set parsed from the same static CSV).
+	public void EnsureLoaded()
+	{
+		if (_loaded)
+		{
+			return;
+		}
+		_loaded = true;
+
 		LoadCsv();
 		InitializeAnchors();
 		ComputeNonMinerIntroSchedule();
