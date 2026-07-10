@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using GodotBlockchainPort.Simulation;
@@ -124,13 +125,19 @@ public partial class BlockExplorer : Control
         sb.AppendLine("[b]Enroll Mode — referral auction[/b]");
         sb.AppendLine($"In auction (recruitable): {inAuction}  |  Resolved: {resolved}  |  Not yet introduced: {notYet}");
 
+        // EB.2 (D-EB.6/7): TotalReceived counts ALL funding (bot economy + player bids); the leader and
+        // the countdown reflect only QUALIFYING bids (the player's). A bot with no bids yet shows
+        // "awaiting first bid" — its window countdown has not started and it stays recruitable.
         foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.InAuction))
         {
             string leader = string.IsNullOrEmpty(s.LeadingDonorAddress)
-                ? "no donations yet"
-                : $"leading {_networkRoot.DescribeAddress(s.LeadingDonorAddress)} ({s.LeadingDonorTotal:F8})";
-            double daysLeft = Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d);
-            sb.AppendLine($"{s.NonMinerNodeId}  {s.NonMinerAddress[..10]}…  | recv {s.TotalReceived:F8} ({s.DonorCount} donor)  | {leader}  | {daysLeft:0.0}d left");
+                ? "no bids yet"
+                : string.Create(CultureInfo.InvariantCulture, $"leading bid {_networkRoot.DescribeAddress(s.LeadingDonorAddress)} ({s.LeadingDonorTotal:F8})");
+            string clock = s.FirstBidUnixMs == 0
+                ? "awaiting first bid — no countdown"
+                : string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left");
+            sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                $"{s.NonMinerNodeId}  {s.NonMinerAddress[..10]}…  | recv {s.TotalReceived:F8} ({s.DonorCount} donor)  | {leader}  | {clock}"));
         }
 
         if (resolved > 0)
@@ -139,7 +146,7 @@ public partial class BlockExplorer : Control
             foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.Resolved))
             {
                 string winner = string.IsNullOrEmpty(s.WinnerAddress)
-                    ? "no winner (no donations)"
+                    ? "no winner (legacy pre-EB.2 world)"
                     : $"referral of {_networkRoot.DescribeAddress(s.WinnerAddress)}";
                 sb.AppendLine($"{s.NonMinerNodeId}  | {winner}");
             }

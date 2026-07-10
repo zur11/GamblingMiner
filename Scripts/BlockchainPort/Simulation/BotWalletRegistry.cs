@@ -12,7 +12,13 @@ public static class BotWalletRegistry
 {
 	private const string RegistryPath = "user://bot_wallet_registry.json";
 	private const int MinerBotCount = 4;
-	private const int NonMinerBotCount = 10;
+	// Step 14 round 3 (D-EB.8, 2026-07-09): raised 10 -> 40 (OQ-EB.5). MUST match
+	// BtcNetworkDataService.NonMinerPoolSize exactly — that constant sizes the historical intro
+	// SCHEDULE, this one sizes how many real non_miner_N wallet records actually exist to fill it.
+	// A registry created under the old count (10) does NOT grow retroactively — non_miner_11..40 simply
+	// won't exist until a fresh registry regenerates (delete bot_wallet_registry.json, or the whole
+	// user:// folder, then relaunch); identity files are deliberately reset-guard-exempt (Ch. 35 §35.1).
+	private const int NonMinerBotCount = 40;
 
 	private static readonly JsonSerializerOptions JsonOptions = new()
 	{

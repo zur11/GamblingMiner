@@ -393,9 +393,14 @@ public partial class SimulationService : Node
 
 		NetworkPopulationScheduler.Recompute(_networkData, nowLocal, otherMinersPower, _founders?.TotalActiveFounderPower ?? 0d);
 
+		// Step 14 (ND.3): push the fullness-parity tx target for the NEXT blocks' automated traffic
+		// (NetworkRoot consumes it inside ScheduleBotTransactionsAfterBlock on every mined block).
+		decimal txTarget = _networkData.GetTargetTxPerBlock(nowLocal);
+		NetworkRoot.SetScheduledTxTargetPerBlock(txTarget);
+
 		Block latest = _networkRoot.GetPlayerLatestBlock();
 		NetworkPopulationScheduler.AppendTelemetry(latest.Index, latest.MinedByNodeId ?? string.Empty, latest.Timestamp,
-			otherMinersPower, _founders?.TotalActiveFounderPower ?? 0d, spawned);
+			otherMinersPower, _founders?.TotalActiveFounderPower ?? 0d, txTarget, _networkRoot.GetPlayerPendingTransactionCount(), spawned);
 	}
 
 	// Step 14 (ND.2) — the scheduled network's owed attempts, mined exactly like the founders': on each

@@ -167,8 +167,9 @@ public static class NetworkPopulationScheduler
 
 	// ── DEV telemetry (founders_trace.csv precedent) — one row per new block ───────────────────────────
 	private const string TracePath = "user://logs/network_population_trace.csv";
+	private const string TraceHeader = "utcMs,blockIndex,lastMiner,decades,castTarget,castPowered,castPowerEach,invisiblePower,playerBotsPower,foundersPower,totalPower,txTargetPerBlock,pendingTxs,spawned";
 
-	public static void AppendTelemetry(int blockIndex, string lastMiner, long tsMs, double playerBotsPower, double foundersPower, string? spawnedNodeId)
+	public static void AppendTelemetry(int blockIndex, string lastMiner, long tsMs, double playerBotsPower, double foundersPower, decimal txTargetPerBlock, int pendingTxs, string? spawnedNodeId)
 	{
 		try
 		{
@@ -177,7 +178,18 @@ public static class NetworkPopulationScheduler
 				DirAccess.MakeDirRecursiveAbsolute("user://logs");
 			}
 
+			// Header versioning: a trace written by an older schema (e.g. the pre-ND.3 column set) is
+			// rebuilt fresh rather than appended to with misaligned rows.
 			bool exists = FileAccess.FileExists(TracePath);
+			if (exists)
+			{
+				using FileAccess probe = FileAccess.Open(TracePath, FileAccess.ModeFlags.Read);
+				if (probe == null || probe.GetLine() != TraceHeader)
+				{
+					exists = false;
+				}
+			}
+
 			using FileAccess file = exists
 				? FileAccess.Open(TracePath, FileAccess.ModeFlags.ReadWrite)
 				: FileAccess.Open(TracePath, FileAccess.ModeFlags.Write);
@@ -192,15 +204,15 @@ public static class NetworkPopulationScheduler
 			}
 			else
 			{
-				file.StoreLine("utcMs,blockIndex,lastMiner,decades,castTarget,castPowered,castPowerEach,invisiblePower,playerBotsPower,foundersPower,totalPower,spawned");
+				file.StoreLine(TraceHeader);
 			}
 
 			double totalPower = playerBotsPower + foundersPower + TotalScheduledPower;
 			file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-				"{0},{1},{2},{3:F3},{4},{5},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11}",
+				"{0},{1},{2},{3:F3},{4},{5},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F4},{12},{13}",
 				tsMs, blockIndex, lastMiner, _lastDecades, _lastCastTarget, _poweredCastIds.Count,
 				_castPowerEach, _invisiblePower, playerBotsPower, foundersPower, totalPower,
-				spawnedNodeId ?? string.Empty));
+				txTargetPerBlock, pendingTxs, spawnedNodeId ?? string.Empty));
 		}
 		catch (Exception e)
 		{

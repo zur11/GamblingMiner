@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using GodotBlockchainPort.Blockchain;
+using GodotBlockchainPort.Simulation;
 using Scripts.Finance;
 #nullable enable
 
@@ -38,6 +39,18 @@ public partial class BtcNetworkDataService : Node
 	public const double CastPerDecade = 2.0;
 	public const double EraMaxHardwareCredits = 100.0;
 
+	// EB.2 (D-EB.3/4), pool size raised at round 3 (D-EB.8, 2026-07-09, OQ-EB.5) — the historical
+	// non-miner introduction schedule: entering from Market Birth along the active-address curve at
+	// 1 + NonMinersPerAddressDecade × log10(runningMaxAddresses / addressesAtBirth). The dataset's true
+	// birth->peak span is 3.201 address-decades (peak 2021-04-15, 1,366,494 — corrected 2026-07-09; an
+	// earlier "Dec 2017 / 2.9 decades" claim was never actually checked against the CSV and was wrong).
+	// NonMinersPerAddressDecade = (NonMinerPoolSize - 1) / 3.201, calibrated so the full pool deploys
+	// almost exactly at that historical peak; MUST be recalibrated together if NonMinerPoolSize changes
+	// again (BotWalletRegistry.NonMinerBotCount must match NonMinerPoolSize exactly — see its comment).
+	public const int NonMinerPoolSize = 40;
+	public const int BaseNonMinersAtBirth = 1;
+	public const double NonMinersPerAddressDecade = 12.183693;
+
 	private CalendarTimeService? _calendarTimeService;
 	private List<NetworkDay> _days = new();
 	private DateTime _lastSeenDateLocal = DateTime.MinValue;
@@ -60,6 +73,75 @@ public partial class BtcNetworkDataService : Node
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		LoadCsv();
 		InitializeAnchors();
+		ComputeNonMinerIntroSchedule();
+	}
+
+	// EB.2 (D-EB.4) — precompute the 10 non-miner introduction dates from the address curve and push
+	// them into NetworkRoot's auction ledger (the ONE shared schedule for canonical live play and the
+	// EB.1 entry-year fast-builds alike). Non-miner i is introduced on the first date the running-max
+	// address count reaches target i+1. The gate is Market Birth, read from BtcMarketDataService
+	// (registered directly before this autoload, so its _Ready — and FirstDataDateLocal — ran already).
+	private void ComputeNonMinerIntroSchedule()
+	{
+		if (_days.Count == 0)
+		{
+			return;
+		}
+
+		var market = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
+		DateTime birthLocal = market?.FirstDataDateLocal
+			?? DateTime.SpecifyKind(new DateTime(2010, 7, 18), DateTimeKind.Local);
+
+		// The running max starts AT birth — the curve measures growth SINCE the market exists. Including
+		// pre-birth history would let the July-2010 slashdot address spike (6,752, days before Mt. Gox)
+		// inflate the anchor and compress the span to ~2.3 decades, silently stranding 2 of the 10 bots
+		// forever (found empirically against the CSV; with the birth-day anchor of 860 all 10 deploy,
+		// the last on 2016-01-20).
+		var introDatesLocal = new List<DateTime>(NonMinerPoolSize);
+		double runMax = 0d;
+		double anchor = 0d;
+		foreach (NetworkDay day in _days)
+		{
+			if (day.DateLocal < birthLocal)
+			{
+				continue;
+			}
+			if (day.ActiveAddresses is long a && a > runMax)
+			{
+				runMax = a;
+			}
+			if (anchor <= 0d)
+			{
+				anchor = Math.Max(1d, runMax);
+			}
+
+			int target = Math.Min(NonMinerPoolSize,
+				BaseNonMinersAtBirth + (int)Math.Round(
+					NonMinersPerAddressDecade * Math.Log10(Math.Max(1d, runMax / anchor)),
+					MidpointRounding.AwayFromZero));
+			while (introDatesLocal.Count < target)
+			{
+				introDatesLocal.Add(day.DateLocal);
+			}
+			if (introDatesLocal.Count >= NonMinerPoolSize)
+			{
+				break;
+			}
+		}
+
+		// Local calendar date → unix ms, mirroring NetworkFeePolicy's gate convention (Kind stripped to
+		// Unspecified, offset zero) so the comparison basis matches the other block-timestamp date gates.
+		long[] scheduleMs = new long[introDatesLocal.Count];
+		for (int i = 0; i < introDatesLocal.Count; i++)
+		{
+			scheduleMs[i] = new DateTimeOffset(
+				DateTime.SpecifyKind(introDatesLocal[i], DateTimeKind.Unspecified), TimeSpan.Zero)
+				.ToUnixTimeMilliseconds();
+		}
+		NetworkRoot.SetNonMinerIntroSchedule(scheduleMs);
+
+		GD.Print($"[BtcNetworkDataService] Non-miner intro schedule ({introDatesLocal.Count}/{NonMinerPoolSize}): " +
+			string.Join(", ", introDatesLocal.ConvertAll(d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))));
 	}
 
 	public override void _Process(double delta)
