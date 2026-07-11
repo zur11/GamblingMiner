@@ -70,6 +70,12 @@ public partial class NetworkRoot : Node
     private const int CasinoBotDonationWeightZeroPercent = 15;
     private const int CasinoBotDonationWeightOnePercent = 70;
     private const decimal MinBidBtc = 0.1m; // D-ND4b.5 — the fixed first-donation floor, BTC principal
+    // ND.4d (2026-07-10) — the PLAYER's own minimum raise is a flat 1 satoshi above the leading bid, NOT
+    // the 10-20% RaiseMin/RaiseMax formula (that stays exactly as-is for the casino-bots' own bidding).
+    // The player can therefore always retake the lead as cheaply as possible — but a casino-bot's NEXT
+    // raise still jumps 10-20% over whatever the player just bid, so a minimal player raise is an easy
+    // target to overtake; the risk is left for the player to learn empirically, not blocked in code.
+    private const decimal OneSatoshi = 0.00000001m;
     private const decimal MinSendFractionDecimal = 0.10m;
     private const decimal MaxSendFractionDecimal = 0.40m;
     // Step 4b.2: bot-chosen fee range (BTC), collected into the winning miner's coinbase. Governs
@@ -1158,7 +1164,9 @@ public partial class NetworkRoot : Node
         NonMinerDonationSummary? entry = ComputeAuctionLedger(GetPlayerLatestBlockTimestampMsStatic())
             .FirstOrDefault(s => s.NonMinerAddress == address);
         if (entry is null || entry.Status != NonMinerAuctionStatus.InAuction) return null;
-        return entry.LeadingBidUnixMs == 0 ? MinBidBtc : entry.LeadingDonorTotal + RaiseMin(entry.LeadingDonorTotal);
+        // ND.4d — always the PLAYER's own floor (this is only ever called for the player's wallet send
+        // panel): OneSatoshi over the leader, not the casino-bots' RaiseMin/RaiseMax formula.
+        return entry.LeadingBidUnixMs == 0 ? MinBidBtc : entry.LeadingDonorTotal + OneSatoshi;
     }
 
     // Cast-miner sell-flow (D-14.2, split out at ND.4a — this WAS TryMinerSellFlow, which iterated
@@ -1522,15 +1530,19 @@ public partial class NetworkRoot : Node
         // advancement), never place a bet, and so never form a casino relationship; their sell-flow
         // donations stay economy-only, exactly like the non-miner↔non-miner exchanges. Single-address
         // bots have no ReceiveWallet (OQ-8.2 — no stored seed), so only WalletAddress applies.
-        var qualifyingBidders = new HashSet<string>();
+        // ND.4d — playerAddresses is split out from qualifyingBidders so the ratchet walk below can tell
+        // WHO is bidding: the player's own raises clear at OneSatoshi over the leader, everyone else's
+        // (the casino-bots) still need the full RaiseMin/RaiseMax jump.
+        var playerAddresses = new HashSet<string>();
         if (player is not null)
         {
             if (player.ReceiveWallet != null)
             {
-                qualifyingBidders.UnionWith(player.ReceiveWallet.OwnedAddresses);
+                playerAddresses.UnionWith(player.ReceiveWallet.OwnedAddresses);
             }
-            qualifyingBidders.Add(player.WalletAddress);
+            playerAddresses.Add(player.WalletAddress);
         }
+        var qualifyingBidders = new HashSet<string>(playerAddresses);
         foreach (BotWalletRecord casinoMinerBot in BotWalletRegistry.MinerBots)
         {
             if (SharedNodesById.TryGetValue(casinoMinerBot.NodeId, out NodeAgent? botNode))
@@ -1600,10 +1612,18 @@ public partial class NetworkRoot : Node
                     break;
                 }
 
-                decimal floor = leader.HasValue ? leader.Value.amount + RaiseMin(leader.Value.amount) : MinBidBtc;
                 (string donor, decimal amount, long ts, long seq)? best = null;
                 foreach ((string donor, decimal amount, long ts, long seq) d in group)
                 {
+                    // ND.4d — the floor a candidate must clear depends on WHO is bidding, not just on
+                    // the current leader: the player only needs to clear the leader by one satoshi;
+                    // everyone else (the casino-bots) still needs the full RaiseMin jump. Pre-leader,
+                    // both start at the same fixed MinBidBtc opening floor (D-ND4b.5, unaffected).
+                    decimal floor = !leader.HasValue
+                        ? MinBidBtc
+                        : playerAddresses.Contains(d.donor)
+                            ? leader.Value.amount + OneSatoshi
+                            : leader.Value.amount + RaiseMin(leader.Value.amount);
                     if (d.amount < floor) continue;
                     if (best is null || d.amount > best.Value.amount)
                     {
