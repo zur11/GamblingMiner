@@ -53,40 +53,51 @@ public partial class NetworkRoot : Node
     private const decimal CasinoTxFee = 0.1m;
 
     // Blocks a miner bot must wait AFTER its own first mined block before it starts donating BTC —
-    // measured per bot, so it works for bots introduced gradually (not an absolute chain index).
+    // measured per bot, so it works for bots introduced gradually (not an absolute chain index). Governs
+    // TryCastSellFlow / TryNonMinerExchanges only — the ND.4b casino-bot cycle (below) has no warmup
+    // gate; its own affordability filter already excludes any bot with nothing to donate.
     private const int CirculationWarmupBlocks = 5;
     private const decimal MinBotSpendableBalanceBtc = 1.0m;
     // (BotSendProbabilityPerBlock = 0.5 retired at Step 14 ND.3 — bot sends are now budgeted per block
-    // by the historical fullness-parity target; see ScheduleBotTransactionsAfterBlock.)
-    // ND.4a — the casino-miner-bots' (bot_1..4) own donation cadence: on average one send per this many
-    // live blocks (geometric draw per block), INDEPENDENT of the historical fullness-parity budget, so
-    // their referral-auction bid stream stays era-stable (~1.5 bids per 100-day window) even where the
-    // historical tx target is near zero (D-14.10's "auction-bid exemption" knob, made real). Their
-    // in-flight txids are exempted from the budget's organic-pending accounting via _casinoBotCycleTxIds
-    // (in-memory only, deliberately: a restart reverts the mempool itself, so it correctly starts empty).
-    private const int CasinoBotSellFlowMeanBlocks = 100;
+    // by the historical fullness-parity target; see ScheduleBotTransactionsAfterBlock. The ND.4a
+    // CasinoBotSellFlowMeanBlocks geometric draw is retired in turn at ND.4b/ND.4c below.)
     private static readonly HashSet<string> _casinoBotCycleTxIds = new();
+    // ND.4b/ND.4c — competitive fast-cycle referral bidding (step14 plan §3.4, D-ND4b.1-13). This block
+    // of constants governs ONLY the casino-bot auction cycle (TryCasinoBotDonation below) — it is
+    // independent of TryCastSellFlow/TryNonMinerExchanges' historical fullness-parity budget.
+    // D-ND4b.3: per-block donation-count draw, weighted — 15% zero, 70% one, 15% two (the remaining
+    // percentage after the two named weights). A flat "always exactly 1" reads monotone/synthetic.
+    private const int CasinoBotDonationWeightZeroPercent = 15;
+    private const int CasinoBotDonationWeightOnePercent = 70;
+    private const decimal MinBidBtc = 0.1m; // D-ND4b.5 — the fixed first-donation floor, BTC principal
     private const decimal MinSendFractionDecimal = 0.10m;
     private const decimal MaxSendFractionDecimal = 0.40m;
-    // Step 4b.2: bot-chosen fee range (BTC), collected into the winning miner's coinbase.
+    // Step 4b.2: bot-chosen fee range (BTC), collected into the winning miner's coinbase. Governs
+    // TryCastSellFlow's ordinary sends only — the ND.4b casino-bot cycle pins a fixed NetworkFeePolicy.
+    // MinFee instead (D-ND4b.5 — a randomized 0.1-1.0 BTC fee would be nonsensical on a 0.1 BTC bid).
     private const decimal MinBotFeeBtc = 0.1m;
     private const decimal MaxBotFeeBtc = 1.0m;
-    // Referral auction — Step 14 EB.2 (D-EB.4/5/6/7), pool + window retuned at round 3 (D-EB.8/9,
-    // 2026-07-09). Non-miners are introduced along the historical active-address curve from Market Birth
-    // (schedule pushed by BtcNetworkDataService at load — SetNonMinerIntroSchedule, pool size 40); the
-    // old 1-per-~2-days NonMinerIntroIntervalMs is retired. Each bot's window is 100 in-game DAYS
-    // (D-EB.9 — confirmed, supersedes the earlier 6-in-game-month/180-day provisional value from when
-    // the pool was only 10) and its countdown starts at the bot's FIRST QUALIFYING BID (D-EB.6), where
-    // only nodes with a real casino relationship (bet-driven mining) qualify — the player AND the
-    // classic casino-miner-bots bot_1..4 (D-EB.7).
-    private const long AuctionWindowMs = 100L * 86_400_000L;
+    // Referral auction — Step 14 EB.2 (D-EB.4/5/6/7), pool retuned at round 3 (D-EB.8, 2026-07-09);
+    // window shortened + bidding mechanics fully reworked into an ascending auction at ND.4b (D-ND4b.1,
+    // 2026-07-10). Non-miners are introduced along the historical active-address curve from Market Birth
+    // (schedule pushed by BtcNetworkDataService at load — SetNonMinerIntroSchedule, pool size 40). Each
+    // bot's window is 20 in-game DAYS (D-ND4b.1 — down from the round-3 100-day value) and RESETS on
+    // every accepted raise (D-ND4b.8) rather than counting once from the first-ever bid — see
+    // ComputeAuctionLedger. Only nodes with a real casino relationship (bet-driven mining) qualify to
+    // bid — the player AND the classic casino-miner-bots bot_1..4 (D-EB.7).
+    private const long AuctionWindowMs = 20L * 86_400_000L;
     private static long[] _nonMinerIntroScheduleMs = [];
+    // ND.4b (D-ND4b.10) — day-of-donation SC valuation for the BlockExplorer Enroll Mode display. A
+    // plain autoload reference (not a throwaway instance, unlike EB.1's bootstrap accessors) so the
+    // auction ledger reuses the SAME loaded CSV/Market-Birth date the rest of live play already reads.
+    private static BtcMarketDataService? _marketData;
 
     public static void SetNonMinerIntroSchedule(long[] introUnixMs) =>
         _nonMinerIntroScheduleMs = introUnixMs ?? [];
 
     public override void _Ready()
     {
+        _marketData = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
         EnsureInitialized();
     }
 
@@ -1036,31 +1047,118 @@ public partial class NetworkRoot : Node
             TryNonMinerExchanges(block, budget - created);
     }
 
-    // ND.4a — the casino-miner-bots' (bot_1..4) donation/bid cycle: rotates ONLY among the four classic
-    // casino bots (random start offset, first eligible sends, one send max per cycle hit), on its own
-    // ~1-per-CasinoBotSellFlowMeanBlocks cadence independent of the historical budget. These are the
-    // only automated sends that qualify as referral-auction bids (D-EB.7 — the eligibility filter itself
-    // lives entirely in ComputeAuctionLedger); decoupling them from the near-zero early-era tx target is
-    // the "auction-bid exemption" knob ND.3 flagged under D-14.10, made real after the first ND.4
-    // playtest showed the shared budget + fixed iteration order handing every send slot to bot_1.
+    // ND.4b/ND.4c — the casino-miner-bots' (bot_1..4) fast-cycle competitive donation/bid cycle
+    // (D-ND4b.2-6/11): replaces ND.4a's geometric ~1-per-100-block draw with a per-block count draw
+    // (0/1/2, weighted — D-ND4b.3), each attempt targeting the soonest-to-expire AFFORDABLE recruitable
+    // non-miner (D-ND4b.4), sending either the fixed first-donation floor or a coin-flip raise over the
+    // current leading bid (D-ND4b.5/6), topped with a random additive tail so amounts never repeat as
+    // clean round numbers (D-ND4b.11). These are the ONLY automated sends that qualify as referral
+    // auction bids (D-EB.7 — the eligibility filter itself lives entirely in ComputeAuctionLedger).
     private static void TryCasinoBotDonation(Block block, List<Block> chain)
     {
-        if (Random.Shared.NextDouble() >= 1d / CasinoBotSellFlowMeanBlocks) return;
+        int count = DrawCasinoBotDonationCount();
+        if (count == 0) return;
 
-        List<string> recipientPool = IntroducedActiveNonMinerAddresses(block.Timestamp);
-        if (recipientPool.Count == 0) return;
+        // D-ND4b.4: rank targets — active auctions soonest-to-expire first, then not-yet-competing ones
+        // — computed ONCE against the chain as of the just-mined block, so every donation slot this
+        // block is measured against the SAME starting leader (the D-ND4b.11 same-block tie-break relies
+        // on this: two independent bids racing the same pre-block leader, not each other in sequence).
+        List<NonMinerDonationSummary> ledger = ComputeAuctionLedger(block.Timestamp);
+        List<NonMinerDonationSummary> recruitable = ledger.Where(s => s.Status == NonMinerAuctionStatus.InAuction).ToList();
+        List<NonMinerDonationSummary> priorityTargets = recruitable
+            .Where(s => s.LeadingBidUnixMs != 0)
+            .OrderBy(s => s.WindowCloseUnixMs)
+            .Concat(recruitable.Where(s => s.LeadingBidUnixMs == 0))
+            .ToList();
+        if (priorityTargets.Count == 0) return;
 
-        IReadOnlyList<BotWalletRecord> bots = BotWalletRegistry.MinerBots;
-        int offset = bots.Count > 0 ? Random.Shared.Next(bots.Count) : 0;
-        for (int i = 0; i < bots.Count; i++)
+        var usedBotIds = new HashSet<string>();
+        for (int slot = 0; slot < count; slot++)
         {
-            Transaction? tx = TrySellFlowSend(bots[(offset + i) % bots.Count], block, chain, recipientPool);
+            Transaction? tx = TryCasinoBotDonateOnce(block, priorityTargets, usedBotIds);
             if (tx != null)
             {
                 _casinoBotCycleTxIds.Add(tx.TransactionId);
-                return;
             }
         }
+    }
+
+    // D-ND4b.3: 15% chance of 0, 70% chance of 1, 15% chance of 2 — a flat "always 1" reads monotone.
+    private static int DrawCasinoBotDonationCount()
+    {
+        double roll = Random.Shared.NextDouble() * 100d;
+        if (roll < CasinoBotDonationWeightZeroPercent) return 0;
+        if (roll < CasinoBotDonationWeightZeroPercent + CasinoBotDonationWeightOnePercent) return 1;
+        return 2;
+    }
+
+    // One donation slot: walk the priority-ranked targets, donate to the first one at least one
+    // not-yet-used-this-block bot can afford (D-ND4b.4), or return null if nothing in the whole list is
+    // affordable by any remaining bot — a legitimate zero-donation outcome for this slot.
+    private static Transaction? TryCasinoBotDonateOnce(Block block, List<NonMinerDonationSummary> priorityTargets, HashSet<string> usedBotIds)
+    {
+        decimal fee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp) ? NetworkFeePolicy.MinFee : 0m;
+
+        foreach (NonMinerDonationSummary target in priorityTargets)
+        {
+            decimal leadingAmount = target.LeadingBidUnixMs == 0 ? 0m : target.LeadingDonorTotal;
+            decimal requiredAmount = target.LeadingBidUnixMs == 0 ? MinBidBtc : leadingAmount + RaiseMin(leadingAmount);
+
+            var affordable = new List<NodeAgent>();
+            foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
+            {
+                if (usedBotIds.Contains(record.NodeId)) continue;
+                if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? node)) continue;
+                if (node.Blockchain.GetAddressSpendableBalance(node.WalletAddress) >= requiredAmount + fee)
+                {
+                    affordable.Add(node);
+                }
+            }
+            if (affordable.Count == 0) continue; // fall through to the next-priority target
+
+            NodeAgent sender = affordable[Random.Shared.Next(affordable.Count)];
+            decimal spendable = sender.Blockchain.GetAddressSpendableBalance(sender.WalletAddress);
+
+            // D-ND4b.6: a raise donation coin-flips between the two ends of the raise band; a first
+            // donation is pinned at the fixed floor.
+            decimal targetPrincipal = target.LeadingBidUnixMs == 0
+                ? MinBidBtc
+                : (Random.Shared.NextDouble() < 0.5
+                    ? leadingAmount + RaiseMin(leadingAmount)
+                    : leadingAmount + RaiseMax(leadingAmount));
+
+            // D-ND4b.11: additive random tail, headroom-capped so the broadcast can never fail for lack
+            // of funds — it only ever makes the bid MORE competitive, never invalidates it.
+            decimal headroom = Math.Max(0m, spendable - fee - targetPrincipal);
+            decimal tail = Math.Round((decimal)Random.Shared.NextDouble() * Math.Min(targetPrincipal, headroom), 8);
+            decimal amount = Math.Round(targetPrincipal + tail, 8);
+
+            Transaction? tx = BuildAndBroadcastUtxoSpend(sender, target.NonMinerAddress, amount, fee, null);
+            if (tx != null)
+            {
+                usedBotIds.Add(sender.NodeId);
+                return tx;
+            }
+        }
+
+        return null;
+    }
+
+    // D-ND4b.6 formula (reproduces both of the developer's worked examples — step14 plan §3.4 ND.4b).
+    private static decimal RaiseMin(decimal leadingBid) => Math.Max(MinBidBtc, 0.10m * leadingBid);
+    private static decimal RaiseMax(decimal leadingBid) => Math.Max(2m * MinBidBtc, 0.20m * leadingBid);
+
+    // ND.4b (D-ND4b.9) — the live "minimum to compete" figure for the player's wallet send panel: null
+    // unless the address is a currently-recruitable (InAuction) non-miner, in which case it's the exact
+    // floor the next donation must clear to become the new leading bid (mirrors TryCasinoBotDonateOnce's
+    // own requiredAmount computation, so the wallet and the bot cycle always agree on the threshold).
+    public decimal? GetMinimumCompetitiveBidBtc(string address)
+    {
+        EnsureInitialized();
+        NonMinerDonationSummary? entry = ComputeAuctionLedger(GetPlayerLatestBlockTimestampMsStatic())
+            .FirstOrDefault(s => s.NonMinerAddress == address);
+        if (entry is null || entry.Status != NonMinerAuctionStatus.InAuction) return null;
+        return entry.LeadingBidUnixMs == 0 ? MinBidBtc : entry.LeadingDonorTotal + RaiseMin(entry.LeadingDonorTotal);
     }
 
     // Cast-miner sell-flow (D-14.2, split out at ND.4a — this WAS TryMinerSellFlow, which iterated
@@ -1386,13 +1484,14 @@ public partial class NetworkRoot : Node
     private static List<NonMinerDonationSummary> ComputeAuctionLedger(long nowMs)
     {
         List<BotWalletRecord> nonMiners = BotWalletRegistry.NonMinerBots.ToList();
-        var donations = new Dictionary<string, List<(string donor, decimal amount, long ts)>>();
+        var donations = new Dictionary<string, List<(string donor, decimal amount, long ts, long seq)>>();
         foreach (BotWalletRecord b in nonMiners)
         {
-            donations[b.Address] = new List<(string, decimal, long)>();
+            donations[b.Address] = new List<(string, decimal, long, long)>();
         }
 
         SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player);
+        long seq = 0;
         if (player is not null)
         {
             foreach (Block block in player.Blockchain.Chain)
@@ -1400,10 +1499,14 @@ public partial class NetworkRoot : Node
                 foreach (Transaction tx in block.Transactions)
                 {
                     if (tx.Sender == BlockchainService.CoinbaseSender) continue;
-                    if (donations.TryGetValue(tx.Recipient, out List<(string, decimal, long)>? list))
+                    // D-ND4b.13 — the running append-order counter: two txs sharing the same block
+                    // timestamp still get a resolvable "earlier" ordering from this, satisfying the
+                    // same-block tie-break without any new persisted/schema field.
+                    if (donations.TryGetValue(tx.Recipient, out List<(string, decimal, long, long)>? list))
                     {
-                        list.Add((tx.Sender, tx.Amount, block.Timestamp));
+                        list.Add((tx.Sender, tx.Amount, block.Timestamp, seq));
                     }
+                    seq++;
                 }
             }
         }
@@ -1440,7 +1543,7 @@ public partial class NetworkRoot : Node
         for (int i = 0; i < nonMiners.Count; i++)
         {
             BotWalletRecord b = nonMiners[i];
-            List<(string donor, decimal amount, long ts)> list = donations[b.Address];
+            List<(string donor, decimal amount, long ts, long seq)> list = donations[b.Address];
 
             var summary = new NonMinerDonationSummary
             {
@@ -1461,56 +1564,91 @@ public partial class NetworkRoot : Node
             }
             summary.IntroUnixMs = introMs;
 
-            // D-EB.6/7 — qualifying bids: PLAYER-sent donations confirmed at/after the introduction
-            // (earlier player sends were charity to a bot not yet in the referral program — funding).
-            List<(string donor, decimal amount, long ts)> bids =
-                list.Where(d => d.ts >= introMs && qualifyingBidders.Contains(d.donor)).ToList();
-
-            (string addr, decimal total) leadingBid = TopDonor(bids, long.MaxValue);
-            summary.LeadingDonorAddress = leadingBid.addr;   // leading QUALIFYING bidder ("" = no bids)
-            summary.LeadingDonorTotal = leadingBid.total;
+            // D-EB.6/7 — qualifying bids: donations from a QUALIFYING bidder confirmed at/after the
+            // introduction (earlier sends were charity to a bot not yet in the referral program).
+            List<(string donor, decimal amount, long ts, long seq)> bids =
+                list.Where(d => d.ts >= introMs && qualifyingBidders.Contains(d.donor))
+                    .OrderBy(d => d.ts).ThenBy(d => d.seq)
+                    .ToList();
 
             if (bids.Count == 0)
             {
-                // Recruitable indefinitely: the countdown has not started (FirstBidUnixMs stays 0).
+                // Recruitable indefinitely: the countdown has not started (LeadingBidUnixMs stays 0).
                 summary.Status = NonMinerAuctionStatus.InAuction;
                 result.Add(summary);
                 continue;
             }
 
-            summary.FirstBidUnixMs = bids.Min(d => d.ts);
-            summary.WindowCloseUnixMs = summary.FirstBidUnixMs + AuctionWindowMs;
-
-            if (nowMs < summary.WindowCloseUnixMs)
+            // D-ND4b.6/7/8/12/13 — ascending-auction ratchet, replacing the old cumulative-sum leader
+            // (TopDonor). Bids are grouped by their shared block timestamp (bids landing in the SAME
+            // block are evaluated against the SAME starting leader, never against each other in
+            // sequence — the D-ND4b.11 same-block tie-break: both execute, only the higher wins, exact
+            // ties broken by earliest seq via the group's own iteration order). Each group's floor is
+            // the current leader's principal + its minimum raise (MinBidBtc if there is no leader yet);
+            // the first bid in the group to clear a strictly-higher floor than the running best becomes
+            // the new leader. A gap of more than AuctionWindowMs between the leader's own bid and the
+            // next candidate group means the window ALREADY closed there — permanently (D-ND4b.12): no
+            // bid after that point can revive or re-win a resolved auction, however large.
+            (string donor, decimal amount, long ts, long seq)? leader = null;
+            long? resolvedAtMs = null;
+            foreach (IGrouping<long, (string donor, decimal amount, long ts, long seq)> group in bids.GroupBy(d => d.ts).OrderBy(g => g.Key))
             {
-                summary.Status = NonMinerAuctionStatus.InAuction;
+                if (resolvedAtMs.HasValue) break;
+                if (leader.HasValue && group.Key > leader.Value.ts + AuctionWindowMs)
+                {
+                    resolvedAtMs = leader.Value.ts + AuctionWindowMs;
+                    break;
+                }
+
+                decimal floor = leader.HasValue ? leader.Value.amount + RaiseMin(leader.Value.amount) : MinBidBtc;
+                (string donor, decimal amount, long ts, long seq)? best = null;
+                foreach ((string donor, decimal amount, long ts, long seq) d in group)
+                {
+                    if (d.amount < floor) continue;
+                    if (best is null || d.amount > best.Value.amount)
+                    {
+                        best = d;
+                    }
+                }
+                if (best.HasValue)
+                {
+                    leader = best;
+                }
             }
-            else
+
+            if (!leader.HasValue)
+            {
+                // No bid ever cleared even the initial MinBidBtc floor (the casino-bot cycle always
+                // meets it — this covers a player sending less than 0.1 BTC as their very first send).
+                summary.Status = NonMinerAuctionStatus.InAuction;
+                result.Add(summary);
+                continue;
+            }
+
+            summary.LeadingDonorAddress = leader.Value.donor;
+            summary.LeadingDonorTotal = leader.Value.amount;
+            summary.LeadingDonorScValue = _marketData?.GetEffectivePriceUsd(
+                    DateTimeOffset.FromUnixTimeMilliseconds(leader.Value.ts).LocalDateTime) is decimal price
+                ? Math.Round(leader.Value.amount * price, 8)
+                : null; // D-ND4b.10: null before Market Birth (no price data yet)
+            summary.LeadingBidUnixMs = leader.Value.ts;
+            summary.WindowCloseUnixMs = resolvedAtMs ?? (leader.Value.ts + AuctionWindowMs);
+
+            if (resolvedAtMs.HasValue || nowMs >= summary.WindowCloseUnixMs)
             {
                 // ≥1 qualifying bid necessarily exists here — every resolved auction has a real winner.
                 summary.Status = NonMinerAuctionStatus.Resolved;
-                summary.WinnerAddress = TopDonor(bids, summary.WindowCloseUnixMs).addr;
+                summary.WinnerAddress = leader.Value.donor;
+            }
+            else
+            {
+                summary.Status = NonMinerAuctionStatus.InAuction;
             }
 
             result.Add(summary);
         }
 
         return result;
-    }
-
-    private static (string addr, decimal total) TopDonor(List<(string donor, decimal amount, long ts)> list, long maxTsInclusive)
-    {
-        var totals = new Dictionary<string, decimal>();
-        foreach ((string donor, decimal amount, long ts) in list)
-        {
-            if (ts > maxTsInclusive) continue;
-            totals.TryGetValue(donor, out decimal cur);
-            totals[donor] = cur + amount;
-        }
-
-        if (totals.Count == 0) return (string.Empty, 0m);
-        KeyValuePair<string, decimal> top = totals.OrderByDescending(kv => kv.Value).First();
-        return (top.Key, top.Value);
     }
 
     // (FirstLiveBlockTimestamp + InAuctionNonMinerAddresses retired at Step 14 EB.2 — introduction is
@@ -2461,10 +2599,16 @@ public sealed class NonMinerDonationSummary
     public int DonorCount { get; set; }
     public string LeadingDonorAddress { get; set; } = string.Empty;
     public decimal LeadingDonorTotal { get; set; }
+    // ND.4b (D-ND4b.10) — the leading bid's own day's SC value (BTC principal × that date's
+    // BtcMarketDataService price); null before Market Birth or when there is no leading bid yet.
+    public decimal? LeadingDonorScValue { get; set; }
     public NonMinerAuctionStatus Status { get; set; } = NonMinerAuctionStatus.NotIntroduced;
     public long IntroUnixMs { get; set; }
-    // EB.2 (D-EB.6): 0 until the first QUALIFYING bid lands — the window countdown has not started.
-    public long FirstBidUnixMs { get; set; }
+    // ND.4b (D-ND4b.8, renamed from FirstBidUnixMs): 0 until a qualifying bid clears the required
+    // minimum; then the timestamp of the CURRENT leading bid — reset on every accepted raise, so this is
+    // NOT literally the first-ever bid (that concept no longer applies under the ascending-auction rules
+    // introduced at ND.4b/ND.4c).
+    public long LeadingBidUnixMs { get; set; }
     public long WindowCloseUnixMs { get; set; }
     public string WinnerAddress { get; set; } = string.Empty; // set when Resolved (never "" — a resolved window has ≥1 bid)
 }

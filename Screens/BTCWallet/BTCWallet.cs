@@ -60,6 +60,9 @@ public partial class BTCWallet : Control
 	private LineEdit _amountInput = null!;
 	private LineEdit _feeInput = null!;
 	private Label _sendFeedback = null!;
+	// ND.4b (D-ND4b.9) — non-blocking "minimum to compete" warning, shown only when the current
+	// recipient is a currently-recruitable non-miner and the entered amount is below the live floor.
+	private Label _auctionBidWarningLabel = null!;
 	private readonly List<string> _toAddresses = new();
 
 	// Address book (Phase 8.4) — the player's wallet as a collection of addresses (base + change addresses).
@@ -238,6 +241,11 @@ public partial class BTCWallet : Control
 		amountRow.AddChild(_amountInput);
 		_sendPanel.AddChild(amountRow);
 
+		_auctionBidWarningLabel = new Label { Text = string.Empty, Visible = false };
+		_auctionBidWarningLabel.AddThemeFontSizeOverride("font_size", 18);
+		_auctionBidWarningLabel.AddThemeColorOverride("font_color", new Color(1f, 0.75f, 0.2f));
+		_sendPanel.AddChild(_auctionBidWarningLabel);
+
 		_feeRow = new HBoxContainer();
 		_feeRow.AddThemeConstantOverride("separation", 10);
 		var feeLabel = new Label { Text = "Fee (BTC):" };
@@ -272,7 +280,42 @@ public partial class BTCWallet : Control
 		rootVBox.AddChild(_sendPanel);
 
 		_toDropdown.ItemSelected += idx =>
+		{
 			_manualAddressInput.Visible = (_toAddresses.Count > 0 && idx == _toAddresses.Count - 1);
+			RefreshAuctionBidWarning();
+		};
+		_manualAddressInput.TextChanged += _ => RefreshAuctionBidWarning();
+		_amountInput.TextChanged += _ => RefreshAuctionBidWarning();
+	}
+
+	// ND.4b (D-ND4b.9) — resolves the current send-panel recipient (best-effort, mirrors OnSendConfirmed's
+	// own resolution) and, if it is a currently-recruitable non-miner, shows the live minimum the next
+	// donation must clear to become the new leading bid. Purely informational — never blocks Send.
+	private void RefreshAuctionBidWarning()
+	{
+		int selected = _toDropdown.Selected;
+		string recipientAddress = (selected >= 0 && selected < _toAddresses.Count)
+			? (selected == _toAddresses.Count - 1 ? _manualAddressInput.Text.Trim() : _toAddresses[selected])
+			: string.Empty;
+
+		decimal? minimum = string.IsNullOrEmpty(recipientAddress)
+			? null
+			: _networkRoot.GetMinimumCompetitiveBidBtc(recipientAddress);
+
+		if (minimum is not decimal min)
+		{
+			_auctionBidWarningLabel.Visible = false;
+			return;
+		}
+
+		bool belowMinimum = !decimal.TryParse(_amountInput.Text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out decimal amount)
+			|| amount < min;
+		_auctionBidWarningLabel.Visible = belowMinimum;
+		if (belowMinimum)
+		{
+			_auctionBidWarningLabel.Text = string.Create(CultureInfo.InvariantCulture,
+				$"This recipient is in an active referral auction — sends below {min:F8} BTC won't count as a competitive bid.");
+		}
 	}
 
 	private void PopulateToDropdown(string excludeAddress)
@@ -315,6 +358,7 @@ public partial class BTCWallet : Control
 		_amountInput.Text = string.Empty;
 		_sendFeedback.Text = string.Empty;
 		ApplyFeeState();
+		RefreshAuctionBidWarning();
 		SetMode(WalletMode.Send);
 	}
 
@@ -726,6 +770,7 @@ public partial class BTCWallet : Control
 		_amountInput.Text = string.Empty;
 		_feeInput.Text = string.Empty;
 		_manualAddressInput.Text = string.Empty;
+		_auctionBidWarningLabel.Visible = false;
 	}
 
 	private void OnOpenPassphrasePressed()

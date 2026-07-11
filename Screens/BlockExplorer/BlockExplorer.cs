@@ -126,14 +126,18 @@ public partial class BlockExplorer : Control
         sb.AppendLine($"In auction (recruitable): {inAuction}  |  Resolved: {resolved}  |  Not yet introduced: {notYet}");
 
         // EB.2 (D-EB.6/7): TotalReceived counts ALL funding (bot economy + player bids); the leader and
-        // the countdown reflect only QUALIFYING bids (the player's). A bot with no bids yet shows
+        // the countdown reflect only QUALIFYING bids. A non-miner with no qualifying bid yet shows
         // "awaiting first bid" — its window countdown has not started and it stays recruitable.
+        // ND.4b (D-ND4b.10): the leading bid's BTC principal now also shows its day-of-donation SC value.
         foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.InAuction))
         {
+            string scValue = s.LeadingDonorScValue is decimal sc
+                ? string.Create(CultureInfo.InvariantCulture, $" ≈ {sc:F8} SC")
+                : string.Empty;
             string leader = string.IsNullOrEmpty(s.LeadingDonorAddress)
                 ? "no bids yet"
-                : string.Create(CultureInfo.InvariantCulture, $"leading bid {_networkRoot.DescribeAddress(s.LeadingDonorAddress)} ({s.LeadingDonorTotal:F8})");
-            string clock = s.FirstBidUnixMs == 0
+                : string.Create(CultureInfo.InvariantCulture, $"leading bid {_networkRoot.DescribeAddress(s.LeadingDonorAddress)} ({s.LeadingDonorTotal:F8} BTC{scValue})");
+            string clock = s.LeadingBidUnixMs == 0
                 ? "awaiting first bid — no countdown"
                 : string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left");
             sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
