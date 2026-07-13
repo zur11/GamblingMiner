@@ -1262,7 +1262,7 @@ public partial class NetworkRoot : Node
         var usedBotIds = new HashSet<string>();
         for (int slot = 0; slot < count; slot++)
         {
-            Transaction? tx = TryCasinoBotDonateOnce(block, priorityTargets, usedBotIds);
+            Transaction? tx = TryCasinoBotDonateOnce(block, priorityTargets, usedBotIds, slot);
             if (tx != null)
             {
                 _casinoBotCycleTxIds.Add(tx.TransactionId);
@@ -1289,11 +1289,12 @@ public partial class NetworkRoot : Node
     // state, own preference order, own roll, own cap), potentially through all four. A bot that
     // cascades away is NOT marked used-this-block (it did nothing); only the bot that actually donates
     // consumes its once-per-block eligibility.
-    private static Transaction? TryCasinoBotDonateOnce(Block block, List<NonMinerDonationSummary> priorityTargets, HashSet<string> usedBotIds)
+    private static Transaction? TryCasinoBotDonateOnce(Block block, List<NonMinerDonationSummary> priorityTargets, HashSet<string> usedBotIds, int slot)
     {
         decimal fee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp) ? NetworkFeePolicy.MinFee : 0m;
 
         var visitedThisSlot = new HashSet<string>();
+        int hop = 0; // 0 = the slot's fairly-drawn first bot; >0 = D-ND6.9 affordability-cascade substitutes
         while (true)
         {
             List<BotWalletRecord> candidates = BotWalletRegistry.MinerBots
@@ -1305,7 +1306,9 @@ public partial class NetworkRoot : Node
             visitedThisSlot.Add(record.NodeId);
             if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? sender)) continue; // registry hole — pass the slot on
 
-            CasinoBotSlotOutcome outcome = TryBuildCasinoBotBid(priorityTargets, sender, fee, out Transaction? tx);
+            CasinoBotSlotOutcome outcome = TryBuildCasinoBotBid(priorityTargets, sender, fee, out Transaction? tx, out CasinoBotBidTrace trace);
+            AppendCasinoBotBidTrace(block, slot, hop, sender.NodeId, outcome, trace);
+            hop++;
             if (outcome == CasinoBotSlotOutcome.Donated && tx != null)
             {
                 usedBotIds.Add(sender.NodeId);
@@ -1337,17 +1340,18 @@ public partial class NetworkRoot : Node
     //      tiers 4 and 7 rolls the 4th tier's 5%, never the 7th's 21%). A failed roll = no donation this
     //      slot, never re-rolled against another slot or pool. Unparticipated targets donate
     //      deterministically (first-time bids need no ladder, as before ND.6).
-    private static CasinoBotSlotOutcome TryBuildCasinoBotBid(List<NonMinerDonationSummary> priorityTargets, NodeAgent sender, decimal fee, out Transaction? tx)
+    private static CasinoBotSlotOutcome TryBuildCasinoBotBid(List<NonMinerDonationSummary> priorityTargets, NodeAgent sender, decimal fee, out Transaction? tx, out CasinoBotBidTrace trace)
     {
         tx = null;
         string botAddress = sender.WalletAddress;
         decimal spendable = sender.Blockchain.GetAddressSpendableBalance(botAddress);
         decimal bidBudgetCap = Math.Round(spendable * MaxBidBalanceFraction, 8);
+        trace = new CasinoBotBidTrace { FeeBtc = fee, SpendableBtc = spendable, BidBudgetCapBtc = bidBudgetCap };
 
         // Steps 1+2 — qualifying pools with this bot's own slot stats (tiers are 1-based positions in
         // the pool's value order; a stable sort keeps ties in arrival order — consistent with ND.5's
         // tie-never-evicts).
-        var qualifying = new List<(NonMinerDonationSummary target, int ownSlotCount, int bestTier)>();
+        var qualifying = new List<(NonMinerDonationSummary target, int ownSlotCount, int bestTier, string ownTiersJoined)>();
         foreach (NonMinerDonationSummary target in priorityTargets)
         {
             List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
@@ -1360,22 +1364,29 @@ public partial class NetworkRoot : Node
             if (ownTiers.Count > 0 && ownTiers[0] <= SatisfiedTopTierCount) continue; // D-ND6.7a — satisfied (ownTiers is ascending by construction)
             if (slotsByValue.Count >= MaxTrackedDonations && ownTiers.Contains(slotsByValue.Count)) continue; // D-ND6.7b — self-eviction guard
 
-            qualifying.Add((target, ownTiers.Count, ownTiers.Count == 0 ? 0 : ownTiers[0]));
+            qualifying.Add((target, ownTiers.Count, ownTiers.Count == 0 ? 0 : ownTiers[0], string.Join("|", ownTiers)));
         }
         if (qualifying.Count == 0) return CasinoBotSlotOutcome.NoQualifyingTarget;
 
         // Step 3 — the affordability walk over the bot-centric order.
-        foreach ((NonMinerDonationSummary target, int ownSlotCount, int bestTier) in qualifying.OrderBy(q => q.ownSlotCount))
+        foreach ((NonMinerDonationSummary target, int ownSlotCount, int bestTier, string ownTiersJoined) in qualifying.OrderBy(q => q.ownSlotCount))
         {
             decimal leadingAmount = target.LeadingBidUnixMs == 0 ? 0m : target.LeadingDonorTotal;
             decimal requiredAmount = target.LeadingBidUnixMs == 0 ? MinBidBtc : leadingAmount + RaiseMin(leadingAmount);
             if (requiredAmount + fee > bidBudgetCap) continue; // D-ND6.8 — unaffordable, keep walking
+
+            // THE target found — from here every outcome (roll fail included) refers to this pool.
+            trace.TargetNodeId = target.NonMinerNodeId;
+            trace.OwnTiersInTarget = ownTiersJoined;
+            trace.RequiredBtc = requiredAmount;
 
             // Step 4 — the single ladder roll.
             if (ownSlotCount > 0)
             {
                 if (!ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int probabilityPercent))
                     return CasinoBotSlotOutcome.RollDeclined; // structurally unreachable — tiers 1-3 excluded above, and a pool holds ≤ MaxTrackedDonations slots
+                trace.RolledTier = bestTier;
+                trace.RolledProbabilityPercent = probabilityPercent;
                 if (Random.Shared.Next(100) >= probabilityPercent)
                     return CasinoBotSlotOutcome.RollDeclined;
             }
@@ -1397,6 +1408,7 @@ public partial class NetworkRoot : Node
             decimal headroom = Math.Max(0m, bidBudgetCap - fee - targetPrincipal);
             decimal tail = Math.Round((decimal)Random.Shared.NextDouble() * Math.Min(targetPrincipal, headroom), 8);
             decimal amount = Math.Round(targetPrincipal + tail, 8);
+            trace.AmountBtc = amount;
 
             tx = BuildAndBroadcastUtxoSpend(sender, target.NonMinerAddress, amount, fee, null);
             return tx != null ? CasinoBotSlotOutcome.Donated : CasinoBotSlotOutcome.BroadcastFailed;
@@ -1404,6 +1416,68 @@ public partial class NetworkRoot : Node
 
         return CasinoBotSlotOutcome.NothingAffordable;
     }
+
+    // ND.6b — per-visit detail for the casino_bot_bid_trace.csv row (filled progressively as
+    // TryBuildCasinoBotBid advances; fields past the point it bailed out stay at their defaults).
+    private sealed class CasinoBotBidTrace
+    {
+        public string TargetNodeId = string.Empty;    // empty until an affordable target was selected
+        public string OwnTiersInTarget = string.Empty; // "4|7" style; empty = unparticipated (or no target)
+        public int RolledTier;                        // 0 = no roll happened (unparticipated target, or none selected)
+        public int RolledProbabilityPercent;
+        public decimal RequiredBtc;
+        public decimal AmountBtc;                     // 0 unless a broadcast was attempted
+        public decimal FeeBtc;
+        public decimal SpendableBtc;
+        public decimal BidBudgetCapBtc;
+    }
+
+    private const string CasinoBotBidTracePath = "user://logs/casino_bot_bid_trace.csv";
+
+    // ND.6b (§8.6 of the step14 plan) — probabilistic rules cannot be calibrated from gameplay feel
+    // alone: one telemetry row per BOT VISIT within a donation slot (= one row per slot when no cascade
+    // fires; a D-ND6.9 affordability cascade adds one row per substitute, sharing the slot index with
+    // ascending `hop`). Every outcome is logged, not just successful bids — the whole point is seeing
+    // the declines (ladder cadence, guard exclusions, half-balance blocks) at their real frequencies.
+    private static void AppendCasinoBotBidTrace(Block block, int slot, int hop, string botNodeId, CasinoBotSlotOutcome outcome, CasinoBotBidTrace trace)
+    {
+        try
+        {
+            if (!DirAccess.DirExistsAbsolute("user://logs"))
+            {
+                DirAccess.MakeDirRecursiveAbsolute("user://logs");
+            }
+
+            bool exists = FileAccess.FileExists(CasinoBotBidTracePath);
+            using FileAccess file = exists
+                ? FileAccess.Open(CasinoBotBidTracePath, FileAccess.ModeFlags.ReadWrite)
+                : FileAccess.Open(CasinoBotBidTracePath, FileAccess.ModeFlags.Write);
+            if (file == null) return;
+
+            if (exists) file.SeekEnd();
+            else file.StoreLine("blockTimestampMs,blockIndex,slot,hop,botNodeId,outcome,targetNodeId,ownTiersInTarget,rolledTier,rolledProbabilityPercent,requiredBtc,amountBtc,feeBtc,spendableBtc,bidBudgetCapBtc");
+
+            file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10:F8},{11:F8},{12:F8},{13:F8},{14:F8}",
+                block.Timestamp, block.Index, slot, hop, botNodeId, CasinoBotSlotOutcomeLabel(outcome),
+                trace.TargetNodeId, trace.OwnTiersInTarget, trace.RolledTier, trace.RolledProbabilityPercent,
+                trace.RequiredBtc, trace.AmountBtc, trace.FeeBtc, trace.SpendableBtc, trace.BidBudgetCapBtc));
+        }
+        catch (Exception e)
+        {
+            GD.PushWarning($"[CasinoBotBidTrace] failed: {e.Message}");
+        }
+    }
+
+    private static string CasinoBotSlotOutcomeLabel(CasinoBotSlotOutcome outcome) => outcome switch
+    {
+        CasinoBotSlotOutcome.Donated => "donated",
+        CasinoBotSlotOutcome.NoQualifyingTarget => "no-qualifying-target",
+        CasinoBotSlotOutcome.NothingAffordable => "nothing-affordable",
+        CasinoBotSlotOutcome.RollDeclined => "roll-declined",
+        CasinoBotSlotOutcome.BroadcastFailed => "broadcast-failed",
+        _ => "unknown",
+    };
 
     // D-ND4b.6 formula (reproduces both of the developer's worked examples — step14 plan §3.4 ND.4b).
     private static decimal RaiseMin(decimal leadingBid) => Math.Max(MinBidBtc, 0.10m * leadingBid);
@@ -2761,6 +2835,8 @@ public partial class NetworkRoot : Node
         DeleteIfExists("user://logs/founders_trace.csv");
         DeleteIfExists("user://logs/swap_desk_trace.csv");
         DeleteIfExists("user://logs/network_population_trace.csv");
+        DeleteIfExists(AuctionSettlementTracePath); // ND.6b — was missing since ND.5 (same reasoning as the others)
+        DeleteIfExists(CasinoBotBidTracePath);
 
         // The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
         // and the betting stats rebuild from a pristine world.
