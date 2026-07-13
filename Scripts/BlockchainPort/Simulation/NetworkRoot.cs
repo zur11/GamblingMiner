@@ -76,6 +76,28 @@ public partial class NetworkRoot : Node
     // raise still jumps 10-20% over whatever the player just bid, so a minimal player raise is an easy
     // target to overtake; the risk is left for the player to learn empirically, not blocked in code.
     private const decimal OneSatoshi = 0.00000001m;
+    // Step 14 ND.5 (D-ND5.3) — a non-miner's tracked donation pool holds the 10 largest qualifying
+    // donations (hoisted from ComputeTrackedDonationPool at ND.6a — the self-eviction guard reads it too).
+    private const int MaxTrackedDonations = 10;
+    // ND.6a (D-ND6.3/6.4, 2026-07-12) — the saturation ladder: exact-TIER re-bid probabilities. "Tier" =
+    // a tracked slot's position in a pool's value order (tier 1 = largest donation … tier 10 = smallest
+    // slot of a full pool); the word "rank" is reserved for the future casino ranking system and must
+    // never be used in this feature. Consecutive Fibonacci percentages kept as literal named values per
+    // D-ND6.4 — never derive them from a formula. Tiers 1-3 have no entry (the satisfied state,
+    // D-ND6.7a). NOTE: the tier-10 89% row is deliberately GUARD-SHADOWED — a bot whose BEST slot is
+    // tier 10 necessarily holds the smallest slot of a full pool, which the self-eviction guard
+    // (D-ND6.7b) excludes before any roll; the entry stays per D-ND6.4's don't-correct rule and only
+    // goes live if that guard is ever relaxed.
+    private static readonly IReadOnlyDictionary<int, int> ReBidProbabilityPercentByTier = new Dictionary<int, int>
+    {
+        [4] = 5, [5] = 8, [6] = 13, [7] = 21, [8] = 34, [9] = 55, [10] = 89,
+    };
+    // D-ND6.7a — a bot holding any top-3 tracked slot in a pool is "satisfied" there: never a re-bid target.
+    private const int SatisfiedTopTierCount = 3;
+    // D-ND6.8 — a bid's ENTIRE outgoing amount (required principal + D-ND4b.11 additive tail + network
+    // fee) may never commit more than this fraction of the bot's SPENDABLE balance (mature/confirmed —
+    // GetAddressSpendableBalance). Replaces the plain `spendable ≥ required + fee` affordability check.
+    private const decimal MaxBidBalanceFraction = 0.5m;
     private const decimal MinSendFractionDecimal = 0.10m;
     private const decimal MaxSendFractionDecimal = 0.40m;
     // Step 4b.2: bot-chosen fee range (BTC), collected into the winning miner's coinbase. Governs
@@ -1211,11 +1233,11 @@ public partial class NetworkRoot : Node
 
     // ND.4b/ND.4c — the casino-miner-bots' (bot_1..4) fast-cycle competitive donation/bid cycle
     // (D-ND4b.2-6/11): replaces ND.4a's geometric ~1-per-100-block draw with a per-block count draw
-    // (0/1/2, weighted — D-ND4b.3), each attempt targeting the soonest-to-expire AFFORDABLE recruitable
-    // non-miner (D-ND4b.4) THIS BOT isn't already self-competing on (self-competition avoidance rules
-    // 1-3, added 2026-07-11 — see FilterAndPrioritizeTargetsForBot), sending either the fixed
-    // first-donation floor or a coin-flip raise over the current leading bid (D-ND4b.5/6), topped with a
-    // random additive tail so amounts never repeat as clean round numbers (D-ND4b.11). These are the ONLY
+    // (0/1/2, weighted — D-ND4b.3). Each slot's chosen bot runs the ND.6a SATURATION-LADDER pipeline
+    // (D-ND6.1…10, 2026-07-12, superseding the 2026-07-11 self-competition rules 1-3 — see
+    // TryCasinoBotDonateOnce/TryBuildCasinoBotBid), sending either the fixed first-donation floor or a
+    // coin-flip raise over the current leading bid (D-ND4b.5/6), topped with a random additive tail so
+    // amounts never repeat as clean round numbers (D-ND4b.11, cap-bounded at ND.6a). These are the ONLY
     // automated sends that qualify as referral auction bids (D-EB.7 — the eligibility filter itself lives
     // entirely in ComputeAuctionLedger).
     private static void TryCasinoBotDonation(Block block, List<Block> chain)
@@ -1223,10 +1245,11 @@ public partial class NetworkRoot : Node
         int count = DrawCasinoBotDonationCount();
         if (count == 0) return;
 
-        // D-ND4b.4: rank targets — active auctions soonest-to-expire first, then not-yet-competing ones
+        // D-ND4b.4: order targets — active auctions soonest-to-expire first, then not-yet-competing ones
         // — computed ONCE against the chain as of the just-mined block, so every donation slot this
         // block is measured against the SAME starting leader (the D-ND4b.11 same-block tie-break relies
         // on this: two independent bids racing the same pre-block leader, not each other in sequence).
+        // ND.6a: each bot then re-orders these per D-ND6.6 (own-slot count first) inside its own pipeline.
         List<NonMinerDonationSummary> ledger = ComputeAuctionLedger(block.Timestamp);
         List<NonMinerDonationSummary> recruitable = ledger.Where(s => s.Status == NonMinerAuctionStatus.InAuction).ToList();
         List<NonMinerDonationSummary> priorityTargets = recruitable
@@ -1256,90 +1279,130 @@ public partial class NetworkRoot : Node
         return 2;
     }
 
-    // Self-competition avoidance (adapted 2026-07-11, developer rules 1-3): the bot for THIS donation slot
-    // is chosen FIRST (fair random pick among not-yet-used-this-block bots) — it's absurd for a bot to
-    // escalate an auction against itself, so once chosen, that bot searches only ITS OWN rules-filtered,
-    // rules-prioritized target list (FilterAndPrioritizeTargetsForBot). If it finds no eligible+affordable
-    // target, this slot yields NO donation — there is deliberately no fallback to a different bot; a
-    // bot's failed search is exactly this attempt's outcome, per the developer's explicit rule.
+    // ND.6a (D-ND6.1/6.9, 2026-07-12 — supersedes the 2026-07-11 self-competition rules 1-3): the bot
+    // for THIS donation slot is chosen FIRST (fair random pick among not-yet-used-this-block bots,
+    // D-ND6.1 — a bot keeps its full selection probability even when its own rules will produce no
+    // donation), then runs its own full bidding pipeline (TryBuildCasinoBotBid). A rule-excluded target
+    // list or a failed ladder roll consumes the slot — no substitution. The ONE exception (D-ND6.9):
+    // when the chosen bot HAS qualifying targets but can afford NONE of them under the half-spendable
+    // cap, the slot cascades to another bot (which re-runs its OWN full pipeline — own participation
+    // state, own preference order, own roll, own cap), potentially through all four. A bot that
+    // cascades away is NOT marked used-this-block (it did nothing); only the bot that actually donates
+    // consumes its once-per-block eligibility.
     private static Transaction? TryCasinoBotDonateOnce(Block block, List<NonMinerDonationSummary> priorityTargets, HashSet<string> usedBotIds)
     {
         decimal fee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp) ? NetworkFeePolicy.MinFee : 0m;
 
-        List<BotWalletRecord> notYetUsed = BotWalletRegistry.MinerBots.Where(b => !usedBotIds.Contains(b.NodeId)).ToList();
-        if (notYetUsed.Count == 0) return null;
-        BotWalletRecord record = notYetUsed[Random.Shared.Next(notYetUsed.Count)];
-        if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? sender)) return null;
+        var visitedThisSlot = new HashSet<string>();
+        while (true)
+        {
+            List<BotWalletRecord> candidates = BotWalletRegistry.MinerBots
+                .Where(b => !usedBotIds.Contains(b.NodeId) && !visitedThisSlot.Contains(b.NodeId))
+                .ToList();
+            if (candidates.Count == 0) return null; // the cascade exhausted every bot — the slot yields nothing
 
-        List<NonMinerDonationSummary> eligibleTargets = FilterAndPrioritizeTargetsForBot(priorityTargets, sender.WalletAddress);
+            BotWalletRecord record = candidates[Random.Shared.Next(candidates.Count)];
+            visitedThisSlot.Add(record.NodeId);
+            if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? sender)) continue; // registry hole — pass the slot on
 
-        foreach (NonMinerDonationSummary target in eligibleTargets)
+            CasinoBotSlotOutcome outcome = TryBuildCasinoBotBid(priorityTargets, sender, fee, out Transaction? tx);
+            if (outcome == CasinoBotSlotOutcome.Donated && tx != null)
+            {
+                usedBotIds.Add(sender.NodeId);
+                return tx;
+            }
+            if (outcome != CasinoBotSlotOutcome.NothingAffordable)
+                return null; // rule-based/roll-based refusal (or a failed broadcast) never cascades — D-ND6.1
+            // NothingAffordable → the D-ND6.9 affordability cascade: try another bot for this same slot.
+        }
+    }
+
+    // ND.6a — per-slot outcome of one bot's bidding pipeline. Only NothingAffordable cascades (D-ND6.9).
+    private enum CasinoBotSlotOutcome { Donated, NoQualifyingTarget, NothingAffordable, RollDeclined, BroadcastFailed }
+
+    // ND.6a — one bot's full bidding pipeline for one donation slot (the saturation ladder, D-ND6.5…6.8):
+    //   1. Qualifying pools (D-ND6.7): every InAuction target EXCEPT pools where this bot holds a top-3
+    //      tracked slot (satisfied) or the smallest slot of a FULL pool (the self-eviction guard — its
+    //      own new bid would evict its own smallest donation, forfeiting the settlement refund already
+    //      secured as the auction stands, D-ND5.4). Both exclusions apply in every participation state.
+    //      (Satisfied subsumes the old rule 1: the leading bid is by construction the pool's tier 1.)
+    //   2. Bot-centric preference order (D-ND6.6): ascending count of the bot's OWN tracked slots
+    //      (0-participation pools first — the spread-wide priority), ties keeping priorityTargets'
+    //      soonest-to-expire-then-awaiting-first-bid order (stable OrderBy).
+    //   3. Half-spendable affordability walk (D-ND6.8): the first pool in that order whose required
+    //      amount + fee fits within spendable × MaxBidBalanceFraction is THE target — unaffordable pools
+    //      are skipped; if none fits, NothingAffordable (the only outcome that cascades).
+    //   4. ONE ladder roll (D-ND6.5), only for a participated target: rolled on the tier with the LOWEST
+    //      re-bid probability among the bot's own slots there (= its best/shallowest slot — holding
+    //      tiers 4 and 7 rolls the 4th tier's 5%, never the 7th's 21%). A failed roll = no donation this
+    //      slot, never re-rolled against another slot or pool. Unparticipated targets donate
+    //      deterministically (first-time bids need no ladder, as before ND.6).
+    private static CasinoBotSlotOutcome TryBuildCasinoBotBid(List<NonMinerDonationSummary> priorityTargets, NodeAgent sender, decimal fee, out Transaction? tx)
+    {
+        tx = null;
+        string botAddress = sender.WalletAddress;
+        decimal spendable = sender.Blockchain.GetAddressSpendableBalance(botAddress);
+        decimal bidBudgetCap = Math.Round(spendable * MaxBidBalanceFraction, 8);
+
+        // Steps 1+2 — qualifying pools with this bot's own slot stats (tiers are 1-based positions in
+        // the pool's value order; a stable sort keeps ties in arrival order — consistent with ND.5's
+        // tie-never-evicts).
+        var qualifying = new List<(NonMinerDonationSummary target, int ownSlotCount, int bestTier)>();
+        foreach (NonMinerDonationSummary target in priorityTargets)
+        {
+            List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
+            var ownTiers = new List<int>();
+            for (int i = 0; i < slotsByValue.Count; i++)
+            {
+                if (slotsByValue[i].DonorAddress == botAddress) ownTiers.Add(i + 1);
+            }
+
+            if (ownTiers.Count > 0 && ownTiers[0] <= SatisfiedTopTierCount) continue; // D-ND6.7a — satisfied (ownTiers is ascending by construction)
+            if (slotsByValue.Count >= MaxTrackedDonations && ownTiers.Contains(slotsByValue.Count)) continue; // D-ND6.7b — self-eviction guard
+
+            qualifying.Add((target, ownTiers.Count, ownTiers.Count == 0 ? 0 : ownTiers[0]));
+        }
+        if (qualifying.Count == 0) return CasinoBotSlotOutcome.NoQualifyingTarget;
+
+        // Step 3 — the affordability walk over the bot-centric order.
+        foreach ((NonMinerDonationSummary target, int ownSlotCount, int bestTier) in qualifying.OrderBy(q => q.ownSlotCount))
         {
             decimal leadingAmount = target.LeadingBidUnixMs == 0 ? 0m : target.LeadingDonorTotal;
             decimal requiredAmount = target.LeadingBidUnixMs == 0 ? MinBidBtc : leadingAmount + RaiseMin(leadingAmount);
+            if (requiredAmount + fee > bidBudgetCap) continue; // D-ND6.8 — unaffordable, keep walking
 
-            decimal spendable = sender.Blockchain.GetAddressSpendableBalance(sender.WalletAddress);
-            if (spendable < requiredAmount + fee) continue; // this bot can't afford this target — try the next eligible one
+            // Step 4 — the single ladder roll.
+            if (ownSlotCount > 0)
+            {
+                if (!ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int probabilityPercent))
+                    return CasinoBotSlotOutcome.RollDeclined; // structurally unreachable — tiers 1-3 excluded above, and a pool holds ≤ MaxTrackedDonations slots
+                if (Random.Shared.Next(100) >= probabilityPercent)
+                    return CasinoBotSlotOutcome.RollDeclined;
+            }
 
-            // D-ND4b.6: a raise donation coin-flips between the two ends of the raise band; a first
-            // donation is pinned at the fixed floor.
+            // D-ND4b.6: a raise coin-flips between the two ends of the raise band; a first donation is
+            // pinned at the fixed floor. ND.6a: the principal is clamped under the half-spendable cap —
+            // the RaiseMax end can exceed it even when the required RaiseMin end fits (the clamp can
+            // never drop below requiredAmount, which the affordability gate above already fitted).
             decimal targetPrincipal = target.LeadingBidUnixMs == 0
                 ? MinBidBtc
                 : (Random.Shared.NextDouble() < 0.5
                     ? leadingAmount + RaiseMin(leadingAmount)
                     : leadingAmount + RaiseMax(leadingAmount));
+            targetPrincipal = Math.Min(targetPrincipal, Math.Round(bidBudgetCap - fee, 8));
 
-            // D-ND4b.11: additive random tail, headroom-capped so the broadcast can never fail for lack
-            // of funds — it only ever makes the bid MORE competitive, never invalidates it.
-            decimal headroom = Math.Max(0m, spendable - fee - targetPrincipal);
+            // D-ND4b.11: additive random tail — headroom now measured against the D-ND6.8 cap, not the
+            // full spendable balance, so `required + tail + fee ≤ spendable × MaxBidBalanceFraction`
+            // holds for the ENTIRE outgoing amount (OQ-ND6.6's resolution).
+            decimal headroom = Math.Max(0m, bidBudgetCap - fee - targetPrincipal);
             decimal tail = Math.Round((decimal)Random.Shared.NextDouble() * Math.Min(targetPrincipal, headroom), 8);
             decimal amount = Math.Round(targetPrincipal + tail, 8);
 
-            Transaction? tx = BuildAndBroadcastUtxoSpend(sender, target.NonMinerAddress, amount, fee, null);
-            if (tx != null)
-            {
-                usedBotIds.Add(sender.NodeId);
-                return tx;
-            }
+            tx = BuildAndBroadcastUtxoSpend(sender, target.NonMinerAddress, amount, fee, null);
+            return tx != null ? CasinoBotSlotOutcome.Donated : CasinoBotSlotOutcome.BroadcastFailed;
         }
 
-        return null;
-    }
-
-    // Self-competition avoidance rules 1-3 (2026-07-11): filters `priorityTargets` down to the non-miners
-    // this bot may legitimately bid on, then orders them by priority.
-    //   Rule 1 — never a target where this bot already holds the LEADING bid (absurd to outbid itself).
-    //   Rule 2 — never a target where this bot already holds a TOP-5 (by BTC value) tracked-pool position,
-    //            even if not literally the leader (e.g. a same-block collision loser can still rank high).
-    //   Rule 3 — among the survivors, "new" non-miners (this bot has ZERO tracked donations there) are
-    //            strictly preferred over "retake the lead" ones (this bot has a tracked donation, but it
-    //            has fallen out of the top 5 — rule 2 already guarantees any survivor's entries are
-    //            bottom-5-only). Each group keeps priorityTargets' own relative order (soonest-to-expire
-    //            first). A bot with nothing in either group finds no eligible target at all.
-    private static List<NonMinerDonationSummary> FilterAndPrioritizeTargetsForBot(List<NonMinerDonationSummary> priorityTargets, string botAddress)
-    {
-        const int topRankSize = 5;
-        var eligibleNew = new List<NonMinerDonationSummary>();
-        var eligibleRetake = new List<NonMinerDonationSummary>();
-
-        foreach (NonMinerDonationSummary target in priorityTargets)
-        {
-            if (!string.IsNullOrEmpty(target.LeadingDonorAddress) && target.LeadingDonorAddress == botAddress)
-                continue; // Rule 1
-
-            List<TrackedDonation> rankedByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
-            bool holdsTopRankSlot = rankedByValue.Take(topRankSize).Any(d => d.DonorAddress == botAddress);
-            if (holdsTopRankSlot) continue; // Rule 2
-
-            bool holdsAnyTrackedSlot = target.TrackedDonations.Any(d => d.DonorAddress == botAddress);
-            if (holdsAnyTrackedSlot)
-                eligibleRetake.Add(target); // Rule 3 — has a tracked entry, necessarily bottom-5-only here
-            else
-                eligibleNew.Add(target); // Rule 3 — never tracked here yet: first priority
-        }
-
-        eligibleNew.AddRange(eligibleRetake);
-        return eligibleNew;
+        return CasinoBotSlotOutcome.NothingAffordable;
     }
 
     // D-ND4b.6 formula (reproduces both of the developer's worked examples — step14 plan §3.4 ND.4b).
@@ -1753,17 +1816,16 @@ public partial class NetworkRoot : Node
         return (playerAddresses, botNodeIdByAddress);
     }
 
-    // Step 14 (ND.5, D-ND5.3/5.4) — the value-ranked top-10 tracked donation pool: processes `bids`
+    // Step 14 (ND.5, D-ND5.3/5.4) — the value-ordered top-10 tracked donation pool: processes `bids`
     // (already qualifying + chronological) in order, keeping the 10 largest by BTC principal. A tie with
     // the current smallest never evicts (first-in stays) — implemented by scanning for the FIRST minimum
     // (strict `<` only), so an existing entry is only ever displaced by a strictly smaller `<` comparison.
     private static List<TrackedDonation> ComputeTrackedDonationPool(List<(string donor, decimal amount, long ts, long seq)> bids, long nowMs)
     {
-        const int maxTrackedDonations = 10;
         var tracked = new List<(string donor, decimal amount, long ts, long seq)>();
         foreach ((string donor, decimal amount, long ts, long seq) bid in bids)
         {
-            if (tracked.Count < maxTrackedDonations)
+            if (tracked.Count < MaxTrackedDonations)
             {
                 tracked.Add(bid);
                 continue;
