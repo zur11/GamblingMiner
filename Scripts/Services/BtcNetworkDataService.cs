@@ -108,7 +108,16 @@ public partial class BtcNetworkDataService : Node
 			return;
 		}
 
-		var market = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
+		// EB.1's throwaway instances (`new BtcNetworkDataService()`, never added to the scene tree — see
+		// EnsureLoaded's own comment) can't resolve an absolute "/root/..." path: Godot's native
+		// get_node_or_null() prints an engine-level error (not a catchable C# exception) whenever it's
+		// called on a node outside the active tree, even though the C#-side GetNodeOrNull still returns
+		// null gracefully afterward. Gate on IsInsideTree() first so only the REAL autoload (always in the
+		// tree by the time its own _Ready → EnsureLoaded runs) attempts the lookup; a throwaway instance
+		// silently falls through to the hardcoded Market Birth date below, exactly as before.
+		BtcMarketDataService? market = IsInsideTree()
+			? GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService")
+			: null;
 		DateTime birthLocal = market?.FirstDataDateLocal
 			?? DateTime.SpecifyKind(new DateTime(2010, 7, 18), DateTimeKind.Local);
 

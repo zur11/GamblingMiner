@@ -279,6 +279,31 @@ public partial class CasinoScBalanceService : Node
 		return true;
 	}
 
+	// Step 14 (ND.5b, D-ND5.4b) — the auction-settlement funding fallback: pays `amount` out of Main
+	// Balance, drawing on-demand AutoLoanAmount loan chunks FIRST if Main can't already cover it (the same
+	// bankruptcy-flavor pattern TryAutoRecharge uses for the Bankroll, retargeted to a Main-coverage
+	// trigger instead of a Bankroll-empty trigger). Always succeeds — infinite credit line in Basic Mode.
+	public void PayFromMainWithAutoLoan(decimal amount)
+	{
+		amount = Money.Normalize(amount);
+		if (amount <= 0m) return;
+		decimal loanChunk = AutoLoanAmount > 0m ? AutoLoanAmount : InitialLoanAmount;
+
+		int safety = 0;
+		while (MainBalance < amount && safety++ < MaxAutoRechargeIterations)
+		{
+			MainBalance = Money.Normalize(MainBalance + loanChunk);
+			LoanCount++;
+			TotalLoaned = Money.Normalize(TotalLoaned + loanChunk);
+			AddLoanRecord(loanChunk, "auto");
+			GD.Print($"[CasinoScBalanceService] Bank loan #{LoanCount} drawn for auction settlement ({loanChunk:F2} SC) — TotalLoaned={TotalLoaned:F8} SC");
+		}
+
+		MainBalance = Money.Normalize(MainBalance - amount);
+		SaveState();
+		BalanceChanged?.Invoke();
+	}
+
 	public bool TryTransferToMainBalance(decimal amount)
 	{
 		amount = Money.Normalize(amount);

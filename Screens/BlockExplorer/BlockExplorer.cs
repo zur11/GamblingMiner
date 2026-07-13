@@ -32,7 +32,9 @@ public partial class BlockExplorer : Control
 
     // Enroll Mode (referral-auction foundation) — built programmatically
     private CheckBox _enrollModeToggle = null!;
-    private RichTextLabel _enrollModeLabel = null!;
+    private VBoxContainer _enrollModePanel = null!;
+    private Label _enrollModeSummaryLabel = null!;
+    private VBoxContainer _enrollModeRowsVBox = null!;
 
     // Live auto-refresh so background simulation (mining/balances) shows in real time.
     private double _autoRefreshTimer;
@@ -96,22 +98,32 @@ public partial class BlockExplorer : Control
         topActions.AddChild(_enrollModeToggle);
 
         // Panel sits just below the top bar (above the main split), so it's visible when toggled on.
+        // Step 14 (ND.5d) — a scrollable VBox of rows (was a single RichTextLabel blob) so each recruitable
+        // non-miner can carry its own "Details →" button (D-ND5.2) alongside its leading-bid info.
         var mainVBox = GetNode<VBoxContainer>("Margin/MainVBox");
-        _enrollModeLabel = new RichTextLabel
+        _enrollModePanel = new VBoxContainer { Visible = false };
+
+        _enrollModeSummaryLabel = new Label();
+        _enrollModePanel.AddChild(_enrollModeSummaryLabel);
+
+        var enrollScroll = new ScrollContainer
         {
-            BbcodeEnabled = true,
-            FitContent = true,
-            Visible = false,
-            CustomMinimumSize = new Vector2(0, 160)
+            CustomMinimumSize = new Vector2(0, 220),
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled
         };
-        mainVBox.AddChild(_enrollModeLabel);
-        mainVBox.MoveChild(_enrollModeLabel, topActions.GetIndex() + 1);
+        _enrollModeRowsVBox = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
+        enrollScroll.AddChild(_enrollModeRowsVBox);
+        _enrollModePanel.AddChild(enrollScroll);
+
+        mainVBox.AddChild(_enrollModePanel);
+        mainVBox.MoveChild(_enrollModePanel, topActions.GetIndex() + 1);
     }
 
     private void RefreshEnrollMode()
     {
         bool on = _enrollModeToggle.ButtonPressed;
-        _enrollModeLabel.Visible = on;
+        _enrollModePanel.Visible = on;
         if (!on) return;
 
         var ledger = _networkRoot.GetNonMinerAuctionLedger();
@@ -120,15 +132,17 @@ public partial class BlockExplorer : Control
         int inAuction = ledger.Count(s => s.Status == NonMinerAuctionStatus.InAuction);
         int resolved = ledger.Count(s => s.Status == NonMinerAuctionStatus.Resolved);
         int notYet = ledger.Count(s => s.Status == NonMinerAuctionStatus.NotIntroduced);
+        _enrollModeSummaryLabel.Text =
+            $"Enroll Mode — referral auction   |   In auction (recruitable): {inAuction}  |  Resolved: {resolved}  |  Not yet introduced: {notYet}";
 
-        var sb = new StringBuilder();
-        sb.AppendLine("[b]Enroll Mode — referral auction[/b]");
-        sb.AppendLine($"In auction (recruitable): {inAuction}  |  Resolved: {resolved}  |  Not yet introduced: {notYet}");
+        foreach (Node child in _enrollModeRowsVBox.GetChildren())
+            child.QueueFree();
 
         // EB.2 (D-EB.6/7): TotalReceived counts ALL funding (bot economy + player bids); the leader and
         // the countdown reflect only QUALIFYING bids. A non-miner with no qualifying bid yet shows
         // "awaiting first bid" — its window countdown has not started and it stays recruitable.
-        // ND.4b (D-ND4b.10): the leading bid's BTC principal now also shows its day-of-donation SC value.
+        // ND.4b (D-ND4b.10, corrected 2026-07-11): the leading bid's BTC principal now also shows its
+        // LIVE, CURRENT SC value (priced as of now, never frozen at the bid's own day).
         foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.InAuction))
         {
             string scValue = s.LeadingDonorScValue is decimal sc
@@ -140,23 +154,44 @@ public partial class BlockExplorer : Control
             string clock = s.LeadingBidUnixMs == 0
                 ? "awaiting first bid — no countdown"
                 : string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left");
-            sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                $"{s.NonMinerNodeId}  {s.NonMinerAddress[..10]}…  | recv {s.TotalReceived:F8} ({s.DonorCount} donor)  | {leader}  | {clock}"));
+            string line = string.Create(CultureInfo.InvariantCulture,
+                $"{s.NonMinerNodeId}  {s.NonMinerAddress[..10]}…  | recv {s.TotalReceived:F8} ({s.DonorCount} donor)  | {leader}  | {clock}");
+
+            var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
+            row.AddChild(new Label { Text = line, SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass });
+
+            // D-ND5.2 — the details button appears ONLY once this non-miner has received at least one
+            // qualifying bid (a leader exists); a never-bid-on entry has nothing to show yet.
+            if (s.LeadingBidUnixMs != 0)
+            {
+                var detailsBtn = new Button { Text = "Details →" };
+                string nonMinerAddress = s.NonMinerAddress;
+                detailsBtn.Pressed += () => OnOpenRecruitableBiddingDetails(nonMinerAddress);
+                row.AddChild(detailsBtn);
+            }
+
+            _enrollModeRowsVBox.AddChild(row);
         }
 
         if (resolved > 0)
         {
-            sb.AppendLine("[b]Resolved (out of auction):[/b]");
+            _enrollModeRowsVBox.AddChild(new Label { Text = "Resolved (out of auction):" });
             foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.Resolved))
             {
                 string winner = string.IsNullOrEmpty(s.WinnerAddress)
                     ? "no winner (legacy pre-EB.2 world)"
                     : $"referral of {_networkRoot.DescribeAddress(s.WinnerAddress)}";
-                sb.AppendLine($"{s.NonMinerNodeId}  | {winner}");
+                // D-ND5.9 — Resolved entries never offer the Details button again; the scene is only ever
+                // reachable while InAuction (the "gets deleted" behavior is this gate's natural consequence).
+                _enrollModeRowsVBox.AddChild(new Label { Text = $"{s.NonMinerNodeId}  | {winner}" });
             }
         }
+    }
 
-        _enrollModeLabel.Text = sb.ToString();
+    private void OnOpenRecruitableBiddingDetails(string nonMinerAddress)
+    {
+        RecruitableBiddingDetails.PendingNonMinerAddress = nonMinerAddress;
+        _sceneManager?.Go(SceneManager.SceneId.RecruitableBiddingDetails);
     }
 
     public override void _Process(double delta)

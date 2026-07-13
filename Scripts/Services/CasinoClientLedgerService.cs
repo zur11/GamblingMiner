@@ -12,7 +12,7 @@ public partial class CasinoClientLedgerService : Node
 		public string   ClientId             { get; set; } = string.Empty;
 		public DateTime UtcTimestamp         { get; set; }
 		public decimal  Amount               { get; set; }
-		public string   Kind                 { get; set; } = string.Empty; // initial | deposit | withdrawal | auto_recharge | bankroll_withdrawal | swap_sc_out | swap_sc_in
+		public string   Kind                 { get; set; } = string.Empty; // initial | deposit | withdrawal | auto_recharge | bankroll_withdrawal | swap_sc_out | swap_sc_in | auction_payout
 		// SF.1.5 / D-SF2.3: distinguishes automatic from player-initiated flows WITHOUT new kinds (every existing
 		// Kind== filter keeps working). Absent/legacy → "manual".
 		public string   Method               { get; set; } = "manual"; // manual | auto
@@ -85,6 +85,14 @@ public partial class CasinoClientLedgerService : Node
 	public void RegisterSwapScIn(string clientId, decimal amount, DateTime utc, string method = "manual")
 	{
 		AddEntry(clientId, amount, "swap_sc_in", method, utc, 0m, 0m);
+	}
+
+	// Step 14 (ND.5b, D-ND5.4b) — the SC payout a non-miner's tracked donation pool pays back at auction
+	// settlement (§7.3). An internal casino-funded credit, not a player-initiated deposit — own kind so it
+	// is excluded from the deposited/withdrawn totals and the since-last-deposit baseline, like swap_sc_in.
+	public void RegisterAuctionPayout(string clientId, decimal amount, DateTime utc)
+	{
+		AddEntry(clientId, amount, "auction_payout", "auto", utc, 0m, 0m);
 	}
 
 	// auto_recharge and startup_default are both internal recharges, not player-initiated deposits.
