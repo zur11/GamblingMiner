@@ -84,13 +84,13 @@ public partial class NetworkRoot : Node
     // slot of a full pool); the word "rank" is reserved for the future casino ranking system and must
     // never be used in this feature. Consecutive Fibonacci percentages kept as literal named values per
     // D-ND6.4 — never derive them from a formula. Tiers 1-3 have no entry (the satisfied state,
-    // D-ND6.7a). NOTE: the tier-10 89% row is deliberately GUARD-SHADOWED — a bot whose BEST slot is
+    // D-ND6.7a). Tier 10 has no entry either (D-ND6.4 amendment, 2026-07-12): a bot whose BEST slot is
     // tier 10 necessarily holds the smallest slot of a full pool, which the self-eviction guard
-    // (D-ND6.7b) excludes before any roll; the entry stays per D-ND6.4's don't-correct rule and only
-    // goes live if that guard is ever relaxed.
+    // (D-ND6.7b) excludes before any roll ever happens — the sequence's next value (89) was removed as
+    // dead weight by developer decision; restore `[10] = 89` if that guard is ever relaxed.
     private static readonly IReadOnlyDictionary<int, int> ReBidProbabilityPercentByTier = new Dictionary<int, int>
     {
-        [4] = 5, [5] = 8, [6] = 13, [7] = 21, [8] = 34, [9] = 55, [10] = 89,
+        [4] = 5, [5] = 8, [6] = 13, [7] = 21, [8] = 34, [9] = 55,
     };
     // D-ND6.7a — a bot holding any top-3 tracked slot in a pool is "satisfied" there: never a re-bid target.
     private const int SatisfiedTopTierCount = 3;
@@ -1384,7 +1384,7 @@ public partial class NetworkRoot : Node
             if (ownSlotCount > 0)
             {
                 if (!ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int probabilityPercent))
-                    return CasinoBotSlotOutcome.RollDeclined; // structurally unreachable — tiers 1-3 excluded above, and a pool holds ≤ MaxTrackedDonations slots
+                    return CasinoBotSlotOutcome.RollDeclined; // structurally unreachable — tiers 1-3 (satisfied) and tier 10 (best-slot-10 ⇒ holds the 10th ⇒ self-eviction guard) are both excluded above
                 trace.RolledTier = bestTier;
                 trace.RolledProbabilityPercent = probabilityPercent;
                 if (Random.Shared.Next(100) >= probabilityPercent)
