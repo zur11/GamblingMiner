@@ -76,16 +76,16 @@ custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 placeholder_text = "1"
 
-[node name="MultiplyOnLossText" type="Label" parent="RootMargin/RootVBox/InputsGrid"]
+[node name="IncreaseOnLossText" type="Label" parent="RootMargin/RootVBox/InputsGrid"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 28
-text = "Multiply On Loss"
+text = "Increase On Loss %"
 
-[node name="MultiplyOnLossInput" type="LineEdit" parent="RootMargin/RootVBox/InputsGrid"]
+[node name="IncreaseOnLossInput" type="LineEdit" parent="RootMargin/RootVBox/InputsGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
-placeholder_text = "2"
+placeholder_text = "100"
 
 [node name="WinChanceText" type="Label" parent="RootMargin/RootVBox/InputsGrid"]
 layout_mode = 2

@@ -7,7 +7,7 @@ public partial class MartingaleCalculatorStandalone : Control
 {
 	private LineEdit _totalBankrollInput;
 	private LineEdit _initialBetInput;
-	private LineEdit _multiplyOnLossInput;
+	private LineEdit _increaseOnLossInput;
 	private LineEdit _winChanceInput;
 	private VBoxContainer _rowsContainer;
 	private Label _statusLabel;
@@ -24,7 +24,7 @@ public partial class MartingaleCalculatorStandalone : Control
 
 		_totalBankrollInput  = GetNode<LineEdit>("%TotalBankrollInput");
 		_initialBetInput     = GetNode<LineEdit>("%InitialBetInput");
-		_multiplyOnLossInput = GetNode<LineEdit>("%MultiplyOnLossInput");
+		_increaseOnLossInput = GetNode<LineEdit>("%IncreaseOnLossInput");
 		_winChanceInput      = GetNode<LineEdit>("%WinChanceInput");
 		_rowsContainer       = GetNode<VBoxContainer>("%RowsContainer");
 		_statusLabel         = GetNode<Label>("%StatusLabel");
@@ -38,10 +38,15 @@ public partial class MartingaleCalculatorStandalone : Control
 	private void OnCalculatePressed()
 	{
 		if (!TryParsePositive(_totalBankrollInput.Text, out double bankroll)
-			|| !TryParsePositive(_initialBetInput.Text, out double initialBet)
-			|| !TryParsePositive(_multiplyOnLossInput.Text, out double multiplyOnLoss))
+			|| !TryParsePositive(_initialBetInput.Text, out double initialBet))
 		{
 			_statusLabel.Text = "Invalid input. Use values greater than 0.";
+			return;
+		}
+
+		if (!TryParseNonNegative(_increaseOnLossInput.Text, out double increaseOnLossPercent))
+		{
+			_statusLabel.Text = "Increase On Loss % must be 0 or greater.";
 			return;
 		}
 
@@ -58,7 +63,7 @@ public partial class MartingaleCalculatorStandalone : Control
 		}
 
 		OnResetPressed();
-		BuildRows(bankroll, initialBet, multiplyOnLoss, winChance);
+		BuildRows(bankroll, initialBet, increaseOnLossPercent, winChance);
 	}
 
 	private void OnResetPressed()
@@ -71,14 +76,18 @@ public partial class MartingaleCalculatorStandalone : Control
 		_statusLabel.Text = "Results reset.";
 	}
 
-	private void BuildRows(double totalBankroll, double initialBet, double multiplyOnLoss, double winChance)
+	private void BuildRows(double totalBankroll, double initialBet, double increaseOnLossPercent, double winChance)
 	{
+		// Each losing step keeps the previous bet and adds the configured increase —
+		// the same formula as ProgressiveBettingStrategy / the DiceGame calculator autofill.
+		double multiplier = 1.0 + increaseOnLossPercent / 100.0;
 		double remaining  = totalBankroll;
 		double nextBet    = initialBet;
 		double lossProb   = 1.0 - winChance / 100.0;
 		int roll          = 1;
+		const int maxRows = 500;
 
-		while (nextBet <= remaining)
+		while (nextBet <= remaining && roll <= maxRows)
 		{
 			var row = _rowScene.Instantiate<BetRollRow>();
 			_rowsContainer.AddChild(row);
@@ -87,11 +96,13 @@ public partial class MartingaleCalculatorStandalone : Control
 			row.SetData(roll, nextBet, remaining);
 			row.SetFailProbability(Math.Pow(lossProb, roll) * 100.0);
 
-			nextBet *= multiplyOnLoss;
+			nextBet *= multiplier;
 			roll++;
 		}
 
 		_statusLabel.Text = $"Generated {roll - 1} bets.";
+		if (roll > maxRows && nextBet <= remaining)
+			_statusLabel.Text += $" Sequence truncated at {maxRows} rows.";
 	}
 
 	private static bool TryParsePositive(string text, out double value)
@@ -104,6 +115,18 @@ public partial class MartingaleCalculatorStandalone : Control
 			out value);
 
 		return parsed && value > 0.0;
+	}
+
+	private static bool TryParseNonNegative(string text, out double value)
+	{
+		string normalized = text.Trim().Replace(',', '.');
+		bool parsed = double.TryParse(
+			normalized,
+			NumberStyles.AllowDecimalPoint,
+			CultureInfo.InvariantCulture,
+			out value);
+
+		return parsed && value >= 0.0;
 	}
 
 	private static bool TryParsePercent(string text, out double value)
