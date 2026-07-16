@@ -653,6 +653,16 @@ Net effect after 1–5: natural-feeling, contested flow **whenever the player is
 
 The developer is specifying objectives one at a time; each becomes a subphase here as it is explained and decided.
 
+#### ND.8a — Standalone Martingale Calculator progression parity (✅ DONE, 2026-07-15)
+
+A warm-up polish task outside the auction system. The MainMenu-reachable `MartingaleCalculatorStandalone` was not including the previous bet in each new step: its "Multiply On Loss" field consumed the raw input as a bare multiplier (`nextBet *= input`), while the DiceGame-integrated popup — the one that "works fine" — is always driven by `UpdateFromGameSettings`, which converts the strategy's `IncreasePercent` into `1 + pct/100` before filling the same field. A player thinking in the game's strategy vocabulary (e.g. entering `1` for a +100% increase) therefore got a flat sequence from the standalone instead of a doubling one.
+
+Fix — align the standalone with `ProgressiveBettingStrategy` semantics:
+- Field relabeled **"Increase On Loss %"** (placeholder `100` = classic doubling martingale); node/`%unique` names renamed `MultiplyOnLoss*` → `IncreaseOnLoss*`.
+- `BuildRows` now computes `multiplier = 1 + increaseOnLossPercent / 100` — every losing step keeps the previous bet and adds the configured increase, exactly like the game and the integrated calculator.
+- Input accepts `≥ 0` (`0` = flat betting, matching the game's `IncreasePercent` domain); a `maxRows = 500` safety cap (mirroring the popup's) prevents a flat/slow progression from instantiating an unbounded row list, with a truncation note in the status label.
+- The integrated popup (`Screens/MartingaleCalculator/MartingaleCalculator.cs`) is untouched — its game-context path already had the correct formula, and its manual-input path is unreachable from DiceGame (context is always injected before opening).
+
 - **ND.8a — bots-only bid-flow stagnation** (named, not yet specified): make auctions stay alive without player participation. Diagnosis first (trace-driven, §12.0's suspects), then the chosen lever(s). *Spec pending the developer's walkthrough.*
 - *(further subphases as the developer explains them)*
 
