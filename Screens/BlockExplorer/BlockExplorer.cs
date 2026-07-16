@@ -264,7 +264,8 @@ public partial class BlockExplorer : Control
         // is resolved (before referral / rank systems ship).
         List<Transaction> visible = block.Transactions.Where(t => !IsSelfChangeTransaction(t)).ToList();
         decimal blockFees = visible.Where(t => !t.IsCoinbase).Sum(t => t.Fee);
-        sb.AppendLine($"Transactions: {visible.Count}  |  Fees collected: {blockFees:F8} BTC");
+        sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+            $"Transactions: {visible.Count}  |  Fees collected: {blockFees:F8} BTC"));
         foreach (Transaction tx in visible)
         {
             bool isCoinbase = tx.IsCoinbase;
@@ -272,7 +273,7 @@ public partial class BlockExplorer : Control
             sb.AppendLine($"TxId: {tx.TransactionId}{(isCoinbase ? "  [COINBASE]" : "")}");
             if (!isCoinbase)
             {
-                sb.AppendLine($"Fee: {tx.Fee:F8} BTC");
+                sb.AppendLine(string.Create(CultureInfo.InvariantCulture, $"Fee: {tx.Fee:F8} BTC"));
                 sb.AppendLine($"Inputs ({tx.Inputs.Count}):");
                 foreach (TxInput inp in tx.Inputs)
                     sb.AppendLine($"  {inp.Address}");
@@ -280,7 +281,7 @@ public partial class BlockExplorer : Control
             IReadOnlyList<TxOutput> outs = ExternalOutputs(tx);
             sb.AppendLine($"Outputs ({outs.Count}):");
             foreach (TxOutput txOut in outs)
-                sb.AppendLine($"  {txOut.Address}  {txOut.Amount:F8} BTC");
+                sb.AppendLine(string.Create(CultureInfo.InvariantCulture, $"  {txOut.Address}  {txOut.Amount:F8} BTC"));
         }
         SetLookupResult(sb.ToString());
     }
@@ -412,7 +413,7 @@ public partial class BlockExplorer : Control
             sb.Append($"TxId: {tx.TransactionId}{(isCoinbase ? "  [COINBASE]" : "")}\n");
             if (!isCoinbase)
             {
-                sb.Append($"Fee: {tx.Fee:F8} BTC\n");
+                sb.Append(string.Create(CultureInfo.InvariantCulture, $"Fee: {tx.Fee:F8} BTC\n"));
                 foreach (TxInput inp in tx.Inputs)
                     sb.Append($"From: {inp.Address}\n");
             }
@@ -423,7 +424,7 @@ public partial class BlockExplorer : Control
             IReadOnlyList<TxOutput> outs = ExternalOutputs(tx);
             sb.Append($"Outputs ({outs.Count}):\n");
             foreach (TxOutput txOut in outs)
-                sb.Append($"  {txOut.Address}  {txOut.Amount:F8} BTC\n");
+                sb.Append(string.Create(CultureInfo.InvariantCulture, $"  {txOut.Address}  {txOut.Amount:F8} BTC\n"));
         }
         return sb.ToString().TrimEnd();
     }

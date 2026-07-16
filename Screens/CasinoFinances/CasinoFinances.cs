@@ -223,7 +223,8 @@ public partial class CasinoFinances : Control
 		feeLabel.AddThemeFontSizeOverride("font_size", 20);
 		_feeInput = new LineEdit
 		{
-			PlaceholderText = "0.10000000",
+			PlaceholderText = "0.00000000", // ND.7 — retired the stale 0.1 Step-10-minimum placeholder; the fee row is default-filled with the day's median
+
 			CustomMinimumSize = new Vector2(200, 0)
 		};
 		_feeInput.AddThemeFontSizeOverride("font_size", 20);
@@ -354,7 +355,8 @@ public partial class CasinoFinances : Control
 			// Hide spent/empty (0-balance) non-base addresses by default — never reused, only kept for history.
 			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
 			string tag = isBase ? "[color=aqua]base  [/color]" : "[color=gray]change[/color]";
-			sb.AppendLine($"{tag}  {address}   —   {confirmed:F8} BTC   [color=gray](created {FmtDate(createdMs)})[/color]");
+			sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+				$"{tag}  {address}   —   {confirmed:F8} BTC   [color=gray](created {FmtDate(createdMs)})[/color]"));
 		}
 		if (hidden > 0 && !showEmpty)
 			sb.AppendLine($"[color=gray]… {hidden} empty (spent) address(es) hidden — tick above to show.[/color]");
@@ -428,7 +430,8 @@ public partial class CasinoFinances : Control
 				_          => (isSwap ? "aqua" : "orange", "−", $"sent to {Short(counterparty)}{extra}"),
 			};
 			if (isSwap) desc += " · SWAP";
-			sb.AppendLine($"[color=gray]{FmtDate(unixMs)}[/color]  [color={color}]{sign}{amount:F8} BTC[/color]  {desc}");
+			sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+				$"[color=gray]{FmtDate(unixMs)}[/color]  [color={color}]{sign}{amount:F8} BTC[/color]  {desc}"));
 		}
 		if (sb.Length == 0)
 			sb.AppendLine("[color=gray]No transfers yet.[/color]");
@@ -460,11 +463,11 @@ public partial class CasinoFinances : Control
 			pendingOut += _networkRoot.GetAddressBalanceDetails(address).pendingOutgoing;
 		}
 		_balanceLabel.Text = book.Count > 1
-			? $"Wallet total ({book.Count} addresses):  {total:F8} BTC"
-			: $"Confirmed balance:  {total:F8} BTC";
+			? string.Create(CultureInfo.InvariantCulture, $"Wallet total ({book.Count} addresses):  {total:F8} BTC")
+			: string.Create(CultureInfo.InvariantCulture, $"Confirmed balance:  {total:F8} BTC");
 		_pendingLabel.Visible = pendingOut > 0m;
 		if (pendingOut > 0m)
-			_pendingLabel.Text = $"Pending outgoing:   {pendingOut:F8} BTC";
+			_pendingLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Pending outgoing:   {pendingOut:F8} BTC");
 
 		RefreshBtcReserveInfo();
 
@@ -473,10 +476,10 @@ public partial class CasinoFinances : Control
 
 		if (_currentPassphraseAddress == null) return;
 		(decimal passConfirmed, decimal passPending) = _networkRoot.GetAddressBalanceDetails(_currentPassphraseAddress);
-		_passBalanceLabel.Text = $"Balance:  {passConfirmed:F8} BTC";
+		_passBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Balance:  {passConfirmed:F8} BTC");
 		_passPendingLabel.Visible = passPending > 0m;
 		if (passPending > 0m)
-			_passPendingLabel.Text = $"Pending outgoing:   {passPending:F8} BTC";
+			_passPendingLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Pending outgoing:   {passPending:F8} BTC");
 	}
 
 	// ── BTC Swap Reserve [DEV] (Step 13 / SW.2, D-SW.9) ───────────────────────
@@ -554,14 +557,14 @@ public partial class CasinoFinances : Control
 		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
 		bool active = NetworkFeePolicy.IsActive(gameTime);
 		_feeRow.Visible = active;
-		if (active) _feeInput.Text = NetworkFeePolicy.DefaultFee.ToString("F8");
+		if (active) _feeInput.Text = NetworkFeePolicy.MedianFeeFor(gameTime).ToString("F8", CultureInfo.InvariantCulture); // ND.7 — day median default-fill
 	}
 
 	private void OnFeeInputFocusExited()
 	{
 		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
 		if (!NetworkFeePolicy.IsActive(gameTime)) return;
-		_feeInput.Text = NetworkFeePolicy.ClampOrDefault(TryParseFee(_feeInput.Text)).ToString("F8");
+		_feeInput.Text = NetworkFeePolicy.ClampOrDefaultFor(TryParseFee(_feeInput.Text), gameTime).ToString("F8", CultureInfo.InvariantCulture);
 	}
 
 	private static decimal TryParseFee(string text)
@@ -615,8 +618,8 @@ public partial class CasinoFinances : Control
 		if (NetworkFeePolicy.IsActive(gameTime))
 		{
 			decimal parsed = TryParseFee(_feeInput.Text);
-			fee = NetworkFeePolicy.ClampOrDefault(parsed);
-			_feeInput.Text = fee.ToString("F8");
+			fee = NetworkFeePolicy.ClampOrDefaultFor(parsed, gameTime);
+			_feeInput.Text = fee.ToString("F8", CultureInfo.InvariantCulture);
 		}
 
 		Transaction? tx = _networkRoot.CreateAndBroadcastTransactionToAddress(_sendFromNodeId, recipientAddress, amount, fee);

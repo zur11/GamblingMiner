@@ -332,7 +332,8 @@ public partial class FoundersWallets : Control
 		feeLabel.AddThemeFontSizeOverride("font_size", 20);
 		_feeInput = new LineEdit
 		{
-			PlaceholderText = "0.10000000",
+			PlaceholderText = "0.00000000", // ND.7 — retired the stale 0.1 Step-10-minimum placeholder; the fee row is default-filled with the day's median
+
 			CustomMinimumSize = new Vector2(200, 0)
 		};
 		_feeInput.AddThemeFontSizeOverride("font_size", 20);
@@ -611,7 +612,8 @@ public partial class FoundersWallets : Control
 			string status = confirmed ? "[color=lime]✓ done[/color]" : "[color=yellow]⏳ pending[/color]";
 			string dir = outgoing ? "→ sent to" : "← received from";
 			string shortAddr = counterparty.Length > 14 ? counterparty[..14] + "…" : counterparty;
-			sb.AppendLine($"{status}  [b]{label}[/b]  {dir} {shortAddr}  ({amount:F8} BTC)");
+			sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+				$"{status}  [b]{label}[/b]  {dir} {shortAddr}  ({amount:F8} BTC)"));
 		}
 		_activityLabel.Text = sb.ToString();
 	}
@@ -673,7 +675,8 @@ public partial class FoundersWallets : Control
 
 		bool showEmpty = _founderShowEmptyToggle.ButtonPressed;
 		var sb = new System.Text.StringBuilder();
-		sb.AppendLine($"[b]Wallet total[/b]  ({book.Count} address(es)):  [b]{total:F8} BTC[/b]");
+		sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+			$"[b]Wallet total[/b]  ({book.Count} address(es)):  [b]{total:F8} BTC[/b]"));
 
 		// Satoshi rotates his COINBASE across fresh addresses; Hal keeps one coinbase and rotates only CHANGE
 		// on send (like the player). Label the derived addresses accordingly.
@@ -684,7 +687,8 @@ public partial class FoundersWallets : Control
 			// Hide spent/empty (0-balance) non-base addresses by default — never reused, only kept for history.
 			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
 			string tag = isBase ? "[color=aqua]base    [/color]" : derivedTag;
-			sb.AppendLine($"  {tag}  {address}  —  {confirmed:F8} BTC  [color=gray]({FmtDate(createdMs)})[/color]");
+			sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+				$"  {tag}  {address}  —  {confirmed:F8} BTC  [color=gray]({FmtDate(createdMs)})[/color]"));
 			shown++;
 		}
 		if (hidden > 0) sb.AppendLine($"[color=gray]… {hidden} empty (spent) address(es) hidden — tick to show.[/color]");
@@ -756,7 +760,8 @@ public partial class FoundersWallets : Control
 				_          => (isSwap ? "aqua" : "orange", "−", $"sent to {Short(counterparty)}{extra}"),
 			};
 			if (isSwap) desc += " · SWAP";
-			sb.AppendLine($"[color=gray]{FmtDate(unixMs)}[/color]  [color={color}]{sign}{amount:F8} BTC[/color]  {desc}");
+			sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+				$"[color=gray]{FmtDate(unixMs)}[/color]  [color={color}]{sign}{amount:F8} BTC[/color]  {desc}"));
 		}
 		if (sb.Length == 0)
 			sb.AppendLine("[color=gray]No transfers yet.[/color]");
@@ -783,15 +788,15 @@ public partial class FoundersWallets : Control
 		// round-trip, etc.) are shown SEPARATELY in the Automatic Activity panel, since the founder did not
 		// order them manually (Step 8.2 design decision).
 		decimal available = _networkRoot.GetNodeSpendableBalance(_currentFounder.FounderId);
-		_balanceLabel.Text = $"Available balance:  {available:F8} BTC";
+		_balanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Available balance:  {available:F8} BTC");
 		_pendingLabel.Visible = false; // automatic activity is shown in its own panel, not as a wallet "pending"
 
 		if (_currentPassphraseAddress == null) return;
 		(decimal passConfirmed, decimal passPending) = _networkRoot.GetAddressBalanceDetails(_currentPassphraseAddress);
-		_passBalanceLabel.Text = $"Balance:  {passConfirmed:F8} BTC";
+		_passBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Balance:  {passConfirmed:F8} BTC");
 		_passPendingLabel.Visible = passPending > 0m;
 		if (passPending > 0m)
-			_passPendingLabel.Text = $"Pending outgoing:   {passPending:F8} BTC";
+			_passPendingLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Pending outgoing:   {passPending:F8} BTC");
 	}
 
 	// ── Mode management ───────────────────────────────────────────────────────
@@ -842,14 +847,14 @@ public partial class FoundersWallets : Control
 		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
 		bool active = NetworkFeePolicy.IsActive(gameTime);
 		_feeRow.Visible = active;
-		if (active) _feeInput.Text = NetworkFeePolicy.DefaultFee.ToString("F8");
+		if (active) _feeInput.Text = NetworkFeePolicy.MedianFeeFor(gameTime).ToString("F8", CultureInfo.InvariantCulture); // ND.7 — day median default-fill
 	}
 
 	private void OnFeeInputFocusExited()
 	{
 		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
 		if (!NetworkFeePolicy.IsActive(gameTime)) return;
-		_feeInput.Text = NetworkFeePolicy.ClampOrDefault(TryParseFee(_feeInput.Text)).ToString("F8");
+		_feeInput.Text = NetworkFeePolicy.ClampOrDefaultFor(TryParseFee(_feeInput.Text), gameTime).ToString("F8", CultureInfo.InvariantCulture);
 	}
 
 	private static decimal TryParseFee(string text)
@@ -860,10 +865,10 @@ public partial class FoundersWallets : Control
 		if (!senderNodeId.StartsWith("pass_", StringComparison.Ordinal))
 		{
 			decimal total = _networkRoot.GetNodeSpendableBalance(senderNodeId);
-			return $"Balance: {total:F8} BTC";
+			return string.Create(CultureInfo.InvariantCulture, $"Balance: {total:F8} BTC");
 		}
 		decimal confirmed = _networkRoot.GetAddressBalanceDetails(senderAddress).confirmedBalance;
-		return $"Balance: {confirmed:F8} BTC";
+		return string.Create(CultureInfo.InvariantCulture, $"Balance: {confirmed:F8} BTC");
 	}
 
 	private void OnSendConfirmed()
@@ -903,8 +908,8 @@ public partial class FoundersWallets : Control
 		if (NetworkFeePolicy.IsActive(gameTime))
 		{
 			decimal parsed = TryParseFee(_feeInput.Text);
-			fee = NetworkFeePolicy.ClampOrDefault(parsed);
-			_feeInput.Text = fee.ToString("F8");
+			fee = NetworkFeePolicy.ClampOrDefaultFor(parsed, gameTime);
+			_feeInput.Text = fee.ToString("F8", CultureInfo.InvariantCulture);
 		}
 
 		Transaction? tx = _networkRoot.CreateAndBroadcastTransactionToAddress(_sendFromNodeId, recipientAddress, amount, fee);

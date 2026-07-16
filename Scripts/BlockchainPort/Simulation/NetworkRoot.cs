@@ -41,16 +41,19 @@ public partial class NetworkRoot : Node
     // account/balance chain has no input→output (UTXO) linkage, so it cannot be replayed into a UTXO set;
     // on a version change we wipe the chain + clock + financial state and re-bootstrap a fresh world (the
     // "clean reset" decision). Increment this whenever the persisted Transaction/Block shape changes.
-    private const int WorldFormatVersion = 2;
+    // v3 (ND.7, D-ND7.6): historical fee replay — fee SEMANTICS are world-defining (an existing chain
+    // carries flat-0.1 fees from 2009-04-26 that the Market-Birth median/mean policy could never
+    // produce, and the bootstrap regenerates differently), so the fee-era switch rides the same
+    // clean-reset mechanism even though the serialized shape itself is unchanged.
+    private const int WorldFormatVersion = 3;
     private const string WorldVersionPath = "user://world_format_version.txt";
     // Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
     // A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
     // chain tip paired with a 2010 fee-activation date), so a tag mismatch triggers the same clean reset
     // as a format-version bump. See ResetWorldIfIncompatible.
     private const string WorldTimelinePath = "user://world_timeline.stamp";
-    // Casino community pool: fixed per-payout transaction fee (lowest available to the casino),
-    // deducted from each contributor's gross share before it is sent (Phase 2).
-    private const decimal CasinoTxFee = 0.1m;
+    // (CasinoTxFee = 0.1 retired at ND.7 — pool payouts now pay the day's replayed MEDIAN fee,
+    // NetworkFeePolicy.MedianFeeAt, literally "the lowest available to the casino" — D-ND7.3/7.8.)
 
     // Blocks a miner bot must wait AFTER its own first mined block before it starts donating BTC —
     // measured per bot, so it works for bots introduced gradually (not an absolute chain index). Governs
@@ -86,25 +89,81 @@ public partial class NetworkRoot : Node
     // D-ND6.4 — never derive them from a formula. Tiers 1-3 have no entry (the satisfied state,
     // D-ND6.7a). Tier 10 has no entry either (D-ND6.4 amendment, 2026-07-12): a bot whose BEST slot is
     // tier 10 necessarily holds the smallest slot of a full pool, which the self-eviction guard
-    // (D-ND6.7b) excludes before any roll ever happens — the sequence's next value (89) was removed as
-    // dead weight by developer decision; restore `[10] = 89` if that guard is ever relaxed.
+    // (D-ND6.7b) excludes before any roll ever happens; restore a tier-10 entry (next Fibonacci step)
+    // if that guard is ever relaxed.
+    // This NORMAL table governs a pool that has reached EarlyRushSlotThreshold (7) occupied tracked slots
+    // and whose rolling window is OUTSIDE its final-week urgency phase (ND.6e below).
     private static readonly IReadOnlyDictionary<int, int> ReBidProbabilityPercentByTier = new Dictionary<int, int>
     {
         [4] = 5, [5] = 8, [6] = 13, [7] = 21, [8] = 34, [9] = 55,
     };
+    // ND.6e (2026-07-15) — Option B, the URGENCY ladder (D-ND6.10's pre-approved "auctions too quiet/long"
+    // lever). Calibration finding from the continuing 2011 playtest: the early rush fixed the young-pool
+    // stall, but once pools matured to NORMAL mode the calm 5%/8%/13% shallow tiers throttled re-bids
+    // again — with 3 player-led mature pools the trace tail (blocks ~1005-1119) was 79 roll-declined vs
+    // 20 donated, 66 of the declines NORMAL tier-4/5/6 rolls, affordability never the constraint. Rather
+    // than raising the whole NORMAL table, each tier shifts ONE Fibonacci level up only while the pool's
+    // rolling window is inside its FINAL 7 in-game days — challenges cluster into an organic late-window
+    // "sniping" phase, and an accepted raise (which resets the 20-day window, D-ND4b.1) drops the pool
+    // back to the calm table. EARLY-RUSH pools ignore urgency (their table is steeper than this one at
+    // every tier it has).
+    private const long AuctionUrgencyWindowMs = 7L * 86_400_000L;
+    private static readonly IReadOnlyDictionary<int, int> UrgentReBidProbabilityPercentByTier = new Dictionary<int, int>
+    {
+        [4] = 8, [5] = 13, [6] = 21, [7] = 34, [8] = 55, [9] = 89,
+    };
+    // ND.6e — shared urgency test (the roll + the RecruitableBiddingDetails mode label read the same
+    // rule). windowCloseUnixMs == 0 = no leading bid yet ⇒ never urgent (first bids are deterministic).
+    public static bool IsAuctionInUrgencyWindow(long windowCloseUnixMs, long nowMs)
+        => windowCloseUnixMs != 0 && windowCloseUnixMs - nowMs <= AuctionUrgencyWindowMs;
+    // ND.6d (2026-07-14) — the EARLY PROBABILITY RUSH table. Calibration finding from the 2011 playtest:
+    // once the player's cheap +1-satoshi retakes push a bot's best slot up to tier 4-5, the normal 5%/8%
+    // roll left bots declining ~95% of the time and the player winning every referral uncontested (the
+    // trace showed pure roll-declined at tier 4/5, spendable ~1000 BTC — affordability was never the
+    // constraint). While a pool holds FEWER than EarlyRushSlotThreshold (7) occupied slots the shallow
+    // tiers use this much steeper curve so casino-bots contest young pools hard; at 7 slots the pool
+    // reverts to the NORMAL table above. A pool in early-rush can hold AT MOST 6 slots (a 7th slot IS the
+    // mode switch), so a best-slot roll can only ever land on tier 4/5/6 here — tiers 7+ need no entry.
+    private const int EarlyRushSlotThreshold = 7;
+    private static readonly IReadOnlyDictionary<int, int> EarlyRushReBidProbabilityPercentByTier = new Dictionary<int, int>
+    {
+        [4] = 34, [5] = 55, [6] = 89,
+    };
     // D-ND6.7a — a bot holding any top-3 tracked slot in a pool is "satisfied" there: never a re-bid target.
     private const int SatisfiedTopTierCount = 3;
+
+    // ND.6d — the single source of truth for a slot's re-bid probability, shared by the roll in
+    // TryBuildCasinoBotBid and the RecruitableBiddingDetails UI label (via ReBidProbabilityLabel below).
+    // occupiedSlots (the pool's current tracked-slot count) selects early-rush (<7) vs normal (≥7);
+    // urgent (ND.6e — final 7 window days) shifts a NORMAL pool one Fibonacci level up. 0 for any tier
+    // with no entry (tiers 1-3 satisfied, tier 10, or an out-of-range tier).
+    private static int ReBidProbabilityPercentFor(int tier, int occupiedSlots, bool urgent)
+    {
+        IReadOnlyDictionary<int, int> table = occupiedSlots < EarlyRushSlotThreshold
+            ? EarlyRushReBidProbabilityPercentByTier
+            : (urgent ? UrgentReBidProbabilityPercentByTier : ReBidProbabilityPercentByTier);
+        return table.TryGetValue(tier, out int pct) ? pct : 0;
+    }
+
+    // ND.6d — the display string shown next to each tracked-pool slot in RecruitableBiddingDetails.
+    // "satisfied" for the top-3 (secure by the D-ND6.7a rule, never a re-bid), "NN%" for a ladder tier,
+    // "0%" for the self-eviction-guarded tier 10 of a full pool, and "" where a percentage is meaningless.
+    public static string ReBidProbabilityLabel(int tier, int occupiedSlots, bool urgent)
+    {
+        if (tier <= SatisfiedTopTierCount) return "satisfied";
+        if (occupiedSlots >= MaxTrackedDonations && tier == MaxTrackedDonations) return "0%";
+        int pct = ReBidProbabilityPercentFor(tier, occupiedSlots, urgent);
+        return pct > 0 ? pct + "%" : string.Empty; // integer percent — culture-invariant by construction
+    }
     // D-ND6.8 — a bid's ENTIRE outgoing amount (required principal + D-ND4b.11 additive tail + network
     // fee) may never commit more than this fraction of the bot's SPENDABLE balance (mature/confirmed —
     // GetAddressSpendableBalance). Replaces the plain `spendable ≥ required + fee` affordability check.
     private const decimal MaxBidBalanceFraction = 0.5m;
     private const decimal MinSendFractionDecimal = 0.10m;
     private const decimal MaxSendFractionDecimal = 0.40m;
-    // Step 4b.2: bot-chosen fee range (BTC), collected into the winning miner's coinbase. Governs
-    // TryCastSellFlow's ordinary sends only — the ND.4b casino-bot cycle pins a fixed NetworkFeePolicy.
-    // MinFee instead (D-ND4b.5 — a randomized 0.1-1.0 BTC fee would be nonsensical on a 0.1 BTC bid).
-    private const decimal MinBotFeeBtc = 0.1m;
-    private const decimal MaxBotFeeBtc = 1.0m;
+    // (Step 4b.2's randomized MinBotFeeBtc/MaxBotFeeBtc 0.1–1.0 band retired at ND.7 — the cast
+    // sell-flow now pays the day's replayed MEAN fee (they ARE the network's average activity) and
+    // every other automated participant the day's MEDIAN — D-ND7.3/7.8.)
     // Referral auction — Step 14 EB.2 (D-EB.4/5/6/7), pool retuned at round 3 (D-EB.8, 2026-07-09);
     // window shortened + bidding mechanics fully reworked into an ascending auction at ND.4b (D-ND4b.1,
     // 2026-07-10). Non-miners are introduced along the historical active-address curve from Market Birth
@@ -686,7 +745,7 @@ public partial class NetworkRoot : Node
             foreach (NodeHardwareState n in allNodes.Where(n => n.CasinoPoolCredits > 0))
             {
                 decimal share = Scripts.Finance.Money.Normalize(poolAmount * n.CasinoPoolCredits / casinoTotal);
-                decimal serviceFee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp) ? CasinoTxFee : 0m;
+                decimal serviceFee = NetworkFeePolicy.MedianFeeAt(block.Timestamp); // 0 pre-birth (ND.7)
                 decimal net = Scripts.Finance.Money.Normalize(share - serviceFee);
                 if (net <= 0m) continue; // reward too small to cover the tx fee → skip (OQ-2)
 
@@ -752,7 +811,7 @@ public partial class NetworkRoot : Node
     // land in one tx whose change is one pending output instead of five. Returns true on success.
     private static bool DistributePoolEventAsSingleTx(NodeAgent casino, CasinoPoolRewardEvent evt, long blockTimestampMs)
     {
-        decimal perFee    = NetworkFeePolicy.IsActiveByTimestamp(blockTimestampMs) ? CasinoTxFee : 0m;
+        decimal perFee    = NetworkFeePolicy.MedianFeeAt(blockTimestampMs); // 0 pre-birth (ND.7)
         decimal totalAmt  = evt.Payouts.Sum(p => p.NetAmount);
         decimal totalFee  = perFee * evt.Payouts.Count;
         decimal need      = totalAmt + totalFee;
@@ -855,7 +914,7 @@ public partial class NetworkRoot : Node
         }
 
         int tipIndex = chain[^1].Index;
-        decimal perFee = NetworkFeePolicy.IsActiveByTimestamp(chain[^1].Timestamp) ? CasinoTxFee : 0m;
+        decimal perFee = NetworkFeePolicy.MedianFeeAt(chain[^1].Timestamp); // 0 pre-birth (ND.7)
 
         // Identity test for "this is our pool block's coinbase": it PAYS a casino-owned address (casino
         // coinbases always pay the base address — RotateCoinbaseAddress = false). More robust than
@@ -1074,7 +1133,7 @@ public partial class NetworkRoot : Node
         // D-ND5.8 / OQ-ND5.3 — sweep the tracked pool's TOTAL BTC to the casino, fee deducted FROM the
         // total (casino receives windowTotal − fee — the accepted, documented shortfall).
         decimal windowTotalBtc = Scripts.Finance.Money.Normalize(summary.TrackedDonations.Sum(d => d.AmountBtc));
-        decimal fee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp) ? NetworkFeePolicy.MinFee : 0m;
+        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp); // 0 pre-birth (ND.7)
         decimal sweepAmount = Scripts.Finance.Money.Normalize(windowTotalBtc - fee);
 
         bool sweepSucceeded = false;
@@ -1291,7 +1350,9 @@ public partial class NetworkRoot : Node
     // consumes its once-per-block eligibility.
     private static Transaction? TryCasinoBotDonateOnce(Block block, List<NonMinerDonationSummary> priorityTargets, HashSet<string> usedBotIds, int slot)
     {
-        decimal fee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp) ? NetworkFeePolicy.MinFee : 0m;
+        // D-ND7.7 — only the network fee ATTACHED to bid txs replays the daily median (it was
+        // MinFee-pinned before, D-ND4b.5's rationale carries over); bid AMOUNTS stay untouched.
+        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
 
         var visitedThisSlot = new HashSet<string>();
         int hop = 0; // 0 = the slot's fairly-drawn first bot; >0 = D-ND6.9 affordability-cascade substitutes
@@ -1306,7 +1367,7 @@ public partial class NetworkRoot : Node
             visitedThisSlot.Add(record.NodeId);
             if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? sender)) continue; // registry hole — pass the slot on
 
-            CasinoBotSlotOutcome outcome = TryBuildCasinoBotBid(priorityTargets, sender, fee, out Transaction? tx, out CasinoBotBidTrace trace);
+            CasinoBotSlotOutcome outcome = TryBuildCasinoBotBid(priorityTargets, sender, fee, block.Timestamp, out Transaction? tx, out CasinoBotBidTrace trace);
             AppendCasinoBotBidTrace(block, slot, hop, sender.NodeId, outcome, trace);
             hop++;
             if (outcome == CasinoBotSlotOutcome.Donated && tx != null)
@@ -1340,7 +1401,7 @@ public partial class NetworkRoot : Node
     //      tiers 4 and 7 rolls the 4th tier's 5%, never the 7th's 21%). A failed roll = no donation this
     //      slot, never re-rolled against another slot or pool. Unparticipated targets donate
     //      deterministically (first-time bids need no ladder, as before ND.6).
-    private static CasinoBotSlotOutcome TryBuildCasinoBotBid(List<NonMinerDonationSummary> priorityTargets, NodeAgent sender, decimal fee, out Transaction? tx, out CasinoBotBidTrace trace)
+    private static CasinoBotSlotOutcome TryBuildCasinoBotBid(List<NonMinerDonationSummary> priorityTargets, NodeAgent sender, decimal fee, long nowMs, out Transaction? tx, out CasinoBotBidTrace trace)
     {
         tx = null;
         string botAddress = sender.WalletAddress;
@@ -1351,7 +1412,7 @@ public partial class NetworkRoot : Node
         // Steps 1+2 — qualifying pools with this bot's own slot stats (tiers are 1-based positions in
         // the pool's value order; a stable sort keeps ties in arrival order — consistent with ND.5's
         // tie-never-evicts).
-        var qualifying = new List<(NonMinerDonationSummary target, int ownSlotCount, int bestTier, string ownTiersJoined)>();
+        var qualifying = new List<(NonMinerDonationSummary target, int ownSlotCount, int bestTier, int occupiedSlots, string ownTiersJoined)>();
         foreach (NonMinerDonationSummary target in priorityTargets)
         {
             List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
@@ -1364,12 +1425,13 @@ public partial class NetworkRoot : Node
             if (ownTiers.Count > 0 && ownTiers[0] <= SatisfiedTopTierCount) continue; // D-ND6.7a — satisfied (ownTiers is ascending by construction)
             if (slotsByValue.Count >= MaxTrackedDonations && ownTiers.Contains(slotsByValue.Count)) continue; // D-ND6.7b — self-eviction guard
 
-            qualifying.Add((target, ownTiers.Count, ownTiers.Count == 0 ? 0 : ownTiers[0], string.Join("|", ownTiers)));
+            // ND.6d — slotsByValue.Count (the pool's current occupied slots) selects early-rush (<7) vs normal (≥7) for the roll below.
+            qualifying.Add((target, ownTiers.Count, ownTiers.Count == 0 ? 0 : ownTiers[0], slotsByValue.Count, string.Join("|", ownTiers)));
         }
         if (qualifying.Count == 0) return CasinoBotSlotOutcome.NoQualifyingTarget;
 
         // Step 3 — the affordability walk over the bot-centric order.
-        foreach ((NonMinerDonationSummary target, int ownSlotCount, int bestTier, string ownTiersJoined) in qualifying.OrderBy(q => q.ownSlotCount))
+        foreach ((NonMinerDonationSummary target, int ownSlotCount, int bestTier, int occupiedSlots, string ownTiersJoined) in qualifying.OrderBy(q => q.ownSlotCount))
         {
             decimal leadingAmount = target.LeadingBidUnixMs == 0 ? 0m : target.LeadingDonorTotal;
             decimal requiredAmount = target.LeadingBidUnixMs == 0 ? MinBidBtc : leadingAmount + RaiseMin(leadingAmount);
@@ -1380,11 +1442,15 @@ public partial class NetworkRoot : Node
             trace.OwnTiersInTarget = ownTiersJoined;
             trace.RequiredBtc = requiredAmount;
 
-            // Step 4 — the single ladder roll.
+            // Step 4 — the single ladder roll (ND.6d: mode-aware — early-rush <7 slots vs normal ≥7;
+            // ND.6e: a NORMAL pool inside its final 7 window days rolls the urgency table instead — a
+            // participated pool always has a leading bid, so WindowCloseUnixMs is set here).
             if (ownSlotCount > 0)
             {
-                if (!ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int probabilityPercent))
-                    return CasinoBotSlotOutcome.RollDeclined; // structurally unreachable — tiers 1-3 (satisfied) and tier 10 (best-slot-10 ⇒ holds the 10th ⇒ self-eviction guard) are both excluded above
+                bool urgent = IsAuctionInUrgencyWindow(target.WindowCloseUnixMs, nowMs);
+                int probabilityPercent = ReBidProbabilityPercentFor(bestTier, occupiedSlots, urgent);
+                if (probabilityPercent <= 0)
+                    return CasinoBotSlotOutcome.RollDeclined; // structurally unreachable — tiers 1-3 (satisfied) and tier 10 (best-slot-10 ⇒ holds the 10th ⇒ self-eviction guard) are both excluded above; early-rush caps at tier 6
                 trace.RolledTier = bestTier;
                 trace.RolledProbabilityPercent = probabilityPercent;
                 if (Random.Shared.Next(100) >= probabilityPercent)
@@ -1546,10 +1612,9 @@ public partial class NetworkRoot : Node
         decimal sendAmount = Math.Round(spendable * fraction, 8);
         if (sendAmount <= 0m) return null;
 
-        // Step 4b.2: attach a sender-chosen fee — only after network fee activation (P10.6).
-        decimal fee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp)
-            ? Math.Round(MinBotFeeBtc + (decimal)Random.Shared.NextDouble() * (MaxBotFeeBtc - MinBotFeeBtc), 8)
-            : 0m;
+        // D-ND7.3 — the cast sell-flow pays the day's replayed MEAN fee (the cast IS the network's
+        // average activity). 0 pre-birth.
+        decimal fee = NetworkFeePolicy.MeanFeeAt(block.Timestamp);
         if (sendAmount + fee > spendable) return null; // must cover amount + fee
 
         string recipientAddress = recipientPool[Random.Shared.Next(recipientPool.Count)];
@@ -1583,9 +1648,7 @@ public partial class NetworkRoot : Node
             decimal sendAmount = Math.Round(spendable * fraction, 8);
             if (sendAmount <= 0m) continue;
 
-            decimal fee = NetworkFeePolicy.IsActiveByTimestamp(block.Timestamp)
-                ? Math.Round(MinBotFeeBtc + (decimal)Random.Shared.NextDouble() * (MaxBotFeeBtc - MinBotFeeBtc), 8)
-                : 0m;
+            decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp); // D-ND7.3 — median, 0 pre-birth
             if (sendAmount + fee > spendable) continue;
 
             BotWalletRecord recipient = holders[Random.Shared.Next(holders.Count)];
@@ -1791,7 +1854,10 @@ public partial class NetworkRoot : Node
         EnsureInitialized();
         foreach (NodeAgent node in SharedNodesById.Values)
         {
-            if (node.WalletAddress == address)
+            // Base address OR any derived address the node's wallet owns (change rotation / Satoshi's
+            // coinbase spread) — an address stays owned forever, so naming the node is always right.
+            if (node.WalletAddress == address
+                || (node.ReceiveWallet?.OwnedAddresses.Contains(address) ?? false))
             {
                 return node.NodeId;
             }
@@ -1847,7 +1913,7 @@ public partial class NetworkRoot : Node
             .ToDictionary(g => g.Key, g => Scripts.Finance.Money.Normalize(g.Sum(d => d.AmountBtc) * closingPrice.Value));
 
         decimal windowTotalBtc = Scripts.Finance.Money.Normalize(summary.TrackedDonations.Sum(d => d.AmountBtc));
-        decimal fee = NetworkFeePolicy.IsActiveByTimestamp(closingBlock.Timestamp) ? NetworkFeePolicy.MinFee : 0m;
+        decimal fee = NetworkFeePolicy.MedianFeeAt(closingBlock.Timestamp); // 0 pre-birth (ND.7)
 
         return new AuctionSettlementSummary
         {
@@ -1945,6 +2011,17 @@ public partial class NetworkRoot : Node
         }
 
         SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player);
+
+        // Identity is resolved BEFORE the chain walk so the player's donations can be canonicalized to
+        // the base address as they are recorded (2026-07-14 playtest fix): a bid whose coin selection
+        // spent a derived CHANGE-address UTXO carries that change address in Inputs[0] (the tx.Sender
+        // shim), and recording it raw made the same player appear as a second, unnamed donor — raw
+        // address in Enroll Mode / details rows, split DonorCount, split settlement payout rows. All
+        // mechanics already treated those bids as the player (qualification, the ND.4d one-satoshi
+        // floor, D-ND5.7 payout routing — each checks the full playerAddresses set), so this only
+        // unifies the recorded identity. Single-address participants (bot_1..4) need no equivalent.
+        (HashSet<string> playerAddresses, Dictionary<string, string> botNodeIdByAddress) = BuildAuctionBidderIdentity(player);
+
         long seq = 0;
         if (player is not null)
         {
@@ -1958,7 +2035,8 @@ public partial class NetworkRoot : Node
                     // same-block tie-break without any new persisted/schema field.
                     if (donations.TryGetValue(tx.Recipient, out List<(string, decimal, long, long)>? list))
                     {
-                        list.Add((tx.Sender, tx.Amount, block.Timestamp, seq));
+                        string donor = playerAddresses.Contains(tx.Sender) ? player.WalletAddress : tx.Sender;
+                        list.Add((donor, tx.Amount, block.Timestamp, seq));
                     }
                     seq++;
                 }
@@ -1978,8 +2056,8 @@ public partial class NetworkRoot : Node
         // bots have no ReceiveWallet (OQ-8.2 — no stored seed), so only WalletAddress applies.
         // ND.4d — playerAddresses is split out from qualifyingBidders so the ratchet walk below can tell
         // WHO is bidding: the player's own raises clear at OneSatoshi over the leader, everyone else's
-        // (the casino-bots) still need the full RaiseMin/RaiseMax jump.
-        (HashSet<string> playerAddresses, Dictionary<string, string> botNodeIdByAddress) = BuildAuctionBidderIdentity(player);
+        // (the casino-bots) still need the full RaiseMin/RaiseMax jump. (The identity sets themselves
+        // are built above the chain walk, where the player-donor canonicalization needs them.)
         var qualifyingBidders = new HashSet<string>(playerAddresses);
         qualifyingBidders.UnionWith(botNodeIdByAddress.Keys);
 

@@ -1,5 +1,7 @@
 # P10 — Network Fee Activation — Implementation Plan
 
+> ⚠ **SUPERSEDED BY STEP 14 ND.7 — Historical Fee Replay (2026-07-13).** The flat fee era this plan built (activation 2009-04-26, `DefaultFee/MinFee/MaxFee = 0.1/0.1/1.0`) is **retired**: the fee era now begins at Market Birth (2010-07-18), data-driven, and every fee on the network replays the real daily historical band (median/mean/max) from the network dataset. The legacy consts and `TimelineConfig.FeeActivationLocal` (D-13.9) are deleted; `WorldFormatVersion` bumped to 3. This plan remains as the historical record of the fee *plumbing* (fee rows in the four send panels, per-tx fee collection, backend gates), which is exactly what the replay now feeds. See `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §10.
+
 **Status**: ✅ **PHASES 10.1–10.6 DONE** — branch `network-fee-activation`. Phase 10.7 (docs) completed 2026-06-30. See §5 for the phase checklist.
 
 **Scope**: Implements the "whole-network fee-free before ~2009-04-26, all participants pay after" rule

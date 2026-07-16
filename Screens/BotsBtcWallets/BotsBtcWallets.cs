@@ -151,7 +151,7 @@ public partial class BotsBtcWallets : Control
 	{
 		string addr = TruncateAddress(bot.Address);
 		decimal balance = _networkRoot.GetAddressBalanceDetails(bot.Address).confirmedBalance;
-		return $"{bot.NodeId,-14} {addr}  {balance:F8} BTC";
+		return string.Create(CultureInfo.InvariantCulture, $"{bot.NodeId,-14} {addr}  {balance:F8} BTC");
 	}
 
 	private void RefreshBotListBalances()
@@ -315,7 +315,8 @@ public partial class BotsBtcWallets : Control
 
 		_feeInput = new LineEdit
 		{
-			PlaceholderText = "0.10000000",
+			PlaceholderText = "0.00000000", // ND.7 — retired the stale 0.1 Step-10-minimum placeholder; the fee row is default-filled with the day's median
+
 			CustomMinimumSize = new Vector2(180, 0)
 		};
 		_feeInput.FocusExited += OnFeeInputFocusExited;
@@ -337,10 +338,10 @@ public partial class BotsBtcWallets : Control
 		_addressLabel.Text = $"Address: {bot.Address}";
 
 		(decimal confirmed, decimal pendingOut) = _networkRoot.GetAddressBalanceDetails(bot.Address);
-		_confirmedBalanceLabel.Text = $"Confirmed balance:  {confirmed:F8} BTC";
+		_confirmedBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Confirmed balance:  {confirmed:F8} BTC");
 		_pendingOutgoingLabel.Visible = pendingOut > 0m;
 		if (pendingOut > 0m)
-			_pendingOutgoingLabel.Text = $"Pending outgoing:   {pendingOut:F8} BTC";
+			_pendingOutgoingLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Pending outgoing:   {pendingOut:F8} BTC");
 
 		// Mining stats
 		_miningStatsSection.Visible = isMiner;
@@ -348,7 +349,7 @@ public partial class BotsBtcWallets : Control
 		{
 			var (mined, totalBtc) = GetMiningStats(bot.Address);
 			_blocksMined.Text = $"Blocks mined:      {mined}";
-			_totalBtcMinedLabel.Text = $"Total BTC mined:   {totalBtc:F8} BTC";
+			_totalBtcMinedLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Total BTC mined:   {totalBtc:F8} BTC");
 		}
 
 		// Wallet status + dev controls
@@ -406,7 +407,8 @@ public partial class BotsBtcWallets : Control
 			string counterpart = tx.Sender == BlockchainService.CoinbaseSender
 				? "coinbase"
 				: isIncoming ? TruncateAddress(tx.Sender) : TruncateAddress(tx.Recipient);
-			sb.AppendLine($"{sign}{tx.Amount:F8} BTC  block #{blockIndex}  {counterpart}  [{txIdShort}]");
+			sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+				$"{sign}{tx.Amount:F8} BTC  block #{blockIndex}  {counterpart}  [{txIdShort}]"));
 		}
 		_transactionsLabel.Text = sb.ToString().TrimEnd();
 	}
@@ -515,8 +517,8 @@ public partial class BotsBtcWallets : Control
 		if (NetworkFeePolicy.IsActive(gameTime))
 		{
 			decimal parsed = TryParseFee(_feeInput.Text);
-			fee = NetworkFeePolicy.ClampOrDefault(parsed);
-			_feeInput.Text = fee.ToString("F8");
+			fee = NetworkFeePolicy.ClampOrDefaultFor(parsed, gameTime);
+			_feeInput.Text = fee.ToString("F8", CultureInfo.InvariantCulture);
 		}
 
 		Transaction? tx = _networkRoot.CreateAndBroadcastTransactionToAddress(_selectedBot.NodeId, recipientAddress, amount, fee);
@@ -541,14 +543,14 @@ public partial class BotsBtcWallets : Control
 		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
 		bool active = NetworkFeePolicy.IsActive(gameTime);
 		_feeRow.Visible = active;
-		if (active) _feeInput.Text = NetworkFeePolicy.DefaultFee.ToString("F8");
+		if (active) _feeInput.Text = NetworkFeePolicy.MedianFeeFor(gameTime).ToString("F8", CultureInfo.InvariantCulture); // ND.7 — day median default-fill
 	}
 
 	private void OnFeeInputFocusExited()
 	{
 		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
 		if (!NetworkFeePolicy.IsActive(gameTime)) return;
-		_feeInput.Text = NetworkFeePolicy.ClampOrDefault(TryParseFee(_feeInput.Text)).ToString("F8");
+		_feeInput.Text = NetworkFeePolicy.ClampOrDefaultFor(TryParseFee(_feeInput.Text), gameTime).ToString("F8", CultureInfo.InvariantCulture);
 	}
 
 	private static decimal TryParseFee(string text)

@@ -36,11 +36,10 @@ public static class TimelineConfig
 	public static readonly DateTime PlayerStartDayLocal =
 		Shift(new DateTime(2009, 3, 21, 0, 0, 0, DateTimeKind.Local));
 
-	// D-13.9 — the plan's one deliberate functional divergence: alt-timeline network fees activate on the
-	// landing/market-open day itself, NOT a uniform +484 shift of 2009-04-26 (which would land 2010-08-23).
-	// Canon (DevAltTimeline == false) is untouched — this reads exactly 2009-04-26 as before.
-	public static readonly DateTime FeeActivationLocal =
-		DevAltTimeline ? PlayerStartDayLocal : new DateTime(2009, 4, 26, 0, 0, 0, DateTimeKind.Local);
+	// D-13.9's FeeActivationLocal special case (alt-timeline fees activating on the landing day) was
+	// ABSORBED by ND.7 (D-ND7.1): the fee era now begins at Market Birth, data-driven from the fee
+	// schedule's own first replayed day (NetworkFeePolicy.SetFeeSchedule) — the alt timeline lands on
+	// 2010-07-18, so "fees begin at Market Birth" satisfies it naturally, with no special case left.
 
 	// Step 14 (EB.1, §5.1) — DEV entry-year bootstrap generator. UNLIKE DevAltTimeline (which MOVES
 	// genesis and the whole founder crew forward), this leaves genesis and the founders at their true

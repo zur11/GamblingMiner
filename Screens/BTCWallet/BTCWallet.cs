@@ -252,7 +252,8 @@ public partial class BTCWallet : Control
 		feeLabel.AddThemeFontSizeOverride("font_size", 22);
 		_feeInput = new LineEdit
 		{
-			PlaceholderText = "0.10000000",
+			PlaceholderText = "0.00000000", // ND.7 — the fee row is always default-filled with the day's median; the old 0.1 placeholder was a retired Step-10 minimum
+
 			CustomMinimumSize = new Vector2(220, 0)
 		};
 		_feeInput.AddThemeFontSizeOverride("font_size", 22);
@@ -424,7 +425,8 @@ public partial class BTCWallet : Control
 			if (!showEmpty && confirmed == 0m && !isBase) { hidden++; continue; }
 			// Use color-word tags, never literal "[base]" — square brackets are BBCode tags in a RichTextLabel.
 			string tag = isBase ? "[color=aqua]base  [/color]" : "[color=gray]change[/color]";
-			sb.AppendLine($"{tag}  {address}   —   {confirmed:F8} BTC   [color=gray](created {FmtDate(createdMs)})[/color]");
+			sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+				$"{tag}  {address}   —   {confirmed:F8} BTC   [color=gray](created {FmtDate(createdMs)})[/color]"));
 		}
 		if (hidden > 0 && !showEmpty)
 			sb.AppendLine($"[color=gray]… {hidden} empty (spent) address(es) hidden — tick above to show.[/color]");
@@ -500,7 +502,8 @@ public partial class BTCWallet : Control
 				_          => (isSwap ? "aqua" : "orange", "−", $"sent to {Short(counterparty)}{extra}"),
 			};
 			if (isSwap) desc += " · SWAP";
-			sb.AppendLine($"[color=gray]{FmtDate(unixMs)}[/color]  [color={color}]{sign}{amount:F8} BTC[/color]  {desc}");
+			sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+				$"[color=gray]{FmtDate(unixMs)}[/color]  [color={color}]{sign}{amount:F8} BTC[/color]  {desc}"));
 		}
 		if (sb.Length == 0)
 			sb.AppendLine("[color=gray]No transfers yet.[/color]");
@@ -543,11 +546,11 @@ public partial class BTCWallet : Control
 		}
 
 		_baseBalanceLabel.Text = book.Count > 1
-			? $"Wallet total ({book.Count} addresses): {total:F8} BTC"
-			: $"Balance: {total:F8} BTC";
+			? string.Create(CultureInfo.InvariantCulture, $"Wallet total ({book.Count} addresses): {total:F8} BTC")
+			: string.Create(CultureInfo.InvariantCulture, $"Balance: {total:F8} BTC");
 		_basePendingLabel.Visible = pendingOut > 0m;
 		if (pendingOut > 0m)
-			_basePendingLabel.Text = $"Pending outgoing: {pendingOut:F8} BTC";
+			_basePendingLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Pending outgoing: {pendingOut:F8} BTC");
 
 		UpdateValuationLabel(total);
 
@@ -557,10 +560,10 @@ public partial class BTCWallet : Control
 		if (_currentMode == WalletMode.PassphraseUnlocked && !string.IsNullOrEmpty(_currentPassphraseAddress))
 		{
 			(decimal pConfirmed, decimal pPending) = _networkRoot.GetAddressBalanceDetails(_currentPassphraseAddress);
-			_passphraseBalanceLabel.Text = $"Balance: {pConfirmed:F8} BTC";
+			_passphraseBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Balance: {pConfirmed:F8} BTC");
 			_passphrasePendingLabel.Visible = pPending > 0m;
 			if (pPending > 0m)
-				_passphrasePendingLabel.Text = $"Pending outgoing: {pPending:F8} BTC";
+				_passphrasePendingLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Pending outgoing: {pPending:F8} BTC");
 		}
 	}
 
@@ -693,14 +696,14 @@ public partial class BTCWallet : Control
 		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
 		bool active = NetworkFeePolicy.IsActive(gameTime);
 		_feeRow.Visible = active;
-		if (active) _feeInput.Text = NetworkFeePolicy.DefaultFee.ToString("F8");
+		if (active) _feeInput.Text = NetworkFeePolicy.MedianFeeFor(gameTime).ToString("F8", CultureInfo.InvariantCulture); // ND.7 — day median default-fill
 	}
 
 	private void OnFeeInputFocusExited()
 	{
 		DateTime gameTime = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.MinValue;
 		if (!NetworkFeePolicy.IsActive(gameTime)) return;
-		_feeInput.Text = NetworkFeePolicy.ClampOrDefault(TryParseFee(_feeInput.Text)).ToString("F8");
+		_feeInput.Text = NetworkFeePolicy.ClampOrDefaultFor(TryParseFee(_feeInput.Text), gameTime).ToString("F8", CultureInfo.InvariantCulture);
 	}
 
 	private static decimal TryParseFee(string text)
@@ -711,10 +714,10 @@ public partial class BTCWallet : Control
 		if (senderNodeId == "player")
 		{
 			decimal total = _networkRoot.GetNodeSpendableBalance("player");
-			return $"Balance: {total:F8} BTC";
+			return string.Create(CultureInfo.InvariantCulture, $"Balance: {total:F8} BTC");
 		}
 		decimal confirmed = _networkRoot.GetAddressBalanceDetails(senderAddress).confirmedBalance;
-		return $"Balance: {confirmed:F8} BTC";
+		return string.Create(CultureInfo.InvariantCulture, $"Balance: {confirmed:F8} BTC");
 	}
 
 	private void OnSendConfirmed()
@@ -754,8 +757,8 @@ public partial class BTCWallet : Control
 		if (NetworkFeePolicy.IsActive(gameTime))
 		{
 			decimal parsed = TryParseFee(_feeInput.Text);
-			fee = NetworkFeePolicy.ClampOrDefault(parsed);
-			_feeInput.Text = fee.ToString("F8");
+			fee = NetworkFeePolicy.ClampOrDefaultFor(parsed, gameTime);
+			_feeInput.Text = fee.ToString("F8", CultureInfo.InvariantCulture);
 		}
 
 		Transaction? tx = _networkRoot.CreateAndBroadcastTransactionToAddress(_sendFromNodeId, recipientAddress, amount, fee);
@@ -768,7 +771,7 @@ public partial class BTCWallet : Control
 		string shortId = tx.TransactionId.Length > 8 ? tx.TransactionId[..8] + "..." : tx.TransactionId;
 		_sendFeedback.Text = $"Sent! [{shortId}]";
 		_amountInput.Text = string.Empty;
-		_feeInput.Text = string.Empty;
+		ApplyFeeState(); // ND.7 — re-default the fee to the current day's median, not string.Empty (which revealed the stale grey placeholder)
 		_manualAddressInput.Text = string.Empty;
 		_auctionBidWarningLabel.Visible = false;
 	}

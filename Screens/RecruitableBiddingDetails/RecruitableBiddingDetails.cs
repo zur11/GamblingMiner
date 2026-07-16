@@ -97,25 +97,46 @@ public partial class RecruitableBiddingDetails : Control
 			: string.Create(CultureInfo.InvariantCulture,
 				$"{Math.Max(0d, (summary.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left in the current window");
 		_statusLabel.Text = $"In Auction — {clock}";
-		_sectionTitleLabel.Text = $"Tracked Donation Pool ({summary.TrackedDonations.Count}/10 by value)";
+
+		// ND.6d — the pool's occupied-slot count selects the casino-bot re-bid mode shown per slot below:
+		// EARLY RUSH while it holds <7 slots (steep tier 4/5/6 probabilities so bots contest young pools
+		// hard), reverting to the NORMAL ladder once it reaches 7. ND.6e — a NORMAL pool inside the final
+		// 7 days of its rolling window rolls the one-Fibonacci-level-up URGENCY table instead. The
+		// per-slot "re-bid NN%" is the chance a casino-bot holding THAT slot as its best position
+		// re-bids when picked (see NetworkRoot).
+		int occupied = summary.TrackedDonations.Count;
+		bool urgent = NetworkRoot.IsAuctionInUrgencyWindow(summary.WindowCloseUnixMs, nowMs);
+		string mode = occupied < 7
+			? "early-rush bidding (pool <7 slots)"
+			: urgent
+				? "normal bidding — FINAL-WEEK URGENCY (≤7d left)"
+				: "normal bidding (pool ≥7 slots)";
+		_sectionTitleLabel.Text = $"Tracked Donation Pool ({occupied}/10 by value) — {mode}";
 
 		ClearContent();
-		if (summary.TrackedDonations.Count == 0)
+		if (occupied == 0)
 		{
 			_contentVBox.AddChild(new Label { Text = "No qualifying donations tracked yet." });
 			return;
 		}
 
-		int rank = 1;
+		int tier = 1;
 		foreach (TrackedDonation d in summary.TrackedDonations.OrderByDescending(d => d.AmountBtc))
 		{
 			string scValue = d.CurrentValueSc is decimal sc
 				? string.Create(CultureInfo.InvariantCulture, $"  (≈ {sc:F8} SC today)")
 				: string.Empty;
+			string prob = NetworkRoot.ReBidProbabilityLabel(tier, occupied, urgent);
+			string probCol = prob switch
+			{
+				"" => string.Empty,
+				"satisfied" => "[satisfied]  ",
+				_ => $"[re-bid {prob}]  ",
+			};
 			string line = string.Create(CultureInfo.InvariantCulture,
-				$"#{rank}  {_networkRoot.DescribeAddress(d.DonorAddress)}  {d.AmountBtc:F8} BTC{scValue}  — {FormatDate(d.TimestampMs)}");
+				$"#{tier}  {probCol}{_networkRoot.DescribeAddress(d.DonorAddress)}  {d.AmountBtc:F8} BTC{scValue}  — {FormatDate(d.TimestampMs)}");
 			_contentVBox.AddChild(new Label { Text = line });
-			rank++;
+			tier++;
 		}
 	}
 

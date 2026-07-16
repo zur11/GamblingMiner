@@ -25,7 +25,7 @@ public partial class BetRollRow : HBoxContainer
 	public void SetFailProbability(double percent)
 	{
 		EnsureNodes();
-		_failProbLabel.Text = $"{percent:F8}%";
+		_failProbLabel.Text = string.Create(CultureInfo.InvariantCulture, $"{percent:F8}%");
 	}
 
 	private void EnsureNodes()

@@ -422,10 +422,10 @@ public partial class CasinoCoinSwaps : Control
 
 	private void RenderPanelAQuote(CasinoCoinSwapService.SwapQuote q)
 	{
-		// Fee breakdown (dev feedback 2026-07-07): FeeCharged = max(fee% × gross, NetworkFeePolicy.MinFee),
-		// so the network's flat share is always exactly MinFee and the casino's margin is whatever remains
+		// Fee breakdown (dev feedback 2026-07-07): the network's flat share is the day's replayed median
+		// (ND.7 / D-ND7.9 — was the flat 0.1 scaffold) and the casino's margin is whatever remains
 		// (0 in the fee-floor regime near the minimum swap size — the casino breaks even, by design, §3.2).
-		decimal networkFeeBtc = NetworkFeePolicy.MinFee;
+		decimal networkFeeBtc = _swapService?.CurrentNetworkFeeBtc ?? 0m;
 		decimal casinoFeeBtc  = Math.Max(0m, Money.Normalize(q.FeeCharged - networkFeeBtc));
 		// Effective casino margin % (dev feedback 2026-07-07): the flat network fee eats into the nominal
 		// SwapFeePercent for any swap not far past the minimum size — e.g. at 10% nominal, a swap at 1.1×
@@ -500,14 +500,15 @@ public partial class CasinoCoinSwaps : Control
 	private void RenderPanelBQuote(CasinoCoinSwapService.SwapQuote q)
 	{
 		// Fee breakdown (dev feedback 2026-07-07) — same logic as Panel A, expressed in SC at this quote's
-		// price: the network's flat share is NetworkFeePolicy.MinFee converted at PriceUsed; the rest is the
-		// casino's margin (0 in the fee-floor regime near the minimum swap size — breaks even, by design).
-		decimal networkFeeSc = Money.Normalize(NetworkFeePolicy.MinFee * q.PriceUsed);
+		// price: the network's flat share is the day's replayed median (ND.7 / D-ND7.9) converted at
+		// PriceUsed; the rest is the casino's margin (0 in the fee-floor regime near the minimum swap size).
+		decimal networkFeeBtcB = _swapService?.CurrentNetworkFeeBtc ?? 0m;
+		decimal networkFeeSc = Money.Normalize(networkFeeBtcB * q.PriceUsed);
 		decimal casinoFeeSc  = Math.Max(0m, Money.Normalize(q.FeeCharged - networkFeeSc));
 		// Effective casino margin % — see Panel A's identical note.
 		decimal effectiveMarginPctB = q.GrossConverted > 0m ? casinoFeeSc / q.GrossConverted * 100m : 0m;
 		_panelBQuoteLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"You send {q.InputAmount:N8} BTC (0.1 network fee inside) → gross {q.GrossConverted:N8} SC − fee {q.FeeCharged:N8} SC (network {networkFeeSc:N8} + casino {casinoFeeSc:N8}, {effectiveMarginPctB:0.##}% effective) → you receive {q.NetOut:N8} SC (instant)");
+			$"You send {q.InputAmount:N8} BTC ({networkFeeBtcB:N8} network fee inside) → gross {q.GrossConverted:N8} SC − fee {q.FeeCharged:N8} SC (network {networkFeeSc:N8} + casino {casinoFeeSc:N8}, {effectiveMarginPctB:0.##}% effective) → you receive {q.NetOut:N8} SC (instant)");
 		if (!q.IsValid)
 			_panelBQuoteLabel.Text += string.Create(CultureInfo.InvariantCulture,
 				$"   ✖ {(q.InputAmount < q.MinInput ? $"minimum swap is {q.MinInput:N8} BTC" : $"exceeds max ({q.MaxLimitedBy})")}");

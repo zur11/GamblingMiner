@@ -16,15 +16,18 @@ using Scripts.Finance;
 // blockchain.com (tx_count median rel-diff 0.81%, hashrate shape median 0.00%). IMPORTANT semantics:
 // TxCount EXCLUDES coinbase transactions (proven empirically at ND.0) — it is exactly the non-coinbase
 // numerator the fullness-parity target wants, so GetTargetTxPerBlock must NOT subtract coinbase again.
-// FeeTotalBtc is the raw daily TOTAL in BTC (mean per tx = total / count, derived when the fee-replay
-// step consumes it); fees are fractal-exempt like price_usd (D-14.6 — never /100).
+// FeeTotalBtc is the raw daily TOTAL in BTC (mean per tx = total / count, derived by the ND.7 fee
+// schedule below); FeeMedianBtc (ND.7.0, 2026-07-13) is the day's real median fee — blank before
+// Market Birth, true Blockchair medians 2010-07-18 → 2011-04-13, BitInfoCharts-derived after (full
+// provenance in the step14 plan §10.5). Fees are fractal-exempt like price_usd (D-14.6 — never /100).
 public sealed record NetworkDay(
 	DateTime DateLocal,
 	long? TxCount,
 	double? HashRate,
 	long? ActiveAddresses,
 	long? BlockCount,
-	decimal? FeeTotalBtc);
+	decimal? FeeTotalBtc,
+	decimal? FeeMedianBtc);
 
 public partial class BtcNetworkDataService : Node
 {
@@ -94,6 +97,75 @@ public partial class BtcNetworkDataService : Node
 		LoadCsv();
 		InitializeAnchors();
 		ComputeNonMinerIntroSchedule();
+		ComputeAndPushFeeSchedule();
+	}
+
+	// ND.7 (D-ND7.4/7.5) — build the effective daily fee schedule and push it into the pure-static
+	// NetworkFeePolicy (the SetNonMinerIntroSchedule precedent: works identically for the real
+	// autoload and EB.1's throwaway bootstrap instances, so entry-year fast-builds crossing Market
+	// Birth pay replay fees during the bootstrap itself). Each band component (median, mean)
+	// independently carries forward its last POSITIVE value across zero/blank days, seeded from the
+	// data's own start (mean: first positive 2009-02-03; median: first positive 2011-04-14 — there is
+	// NONE earlier, so the effective median replays an honest 0 from Market Birth through 2011-04-13,
+	// the ND.7.0 data-forced refinement). Entries run from Market Birth (D-ND7.1 — the fee era's own
+	// first replayed day, read from BtcMarketDataService, never a second hardcoded date) to the
+	// dataset end; NetworkFeePolicy freezes past the end.
+	private void ComputeAndPushFeeSchedule()
+	{
+		if (_days.Count == 0)
+		{
+			return; // no dataset ⇒ NetworkFeePolicy's fee-free fallback stands
+		}
+
+		// Same IsInsideTree() guard + hardcoded fallback as ComputeNonMinerIntroSchedule (throwaway
+		// EB.1 instances live outside the scene tree and must not attempt "/root/..." lookups).
+		BtcMarketDataService? market = IsInsideTree()
+			? GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService")
+			: null;
+		DateTime birthLocal = (market?.FirstDataDateLocal
+			?? DateTime.SpecifyKind(new DateTime(2010, 7, 18), DateTimeKind.Local)).Date;
+
+		var entries = new List<NetworkFeePolicy.FeeDay>();
+		decimal medianCarry = 0m;
+		decimal meanCarry = 0m;
+		foreach (NetworkDay day in _days)
+		{
+			if (day.FeeMedianBtc is decimal median && median > 0m)
+			{
+				medianCarry = median; // already Money.Normalize'd at parse
+			}
+			if (day.FeeTotalBtc is decimal total && day.TxCount is long txs && txs > 0)
+			{
+				decimal mean = Money.Normalize(total / txs);
+				if (mean > 0m)
+				{
+					meanCarry = mean;
+				}
+			}
+
+			if (day.DateLocal < birthLocal)
+			{
+				continue; // pre-birth days only feed the carry seeds, never the schedule
+			}
+
+			decimal max = Money.Normalize(Math.Max(medianCarry, meanCarry) * NetworkFeePolicy.MaxFeeMeanMultiplier);
+			entries.Add(new NetworkFeePolicy.FeeDay(medianCarry, meanCarry, max));
+		}
+
+		if (entries.Count == 0)
+		{
+			return; // dataset ends before Market Birth (never in practice) ⇒ fee-free fallback
+		}
+
+		NetworkFeePolicy.SetFeeSchedule(birthLocal, entries.ToArray());
+
+		// D-ND7.10 — one load-summary line: first replay day, its seed values, and the dataset-end values.
+		NetworkFeePolicy.FeeDay seed = entries[0];
+		NetworkFeePolicy.FeeDay last = entries[^1];
+		GD.Print(string.Create(CultureInfo.InvariantCulture,
+			$"[BtcNetworkDataService] Fee schedule pushed: {entries.Count} days from {birthLocal:yyyy-MM-dd} " +
+			$"(seed median={seed.Median:F8} mean={seed.Mean:F8} max={seed.Max:F8}; " +
+			$"end median={last.Median:F8} mean={last.Mean:F8} max={last.Max:F8})."));
 	}
 
 	// EB.2 (D-EB.4) — precompute the 10 non-miner introduction dates from the address curve and push
@@ -334,7 +406,7 @@ public partial class BtcNetworkDataService : Node
 		string[] lines = file.GetAsText().Split('\n');
 		var days = new List<NetworkDay>(lines.Length);
 
-		// Header row (date,tx_count,hashrate,active_addresses,block_count,fee_total_btc,source) skipped.
+		// Header row (date,tx_count,hashrate,active_addresses,block_count,fee_total_btc,fee_median_btc,source) skipped.
 		for (int i = 1; i < lines.Length; i++)
 		{
 			string line = lines[i].TrimEnd('\r', '\n');
@@ -344,7 +416,7 @@ public partial class BtcNetworkDataService : Node
 			}
 
 			string[] cols = line.Split(',');
-			if (cols.Length < 7)
+			if (cols.Length < 8)
 			{
 				continue;
 			}
@@ -359,7 +431,8 @@ public partial class BtcNetworkDataService : Node
 				ParseNullableDouble(cols[2]),
 				ParseNullableLong(cols[3]),
 				ParseNullableLong(cols[4]),
-				ParseNullableDecimal(cols[5])));
+				ParseNullableDecimal(cols[5]),
+				ParseNullableDecimal(cols[6])));
 		}
 
 		days.Sort((a, b) => a.DateLocal.CompareTo(b.DateLocal));

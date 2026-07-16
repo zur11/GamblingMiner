@@ -172,7 +172,8 @@ public static class NetworkPopulationScheduler
 
 	// ── DEV telemetry (founders_trace.csv precedent) — one row per new block ───────────────────────────
 	private const string TracePath = "user://logs/network_population_trace.csv";
-	private const string TraceHeader = "utcMs,blockIndex,lastMiner,decades,castTarget,castPowered,castPowerEach,invisiblePower,playerBotsPower,foundersPower,totalPower,txTargetPerBlock,pendingTxs,spawned";
+	// ND.7 (D-ND7.10): + the day's effective replayed fee band components at each block row.
+	private const string TraceHeader = "utcMs,blockIndex,lastMiner,decades,castTarget,castPowered,castPowerEach,invisiblePower,playerBotsPower,foundersPower,totalPower,txTargetPerBlock,pendingTxs,spawned,feeMedianBtc,feeMeanBtc";
 
 	public static void AppendTelemetry(int blockIndex, string lastMiner, long tsMs, double playerBotsPower, double foundersPower, decimal txTargetPerBlock, int pendingTxs, string? spawnedNodeId)
 	{
@@ -214,10 +215,11 @@ public static class NetworkPopulationScheduler
 
 			double totalPower = playerBotsPower + foundersPower + TotalScheduledPower;
 			file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-				"{0},{1},{2},{3:F3},{4},{5},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F4},{12},{13}",
+				"{0},{1},{2},{3:F3},{4},{5},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F4},{12},{13},{14:F8},{15:F8}",
 				tsMs, blockIndex, lastMiner, _lastDecades, _lastCastTarget, _poweredCastIds.Count,
 				_castPowerEach, _invisiblePower, playerBotsPower, foundersPower, totalPower,
-				txTargetPerBlock, pendingTxs, spawnedNodeId ?? string.Empty));
+				txTargetPerBlock, pendingTxs, spawnedNodeId ?? string.Empty,
+				NetworkFeePolicy.MedianFeeAt(tsMs), NetworkFeePolicy.MeanFeeAt(tsMs)));
 		}
 		catch (Exception e)
 		{

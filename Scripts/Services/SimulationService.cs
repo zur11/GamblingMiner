@@ -109,6 +109,8 @@ public partial class SimulationService : Node
 	private const int BotHistoryCapacity = 260;
 	private readonly Dictionary<string, Queue<BotPlayEntry>> _botHistories = new();
 
+	private const string PlayerNodeId = "player";
+
 	public bool IsRunning { get; private set; }
 	public PlayerAutobetConfig? CurrentConfig => _config;
 
@@ -564,6 +566,48 @@ public partial class SimulationService : Node
 		return true;
 	}
 
+	// Manual Main ↔ Bankroll transfers made while an autobet session is live (BankrollProgrammer). They
+	// MUST mutate the SESSION wallet: a write that only touches BankrollStateService is clobbered by the
+	// next settled bet's write-back (`_bankroll.SetBalance(_wallet.Balance)` in ExecutePlayerBet), which
+	// destroys an injected amount (Main already paid it) or duplicates a withdrawn one. Returns false
+	// when no session is running — the caller falls back to the idle BankrollStateService path.
+	public bool TryManualTransferToBankroll(decimal amount)
+	{
+		if (!IsRunning || _wallet == null || _bankrollProgram == null || _principal == null) return false;
+		if (!_bankrollProgram.TryTransferBalanceToBankroll(_principal, _wallet, amount, "manual_recharge"))
+		{
+			return false;
+		}
+
+		// Stats parity with the auto-recharge path above: a manual recharge also resets the since-recharge
+		// stats scope (DiceGame's TryProgrammedBankrollTransfer registers every Main→Bankroll transfer too).
+		if (_config?.IsPlayerActive == true)
+		{
+			_userStats?.RegisterDeposit(amount, _wallet.Balance, _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
+		}
+		_bankroll?.SetBalance(_wallet.Balance);
+		PersistFinancialState(false);
+		EmitSignal(SignalName.BetSettled); // refresh live UI: bankroll jumped
+		return true;
+	}
+
+	public bool TryManualTransferToBalance(decimal amount)
+	{
+		if (!IsRunning || _wallet == null || _bankrollProgram == null || _principal == null) return false;
+		// Clamp against the live session wallet — the authoritative balance mid-run. If the withdrawal
+		// leaves less than the current bet, the session stops on InsufficientBalance naturally.
+		amount = Money.Normalize(Math.Min(amount, _wallet.Balance));
+		if (!_bankrollProgram.TryTransferBankrollToBalance(_principal, _wallet, amount, "manual_return"))
+		{
+			return false;
+		}
+
+		_bankroll?.SetBalance(_wallet.Balance);
+		PersistFinancialState(false);
+		EmitSignal(SignalName.BetSettled); // refresh live UI: bankroll dropped
+		return true;
+	}
+
 	private void CaptureCheckpoint()
 	{
 		PersistFinancialState(true);
@@ -572,9 +616,33 @@ public partial class SimulationService : Node
 			return;
 		}
 
+		// A checkpoint always captures the PLAYER's financial state — the same information as every block
+		// commit, no matter which node the delegated session bets for. When the session was started with a
+		// bot as the active node, the shared services hold the BOT's balances (DiceGame's node selector
+		// rewrote them), so swap the player's NodeFinancialState mirror in for the capture and restore the
+		// bot's values after (PersistFinancialState above just refreshed the bot's mirror).
+		bool botSession = _config != null && !_config.IsPlayerActive;
+		if (botSession)
+		{
+			NodeFinancialState playerState = _networkRoot.GetOrCreateNodeFinancialState(
+				PlayerNodeId, _principal.CurrentBalance, _bankroll.CurrentBalance);
+			_principal.SetBalance(playerState.PrincipalBalance);
+			_bankroll.SetBalance(playerState.BankrollBalance);
+			_bankrollProgram.ReplaceState(playerState.AutoRechargeAmount, playerState.TransferRecords);
+		}
+
 		DateTime historyUtc = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
 		DateTime calendarLocal = _calendar?.CurrentLocalDateTime ?? DateTime.Now;
 		_checkpoint.CaptureCheckpoint(_principal, _bankroll, _bankrollProgram, historyUtc, calendarLocal);
+
+		if (botSession)
+		{
+			NodeFinancialState botState = _networkRoot.GetOrCreateNodeFinancialState(
+				_config!.ActiveNodeId, _principal.CurrentBalance, _bankroll.CurrentBalance);
+			_principal.SetBalance(botState.PrincipalBalance);
+			_bankroll.SetBalance(botState.BankrollBalance);
+			_bankrollProgram.ReplaceState(botState.AutoRechargeAmount, botState.TransferRecords);
+		}
 	}
 
 	// ── Bots (Phase 2) ──────────────────────────────────────────────────────────

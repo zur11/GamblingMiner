@@ -457,10 +457,20 @@ public partial class DiceGame : Control, IBetEventSource
 		// participant to the last mined block. Disk persistence happens only at block-mining (CaptureBlockCheckpoint).
 		SaveActiveNodeFinancialState(false);
 		_activeNodeId = nextNodeId;
-		LoadActiveNodeFinancialState();
+		// restorePlayerFromMirror: when switching BACK to the player the services hold the outgoing bot's
+		// balances and must be restored from the player mirror saved at the player→bot switch.
+		LoadActiveNodeFinancialState(restorePlayerFromMirror: true);
 		LoadActiveNodeStrategySnapshot();
 		RefreshHardwareDrivenSpeed(); // re-lock the betting speed to the newly selected node's hardware
 		_betHistoryContainer?.ClearEntries();
+		// SF.4B.6 parity: switching back to the player reseeds the list from the persistent store, exactly
+		// like scene entry does — clearing alone left the player's recent plays blank until the next
+		// scene re-entry. Bots keep the cleared list (their history lives in BotPlayHistory).
+		if (IsPlayerActive())
+		{
+			_betHistoryContainer?.LoadFromHistoricalRecords(
+				_userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries));
+		}
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
 		_resultValue.Modulate = Colors.White;
@@ -470,7 +480,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private bool IsPlayerActive() =>
 		string.Equals(_activeNodeId, PlayerNodeId, StringComparison.Ordinal);
 
-	private void LoadActiveNodeFinancialState()
+	private void LoadActiveNodeFinancialState(bool restorePlayerFromMirror = false)
 	{
 		if (_blockchainNetworkRoot == null || _wallet == null)
 		{
@@ -486,11 +496,16 @@ public partial class DiceGame : Control, IBetEventSource
 
 		// The player's real balances live in PrincipalBalanceService/BankrollStateService/BankrollProgramService
 		// (each persists itself and is the single source of truth — see SimulationService's header comment).
-		// NodeFinancialState only mirrors the player here for the Active Node Selector's bot-viewing UI; applying
-		// this cached snapshot back onto the player would revert any change made in another scene (e.g. a
-		// BankrollProgrammer transfer) the next time DiceGame is entered, since the cache is only refreshed via
-		// SaveActiveNodeFinancialState() on the way OUT of DiceGame and BankrollProgrammer bypasses it entirely.
-		if (IsPlayerActive())
+		// NodeFinancialState only mirrors the player here for the Active Node Selector's bot-viewing UI. Two
+		// call sites, opposite rules:
+		//  - SCENE ENTRY (_Ready): NEVER apply the mirror to the player — the live services are authoritative
+		//    and the mirror may be stale (refreshed only on the way OUT of DiceGame; BankrollProgrammer/ScFinances
+		//    bypass it entirely), so applying it would revert transfers made in other scenes.
+		//  - NODE SWITCH back to the player (restorePlayerFromMirror = true): MUST apply the mirror — the
+		//    services currently hold the OUTGOING BOT's balances (the selector rewrites them on switch), and the
+		//    player mirror was freshly saved at the player→bot switch of this same visit. Skipping the restore
+		//    here left the bot's balances masquerading as the player's (silent SC corruption/destruction).
+		if (IsPlayerActive() && !restorePlayerFromMirror)
 		{
 			return;
 		}
@@ -1240,6 +1255,17 @@ public partial class DiceGame : Control, IBetEventSource
 		if (_calendarTimeService != null && !_autobetDelegated)
 			_calendarTimeService.IsAutobetActive = false;
 		SaveActiveNodeStrategySnapshot();
+		// If a bot is still the active node, the shared balance services hold the BOT's balances. They must
+		// not escape DiceGame (every other scene — StatusBar, BankrollProgrammer, ScFinances — would read and
+		// mutate them as the player's, and they self-persist). Save the bot's state, then restore the player
+		// mirror onto the services. Safe here: the selector is locked while an autobet is delegated, so a
+		// non-player active node implies no background session owns these services.
+		if (!IsPlayerActive())
+		{
+			SaveActiveNodeFinancialState(false);
+			_activeNodeId = PlayerNodeId;
+			LoadActiveNodeFinancialState(restorePlayerFromMirror: true);
+		}
 		// Bots live in SimulationService now; only stop them if the player is NOT running a background
 		// autobet (otherwise they must keep mining across the scene change).
 		if (!_autobetDelegated)
@@ -2092,6 +2118,19 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
+		// A checkpoint always captures the PLAYER's financial state — the same information as every block
+		// commit, no matter which node is active (identical to the background path, where the player's
+		// services are captured while any miner mines). With a bot active, the shared services hold the
+		// BOT's balances (the node selector rewrote them), so swap the player mirror in for the capture
+		// and re-apply the bot's state after (SaveActiveNodeFinancialState above just refreshed it).
+		bool botActive = !IsPlayerActive();
+		string activeBotId = _activeNodeId;
+		if (botActive)
+		{
+			_activeNodeId = PlayerNodeId;
+			LoadActiveNodeFinancialState(restorePlayerFromMirror: true);
+		}
+
 		DateTime historyUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
 		DateTime calendarLocal = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
 		_blockCheckpointService.CaptureCheckpoint(
@@ -2100,5 +2139,11 @@ public partial class DiceGame : Control, IBetEventSource
 			_bankrollProgramService,
 			historyUtc,
 			calendarLocal);
+
+		if (botActive)
+		{
+			_activeNodeId = activeBotId;
+			LoadActiveNodeFinancialState();
+		}
 	}
 }

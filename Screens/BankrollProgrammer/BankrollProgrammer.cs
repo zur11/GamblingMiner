@@ -11,6 +11,8 @@ public partial class BankrollProgrammer : Control
 	private BankrollProgramService _bankrollProgramService;
 	private CalendarTimeService _calendarTimeService;
 	private SceneManager _sceneManager;
+	private SimulationService _simulationService;
+	private UserStatsService _userStatsService;
 	private Wallet _bankrollMirrorWallet;
 
 	private Label _balanceValue;
@@ -33,6 +35,8 @@ public partial class BankrollProgrammer : Control
 		_bankrollProgramService = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+		_simulationService = GetNodeOrNull<SimulationService>("/root/SimulationService");
+		_userStatsService = GetNodeOrNull<UserStatsService>("/root/UserStatsService");
 		_principalBalanceService?.EnsureInitialized();
 		_bankrollStateService?.EnsureInitialized(0m);
 		_bankrollMirrorWallet = new Wallet(_bankrollStateService?.CurrentBalance ?? 0m);
@@ -120,6 +124,24 @@ public partial class BankrollProgrammer : Control
 			return;
 		}
 
+		// While an autobet session is live the transfer must go through the session's own wallet — a plain
+		// BankrollStateService write would be overwritten by the next settled bet's write-back, silently
+		// destroying the injected SC (Main already paid it).
+		if (_simulationService?.IsRunning == true)
+		{
+			if (!_simulationService.TryManualTransferToBankroll(amount))
+			{
+				_statusValue.Text = "Transfer failed.";
+				return;
+			}
+
+			_manualRechargeToBankrollInput.Text = "";
+			_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
+				$"Recharged {amount:N8} to Bankroll. Bankroll now: {_bankrollStateService?.CurrentBalance ?? 0m:N8}.");
+			RenderAll();
+			return;
+		}
+
 		decimal currentBankroll = Money.Normalize(_bankrollStateService?.CurrentBalance ?? 0m);
 		_bankrollMirrorWallet ??= new Wallet(currentBankroll);
 		_bankrollMirrorWallet.SetBalanceForTimeTravel(currentBankroll);
@@ -137,6 +159,10 @@ public partial class BankrollProgrammer : Control
 		}
 
 		_bankrollStateService?.SetBalance(_bankrollMirrorWallet.Balance);
+		// Stats parity with the auto-recharge paths (SimulationService / DiceGame's TryProgrammedBankrollTransfer):
+		// a manual recharge also resets the since-recharge stats scope. Game time, never wall-clock (§24.10).
+		_userStatsService?.RegisterDeposit(amount, _bankrollMirrorWallet.Balance,
+			_calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow);
 		_manualRechargeToBankrollInput.Text = "";
 		_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
 			$"Recharged {amount:N8} to Bankroll. Bankroll now: {_bankrollMirrorWallet.Balance:N8}.");
@@ -156,6 +182,26 @@ public partial class BankrollProgrammer : Control
 		if (effectiveAmount <= 0m)
 		{
 			_statusValue.Text = "No transferable balance.";
+			return;
+		}
+
+		// Same session-live rule as the recharge above: mutating only BankrollStateService while a session
+		// runs would let the next bet's write-back restore the withdrawn amount — duplicating SC.
+		if (_simulationService?.IsRunning == true)
+		{
+			if (!_simulationService.TryManualTransferToBalance(effectiveAmount))
+			{
+				_statusValue.Text = "Could not transfer from bankroll to Main Balance.";
+				return;
+			}
+
+			decimal remaining = _bankrollStateService?.CurrentBalance ?? 0m;
+			string sessionEmptyHint = remaining <= 0m
+				? " Bankroll is now empty — the running session will stop on its next bet."
+				: string.Empty;
+			_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
+				$"Transferred {effectiveAmount:N8} to Main Balance. Bankroll remaining: {remaining:N8}.{sessionEmptyHint}");
+			RenderAll();
 			return;
 		}
 
@@ -237,7 +283,8 @@ public partial class BankrollProgrammer : Control
 		{
 			string when = rec.UtcTimestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 			string dir = rec.Direction == "balance_to_bankroll" ? "BAL->BR" : "BR->BAL";
-			_transfersList.AddItem($"{when} | {dir} | {rec.Amount:F8} | {rec.Reason}");
+			_transfersList.AddItem(string.Create(CultureInfo.InvariantCulture,
+				$"{when} | {dir} | {rec.Amount:F8} | {rec.Reason}"));
 		}
 	}
 
