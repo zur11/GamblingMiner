@@ -1,6 +1,6 @@
 # Historical Network Population Scheduler — Miners & Transaction Rates (Step 14) — Design Plan
 
-**Status**: v7 (2026-07-09) — rounds 1–2 LOCKED (D-14.1 … D-14.12); ND.0–ND.3 built. **EB.2 built** (D-EB.1 … D-EB.7, round 3 retuned it — D-EB.8/9/10, non-miner pool → 40, window → 100 in-game days) — committed. **EB.1 built** (`TimelineConfig.DevEntryYear` + the two-phase `HistoricalBootstrapService` extension, §5.1) — playtest **explicitly deferred to the next subphase** per the developer; commit pending regardless. **Deferred to ND.4**: a detailed theoretical write-up of the §6.2 decoupling refactor (scaling the non-miner pool past 40) as a documented-but-unbuilt ProjectDesignManual option. **ND.4** (calibration + full docs pass) is the only phase left. **Update (2026-07-10)**: ND.4a/ND.4b/ND.4c/ND.4d built and documented (see their own commits + `Documentation/ProjectDesignManual.md` Ch. 22 §22.6–22.8). **ND.5 (§7, Auction Settlement — SC cashback for tracked auction donors) is now IMPLEMENTED** — ND.5a…e all built (settlement architecture, execution, `RecruitableBiddingDetails` scene, Enroll Mode wiring, docs pass); `dotnet build` clean; pending the developer's own in-game calibration playtest per §7.5's checklist before final commit. **Update (2026-07-11)**: ND.6 (§8, Casino-Miner Bidding Refinement — the Saturation Ladder) added as a SPEC DRAFT: the developer's post-playtest ruleset (fixing the saturated-bots stall + the player-always-wins hole) captured as P-ND6.1…6, with assistant analysis, balance options, and open questions OQ-ND6.1…8 awaiting resolution before implementation. **Update (2026-07-12)**: OQ-ND6.1…8 ALL RESOLVED by the developer — ND.6 spec **LOCKED** as **D-ND6.1…10** (§8.5; "tier" terminology adopted, single-roll-on-best-tier mechanic, self-eviction guard general, half-spendable cap bounding the full send, Option A composition with B/D as pre-approved calibration levers). **ND.6 IS NOW IMPLEMENTED** — ND.6a (pipeline rewrite), ND.6b (`casino_bot_bid_trace.csv` slot telemetry) and ND.6c (docs pass + the D-ND6.4 amendment removing the guard-shadowed `tier 10 → 89%` table entry) all built same day (§8.7); `dotnet build` clean; pending the developer's §8.6 calibration playtest before final sign-off. **Update (2026-07-19)**: ND.8 (§12) reorganized for implementation — subphase roster + order in §12.3 (ND.8a ✅ done; ND.8b Business Migration design-LOCKED rounds 1–5, `D-ND8.1…35`, incl. the §12.4.6e SC monetary system / fiat-debt ladder; ND.8c SC Monetary Ledger approved + checklist ready in §12.5.1, **implements first**; ND.8d = the bots-only stagnation, renumbered from the duplicate "ND.8a" label, spec pending; ND.8e reserved for monetary Option A). Implementation order: **ND.8c → ND.8b.0 → ND.8b staged → ND.8e**, ND.8d whenever spec'd. **ND.8c BUILT same day** (§12.5.1 all ticked, `dotnet build` clean — `ScMonetaryLedgerService` autoload #18, the `AddLoanRecord` mint hook, full checkpoint coverage, the `WorldEconomy` DEV scene) — **verified in-game by the developer (persistence confirmed), committed**. **ND.8f (bots as first-class casino clients, resolves OQ-11.1) added to the roster and BUILT same day** (§12.5.4, `dotnet build` clean); developer in-game verification + commit pending.
+**Status**: v7 (2026-07-09) — rounds 1–2 LOCKED (D-14.1 … D-14.12); ND.0–ND.3 built. **EB.2 built** (D-EB.1 … D-EB.7, round 3 retuned it — D-EB.8/9/10, non-miner pool → 40, window → 100 in-game days) — committed. **EB.1 built** (`TimelineConfig.DevEntryYear` + the two-phase `HistoricalBootstrapService` extension, §5.1) — playtest **explicitly deferred to the next subphase** per the developer; commit pending regardless. **Deferred to ND.4**: a detailed theoretical write-up of the §6.2 decoupling refactor (scaling the non-miner pool past 40) as a documented-but-unbuilt ProjectDesignManual option. **ND.4** (calibration + full docs pass) is the only phase left. **Update (2026-07-10)**: ND.4a/ND.4b/ND.4c/ND.4d built and documented (see their own commits + `Documentation/ProjectDesignManual.md` Ch. 22 §22.6–22.8). **ND.5 (§7, Auction Settlement — SC cashback for tracked auction donors) is now IMPLEMENTED** — ND.5a…e all built (settlement architecture, execution, `RecruitableBiddingDetails` scene, Enroll Mode wiring, docs pass); `dotnet build` clean; pending the developer's own in-game calibration playtest per §7.5's checklist before final commit. **Update (2026-07-11)**: ND.6 (§8, Casino-Miner Bidding Refinement — the Saturation Ladder) added as a SPEC DRAFT: the developer's post-playtest ruleset (fixing the saturated-bots stall + the player-always-wins hole) captured as P-ND6.1…6, with assistant analysis, balance options, and open questions OQ-ND6.1…8 awaiting resolution before implementation. **Update (2026-07-12)**: OQ-ND6.1…8 ALL RESOLVED by the developer — ND.6 spec **LOCKED** as **D-ND6.1…10** (§8.5; "tier" terminology adopted, single-roll-on-best-tier mechanic, self-eviction guard general, half-spendable cap bounding the full send, Option A composition with B/D as pre-approved calibration levers). **ND.6 IS NOW IMPLEMENTED** — ND.6a (pipeline rewrite), ND.6b (`casino_bot_bid_trace.csv` slot telemetry) and ND.6c (docs pass + the D-ND6.4 amendment removing the guard-shadowed `tier 10 → 89%` table entry) all built same day (§8.7); `dotnet build` clean; pending the developer's §8.6 calibration playtest before final sign-off. **Update (2026-07-19)**: ND.8 (§12) reorganized for implementation — subphase roster + order in §12.3 (ND.8a ✅ done; ND.8b Business Migration design-LOCKED rounds 1–5, `D-ND8.1…35`, incl. the §12.4.6e SC monetary system / fiat-debt ladder; ND.8c SC Monetary Ledger approved + checklist ready in §12.5.1, **implements first**; ND.8d = the bots-only stagnation, renumbered from the duplicate "ND.8a" label, spec pending; ND.8e reserved for monetary Option A). Implementation order: **ND.8c → ND.8b.0 → ND.8b staged → ND.8e**, ND.8d whenever spec'd. **ND.8c BUILT same day** (§12.5.1 all ticked, `dotnet build` clean — `ScMonetaryLedgerService` autoload #18, the `AddLoanRecord` mint hook, full checkpoint coverage, the `WorldEconomy` DEV scene) — **verified in-game by the developer (persistence confirmed), committed**. **ND.8f (bots as first-class casino clients, resolves OQ-11.1) added to the roster and BUILT same day** (§12.5.4, `dotnet build` clean) — **verified in-game + committed** (incl. the all-clients live feed + per-client filter follow-ups). **ND.8b.0 (roster data, OQ-ND8.23-build) DONE same day**: round-6 decisions `D-ND8.36…39` (weights×curves inflow, hybrid intro pacing, defunct-real/living-parodied naming, Mt. Gox → non-auctionable flavor) + `Data/Companies/company_roster.csv` landed (§12.5.2/§12.4.6d build note). Next: ND.8b.1 (company identity migration).
 
 **Scope (intent statement)**: a scheduler that **populates the blockchain with miners over time** and **defines the rate of automated transactions**, so the simulated network reproduces the historical behavior of the real Bitcoin network as far as the data allows. This is the systematization of what today is hardcoded: 4 fixed miner bots (`bot_1..4`), the referral-auction drip for non-miners (`NonMinerIntroIntervalMs` = one every ~2 in-game days), and per-block coin-recirculation probability (`BotSendProbabilityPerBlock = 0.5`). Instead of constants, these should follow historical curves.
 
@@ -656,7 +656,7 @@ The developer specifies objectives one at a time; each becomes a subphase as it 
 | Subphase | What | Status |
 |---|---|---|
 | **ND.8a** — Martingale Calculator parity | standalone calculator aligned with `ProgressiveBettingStrategy` semantics (write-up below) | ✅ DONE 2026-07-15 (committed `d0ab200`) |
-| **ND.8b** — The Business Migration | the 40 non-miners → named historical companies + the stock/dividend/vote economy (§12.4) | 🔒 design LOCKED (rounds 1–5, `D-ND8.1…35`); awaiting the `OQ-ND8.23`-build data step, then the §12.5.2 staged implementation |
+| **ND.8b** — The Business Migration | the 40 non-miners → named historical companies + the stock/dividend/vote economy (§12.4) | 🔒 design LOCKED (rounds 1–6, `D-ND8.1…39`); **ND.8b.0 roster data ✅ DONE 2026-07-19** (`Data/Companies/company_roster.csv` — §12.5.2); next: the ND.8b.1… staged implementation |
 | **ND.8c** — SC Monetary Ledger | monetary-system Option 0 (§12.4.6e, `D-ND8.35`): every SC mint/burn event, genesis grants, the `circulation = grants + debt` invariant, DEV readout | ✅ **BUILT 2026-07-19** (§12.5.1 — build clean; developer in-game verification + commit pending) |
 | **ND.8d** — bots-only bid-flow stagnation | make auctions stay alive without player participation — diagnosis first (trace-driven, §12.0's suspects), then the chosen lever(s) | ⏳ named, spec pending the developer's walkthrough (independent of b/c — can be spec'd any time) |
 | **ND.8e** — Monetary system Option A | Central Bank + fed-funds policy replay (§12.4.6e, `D-ND8.31…34`; `OQ-ND8.30` decided here) | 📋 label reserved — spec'd/implemented after ND.8b lands the bank companies |
@@ -820,34 +820,65 @@ Founding-day and ongoing BTC→SC conversions (a company turning received BTC in
 
 Minor follow-ups this surfaced (round 5): `OQ-ND8.28` and `OQ-ND8.29` — **both RESOLVED by the §12.4.6e SC monetary system** (`D-ND8.33` / `D-ND8.34`).
 
-#### 12.4.6d — The company roster (`D-ND8.23` — shape approved)
+#### 12.4.6d — The company roster (`D-ND8.23` shape approved → ✅ LANDED at ND.8b.0, 2026-07-19 — table synced to `Data/Companies/company_roster.csv`)
 
-The 40 companies split into **real historical anchors** (name + date faithful to the real business) and **fictional gap-fillers** (randomized names/dates covering timeline gaps). Approved real anchors (mixers corrected to **dark-grey default** per review — the ±1 market shift can still reach black-market):
+The 40 companies split into **real historical anchors** (name + date faithful to the real business) and **fictional gap-fillers** (names/dates covering the timeline gaps: bank clones for the §12.4.6c SC backbone, VPN/hosting, extra mixers, a remittance desk + OTC broker, more pools and darknet stalls, spread 2010–2017 to keep the intro drip populated). **The table below is the FULL 40-row roster, synced 2026-07-19 to the landed `Data/Companies/company_roster.csv` (the authoritative source), with the round-6 corrections applied (`D-ND8.36…39`; mixers at dark-grey default per review — the ±1 market shift can still reach black-market).** `Wt` = `inflow_weight` (1–10 relative era size, `D-ND8.36`); `Anchor` = provenance class (`real | parody | fictional`).
 
-| Company | Band | Market (default) | ~Date |
-|---|---|---|---|
-| Papa's Pizzeria (Laszlo / Pizza Day) | CB1 | official | 2010-05 |
-| Grass Hill Alpacas (socks) | CB1 | official | 2011-01 |
-| Casascius (physical coins) | CB1 | official | 2011-09 |
-| BitPay (fiat-settling processor) | CB2 | official | 2011-05 |
-| BitInstant (Charlie Shrem) | CB2 | light-grey | 2011-04 |
-| Butterfly Labs (mining hardware) | CB2 | light-grey | 2011-06 |
-| Coinbase (fiat brokerage) | CB2 | official | 2012-06 |
-| Bitcoin Market (dwdollar, 1st exchange) | CB3 | official | 2010-02 |
-| Mt. Gox | CB3 | official | 2010-07 |
-| Tradehill | CB3 | official | 2011-06 |
-| Bitstamp | CB3 | official | 2011-08 |
-| BTC-e | CB3 | dark-grey | 2011-08 |
-| SatoshiDice (betting) | CB4 | light-grey | 2012-04 |
-| Bitcoin poker room (Seals with Clubs) | CB4 | light-grey | 2011-09 |
-| The Silk Market (Silk Road parody) | CB4 | black | 2011-02 |
-| Black Market Reloaded (parody) | CB4 | black | 2011-06 |
-| Slush Pool (1st mining pool) | CB5 | official | 2010-12 |
-| ArtForz cluster (as company) | CB5 | official | 2010-07 |
-| DeepBit / BTC Guild (pools) | CB5 | official | 2011-02 |
-| The Laundromat / CoinWash (mixers) | CB5 | dark-grey | 2011-10 |
+| Company | Band | Market (default) | Appearance | Anchor | Wt | Expansion |
+|---|---|---|---|---|---|---|
+| Bitcoin Market (dwdollar, 1st exchange) | CB3 | official | 2010-02-06 | real | 3 | — |
+| Papa's Pizzeria (Laszlo / Pizza Day) | CB1 | official | 2010-05-22 | parody | 3 | — |
+| ArtForz Cluster (GPU farm — P1a renames the cast handle) | CB5 | official | 2010-07-25 | real | 5 | — |
+| Slush Pool (1st mining pool) | CB5 | official | 2010-12-16 | real | 7 | — |
+| Grass Hill Alpacas (socks) | CB1 | official | 2011-01-15 | real | 1 | — |
+| The Silk Market (Silk Road parody) | CB4 | black | 2011-02-01 | parody | 8 | — |
+| DeepBit (dominant 2011 pool) | CB5 | official | 2011-02-26 | real | 8 | 2011-06 ×1.5 |
+| BitInstant (Charlie Shrem) | CB2 | light-grey | 2011-04-01 | real | 5 | — |
+| BitPaid (BitPay riff — fiat-settling processor) | CB2 | official | 2011-05-02 | parody | 6 | — |
+| BTC Guild (2nd major pool — split from the bundled row) | CB5 | official | 2011-05-04 | real | 7 | — |
+| Tradehill | CB3 | official | 2011-06-08 | real | 5 | — |
+| Butterfly Labs (mining hardware) | CB2 | light-grey | 2011-06-15 | real | 6 | — |
+| Blackmarket Reboot (Black Market Reloaded parody) | CB4 | black | 2011-06-30 | parody | 5 | — |
+| BTC-e | CB3 | dark-grey | 2011-08-07 | real | 7 | — |
+| BitStomp (Bitstamp riff) | CB3 | official | 2011-08-22 | parody | 8 | 2014-03 ×2 |
+| Seals with Clubs (poker room) | CB4 | light-grey | 2011-09-01 | real | 5 | — |
+| Casascius (physical coins) | CB1 | official | 2011-09-06 | real | 3 | — |
+| The Laundromat (mixer #1) | CB5 | dark-grey | 2011-10-27 | fictional | 4 | — |
+| CoinWash (mixer #2) | CB5 | dark-grey | 2012-03-14 | fictional | 3 | — |
+| SatoshiDice (betting) | CB4 | light-grey | 2012-04-24 | real | 9 | 2012-07 ×2 |
+| CoinBasis (Coinbase riff — fiat brokerage) | CB2 | official | 2012-06-20 | parody | 9 | 2013-04 ×2 |
+| First Satoshi Savings (bank clone #1, §12.4.6c) | CB1 | official | 2012-09-03 | fictional | 5 | — |
+| Satoshi's General Store (merchant) | CB1 | official | 2013-02-11 | fictional | 2 | — |
+| Lucky Satoshi Casino | CB4 | light-grey | 2013-04-08 | fictional | 4 | — |
+| Digital Reserve Trust (bank clone #2) | CB1 | official | 2013-06-17 | fictional | 5 | — |
+| SatoshiWire Remittance | CB2 | official | 2013-08-05 | fictional | 3 | — |
+| GhostRoute VPN | CB4 | light-grey | 2013-09-23 | fictional | 3 | — |
+| Pacific Coin Exchange (fills Mt. Gox's vacated CB3 slot) | CB3 | official | 2013-11-11 | fictional | 5 | — |
+| TumbleDry (mixer #3) | CB5 | dark-grey | 2013-12-09 | fictional | 3 | — |
+| CoinTeller ATM Network | CB2 | official | 2014-02-20 | fictional | 3 | — |
+| Nakamoto Desk OTC | CB2 | light-grey | 2014-05-12 | fictional | 5 | — |
+| OnionHost (bulletproof hosting) | CB4 | dark-grey | 2014-08-18 | fictional | 3 | — |
+| Harbor Coin Bank (bank clone #3) | CB1 | official | 2014-11-03 | fictional | 4 | — |
+| Night Bazaar (darknet market) | CB4 | black | 2014-12-15 | fictional | 5 | — |
+| EastRand Exchange (BTC-e archetype) | CB3 | dark-grey | 2015-04-27 | fictional | 4 | — |
+| GiftSats Cards (gift-card reseller) | CB2 | light-grey | 2015-07-06 | fictional | 2 | — |
+| Frostbyte Pool | CB5 | official | 2015-09-14 | fictional | 4 | — |
+| Ledger & Sons Private Bank (bank clone #4) | CB1 | official | 2016-03-21 | fictional | 4 | — |
+| Vapor Market (darknet market) | CB4 | black | 2016-08-08 | fictional | 4 | — |
+| Dragon Gate Pool | CB5 | official | 2016-12-05 | fictional | 5 | — |
 
-Non-auctionable: **Gavin's Faucet** (2010-06, `D-ND8.2`). **Fictional gap-fillers (≈12–15 to reach 40):** more **bank clones** (CB1, the §12.4.6c SC backbone), a **VPN/hosting shop** (CB4), extra **mixers** (CB5 dark-grey), a **remittance desk** + an **OTC broker** (CB2), a couple more **mining pools** (CB5) and **darknet-adjacent** stalls (CB4) — spread across 2010–2017 to keep the intro drip populated between the historical dates. **Per-era target BTC inflow** for every row is *derived* from `BtcNetworkDataService`'s per-day network volume at each company's active dates (not hand-authored) — the ND.0-style data step that completes the roster (round 5).
+Band totals: CB1×8 · CB2×8 · CB3×6 · CB4×9 · CB5×9 = **40 auctionable**.
+
+**Non-auctionable flavor anchors** (in the CSV with `auctionable=false` — never intro'd, never auctioned; reserved for flavor scripting):
+
+| Entity | Band | Market | Appearance | Anchor | Wt | Why excluded |
+|---|---|---|---|---|---|---|
+| Gavin's Faucet | CB1 | official | 2010-06-11 | real | 1 | `D-ND8.2` — a deliberate money-loser (adoption, not profit) |
+| Mt. Gox | CB3 | official | 2010-07-18 | real | 10 | `D-ND8.39` — its hack/halt-days/collapse are scripted market-data events votes must never alter |
+
+**Per-era target BTC inflow** is *derived*, not hand-authored: `inflow_weight` × the activity curves `BtcNetworkDataService` already serves (`D-ND8.36` consumption spec in §12.5.2's ND.8b.0 entry).
+
+**ND.8b.0 build note (2026-07-19 — the roster is LANDED: `Data/Companies/company_roster.csv`, 42 rows).** Round-6 corrections (now reflected in the table above): **Mt. Gox is REMOVED from the auctionable 40** (`D-ND8.39` — non-auctionable flavor anchor beside the Faucet: its 2011 hack halt-days and eventual fate are scripted market-data events that shareholder votes must never be able to alter; a fictional `pacific_coin_exchange` fills the vacated CB3 slot); the naming policy is **defunct-real / living-parodied** (`D-ND8.38` — Bitstamp → *BitStomp*, BitPay → *BitPaid*, Coinbase → *CoinBasis*; defunct businesses keep real names; dark markets keep their decided parodies); the bundled `DeepBit / BTC Guild` row split into two companies (BTC Guild at its real ~May 2011 launch); and the "per-era volume" derivation resolved as **relative weights × existing curves** (`D-ND8.36` — the network dataset has no transfer-volume column, and absolute targets would collide with D-14.2's no-synthetic-filler rule anyway). Final composition: **40 auctionable** (21 real/parody anchors + 19 fictional gap-fillers; bands CB1×8 / CB2×8 / CB3×6 / CB4×9 / CB5×9) + **2 non-auctionable flavor anchors** (Faucet, Mt. Gox).
 
 #### 12.4.6e — The SC monetary system: the fiat-debt ladder (round 5, 2026-07-19 — `D-ND8.30…35`; resolves `OQ-ND8.28` / `OQ-ND8.29`)
 
@@ -914,8 +945,11 @@ Do **both**, weighted to the automatic version. **(1) Background (do for sure):*
 **Design-locked, round 5 (developer-decided, 2026-07-19 — the SC monetary system, §12.4.6e):**
 `D-ND8.30` fiat-debt ladder adopted: Option 0 (SC Monetary Ledger, subphase ND.8c, implement now) → Option A (Central Bank + historical policy replay) for Basic Mode; Option B (full fractional-reserve) documented post-Basic-Mode; Option C (inflation/peg drift) rejected forever — the 1:1 peg is canon, tightening = credit scarcity, never value loss · `D-ND8.31` Central Bank = the only true mint, never auctionable, above all banks incl. the house bank; credit draws create SC, repayments destroy it · `D-ND8.32` policy = daily fed-funds-rate historical replay (FRED CSV → pure-static `MonetaryPolicySchedule`, the `NetworkFeePolicy` mold), mapped to a credit-capacity multiplier (no interest in Basic Mode, consistent with `D-ND8.24`) · `D-ND8.33` (resolves `OQ-ND8.28`) repay in SC, proportional collateral release, default ⇒ bank keeps the collateral BTC outright · `D-ND8.34` (resolves `OQ-ND8.29`) provisional casino path until the first bank company founds, then banks take over new credit + the casino's auto-loan migrates to a house-bank credit line on the quarterly cadence (closes P6) · `D-ND8.35` Option 0 spec: genesis grants (player `40,000` + bot starting SC = equity, never debt), mint/burn events only, DEV readout in the `D-ND8.25` scene (ND.8c builds its skeleton), standalone subphase ND.8c BEFORE ND.8b implementation, no `WorldFormatVersion` bump.
 
+**Design-locked, round 6 (developer-decided, 2026-07-19 — the ND.8b.0 roster data decisions):**
+`D-ND8.36` per-era inflow = **relative weights × existing curves** — the roster stores a per-company `inflow_weight` (relative economic size); the runtime target/recipient split is weight-biased among introduced companies, scaled for free by the era's real activity (sender balances + the fullness-parity budget); NO new transfer-volume dataset (the network CSV has none, and absolute BTC targets would collide with D-14.2's no-synthetic-filler rule) · `D-ND8.37` intro pacing = **hybrid**: the calibrated active-address curve keeps deciding HOW MANY companies exist at any date (zero recalibration of the playtested auction economy); the roster decides WHICH company fills each opened slot — eligible from its historical `appearance_date`, entering in date order; enters late if the curve lags its date, never early · `D-ND8.38` naming = **defunct-real / living-parodied**: dead businesses keep their real names (Mt. Gox, Tradehill, BTC-e, DeepBit, Butterfly Labs…); still-operating companies get recognizable riffs (Coinbase → *CoinBasis*, BitPay → *BitPaid*, Bitstamp → *BitStomp*); dark markets keep their decided parodies (The Silk Market, Blackmarket Reboot); the CSV's `anchor` column records the provenance class (`real | parody | fictional`) · `D-ND8.39` **Mt. Gox is NOT auctionable** — a non-auctionable flavor anchor (the D-ND8.2 faucet precedent, `auctionable=false` in the CSV): its hack/halt-days/collapse are scripted market-data events that co-ownership votes must never alter; a fictional exchange fills its CB3 roster slot.
+
 **Open (build-out — no design blockers remain):**
-- **`OQ-ND8.23`-build** — author the full 40-row roster (the §12.4.6d anchors + the ≈12–15 fictional gap-fillers) and derive each row's per-era target BTC inflow from `BtcNetworkDataService` volumes; land it as a `Data/…` spec. The ND.0-style data step.
+- ~~**`OQ-ND8.23`-build**~~ — ✅ **RESOLVED 2026-07-19 (ND.8b.0)**: the full roster landed at `Data/Companies/company_roster.csv` (§12.4.6d build note + §12.5.2).
 - **`OQ-ND8.30`** — the Option A rate→credit-capacity-multiplier mapping (banded table vs formula) — a calibration knob, decided when Option A is spec'd/calibrated (§12.4.6e).
 
 Requested tables present: Currency Bands + ranges (§12.4.2), Market categories (§12.4.3), stock slot-bonus ladder (§12.4.5), the company roster (§12.4.6d), the monetary-system options ladder (§12.4.6e). **The design is now spec-complete enough to begin ND.8b implementation planning; only the roster data (`OQ-ND8.23`-build) and the Option A multiplier mapping (`OQ-ND8.30`, calibration-time) remain open — the bank-model follow-ups are resolved (§12.4.6e), and subphase ND.8c (the SC Monetary Ledger) is approved to implement now.**
@@ -938,7 +972,7 @@ The auction *front end* is reflavored, not rebuilt: the ascending-bid ladder (ND
 
 #### 12.5.2 ND.8b — Business Migration: staging skeleton (high-level; each stage gets its ND.7-style detailed checklist at its turn)
 
-- [ ] **ND.8b.0 — roster data step** (`OQ-ND8.23`-build, ND.0's pipeline discipline): the full 40-row roster (§12.4.6d anchors + the ≈12–15 fictional gap-fillers) + per-era target BTC inflow derived from `BtcNetworkDataService` volumes, landed as a `Data/…` spec. ⚠ Reconcile at spec time: roster appearance dates vs the existing active-address intro schedule (`ComputeNonMinerIntroSchedule`) — one must govern.
+- [x] **ND.8b.0 — roster data step** ✅ DONE (2026-07-19, `D-ND8.36…39`): **`Data/Companies/company_roster.csv`** (+ `.csv.import` pinned `importer="keep"`, the dataset precedent) — 42 rows: **40 auctionable companies** (21 real/parody anchors + 19 fictional gap-fillers; CB1×8 / CB2×8 / CB3×6 / CB4×9 / CB5×9; dates 2010-02 → 2016-12) + **2 non-auctionable flavor anchors** (Gavin's Faucet `D-ND8.2`, Mt. Gox `D-ND8.39`). Columns: `company_id, display_name, currency_band (CB1–5), market_category (official|light_grey|dark_grey|black), appearance_date, auctionable, inflow_weight (1–10 relative era size), expansion_date, expansion_multiplier, anchor (real|parody|fictional), notes` — notes are deliberately comma-free so a plain comma split parses safely. **Consumption spec (implemented at ND.8b.1/8b.5, InvariantCulture, blank ⇒ null):** (a) *intro mapping* (`D-ND8.37` hybrid) — `ComputeNonMinerIntroSchedule` keeps producing the intro DATES (the pace); each opened slot is filled by the earliest-`appearance_date` not-yet-introduced auctionable company whose date ≤ the slot's date; if none is eligible yet, the slot waits for the earliest upcoming appearance date (deterministic, no RNG); (b) *inflow split* (`D-ND8.36`) — scheduled-inflow recipients drawn ∝ `effective_weight` among introduced companies, where `effective_weight = inflow_weight × (expansion_multiplier if now ≥ expansion_date else 1)` — the expansion is a permanent step-up (v1 semantics; sparse: only 5 rows carry one, each historically justified — DeepBit's 2011 dominance, SatoshiDice's 2012 tx boom, CoinBasis' April-2013 bubble, BitStomp's post-Gox 2014 shift); (c) `auctionable=false` rows never enter the intro schedule or the auction — reserved for flavor scripting. The reconciliation warning below is thereby RESOLVED (curve paces, roster orders).
 - [ ] **ND.8b.1 — company identity migration**: non-miner records gain company identity (name / appearance date / Currency Band / Market category); "non-miner" survives only as the legacy code id (`D-ND8.10`); Enroll Mode / BlockExplorer relabeling.
 - [ ] **ND.8b.2 — founding rewrite**: `SettleResolvedAuction` → found the company + mint the NST/PST distribution per §12.4.5 (`D-ND8.14`/`D-ND8.15`) — no SC cashback, no BTC sweep; founding summary recorded for `CompanyDetails`.
 - [ ] **ND.8b.3 — dividends & votes engine**: quarterly cadence, founding-day + >30%-inflow special votes, the `D-ND8.17/18/19b` resolution rules, game pause for player NST holders.

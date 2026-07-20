@@ -1,0 +1,43 @@
+company_id,display_name,currency_band,market_category,appearance_date,auctionable,inflow_weight,expansion_date,expansion_multiplier,anchor,notes
+bitcoin_market,Bitcoin Market,CB3,official,2010-02-06,true,3,,,real,First BTC exchange (dwdollar; forum go-live post Feb 6 2010); defunct 2011 — real name kept (D-ND8.38)
+papas_pizzeria,Papa's Pizzeria,CB1,official,2010-05-22,true,3,,,parody,Pizza Day merchant (Laszlo's counterparty); appearance = the real 10000-BTC pizza day
+gavin_faucet,Gavin's Faucet,CB1,official,2010-06-11,false,1,,,real,NON-AUCTIONABLE non-profit flavor node (D-ND8.2); gives BTC away (5 BTC/visitor); return is adoption not profit
+mt_gox,Mt. Gox,CB3,official,2010-07-18,false,10,,,real,NON-AUCTIONABLE flavor anchor (D-ND8.39): its 2011 hack halt-days and eventual fate are scripted market-data events shareholder votes must never alter; defunct — real name
+artforz_cluster,ArtForz Cluster,CB5,official,2010-07-25,true,5,,,real,First private GPU farm (~25% of 2010 network); P1a renames the artforz cast-miner handle when this company ships
+slush_pool,Slush Pool,CB5,official,2010-12-16,true,7,,,real,First mining pool (first pooled block Dec 16 2010); brand since retired (Braiins) — treated defunct
+grass_hill_alpacas,Grass Hill Alpacas,CB1,official,2011-01-15,true,1,,,real,The famous alpaca-socks merchant — early physical-goods BTC commerce
+silk_market,The Silk Market,CB4,black,2011-02-01,true,8,,,parody,Silk Road parody (decided euphemism); highest payout + the seizure-risk archetype (§12.4.3)
+deepbit,DeepBit,CB5,official,2011-02-26,true,8,2011-06-01,1.5,real,Dominant 2011 pool — peaked ~55% of network mid-2011 (the expansion step); defunct — real name
+bitinstant,BitInstant,CB2,light_grey,2011-04-01,true,5,,,real,Charlie Shrem's payment rail; defunct 2013 — real name (approved table date kept)
+bitpaid,BitPaid,CB2,official,2011-05-02,true,6,,,parody,Riff of BitPay (living trademark — D-ND8.38); the fiat-settling processor archetype
+btc_guild,BTC Guild,CB5,official,2011-05-04,true,7,,,real,Second major pool; §12.4.6d bundled it with DeepBit at 2011-02 — split row uses its real ~May 2011 launch; defunct 2015
+tradehill,Tradehill,CB3,official,2011-06-08,true,5,,,real,Second major exchange; defunct 2012 — real name
+butterfly_labs,Butterfly Labs,CB2,light_grey,2011-06-15,true,6,,,real,Mining-hardware vendor (FPGA→ASIC pre-orders); defunct (FTC) — real name
+blackmarket_reboot,Blackmarket Reboot,CB4,black,2011-06-30,true,5,,,parody,Black Market Reloaded parody per the §12.4.6d note
+btc_e,BTC-e,CB3,dark_grey,2011-08-07,true,7,,,real,The loosely-regulated exchange archetype (dark-grey default per the approved table); seized 2017 — real name
+bitstomp,BitStomp,CB3,official,2011-08-22,true,8,2014-03-01,2,parody,Riff of Bitstamp (living trademark — D-ND8.38); EU exchange archetype; expansion = the post-Gox-collapse volume shift
+seals_with_clubs,Seals with Clubs,CB4,light_grey,2011-09-01,true,5,,,real,First BTC poker room; defunct 2015 — real name
+casascius,Casascius,CB1,official,2011-09-06,true,3,,,real,Physical BTC coins (Mike Caldwell); minting halted 2013 (FinCEN) — real name
+laundromat,The Laundromat,CB5,dark_grey,2011-10-27,true,4,,,fictional,Mixer archetype #1 (the Bitcoin Fog era); dark-grey default with ±1 vote reach to black
+coinwash,CoinWash,CB5,dark_grey,2012-03-14,true,3,,,fictional,Mixer archetype #2
+satoshidice,SatoshiDice,CB4,light_grey,2012-04-24,true,9,2012-07-01,2,real,On-chain betting phenomenon — carried ~half of ALL network txs in its 2012 boom (the expansion step); brand faded — real name
+coinbasis,CoinBasis,CB2,official,2012-06-20,true,9,2013-04-01,2,parody,Riff of Coinbase (living trademark — D-ND8.38); fiat brokerage giant; expansion = the April 2013 bubble
+first_satoshi_savings,First Satoshi Savings,CB1,official,2012-09-03,true,5,,,fictional,Bank clone #1 — the §12.4.6c SC-backbone lender (auctionable clone of the house bank)
+satoshis_general_store,Satoshi's General Store,CB1,official,2013-02-11,true,2,,,fictional,Late merchant filler (BTC-accepting goods store)
+lucky_satoshi_casino,Lucky Satoshi Casino,CB4,light_grey,2013-04-08,true,4,,,fictional,Crypto-casino filler (the SatoshiDice-cousin archetype)
+digital_reserve_trust,Digital Reserve Trust,CB1,official,2013-06-17,true,5,,,fictional,Bank clone #2
+satoshiwire_remit,SatoshiWire Remittance,CB2,official,2013-08-05,true,3,,,fictional,Remittance desk — fiat-first with meaningful BTC inflow (the CB2 shape)
+ghostroute_vpn,GhostRoute VPN,CB4,light_grey,2013-09-23,true,3,,,fictional,On-chain-paid VPN service
+pacific_coin_exchange,Pacific Coin Exchange,CB3,official,2013-11-11,true,5,,,fictional,Fictional exchange filling the CB3 slot Mt. Gox vacated (D-ND8.39)
+tumbledry_mixer,TumbleDry,CB5,dark_grey,2013-12-09,true,3,,,fictional,Mixer archetype #3
+cointeller_atm,CoinTeller ATM Network,CB2,official,2014-02-20,true,3,,,fictional,Bitcoin-ATM operator (holds a fiat float)
+nakamoto_desk_otc,Nakamoto Desk OTC,CB2,light_grey,2014-05-12,true,5,,,fictional,OTC / broker desk filler
+onionhost,OnionHost,CB4,dark_grey,2014-08-18,true,3,,,fictional,Bulletproof-hosting filler
+night_bazaar,Night Bazaar,CB4,black,2014-12-15,true,5,,,fictional,Darknet-market filler (mid-era; post-Silk generation)
+harbor_coin_bank,Harbor Coin Bank,CB1,official,2014-11-03,true,4,,,fictional,Bank clone #3
+eastrand_exchange,EastRand Exchange,CB3,dark_grey,2015-04-27,true,4,,,fictional,Loosely-regulated exchange filler (the BTC-e archetype)
+giftsats_cards,GiftSats Cards,CB2,light_grey,2015-07-06,true,2,,,fictional,Gift-card reseller
+frostbyte_pool,Frostbyte Pool,CB5,official,2015-09-14,true,4,,,fictional,Late-era pool filler
+ledger_and_sons,Ledger & Sons Private Bank,CB1,official,2016-03-21,true,4,,,fictional,Bank clone #4
+vapor_market,Vapor Market,CB4,black,2016-08-08,true,4,,,fictional,Late darknet-market filler
+dragon_gate_pool,Dragon Gate Pool,CB5,official,2016-12-05,true,5,,,fictional,Late-era pool filler #2
