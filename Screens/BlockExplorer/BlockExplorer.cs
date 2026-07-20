@@ -155,7 +155,7 @@ public partial class BlockExplorer : Control
                 ? "awaiting first bid — no countdown"
                 : string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left");
             string line = string.Create(CultureInfo.InvariantCulture,
-                $"{s.NonMinerNodeId}  {s.NonMinerAddress[..10]}…  | recv {s.TotalReceived:F8} ({s.DonorCount} donor)  | {leader}  | {clock}");
+                $"{NetworkRoot.DescribeCompany(s)}  | recv {s.TotalReceived:F8} ({s.DonorCount} donor)  | {leader}  | {clock}");
 
             var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
             row.AddChild(new Label { Text = line, SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass });
@@ -183,7 +183,7 @@ public partial class BlockExplorer : Control
                     : $"referral of {_networkRoot.DescribeAddress(s.WinnerAddress)}";
                 // D-ND5.9 — Resolved entries never offer the Details button again; the scene is only ever
                 // reachable while InAuction (the "gets deleted" behavior is this gate's natural consequence).
-                _enrollModeRowsVBox.AddChild(new Label { Text = $"{s.NonMinerNodeId}  | {winner}" });
+                _enrollModeRowsVBox.AddChild(new Label { Text = $"{NetworkRoot.DescribeCompany(s)}  | {winner}" });
             }
         }
     }

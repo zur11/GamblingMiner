@@ -76,7 +76,10 @@ public partial class RecruitableBiddingDetails : Control
 			return;
 		}
 
-		_identityLabel.Text = $"{summary.NonMinerNodeId}   {summary.NonMinerAddress}";
+		string appearance = summary.CompanyAppearanceDateLocal is DateTime d
+			? $"  —  appeared {d:yyyy-MM-dd}"
+			: string.Empty;
+		_identityLabel.Text = $"{NetworkRoot.DescribeCompany(summary)}{appearance}   [{summary.NonMinerAddress}]";
 
 		if (summary.Status == NonMinerAuctionStatus.Resolved)
 		{

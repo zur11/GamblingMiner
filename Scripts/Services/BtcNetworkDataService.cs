@@ -180,6 +180,9 @@ public partial class BtcNetworkDataService : Node
 			return;
 		}
 
+		// ND.8b.1 (D-ND8.37) — the hybrid intro mapping below needs the roster's appearance dates.
+		CompanyRoster.EnsureLoaded();
+
 		// EB.1's throwaway instances (`new BtcNetworkDataService()`, never added to the scene tree — see
 		// EnsureLoaded's own comment) can't resolve an absolute "/root/..." path: Godot's native
 		// get_node_or_null() prints an engine-level error (not a catchable C# exception) whenever it's
@@ -227,6 +230,21 @@ public partial class BtcNetworkDataService : Node
 			if (introDatesLocal.Count >= NonMinerPoolSize)
 			{
 				break;
+			}
+		}
+
+		// ND.8b.1 (D-ND8.37 hybrid intro mapping) — the pace above produces slot i's opening date off
+		// the address curve alone; the roster's i-th earliest-appearing auctionable company (Auctionable
+		// is appearance-date sorted, so this is exactly "the earliest not-yet-introduced auctionable
+		// company") may not yet have appeared. When it hasn't, the slot WAITS for it (deterministic, no
+		// RNG): effective intro = max(pace date, that company's appearance date). Both sequences are
+		// non-decreasing, so slot i always pairs with Auctionable[i] — see the ND.8b.0 build note.
+		IReadOnlyList<CompanyRecord> auctionable = CompanyRoster.Auctionable;
+		for (int i = 0; i < introDatesLocal.Count && i < auctionable.Count; i++)
+		{
+			if (auctionable[i].AppearanceDateLocal > introDatesLocal[i])
+			{
+				introDatesLocal[i] = auctionable[i].AppearanceDateLocal;
 			}
 		}
 

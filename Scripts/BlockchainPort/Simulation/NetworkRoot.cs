@@ -1868,6 +1868,15 @@ public partial class NetworkRoot : Node
         return address.Length > 12 ? address[..12] + "…" : address;
     }
 
+    // ND.8b.1 — one-line company identity for UI display (BlockExplorer's Enroll Mode,
+    // RecruitableBiddingDetails): "Display Name (CB#, market_category)". Falls back to the legacy
+    // NodeId if this non-miner has no roster match (should never happen — see the summary's own
+    // CompanyId comment).
+    public static string DescribeCompany(NonMinerDonationSummary summary) =>
+        string.IsNullOrEmpty(summary.CompanyId)
+            ? summary.NonMinerNodeId
+            : $"{summary.CompanyDisplayName} ({summary.CompanyCurrencyBand}, {summary.CompanyMarketCategory})";
+
     // Referral auction ledger — Step 14 EB.2 rework (D-EB.4/5/6/7). Fully DERIVED from the canonical
     // chain — no persisted state. Non-miners are introduced along the historical active-address curve
     // from Market Birth; each bot's 6-in-game-month window starts counting at its FIRST QUALIFYING BID.
@@ -2076,6 +2085,18 @@ public partial class NetworkRoot : Node
                 TotalReceived = list.Sum(d => d.amount),          // ALL funding (economy + bids) — display
                 DonorCount = list.Select(d => d.donor).Distinct().Count()
             };
+
+            // ND.8b.1 (D-ND8.37) — non_miner_{i+1} (BotWalletRegistry's fixed creation order) always
+            // pairs with CompanyRoster.Auctionable[i]; see BtcNetworkDataService.ComputeNonMinerIntroSchedule.
+            if (CompanyRoster.ForNonMinerIndex(i) is CompanyRecord company)
+            {
+                summary.CompanyId = company.CompanyId;
+                summary.CompanyDisplayName = company.DisplayName;
+                summary.CompanyCurrencyBand = company.CurrencyBand;
+                summary.CompanyMarketCategory = company.MarketCategory;
+                summary.CompanyAppearanceDateLocal = company.AppearanceDateLocal;
+                summary.CompanyAnchor = company.Anchor;
+            }
 
             // D-EB.4 — introduction by the pushed historical schedule (empty schedule / index beyond it
             // ⇒ not introduced; the schedule arrives from BtcNetworkDataService before any gameplay).
@@ -3139,6 +3160,15 @@ public sealed class NonMinerDonationSummary
 {
     public string NonMinerNodeId { get; set; } = string.Empty;
     public string NonMinerAddress { get; set; } = string.Empty;
+    // ND.8b.1 (D-ND8.10/D-ND8.37) — company identity: "non-miner" survives only as the legacy
+    // NodeId above. Null only for a pool-size mismatch (NonMinerBots.Count > CompanyRoster
+    // .Auctionable.Count), which should never happen in a canon world (both are 40).
+    public string? CompanyId { get; set; }
+    public string CompanyDisplayName { get; set; } = string.Empty;
+    public string CompanyCurrencyBand { get; set; } = string.Empty;
+    public string CompanyMarketCategory { get; set; } = string.Empty;
+    public DateTime? CompanyAppearanceDateLocal { get; set; }
+    public string CompanyAnchor { get; set; } = string.Empty;
     public decimal TotalReceived { get; set; }
     public int DonorCount { get; set; }
     public string LeadingDonorAddress { get; set; } = string.Empty;
