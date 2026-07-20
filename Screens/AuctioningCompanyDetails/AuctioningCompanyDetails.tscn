@@ -1,9 +1,9 @@
 [gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://Screens/RecruitableBiddingDetails/RecruitableBiddingDetails.cs" id="1"]
+[ext_resource type="Script" path="res://Screens/AuctioningCompanyDetails/AuctioningCompanyDetails.cs" id="1"]
 [ext_resource type="Script" path="res://Scripts/BlockchainPort/Simulation/NetworkRoot.cs" id="2"]
 
-[node name="RecruitableBiddingDetails" type="Control"]
+[node name="AuctioningCompanyDetails" type="Control"]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -38,7 +38,7 @@ layout_mode = 2
 [node name="Title" type="Label" parent="RootMargin/RootVBox"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 32
-text = "Recruitable Bidding Details"
+text = "Auctioning Company Details"
 
 [node name="IdentityLabel" type="Label" parent="RootMargin/RootVBox"]
 unique_name_in_owner = true

@@ -20,8 +20,9 @@ using Scripts.Finance;
 //    code (NetworkRoot.GetOrCreateNodeFinancialState, first time each bot runs), but canonically the
 //    grant exists from world start — the ledger records the canon, not the lazy-init timing.
 //  • LOAN DRAWS — every casino bank-loan draw (CasinoScBalanceService.AddLoanRecord: the bankruptcy
-//    dose path, PayFromMainWithAutoLoan, and the dev manual loan) MINTS new SC as debt attributed to
-//    "casino". The bank is the off-screen printer until ND.8e's Central Bank makes it explicit.
+//    dose path and the dev manual loan — the auction-settlement PayFromMainWithAutoLoan draw site
+//    retired at ND.8b.2, D-ND8.14) MINTS new SC as debt attributed to "casino". The bank is the
+//    off-screen printer until ND.8e's Central Bank makes it explicit.
 //  • BURNS — reserved for ND.8e (Option A): repayment destroys SC, decrementing the borrower's debt.
 //
 // Persisted to user://sc_monetary_ledger.json; checkpoint-covered (BlockSessionCheckpointService DTO,

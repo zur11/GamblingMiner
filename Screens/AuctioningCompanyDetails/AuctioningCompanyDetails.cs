@@ -7,16 +7,17 @@ using UI.StatusBar;
 #nullable enable
 
 // Step 14 (ND.5c, D-ND5.9) — per-non-miner detail scene: the live top-10 tracked donation pool while the
-// auction is still open, switching to a settlement summary once it resolves. Entered from BlockExplorer's
+// auction is still open, switching to a founding/stock-distribution summary once it resolves (ND.8b.2,
+// D-ND8.14 — supersedes the original SC-cashback/BTC-sweep settlement view). Entered from BlockExplorer's
 // Enroll Mode (D-ND5.2) via the static hand-off field below — no existing cross-scene parameter-passing
 // convention was found elsewhere in the codebase to reuse (D-ND5.9), so this is a new, minimal, self-
-// contained pattern, not an extension of SceneManager. The scene NEVER triggers settlement itself —
-// NetworkRoot.TrySettleResolvedAuctions already ran it live, exactly once, from HandleMinedBlock; this
-// scene only ever displays the result (GetNonMinerAuctionLedger / GetAuctionSettlementSummary are both
-// pure, side-effect-free reads).
-public partial class RecruitableBiddingDetails : Control
+// contained pattern, not an extension of SceneManager. The scene NEVER triggers founding itself —
+// NetworkRoot.TrySettleResolvedAuctions/FoundCompany already ran it live, exactly once, from
+// HandleMinedBlock; this scene only ever displays the result (GetNonMinerAuctionLedger / GetCompanyFounding
+// are both pure, side-effect-free reads). A stand-in until ND.8b.4's CompanyDetails scene replaces it.
+public partial class AuctioningCompanyDetails : Control
 {
-	// Set by BlockExplorer immediately before SceneManager.Go(SceneId.RecruitableBiddingDetails).
+	// Set by BlockExplorer immediately before SceneManager.Go(SceneId.AuctioningCompanyDetails).
 	public static string? PendingNonMinerAddress;
 
 	private NetworkRoot _networkRoot = null!;
@@ -143,47 +144,50 @@ public partial class RecruitableBiddingDetails : Control
 		}
 	}
 
-	// D-ND5.9 — once resolved: each paid donor + their SC amount, and the BTC total swept to casino.
+	// ND.8b.2 (D-ND8.14/D-ND8.15) — once resolved, the non-miner is a FOUNDED company: no more SC payout
+	// or BTC sweep (the company keeps its own on-chain treasury), just the minted NST/PST distribution.
+	// This is a stand-in until ND.8b.4's CompanyDetails scene replaces it properly.
 	private void ShowSettlementSummary(NonMinerDonationSummary summary)
 	{
-		string winner = string.IsNullOrEmpty(summary.WinnerAddress)
-			? "no winner (legacy pre-EB.2 world)"
-			: _networkRoot.DescribeAddress(summary.WinnerAddress);
-		_statusLabel.Text = $"Resolved — now a permanent referral of {winner}";
-		_sectionTitleLabel.Text = "Settlement Summary";
+		_statusLabel.Text = $"Resolved — {NetworkRoot.DescribeCompany(summary)} is now a founded company";
+		_sectionTitleLabel.Text = "Founding Summary — Stock Distribution";
 
 		ClearContent();
 
-		AuctionSettlementSummary? settlement = _networkRoot.GetAuctionSettlementSummary(_nonMinerAddress);
-		if (settlement is null)
+		CompanyFounding? founding = _networkRoot.GetCompanyFounding(_nonMinerAddress);
+		if (founding is null || founding.Holdings.Count == 0)
 		{
-			_contentVBox.AddChild(new Label { Text = "Settlement figures unavailable (no closing-date price data)." });
+			_contentVBox.AddChild(new Label { Text = "Founding figures unavailable." });
 			return;
 		}
 
 		_contentVBox.AddChild(new Label
 		{
-			Text = string.Create(CultureInfo.InvariantCulture,
-				$"Closing date: {FormatDate(settlement.ClosingBlockTimestampMs)}   |   Closing price: {settlement.ClosingPriceUsd:F8} SC/BTC")
+			Text = string.Create(CultureInfo.InvariantCulture, $"Founded: {FormatDate(founding.FoundedAtUnixMs)}")
 		});
 		_contentVBox.AddChild(new HSeparator());
 
-		foreach (AuctionSettlementPayout payout in settlement.Payouts.OrderByDescending(p => p.PayoutSc))
+		decimal totalNst = founding.Holdings.Sum(h => h.Nst);
+		decimal totalPst = founding.Holdings.Sum(h => h.Pst);
+		decimal totalTokens = totalNst + totalPst;
+
+		foreach (CompanyShareHolding h in founding.Holdings.OrderByDescending(h => h.Nst + h.Pst))
 		{
+			decimal tokens = h.Nst + h.Pst;
+			string shareClass = h.Nst > 0m ? "NST" : "PST";
+			decimal profitShare = totalTokens > 0m ? tokens / totalTokens : 0m;
+			string votes = h.Nst > 0m && totalNst > 0m
+				? string.Create(CultureInfo.InvariantCulture, $"  |  votes {h.Nst / totalNst:P2}")
+				: string.Empty;
 			string line = string.Create(CultureInfo.InvariantCulture,
-				$"{_networkRoot.DescribeAddress(payout.DonorAddress)}  paid  {payout.PayoutSc:F8} SC");
+				$"{_networkRoot.DescribeAddress(h.HolderId)}  —  {tokens:F8} {shareClass}  |  profit share {profitShare:P2}{votes}");
 			_contentVBox.AddChild(new Label { Text = line });
 		}
 
 		_contentVBox.AddChild(new HSeparator());
 		_contentVBox.AddChild(new Label
 		{
-			Text = string.Create(CultureInfo.InvariantCulture, $"Total paid out: {settlement.TotalPayoutSc:F8} SC")
-		});
-		_contentVBox.AddChild(new Label
-		{
-			Text = string.Create(CultureInfo.InvariantCulture,
-				$"BTC swept to casino: {settlement.SweepAmountBtc:F8} BTC  (of {settlement.WindowTotalBtc:F8} BTC tracked, network fee absorbed from the total)")
+			Text = string.Create(CultureInfo.InvariantCulture, $"Total minted: {totalNst:F8} NST  +  {totalPst:F8} PST")
 		});
 	}
 

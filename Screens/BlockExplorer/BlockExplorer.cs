@@ -166,7 +166,7 @@ public partial class BlockExplorer : Control
             {
                 var detailsBtn = new Button { Text = "Details →" };
                 string nonMinerAddress = s.NonMinerAddress;
-                detailsBtn.Pressed += () => OnOpenRecruitableBiddingDetails(nonMinerAddress);
+                detailsBtn.Pressed += () => OnOpenAuctioningCompanyDetails(nonMinerAddress);
                 row.AddChild(detailsBtn);
             }
 
@@ -175,23 +175,26 @@ public partial class BlockExplorer : Control
 
         if (resolved > 0)
         {
-            _enrollModeRowsVBox.AddChild(new Label { Text = "Resolved (out of auction):" });
+            _enrollModeRowsVBox.AddChild(new Label { Text = "Founded (out of auction):" });
+            // D-ND5.9 — Founded entries never offer the Details button again here; the AuctioningCompanyDetails
+            // scene is only ever reachable while InAuction. ND.8b.4's CompanyDetails scene is where a founded
+            // company gets its own BlockExplorer button (plan §12.4.6a) — not built yet.
             foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.Resolved))
             {
-                string winner = string.IsNullOrEmpty(s.WinnerAddress)
-                    ? "no winner (legacy pre-EB.2 world)"
-                    : $"referral of {_networkRoot.DescribeAddress(s.WinnerAddress)}";
-                // D-ND5.9 — Resolved entries never offer the Details button again; the scene is only ever
-                // reachable while InAuction (the "gets deleted" behavior is this gate's natural consequence).
-                _enrollModeRowsVBox.AddChild(new Label { Text = $"{NetworkRoot.DescribeCompany(s)}  | {winner}" });
+                // ND.8b.2 — "founded" replaces the old SC-cashback "referral" wording (D-ND8.14): the
+                // leading bidder now controls the company's founding stock mint, not a one-shot payout.
+                string founder = string.IsNullOrEmpty(s.WinnerAddress)
+                    ? "no leading bidder (legacy pre-EB.2 world)"
+                    : $"founded by {_networkRoot.DescribeAddress(s.WinnerAddress)}";
+                _enrollModeRowsVBox.AddChild(new Label { Text = $"{NetworkRoot.DescribeCompany(s)}  | {founder}" });
             }
         }
     }
 
-    private void OnOpenRecruitableBiddingDetails(string nonMinerAddress)
+    private void OnOpenAuctioningCompanyDetails(string nonMinerAddress)
     {
-        RecruitableBiddingDetails.PendingNonMinerAddress = nonMinerAddress;
-        _sceneManager?.Go(SceneManager.SceneId.RecruitableBiddingDetails);
+        AuctioningCompanyDetails.PendingNonMinerAddress = nonMinerAddress;
+        _sceneManager?.Go(SceneManager.SceneId.AuctioningCompanyDetails);
     }
 
     public override void _Process(double delta)

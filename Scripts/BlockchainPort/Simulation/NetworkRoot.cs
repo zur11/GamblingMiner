@@ -112,7 +112,7 @@ public partial class NetworkRoot : Node
     {
         [4] = 8, [5] = 13, [6] = 21, [7] = 34, [8] = 55, [9] = 89,
     };
-    // ND.6e — shared urgency test (the roll + the RecruitableBiddingDetails mode label read the same
+    // ND.6e — shared urgency test (the roll + the AuctioningCompanyDetails mode label read the same
     // rule). windowCloseUnixMs == 0 = no leading bid yet ⇒ never urgent (first bids are deterministic).
     public static bool IsAuctionInUrgencyWindow(long windowCloseUnixMs, long nowMs)
         => windowCloseUnixMs != 0 && windowCloseUnixMs - nowMs <= AuctionUrgencyWindowMs;
@@ -133,7 +133,7 @@ public partial class NetworkRoot : Node
     private const int SatisfiedTopTierCount = 3;
 
     // ND.6d — the single source of truth for a slot's re-bid probability, shared by the roll in
-    // TryBuildCasinoBotBid and the RecruitableBiddingDetails UI label (via ReBidProbabilityLabel below).
+    // TryBuildCasinoBotBid and the AuctioningCompanyDetails UI label (via ReBidProbabilityLabel below).
     // occupiedSlots (the pool's current tracked-slot count) selects early-rush (<7) vs normal (≥7);
     // urgent (ND.6e — final 7 window days) shifts a NORMAL pool one Fibonacci level up. 0 for any tier
     // with no entry (tiers 1-3 satisfied, tier 10, or an out-of-range tier).
@@ -145,7 +145,7 @@ public partial class NetworkRoot : Node
         return table.TryGetValue(tier, out int pct) ? pct : 0;
     }
 
-    // ND.6d — the display string shown next to each tracked-pool slot in RecruitableBiddingDetails.
+    // ND.6d — the display string shown next to each tracked-pool slot in AuctioningCompanyDetails.
     // "satisfied" for the top-3 (secure by the D-ND6.7a rule, never a re-bid), "NN%" for a ladder tier,
     // "0%" for the self-eviction-guarded tier 10 of a full pool, and "" where a percentage is meaningless.
     public static string ReBidProbabilityLabel(int tier, int occupiedSlots, bool urgent)
@@ -179,13 +179,15 @@ public partial class NetworkRoot : Node
     // plain autoload reference (not a throwaway instance, unlike EB.1's bootstrap accessors) so the
     // auction ledger reuses the SAME loaded CSV/Market-Birth date the rest of live play already reads.
     private static BtcMarketDataService? _marketData;
-    // Step 14 (ND.5b, D-ND5.4b) — the casino/player SC legs of an auction settlement. Same caching
-    // pattern as _marketData: plain autoload references, populated once by whichever NetworkRoot
-    // instance's _Ready() actually runs in the scene tree, then read from anywhere (including the
-    // throwaway `new NetworkRoot()` accessors other services already use).
-    private static CasinoScBalanceService? _casinoScBalance;
-    private static PrincipalBalanceService? _principalBalance;
-    private static CasinoClientLedgerService? _casinoClientLedger;
+    // ND.8b.1 — non_miner_{i+1} (BotWalletRegistry's fixed creation order) <-> CompanyRoster
+    // .Auctionable[i]'s founding record, once (and only once) that company's auction resolves.
+    // Keyed by NonMinerNodeId (stable across the whole game, unlike the address — non-miners are
+    // single-address today anyway). Persisted inside BlockchainStateSnapshot (PersistStateToDisk /
+    // ApplyStateFromSnapshot below) — chain-adjacent state, so it rides the SAME "a block is the only
+    // commit to disk" rule + world-reset delete-list entry (StatePath) the rest of that snapshot uses;
+    // no separate checkpoint/pre-genesis-reset path is needed (a founding can only ever happen well
+    // post-genesis — Market Birth alone is ~1.5 in-game years after player start).
+    private static readonly Dictionary<string, CompanyFounding> _companyFoundings = new();
 
     public static void SetNonMinerIntroSchedule(long[] introUnixMs) =>
         _nonMinerIntroScheduleMs = introUnixMs ?? [];
@@ -193,9 +195,6 @@ public partial class NetworkRoot : Node
     public override void _Ready()
     {
         _marketData = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
-        _casinoScBalance = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
-        _principalBalance = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
-        _casinoClientLedger = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
         EnsureInitialized();
     }
 
@@ -1039,11 +1038,11 @@ public partial class NetworkRoot : Node
     }
 
     // Step 14 (ND.5a, D-ND5.10) — ComputeAuctionLedger is a PURE, side-effect-free function called freely
-    // and repeatedly from UI refreshes; settlement (paying SC, sweeping BTC) is a REAL state-changing
-    // event that must fire exactly once per non-miner's resolution. Diffs the CURRENT block's ledger
-    // against the PREVIOUS block's (recomputed on demand — nothing between blocks persists, so no new
-    // state is needed for the diff itself) and settles only the non-miners whose status just flipped
-    // InAuction → Resolved on THIS block.
+    // and repeatedly from UI refreshes; founding a company (minting its stock-token distribution) is a
+    // REAL state-changing event that must fire exactly once per non-miner's resolution. Diffs the CURRENT
+    // block's ledger against the PREVIOUS block's (recomputed on demand — nothing between blocks
+    // persists, so no new state is needed for the diff itself) and founds only the non-miners whose
+    // status just flipped InAuction → Resolved on THIS block.
     private static void TrySettleResolvedAuctions(Block block)
     {
         if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)) return;
@@ -1062,100 +1061,105 @@ public partial class NetworkRoot : Node
 
             bool alreadyResolved = previousStatusByAddress.TryGetValue(summary.NonMinerAddress, out NonMinerAuctionStatus prevStatus)
                 && prevStatus == NonMinerAuctionStatus.Resolved;
-            if (alreadyResolved) continue; // settled on an earlier block already — never re-fire
+            if (alreadyResolved) continue; // founded on an earlier block already — never re-fire
 
-            SettleResolvedAuction(block, player, summary);
+            FoundCompany(block, player, summary);
         }
     }
 
-    // Step 14 (ND.5b, D-ND5.6/5.7/5.8/5.4b) — the settlement side effects for one newly-resolved
-    // non-miner: pay every unique tracked donor in SC at the CLOSING date's price (drawing an on-demand
-    // Main-only auto-loan first if needed), then sweep the tracked pool's total BTC to the casino.
-    private static void SettleResolvedAuction(Block block, NodeAgent player, NonMinerDonationSummary summary)
+    // ND.8b.2 (D-ND8.14/D-ND8.15) — supersedes ND.5's "pay every tracked donor back in SC, sweep BTC to
+    // casino" settlement: auction close now FOUNDS the company. The company keeps its own on-chain BTC —
+    // its balance IS its treasury from here on, no sweep — and its equity is minted instead, as
+    // stock-tokens distributed to the tracked-pool bidders per §12.4.5's algorithm. No SC changes hands at
+    // all here (BTC→SC provisioning is ND.8b.6's job); this step is pure token bookkeeping.
+    private static void FoundCompany(Block block, NodeAgent player, NonMinerDonationSummary summary)
     {
         if (summary.TrackedDonations.Count == 0) return; // structurally unreachable — a resolved auction has ≥1 bid, so ≥1 tracked donation
-
-        DateTime closingLocal = DateTimeOffset.FromUnixTimeMilliseconds(block.Timestamp).LocalDateTime;
-        decimal? closingPrice = _marketData?.GetEffectivePriceUsd(closingLocal);
-        if (closingPrice is null)
-        {
-            // Structurally unreachable in real play (non-miners are only introduced from Market Birth
-            // onward, and even the fastest possible auction takes the full 20-day window to resolve), but
-            // guarded rather than crashing — this non-miner stays Resolved forever either way (D-ND4b.12),
-            // so a missed settlement here would never get a second chance.
-            GD.PushWarning($"[ND.5] Auction resolved for {summary.NonMinerAddress} with no closing-date price data — settlement skipped.");
-            return;
-        }
+        if (_companyFoundings.ContainsKey(summary.NonMinerNodeId)) return; // idempotent safety net (the caller already diff-guards this)
 
         (HashSet<string> playerAddresses, Dictionary<string, string> botNodeIdByAddress) = BuildAuctionBidderIdentity(player);
 
-        // D-ND5.6/5.7 — revalue every tracked donation at the UNIFORM closing price, then aggregate by
-        // unique donor (one payout per donor, not one per donation).
-        Dictionary<string, decimal> payoutScByDonor = summary.TrackedDonations
-            .GroupBy(d => d.DonorAddress)
-            .ToDictionary(g => g.Key, g => Scripts.Finance.Money.Normalize(g.Sum(d => d.AmountBtc) * closingPrice.Value));
+        // D-ND8.15 step 1 — rank the tracked pool descending by BTC principal (tier 1 = largest) and
+        // aggregate each unique donor's LIVE total + every tier it occupies (a donor can hold more than
+        // one tier — repeat raises that were never evicted from the top-10).
+        List<TrackedDonation> rankedDesc = summary.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
+        decimal poolTotal = rankedDesc.Sum(d => d.AmountBtc);
+        if (poolTotal <= 0m) return; // structurally unreachable — a resolved auction's leading bid alone is > 0
 
-        decimal totalPayoutSc = Scripts.Finance.Money.Normalize(payoutScByDonor.Values.Sum());
-
-        // D-ND5.4b — draw on-demand AutoLoanAmount chunks into Main FIRST (once, for the whole total), only
-        // if Main can't already cover it; then debit Main by the total either way.
-        if (totalPayoutSc > 0m)
+        var perDonor = new Dictionary<string, (decimal liveBtc, List<int> tiers)>();
+        for (int i = 0; i < rankedDesc.Count; i++)
         {
-            _casinoScBalance?.PayFromMainWithAutoLoan(totalPayoutSc);
-        }
-
-        DateTime utcNow = DateTimeOffset.FromUnixTimeMilliseconds(block.Timestamp).UtcDateTime;
-        int payoutDonorCount = 0;
-        foreach ((string donor, decimal payoutSc) in payoutScByDonor)
-        {
-            if (payoutSc <= 0m) continue;
-            payoutDonorCount++;
-
-            if (playerAddresses.Contains(donor))
+            int tier = i + 1;
+            TrackedDonation d = rankedDesc[i];
+            if (!perDonor.TryGetValue(d.DonorAddress, out (decimal liveBtc, List<int> tiers) entry))
             {
-                _principalBalance?.Deposit(payoutSc);
-                _casinoClientLedger?.RegisterAuctionPayout("player", payoutSc, utcNow);
+                entry = (0m, new List<int>());
             }
-            else if (botNodeIdByAddress.TryGetValue(donor, out string? botNodeId))
-            {
-                var netRootAccessor = new NetworkRoot();
-                NodeFinancialState state = netRootAccessor.GetOrCreateNodeFinancialState(
-                    botNodeId,
-                    BankrollProgramService.InitialPrincipalBalanceBaseline - BankrollProgramService.DefaultAutoRechargeAmount,
-                    BankrollProgramService.DefaultAutoRechargeAmount);
-                state.PrincipalBalance = Scripts.Finance.Money.Normalize(state.PrincipalBalance + payoutSc);
-                netRootAccessor.SetNodeFinancialState(botNodeId, state, false);
-                // ND.8f: bot payouts are ledgered like the player's (previously the entry was player-only).
-                _casinoClientLedger?.RegisterAuctionPayout(botNodeId, payoutSc, utcNow);
-            }
-            // else: a donor address that no longer maps to a qualifying bidder (should not happen — the
-            // tracked pool only ever draws from `bids`, which is already qualifying-bidder-filtered).
+            entry.liveBtc += d.AmountBtc;
+            entry.tiers.Add(tier);
+            perDonor[d.DonorAddress] = entry;
         }
 
-        // D-ND5.8 / OQ-ND5.3 — sweep the tracked pool's TOTAL BTC to the casino, fee deducted FROM the
-        // total (casino receives windowTotal − fee — the accepted, documented shortfall).
-        decimal windowTotalBtc = Scripts.Finance.Money.Normalize(summary.TrackedDonations.Sum(d => d.AmountBtc));
-        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp); // 0 pre-birth (ND.7)
-        decimal sweepAmount = Scripts.Finance.Money.Normalize(windowTotalBtc - fee);
-
-        bool sweepSucceeded = false;
-        if (sweepAmount > 0m
-            && SharedNodesById.TryGetValue(summary.NonMinerNodeId, out NodeAgent? nonMinerNode)
-            && SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casinoNode))
+        // D-ND8.15 steps 2–4 — participation share × the 10,000-ST base pool, then the halving slot-bonus
+        // ladder (5.2% at tier 1, halving each tier down to 10). A top-3-tier holder mints NST (dividend
+        // rights + votes); everyone else mints PST (dividend rights only).
+        var holdings = new List<CompanyShareHolding>();
+        foreach (KeyValuePair<string, (decimal liveBtc, List<int> tiers)> kv in perDonor)
         {
-            sweepSucceeded = BuildAndBroadcastUtxoSpend(nonMinerNode, casinoNode.WalletAddress, sweepAmount, fee, null, "auction settlement sweep") != null;
+            string donorAddress = kv.Key;
+            decimal liveBtc = kv.Value.liveBtc;
+            List<int> tiers = kv.Value.tiers;
+
+            decimal participationShare = liveBtc / poolTotal;
+            decimal baseTokens = Scripts.Finance.Money.Normalize(participationShare * StockBaseTokenPool);
+            decimal bonusFraction = tiers.Sum(SlotBonusPercent) / 100m;
+            decimal finalTokens = Scripts.Finance.Money.Normalize(baseTokens * (1m + bonusFraction));
+            bool holdsTopThreeTier = tiers.Any(t => t <= 3);
+
+            string holderId = playerAddresses.Contains(donorAddress)
+                ? PlayerNodeId
+                : botNodeIdByAddress.TryGetValue(donorAddress, out string? botNodeId)
+                    ? botNodeId
+                    : donorAddress; // should not happen — see BuildAuctionBidderIdentity's own comment
+
+            holdings.Add(new CompanyShareHolding
+            {
+                HolderId = holderId,
+                Nst = holdsTopThreeTier ? finalTokens : 0m,
+                Pst = holdsTopThreeTier ? 0m : finalTokens
+            });
         }
 
-        AppendAuctionSettlementTrace(block, summary, totalPayoutSc, payoutDonorCount, windowTotalBtc, sweepAmount, sweepSucceeded);
+        var founding = new CompanyFounding
+        {
+            NonMinerNodeId = summary.NonMinerNodeId,
+            NonMinerAddress = summary.NonMinerAddress,
+            CompanyId = summary.CompanyId ?? string.Empty,
+            FoundedAtUnixMs = block.Timestamp,
+            Holdings = holdings
+        };
+        _companyFoundings[summary.NonMinerNodeId] = founding;
+
+        AppendCompanyFoundingTrace(block, summary, founding);
     }
 
-    private const string AuctionSettlementTracePath = "user://logs/auction_settlement_trace.csv";
+    // D-ND8.15's fixed halving slot-bonus ladder (percentage points), tier 1..10 — max possible bonus
+    // (all 10 tiers held by one bidder) ≈ +10.39%.
+    private static readonly decimal[] SlotBonusPercentByTier =
+    [
+        5.2m, 2.6m, 1.3m, 0.65m, 0.325m, 0.1625m, 0.08125m, 0.040625m, 0.0203125m, 0.01015625m
+    ];
+    private const decimal StockBaseTokenPool = 10_000m;
 
-    // Step 14 (ND.5a/b) — one telemetry row per settled non-miner, so the developer can verify during
-    // playtest that TrySettleResolvedAuctions fires EXACTLY once per resolution (D-ND5.10's core
-    // requirement) and inspect the payout/sweep figures without instrumenting the scene first.
-    private static void AppendAuctionSettlementTrace(Block block, NonMinerDonationSummary summary,
-        decimal totalPayoutSc, int payoutDonorCount, decimal windowTotalBtc, decimal sweepAmount, bool sweepSucceeded)
+    private static decimal SlotBonusPercent(int tier) =>
+        tier >= 1 && tier <= SlotBonusPercentByTier.Length ? SlotBonusPercentByTier[tier - 1] : 0m;
+
+    private const string CompanyFoundingTracePath = "user://logs/company_founding_trace.csv";
+
+    // ND.8b.2 — one telemetry row per founded company (renamed from ND.5's auction_settlement_trace: there
+    // is no more payout/sweep to log — this instead confirms FoundCompany fires exactly once per
+    // resolution and records the minted totals for playtest verification).
+    private static void AppendCompanyFoundingTrace(Block block, NonMinerDonationSummary summary, CompanyFounding founding)
     {
         try
         {
@@ -1164,23 +1168,25 @@ public partial class NetworkRoot : Node
                 DirAccess.MakeDirRecursiveAbsolute("user://logs");
             }
 
-            bool exists = FileAccess.FileExists(AuctionSettlementTracePath);
+            bool exists = FileAccess.FileExists(CompanyFoundingTracePath);
             using FileAccess file = exists
-                ? FileAccess.Open(AuctionSettlementTracePath, FileAccess.ModeFlags.ReadWrite)
-                : FileAccess.Open(AuctionSettlementTracePath, FileAccess.ModeFlags.Write);
+                ? FileAccess.Open(CompanyFoundingTracePath, FileAccess.ModeFlags.ReadWrite)
+                : FileAccess.Open(CompanyFoundingTracePath, FileAccess.ModeFlags.Write);
             if (file == null) return;
 
             if (exists) file.SeekEnd();
-            else file.StoreLine("blockTimestampMs,blockIndex,nonMinerNodeId,nonMinerAddress,winnerAddress,trackedDonationCount,payoutDonorCount,totalPayoutSc,windowTotalBtc,sweepAmountBtc,sweepSucceeded");
+            else file.StoreLine("blockTimestampMs,blockIndex,nonMinerNodeId,companyId,companyDisplayName,winnerAddress,trackedDonationCount,holderCount,totalNst,totalPst");
 
+            decimal totalNst = founding.Holdings.Sum(h => h.Nst);
+            decimal totalPst = founding.Holdings.Sum(h => h.Pst);
             file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "{0},{1},{2},{3},{4},{5},{6},{7:F8},{8:F8},{9:F8},{10}",
-                block.Timestamp, block.Index, summary.NonMinerNodeId, summary.NonMinerAddress, summary.WinnerAddress,
-                summary.TrackedDonations.Count, payoutDonorCount, totalPayoutSc, windowTotalBtc, sweepAmount, sweepSucceeded));
+                "{0},{1},{2},{3},{4},{5},{6},{7},{8:F8},{9:F8}",
+                block.Timestamp, block.Index, summary.NonMinerNodeId, summary.CompanyId, summary.CompanyDisplayName,
+                summary.WinnerAddress, summary.TrackedDonations.Count, founding.Holdings.Count, totalNst, totalPst));
         }
         catch (Exception e)
         {
-            GD.PushWarning($"[AuctionSettlementTrace] failed: {e.Message}");
+            GD.PushWarning($"[CompanyFoundingTrace] failed: {e.Message}");
         }
     }
 
@@ -1869,7 +1875,7 @@ public partial class NetworkRoot : Node
     }
 
     // ND.8b.1 — one-line company identity for UI display (BlockExplorer's Enroll Mode,
-    // RecruitableBiddingDetails): "Display Name (CB#, market_category)". Falls back to the legacy
+    // AuctioningCompanyDetails): "Display Name (CB#, market_category)". Falls back to the legacy
     // NodeId if this non-miner has no roster match (should never happen — see the summary's own
     // CompanyId comment).
     public static string DescribeCompany(NonMinerDonationSummary summary) =>
@@ -1895,47 +1901,19 @@ public partial class NetworkRoot : Node
         return ComputeAuctionLedger(nowMs);
     }
 
-    // Step 14 (ND.5c, D-ND5.9) — a PURE, read-only recomputation of a resolved non-miner's settlement
-    // figures, for the RecruitableBiddingDetails scene's summary view. The scene never triggers
-    // settlement itself (TrySettleResolvedAuctions already ran it live, exactly once, from
-    // HandleMinedBlock) — this just reconstructs the same numbers for DISPLAY, the same way
-    // ComputeAuctionLedger is freely recomputed for every other UI refresh. Returns null if the non-miner
-    // isn't Resolved yet, or (structurally unreachable in real play) no closing price is available.
-    public AuctionSettlementSummary? GetAuctionSettlementSummary(string nonMinerAddress)
+    // ND.8b.2 (D-ND8.14) — a PURE, read-only lookup of a founded company's stock-token distribution, for
+    // the AuctioningCompanyDetails scene's summary view (a stand-in until ND.8b.4's CompanyDetails scene
+    // replaces it). The scene never triggers founding itself (FoundCompany already ran it live, exactly
+    // once, from HandleMinedBlock) — this just reads the recorded result. Null if this non-miner hasn't
+    // resolved/founded yet.
+    public CompanyFounding? GetCompanyFounding(string nonMinerAddress)
     {
         EnsureInitialized();
         NonMinerDonationSummary? summary = GetNonMinerAuctionLedger()
             .FirstOrDefault(s => s.NonMinerAddress == nonMinerAddress && s.Status == NonMinerAuctionStatus.Resolved);
-        if (summary is null || summary.TrackedDonations.Count == 0) return null;
-        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)) return null;
+        if (summary is null) return null;
 
-        // The exact block that first crossed WindowCloseUnixMs is the one TrySettleResolvedAuctions
-        // actually settled against (D-ND5.6 — "the resolution block's own game-calendar date").
-        Block? closingBlock = player.Blockchain.Chain.FirstOrDefault(b => b.Timestamp >= summary.WindowCloseUnixMs)
-            ?? player.Blockchain.Chain.LastOrDefault();
-        if (closingBlock is null) return null;
-
-        decimal? closingPrice = _marketData?.GetEffectivePriceUsd(
-            DateTimeOffset.FromUnixTimeMilliseconds(closingBlock.Timestamp).LocalDateTime);
-        if (closingPrice is null) return null;
-
-        Dictionary<string, decimal> payoutScByDonor = summary.TrackedDonations
-            .GroupBy(d => d.DonorAddress)
-            .ToDictionary(g => g.Key, g => Scripts.Finance.Money.Normalize(g.Sum(d => d.AmountBtc) * closingPrice.Value));
-
-        decimal windowTotalBtc = Scripts.Finance.Money.Normalize(summary.TrackedDonations.Sum(d => d.AmountBtc));
-        decimal fee = NetworkFeePolicy.MedianFeeAt(closingBlock.Timestamp); // 0 pre-birth (ND.7)
-
-        return new AuctionSettlementSummary
-        {
-            NonMinerAddress = nonMinerAddress,
-            ClosingBlockTimestampMs = closingBlock.Timestamp,
-            ClosingPriceUsd = closingPrice.Value,
-            Payouts = payoutScByDonor.Select(kv => new AuctionSettlementPayout { DonorAddress = kv.Key, PayoutSc = kv.Value }).ToList(),
-            TotalPayoutSc = Scripts.Finance.Money.Normalize(payoutScByDonor.Values.Sum()),
-            WindowTotalBtc = windowTotalBtc,
-            SweepAmountBtc = Scripts.Finance.Money.Normalize(windowTotalBtc - fee)
-        };
+        return _companyFoundings.TryGetValue(summary.NonMinerNodeId, out CompanyFounding? founding) ? founding : null;
     }
 
     // D-EB.7 / ND.5 — the qualifying-bidder identity split, shared by ComputeAuctionLedger (the ratchet
@@ -2804,7 +2782,8 @@ public partial class NetworkRoot : Node
                 }),
             LastMinedByNodeId = _lastMinedByNodeId,
             CurrentMinerStreak = _currentMinerStreak,
-            BestMinerStreak = _bestMinerStreak
+            BestMinerStreak = _bestMinerStreak,
+            CompanyFoundings = new Dictionary<string, CompanyFounding>(_companyFoundings)
         };
 
         using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
@@ -2937,7 +2916,7 @@ public partial class NetworkRoot : Node
         DeleteIfExists("user://logs/founders_trace.csv");
         DeleteIfExists("user://logs/swap_desk_trace.csv");
         DeleteIfExists("user://logs/network_population_trace.csv");
-        DeleteIfExists(AuctionSettlementTracePath); // ND.6b — was missing since ND.5 (same reasoning as the others)
+        DeleteIfExists(CompanyFoundingTracePath); // ND.6b — was missing since ND.5 (same reasoning as the others); ND.8b.2 renamed the file
         DeleteIfExists(CasinoBotBidTracePath);
 
         // The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
@@ -2989,6 +2968,12 @@ public partial class NetworkRoot : Node
         {
             if (SharedNodesById.TryGetValue(nodeId, out NodeAgent? node))
                 node.FinancialState = state.CloneNormalized();
+        }
+
+        _companyFoundings.Clear();
+        foreach ((string nonMinerNodeId, CompanyFounding founding) in snapshot.CompanyFoundings ?? new Dictionary<string, CompanyFounding>())
+        {
+            _companyFoundings[nonMinerNodeId] = founding;
         }
     }
 
@@ -3085,6 +3070,9 @@ public partial class NetworkRoot : Node
         public string LastMinedByNodeId { get; set; } = string.Empty;
         public int CurrentMinerStreak { get; set; }
         public int BestMinerStreak { get; set; }
+        // ND.8b.2 — keyed by NonMinerNodeId, mirrors _companyFoundings. Absent/null on an older snapshot
+        // (pre-ND.8b.2) deserializes to an empty dict below — no founding could exist yet under it anyway.
+        public Dictionary<string, CompanyFounding> CompanyFoundings { get; set; } = new();
     }
 
     private sealed class NodeWalletSnapshot
@@ -3203,27 +3191,31 @@ public sealed class TrackedDonation
     public long TimestampMs { get; set; }
     // Corrected 2026-07-11 (developer playtest feedback, supersedes the original D-ND5.3 day-of-donation
     // reading): this donation's LIVE, CURRENT SC value — priced as of "now" (the moment last computed),
-    // not frozen at its own donation day. Purely informational display only — NEVER the value used at
-    // settlement, which revalues everything at the CLOSING date instead, D-ND5.6 (unchanged).
+    // not frozen at its own donation day. Purely informational display only (ND.8b.2: founding no longer
+    // revalues anything in SC — the stock-token mint at close is BTC-participation-share-based only).
     public decimal? CurrentValueSc { get; set; }
 }
 
-// Step 14 (ND.5c) — display-only reconstruction of one non-miner's settlement (RecruitableBiddingDetails'
-// summary view). Read-only recomputation, not a record of what NetworkRoot.SettleResolvedAuction actually
-// did — see GetAuctionSettlementSummary.
-public sealed class AuctionSettlementSummary
+// ND.8b.2 (D-ND8.14/D-ND8.15) — the once-per-resolution founding record: who holds what NST/PST at the
+// company's close, for the AuctioningCompanyDetails scene's summary view (a stand-in until ND.8b.4's
+// CompanyDetails scene replaces it) and later the dividends/votes engine (ND.8b.3). Persisted inside
+// NetworkRoot's own BlockchainStateSnapshot — see the _companyFoundings field comment.
+public sealed class CompanyFounding
 {
+    public string NonMinerNodeId { get; set; } = string.Empty;
     public string NonMinerAddress { get; set; } = string.Empty;
-    public long ClosingBlockTimestampMs { get; set; }
-    public decimal ClosingPriceUsd { get; set; }
-    public List<AuctionSettlementPayout> Payouts { get; set; } = new();
-    public decimal TotalPayoutSc { get; set; }
-    public decimal WindowTotalBtc { get; set; }
-    public decimal SweepAmountBtc { get; set; }
+    public string CompanyId { get; set; } = string.Empty;
+    public long FoundedAtUnixMs { get; set; }
+    public List<CompanyShareHolding> Holdings { get; set; } = new();
 }
 
-public sealed class AuctionSettlementPayout
+// One bidder's minted equity in a founded company (D-ND8.6/D-ND8.15). Exactly one of Nst/Pst is non-zero
+// per holder: a top-3-tier holder at close mints NST (dividend rights + voting weight), everyone else
+// mints PST (dividend rights only, no votes). HolderId is "player" or a bot nodeId (bot_1..4) — the same
+// identity space ComputeAuctionLedger's qualifying bidders already use.
+public sealed class CompanyShareHolding
 {
-    public string DonorAddress { get; set; } = string.Empty;
-    public decimal PayoutSc { get; set; }
+    public string HolderId { get; set; } = string.Empty;
+    public decimal Nst { get; set; }
+    public decimal Pst { get; set; }
 }

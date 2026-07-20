@@ -109,8 +109,10 @@ public partial class CasinoScBalanceService : Node
 
 	// Game-world time for a loan record (never wall-clock). Fallback only if the calendar autoload is absent.
 	// ND.8c (D-ND8.35): every bank-loan draw MINTS new SC, so it is mirrored into the world's monetary
-	// ledger as casino debt. All three draw sites (bankruptcy dose recharge, PayFromMainWithAutoLoan,
-	// TriggerManualLoan) funnel through here — one hook covers them all. Lazy resolve: the ledger
+	// ledger as casino debt. Both draw sites (bankruptcy dose recharge, TriggerManualLoan) funnel through
+	// here — one hook covers them both (the third original site, the auction-settlement
+	// PayFromMainWithAutoLoan, retired at ND.8b.2 — D-ND8.14 removed the SC-cashback path it funded).
+	// Lazy resolve: the ledger
 	// autoload registers AFTER this service, so it isn't in the tree yet during our _Ready. The
 	// checkpoint restore path (RestoreCasinoScState) rebuilds the list directly and deliberately does
 	// NOT pass through here — the ledger has its own checkpoint restore.
@@ -306,31 +308,6 @@ public partial class CasinoScBalanceService : Node
 		SaveState();
 		BalanceChanged?.Invoke();
 		return true;
-	}
-
-	// Step 14 (ND.5b, D-ND5.4b) — the auction-settlement funding fallback: pays `amount` out of Main
-	// Balance, drawing on-demand AutoLoanAmount loan chunks FIRST if Main can't already cover it (the same
-	// bankruptcy-flavor pattern TryAutoRecharge uses for the Bankroll, retargeted to a Main-coverage
-	// trigger instead of a Bankroll-empty trigger). Always succeeds — infinite credit line in Basic Mode.
-	public void PayFromMainWithAutoLoan(decimal amount)
-	{
-		amount = Money.Normalize(amount);
-		if (amount <= 0m) return;
-		decimal loanChunk = AutoLoanAmount > 0m ? AutoLoanAmount : InitialLoanAmount;
-
-		int safety = 0;
-		while (MainBalance < amount && safety++ < MaxAutoRechargeIterations)
-		{
-			MainBalance = Money.Normalize(MainBalance + loanChunk);
-			LoanCount++;
-			TotalLoaned = Money.Normalize(TotalLoaned + loanChunk);
-			AddLoanRecord(loanChunk, "auto");
-			GD.Print($"[CasinoScBalanceService] Bank loan #{LoanCount} drawn for auction settlement ({loanChunk:F2} SC) — TotalLoaned={TotalLoaned:F8} SC");
-		}
-
-		MainBalance = Money.Normalize(MainBalance - amount);
-		SaveState();
-		BalanceChanged?.Invoke();
 	}
 
 	public bool TryTransferToMainBalance(decimal amount)
