@@ -22,10 +22,8 @@ public partial class ClientsTransactions : Control
 	private double _refreshTimer;
 	private const double RefreshInterval = 2.0;
 
-	private static readonly (string Id, string Display)[] KnownClients =
-	{
-		("player", "Player"),
-	};
+	// ND.8f: all five canonical casino clients (single source of truth in the ledger service).
+	private static readonly (string Id, string Display)[] KnownClients = CasinoClientLedgerService.CanonicalClients;
 
 	public override void _Ready()
 	{

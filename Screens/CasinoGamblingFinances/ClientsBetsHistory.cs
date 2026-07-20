@@ -16,10 +16,10 @@ public partial class ClientsBetsHistory : Control
 	private Label _overallPlLabel;
 	private Label _totalWageredAllLabel;
 	private OptionButton _gameFilter;
+	private OptionButton _clientFilter;
 	private VBoxContainer _clientRows;
 	private VBoxContainer _liveFeedVBox;
 
-	private decimal _totalWageredAll = 0m;
 	private const int MaxFeedEntries = 50;
 	private double _refreshTimer;
 	private const double RefreshInterval = 2.0;
@@ -38,6 +38,7 @@ public partial class ClientsBetsHistory : Control
 		_overallPlLabel        = GetNode<Label>("%OverallPlLabel");
 		_totalWageredAllLabel  = GetNode<Label>("%TotalWageredAllLabel");
 		_gameFilter            = GetNode<OptionButton>("%GameFilter");
+		_clientFilter          = GetNode<OptionButton>("%ClientFilter");
 		_clientRows            = GetNode<VBoxContainer>("%ClientRows");
 		_liveFeedVBox          = GetNode<VBoxContainer>("%LiveFeedVBox");
 
@@ -45,13 +46,20 @@ public partial class ClientsBetsHistory : Control
 		_gameFilter.AddItem("Dice");
 		_gameFilter.ItemSelected += _ => ClearLiveFeed();
 
+		// ND.8f follow-up: per-client feed filter, mirroring the game filter (index 0 = all; index i > 0
+		// maps to CanonicalClients[i − 1]).
+		_clientFilter.AddItem("All Clients");
+		foreach ((string _, string display) in CasinoClientLedgerService.CanonicalClients)
+			_clientFilter.AddItem(display);
+		_clientFilter.ItemSelected += _ => ClearLiveFeed();
+
 		GetNode<Button>("%BackBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.CasinoGamblingFinances);
 
+		// ND.8f follow-up: the live feed shows EVERY casino client's settled bets (player autobet + bot_1..4)
+		// via the typed ClientBetSettled event. Manual DiceGame bets can only happen while DiceGame itself is
+		// the active scene, so the feed cannot miss them while this screen is open.
 		if (_simService != null)
-			_simService.BetSettled += OnBetSettled;
-
-		// Seed session wagered counter from current stats (player bets placed before entering this scene).
-		_totalWageredAll = _userStats?.Stats?.TotalAmountWagered ?? 0m;
+			_simService.ClientBetSettled += OnClientBetSettled;
 
 		RefreshGlobalSummary();
 		RefreshClientRows();
@@ -60,7 +68,7 @@ public partial class ClientsBetsHistory : Control
 	public override void _ExitTree()
 	{
 		if (_simService != null)
-			_simService.BetSettled -= OnBetSettled;
+			_simService.ClientBetSettled -= OnClientBetSettled;
 	}
 
 	public override void _Process(double delta)
@@ -74,32 +82,39 @@ public partial class ClientsBetsHistory : Control
 		}
 	}
 
-	private void OnBetSettled()
+	private void OnClientBetSettled(string nodeId, string gameId, BetTransactionEvent bet)
 	{
-		BetTransactionEvent bet = _simService?.LastSettledBetEvent;
 		if (bet == null) return;
-
-		string gameId = _simService?.CurrentConfig?.GameId ?? "Dice";
-
-		_totalWageredAll = Money.Normalize(_totalWageredAll + bet.BetAmount);
-		_totalWageredAllLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Total SC wagered (all clients):  {_totalWageredAll:N8} SC");
 
 		int filterIdx = _gameFilter.Selected;
 		bool gameMatches = filterIdx == 0 || (filterIdx == 1 && gameId == "Dice");
-		if (gameMatches)
-			AddLiveFeedEntry(bet, gameId);
+
+		int clientIdx = _clientFilter.Selected;
+		bool clientMatches = clientIdx <= 0
+			|| (clientIdx - 1 < CasinoClientLedgerService.CanonicalClients.Length
+				&& CasinoClientLedgerService.CanonicalClients[clientIdx - 1].Id == nodeId);
+
+		if (gameMatches && clientMatches)
+			AddLiveFeedEntry(DisplayNameFor(nodeId), bet, gameId);
 
 		RefreshGlobalSummary();
 	}
 
-	private void AddLiveFeedEntry(BetTransactionEvent bet, string gameId)
+	private static string DisplayNameFor(string nodeId)
+	{
+		foreach ((string id, string display) in CasinoClientLedgerService.CanonicalClients)
+			if (id == nodeId) return display;
+		return nodeId;
+	}
+
+	private void AddLiveFeedEntry(string displayName, BetTransactionEvent bet, string gameId)
 	{
 		string ts      = bet.Timestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm:ss");
 		string outcome = bet.IsWin ? "WIN " : "LOSS";
 		decimal delta  = -bet.CreditedProfit;
 
 		var label = new Label();
-		label.Text = string.Create(CultureInfo.InvariantCulture, $"{ts}  Player  {gameId}  Bet {bet.BetAmount:N8} SC  {outcome}  {bet.CreditedProfit:+0.00000000;-0.00000000} SC  → casino: {delta:+0.00000000;-0.00000000} SC");
+		label.Text = string.Create(CultureInfo.InvariantCulture, $"{ts}  {displayName,-6}  {gameId}  Bet {bet.BetAmount:N8} SC  {outcome}  {bet.CreditedProfit:+0.00000000;-0.00000000} SC  → casino: {delta:+0.00000000;-0.00000000} SC");
 		label.AddThemeFontSizeOverride("font_size", 16);
 		label.AddThemeColorOverride("font_color", bet.IsWin
 			? new Color(1f, 0.5f, 0.4f)   // player win = casino loss → red-ish
@@ -124,6 +139,16 @@ public partial class ClientsBetsHistory : Control
 
 	private void RefreshGlobalSummary()
 	{
+		// ND.8f: "all clients" is now literal — player (UserStatsService) + bot_1..4 (the casino's book).
+		decimal totalWageredAll = _userStats?.Stats?.TotalAmountWagered ?? 0m;
+		foreach ((string id, string _) in CasinoClientLedgerService.CanonicalClients)
+		{
+			if (id == "player") continue;
+			CasinoClientLedgerService.ClientBetStats book = _ledger?.GetBetStats(id);
+			totalWageredAll = Money.Normalize(totalWageredAll + (book?.TotalWagered ?? 0m));
+		}
+		_totalWageredAllLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Total SC wagered (all clients):  {totalWageredAll:N8} SC");
+
 		if (_casinoSc == null) return;
 		_overallTotalLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Casino since 21 Mar 2009  |  Total SC: {_casinoSc.TotalSc:N8} SC");
 
@@ -140,12 +165,14 @@ public partial class ClientsBetsHistory : Control
 		foreach (Node child in _clientRows.GetChildren())
 			child.QueueFree();
 
-		BuildClientRow("player", "Player");
+		// ND.8f: one row per canonical client — the player sourced from UserStatsService (richer, already
+		// checkpoint-consistent), the bots from the casino's own per-client bet-stats book.
+		foreach ((string id, string display) in CasinoClientLedgerService.CanonicalClients)
+			BuildClientRow(id, display);
 	}
 
 	private void BuildClientRow(string clientId, string displayName)
 	{
-		var stats = _userStats?.Stats;
 		CasinoClientLedgerService.LedgerEntry lastDeposit   = _ledger?.GetLastDeposit(clientId);
 		CasinoClientLedgerService.LedgerEntry lastRecharge  = _ledger?.GetLastAutoRecharge(clientId);
 
@@ -153,8 +180,30 @@ public partial class ClientsBetsHistory : Control
 			? lastDeposit.UtcTimestamp.ToLocalTime().ToString("dd MMM yyyy")
 			: "—";
 
-		decimal wageredLifetime     = stats?.TotalAmountWagered ?? 0m;
-		decimal profitLifetime      = stats?.TotalProfit ?? 0m;
+		decimal wageredLifetime;
+		decimal profitLifetime;
+		int totalBets;
+		int wins;
+		int losses;
+		if (clientId == "player")
+		{
+			var stats = _userStats?.Stats;
+			wageredLifetime = stats?.TotalAmountWagered ?? 0m;
+			profitLifetime  = stats?.TotalProfit ?? 0m;
+			totalBets       = stats?.TotalBets ?? 0;
+			wins            = stats?.TotalWins ?? 0;
+			losses          = stats?.TotalLosses ?? 0;
+		}
+		else
+		{
+			CasinoClientLedgerService.ClientBetStats book = _ledger?.GetBetStats(clientId);
+			wageredLifetime = book?.TotalWagered ?? 0m;
+			profitLifetime  = book?.NetProfit ?? 0m;
+			totalBets       = book?.TotalBets ?? 0;
+			wins            = book?.TotalWins ?? 0;
+			losses          = book?.TotalLosses ?? 0;
+		}
+
 		decimal wageredSinceDeposit = Math.Max(0m, wageredLifetime - (lastDeposit?.TotalWageredSnapshot ?? 0m));
 		decimal plLifetime          = -profitLifetime;
 		decimal plSinceDeposit      = -(profitLifetime - (lastDeposit?.NetProfitSnapshot ?? 0m));
@@ -162,9 +211,6 @@ public partial class ClientsBetsHistory : Control
 			? -(profitLifetime - lastRecharge.NetProfitSnapshot)
 			: plLifetime; // no recharge yet → same as all-time
 
-		int totalBets = stats?.TotalBets ?? 0;
-		int wins      = stats?.TotalWins ?? 0;
-		int losses    = stats?.TotalLosses ?? 0;
 		decimal winRate = totalBets > 0 ? (decimal)wins / totalBets * 100m : 0m;
 
 		string rechargeDate = lastRecharge != null

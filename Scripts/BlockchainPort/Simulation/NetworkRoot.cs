@@ -1125,6 +1125,8 @@ public partial class NetworkRoot : Node
                     BankrollProgramService.DefaultAutoRechargeAmount);
                 state.PrincipalBalance = Scripts.Finance.Money.Normalize(state.PrincipalBalance + payoutSc);
                 netRootAccessor.SetNodeFinancialState(botNodeId, state, false);
+                // ND.8f: bot payouts are ledgered like the player's (previously the entry was player-only).
+                _casinoClientLedger?.RegisterAuctionPayout(botNodeId, payoutSc, utcNow);
             }
             // else: a donor address that no longer maps to a qualifying bidder (should not happen — the
             // tracked pool only ever draws from `bids`, which is already qualifying-bidder-filtered).
@@ -2906,6 +2908,7 @@ public partial class NetworkRoot : Node
         DeleteIfExists("user://hardware_allocation.json");
         DeleteIfExists("user://casino_pool_state.json");
         DeleteIfExists("user://casino_coin_swap_state.json");
+        DeleteIfExists("user://sc_monetary_ledger.json"); // ND.8c — added WITH the feature (the TL.3 maintenance rule)
 
         // DEV trace telemetry: not player-visible, but rows dated under the other timeline would make the
         // traces unreadable (founders_trace is actively used to verify founder pacing) — start them fresh.

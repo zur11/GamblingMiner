@@ -1422,14 +1422,22 @@ public partial class DiceGame : Control, IBetEventSource
 			if (IsPlayerActive())
 			{
 				_userStatsService?.OnBetExecutedRegisterBet(GameId, betEvent);
-				// Route the inverse of the player's profit to/from the casino SC bankroll, exactly as
-				// SimulationService does for autobet. Manual bets do NOT go through SimulationService, so
-				// without this the casino never funds/settles for manual play (with lazy first-bet funding it
-				// would stay at Bankroll 0 forever). Player bets only (bots don't route to casino SC — OQ-11.1).
-				// Safe from double-counting: while autobet is delegated to SimulationService, ExecuteBet is inert
-				// (TickAutoBet returns early on _autobetDelegated and manual betting is disabled).
-				_casinoSc?.ApplyBetResult(-betEvent.CreditedProfit);
 			}
+			else
+			{
+				// ND.8f: with a bot active in the node selector, the settled bet is the BOT's play — it
+				// accrues in the casino's per-client bet-stats book (player stats stay in UserStatsService).
+				_casinoClientLedger ??= GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
+				_casinoClientLedger?.RegisterSettledBet(_activeNodeId, betEvent.BetAmount, betEvent.CreditedProfit, betEvent.IsWin);
+			}
+			// Route the inverse of the client's profit to/from the casino SC bankroll, exactly as
+			// SimulationService does for autobet. Manual bets do NOT go through SimulationService, so
+			// without this the casino never funds/settles for manual play (with lazy first-bet funding it
+			// would stay at Bankroll 0 forever). Since ND.8f (OQ-11.1 resolved) EVERY client's bet routes
+			// here — player and bots alike (previously player-only). Safe from double-counting: while
+			// autobet is delegated to SimulationService, ExecuteBet is inert (TickAutoBet returns early on
+			// _autobetDelegated and manual betting is disabled).
+			_casinoSc?.ApplyBetResult(-betEvent.CreditedProfit);
 			SaveActiveNodeFinancialState(false);
 			ProcessBlockchainAttemptForBet(_activeNodeId, _strategyPanel.StopOnBlockMinedEnabled, _session);
 			if (!suppressClockAdvance)

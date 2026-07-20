@@ -34,9 +34,15 @@ public partial class BlockSessionCheckpointService : Node
 		// Step 12 (SF.1.5 / D-SF2.4): the casino client ledger is a player-facing persisted list, so it is
 		// snapshotted at each block. Null in a legacy checkpoint → keep loaded entries.
 		public List<CasinoClientLedgerService.LedgerEntry> ClientLedgerEntries { get; set; }
+		// Step 14 (ND.8f): the ledger's per-client bet-stats book, snapshotted beside the entries. Null in
+		// a legacy pre-ND.8f checkpoint → the service keeps its loaded book.
+		public Dictionary<string, CasinoClientLedgerService.ClientBetStats> ClientBetStats { get; set; }
 		// Step 13 (SW.0): the casino swap desk's reserves/fee/floor/history, bundled as one DTO. Null in a
 		// legacy pre-SW.0 checkpoint → CasinoCoinSwapService keeps its loaded state (no migration).
 		public CasinoCoinSwapService.CheckpointState CasinoCoinSwapState { get; set; }
+		// Step 14 (ND.8c / D-ND8.35): the SC monetary ledger (grants/debt/mint events), bundled as one DTO.
+		// Null in a legacy pre-ND.8c checkpoint → ScMonetaryLedgerService initializes from live state instead.
+		public ScMonetaryLedgerService.CheckpointState ScMonetaryLedgerState { get; set; }
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -74,6 +80,10 @@ public partial class BlockSessionCheckpointService : Node
 		GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")
 			?.ResetToPreGenesisDefaults(); // Step 13 (SW.0): reserves 0, fee 10%, floor OFF, history cleared
 
+		// ND.8c note: ScMonetaryLedgerService.ResetToPreGenesisDefaults() runs at the END of this method
+		// (after the calendar reset below) so its re-registered genesis-grant events carry the player-start
+		// game time, mirroring the client ledger's "initial" entry.
+
 		// The clock and bet history leak the same way (CalendarTimeService/UserStatsService self-persist on
 		// every bet, not just on a mined block). Before any real block, the chain tip IS still the historical
 		// bootstrap's last block (see NetworkRoot.GetPlayerLatestBlockTimestampMsStatic), so re-deriving
@@ -103,6 +113,11 @@ public partial class BlockSessionCheckpointService : Node
 		// "initial" 40,000 stake (uses the just-set playerStart clock for its game-time timestamp).
 		GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService")
 			?.ResetToPreGenesisDefaults();
+
+		// ND.8c (D-ND8.35): back to the five canonical genesis grants + zero debt, grant events timestamped
+		// at the just-set playerStart clock.
+		GetNodeOrNull<ScMonetaryLedgerService>("/root/ScMonetaryLedgerService")
+			?.ResetToPreGenesisDefaults();
 	}
 
 	// Called once on startup after all other autoloads have loaded their own files.
@@ -131,9 +146,12 @@ public partial class BlockSessionCheckpointService : Node
 		GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")
 			?.RestoreFromCheckpoint(CurrentSnapshot.PlayerBankState); // null DTO (legacy) → keeps loaded state
 		GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService")
-			?.RestoreFromCheckpoint(CurrentSnapshot.ClientLedgerEntries); // null (legacy) → keeps loaded entries
+			?.RestoreFromCheckpoint(CurrentSnapshot.ClientLedgerEntries, CurrentSnapshot.ClientBetStats); // nulls (legacy) → keeps loaded state
 		GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")
 			?.RestoreFromCheckpoint(CurrentSnapshot.CasinoCoinSwapState); // null DTO (legacy) → keeps loaded state
+		GetNodeOrNull<ScMonetaryLedgerService>("/root/ScMonetaryLedgerService")
+			?.RestoreFromCheckpoint(CurrentSnapshot.ScMonetaryLedgerState); // null DTO (legacy) → init from live state
+			// (must run AFTER the CasinoScBalanceService restore above — the live-state init reads TotalLoaned)
 
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
 		{
@@ -199,7 +217,9 @@ public partial class BlockSessionCheckpointService : Node
 			AutoRechargeEnabled = program.AutoRechargeEnabled,
 			PlayerBankState = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")?.CaptureCheckpointState(),
 			ClientLedgerEntries = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService")?.CaptureEntriesForCheckpoint(),
+			ClientBetStats = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService")?.CaptureBetStatsForCheckpoint(),
 			CasinoCoinSwapState = GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")?.CaptureCheckpointState(),
+			ScMonetaryLedgerState = GetNodeOrNull<ScMonetaryLedgerService>("/root/ScMonetaryLedgerService")?.CaptureCheckpointState(),
 			CapturedAtUtc = DateTime.UtcNow
 		};
 

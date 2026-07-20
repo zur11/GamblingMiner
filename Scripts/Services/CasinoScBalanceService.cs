@@ -22,6 +22,7 @@ public partial class CasinoScBalanceService : Node
 	private const string StatePath = "user://casino_sc_balance_state.json";
 	private int _betCount;
 	private CalendarTimeService _calendarTime;
+	private ScMonetaryLedgerService _monetaryLedger;
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
 	// One bank-loan draw (auto = the on-demand bankruptcy recharge; manual = dev-requested via CasinoGamblingFinances).
@@ -84,6 +85,11 @@ public partial class CasinoScBalanceService : Node
 
 	public event Action BalanceChanged;
 
+	// ND.8f: throttled flush for the bet-driven saves (see ApplyBetResult's perf note).
+	private bool _saveDirty;
+	private double _saveFlushTimer;
+	private const double SaveFlushInterval = 0.5;
+
 	public override void _Ready()
 	{
 		LoadState();
@@ -91,7 +97,23 @@ public partial class CasinoScBalanceService : Node
 		GD.Print($"[CasinoScBalanceService] Ready — MainBalance={MainBalance:F8} SC  Bankroll={Bankroll:F8} SC  BankrollTarget={BankrollTarget:F8} SC  LoanCount={LoanCount}  TotalLoaned={TotalLoaned:F8} SC");
 	}
 
+	public override void _Process(double delta)
+	{
+		if (!_saveDirty) return;
+		_saveFlushTimer += delta;
+		if (_saveFlushTimer < SaveFlushInterval) return;
+		_saveFlushTimer = 0;
+		_saveDirty = false;
+		SaveState();
+	}
+
 	// Game-world time for a loan record (never wall-clock). Fallback only if the calendar autoload is absent.
+	// ND.8c (D-ND8.35): every bank-loan draw MINTS new SC, so it is mirrored into the world's monetary
+	// ledger as casino debt. All three draw sites (bankruptcy dose recharge, PayFromMainWithAutoLoan,
+	// TriggerManualLoan) funnel through here — one hook covers them all. Lazy resolve: the ledger
+	// autoload registers AFTER this service, so it isn't in the tree yet during our _Ready. The
+	// checkpoint restore path (RestoreCasinoScState) rebuilds the list directly and deliberately does
+	// NOT pass through here — the ledger has its own checkpoint restore.
 	private void AddLoanRecord(decimal amount, string reason)
 	{
 		_loanHistory.Add(new LoanRecord
@@ -100,6 +122,8 @@ public partial class CasinoScBalanceService : Node
 			Reason        = reason,
 			GameDateLocal = _calendarTime?.CurrentLocalDateTime ?? DateTime.Now
 		});
+		_monetaryLedger ??= GetNodeOrNull<ScMonetaryLedgerService>("/root/ScMonetaryLedgerService");
+		_monetaryLedger?.RegisterLoanDraw(ScMonetaryLedgerService.PartyCasino, amount, reason);
 	}
 
 	// Game-world time for a recharge record; trim to the last MaxRechargeHistory so the history stays bounded.
@@ -171,19 +195,24 @@ public partial class CasinoScBalanceService : Node
 		BalanceChanged?.Invoke();
 	}
 
-	// Called by SimulationService (autobet) and DiceGame.ExecuteBet (manual) after each settled player bet.
-	// casinoDelta = −(player's creditedProfit): positive when player loses, negative when player wins.
-	// Extra-lazy funding (CG.1.8): the Bankroll simply accumulates player losses; the foundational loan is
-	// NEVER drawn on a losing streak. Only when a player win pushes the Bankroll ≤ 0 does TryAutoRecharge()
+	// Called after EVERY settled client bet — player (SimulationService autobet + DiceGame.ExecuteBet) AND
+	// bot_1..4 (SimulationService.ExecuteBotBet; DiceGame with a bot active) since ND.8f resolved OQ-11.1.
+	// casinoDelta = −(client's creditedProfit): positive when the client loses, negative when it wins.
+	// Extra-lazy funding (CG.1.8): the Bankroll simply accumulates client losses; the foundational loan is
+	// NEVER drawn on a losing streak. Only when a client win pushes the Bankroll ≤ 0 does TryAutoRecharge()
 	// fire — the sole funding trigger — injecting one BankrollTarget dose (drawing the 40,000 loan iff Main is
 	// short) so the win's overage is absorbed by the recharged Bankroll, not by Main.
+	// ND.8f perf note: with bots betting many times per second in the background, per-bet SaveState is
+	// wasted I/O (a restart restores from the block checkpoint regardless — block = the only commit), so
+	// bet-driven saves flush through the _Process dirty-flag throttle; loans/transfers/setters still save
+	// immediately.
 	public void ApplyBetResult(decimal casinoDelta)
 	{
 		Bankroll = Money.Normalize(Bankroll + casinoDelta);
 		if (Bankroll <= 0m)
 			TryAutoRecharge();
 		Bankroll = Money.Normalize(Math.Max(0m, Bankroll));
-		SaveState();
+		_saveDirty = true;
 		BalanceChanged?.Invoke();
 
 		_betCount++;

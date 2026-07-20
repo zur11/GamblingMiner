@@ -26,5 +26,6 @@ public partial class MainMenu : Control
 		GetNode<Button>("%BotPlayHistoryBtn").Pressed       += () => _sceneManager?.Go(SceneManager.SceneId.BotPlayHistory);
 		GetNode<Button>("%BTCPoolsAndHardwareShopBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.BTCPoolsAndHardwareShop);
 		GetNode<Button>("%CasinoGamblingFinancesBtn").Pressed  += () => _sceneManager?.Go(SceneManager.SceneId.CasinoGamblingFinances);
+		GetNode<Button>("%WorldEconomyBtn").Pressed             += () => _sceneManager?.Go(SceneManager.SceneId.WorldEconomy);
 	}
 }

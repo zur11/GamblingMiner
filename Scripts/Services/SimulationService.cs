@@ -78,6 +78,15 @@ public partial class SimulationService : Node
 	private BlockSessionCheckpointService? _checkpoint;
 	private FoundersMiningService? _founders;
 	private CasinoScBalanceService? _casinoSc;
+	// ND.8f: the casino's per-client ledger/bet-stats book. Lazy-resolved at the call sites (bot bets can
+	// settle before/independently of any _Ready ordering assumptions).
+	private CasinoClientLedgerService? _clientLedger;
+
+	// ND.8f follow-up: per-client settled-bet feed for ClientsBetsHistory — a typed C# event (not a Godot
+	// signal: BetTransactionEvent is not a Variant). Fired for the delegated player autobet AND every bot
+	// bet; manual DiceGame bets can only happen while DiceGame itself is the active scene, so a live-feed
+	// subscriber in another scene cannot miss them. (nodeId, gameId, settled bet.)
+	public event Action<string, string, BetTransactionEvent>? ClientBetSettled;
 	private PlayerBankAccountService? _playerBank;
 	private NetworkRoot _networkRoot = null!;
 
@@ -478,10 +487,18 @@ public partial class SimulationService : Node
 		// Settle THIS bet's balances BEFORE mining/checkpoint (OQ-CG.10): if this same bet mines a block, the
 		// checkpoint it captures must reflect the bet's own result, consistently with the bet-history boundary
 		// (HistoryCheckpointUtcTicks) which already includes this bet. Keep the bankroll autoload (the source of
-		// truth) in sync so every scene reflects it live, and route the inverse of the player's profit to/from
-		// the casino SC bankroll (player bets only — OQ-11.1).
+		// truth) in sync so every scene reflects it live, and route the inverse of the client's profit to/from
+		// the casino SC bankroll — since ND.8f (OQ-11.1 resolved) EVERY client's bet routes there, so a
+		// delegated autobet running on a bot node is simply that bot's play (correct semantics, no longer an
+		// inconsistency with the comment); its settled bets also accrue in the casino's per-client book.
 		_bankroll?.SetBalance(_wallet.Balance);
 		_casinoSc?.ApplyBetResult(-(LastSettledBetEvent?.CreditedProfit ?? 0m));
+		if (!_config.IsPlayerActive && LastSettledBetEvent != null)
+		{
+			_clientLedger ??= GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
+			_clientLedger?.RegisterSettledBet(_config.ActiveNodeId, LastSettledBetEvent.BetAmount,
+				LastSettledBetEvent.CreditedProfit, LastSettledBetEvent.IsWin);
+		}
 
 		// One nonce attempt per bet (1 bet = 1 attempt), routed by the active node's hardware allocation
 		// (individual pool → own chain; casino pool → casino chain). Real PoW on the shared chain.
@@ -497,6 +514,8 @@ public partial class SimulationService : Node
 			}
 		}
 
+		if (LastSettledBetEvent != null)
+			ClientBetSettled?.Invoke(_config.ActiveNodeId, _config.GameId, LastSettledBetEvent);
 		EmitSignal(SignalName.BetSettled);
 	}
 
@@ -784,6 +803,14 @@ public partial class SimulationService : Node
 			// Record the settled bet in the bot's rolling history (for the study screen).
 			PushBotPlayEntry(runner.NodeId, betEvent);
 
+			// ND.8f (OQ-11.1 resolved): a bot's settled bet routes its inverse to the casino exactly like
+			// the player's, and accrues in the casino's per-client bet-stats book (the bots' stats source
+			// for ClientsBetsHistory). ApplyBetResult's save is throttled, so this is cheap per bet.
+			_casinoSc?.ApplyBetResult(-betEvent.CreditedProfit);
+			_clientLedger ??= GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
+			_clientLedger?.RegisterSettledBet(runner.NodeId, betEvent.BetAmount, betEvent.CreditedProfit, betEvent.IsWin);
+			ClientBetSettled?.Invoke(runner.NodeId, "Dice", betEvent); // bots are Dice-only (no GameId on BotConfig)
+
 			long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
 			Block? block = RouteNonceAttempt(runner.NodeId, tsMs);
 			if (block != null)
@@ -878,6 +905,14 @@ public partial class SimulationService : Node
 			Reason = "auto_recharge"
 		});
 		_networkRoot.SetNodeFinancialState(runner.NodeId, state, false);
+
+		// ND.8f: mirror the recharge into the casino's client ledger with wagered/profit snapshots from the
+		// per-client book — the bots' equivalent of the player path's BankrollProgramService registration
+		// (the "P/L since last bankroll recharge" baseline in ClientsBetsHistory).
+		_clientLedger ??= GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
+		CasinoClientLedgerService.ClientBetStats? book = _clientLedger?.GetBetStats(runner.NodeId);
+		_clientLedger?.RegisterAutoRecharge(runner.NodeId, amount,
+			_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow, book?.TotalWagered ?? 0m, book?.NetProfit ?? 0m);
 		return true;
 	}
 

@@ -20,16 +20,51 @@ public partial class CasinoClientLedgerService : Node
 		public decimal  NetProfitSnapshot    { get; set; }
 	}
 
+	// ND.8f: the five canonical casino clients — the same set as the ND.8c genesis grants. Each carries one
+	// "initial" 40,000 entry (see EnsureCanonicalInitialDeposits) and its own row in the per-client scenes.
+	public static readonly (string Id, string Display)[] CanonicalClients =
+	{
+		("player", "Player"),
+		("bot_1", "Bot 1"),
+		("bot_2", "Bot 2"),
+		("bot_3", "Bot 3"),
+		("bot_4", "Bot 4"),
+	};
+
+	// ND.8f — the casino-side per-client betting book (OQ-11.1 resolved): cumulative bets/wins/losses/
+	// wagered/net-profit per client. The stats source for the NON-player clients (the player's row keeps
+	// reading UserStatsService); NetProfit is the CLIENT's own net profit, so casino P/L = −NetProfit.
+	// Deliberately NOT stored on NodeFinancialState — DiceGame.SaveActiveNodeFinancialState rebuilds that
+	// DTO from the shared services on every save, which would clobber any stats fields.
+	public sealed class ClientBetStats
+	{
+		public int     TotalBets    { get; set; }
+		public int     TotalWins    { get; set; }
+		public int     TotalLosses  { get; set; }
+		public decimal TotalWagered { get; set; }
+		public decimal NetProfit    { get; set; }
+	}
+
 	private const string StatePath = "user://casino_client_ledger.json";
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
 	private sealed class Snapshot
 	{
 		public List<LedgerEntry> Entries { get; set; } = new();
+		public Dictionary<string, ClientBetStats> BetStats { get; set; } = new();
 	}
 
 	private readonly List<LedgerEntry> _entries = new();
 	public IReadOnlyList<LedgerEntry> Entries => _entries;
+
+	private readonly Dictionary<string, ClientBetStats> _betStats = new();
+
+	// ND.8f: bet-stats updates arrive many times per second with bots running — persisting per bet would
+	// thrash the disk for nothing (a restart restores from the block checkpoint regardless; block = the
+	// only commit). Dirty-flag flush instead; everything else keeps its immediate SaveState.
+	private bool _statsSaveDirty;
+	private double _statsSaveFlushTimer;
+	private const double StatsSaveFlushInterval = 1.0;
 
 	public event Action LedgerChanged;
 
@@ -39,10 +74,54 @@ public partial class CasinoClientLedgerService : Node
 	{
 		LoadState();
 		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
-
-		if (!_entries.Any(e => e.ClientId == "player"))
-			RegisterInitialDeposit("player", 40000m, _calendarTime?.CurrentUtcDateTime ?? DateTime.UtcNow, 0m, 0m);
+		EnsureCanonicalInitialDeposits();
 	}
+
+	public override void _Process(double delta)
+	{
+		if (!_statsSaveDirty) return;
+		_statsSaveFlushTimer += delta;
+		if (_statsSaveFlushTimer < StatsSaveFlushInterval) return;
+		_statsSaveFlushTimer = 0;
+		_statsSaveDirty = false;
+		SaveState();
+	}
+
+	// ND.8f: every canonical client (player + bot_1..4) carries exactly one "initial" 40,000 entry — the
+	// ledger mirror of its ND.8c genesis grant. Idempotent; called at boot, after a checkpoint restore (a
+	// legacy checkpoint's entry list would otherwise wipe the bots' migration entries), and by the
+	// pre-genesis reset. A mid-world migration timestamps the bots at the current game time (honest
+	// "enrolled now" semantics — their play only starts being accounted from this build onward).
+	private void EnsureCanonicalInitialDeposits()
+	{
+		foreach ((string id, string _) in CanonicalClients)
+		{
+			if (_entries.Any(e => e.ClientId == id && e.Kind == "initial")) continue;
+			RegisterInitialDeposit(id, 40000m, _calendarTime?.CurrentUtcDateTime ?? DateTime.UtcNow, 0m, 0m);
+		}
+	}
+
+	// ND.8f — one settled bet accrued into the per-client book. In-memory + throttled flush (see _Process);
+	// no LedgerChanged (the per-client scenes poll on a 2 s timer — firing per bot bet would churn the UI).
+	public void RegisterSettledBet(string clientId, decimal betAmount, decimal creditedProfit, bool isWin)
+	{
+		if (string.IsNullOrEmpty(clientId)) return;
+		if (!_betStats.TryGetValue(clientId, out ClientBetStats stats))
+		{
+			stats = new ClientBetStats();
+			_betStats[clientId] = stats;
+		}
+		stats.TotalBets++;
+		if (isWin) stats.TotalWins++;
+		else stats.TotalLosses++;
+		stats.TotalWagered = Money.Normalize(stats.TotalWagered + Math.Abs(betAmount));
+		stats.NetProfit    = Money.Normalize(stats.NetProfit + creditedProfit);
+		_statsSaveDirty = true;
+	}
+
+	// Null when the client has no accrued bets yet. Read-only use by the scenes/recharge snapshots.
+	public ClientBetStats GetBetStats(string clientId)
+		=> _betStats.TryGetValue(clientId, out ClientBetStats stats) ? stats : null;
 
 	public void RegisterInitialDeposit(string clientId, decimal amount, DateTime utc,
 		decimal totalWageredSnapshot, decimal netProfitSnapshot)
@@ -133,8 +212,15 @@ public partial class CasinoClientLedgerService : Node
 	// Deep copy of every entry, for BlockSessionCheckpointService.CaptureCheckpoint (block = the only commit).
 	public List<LedgerEntry> CaptureEntriesForCheckpoint() => _entries.Select(CloneEntry).ToList();
 
-	// Restore from a block checkpoint. Null (legacy pre-SF.1.5 checkpoint) → keep whatever LoadState() loaded.
-	public void RestoreFromCheckpoint(List<LedgerEntry> entries)
+	// ND.8f: the per-client bet-stats book joins the checkpoint surface beside the entries list.
+	public Dictionary<string, ClientBetStats> CaptureBetStatsForCheckpoint()
+		=> _betStats.ToDictionary(kv => kv.Key, kv => CloneStats(kv.Value));
+
+	// Restore from a block checkpoint. Null entries (legacy pre-SF.1.5 checkpoint) → keep whatever
+	// LoadState() loaded. Null betStats (legacy pre-ND.8f checkpoint) → keep the loaded book (no better
+	// source exists). After an entries restore the canonical "initial" deposits are re-ensured — a legacy
+	// checkpoint's list predates the bots' migration entries and would otherwise silently wipe them.
+	public void RestoreFromCheckpoint(List<LedgerEntry> entries, Dictionary<string, ClientBetStats> betStats)
 	{
 		if (entries == null)
 		{
@@ -148,20 +234,44 @@ public partial class CasinoClientLedgerService : Node
 			if (e == null || string.IsNullOrEmpty(e.ClientId)) continue;
 			_entries.Add(CloneEntry(e));
 		}
+
+		if (betStats != null)
+		{
+			_betStats.Clear();
+			foreach (var kv in betStats)
+			{
+				if (kv.Value == null || string.IsNullOrEmpty(kv.Key)) continue;
+				_betStats[kv.Key] = CloneStats(kv.Value);
+			}
+		}
+
+		EnsureCanonicalInitialDeposits();
 		SaveState();
 		LedgerChanged?.Invoke();
 	}
 
-	// Pre-genesis reset: discard every player entry accumulated between restarts and re-establish the single
-	// clean "initial" starting-stake deposit (D-SF3.4 — reverts to today's meaning). Called from
-	// BlockSessionCheckpointService.ResetToPreGenesisDefaults() on every boot until the first real block.
+	// Pre-genesis reset: discard every canonical client's entries accumulated between restarts, zero the
+	// bet-stats book, and re-establish the five clean "initial" starting-stake deposits (D-SF3.4 semantics,
+	// extended to all clients at ND.8f). Called from BlockSessionCheckpointService.ResetToPreGenesisDefaults()
+	// on every boot until the first real block.
 	public void ResetToPreGenesisDefaults()
 	{
-		_entries.RemoveAll(e => e.ClientId == "player");
-		RegisterInitialDeposit("player", 40000m, _calendarTime?.CurrentUtcDateTime ?? DateTime.UtcNow, 0m, 0m);
+		foreach ((string id, string _) in CanonicalClients)
+			_entries.RemoveAll(e => e.ClientId == id);
+		_betStats.Clear();
+		EnsureCanonicalInitialDeposits();
 		SaveState();
 		LedgerChanged?.Invoke();
 	}
+
+	private static ClientBetStats CloneStats(ClientBetStats s) => new ClientBetStats
+	{
+		TotalBets    = Math.Max(0, s.TotalBets),
+		TotalWins    = Math.Max(0, s.TotalWins),
+		TotalLosses  = Math.Max(0, s.TotalLosses),
+		TotalWagered = Money.Normalize(Math.Max(0m, s.TotalWagered)),
+		NetProfit    = Money.Normalize(s.NetProfit)
+	};
 
 	private static LedgerEntry CloneEntry(LedgerEntry e) => new LedgerEntry
 	{
@@ -198,7 +308,15 @@ public partial class CasinoClientLedgerService : Node
 		{
 			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Read);
 			Snapshot snapshot = JsonSerializer.Deserialize<Snapshot>(file.GetAsText(), JsonOptions);
-			if (snapshot?.Entries == null) return;
+			if (snapshot == null) return;
+
+			foreach (var kv in snapshot.BetStats ?? new Dictionary<string, ClientBetStats>())
+			{
+				if (kv.Value == null || string.IsNullOrEmpty(kv.Key)) continue;
+				_betStats[kv.Key] = CloneStats(kv.Value);
+			}
+
+			if (snapshot.Entries == null) return;
 			foreach (LedgerEntry e in snapshot.Entries)
 			{
 				if (e == null || string.IsNullOrEmpty(e.ClientId)) continue;
@@ -224,7 +342,11 @@ public partial class CasinoClientLedgerService : Node
 	{
 		try
 		{
-			var snapshot = new Snapshot { Entries = new List<LedgerEntry>(_entries) };
+			var snapshot = new Snapshot
+			{
+				Entries  = new List<LedgerEntry>(_entries),
+				BetStats = _betStats.ToDictionary(kv => kv.Key, kv => CloneStats(kv.Value))
+			};
 			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
 			file.StoreString(JsonSerializer.Serialize(snapshot, JsonOptions));
 		}
