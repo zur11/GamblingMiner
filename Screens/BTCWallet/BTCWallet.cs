@@ -242,6 +242,7 @@ public partial class BTCWallet : Control
 		_sendPanel.AddChild(amountRow);
 
 		_auctionBidWarningLabel = new Label { Text = string.Empty, Visible = false };
+		_auctionBidWarningLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart; // ND.8d.6 — now multi-line (up to 3 warnings)
 		_auctionBidWarningLabel.AddThemeFontSizeOverride("font_size", 18);
 		_auctionBidWarningLabel.AddThemeColorOverride("font_color", new Color(1f, 0.75f, 0.2f));
 		_sendPanel.AddChild(_auctionBidWarningLabel);
@@ -292,6 +293,8 @@ public partial class BTCWallet : Control
 	// ND.4b (D-ND4b.9) — resolves the current send-panel recipient (best-effort, mirrors OnSendConfirmed's
 	// own resolution) and, if it is a currently-recruitable non-miner, shows the live minimum the next
 	// donation must clear to become the new leading bid. Purely informational — never blocks Send.
+	// ND.8d.6 — up to three NON-blocking bid-safety warnings (the send always proceeds): below-minimum
+	// (pre-existing), already-leading, and closing-soon. Composed into one multi-line label.
 	private void RefreshAuctionBidWarning()
 	{
 		int selected = _toDropdown.Selected;
@@ -299,24 +302,36 @@ public partial class BTCWallet : Control
 			? (selected == _toAddresses.Count - 1 ? _manualAddressInput.Text.Trim() : _toAddresses[selected])
 			: string.Empty;
 
-		decimal? minimum = string.IsNullOrEmpty(recipientAddress)
-			? null
-			: _networkRoot.GetMinimumCompetitiveBidBtc(recipientAddress);
-
-		if (minimum is not decimal min)
+		if (string.IsNullOrEmpty(recipientAddress))
 		{
 			_auctionBidWarningLabel.Visible = false;
 			return;
 		}
 
-		bool belowMinimum = !decimal.TryParse(_amountInput.Text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out decimal amount)
-			|| amount < min;
-		_auctionBidWarningLabel.Visible = belowMinimum;
-		if (belowMinimum)
+		var lines = new List<string>();
+
+		// (existing) a send below the competitive floor won't count as a bid.
+		if (_networkRoot.GetMinimumCompetitiveBidBtc(recipientAddress) is decimal min)
 		{
-			_auctionBidWarningLabel.Text = string.Create(CultureInfo.InvariantCulture,
-				$"This recipient is in an active referral auction — sends below {min:F8} BTC won't count as a competitive bid.");
+			bool belowMinimum = !decimal.TryParse(_amountInput.Text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out decimal amount)
+				|| amount < min;
+			if (belowMinimum)
+				lines.Add(string.Create(CultureInfo.InvariantCulture,
+					$"This recipient is in an active referral auction — sends below {min:F8} BTC won't count as a competitive bid."));
 		}
+
+		// ND.8d.6 (a) — already-leading (non-blocking): a send from the current leader is IGNORED by the
+		// auction (last-bid preservation) — it won't count as a donation and your leading bid is preserved.
+		if (_networkRoot.IsPlayerLeadingCompanyBid(recipientAddress))
+			lines.Add("You already hold the leading bid here — if you send anyway it won't count as a bid: it won't participate in the auction, and your current leading bid (with its countdown) is preserved.");
+
+		// ND.8d.6 (b) — closing-soon (non-blocking): a bid may not be mined before the window closes.
+		if (_networkRoot.GetAuctionDaysUntilClose(recipientAddress) is double days && days <= NetworkRoot.AuctionClosingSoonWarningDays)
+			lines.Add(string.Create(CultureInfo.InvariantCulture,
+				$"This auction closes in ~{days:0.0} in-game day(s) — if no block is mined before it closes, this bid may not be counted (your BTC stays in your wallet)."));
+
+		_auctionBidWarningLabel.Text = string.Join("\n", lines);
+		_auctionBidWarningLabel.Visible = lines.Count > 0;
 	}
 
 	private void PopulateToDropdown(string excludeAddress)

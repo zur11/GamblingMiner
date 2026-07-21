@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using GodotBlockchainPort.Simulation;
@@ -111,8 +112,8 @@ public partial class AuctioningCompanyDetails : Control
 		// EARLY RUSH while it holds <7 slots (steep tier 4/5/6 probabilities so bots contest young pools
 		// hard), reverting to the NORMAL ladder once it reaches 7. ND.6e — a NORMAL pool inside the final
 		// 7 days of its rolling window rolls the one-Fibonacci-level-up URGENCY table instead. The
-		// per-slot "re-bid NN%" is the chance a casino-bot holding THAT slot as its best position
-		// re-bids when picked (see NetworkRoot).
+		// per-slot "re-bid NN%" is the live chance a casino-bot occupying THAT slot re-bids when picked —
+		// ND.8d now factors the occupant's OWN bid-count (tiers 2/3), and a player-held slot shows none.
 		int occupied = summary.TrackedDonations.Count;
 		bool urgent = NetworkRoot.IsAuctionInUrgencyWindow(summary.WindowCloseUnixMs, nowMs);
 		string mode = occupied < 7
@@ -129,13 +130,22 @@ public partial class AuctioningCompanyDetails : Control
 			return;
 		}
 
+		// ND.8d.2 — each slot's live re-bid % now factors the OCCUPANT's own bid-count (how many tracked
+		// slots that donor holds here); a slot held by the PLAYER shows no probability at all (blank).
+		Dictionary<string, int> slotsByDonor = summary.TrackedDonations
+			.GroupBy(d => d.DonorAddress)
+			.ToDictionary(g => g.Key, g => g.Count());
+
 		int tier = 1;
 		foreach (TrackedDonation d in summary.TrackedDonations.OrderByDescending(d => d.AmountBtc))
 		{
 			string scValue = d.CurrentValueSc is decimal sc
 				? string.Create(CultureInfo.InvariantCulture, $"  (≈ {sc:F8} SC today)")
 				: string.Empty;
-			string prob = NetworkRoot.ReBidProbabilityLabel(tier, occupied, urgent);
+			int ownBidCount = slotsByDonor.TryGetValue(d.DonorAddress, out int c) ? c : 1;
+			string prob = _networkRoot.IsPlayerBidderAddress(d.DonorAddress)
+				? string.Empty // ND.8d.2 — the player bids manually; never a ladder re-bid probability
+				: NetworkRoot.ReBidProbabilityLabel(tier, occupied, urgent, ownBidCount);
 			string probCol = prob switch
 			{
 				"" => string.Empty,
