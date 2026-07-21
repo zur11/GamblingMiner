@@ -179,6 +179,9 @@ public partial class NetworkRoot : Node
     // plain autoload reference (not a throwaway instance, unlike EB.1's bootstrap accessors) so the
     // auction ledger reuses the SAME loaded CSV/Market-Birth date the rest of live play already reads.
     private static BtcMarketDataService? _marketData;
+    // ND.8b.6 — see _Ready: the provisional casino SC-provisioning path + the player's SC dividend claims.
+    private static CasinoScBalanceService? _casinoSc;
+    private static PrincipalBalanceService? _principalBalance;
     // ND.8b.1 — non_miner_{i+1} (BotWalletRegistry's fixed creation order) <-> CompanyRoster
     // .Auctionable[i]'s founding record, once (and only once) that company's auction resolves.
     // Keyed by NonMinerNodeId (stable across the whole game, unlike the address — non-miners are
@@ -188,6 +191,15 @@ public partial class NetworkRoot : Node
     // no separate checkpoint/pre-genesis-reset path is needed (a founding can only ever happen well
     // post-genesis — Market Birth alone is ~1.5 in-game years after player start).
     private static readonly Dictionary<string, CompanyFounding> _companyFoundings = new();
+    // ND.8b.3 — per-company governance state (reserve mix, market category, open vote, dividend cycle,
+    // claimables), keyed by NonMinerNodeId like _companyFoundings and persisted beside it in
+    // BlockchainStateSnapshot (same "a block is the only commit" inheritance — governance can only exist
+    // for founded companies, i.e. well post-genesis).
+    private static readonly Dictionary<string, CompanyGovernanceState> _companyGovernance = new();
+    // ND.8b.3 (D-ND8.13/D-ND8.26) — the casino-miner-bots' governance identities (one Currency-Band
+    // preference + one market-category preference each), re-rolled per world; drawn lazily on the first
+    // vote open (always inside block processing, so the draw lands in that block's snapshot write).
+    private static readonly Dictionary<string, BotGovernancePreference> _botGovernancePreferences = new();
 
     public static void SetNonMinerIntroSchedule(long[] introUnixMs) =>
         _nonMinerIntroScheduleMs = introUnixMs ?? [];
@@ -195,6 +207,11 @@ public partial class NetworkRoot : Node
     public override void _Ready()
     {
         _marketData = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
+        // ND.8b.6 (D-ND8.24/D-ND8.34) — the provisional SC-provisioning path: company BTC→SC conversions
+        // draw SC from the casino's Main Balance (auto-loan when short), and the player's SC dividend
+        // claims land on the Main Balance. Plain autoload references, the _marketData pattern.
+        _casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
+        _principalBalance = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
         EnsureInitialized();
     }
 
@@ -1029,6 +1046,7 @@ public partial class NetworkRoot : Node
             AppendDifficultyTrace(miner, block); // F0: per-block difficulty/throughput telemetry (live blocks only)
             ScheduleBotTransactionsAfterBlock(block);
             TrySettleResolvedAuctions(block); // Step 14 (ND.5, D-ND5.10): settle any non-miner that just resolved this block
+            TickCompanyGovernance(block); // Step 14 (ND.8b.3): votes + dividends, committed in this block's snapshot write below
             HistoricalEventScheduler.OnBlockMined(block); // Step 7.4: inject scripted player-era txs at their date
             PersistStateToDisk();
             // After every block (any miner), retry casino-pool payouts whose coinbase has now matured.
@@ -1141,6 +1159,10 @@ public partial class NetworkRoot : Node
         _companyFoundings[summary.NonMinerNodeId] = founding;
 
         AppendCompanyFoundingTrace(block, summary, founding);
+
+        // ND.8b.3 (D-ND8.18) — the very first vote fires on auction close: initialize the company's
+        // governance state and open the founding-day vote (initial reserve-mix direction).
+        InitializeCompanyGovernance(block, summary, founding);
     }
 
     // D-ND8.15's fixed halving slot-bonus ladder (percentage points), tier 1..10 — max possible bonus
@@ -1187,6 +1209,806 @@ public partial class NetworkRoot : Node
         catch (Exception e)
         {
             GD.PushWarning($"[CompanyFoundingTrace] failed: {e.Message}");
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // Step 14 (ND.8b.3, D-ND8.17/18/19b) — Company governance: the dividends & votes engine.
+    //
+    // BLOCK-DRIVEN: TickCompanyGovernance is called from HandleMinedBlock right after
+    // TrySettleResolvedAuctions and BEFORE PersistStateToDisk, so every governance mutation commits in
+    // the same block-snapshot write — "a block is the only commit to disk" holds by construction.
+    // Between-block UI actions (the player's ballot, a manual dividend claim) mutate memory + the
+    // mempool only and revert together on an app restart, like every other between-block action.
+    // Timing granularity is the block (~0.68 in-game days at target pace): a vote "closes" on the first
+    // block whose timestamp crosses its deadline — comfortably inside D-ND8.18's one-day scale.
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+
+    private const string CompanyVoteKindFounding = "founding";   // D-ND8.18 — fires on auction close
+    private const string CompanyVoteKindQuarterly = "quarterly"; // dividend amount + reserve/nature direction
+    private const string CompanyVoteKindSpecial = "special";     // >30%-inflow reserve vote
+
+    // D-ND8.18 — every vote runs one in-game day; its result applies from the next day (the moment the
+    // window elapses — the first block past OpenedAt + 1 day) and holds until the next quarter.
+    private const long VoteDurationMs = 86_400_000L;
+    private const long GameDayMs = 86_400_000L;
+    private const int QuarterMonths = 3;
+    // D-ND8.18 — the special reserve vote fires when cumulative NEW inflow since the last vote closed
+    // exceeds 30% of the reserve value measured at that close (SC+BTC combined — the SC side is
+    // structurally 0 until ND.8b.6 lands the automatic conversions, so today this is a pure-BTC test).
+    // It does NOT reschedule the quarterly cadence.
+    private const decimal SpecialVoteInflowFraction = 0.30m;
+    // D-ND8.19b — a discrete ±1 market-category shift needs a weighted supermajority (~60% of total
+    // voting weight); the reserve % just moves on the simple weighted average. Tie/sub-threshold = no
+    // change (status-quo bias).
+    private const decimal MarketShiftSupermajorityFraction = 0.60m;
+    private const int MaxVoteHistoryPerCompany = 40;
+
+    // §12.4.3's risk/reward dial, quantified (ND.8b.3 calibration constants, Fibonacci like the ladder
+    // tables — tune at the ND.8b playtest): the DEFAULT quarterly dividend rate (% of each reserve side,
+    // BTC and SC measured separately per D-ND8.17). Payout ballots clamp to [0, 2× the current default].
+    public static decimal DefaultQuarterlyPayoutRatePercent(string marketCategory) => marketCategory switch
+    {
+        "black" => 21m,
+        "dark_grey" => 13m,
+        "light_grey" => 8m,
+        _ => 5m, // official
+    };
+
+    // §12.4.2 — Currency Band geometry: the band default (a company's reserve target until its
+    // founding-day vote resolves) and the ±25% vote range, expressed as the SC side % of reserves.
+    private static decimal BandDefaultScPercent(string band) => band switch
+    {
+        "CB1" => 100m,
+        "CB2" => 75m,
+        "CB3" => 50m,
+        "CB4" => 25m,
+        _ => 0m, // CB5
+    };
+
+    public static (decimal min, decimal max) BandScPercentBounds(string band) => band switch
+    {
+        "CB1" => (75m, 100m),
+        "CB2" => (50m, 100m),
+        "CB3" => (25m, 75m),
+        "CB4" => (0m, 50m),
+        _ => (0m, 25m), // CB5
+    };
+
+    // §12.4.3 — light → dark, the axis a quarterly vote may shift by at most ±1 category, clamped within
+    // ±1 of the roster DEFAULT (D-ND8.7 — a company never drifts more than one step from its nature).
+    private static readonly string[] MarketCategoryOrder = ["official", "light_grey", "dark_grey", "black"];
+
+    private static int MarketCategoryIndex(string category)
+    {
+        int index = Array.IndexOf(MarketCategoryOrder, category);
+        return index >= 0 ? index : 0;
+    }
+
+    // Quarterly dates are calendar-anchored (founding date + 3 in-game months per quarter), not a flat
+    // day count — matches how the roster/timeline anchors every other historical date.
+    private static long AddMonthsMs(long baseUnixMs, int months) =>
+        new DateTimeOffset(DateTimeOffset.FromUnixTimeMilliseconds(baseUnixMs).ToLocalTime().LocalDateTime.AddMonths(months))
+            .ToUnixTimeMilliseconds();
+
+    private static decimal CompanyTreasuryBtc(string nonMinerNodeId) =>
+        SharedNodesById.TryGetValue(nonMinerNodeId, out NodeAgent? node) ? AggregateSpendable(node) : 0m;
+
+    // D-ND8.13/D-ND8.26 — the four casino-miner-bots draw, once per world: a distinct 4-of-5 Currency
+    // Band preference set (one band always unrepresented) and a distinct full permutation of the 4
+    // market categories (all stances represented, one per bot). Drawn lazily on the first vote open —
+    // always inside block processing, so the draw lands in that same block's snapshot write and stays
+    // stable for the rest of the world's life.
+    private static void EnsureBotGovernancePreferences()
+    {
+        IReadOnlyList<BotWalletRecord> minerBots = BotWalletRegistry.MinerBots;
+        if (minerBots.Count == 0 || _botGovernancePreferences.Count >= minerBots.Count)
+        {
+            return;
+        }
+
+        string[] bands = ["CB1", "CB2", "CB3", "CB4", "CB5"];
+        string[] markets = (string[])MarketCategoryOrder.Clone();
+        ShuffleInPlace(bands);
+        ShuffleInPlace(markets);
+        for (int i = 0; i < minerBots.Count; i++)
+        {
+            _botGovernancePreferences[minerBots[i].NodeId] = new BotGovernancePreference
+            {
+                CurrencyBandPreference = bands[i % bands.Length],
+                MarketCategoryPreference = markets[i % markets.Length]
+            };
+        }
+    }
+
+    private static void ShuffleInPlace(string[] values)
+    {
+        for (int i = values.Length - 1; i > 0; i--)
+        {
+            int j = Random.Shared.Next(i + 1);
+            (values[i], values[j]) = (values[j], values[i]);
+        }
+    }
+
+    // Called from FoundCompany — the company's governance state is born WITH the company, and the
+    // founding-day vote (initial reserve-mix direction, D-ND8.18) opens on the same block.
+    private static void InitializeCompanyGovernance(Block block, NonMinerDonationSummary summary, CompanyFounding founding)
+    {
+        if (_companyGovernance.ContainsKey(summary.NonMinerNodeId))
+        {
+            return;
+        }
+
+        string band = string.IsNullOrEmpty(summary.CompanyCurrencyBand) ? "CB3" : summary.CompanyCurrencyBand;
+        string category = string.IsNullOrEmpty(summary.CompanyMarketCategory) ? "official" : summary.CompanyMarketCategory;
+
+        var gov = new CompanyGovernanceState
+        {
+            NonMinerNodeId = summary.NonMinerNodeId,
+            CompanyId = founding.CompanyId,
+            CurrencyBand = band,
+            DefaultMarketCategory = category,
+            MarketCategory = category,
+            ReserveScPercent = BandDefaultScPercent(band),
+            QuarterIndex = 0,
+            NextQuarterlyDueMs = AddMonthsMs(founding.FoundedAtUnixMs, QuarterMonths),
+            BaselineReserveBtc = CompanyTreasuryBtc(summary.NonMinerNodeId),
+            InflowSinceBaselineBtc = 0m
+        };
+        _companyGovernance[summary.NonMinerNodeId] = gov;
+
+        OpenCompanyVote(gov, founding, CompanyVoteKindFounding, block);
+    }
+
+    private static void TickCompanyGovernance(Block block)
+    {
+        if (_companyGovernance.Count == 0)
+        {
+            return;
+        }
+
+        AccumulateCompanyInflows(block);
+        long nowMs = block.Timestamp;
+
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            if (!_companyFoundings.TryGetValue(gov.NonMinerNodeId, out CompanyFounding? founding))
+            {
+                continue;
+            }
+
+            // 1) Close a due vote. AwaitingPlayerVote holds it open — time is paused for the player
+            //    anyway (IsAwaitingPlayerVote below), so this guard only bites if the pause was bypassed.
+            if (gov.OpenVote != null && nowMs >= gov.OpenVote.ClosesAtMs && !gov.OpenVote.AwaitingPlayerVote)
+            {
+                CloseCompanyVote(gov, founding, block);
+            }
+
+            // 2) With no vote running: the quarterly on its scheduled date takes precedence; else the
+            //    >30%-inflow special reserve vote (which never reschedules the quarterly, D-ND8.18).
+            if (gov.OpenVote == null)
+            {
+                if (nowMs >= gov.NextQuarterlyDueMs)
+                {
+                    // Quarter end: credit the closing cycle's NST lumps + residual PST drip BEFORE the
+                    // new quarter's vote opens (D-ND8.17 — the lump is paid at quarter end).
+                    SettleDividendCycleAtQuarterEnd(gov, founding, block);
+                    gov.QuarterIndex++;
+                    gov.NextQuarterlyDueMs = AddMonthsMs(founding.FoundedAtUnixMs, QuarterMonths * (gov.QuarterIndex + 1));
+                    OpenCompanyVote(gov, founding, CompanyVoteKindQuarterly, block);
+                }
+                else if (gov.BaselineReserveBtc > 0m
+                    && gov.InflowSinceBaselineBtc > gov.BaselineReserveBtc * SpecialVoteInflowFraction)
+                {
+                    OpenCompanyVote(gov, founding, CompanyVoteKindSpecial, block);
+                }
+            }
+
+            // 3) Advance the live dividend cycle: PST daily-drip accrual, then the ND.8b.6 reserve
+            //    conversion (fills the SC reserve BEFORE claims draw on it), then bot auto-claims.
+            AccrueDailyDrip(gov, founding, block);
+            TryConvertCompanyReserves(gov, block);
+            TryAutoClaimBotDividends(gov, block);
+        }
+    }
+
+    // ── ND.8b.6 (D-ND8.24/D-ND8.34) — automatic BTC→SC reserve conversion, provisional casino path ──
+
+    // Calibration floors (v1): convert only when the SC-side deficit is ≥ 5% of total reserve value AND
+    // the BTC to sell clears a dust/value floor — conversions stay chunky instead of one tiny tx per
+    // inflow, and each conversion is an ORGANIC mempool tx that the fullness-parity budget counts.
+    private const decimal ConversionDeficitTriggerFraction = 0.05m;
+    private const decimal MinConversionBtc = 0.01m;
+
+    // Moves a founded company's reserves toward its voted ReserveScPercent target: an on-chain
+    // company→casino BTC send (network median fee — the network's cost, never a desk fee) paired with an
+    // SC credit into the company's ScReserve at the CLEAN market reference rate (the day's price,
+    // D-ND8.24), funded from the casino's Main Balance with auto-loan chunks when short (the provisional
+    // path — banks take this over at ND.8e, D-ND8.34). Gated on the founding-day vote having closed
+    // ("per preferences + the founding vote"); v1 converts BTC→SC only — the reverse direction needs the
+    // casino to SELL BTC for SC, which is the swap desk/bank's job, deferred with the provisional path.
+    private static void TryConvertCompanyReserves(CompanyGovernanceState gov, Block block)
+    {
+        if (gov.VoteHistory.Count == 0 || gov.ReserveScPercent <= 0m || _casinoSc == null)
+        {
+            return;
+        }
+
+        decimal? priceUsd = _marketData?.GetEffectivePriceUsd(
+            DateTimeOffset.FromUnixTimeMilliseconds(block.Timestamp).LocalDateTime);
+        if (priceUsd is not decimal price || price <= 0m)
+        {
+            return; // no market yet (structurally unreachable post-founding — auctions start at Market Birth)
+        }
+
+        decimal treasuryBtc = CompanyTreasuryBtc(gov.NonMinerNodeId);
+        decimal totalValueSc = treasuryBtc * price + gov.ScReserve;
+        if (totalValueSc <= 0m)
+        {
+            return;
+        }
+
+        decimal targetSc = totalValueSc * gov.ReserveScPercent / 100m;
+        decimal deficitSc = targetSc - gov.ScReserve;
+        if (deficitSc < totalValueSc * ConversionDeficitTriggerFraction)
+        {
+            return;
+        }
+
+        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
+        decimal btcToSell = Scripts.Finance.Money.Normalize(deficitSc / price);
+        if (btcToSell + fee > treasuryBtc)
+        {
+            btcToSell = Scripts.Finance.Money.Normalize(treasuryBtc - fee);
+        }
+
+        if (btcToSell < Math.Max(MinConversionBtc, fee * 2m))
+        {
+            return;
+        }
+
+        if (!SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company)
+            || !SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
+        {
+            return;
+        }
+
+        decimal scAmount = Scripts.Finance.Money.Normalize(btcToSell * price);
+        if (scAmount <= 0m || !_casinoSc.TryPayCompanyProvisionSc(scAmount, "company_conversion"))
+        {
+            return;
+        }
+
+        if (BuildAndBroadcastUtxoSpend(company, casino.WalletAddress, btcToSell, fee, null, "CONVERSION") == null)
+        {
+            _casinoSc.ReceiveSwapSc(scAmount); // unwind the SC leg on a failed broadcast (the SW.4 pattern)
+            return;
+        }
+
+        gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve + scAmount);
+        AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "conversion", "btc_to_sc",
+            string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "btc={0:F8};sc={1:F8};price={2:F2}", btcToSell, scAmount, price));
+    }
+
+    // New BTC arriving at a founded company's address this block (its own sends' change excluded) feeds
+    // the D-ND8.18 >30% special-vote trigger. Companies are single-address today (OQ-8.2).
+    private static void AccumulateCompanyInflows(Block block)
+    {
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            if (!_companyFoundings.TryGetValue(gov.NonMinerNodeId, out CompanyFounding? founding))
+            {
+                continue;
+            }
+
+            string address = founding.NonMinerAddress;
+            foreach (Transaction tx in block.Transactions)
+            {
+                if (tx.IsCoinbase || tx.Inputs.Any(i => i.Address == address))
+                {
+                    continue;
+                }
+
+                foreach (TxOutput output in tx.Outputs)
+                {
+                    if (output.Address == address)
+                    {
+                        gov.InflowSinceBaselineBtc = Scripts.Finance.Money.Normalize(gov.InflowSinceBaselineBtc + output.Amount);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void OpenCompanyVote(CompanyGovernanceState gov, CompanyFounding founding, string kind, Block block)
+    {
+        EnsureBotGovernancePreferences();
+
+        var vote = new CompanyVote
+        {
+            Kind = kind,
+            OpenedAtMs = block.Timestamp,
+            ClosesAtMs = block.Timestamp + VoteDurationMs
+        };
+
+        // Bots cast immediately and deterministically from their persisted preferences (D-ND8.4 —
+        // weighting/direction, never filtering; a restart before the closing block simply re-runs the
+        // same ballots). The player's ballot arrives through TryRegisterPlayerVote (the Board Vote
+        // panel); until it does, the game is paused for them (D-ND8.18, IsAwaitingPlayerVote below).
+        foreach (CompanyShareHolding holding in founding.Holdings)
+        {
+            if (holding.Nst <= 0m)
+            {
+                continue; // PST holders carry zero votes (D-ND8.6)
+            }
+
+            if (holding.HolderId == PlayerNodeId)
+            {
+                vote.AwaitingPlayerVote = true;
+                continue;
+            }
+
+            vote.Ballots[holding.HolderId] = BuildBotBallot(holding.HolderId, gov);
+        }
+
+        gov.OpenVote = vote;
+        AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "vote_open", kind,
+            vote.AwaitingPlayerVote ? "awaiting_player" : "bots_only");
+    }
+
+    // A bot's ballot is a pure function of its persisted preferences + the company's current state:
+    // Currency — its continuous target IS its preference point (a CB3 "balancer" targets 50/50 and damps
+    // swings, D-ND8.19b needs no special-casing); Market — one step toward its preferred category;
+    // Payout — the current category's default rate (bots vote "the standard").
+    private static CompanyBallot BuildBotBallot(string botNodeId, CompanyGovernanceState gov)
+    {
+        _botGovernancePreferences.TryGetValue(botNodeId, out BotGovernancePreference? pref);
+        return new CompanyBallot
+        {
+            ReserveScPercentTarget = BandDefaultScPercent(pref?.CurrencyBandPreference ?? gov.CurrencyBand),
+            MarketShift = pref == null
+                ? 0
+                : Math.Sign(MarketCategoryIndex(pref.MarketCategoryPreference) - MarketCategoryIndex(gov.MarketCategory)),
+            PayoutRatePercent = DefaultQuarterlyPayoutRatePercent(gov.MarketCategory)
+        };
+    }
+
+    private static void CloseCompanyVote(CompanyGovernanceState gov, CompanyFounding founding, Block block)
+    {
+        CompanyVote vote = gov.OpenVote!;
+        gov.OpenVote = null;
+
+        decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
+        decimal reserveResult = gov.ReserveScPercent;
+        decimal payoutResult = 0m;
+        int shiftResult = 0;
+
+        if (totalNst > 0m && vote.Ballots.Count > 0)
+        {
+            Dictionary<string, decimal> nstByHolder = founding.Holdings
+                .Where(h => h.Nst > 0m)
+                .ToDictionary(h => h.HolderId, h => h.Nst);
+
+            decimal votedWeight = 0m, weightedReserve = 0m, weightedPayout = 0m, lighterWeight = 0m, darkerWeight = 0m;
+            foreach ((string holderId, CompanyBallot ballot) in vote.Ballots)
+            {
+                if (!nstByHolder.TryGetValue(holderId, out decimal nst) || nst <= 0m)
+                {
+                    continue;
+                }
+
+                decimal weight = nst / totalNst; // D-ND8.15 step 6 — voting weight = NST ÷ total NST
+                votedWeight += weight;
+                weightedReserve += weight * ballot.ReserveScPercentTarget;
+                weightedPayout += weight * ballot.PayoutRatePercent;
+                if (ballot.MarketShift > 0) darkerWeight += weight;
+                else if (ballot.MarketShift < 0) lighterWeight += weight;
+            }
+
+            if (votedWeight > 0m)
+            {
+                // D-ND8.19b — reserve %: simple weighted average of the cast targets, clamped to the
+                // band's ±25% range.
+                (decimal min, decimal max) = BandScPercentBounds(gov.CurrencyBand);
+                reserveResult = Math.Clamp(Scripts.Finance.Money.Normalize(weightedReserve / votedWeight), min, max);
+
+                if (vote.Kind == CompanyVoteKindQuarterly)
+                {
+                    // D-ND8.19b — a market shift is discrete and riskier: it needs ≥60% of TOTAL voting
+                    // weight in one direction, and lands clamped within ±1 of the roster default.
+                    if (darkerWeight >= MarketShiftSupermajorityFraction) shiftResult = 1;
+                    else if (lighterWeight >= MarketShiftSupermajorityFraction) shiftResult = -1;
+                    if (shiftResult != 0)
+                    {
+                        int defaultIndex = MarketCategoryIndex(gov.DefaultMarketCategory);
+                        int newIndex = Math.Clamp(
+                            MarketCategoryIndex(gov.MarketCategory) + shiftResult,
+                            Math.Max(0, defaultIndex - 1),
+                            Math.Min(MarketCategoryOrder.Length - 1, defaultIndex + 1));
+                        gov.MarketCategory = MarketCategoryOrder[newIndex];
+                    }
+
+                    payoutResult = Math.Clamp(
+                        Scripts.Finance.Money.Normalize(weightedPayout / votedWeight),
+                        0m,
+                        DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * 2m);
+                }
+            }
+        }
+
+        gov.ReserveScPercent = reserveResult;
+
+        if (vote.Kind == CompanyVoteKindQuarterly)
+        {
+            // D-ND8.17 — FINALIZE the quarter's dividend as two separately-tracked amounts (never live
+            // accrual): each currency side is payoutRate% of the corresponding reserve at finalize time.
+            // The SC side is structurally 0 until ND.8b.6 lands the BTC→SC conversions.
+            decimal treasuryBtc = CompanyTreasuryBtc(gov.NonMinerNodeId);
+            gov.QuarterPayoutRatePercent = payoutResult;
+            gov.QuarterDividendBtc = Scripts.Finance.Money.Normalize(treasuryBtc * payoutResult / 100m);
+            gov.QuarterDividendSc = Scripts.Finance.Money.Normalize(gov.ScReserve * payoutResult / 100m);
+            gov.QuarterCycleStartMs = block.Timestamp;
+            gov.QuarterCycleEndMs = gov.NextQuarterlyDueMs;
+            gov.QuarterDrippedDays = 0;
+            gov.QuarterLumpCredited = false;
+        }
+
+        // Reset the >30% special-vote baseline at EVERY vote close — "new inflow" is measured from the
+        // last governance event (D-ND8.18).
+        gov.BaselineReserveBtc = CompanyTreasuryBtc(gov.NonMinerNodeId);
+        gov.InflowSinceBaselineBtc = 0m;
+
+        gov.VoteHistory.Add(new CompanyVoteRecord
+        {
+            Kind = vote.Kind,
+            OpenedAtMs = vote.OpenedAtMs,
+            ClosedAtMs = block.Timestamp,
+            ResultReserveScPercent = gov.ReserveScPercent,
+            ResultMarketCategory = gov.MarketCategory,
+            ResultPayoutRatePercent = vote.Kind == CompanyVoteKindQuarterly ? gov.QuarterPayoutRatePercent : 0m,
+            FinalizedDividendBtc = vote.Kind == CompanyVoteKindQuarterly ? gov.QuarterDividendBtc : 0m,
+            FinalizedDividendSc = vote.Kind == CompanyVoteKindQuarterly ? gov.QuarterDividendSc : 0m
+        });
+        if (gov.VoteHistory.Count > MaxVoteHistoryPerCompany)
+        {
+            gov.VoteHistory.RemoveAt(0);
+        }
+
+        AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "vote_close", vote.Kind,
+            string.Format(System.Globalization.CultureInfo.InvariantCulture, "shift={0}", shiftResult));
+    }
+
+    // D-ND8.17 — the PST daily drip: each elapsed in-game day of the active cycle accrues
+    // (profit% × finalized dividend) ÷ days-in-quarter into the PST holder's claimable balance. Accrual
+    // is date-diffed (block granularity), so restarts/slow blocks never lose or double a day.
+    private static void AccrueDailyDrip(CompanyGovernanceState gov, CompanyFounding founding, Block block)
+    {
+        if (gov.QuarterCycleStartMs <= 0 || gov.QuarterLumpCredited
+            || (gov.QuarterDividendBtc <= 0m && gov.QuarterDividendSc <= 0m))
+        {
+            return;
+        }
+
+        int daysInQuarter = Math.Max(1, (int)((gov.QuarterCycleEndMs - gov.QuarterCycleStartMs) / GameDayMs));
+        int elapsedDays = (int)Math.Clamp((block.Timestamp - gov.QuarterCycleStartMs) / GameDayMs, 0L, daysInQuarter);
+        int daysToDrip = elapsedDays - gov.QuarterDrippedDays;
+        if (daysToDrip <= 0)
+        {
+            return;
+        }
+
+        decimal totalTokens = founding.Holdings.Sum(h => h.Nst + h.Pst);
+        if (totalTokens <= 0m)
+        {
+            return;
+        }
+
+        foreach (CompanyShareHolding holding in founding.Holdings)
+        {
+            if (holding.Pst <= 0m)
+            {
+                continue; // the daily drip is the PST payment preference; NST waits for the lump
+            }
+
+            decimal share = (holding.Nst + holding.Pst) / totalTokens; // D-ND8.15 step 5 — profit participation
+            CompanyClaimable claim = GetOrCreateClaimable(gov, holding.HolderId);
+            claim.Btc = Scripts.Finance.Money.Normalize(claim.Btc + share * gov.QuarterDividendBtc / daysInQuarter * daysToDrip);
+            claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc + share * gov.QuarterDividendSc / daysInQuarter * daysToDrip);
+        }
+
+        gov.QuarterDrippedDays = elapsedDays;
+    }
+
+    // Quarter end (D-ND8.17): NST holders' lump = their full profit-participation share of the finalized
+    // dividend; PST holders get any residual drip days flushed so the finalized amounts distribute
+    // exactly. Runs once per cycle, right before the next quarterly vote opens.
+    private static void SettleDividendCycleAtQuarterEnd(CompanyGovernanceState gov, CompanyFounding founding, Block block)
+    {
+        if (gov.QuarterCycleStartMs <= 0 || gov.QuarterLumpCredited)
+        {
+            return;
+        }
+
+        gov.QuarterLumpCredited = true;
+        if (gov.QuarterDividendBtc <= 0m && gov.QuarterDividendSc <= 0m)
+        {
+            return;
+        }
+
+        decimal totalTokens = founding.Holdings.Sum(h => h.Nst + h.Pst);
+        if (totalTokens <= 0m)
+        {
+            return;
+        }
+
+        int daysInQuarter = Math.Max(1, (int)((gov.QuarterCycleEndMs - gov.QuarterCycleStartMs) / GameDayMs));
+        int residualDays = Math.Max(0, daysInQuarter - gov.QuarterDrippedDays);
+
+        foreach (CompanyShareHolding holding in founding.Holdings)
+        {
+            decimal share = (holding.Nst + holding.Pst) / totalTokens;
+            CompanyClaimable claim = GetOrCreateClaimable(gov, holding.HolderId);
+            if (holding.Nst > 0m)
+            {
+                claim.Btc = Scripts.Finance.Money.Normalize(claim.Btc + share * gov.QuarterDividendBtc);
+                claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc + share * gov.QuarterDividendSc);
+            }
+            else if (holding.Pst > 0m && residualDays > 0)
+            {
+                claim.Btc = Scripts.Finance.Money.Normalize(claim.Btc + share * gov.QuarterDividendBtc / daysInQuarter * residualDays);
+                claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc + share * gov.QuarterDividendSc / daysInQuarter * residualDays);
+            }
+        }
+
+        gov.QuarterDrippedDays = daysInQuarter;
+        AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "quarter_settled", CompanyVoteKindQuarterly, "");
+    }
+
+    private static CompanyClaimable GetOrCreateClaimable(CompanyGovernanceState gov, string holderId)
+    {
+        if (!gov.ClaimableByHolder.TryGetValue(holderId, out CompanyClaimable? claim))
+        {
+            claim = new CompanyClaimable();
+            gov.ClaimableByHolder[holderId] = claim;
+        }
+
+        return claim;
+    }
+
+    // Bots auto-claim EVERY dividend arrival (developer directive, 2026-07-20 — normal/NST lumps and
+    // preferred/PST drips alike, superseding the initial 2×fee value floor): each accrual is swept with
+    // a real on-chain company→bot send on the same block it lands, the network fee deducted from the
+    // dividend itself (the ND.5 sweep precedent — accepted shortfall). The only remaining gate is the
+    // physical one — the claim must NET something (claimable > fee), since a send cannot pay out less
+    // than its own fee; a sub-fee accrual just waits for the next drip day to push it over. A failed
+    // broadcast (treasury momentarily tied up) retries on a later block — the claimable never disappears.
+    private static void TryAutoClaimBotDividends(CompanyGovernanceState gov, Block block)
+    {
+        if (gov.ClaimableByHolder.Count == 0 || !SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company))
+        {
+            return;
+        }
+
+        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
+        foreach ((string holderId, CompanyClaimable claim) in gov.ClaimableByHolder)
+        {
+            if (holderId == PlayerNodeId)
+            {
+                continue; // the player claims manually (CompanyDetails panel)
+            }
+
+            if (!SharedNodesById.TryGetValue(holderId, out NodeAgent? holder))
+            {
+                continue;
+            }
+
+            // ND.8b.6 — the SC side pays instantly from the company's SC reserve into the bot's own SC
+            // principal (the NodeFinancialState mirror the recharge/settlement paths already use);
+            // partial when the reserve is short, remainder stays accrued. Skipped while the bot has no
+            // financial state yet (it materializes on its first bet — always long before any dividend).
+            if (claim.Sc > 0m && gov.ScReserve > 0m && holder.FinancialState is NodeFinancialState fin)
+            {
+                decimal paySc = Math.Min(claim.Sc, gov.ScReserve);
+                fin.PrincipalBalance = Scripts.Finance.Money.Normalize(fin.PrincipalBalance + paySc);
+                gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve - paySc);
+                claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc - paySc);
+            }
+
+            if (claim.Btc <= fee)
+            {
+                continue; // physically unpayable (net ≤ 0) — waits for the next accrual to clear the fee
+            }
+
+            decimal sendAmount = Scripts.Finance.Money.Normalize(claim.Btc - fee);
+            if (sendAmount <= 0m || BuildAndBroadcastUtxoSpend(company, holder.WalletAddress, sendAmount, fee, null, "DIVIDEND") == null)
+            {
+                continue;
+            }
+
+            claim.Btc = 0m;
+            AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim", holderId,
+                string.Format(System.Globalization.CultureInfo.InvariantCulture, "btc={0:F8}", sendAmount));
+        }
+    }
+
+    // ── ND.8b.3 public surface (the pause gate + the CompanyDetails scene's read/act API) ─────────────
+
+    // D-ND8.18 — TRUE while any founded company's open vote still lacks the player's ballot (the player
+    // holds NST there). SimulationService pauses the autobet tick and DiceGame refuses manual bets while
+    // this holds, so game time cannot advance past the vote without the player's say.
+    public static bool IsAwaitingPlayerVote
+    {
+        get
+        {
+            foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+            {
+                if (gov.OpenVote is { AwaitingPlayerVote: true })
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    // The companies currently waiting on the player's ballot — for the DiceGame pause notice and the
+    // Board Vote panel's routing.
+    public static IReadOnlyList<(string nonMinerNodeId, string companyDisplayName)> GetCompaniesAwaitingPlayerVote()
+    {
+        var result = new List<(string, string)>();
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            if (gov.OpenVote is not { AwaitingPlayerVote: true })
+            {
+                continue;
+            }
+
+            CompanyRecord? record = CompanyRoster.ByCompanyId(gov.CompanyId);
+            result.Add((gov.NonMinerNodeId, record?.DisplayName ?? gov.CompanyId));
+        }
+
+        return result;
+    }
+
+    // The Board Vote panel's submit path. Clamps every field into its legal range (band ±25%, shift ∈
+    // {-1,0,1}, payout ∈ [0, 2× default]) rather than rejecting — the UI pre-fills legal values anyway.
+    // Registering the ballot lifts the pause; the vote still closes on its own one-day schedule.
+    public static bool TryRegisterPlayerVote(string nonMinerNodeId, decimal reserveScPercentTarget, int marketShift, decimal payoutRatePercent)
+    {
+        if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov)
+            || gov.OpenVote is not { } vote
+            || !_companyFoundings.TryGetValue(nonMinerNodeId, out CompanyFounding? founding)
+            || !founding.Holdings.Any(h => h.HolderId == PlayerNodeId && h.Nst > 0m))
+        {
+            return false;
+        }
+
+        (decimal min, decimal max) = BandScPercentBounds(gov.CurrencyBand);
+        vote.Ballots[PlayerNodeId] = new CompanyBallot
+        {
+            ReserveScPercentTarget = Math.Clamp(Scripts.Finance.Money.Normalize(reserveScPercentTarget), min, max),
+            MarketShift = Math.Clamp(marketShift, -1, 1),
+            PayoutRatePercent = Math.Clamp(Scripts.Finance.Money.Normalize(payoutRatePercent), 0m,
+                DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * 2m)
+        };
+        vote.AwaitingPlayerVote = false;
+        return true;
+    }
+
+    public CompanyGovernanceState? GetCompanyGovernanceByNodeId(string nonMinerNodeId)
+    {
+        EnsureInitialized();
+        return _companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov) ? gov : null;
+    }
+
+    // The player's manual dividend claim (Quarterly/Daily Dividend panels). The BTC side goes on-chain
+    // to the player's BASE address (the D-SW.6 precedent), network fee deducted from the claim itself;
+    // the SC side (ND.8b.6) pays instantly from the company's SC reserve into the player's Main Balance
+    // (partial when the reserve is short — the remainder stays accrued).
+    public (bool ok, string message) TryClaimPlayerCompanyDividends(string nonMinerNodeId)
+    {
+        EnsureInitialized();
+        if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov)
+            || !gov.ClaimableByHolder.TryGetValue(PlayerNodeId, out CompanyClaimable? claim)
+            || (claim.Btc <= 0m && claim.Sc <= 0m))
+        {
+            return (false, "Nothing to claim yet.");
+        }
+
+        if (!SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company)
+            || !SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+        {
+            return (false, "Company node unavailable.");
+        }
+
+        // SC leg (ND.8b.6) — instant, off-chain: company SC reserve → player Main Balance.
+        decimal paidSc = 0m;
+        if (claim.Sc > 0m && gov.ScReserve > 0m && _principalBalance != null)
+        {
+            paidSc = Math.Min(claim.Sc, gov.ScReserve);
+            _principalBalance.Deposit(paidSc);
+            gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve - paidSc);
+            claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc - paidSc);
+        }
+
+        // BTC leg — on-chain, fee deducted from the claim.
+        long tipMs = player.Blockchain.GetLastBlock().Timestamp;
+        decimal fee = NetworkFeePolicy.MedianFeeAt(tipMs);
+        decimal paidBtc = 0m;
+        string btcNote = string.Empty;
+        if (claim.Btc > fee)
+        {
+            decimal sendAmount = Scripts.Finance.Money.Normalize(claim.Btc - fee);
+            if (BuildAndBroadcastUtxoSpend(company, player.WalletAddress, sendAmount, fee, null, "DIVIDEND") != null)
+            {
+                claim.Btc = 0m;
+                paidBtc = sendAmount;
+            }
+            else
+            {
+                btcNote = " BTC leg failed (treasury tied up) — try again after the next block.";
+            }
+        }
+        else if (claim.Btc > 0m)
+        {
+            btcNote = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                " {0:F8} BTC stays accrued (does not cover the {1:F8} network fee yet).", claim.Btc, fee);
+        }
+
+        if (paidBtc <= 0m && paidSc <= 0m)
+        {
+            return (false, "Nothing claimable right now." + btcNote);
+        }
+
+        string btcPart = paidBtc > 0m
+            ? string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0:F8} BTC broadcast (fee {1:F8}, confirms next block)", paidBtc, fee)
+            : string.Empty;
+        string scPart = paidSc > 0m
+            ? string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0:F8} SC credited to Main Balance", paidSc)
+            : string.Empty;
+        string joined = btcPart.Length > 0 && scPart.Length > 0 ? $"{btcPart} + {scPart}" : btcPart + scPart;
+        return (true, $"Dividend claim: {joined}.{btcNote}");
+    }
+
+    private const string CompanyGovernanceTracePath = "user://logs/company_governance_trace.csv";
+
+    // ND.8b.3 telemetry — one row per governance event (vote_open / vote_close / quarter_settled /
+    // bot_claim). Daily drip accruals are deliberately NOT logged (row volume); the quarter_settled and
+    // claim rows bracket them for playtest verification.
+    private static void AppendCompanyGovernanceTrace(long timestampMs, int blockIndex, CompanyGovernanceState gov,
+        string eventType, string kind, string detail)
+    {
+        try
+        {
+            if (!DirAccess.DirExistsAbsolute("user://logs"))
+            {
+                DirAccess.MakeDirRecursiveAbsolute("user://logs");
+            }
+
+            bool exists = FileAccess.FileExists(CompanyGovernanceTracePath);
+            using FileAccess file = exists
+                ? FileAccess.Open(CompanyGovernanceTracePath, FileAccess.ModeFlags.ReadWrite)
+                : FileAccess.Open(CompanyGovernanceTracePath, FileAccess.ModeFlags.Write);
+            if (file == null)
+            {
+                return;
+            }
+
+            if (exists) file.SeekEnd();
+            else file.StoreLine("blockTimestampMs,blockIndex,companyId,event,kind,reserveScPct,marketCategory,payoutRatePct,dividendBtc,dividendSc,detail");
+
+            file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0},{1},{2},{3},{4},{5:F2},{6},{7:F2},{8:F8},{9:F8},{10}",
+                timestampMs, blockIndex, gov.CompanyId, eventType, kind, gov.ReserveScPercent,
+                gov.MarketCategory, gov.QuarterPayoutRatePercent, gov.QuarterDividendBtc, gov.QuarterDividendSc, detail));
+        }
+        catch (Exception e)
+        {
+            GD.PushWarning($"[CompanyGovernanceTrace] failed: {e.Message}");
         }
     }
 
@@ -1581,7 +2403,11 @@ public partial class NetworkRoot : Node
     // historical schedule, regardless of auction status. Returns how many sends were actually created.
     private static int TryCastSellFlow(Block block, List<Block> chain, int budget)
     {
-        List<string> recipientPool = IntroducedActiveNonMinerAddresses(block.Timestamp);
+        // ND.8b.5 (D-ND8.20/D-ND8.36) — the uniform-random recipient is replaced by a WEIGHT-BIASED draw
+        // among introduced companies: weight = inflow_weight × expansion step-up × dev multiplier. The
+        // amount still tracks the SENDER's balance (D-ND8.36 — relative weights over the existing
+        // curves, no absolute BTC targets), so era scaling stays free and D-14.2 holds.
+        List<(string address, decimal weight)> recipientPool = IntroducedWeightedRecipientPool(block.Timestamp);
         if (recipientPool.Count == 0) return 0;
 
         IReadOnlyList<BotWalletRecord> senders = BotWalletRegistry.CastMiners;
@@ -1601,7 +2427,8 @@ public partial class NetworkRoot : Node
     // One sell-flow send attempt for a single miner record — the shared gate/spend logic of the two
     // cycles above (TryCasinoBotDonation and TryCastSellFlow). Returns the broadcast transaction, or
     // null if any gate failed.
-    private static Transaction? TrySellFlowSend(BotWalletRecord record, Block block, List<Block> chain, List<string> recipientPool)
+    private static Transaction? TrySellFlowSend(BotWalletRecord record, Block block, List<Block> chain,
+        List<(string address, decimal weight)> recipientPool)
     {
         if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? node)) return null;
 
@@ -1625,7 +2452,7 @@ public partial class NetworkRoot : Node
         decimal fee = NetworkFeePolicy.MeanFeeAt(block.Timestamp);
         if (sendAmount + fee > spendable) return null; // must cover amount + fee
 
-        string recipientAddress = recipientPool[Random.Shared.Next(recipientPool.Count)];
+        string recipientAddress = DrawWeightedRecipient(recipientPool); // ND.8b.5 — ∝ effective inflow weight
         if (recipientAddress == node.WalletAddress) return null; // never send to self
 
         // Step 8 — UTXO spend (coin-select the miner's base-address UTXOs + change back to its base).
@@ -2194,19 +3021,83 @@ public partial class NetworkRoot : Node
     // (FirstLiveBlockTimestamp + InAuctionNonMinerAddresses retired at Step 14 EB.2 — introduction is
     // schedule-driven, and the sell-flow's recipients don't depend on auction status (funding flows
     // before, during, and after a window); whether a send COUNTS as a bid is decided entirely by
-    // ComputeAuctionLedger's qualifying-bidder set: see IntroducedActiveNonMinerAddresses / D-EB.4/7.)
+    // ComputeAuctionLedger's qualifying-bidder set: see IntroducedWeightedRecipientPool / D-EB.4/7.)
 
-    // Addresses of ACTIVE non-miners already introduced by the historical schedule at the given time —
-    // the sell-flow/economy recipient pool. Auction status is irrelevant here (funding continues before,
-    // during, and after a bot's auction); empty before Market Birth, which is historically exact.
-    private static List<string> IntroducedActiveNonMinerAddresses(long nowMs)
+    // ── ND.8b.5 (D-ND8.20/D-ND8.36) — per-company, historically-anchored inflow ──────────────────────
+    // The recipient pool lists ACTIVE non-miners already introduced by the historical schedule at the
+    // given time (auction status irrelevant — funding continues before, during, and after a window;
+    // empty before Market Birth, which is historically exact). ND.8b.5 attaches each company's effective
+    // inflow weight, retiring the old uniform IntroducedActiveNonMinerAddresses list (this pool's only
+    // caller was the sell-flow).
+
+    // Dev-tunable per-company inflow multipliers (D-ND8.20 option 1, default 1.0 — the "nudge the
+    // average" lever), keyed by companyId; surfaced as DEV knobs in WorldEconomy (D-ND8.25, ND.8b.6).
+    // Persisted in BlockchainStateSnapshot beside the governance state (block-commit rule).
+    private static readonly Dictionary<string, decimal> _companyInflowMultipliers = new();
+
+    public static decimal GetCompanyInflowMultiplier(string companyId) =>
+        _companyInflowMultipliers.TryGetValue(companyId, out decimal m) ? m : 1m;
+
+    public static void SetCompanyInflowMultiplier(string companyId, decimal multiplier)
+    {
+        multiplier = Math.Clamp(multiplier, 0m, 100m);
+        if (multiplier == 1m) _companyInflowMultipliers.Remove(companyId);
+        else _companyInflowMultipliers[companyId] = multiplier;
+    }
+
+    // D-ND8.36 — a company's effective inflow weight at a given date:
+    // inflow_weight × (expansion_multiplier once now ≥ expansion_date — a PERMANENT step-up, v1
+    // semantics) × the dev multiplier. Companies missing from the roster (a non-canon pool-size
+    // mismatch) fall back to weight 1 so the flow never starves.
+    public static decimal EffectiveInflowWeight(string? companyId, long nowMs)
+    {
+        CompanyRecord? record = companyId is null ? null : CompanyRoster.ByCompanyId(companyId);
+        if (record is not CompanyRecord r)
+        {
+            return 1m;
+        }
+
+        decimal weight = Math.Max(1, r.InflowWeight);
+        if (r.ExpansionDateLocal is DateTime expansion && r.ExpansionMultiplier is decimal multiplier
+            && nowMs >= new DateTimeOffset(expansion).ToUnixTimeMilliseconds())
+        {
+            weight *= multiplier;
+        }
+
+        return weight * GetCompanyInflowMultiplier(r.CompanyId);
+    }
+
+    // The sell-flow recipient pool with each introduced company's effective weight attached (the
+    // ND.8b.5 replacement for the retired plain address list).
+    private static List<(string address, decimal weight)> IntroducedWeightedRecipientPool(long nowMs)
     {
         var active = new HashSet<string>(ActiveNonMinerAddresses());
         return ComputeAuctionLedger(nowMs)
-            .Where(s => s.Status != NonMinerAuctionStatus.NotIntroduced)
-            .Select(s => s.NonMinerAddress)
-            .Where(active.Contains)
+            .Where(s => s.Status != NonMinerAuctionStatus.NotIntroduced && active.Contains(s.NonMinerAddress))
+            .Select(s => (s.NonMinerAddress, EffectiveInflowWeight(s.CompanyId, nowMs)))
+            .Where(p => p.Item2 > 0m)
             .ToList();
+    }
+
+    private static string DrawWeightedRecipient(List<(string address, decimal weight)> pool)
+    {
+        decimal total = pool.Sum(p => p.weight);
+        if (total <= 0m)
+        {
+            return pool[Random.Shared.Next(pool.Count)].address;
+        }
+
+        decimal roll = (decimal)Random.Shared.NextDouble() * total;
+        foreach ((string address, decimal weight) in pool)
+        {
+            roll -= weight;
+            if (roll < 0m)
+            {
+                return address;
+            }
+        }
+
+        return pool[^1].address; // rounding tail
     }
 
     public Block? GetBlockByIndexForNode(string nodeId, int blockIndex)
@@ -2783,7 +3674,10 @@ public partial class NetworkRoot : Node
             LastMinedByNodeId = _lastMinedByNodeId,
             CurrentMinerStreak = _currentMinerStreak,
             BestMinerStreak = _bestMinerStreak,
-            CompanyFoundings = new Dictionary<string, CompanyFounding>(_companyFoundings)
+            CompanyFoundings = new Dictionary<string, CompanyFounding>(_companyFoundings),
+            CompanyGovernance = new Dictionary<string, CompanyGovernanceState>(_companyGovernance),
+            BotGovernancePreferences = new Dictionary<string, BotGovernancePreference>(_botGovernancePreferences),
+            CompanyInflowMultipliers = new Dictionary<string, decimal>(_companyInflowMultipliers)
         };
 
         using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
@@ -2917,6 +3811,7 @@ public partial class NetworkRoot : Node
         DeleteIfExists("user://logs/swap_desk_trace.csv");
         DeleteIfExists("user://logs/network_population_trace.csv");
         DeleteIfExists(CompanyFoundingTracePath); // ND.6b — was missing since ND.5 (same reasoning as the others); ND.8b.2 renamed the file
+        DeleteIfExists(CompanyGovernanceTracePath); // ND.8b.3 — added WITH the feature (the TL.3/ND.6b rule)
         DeleteIfExists(CasinoBotBidTracePath);
 
         // The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
@@ -2974,6 +3869,27 @@ public partial class NetworkRoot : Node
         foreach ((string nonMinerNodeId, CompanyFounding founding) in snapshot.CompanyFoundings ?? new Dictionary<string, CompanyFounding>())
         {
             _companyFoundings[nonMinerNodeId] = founding;
+        }
+
+        // ND.8b.3 — governance state + bot preferences ride the same snapshot (absent/null on an older
+        // snapshot ⇒ empty: any already-founded company simply starts its governance on the next
+        // founding — none can exist pre-ND.8b.3 in a canon world anyway).
+        _companyGovernance.Clear();
+        foreach ((string nonMinerNodeId, CompanyGovernanceState gov) in snapshot.CompanyGovernance ?? new Dictionary<string, CompanyGovernanceState>())
+        {
+            _companyGovernance[nonMinerNodeId] = gov;
+        }
+
+        _botGovernancePreferences.Clear();
+        foreach ((string botNodeId, BotGovernancePreference pref) in snapshot.BotGovernancePreferences ?? new Dictionary<string, BotGovernancePreference>())
+        {
+            _botGovernancePreferences[botNodeId] = pref;
+        }
+
+        _companyInflowMultipliers.Clear();
+        foreach ((string companyId, decimal multiplier) in snapshot.CompanyInflowMultipliers ?? new Dictionary<string, decimal>())
+        {
+            _companyInflowMultipliers[companyId] = multiplier;
         }
     }
 
@@ -3073,6 +3989,12 @@ public partial class NetworkRoot : Node
         // ND.8b.2 — keyed by NonMinerNodeId, mirrors _companyFoundings. Absent/null on an older snapshot
         // (pre-ND.8b.2) deserializes to an empty dict below — no founding could exist yet under it anyway.
         public Dictionary<string, CompanyFounding> CompanyFoundings { get; set; } = new();
+        // ND.8b.3 — keyed by NonMinerNodeId, mirrors _companyGovernance (same additive-field rule).
+        public Dictionary<string, CompanyGovernanceState> CompanyGovernance { get; set; } = new();
+        // ND.8b.3 — keyed by bot NodeId, mirrors _botGovernancePreferences (D-ND8.13/26 world draws).
+        public Dictionary<string, BotGovernancePreference> BotGovernancePreferences { get; set; } = new();
+        // ND.8b.5 — keyed by companyId, mirrors _companyInflowMultipliers (only non-1.0 entries stored).
+        public Dictionary<string, decimal> CompanyInflowMultipliers { get; set; } = new();
     }
 
     private sealed class NodeWalletSnapshot
@@ -3218,4 +4140,91 @@ public sealed class CompanyShareHolding
     public string HolderId { get; set; } = string.Empty;
     public decimal Nst { get; set; }
     public decimal Pst { get; set; }
+}
+
+// ND.8b.3 (D-ND8.17/18/19b) — one founded company's live governance state: applied reserve mix + market
+// category, the open vote (if any), the finalized quarter-dividend cycle, per-holder claimables, and the
+// >30%-inflow special-vote tracking. Keyed by NonMinerNodeId beside CompanyFounding and persisted in the
+// same BlockchainStateSnapshot (same "a block is the only commit" inheritance).
+public sealed class CompanyGovernanceState
+{
+    public string NonMinerNodeId { get; set; } = string.Empty;
+    public string CompanyId { get; set; } = string.Empty;
+    public string CurrencyBand { get; set; } = "CB3";
+    // The roster's category (the ±1 drift anchor, D-ND8.7) vs the currently-applied one.
+    public string DefaultMarketCategory { get; set; } = "official";
+    public string MarketCategory { get; set; } = "official";
+    // The applied reserve-mix target: what % of reserves the company wants held in SC (BTC is the
+    // complement). Set by the founding-day vote, moved by later votes within the band's ±25% range;
+    // ENFORCED (actual BTC→SC conversion) from ND.8b.6.
+    public decimal ReserveScPercent { get; set; }
+    // The company's SC reserve — structurally 0 until ND.8b.6 lands the automatic conversions.
+    public decimal ScReserve { get; set; }
+    public int QuarterIndex { get; set; }
+    public long NextQuarterlyDueMs { get; set; }
+    public CompanyVote? OpenVote { get; set; }
+    // D-ND8.17 — the FINALIZED quarter dividend (never live accrual), BTC and SC tracked separately.
+    public decimal QuarterPayoutRatePercent { get; set; }
+    public decimal QuarterDividendBtc { get; set; }
+    public decimal QuarterDividendSc { get; set; }
+    public long QuarterCycleStartMs { get; set; }
+    public long QuarterCycleEndMs { get; set; }
+    public int QuarterDrippedDays { get; set; }
+    public bool QuarterLumpCredited { get; set; } = true; // true = no cycle is currently distributing
+    public Dictionary<string, CompanyClaimable> ClaimableByHolder { get; set; } = new();
+    // D-ND8.18 — the >30%-inflow special-vote trigger: reserve value at the last vote close + new BTC
+    // received since (the SC side joins the measure at ND.8b.6).
+    public decimal BaselineReserveBtc { get; set; }
+    public decimal InflowSinceBaselineBtc { get; set; }
+    public List<CompanyVoteRecord> VoteHistory { get; set; } = new();
+}
+
+// One open vote (D-ND8.18): founding-day, quarterly, or >30%-inflow special. Bots' ballots are cast at
+// open; the player's arrives via TryRegisterPlayerVote while AwaitingPlayerVote pauses the game.
+public sealed class CompanyVote
+{
+    public string Kind { get; set; } = string.Empty; // "founding" | "quarterly" | "special"
+    public long OpenedAtMs { get; set; }
+    public long ClosesAtMs { get; set; }
+    public bool AwaitingPlayerVote { get; set; }
+    public Dictionary<string, CompanyBallot> Ballots { get; set; } = new(); // holderId → ballot
+}
+
+// One NST holder's ballot (D-ND8.19b): a continuous reserve target (clamped to the band), a discrete
+// market direction (-1 lighter / 0 hold / +1 darker — quarterly votes only), and a quarterly payout-rate
+// preference (% of each reserve side, quarterly votes only).
+public sealed class CompanyBallot
+{
+    public decimal ReserveScPercentTarget { get; set; }
+    public int MarketShift { get; set; }
+    public decimal PayoutRatePercent { get; set; }
+}
+
+// One holder's accrued-but-unclaimed dividends in one company (BTC and SC separately, D-ND8.17).
+public sealed class CompanyClaimable
+{
+    public decimal Btc { get; set; }
+    public decimal Sc { get; set; }
+}
+
+// A closed vote's outcome, kept per company (capped) for the CompanyDetails history readout.
+public sealed class CompanyVoteRecord
+{
+    public string Kind { get; set; } = string.Empty;
+    public long OpenedAtMs { get; set; }
+    public long ClosedAtMs { get; set; }
+    public decimal ResultReserveScPercent { get; set; }
+    public string ResultMarketCategory { get; set; } = string.Empty;
+    public decimal ResultPayoutRatePercent { get; set; }
+    public decimal FinalizedDividendBtc { get; set; }
+    public decimal FinalizedDividendSc { get; set; }
+}
+
+// ND.8b.3 (D-ND8.13/D-ND8.26) — one casino-miner-bot's governance identity, re-rolled per world: a
+// Currency Band preference (distinct 4-of-5 draw across the four bots) + a market-category preference
+// (distinct permutation, all four stances represented).
+public sealed class BotGovernancePreference
+{
+    public string CurrencyBandPreference { get; set; } = "CB3";
+    public string MarketCategoryPreference { get; set; } = "official";
 }

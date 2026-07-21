@@ -25,6 +25,7 @@ public partial class SceneManager : Node
 		ScTransactions,
 		CasinoCoinSwaps,
 		AuctioningCompanyDetails,
+		CompanyDetails,
 		WorldEconomy,
 	}
 
@@ -50,6 +51,7 @@ public partial class SceneManager : Node
 		[SceneId.ScTransactions]           = "res://Screens/ScFinances/ScTransactions.tscn",
 		[SceneId.CasinoCoinSwaps]          = "res://Screens/CasinoCoinSwaps/CasinoCoinSwaps.tscn",
 		[SceneId.AuctioningCompanyDetails] = "res://Screens/AuctioningCompanyDetails/AuctioningCompanyDetails.tscn",
+		[SceneId.CompanyDetails]           = "res://Screens/CompanyDetails/CompanyDetails.tscn",
 		[SceneId.WorldEconomy]              = "res://Screens/WorldEconomy/WorldEconomy.tscn",
 	};
 

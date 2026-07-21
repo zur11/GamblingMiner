@@ -2,6 +2,8 @@ using Godot;
 using System;
 using System.Globalization;
 using System.Text;
+using GodotBlockchainPort.Blockchain;
+using GodotBlockchainPort.Simulation;
 using UI.StatusBar;
 
 // Step 14 ND.8c (D-ND8.25 / D-ND8.35) — the World Economy DEV hub. Hosts the SC Monetary Ledger readout
@@ -22,6 +24,13 @@ public partial class WorldEconomy : Control
 	private Label _debtLabel;
 	private RichTextLabel _ledgerLabel;
 
+	// ND.8b.6 (D-ND8.25) — the company inflow/expansion DEV knobs (per-company inflow multiplier over
+	// the D-ND8.36 weighted draw). The multiplier lives in NetworkRoot's static state and rides the
+	// block-commit snapshot like the rest of the governance state.
+	private OptionButton _companySelector;
+	private SpinBox _inflowMultiplierSpin;
+	private Label _companyInflowInfoLabel;
+
 	public override void _Ready()
 	{
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
@@ -34,11 +43,57 @@ public partial class WorldEconomy : Control
 		_debtLabel        = GetNode<Label>("%DebtLabel");
 		_ledgerLabel      = GetNode<RichTextLabel>("%LedgerLabel");
 
+		_companySelector        = GetNode<OptionButton>("%CompanySelector");
+		_inflowMultiplierSpin   = GetNode<SpinBox>("%InflowMultiplierSpin");
+		_companyInflowInfoLabel = GetNode<Label>("%CompanyInflowInfoLabel");
+
+		CompanyRoster.EnsureLoaded();
+		foreach (CompanyRecord record in CompanyRoster.Auctionable)
+			_companySelector.AddItem(record.DisplayName);
+		_companySelector.ItemSelected += _ => RefreshCompanyKnobs();
+		GetNode<Button>("%ApplyMultiplierBtn").Pressed += OnApplyInflowMultiplier;
+		RefreshCompanyKnobs();
+
 		GetNode<Button>("%BackBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.MainMenu);
 
 		if (_ledger != null)
 			_ledger.LedgerChanged += Refresh;
 		Refresh();
+	}
+
+	private CompanyRecord? SelectedCompany()
+	{
+		int index = _companySelector.Selected;
+		return index >= 0 && index < CompanyRoster.Auctionable.Count ? CompanyRoster.Auctionable[index] : null;
+	}
+
+	private void OnApplyInflowMultiplier()
+	{
+		if (SelectedCompany() is not CompanyRecord record) return;
+		NetworkRoot.SetCompanyInflowMultiplier(record.CompanyId, (decimal)_inflowMultiplierSpin.Value);
+		RefreshCompanyKnobs();
+	}
+
+	private void RefreshCompanyKnobs()
+	{
+		if (SelectedCompany() is not CompanyRecord record)
+		{
+			_companyInflowInfoLabel.Text = "No auctionable companies loaded (roster missing?).";
+			return;
+		}
+
+		decimal multiplier = NetworkRoot.GetCompanyInflowMultiplier(record.CompanyId);
+		_inflowMultiplierSpin.Value = (double)multiplier;
+
+		long nowMs = NetworkRoot.GetPlayerLatestBlockTimestampMsStatic();
+		decimal effective = NetworkRoot.EffectiveInflowWeight(record.CompanyId, nowMs);
+		string expansion = record.ExpansionDateLocal is DateTime e && record.ExpansionMultiplier is decimal m
+			? string.Create(CultureInfo.InvariantCulture,
+				$"expansion ×{m:0.##} from {e:yyyy-MM-dd} ({(nowMs >= new DateTimeOffset(e).ToUnixTimeMilliseconds() ? "ACTIVE" : "pending")})")
+			: "no scheduled expansion";
+		_companyInflowInfoLabel.Text = string.Create(CultureInfo.InvariantCulture,
+			$"{record.DisplayName} ({record.CompanyId}) — {record.CurrencyBand}, {record.MarketCategory}, appears {record.AppearanceDateLocal:yyyy-MM-dd}  |  " +
+			$"inflow weight {record.InflowWeight}, {expansion}, dev multiplier ×{multiplier:0.##}  ⇒  effective weight {effective:0.##}");
 	}
 
 	public override void _ExitTree()

@@ -108,6 +108,12 @@ public partial class SimulationService : Node
 	private PlayerAutobetConfig? _config;
 	private double _accumulatorSeconds;
 
+	// Step 14 (ND.8b.3, D-ND8.18): true while this service froze the calendar because an open board vote
+	// is waiting for the player's ballot (NetworkRoot.IsAwaitingPlayerVote). Bets are what advance time,
+	// but the calendar also ticks on its own while delegated — the pause must pin the clock where the
+	// vote-opening block left it, and must restore IsRunning only if WE were the ones who stopped it.
+	private bool _pausedForBoardVote;
+
 	// Bot runners (Phase 2): continuous background betting for casino bot nodes while the player autobet
 	// is active. Single owner of bot state lives here, not in DiceGame.
 	private readonly Dictionary<string, BotRunner> _botRunners = new();
@@ -253,6 +259,31 @@ public partial class SimulationService : Node
 		if (!IsRunning || _config == null || _session == null || _wallet == null)
 		{
 			return;
+		}
+
+		// Step 14 (ND.8b.3, D-ND8.18): an open board vote in a company where the player holds NST pauses
+		// the game until the player registers a ballot (CompanyDetails' Board Vote panel). Skip the whole
+		// tick (no bets, no bots, no founder/scheduled mining) and freeze the calendar in place; restore
+		// it the frame after the ballot lands. DiceGame gates manual bets on the same flag.
+		if (NetworkRoot.IsAwaitingPlayerVote)
+		{
+			_pausedForBoardVote = true;
+			// Re-checked every frame (not only on the pause edge): DiceGame re-asserts IsRunning on
+			// scene re-entry (BindToRunningBackgroundAutobet), which must not thaw a vote-paused clock.
+			if (_calendar is { IsRunning: true })
+			{
+				_calendar.IsRunning = false;
+				_calendar.PersistCurrentTime();
+			}
+			return;
+		}
+		if (_pausedForBoardVote)
+		{
+			_pausedForBoardVote = false;
+			if (_calendar != null)
+			{
+				_calendar.IsRunning = true;
+			}
 		}
 
 		// Step 7.2: founders mine concurrently with the player (no autonomous clock). Recompute their

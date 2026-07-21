@@ -310,6 +310,36 @@ public partial class CasinoScBalanceService : Node
 		return true;
 	}
 
+	// Step 14 (ND.8b.6, D-ND8.24/D-ND8.34) — the PROVISIONAL SC-provisioning path for founded companies'
+	// automatic BTC→SC conversions: SC leaves the casino's Main Balance at the clean market reference
+	// rate (no swap-desk fee; the casino receives the company's BTC on-chain in exchange, see
+	// NetworkRoot.TryConvertCompanyReserves). If Main can't cover the amount, the bank injects
+	// AutoLoanAmount chunks first (mirroring TryAutoRecharge's bankruptcy-flavor loan) — every draw flows
+	// through AddLoanRecord, so the SC Monetary Ledger accounts it as casino debt (§12.4.6e "inherently
+	// covered"). This path retires when the first bank company takes over new credit (D-ND8.34, ND.8e).
+	public bool TryPayCompanyProvisionSc(decimal amount, string reason)
+	{
+		amount = Money.Normalize(amount);
+		if (amount <= 0m) return false;
+
+		decimal loanChunk = AutoLoanAmount > 0m ? AutoLoanAmount : InitialLoanAmount;
+		int safety = 0;
+		while (MainBalance < amount && safety++ < MaxAutoRechargeIterations)
+		{
+			MainBalance = Money.Normalize(MainBalance + loanChunk);
+			LoanCount++;
+			TotalLoaned = Money.Normalize(TotalLoaned + loanChunk);
+			AddLoanRecord(loanChunk, reason);
+		}
+
+		if (MainBalance < amount) return false; // amount absurdly beyond the loan safety cap — refuse
+
+		MainBalance = Money.Normalize(MainBalance - amount);
+		SaveState();
+		BalanceChanged?.Invoke();
+		return true;
+	}
+
 	public bool TryTransferToMainBalance(decimal amount)
 	{
 		amount = Money.Normalize(amount);

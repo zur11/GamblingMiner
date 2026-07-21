@@ -587,8 +587,42 @@ public partial class DiceGame : Control, IBetEventSource
 	public override void _Process(double delta)
 	{
 		UpdateCurrentAppTimeUI();
+		UpdateBoardVotePauseUi();
 		TickAutoBet(delta);
 	}
+
+	// Step 14 (ND.8b.3/D-ND8.18 follow-up): while a board vote awaits the player's ballot, BOTH betting
+	// buttons (manual + AUTO) are disabled — the button-level mirror of the ExecuteBet/SimulationService
+	// gates, so the player can see that time cannot be advanced until the company matter is attended.
+	// Edge-triggered: the per-frame cost is one static flag read; buttons/notice update only on change.
+	private bool _boardVotePauseActive;
+
+	private void UpdateBoardVotePauseUi()
+	{
+		bool awaiting = NetworkRoot.IsAwaitingPlayerVote;
+		if (awaiting == _boardVotePauseActive)
+		{
+			return;
+		}
+
+		_boardVotePauseActive = awaiting;
+		ApplyBettingControlsAvailability();
+		if (awaiting)
+		{
+			var pending = NetworkRoot.GetCompaniesAwaitingPlayerVote();
+			string where = pending.Count > 0 ? pending[0].companyDisplayName : "a company you co-own";
+			_resultValue.Text = $"Board vote pending at {where} — vote in Block Explorer → Enroll Mode → Details to resume play.";
+		}
+		else
+		{
+			_resultValue.Text = "Board vote attended — you may resume betting.";
+		}
+	}
+
+	// Composes the two independent button locks: only the player node may bet (bot-active lock, see the
+	// node-selector load path), and a pending board vote suspends betting entirely (D-ND8.18).
+	private void ApplyBettingControlsAvailability() =>
+		_strategyPanel.SetBettingControlsEnabled(IsPlayerActive() && !NetworkRoot.IsAwaitingPlayerVote);
 
 	// --- Eventos UI ---
 	private void OnHighLowToggled()
@@ -802,7 +836,8 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		// Only the player may place bets / autobet; bots can be configured but not bet manually.
-		_strategyPanel.SetBettingControlsEnabled(IsPlayerActive());
+		// (Composed with the ND.8b.3 board-vote pause lock — see ApplyBettingControlsAvailability.)
+		ApplyBettingControlsAvailability();
 
 		// For the player, the panel's auto-recharge toggle is only an access point to the service-level flag —
 		// reflect the service value (single source of truth), overriding whatever the per-node snapshot set.
@@ -1393,6 +1428,17 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		if (_session == null || !_session.IsRunning)
 		{
+			return;
+		}
+
+		// Step 14 (ND.8b.3, D-ND8.18): an open board vote in a company where the player holds NST pauses
+		// ALL play — manual bets included — until the player registers a ballot (BlockExplorer Enroll
+		// Mode → Details → Board Vote). SimulationService gates the delegated autobet on the same flag.
+		if (NetworkRoot.IsAwaitingPlayerVote)
+		{
+			var awaiting = NetworkRoot.GetCompaniesAwaitingPlayerVote();
+			string where = awaiting.Count > 0 ? awaiting[0].companyDisplayName : "a company you co-own";
+			_resultValue.Text = $"Board vote pending at {where} — register your vote to resume play.";
 			return;
 		}
 

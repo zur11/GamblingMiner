@@ -84,7 +84,12 @@ public partial class AuctioningCompanyDetails : Control
 
 		if (summary.Status == NonMinerAuctionStatus.Resolved)
 		{
-			ShowSettlementSummary(summary);
+			// ND.8b.4 (D-ND8.16) — a founded company's home is now the CompanyDetails scene (founding
+			// summary + holding-gated Board Vote / dividend panels); forward there instead of the retired
+			// ND.8b.2 stand-in summary. This scene stays the InAuction-only view (D-ND5.9).
+			CompanyDetails.PendingNonMinerAddress = _nonMinerAddress;
+			_nonMinerAddress = string.Empty; // stop this scene's refresh loop before the switch
+			_sceneManager?.Go(SceneManager.SceneId.CompanyDetails);
 		}
 		else
 		{
@@ -144,52 +149,8 @@ public partial class AuctioningCompanyDetails : Control
 		}
 	}
 
-	// ND.8b.2 (D-ND8.14/D-ND8.15) — once resolved, the non-miner is a FOUNDED company: no more SC payout
-	// or BTC sweep (the company keeps its own on-chain treasury), just the minted NST/PST distribution.
-	// This is a stand-in until ND.8b.4's CompanyDetails scene replaces it properly.
-	private void ShowSettlementSummary(NonMinerDonationSummary summary)
-	{
-		_statusLabel.Text = $"Resolved — {NetworkRoot.DescribeCompany(summary)} is now a founded company";
-		_sectionTitleLabel.Text = "Founding Summary — Stock Distribution";
-
-		ClearContent();
-
-		CompanyFounding? founding = _networkRoot.GetCompanyFounding(_nonMinerAddress);
-		if (founding is null || founding.Holdings.Count == 0)
-		{
-			_contentVBox.AddChild(new Label { Text = "Founding figures unavailable." });
-			return;
-		}
-
-		_contentVBox.AddChild(new Label
-		{
-			Text = string.Create(CultureInfo.InvariantCulture, $"Founded: {FormatDate(founding.FoundedAtUnixMs)}")
-		});
-		_contentVBox.AddChild(new HSeparator());
-
-		decimal totalNst = founding.Holdings.Sum(h => h.Nst);
-		decimal totalPst = founding.Holdings.Sum(h => h.Pst);
-		decimal totalTokens = totalNst + totalPst;
-
-		foreach (CompanyShareHolding h in founding.Holdings.OrderByDescending(h => h.Nst + h.Pst))
-		{
-			decimal tokens = h.Nst + h.Pst;
-			string shareClass = h.Nst > 0m ? "NST" : "PST";
-			decimal profitShare = totalTokens > 0m ? tokens / totalTokens : 0m;
-			string votes = h.Nst > 0m && totalNst > 0m
-				? string.Create(CultureInfo.InvariantCulture, $"  |  votes {h.Nst / totalNst:P2}")
-				: string.Empty;
-			string line = string.Create(CultureInfo.InvariantCulture,
-				$"{_networkRoot.DescribeAddress(h.HolderId)}  —  {tokens:F8} {shareClass}  |  profit share {profitShare:P2}{votes}");
-			_contentVBox.AddChild(new Label { Text = line });
-		}
-
-		_contentVBox.AddChild(new HSeparator());
-		_contentVBox.AddChild(new Label
-		{
-			Text = string.Create(CultureInfo.InvariantCulture, $"Total minted: {totalNst:F8} NST  +  {totalPst:F8} PST")
-		});
-	}
+	// (ND.8b.2's ShowSettlementSummary stand-in was removed at ND.8b.4 — the resolved view now lives in
+	// the CompanyDetails scene, reached via the forward in RefreshAll above.)
 
 	private void ClearContent()
 	{

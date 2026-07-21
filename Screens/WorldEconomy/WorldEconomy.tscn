@@ -41,7 +41,7 @@ layout_mode = 2
 autowrap_mode = 3
 theme_override_font_sizes/font_size = 16
 theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1)
-text = "SC Monetary Ledger (ND.8c) — every SC in existence is a genesis grant or someone's debt. Company inflow/expansion knobs arrive with ND.8b."
+text = "SC Monetary Ledger (ND.8c) — every SC in existence is a genesis grant or someone's debt. Company inflow/expansion knobs below (ND.8b.6)."
 
 [node name="Sep0" type="HSeparator" parent="RootMargin/RootVBox"]
 layout_mode = 2
@@ -65,6 +65,46 @@ theme_override_font_sizes/font_size = 20
 text = "Debt outstanding:          0.00000000 SC"
 
 [node name="Sep1" type="HSeparator" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="CompanyKnobsTitle" type="Label" parent="RootMargin/RootVBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Company Inflow & Expansion [DEV] (ND.8b.5/6)"
+
+[node name="KnobRow" type="HBoxContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="CompanySelector" type="OptionButton" parent="RootMargin/RootVBox/KnobRow"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="MultiplierLabel" type="Label" parent="RootMargin/RootVBox/KnobRow"]
+layout_mode = 2
+text = "Inflow multiplier:"
+
+[node name="InflowMultiplierSpin" type="SpinBox" parent="RootMargin/RootVBox/KnobRow"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 0.0
+max_value = 100.0
+step = 0.1
+value = 1.0
+
+[node name="ApplyMultiplierBtn" type="Button" parent="RootMargin/RootVBox/KnobRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Apply"
+
+[node name="CompanyInflowInfoLabel" type="Label" parent="RootMargin/RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1)
+text = "Select a company to inspect its inflow weight, expansion event, and effective weight."
+
+[node name="Sep2" type="HSeparator" parent="RootMargin/RootVBox"]
 layout_mode = 2
 
 [node name="LedgerLabel" type="RichTextLabel" parent="RootMargin/RootVBox"]

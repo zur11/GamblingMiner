@@ -176,9 +176,14 @@ public partial class BlockExplorer : Control
         if (resolved > 0)
         {
             _enrollModeRowsVBox.AddChild(new Label { Text = "Founded (out of auction):" });
-            // D-ND5.9 — Founded entries never offer the Details button again here; the AuctioningCompanyDetails
-            // scene is only ever reachable while InAuction. ND.8b.4's CompanyDetails scene is where a founded
-            // company gets its own BlockExplorer button (plan §12.4.6a) — not built yet.
+            // ND.8b.4 (D-ND8.16) — a founded company's row now carries its own "Details →" into the new
+            // CompanyDetails scene (founding summary + the holding-gated Board Vote / dividend panels).
+            // AuctioningCompanyDetails stays the InAuction-only view (D-ND5.9).
+            // ND.8b.3 follow-up (developer-requested): a company whose open board vote is WAITING FOR THE
+            // PLAYER'S BALLOT paints its whole row red — the locator for "which company paused my game".
+            // Dividend claiming is deliberately NOT highlighted (it never blocks play).
+            var awaitingVote = new HashSet<string>(
+                NetworkRoot.GetCompaniesAwaitingPlayerVote().Select(c => c.nonMinerNodeId));
             foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.Resolved))
             {
                 // ND.8b.2 — "founded" replaces the old SC-cashback "referral" wording (D-ND8.14): the
@@ -186,7 +191,28 @@ public partial class BlockExplorer : Control
                 string founder = string.IsNullOrEmpty(s.WinnerAddress)
                     ? "no leading bidder (legacy pre-EB.2 world)"
                     : $"founded by {_networkRoot.DescribeAddress(s.WinnerAddress)}";
-                _enrollModeRowsVBox.AddChild(new Label { Text = $"{NetworkRoot.DescribeCompany(s)}  | {founder}" });
+                bool votePending = awaitingVote.Contains(s.NonMinerNodeId);
+
+                var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
+                var rowLabel = new Label
+                {
+                    Text = votePending
+                        ? $"⚠ BOARD VOTE PENDING — {NetworkRoot.DescribeCompany(s)}  | {founder}"
+                        : $"{NetworkRoot.DescribeCompany(s)}  | {founder}",
+                    SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                    MouseFilter = MouseFilterEnum.Pass
+                };
+                var detailsBtn = new Button { Text = votePending ? "Vote →" : "Details →" };
+                if (votePending)
+                {
+                    rowLabel.AddThemeColorOverride("font_color", new Color(1f, 0.3f, 0.3f));
+                    detailsBtn.AddThemeColorOverride("font_color", new Color(1f, 0.3f, 0.3f));
+                }
+                row.AddChild(rowLabel);
+                string nonMinerAddress = s.NonMinerAddress;
+                detailsBtn.Pressed += () => OnOpenCompanyDetails(nonMinerAddress);
+                row.AddChild(detailsBtn);
+                _enrollModeRowsVBox.AddChild(row);
             }
         }
     }
@@ -195,6 +221,12 @@ public partial class BlockExplorer : Control
     {
         AuctioningCompanyDetails.PendingNonMinerAddress = nonMinerAddress;
         _sceneManager?.Go(SceneManager.SceneId.AuctioningCompanyDetails);
+    }
+
+    private void OnOpenCompanyDetails(string nonMinerAddress)
+    {
+        CompanyDetails.PendingNonMinerAddress = nonMinerAddress;
+        _sceneManager?.Go(SceneManager.SceneId.CompanyDetails);
     }
 
     public override void _Process(double delta)
