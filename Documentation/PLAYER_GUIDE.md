@@ -109,6 +109,19 @@ The Blockchain Explorer is used to inspect:
 
 It is currently one of the best ways to understand what the mining prototype is doing.
 
+## Company Shares & Board Votes
+
+As you play, historical companies get founded from the referral auctions, and you can end up holding shares in them. Some shares (NST) carry **voting rights**; others (PST) only pay dividends.
+
+**A board vote pauses the game.** When a company you hold voting shares (NST) in opens a board vote, everything freezes — the clock stops and **the betting buttons in Dice (both Manual and AUTO) are disabled** — until you cast your ballot. Open the Blockchain Explorer's Enroll Mode: the company needing your vote shows up in **red ("⚠ BOARD VOTE PENDING")**. Click "Vote →", submit your ballot, and the game unpauses.
+
+**Important — save your vote by mining a block.** The game only writes progress to disk when a block is mined (the same reason a restart rewinds your clock, balances, and pending transactions to the last mined block). Your ballot works the same way: casting it unpauses the game **immediately**, but it isn't saved until at least one new block is mined afterward. So:
+
+- If you vote and then close the app **before** a new block is mined, your vote is lost — on reopening you'll be asked to vote again.
+- Because a pending vote also stops mining, **reopening the app with a vote still pending drops you straight into it**: you'll be asked to vote before you can bet, with no chance to "play up to it" first.
+
+To keep a vote, cast it and then let the game run until **at least one block is mined** (place a bet or two, or leave autobet on for a moment) before you stop. This is expected behavior, not a bug.
+
 ## Planned Systems
 
 These systems are part of the design direction but should not be treated as finished gameplay yet:

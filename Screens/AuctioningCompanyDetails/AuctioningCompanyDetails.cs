@@ -145,7 +145,10 @@ public partial class AuctioningCompanyDetails : Control
 			int ownBidCount = slotsByDonor.TryGetValue(d.DonorAddress, out int c) ? c : 1;
 			string prob = _networkRoot.IsPlayerBidderAddress(d.DonorAddress)
 				? string.Empty // ND.8d.2 — the player bids manually; never a ladder re-bid probability
-				: NetworkRoot.ReBidProbabilityLabel(tier, occupied, urgent, ownBidCount);
+				// ND.8d round-3 label parity — reflects the roll's max(mode rate, stuck-single-bidder
+				// escalation), so a lone below-top-3 bot's % visibly climbs (e.g. 8→16→24) instead of
+				// sitting frozen at the static mode rate.
+				: _networkRoot.ReBidProbabilityLabelForSlot(summary, d.DonorAddress, tier, occupied, urgent, ownBidCount);
 			string probCol = prob switch
 			{
 				"" => string.Empty,

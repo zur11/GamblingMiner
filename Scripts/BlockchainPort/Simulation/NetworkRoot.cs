@@ -180,7 +180,7 @@ public partial class NetworkRoot : Node
     }
 
     // ND.6d/ND.8d — the single source of truth for a slot's re-bid probability, shared by the roll in
-    // TryBuildCasinoBotBid and the AuctioningCompanyDetails UI label (via ReBidProbabilityLabel below).
+    // TryBuildCasinoBotBid and the AuctioningCompanyDetails UI label (via ReBidProbabilityLabelForSlot below).
     // occupiedSlots (the pool's current tracked-slot count) selects early-rush (<7) vs normal (≥7); urgent
     // (ND.6e — final 7 window days) shifts a NORMAL pool up. ownBidCount (ND.8d) is the occupant's own
     // tracked-slot count, consumed only by the tiers-2/3 shallow ladder. 0 for tier 1 (always satisfied),
@@ -200,11 +200,29 @@ public partial class NetworkRoot : Node
     // for tier 1 (always) and tier 3 at ≥2 own bids, "NN%" for a ladder tier, "0%" for the self-eviction-
     // guarded tier 10 of a full pool, "" where a percentage is meaningless. (Player-held slots are blanked
     // by the caller — the player never rolls the ladder.)
-    public static string ReBidProbabilityLabel(int tier, int occupiedSlots, bool urgent, int ownBidCount)
+    //
+    // ND.8d round-3 label parity (2026-07-21, §12.5.5): for a single-slot below-top-3 occupant the shown %
+    // must MATCH the roll's `max(mode rate, escalation)` (TryBuildCasinoBotBid) — the base
+    // ReBidProbabilityPercentFor alone shows only the static mode rate and never the growing escalation, so
+    // the label sat frozen (e.g. bot_1's tier-5 BitInstant slot displayed a fixed 8% while its actual roll
+    // climbed 8→16→24). This is an INSTANCE method so it can resolve the occupant bot from the donor address
+    // (bots are single-address, OQ-8.2) and read the current chain tip; it PEEKS `_stuckBidderSignatures`
+    // via the pure PeekStuckEscalationProbabilityPercent (no mutation — a 1 s UI refresh must never stamp it).
+    public string ReBidProbabilityLabelForSlot(NonMinerDonationSummary summary, string donorAddress, int tier, int occupiedSlots, bool urgent, int ownBidCount)
     {
         if (IsBidderSatisfied(tier, ownBidCount)) return "satisfied";
         if (occupiedSlots >= MaxTrackedDonations && tier == MaxTrackedDonations) return "0%";
         int pct = ReBidProbabilityPercentFor(tier, occupiedSlots, urgent, ownBidCount);
+        if (ownBidCount == 1 && tier > 3)
+        {
+            NodeAgent? bot = SharedNodesById.Values.FirstOrDefault(n =>
+                n.WalletAddress == donorAddress || (n.ReceiveWallet?.OwnedAddresses.Contains(donorAddress) ?? false));
+            if (bot != null)
+            {
+                int currentBlockIndex = GetPlayerLatestBlock().Index;
+                pct = Math.Max(pct, PeekStuckEscalationProbabilityPercent(summary.NonMinerNodeId, bot.NodeId, tier, currentBlockIndex));
+            }
+        }
         return pct > 0 ? pct + "%" : string.Empty; // integer percent — culture-invariant by construction
     }
 
@@ -265,9 +283,20 @@ public partial class NetworkRoot : Node
     // escalation harmlessly restarts from base (exactly how the streak counters already behave).
     private static readonly Dictionary<(string nonMinerNodeId, string botNodeId), (string signature, int sinceBlockIndex)> _stuckBidderSignatures = new();
 
+    // ND.8d round 3 — the escalation math itself: the tier's plain NORMAL base grown linearly by one step
+    // per block stuck, clamped to 100%. Shared by the roll path (ComputeStuckEscalationProbabilityPercent,
+    // which owns the signature write) and the label path (PeekStuckEscalationProbabilityPercent, pure).
+    private static int EscalatedStuckPercent(int bestTier, int blocksElapsed)
+    {
+        if (!ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int baseProbability) || baseProbability <= 0)
+            return 0; // defensive — tiers 4-9 always have a NORMAL-table entry
+        decimal scaled = baseProbability * (decimal)(Math.Max(0, blocksElapsed) + 1);
+        return (int)Math.Min(100m, scaled);
+    }
+
     // ND.8d round 3 — reads (and updates, edge-triggered) the stuck-bidder signal for this (target, bot)
     // pair, then returns the escalating probability if currently single-slot at a non-top-3 tier. Called
-    // once per this bot's evaluation of this target, each block (never per-frame).
+    // once per this bot's evaluation of this target, each block (never per-frame). THE side-effecting path.
     private static int ComputeStuckEscalationProbabilityPercent(NonMinerDonationSummary target, string botNodeId, int ownSlotCount, int bestTier, int currentBlockIndex)
     {
         string signature = ownSlotCount >= 2 ? "multi" : $"single:{bestTier}";
@@ -279,12 +308,25 @@ public partial class NetworkRoot : Node
         }
 
         if (ownSlotCount != 1 || bestTier <= 3) return 0; // caller only asks for the single-slot, non-top-3 case
-        if (!ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int baseProbability) || baseProbability <= 0)
-            return 0; // defensive — tiers 4-9 always have a NORMAL-table entry
+        return EscalatedStuckPercent(bestTier, currentBlockIndex - recorded.sinceBlockIndex);
+    }
 
-        int blocksElapsed = Math.Max(0, currentBlockIndex - recorded.sinceBlockIndex);
-        decimal scaled = baseProbability * (decimal)(blocksElapsed + 1);
-        return (int)Math.Min(100m, scaled);
+    // ND.8d round-3 label parity (2026-07-21, §12.5.5) — the SIDE-EFFECT-FREE twin of the above, for the
+    // AuctioningCompanyDetails per-slot label. The 1 s UI refresh must NEVER stamp `_stuckBidderSignatures`
+    // (that would corrupt the roll's timing), so this only READS: it uses the recorded "since" when the
+    // signature still matches, else predicts what the NEXT roll would compute (a fresh reset ⇒ blocksElapsed
+    // 0 ⇒ base × 1), so the displayed label and the actual roll agree. Single-slot, non-top-3 only (the
+    // caller gates on ownBidCount == 1 && tier > 3); returns 0 otherwise.
+    private static int PeekStuckEscalationProbabilityPercent(string nonMinerNodeId, string botNodeId, int bestTier, int currentBlockIndex)
+    {
+        if (bestTier <= 3) return 0;
+        int sinceBlockIndex = currentBlockIndex;
+        if (_stuckBidderSignatures.TryGetValue((nonMinerNodeId, botNodeId), out (string signature, int sinceBlockIndex) recorded)
+            && recorded.signature == $"single:{bestTier}")
+        {
+            sinceBlockIndex = recorded.sinceBlockIndex;
+        }
+        return EscalatedStuckPercent(bestTier, currentBlockIndex - sinceBlockIndex);
     }
     // D-ND6.8 — a bid's ENTIRE outgoing amount (required principal + D-ND4b.11 additive tail + network
     // fee) may never commit more than this fraction of the bot's SPENDABLE balance (mature/confirmed —
