@@ -1152,7 +1152,7 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 
 ---
 
-## 13. ND.9 — Company Data Presentation Polish (✅ READY FOR IMPLEMENTATION, 2026-07-22 — first batch of 7 player items spec'd as ND.9a–h, all §13.3 decisions locked)
+## 13. ND.9 — Company Data Presentation Polish (✅ BUILT 2026-07-22 — first batch ND.9a–h implemented, `dotnet build` 0 warnings / 0 errors; developer in-game verification + commit pending)
 
 **Why this phase exists.** ND.8b–ND.8g landed the full company system — founding, stock distribution, dividends & votes, the `CompanyDetails` / `AuctioningCompanyDetails` scenes, the SC Monetary Ledger, bots-as-clients, and the player dividend-claim history — all now BUILT & VERIFIED. With the *mechanics* working and verified in-game, the developer, now playing as a real player, is finding rough edges in **how the company data is presented**: what's shown, where, how it's labelled, what's missing at a glance, and which numbers a player actually needs surfaced. This phase collects those presentation/UX refinements. It is deliberately **polish-only** — no new economic mechanics, no changes to the auction/dividend/vote *math* already locked in §12; only how existing data is displayed, organized, and navigated.
 
@@ -1167,14 +1167,14 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 
 | Subphase | Title | Player item | Status |
 |---|---|---|---|
-| ND.9a | BlockExplorer toggle rename → "Auction / Company Mode" + record the deferred Basic-Mode split | 1 | ✅ LOCKED — ready |
-| ND.9b | `CompanyDetails` holding-keyed border colour (NST gold / PST silver / none black) | 2 | ✅ LOCKED — ready |
-| ND.9c | Founding Snapshot — per-participant tier / participation% / bonus / NST-PST distribution at close | 3 | ✅ LOCKED — **Option B, no shared helper; legacy foundings show no snapshot** |
-| ND.9d | Reserves-at-a-glance — BTC & SC reserves side by side, original% vs current% | 4 | ✅ LOCKED — grouped into ND.9d/e/f panel |
-| ND.9e | Market (Light↔Dark) level — initial vs current, as a white→black gradient slider | 5 | ✅ LOCKED — gradient slider added |
-| ND.9f | Reserves/Dividends split (payout rate) — initial default vs current voted | 6a | ✅ LOCKED — grouped into ND.9d/e/f panel |
-| ND.9g | Last-Vote Snapshot — every participant's ballot + weight + result + company before/after | 6b | ✅ LOCKED — persist on **every** `CompanyVoteRecord` |
-| ND.9h | Per-participant dividend distribution on a quarterly snapshot (PST quarter-total → daily breakdown) | 7 | ✅ LOCKED — ready |
+| ND.9a | BlockExplorer toggle rename → "Auction / Company Mode" + record the deferred Basic-Mode split | 1 | ✅ BUILT |
+| ND.9b | `CompanyDetails` holding-keyed border colour (NST gold / PST silver / none black) | 2 | ✅ BUILT |
+| ND.9c | Founding Snapshot — per-participant tier / participation% / bonus / NST-PST distribution at close | 3 | ✅ BUILT — Option B, no helper; legacy foundings show no snapshot |
+| ND.9d | Reserves-at-a-glance — BTC & SC reserves side by side, original% vs current% | 4 | ✅ BUILT — in the grouped panel |
+| ND.9e | Market (Light↔Dark) level — initial vs current, as a white→black gradient slider | 5 | ✅ BUILT — gradient slider |
+| ND.9f | Reserves/Dividends split (payout rate) — initial default vs current voted | 6a | ✅ BUILT — in the grouped panel |
+| ND.9g | Last-Vote Snapshot — every participant's ballot + weight + result + company before/after | 6b | ✅ BUILT — persisted on **every** `CompanyVoteRecord` |
+| ND.9h | Per-participant dividend distribution on a quarterly snapshot (PST quarter-total → daily breakdown) | 7 | ✅ BUILT |
 
 **Shared implementation notes (apply to every ND.9x that touches a scene):**
 - **`Documentation/ProjectDesignManual.md` Ch. 29 is mandatory reading before editing `CompanyDetails.tscn` / `AuctioningCompanyDetails.tscn` scroll/footer layout.** Both scenes already follow the reference chain (`RootMargin → RootVBox(bounded) → ContentScroll(size_flags_vertical=3) → InfoVBox/ActionVBox`, then a fixed `BackBtn` footer OUTSIDE the scroll). New readouts go inside `_infoVBox` (rebuilt each 1 s refresh in `RebuildInfo`) — no new `ScrollContainer`, Ch. 29-compliant by construction (the ND.8g precedent, §12.5.6).
@@ -1271,7 +1271,21 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 5. **ND.9e:** ✅ Labels **"Official / Light-grey / Dark-grey / Black market"** confirmed; rendered as a **white→black gradient slider** — the whole scale with labelled ticks + % dark, a marker for the CURRENT config only, the default config shown in numbers only. Darkness% = index/3 (0 / 33 / 67 / 100).
 6. **Build order:** ✅ Confirmed — **ND.9a → ND.9b → ND.9d/e/f (grouped) → ND.9c → ND.9g → ND.9h.** ND.9c/g touch engine-side capture (persist new founding-breakdown / vote-detail); ND.9a/b/d/e/f/h are display-only.
 
-*Status: entire §13 is ✅ **READY FOR IMPLEMENTATION**, 2026-07-22. All decisions locked; no code written yet. Implementation proceeds in the §13.3(6) build order on developer go-ahead.*
+*Status: entire §13 is ✅ **BUILT**, 2026-07-22 — implemented in the §13.3(6) build order (ND.9a → b → d/e/f → c → g → h), `dotnet build` 0 warnings / 0 errors. Developer in-game verification + commit pending.*
+
+### 13.4 Implementation notes (as built, 2026-07-22)
+
+- **ND.9a** — `BlockExplorer.cs`: toggle text + header string → "Auction / Company Mode"; deferred Basic-Mode split recorded in `ProjectDesignManual.md` §22.3 and `PRIVATE_ROADMAP.md`. Internal `enrollMode` ids kept (code-facing).
+- **ND.9b** — `CompanyDetails.cs`: a mouse-transparent `Panel` + `StyleBoxFlat` border overlay (index 0, inset 8 px, Ch. 29-safe), colour set per refresh from the player's holding (gold `#D9A621` NST / silver `#BFBFC7` PST / black `#0D0D0D` none); a "You hold: …" caption appended to the status line.
+- **ND.9d/e/f** — `CompanyDetails.BuildCompanyPolicySection`: one "Company Policy (initial → current)" section replacing the old scattered governance lines. Reserves (BTC+SC side by side, live SC-equiv of BTC, initial→current mix — initial read from the founding vote's `ResultReserveScPercent`), Market level (`BuildMarketGradientBar`: fixed-width 420 px white→grey→black `GradientTexture1D`, 4 labelled ticks with % dark, a "▲ current" caret; default in numbers only), Dividend rate (initial default via `DefaultQuarterlyPayoutRatePercent(DefaultMarketCategory)` → current).
+- **ND.9c** — `CompanyFounding.FoundingBreakdown` (`List<CompanyFoundingBreakdown>`), populated in `FoundCompany`'s existing per-donor loop (no helper); `CompanyDetails` "Founding Snapshot — Stock Distribution" table reads it (tier(s), bid BTC, participation%, base×(1+bonus)=final, class), legacy fallback line when empty.
+- **ND.9g** — `CompanyVoteRecord` gained `BeforeReserveScPercent/BeforeMarketCategory/BeforePayoutRatePercent`, `QuarterDaysInCycle`, `List<VoteBallotRecord> Ballots`; captured in `CloseCompanyVote` (before-values before mutation, ballots + weight inside the tally loop). `CompanyDetails.BuildLastVoteSnapshot` renders before→after dials + every ballot; legacy records degrade to result-only.
+- **ND.9h** — inside `BuildLastVoteSnapshot`, on a quarterly record with a finalized dividend: per-holder quarter total (`share × finalized`) for all participants, PST rows split to a daily amount using `QuarterDaysInCycle`.
+- **No new persisted files / checkpoint / delete-list / `WorldFormatVersion` work** — `FoundingBreakdown` and the new `CompanyVoteRecord` fields ride `NetworkRoot`'s existing `BlockchainStateSnapshot` (the ND.8g inheritance). Presentation-only otherwise; no auction/dividend/vote *math* changed.
+- **Post-verify tweaks (2026-07-22, developer feedback round 1):**
+  - **ND.9e slider layout fix** — the tick labels (name + % dark) overlapped the gradient. Rewrote `BuildMarketGradientBar` into three non-overlapping bands: tick labels ABOVE (y 0–32), gradient in the middle (y 34–50), the "▲ current" caret below (y 52). Widened to 440 px, tick width 96 px. The current caret was already fine (kept).
+  - **ND.9b extended to BlockExplorer** — the holding-keyed border (gold NST / silver PST / black none) now also frames each **founded company's title** in Auction / Company Mode: the title `Label` is wrapped in a bordered `PanelContainer` (`StyleBoxFlat`, 2 px border + content margins), colour from the player's holding via `GetCompanyFounding(...).Holdings["player"]`. Coexists with the existing vote-pending red text (border = your stake, red = your ballot blocks play).
+- **Verify in-game:** open a founded company's `CompanyDetails` (BlockExplorer → Auction / Company Mode → Founded row → Details →) and check: border colour matches holding; Founding Snapshot table (a company founded pre-ND.9c shows the legacy notice); the gradient slider marks the current market level; a company that has closed at least one quarterly vote shows the Last Vote Snapshot with ballots + the per-participant/daily dividend split.
 
 <!-- ND.9x subphase specs are appended below this line as more needs are described. -->
 

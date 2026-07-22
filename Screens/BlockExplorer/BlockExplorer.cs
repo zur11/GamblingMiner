@@ -36,6 +36,12 @@ public partial class BlockExplorer : Control
     private Label _enrollModeSummaryLabel = null!;
     private VBoxContainer _enrollModeRowsVBox = null!;
 
+    // ND.9b (extended 2026-07-22) — the same holding-keyed border colours CompanyDetails uses, applied
+    // here around each FOUNDED company's title: gold when the player holds NST, silver PST, black neither.
+    private static readonly Color HoldingGold = new(0.85f, 0.65f, 0.13f);
+    private static readonly Color HoldingSilver = new(0.75f, 0.75f, 0.78f);
+    private static readonly Color HoldingBlack = new(0.05f, 0.05f, 0.05f);
+
     // Live auto-refresh so background simulation (mining/balances) shows in real time.
     private double _autoRefreshTimer;
     private const double AutoRefreshInterval = 1.0;
@@ -93,7 +99,12 @@ public partial class BlockExplorer : Control
     {
         // Toggle lives in the top action bar (always visible).
         var topActions = GetNode<HBoxContainer>("Margin/MainVBox/TopActions");
-        _enrollModeToggle = new CheckBox { Text = "Enroll Mode" };
+        // ND.9a — the toggle now surfaces both still-recruitable auctions AND founded companies, so it is
+        // labelled "Auction / Company Mode" (was "Enroll Mode"). Deferred Basic-Mode objective (non-priority,
+        // see PRIVATE_ROADMAP / ProjectDesignManual §22.3): in Basic Mode this reverts to Auction Mode only,
+        // and founded companies move to their own dedicated scene/list. Internal ids keep the "enrollMode"
+        // name (code-facing, not player-facing).
+        _enrollModeToggle = new CheckBox { Text = "Auction / Company Mode" };
         _enrollModeToggle.Toggled += _ => RefreshEnrollMode();
         topActions.AddChild(_enrollModeToggle);
 
@@ -133,7 +144,7 @@ public partial class BlockExplorer : Control
         int resolved = ledger.Count(s => s.Status == NonMinerAuctionStatus.Resolved);
         int notYet = ledger.Count(s => s.Status == NonMinerAuctionStatus.NotIntroduced);
         _enrollModeSummaryLabel.Text =
-            $"Enroll Mode — referral auction   |   In auction (recruitable): {inAuction}  |  Resolved: {resolved}  |  Not yet introduced: {notYet}";
+            $"Auction / Company Mode — referral auction & founded companies   |   In auction (recruitable): {inAuction}  |  Resolved: {resolved}  |  Not yet introduced: {notYet}";
 
         foreach (Node child in _enrollModeRowsVBox.GetChildren())
             child.QueueFree();
@@ -199,7 +210,6 @@ public partial class BlockExplorer : Control
                     Text = votePending
                         ? $"⚠ BOARD VOTE PENDING — {NetworkRoot.DescribeCompany(s)}  | {founder}"
                         : $"{NetworkRoot.DescribeCompany(s)}  | {founder}",
-                    SizeFlagsHorizontal = SizeFlags.ExpandFill,
                     MouseFilter = MouseFilterEnum.Pass
                 };
                 var detailsBtn = new Button { Text = votePending ? "Vote →" : "Details →" };
@@ -208,7 +218,37 @@ public partial class BlockExplorer : Control
                     rowLabel.AddThemeColorOverride("font_color", new Color(1f, 0.3f, 0.3f));
                     detailsBtn.AddThemeColorOverride("font_color", new Color(1f, 0.3f, 0.3f));
                 }
-                row.AddChild(rowLabel);
+
+                // ND.9b (2026-07-22) — a holding-keyed coloured border around the company TITLE (same
+                // gold/silver/black scheme as CompanyDetails). Independent of the vote-pending red text —
+                // both signals coexist (red = "your ballot is blocking play", border = "your stake here").
+                CompanyFounding? founding = _networkRoot.GetCompanyFounding(s.NonMinerAddress);
+                CompanyShareHolding? playerHolding = founding?.Holdings.FirstOrDefault(h => h.HolderId == "player");
+                Color borderColor = playerHolding is { Nst: > 0m } ? HoldingGold
+                    : playerHolding is { Pst: > 0m } ? HoldingSilver
+                    : HoldingBlack;
+                var titleStyle = new StyleBoxFlat
+                {
+                    BgColor = new Color(0, 0, 0, 0),
+                    BorderColor = borderColor,
+                    BorderWidthLeft = 2,
+                    BorderWidthTop = 2,
+                    BorderWidthRight = 2,
+                    BorderWidthBottom = 2,
+                    CornerRadiusTopLeft = 4,
+                    CornerRadiusTopRight = 4,
+                    CornerRadiusBottomLeft = 4,
+                    CornerRadiusBottomRight = 4,
+                    ContentMarginLeft = 8,
+                    ContentMarginRight = 8,
+                    ContentMarginTop = 3,
+                    ContentMarginBottom = 3
+                };
+                var titlePanel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
+                titlePanel.AddThemeStyleboxOverride("panel", titleStyle);
+                titlePanel.AddChild(rowLabel);
+                row.AddChild(titlePanel);
+
                 string nonMinerAddress = s.NonMinerAddress;
                 detailsBtn.Pressed += () => OnOpenCompanyDetails(nonMinerAddress);
                 row.AddChild(detailsBtn);

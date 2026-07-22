@@ -35,6 +35,15 @@ public partial class CompanyDetails : Control
 	private VBoxContainer _infoVBox = null!;
 	private VBoxContainer _actionVBox = null!;
 
+	// ND.9b — a holding-keyed page border: gold when the player holds NST, silver when PST, black when
+	// neither. A transparent-centre StyleBoxFlat overlay drawn just inside the screen edge (Ch. 29-safe —
+	// it sits behind the content, mouse-transparent, and never touches the scroll/footer layout).
+	private Panel _borderPanel = null!;
+	private StyleBoxFlat _borderStyle = null!;
+	private static readonly Color HoldingGold = new(0.85f, 0.65f, 0.13f);   // NST
+	private static readonly Color HoldingSilver = new(0.75f, 0.75f, 0.78f); // PST
+	private static readonly Color HoldingBlack = new(0.05f, 0.05f, 0.05f);  // none
+
 	// The action panels are rebuilt ONLY when this signature changes (open-vote identity + holding
 	// class), so the player's in-progress SpinBox/OptionButton edits survive the 1 s info refresh.
 	private string _actionSignature = string.Empty;
@@ -60,6 +69,8 @@ public partial class CompanyDetails : Control
 		_statusLabel = GetNode<Label>("%StatusLabel");
 		_infoVBox = GetNode<VBoxContainer>("%InfoVBox");
 		_actionVBox = GetNode<VBoxContainer>("%ActionVBox");
+
+		BuildBorderOverlay();
 
 		GetNode<Button>("%BackBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.BlockExplorer);
 
@@ -96,12 +107,19 @@ public partial class CompanyDetails : Control
 
 		CompanyGovernanceState? gov = _networkRoot.GetCompanyGovernanceByNodeId(founding.NonMinerNodeId);
 
+		// ND.9b — the player's holding class drives the page-border colour + a legible caption.
+		CompanyShareHolding? playerHolding = founding.Holdings.FirstOrDefault(h => h.HolderId == PlayerNodeId);
+		bool hasNst = playerHolding is { Nst: > 0m };
+		bool hasPst = playerHolding is { Pst: > 0m };
+		_borderStyle.BorderColor = hasNst ? HoldingGold : hasPst ? HoldingSilver : HoldingBlack;
+		string holdingCaption = hasNst ? "NST (voting shares)" : hasPst ? "PST (dividend shares)" : "no shares";
+
 		string appearance = summary.CompanyAppearanceDateLocal is DateTime d
 			? $"  —  appeared {d:yyyy-MM-dd}"
 			: string.Empty;
 		_identityLabel.Text = $"{NetworkRoot.DescribeCompany(summary)}{appearance}   [{summary.NonMinerAddress}]";
 		_statusLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Founded {FormatDate(founding.FoundedAtUnixMs)}  |  treasury {_networkRoot.GetNodeSpendableBalance(founding.NonMinerNodeId):F8} BTC");
+			$"Founded {FormatDate(founding.FoundedAtUnixMs)}  |  treasury {_networkRoot.GetNodeSpendableBalance(founding.NonMinerNodeId):F8} BTC  |  You hold: {holdingCaption}");
 
 		RebuildInfo(founding, gov);
 		RebuildOrUpdateActions(founding, gov);
@@ -114,24 +132,59 @@ public partial class CompanyDetails : Control
 		foreach (Node child in _infoVBox.GetChildren()) child.QueueFree();
 
 		// Stock distribution (the founding mint, D-ND8.15).
-		_infoVBox.AddChild(SectionTitle("Stock Distribution (founding mint)"));
+		_infoVBox.AddChild(SectionTitle("Founding Snapshot — Stock Distribution"));
 		decimal totalNst = founding.Holdings.Sum(h => h.Nst);
 		decimal totalPst = founding.Holdings.Sum(h => h.Pst);
 		decimal totalTokens = totalNst + totalPst;
-		foreach (CompanyShareHolding h in founding.Holdings.OrderByDescending(h => h.Nst + h.Pst))
+
+		// ND.9c — the frozen "how the company was founded" table (tier occupancy, participation %, slot
+		// bonus, base→final tokens), read from the persisted breakdown. Legacy companies (founded before
+		// ND.9c) have no breakdown ⇒ a one-line notice + the plain token list below.
+		if (founding.FoundingBreakdown.Count > 0)
 		{
-			decimal tokens = h.Nst + h.Pst;
-			string shareClass = h.Nst > 0m ? "NST" : "PST";
-			decimal profitShare = totalTokens > 0m ? tokens / totalTokens : 0m;
-			string votes = h.Nst > 0m && totalNst > 0m
-				? string.Create(CultureInfo.InvariantCulture, $"  |  votes {h.Nst / totalNst:P2}")
-				: string.Empty;
+			decimal poolBtc = founding.FoundingBreakdown.Sum(b => b.AmountBtcAtClose);
 			_infoVBox.AddChild(new Label
 			{
 				Text = string.Create(CultureInfo.InvariantCulture,
-					$"{_networkRoot.DescribeAddress(h.HolderId)}  —  {tokens:F8} {shareClass}  |  profit share {profitShare:P2}{votes}")
+					$"Auction pool at close: {poolBtc:F8} BTC over {founding.FoundingBreakdown.Count} bidder(s). Each bidder's share of the 10,000-token base pool × (1 + slot bonus):")
 			});
+			foreach (CompanyFoundingBreakdown b in founding.FoundingBreakdown.OrderByDescending(b => b.FinalTokens))
+			{
+				string tierList = "#" + string.Join(",#", b.Tiers);
+				string cls = b.IsNst
+					? string.Create(CultureInfo.InvariantCulture, $"NST (votes {(totalNst > 0m ? b.FinalTokens / totalNst : 0m):P2})")
+					: "PST (no votes)";
+				_infoVBox.AddChild(new Label
+				{
+					Text = string.Create(CultureInfo.InvariantCulture,
+						$"{_networkRoot.DescribeAddress(b.HolderId)}  —  tier(s) {tierList}  —  bid {b.AmountBtcAtClose:F8} BTC  —  participation {b.ParticipationShare:P2}")
+				});
+				_infoVBox.AddChild(new Label
+				{
+					Text = string.Create(CultureInfo.InvariantCulture,
+						$"      base {b.BaseTokens:F8} × (1 + bonus {b.BonusFraction:P2}) = {b.FinalTokens:F8} tokens  —  {cls}")
+				});
+			}
 		}
+		else
+		{
+			_infoVBox.AddChild(new Label { Text = "Founding breakdown unavailable (company founded before this feature)." });
+			foreach (CompanyShareHolding h in founding.Holdings.OrderByDescending(h => h.Nst + h.Pst))
+			{
+				decimal tokens = h.Nst + h.Pst;
+				string shareClass = h.Nst > 0m ? "NST" : "PST";
+				decimal profitShare = totalTokens > 0m ? tokens / totalTokens : 0m;
+				string votes = h.Nst > 0m && totalNst > 0m
+					? string.Create(CultureInfo.InvariantCulture, $"  |  votes {h.Nst / totalNst:P2}")
+					: string.Empty;
+				_infoVBox.AddChild(new Label
+				{
+					Text = string.Create(CultureInfo.InvariantCulture,
+						$"{_networkRoot.DescribeAddress(h.HolderId)}  —  {tokens:F8} {shareClass}  |  profit share {profitShare:P2}{votes}")
+				});
+			}
+		}
+
 		_infoVBox.AddChild(new Label
 		{
 			Text = string.Create(CultureInfo.InvariantCulture, $"Total minted: {totalNst:F8} NST  +  {totalPst:F8} PST")
@@ -144,23 +197,15 @@ public partial class CompanyDetails : Control
 			return;
 		}
 
+		// ND.9d/e/f — the combined "Company Policy (initial → current)" panel (replaces the old scattered
+		// Reserve-mix / SC-reserve / Market-category lines): Reserves, Market level (gradient slider),
+		// Dividend rate — each showing initial → current.
+		_infoVBox.AddChild(new HSeparator());
+		BuildCompanyPolicySection(founding, gov);
+
 		// Governance status (ND.8b.3).
 		_infoVBox.AddChild(new HSeparator());
-		_infoVBox.AddChild(SectionTitle("Governance"));
-		_infoVBox.AddChild(new Label
-		{
-			Text = string.Create(CultureInfo.InvariantCulture,
-				$"Reserve mix target: {gov.ReserveScPercent:F0}% SC / {100m - gov.ReserveScPercent:F0}% BTC  ({gov.CurrencyBand}, vote range {FormatBounds(gov.CurrencyBand)})")
-		});
-		_infoVBox.AddChild(new Label
-		{
-			Text = string.Create(CultureInfo.InvariantCulture,
-				$"SC reserve: {gov.ScReserve:N8} SC (auto-converted from treasury BTC via the provisional casino path)")
-		});
-		string drift = gov.MarketCategory == gov.DefaultMarketCategory
-			? string.Empty
-			: $"  (default: {gov.DefaultMarketCategory})";
-		_infoVBox.AddChild(new Label { Text = $"Market category: {gov.MarketCategory}{drift}" });
+		_infoVBox.AddChild(SectionTitle("Governance status"));
 		_infoVBox.AddChild(new Label
 		{
 			Text = string.Create(CultureInfo.InvariantCulture,
@@ -186,6 +231,10 @@ public partial class CompanyDetails : Control
 					$"Quarter dividend ({state}): {gov.QuarterDividendBtc:F8} BTC + {gov.QuarterDividendSc:F8} SC at {gov.QuarterPayoutRatePercent:F2}%/quarter  |  {FormatDate(gov.QuarterCycleStartMs)} → {FormatDate(gov.QuarterCycleEndMs)}")
 			});
 		}
+
+		// ND.9g / ND.9h — the Last Vote Snapshot (every participant's ballot + before→after dials + the
+		// quarterly dividend distribution). Reads gov.VoteHistory.Last().
+		BuildLastVoteSnapshot(founding, gov);
 
 		// Vote history (newest first, short).
 		if (gov.VoteHistory.Count > 0)
@@ -423,6 +472,281 @@ public partial class CompanyDetails : Control
 			_claimFeedbackLabel.Text = message;
 			_claimFeedbackLabel.Modulate = ok ? Colors.LightGreen : Colors.Orange;
 		}
+	}
+
+	// ── ND.9d/e/f — the "Company Policy (initial → current)" panel ────────────────────────────────
+
+	private static readonly string[] MarketOrder = { "official", "light_grey", "dark_grey", "black" };
+
+	private static int MarketIndex(string id)
+	{
+		int i = Array.IndexOf(MarketOrder, id);
+		return i < 0 ? 0 : i;
+	}
+
+	// ND.9e — player-facing label + light/dark percentage (darkness% = index/3 × 100). Shared with ND.9g.
+	private static (string label, int darkPercent) MarketDisplay(string id) => id switch
+	{
+		"official" => ("Official", 0),
+		"light_grey" => ("Light-grey", 33),
+		"dark_grey" => ("Dark-grey", 67),
+		"black" => ("Black market", 100),
+		_ => (id, 0)
+	};
+
+	private void BuildCompanyPolicySection(CompanyFounding founding, CompanyGovernanceState gov)
+	{
+		_infoVBox.AddChild(SectionTitle("Company Policy (initial → current)"));
+
+		// ND.9d — Reserves: BTC & SC side by side, original → current mix.
+		decimal current = gov.ReserveScPercent;
+		decimal orig = gov.VoteHistory.FirstOrDefault(v => v.Kind == "founding")?.ResultReserveScPercent ?? current;
+		decimal treasuryBtc = _networkRoot.GetNodeSpendableBalance(founding.NonMinerNodeId);
+		decimal? price = _btcMarketDataService?.GetEffectivePriceUsd(
+			DateTimeOffset.FromUnixTimeMilliseconds(_networkRoot.GetPlayerLatestBlock().Timestamp).LocalDateTime);
+		string btcInSc = price is decimal p
+			? string.Create(CultureInfo.InvariantCulture, $"  (~{treasuryBtc * p:N2} SC)")
+			: string.Empty;
+
+		_infoVBox.AddChild(new Label { Text = "Reserves:" });
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"   BTC reserve: {treasuryBtc:F8} BTC  ({100m - current:F0}% target){btcInSc}")
+		});
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"   SC reserve:  {gov.ScReserve:N8} SC  ({current:F0}% target)")
+		});
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"   Mix: initial {orig:F0}% SC / {100m - orig:F0}% BTC   →   current {current:F0}% SC / {100m - current:F0}% BTC   ({gov.CurrencyBand}, band {FormatBounds(gov.CurrencyBand)})")
+		});
+
+		// ND.9e — Market (Light↔Dark) level: gradient slider (current marked) + default in numbers only.
+		_infoVBox.AddChild(new Label { Text = "Market level:" });
+		_infoVBox.AddChild(BuildMarketGradientBar(gov.MarketCategory));
+		(string curLabel, int curDark) = MarketDisplay(gov.MarketCategory);
+		(string defLabel, int defDark) = MarketDisplay(gov.DefaultMarketCategory);
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"   Current: {curLabel} ({curDark}% dark)     Default: {defLabel} ({defDark}% dark)")
+		});
+
+		// ND.9f — Dividend rate: initial default → current voted.
+		decimal defaultRate = NetworkRoot.DefaultQuarterlyPayoutRatePercent(gov.DefaultMarketCategory);
+		_infoVBox.AddChild(new Label { Text = "Dividend rate:" });
+		_infoVBox.AddChild(new Label
+		{
+			Text = gov.QuarterPayoutRatePercent > 0m
+				? string.Create(CultureInfo.InvariantCulture,
+					$"   {gov.QuarterPayoutRatePercent:F1}% of reserves paid out per quarter as dividends; the rest stays in reserve  (default {defaultRate:F0}%, max {defaultRate * 2m:F0}%)")
+				: string.Create(CultureInfo.InvariantCulture,
+					$"   not yet set — first quarter pending  (default {defaultRate:F0}%/quarter, max {defaultRate * 2m:F0}%)")
+		});
+	}
+
+	// ND.9e — a fixed-width white→grey→black gradient bar with the four categories as labelled ticks
+	// (name + % dark) and a caret marking ONLY the current category (default is shown in numbers, not here).
+	private Control BuildMarketGradientBar(string currentId)
+	{
+		// Layout bands (no overlap): tick labels (name + % dark) sit ABOVE the gradient, the gradient bar
+		// in the middle, the "▲ current" caret below it.
+		const int W = 440;
+		const int TickTop = 0;
+		const int TickH = 32;      // two lines of font 11, fully above the gradient
+		const int GradTop = 34;
+		const int GradH = 16;
+		const int CaretTop = 52;
+		const int H = 72;
+		const int TickW = 96;
+		var bar = new Control { CustomMinimumSize = new Vector2(W, H) };
+
+		var grad = new Gradient
+		{
+			Offsets = new[] { 0f, 0.5f, 1f },
+			Colors = new[] { new Color(1f, 1f, 1f), new Color(0.5f, 0.5f, 0.5f), new Color(0.05f, 0.05f, 0.05f) }
+		};
+		var tex = new GradientTexture1D { Gradient = grad, Width = W };
+		var rect = new TextureRect
+		{
+			Texture = tex,
+			Position = new Vector2(0, GradTop),
+			Size = new Vector2(W, GradH),
+			StretchMode = TextureRect.StretchModeEnum.Scale
+		};
+		bar.AddChild(rect);
+
+		for (int i = 0; i < MarketOrder.Length; i++)
+		{
+			float x = i / (float)(MarketOrder.Length - 1) * W;
+			(string label, int darkPercent) = MarketDisplay(MarketOrder[i]);
+			var tick = new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture, $"{label}\n{darkPercent}%"),
+				Position = new Vector2(Mathf.Clamp(x - TickW / 2f, 0f, W - TickW), TickTop),
+				Size = new Vector2(TickW, TickH),
+				HorizontalAlignment = HorizontalAlignment.Center
+			};
+			tick.AddThemeFontSizeOverride("font_size", 11);
+			bar.AddChild(tick);
+		}
+
+		float cx = MarketIndex(currentId) / (float)(MarketOrder.Length - 1) * W;
+		var marker = new Label
+		{
+			Text = "▲ current",
+			Position = new Vector2(Mathf.Clamp(cx - 26f, 0f, W - 52f), CaretTop)
+		};
+		marker.AddThemeFontSizeOverride("font_size", 12);
+		marker.AddThemeColorOverride("font_color", new Color(1f, 0.55f, 0f));
+		bar.AddChild(marker);
+
+		return bar;
+	}
+
+	// ── ND.9g / ND.9h — the Last Vote Snapshot ────────────────────────────────────────────────────
+
+	private static string MarketShiftLabel(int shift) => shift > 0 ? "darker" : shift < 0 ? "lighter" : "hold";
+
+	private void BuildLastVoteSnapshot(CompanyFounding founding, CompanyGovernanceState gov)
+	{
+		CompanyVoteRecord? rec = gov.VoteHistory.Count > 0 ? gov.VoteHistory[^1] : null;
+		if (rec is null) return;
+
+		_infoVBox.AddChild(new HSeparator());
+		_infoVBox.AddChild(SectionTitle("Last Vote Snapshot"));
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"{rec.Kind} vote — opened {FormatDate(rec.OpenedAtMs)}, closed {FormatDate(rec.ClosedAtMs)}")
+		});
+
+		// ND.9g — before → after for the three policy dials. Legacy records (closed before ND.9g) have no
+		// captured "before" (empty BeforeMarketCategory) → show results only.
+		bool hasBefore = !string.IsNullOrEmpty(rec.BeforeMarketCategory);
+		if (hasBefore)
+		{
+			_infoVBox.AddChild(new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"   Reserve (SC%): {rec.BeforeReserveScPercent:F0}%  →  {rec.ResultReserveScPercent:F0}%")
+			});
+			(string beforeMkt, int beforeDark) = MarketDisplay(rec.BeforeMarketCategory);
+			(string afterMkt, int afterDark) = MarketDisplay(rec.ResultMarketCategory);
+			_infoVBox.AddChild(new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"   Market level: {beforeMkt} ({beforeDark}% dark)  →  {afterMkt} ({afterDark}% dark)")
+			});
+			if (rec.Kind == "quarterly")
+			{
+				_infoVBox.AddChild(new Label
+				{
+					Text = string.Create(CultureInfo.InvariantCulture,
+						$"   Dividend rate: {rec.BeforePayoutRatePercent:F1}%  →  {rec.ResultPayoutRatePercent:F1}% /quarter")
+				});
+			}
+		}
+		else
+		{
+			(string afterMkt, int afterDark) = MarketDisplay(rec.ResultMarketCategory);
+			_infoVBox.AddChild(new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"   Result: reserve {rec.ResultReserveScPercent:F0}% SC, market {afterMkt} ({afterDark}% dark)  (before-values not captured — legacy vote)")
+			});
+		}
+
+		// ND.9g — every participant's cast ballot.
+		if (rec.Ballots.Count > 0)
+		{
+			_infoVBox.AddChild(new Label { Text = "Ballots cast:" });
+			foreach (VoteBallotRecord b in rec.Ballots.OrderByDescending(b => b.Weight))
+			{
+				string market = rec.Kind == "quarterly"
+					? string.Create(CultureInfo.InvariantCulture, $", market {MarketShiftLabel(b.MarketShift)}, payout {b.PayoutRatePercent:F1}%")
+					: string.Empty;
+				_infoVBox.AddChild(new Label
+				{
+					Text = string.Create(CultureInfo.InvariantCulture,
+						$"   {_networkRoot.DescribeAddress(b.HolderId)}  —  weight {b.Weight:P2}  —  voted: reserve {b.ReserveScPercentTarget:F0}%{market}")
+				});
+			}
+		}
+		else
+		{
+			_infoVBox.AddChild(new Label { Text = "   No ballots were cast (result held the prior values)." });
+		}
+
+		// ND.9h — on a QUARTERLY snapshot, publish each participant's dividend this quarter (PST split to a
+		// daily amount so it's clear why they receive a given amount per day).
+		if (rec.Kind == "quarterly" && (rec.FinalizedDividendBtc > 0m || rec.FinalizedDividendSc > 0m))
+		{
+			decimal totalTokens = founding.Holdings.Sum(h => h.Nst + h.Pst);
+			int days = Math.Max(1, rec.QuarterDaysInCycle);
+			_infoVBox.AddChild(new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"This quarter's dividends — pool {rec.FinalizedDividendBtc:F8} BTC + {rec.FinalizedDividendSc:F8} SC over {days} day(s):")
+			});
+			if (totalTokens > 0m)
+			{
+				foreach (CompanyShareHolding h in founding.Holdings.OrderByDescending(h => h.Nst + h.Pst))
+				{
+					decimal share = (h.Nst + h.Pst) / totalTokens;
+					decimal qBtc = share * rec.FinalizedDividendBtc;
+					decimal qSc = share * rec.FinalizedDividendSc;
+					bool isNst = h.Nst > 0m;
+					_infoVBox.AddChild(new Label
+					{
+						Text = string.Create(CultureInfo.InvariantCulture,
+							$"   {_networkRoot.DescribeAddress(h.HolderId)}  —  {(isNst ? "NST" : "PST")}  —  profit share {share:P2}  —  quarter total {qBtc:F8} BTC + {qSc:F8} SC")
+					});
+					if (!isNst && rec.QuarterDaysInCycle > 0)
+					{
+						_infoVBox.AddChild(new Label
+						{
+							Text = string.Create(CultureInfo.InvariantCulture,
+								$"      → daily {qBtc / days:F8} BTC + {qSc / days:F8} SC  × {days} days  (PST drip)")
+						});
+					}
+				}
+			}
+		}
+	}
+
+	// ND.9b — a mouse-transparent bordered Panel inset a few px from the screen edge, sitting behind the
+	// content (index 0). Its centre is transparent, so only the coloured frame shows; the colour is set per
+	// refresh from the player's holding class. Does NOT touch RootMargin/RootVBox — Ch. 29-safe by design.
+	private void BuildBorderOverlay()
+	{
+		_borderStyle = new StyleBoxFlat
+		{
+			BgColor = new Color(0, 0, 0, 0),
+			BorderColor = HoldingBlack,
+			BorderWidthLeft = 4,
+			BorderWidthTop = 4,
+			BorderWidthRight = 4,
+			BorderWidthBottom = 4,
+			CornerRadiusTopLeft = 6,
+			CornerRadiusTopRight = 6,
+			CornerRadiusBottomLeft = 6,
+			CornerRadiusBottomRight = 6
+		};
+
+		_borderPanel = new Panel { MouseFilter = MouseFilterEnum.Ignore };
+		_borderPanel.AddThemeStyleboxOverride("panel", _borderStyle);
+		AddChild(_borderPanel);
+		MoveChild(_borderPanel, 0);
+		_borderPanel.SetAnchorsPreset(LayoutPreset.FullRect);
+		_borderPanel.OffsetLeft = 8;
+		_borderPanel.OffsetTop = 8;
+		_borderPanel.OffsetRight = -8;
+		_borderPanel.OffsetBottom = -8;
 	}
 
 	private static Label SectionTitle(string text)

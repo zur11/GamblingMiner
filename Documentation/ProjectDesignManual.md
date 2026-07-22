@@ -2073,9 +2073,11 @@ Nothing here is persisted — it's all recomputed from the canonical chain, so i
 
 The recirculation scheduler now targets **only non-miners currently in an open window** (`InAuctionNonMinerAddresses(block.Timestamp)`). Before the first bot is introduced, the pool is empty (no donations); once a bot resolves, the scheduler stops donating to it (the auction is over). The player may still *send* to any address, but donations after a window closes don't change its winner (they're past the close timestamp).
 
-### 22.3 — Seeing it: BlockExplorer "Enroll Mode"
+### 22.3 — Seeing it: BlockExplorer "Auction / Company Mode"
 
 A toggle (default off) reveals the auction: a header counter (`In auction / Resolved / Not yet introduced`), each in-auction bot with its total received, donor count, **leading donor**, and **days left**, then a list of resolved bots with **who won** each. This is the player's window into the live auction.
+
+**Naming (ND.9a, 2026-07-22):** the toggle was renamed **"Enroll Mode" → "Auction / Company Mode"** because it now surfaces founded companies (with a "Details →" into `CompanyDetails`) alongside still-recruitable auctions. **Deferred, non-priority Basic-Mode objective:** in Basic Mode the toggle reverts to **Auction Mode only**, and founded companies move to their **own dedicated scene/list** (not folded into the explorer). Internal identifiers keep the `enrollMode` name (code-facing).
 
 ### 22.4 — What's deliberately *not* here yet (starter scope)
 

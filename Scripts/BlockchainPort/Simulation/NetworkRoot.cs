@@ -1368,6 +1368,7 @@ public partial class NetworkRoot : Node
         // ladder (5.2% at tier 1, halving each tier down to 10). A top-3-tier holder mints NST (dividend
         // rights + votes); everyone else mints PST (dividend rights only).
         var holdings = new List<CompanyShareHolding>();
+        var breakdown = new List<CompanyFoundingBreakdown>(); // ND.9c — the frozen "how it was founded" record
         foreach (KeyValuePair<string, (decimal liveBtc, List<int> tiers)> kv in perDonor)
         {
             string donorAddress = kv.Key;
@@ -1392,6 +1393,19 @@ public partial class NetworkRoot : Node
                 Nst = holdsTopThreeTier ? finalTokens : 0m,
                 Pst = holdsTopThreeTier ? 0m : finalTokens
             });
+
+            // ND.9c — persist the same values we just computed (no second copy of the math, no helper).
+            breakdown.Add(new CompanyFoundingBreakdown
+            {
+                HolderId = holderId,
+                Tiers = new List<int>(tiers),
+                AmountBtcAtClose = liveBtc,
+                ParticipationShare = participationShare,
+                BaseTokens = baseTokens,
+                BonusFraction = bonusFraction,
+                FinalTokens = finalTokens,
+                IsNst = holdsTopThreeTier
+            });
         }
 
         var founding = new CompanyFounding
@@ -1400,7 +1414,8 @@ public partial class NetworkRoot : Node
             NonMinerAddress = summary.NonMinerAddress,
             CompanyId = summary.CompanyId ?? string.Empty,
             FoundedAtUnixMs = block.Timestamp,
-            Holdings = holdings
+            Holdings = holdings,
+            FoundingBreakdown = breakdown
         };
         _companyFoundings[summary.NonMinerNodeId] = founding;
 
@@ -1827,6 +1842,12 @@ public partial class NetworkRoot : Node
         CompanyVote vote = gov.OpenVote!;
         gov.OpenVote = null;
 
+        // ND.9g — snapshot the three policy dials BEFORE this vote's result is applied (before→after).
+        decimal beforeReserve = gov.ReserveScPercent;
+        string beforeMarket = gov.MarketCategory;
+        decimal beforePayout = gov.QuarterPayoutRatePercent;
+        var ballotRecords = new List<VoteBallotRecord>(); // ND.9g — every cast ballot, with its weight
+
         decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
         decimal reserveResult = gov.ReserveScPercent;
         decimal payoutResult = 0m;
@@ -1852,6 +1873,16 @@ public partial class NetworkRoot : Node
                 weightedPayout += weight * ballot.PayoutRatePercent;
                 if (ballot.MarketShift > 0) darkerWeight += weight;
                 else if (ballot.MarketShift < 0) lighterWeight += weight;
+
+                ballotRecords.Add(new VoteBallotRecord
+                {
+                    HolderId = holderId,
+                    Nst = nst,
+                    Weight = weight,
+                    ReserveScPercentTarget = ballot.ReserveScPercentTarget,
+                    MarketShift = ballot.MarketShift,
+                    PayoutRatePercent = ballot.PayoutRatePercent
+                });
             }
 
             if (votedWeight > 0m)
@@ -1887,6 +1918,7 @@ public partial class NetworkRoot : Node
 
         gov.ReserveScPercent = reserveResult;
 
+        int quarterDays = 0; // ND.9h — quarter length (in-game days), 0 for non-quarterly votes
         if (vote.Kind == CompanyVoteKindQuarterly)
         {
             // D-ND8.17 — FINALIZE the quarter's dividend as two separately-tracked amounts (never live
@@ -1900,6 +1932,7 @@ public partial class NetworkRoot : Node
             gov.QuarterCycleEndMs = gov.NextQuarterlyDueMs;
             gov.QuarterDrippedDays = 0;
             gov.QuarterLumpCredited = false;
+            quarterDays = Math.Max(1, (int)((gov.QuarterCycleEndMs - gov.QuarterCycleStartMs) / GameDayMs));
         }
 
         // Reset the >30% special-vote baseline at EVERY vote close — "new inflow" is measured from the
@@ -1916,7 +1949,13 @@ public partial class NetworkRoot : Node
             ResultMarketCategory = gov.MarketCategory,
             ResultPayoutRatePercent = vote.Kind == CompanyVoteKindQuarterly ? gov.QuarterPayoutRatePercent : 0m,
             FinalizedDividendBtc = vote.Kind == CompanyVoteKindQuarterly ? gov.QuarterDividendBtc : 0m,
-            FinalizedDividendSc = vote.Kind == CompanyVoteKindQuarterly ? gov.QuarterDividendSc : 0m
+            FinalizedDividendSc = vote.Kind == CompanyVoteKindQuarterly ? gov.QuarterDividendSc : 0m,
+            // ND.9g / ND.9h
+            BeforeReserveScPercent = beforeReserve,
+            BeforeMarketCategory = beforeMarket,
+            BeforePayoutRatePercent = beforePayout,
+            QuarterDaysInCycle = quarterDays,
+            Ballots = ballotRecords
         });
         if (gov.VoteHistory.Count > MaxVoteHistoryPerCompany)
         {
@@ -4476,6 +4515,29 @@ public sealed class CompanyFounding
     public string CompanyId { get; set; } = string.Empty;
     public long FoundedAtUnixMs { get; set; }
     public List<CompanyShareHolding> Holdings { get; set; } = new();
+    // ND.9c (2026-07-22) — the FROZEN founding-mint breakdown, one entry per unique donor, capturing HOW the
+    // NST/PST distribution was computed at auction close (tier occupancy, participation %, slot-bonus, base
+    // vs final tokens). Populated inside FoundCompany's per-donor loop from the values it already computes —
+    // no reconstruction path, no shared helper (developer decision, ND.9c). Rides this same
+    // BlockchainStateSnapshot for free. Legacy companies founded before ND.9c have an EMPTY list; the
+    // CompanyDetails snapshot section degrades to a one-line "unavailable" notice + the plain token list.
+    public List<CompanyFoundingBreakdown> FoundingBreakdown { get; set; } = new();
+}
+
+// ND.9c — one donor's founding-mint math, frozen at auction close (see CompanyFounding.FoundingBreakdown).
+// HolderId is "player" / a bot nodeId / (fallback) the raw donor address, resolved exactly as the sibling
+// CompanyShareHolding. Tiers are 1-based positions in the value-ranked tracked pool (1 = largest bid); a
+// donor can hold more than one. IsNst mirrors the holding's class (any tier ≤ 3 ⇒ NST, else PST).
+public sealed class CompanyFoundingBreakdown
+{
+    public string HolderId { get; set; } = string.Empty;
+    public List<int> Tiers { get; set; } = new();
+    public decimal AmountBtcAtClose { get; set; }
+    public decimal ParticipationShare { get; set; }
+    public decimal BaseTokens { get; set; }
+    public decimal BonusFraction { get; set; }
+    public decimal FinalTokens { get; set; }
+    public bool IsNst { get; set; }
 }
 
 // One bidder's minted equity in a founded company (D-ND8.6/D-ND8.15). Exactly one of Nst/Pst is non-zero
@@ -4586,6 +4648,31 @@ public sealed class CompanyVoteRecord
     public decimal ResultPayoutRatePercent { get; set; }
     public decimal FinalizedDividendBtc { get; set; }
     public decimal FinalizedDividendSc { get; set; }
+    // ND.9g (2026-07-22) — the company's three policy dials RIGHT BEFORE this vote's result was applied,
+    // so the CompanyDetails "Last Vote Snapshot" can show before→after. Legacy records (closed before
+    // ND.9g) leave these at defaults and the snapshot shows only the result fields above.
+    public decimal BeforeReserveScPercent { get; set; }
+    public string BeforeMarketCategory { get; set; } = string.Empty;
+    public decimal BeforePayoutRatePercent { get; set; }
+    // ND.9h — the quarter length (in-game days) of the cycle this quarterly vote opened, so the snapshot
+    // can split each PST holder's quarter total into a daily amount. 0 for non-quarterly votes.
+    public int QuarterDaysInCycle { get; set; }
+    // ND.9g — every ballot cast in this vote (all cast ballots come from NST holders — only they get the
+    // vote panel). Rides the same BlockchainStateSnapshot; the list is ≤ the NST-holder count (tiny).
+    public List<VoteBallotRecord> Ballots { get; set; } = new();
+}
+
+// ND.9g — one participant's cast ballot in a closed vote (for the "Last Vote Snapshot"). Weight is the
+// holder's NST ÷ total NST at close (a 0..1 fraction). MarketShift is -1 lighter / 0 hold / +1 darker;
+// ReserveScPercentTarget and PayoutRatePercent are the ballot's raw preferences.
+public sealed class VoteBallotRecord
+{
+    public string HolderId { get; set; } = string.Empty;
+    public decimal Nst { get; set; }
+    public decimal Weight { get; set; }
+    public decimal ReserveScPercentTarget { get; set; }
+    public int MarketShift { get; set; }
+    public decimal PayoutRatePercent { get; set; }
 }
 
 // ND.8b.3 (D-ND8.13/D-ND8.26) — one casino-miner-bot's governance identity, re-rolled per world: a
