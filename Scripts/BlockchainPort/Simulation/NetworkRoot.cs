@@ -328,6 +328,49 @@ public partial class NetworkRoot : Node
         }
         return EscalatedStuckPercent(bestTier, currentBlockIndex - sinceBlockIndex);
     }
+
+    // Fix B (ND.10a, 2026-07-22) — the per-block signature sweep. The escalation was previously refreshed
+    // ONLY when a bot's pipeline SELECTED a pool, so a bot busy seeding fresh pools never updated the signal
+    // for a pool it was already stuck in — its signature went stale and neither the roll nor the label
+    // escalated (the bot_4/BitInstant tier 2→5 finding, §13 audit). This refreshes EVERY (recruitable pool ×
+    // casino bot) pair each block, edge-triggered (the same rule ComputeStuckEscalationProbabilityPercent
+    // uses to stamp), so a rank-push by ANOTHER bot is recorded at the block it happens and `blocksElapsed`
+    // then grows correctly. It also REMOVES the entry when the bot no longer holds any slot in that pool, so
+    // a future re-entry starts fresh (closes the round-3 "accepted residual imprecision").
+    private static void SweepStuckBidderSignatures(List<NonMinerDonationSummary> recruitable, int currentBlockIndex)
+    {
+        foreach (NonMinerDonationSummary target in recruitable)
+        {
+            List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
+            foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
+            {
+                if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
+                string botAddress = bot.WalletAddress;
+                int ownSlotCount = 0, bestTier = 0;
+                for (int i = 0; i < slotsByValue.Count; i++)
+                {
+                    if (slotsByValue[i].DonorAddress != botAddress) continue;
+                    ownSlotCount++;
+                    if (bestTier == 0) bestTier = i + 1;
+                }
+
+                var key = (target.NonMinerNodeId, record.NodeId);
+                if (ownSlotCount == 0)
+                {
+                    _stuckBidderSignatures.Remove(key); // fully evicted — a future re-entry starts fresh
+                    continue;
+                }
+
+                string signature = ownSlotCount >= 2 ? "multi" : $"single:{bestTier}";
+                if (!_stuckBidderSignatures.TryGetValue(key, out (string signature, int sinceBlockIndex) recorded)
+                    || recorded.signature != signature)
+                {
+                    _stuckBidderSignatures[key] = (signature, currentBlockIndex);
+                }
+            }
+        }
+    }
+
     // D-ND6.8 — a bid's ENTIRE outgoing amount (required principal + D-ND4b.11 additive tail + network
     // fee) may never commit more than this fraction of the bot's SPENDABLE balance (mature/confirmed —
     // GetAddressSpendableBalance). Replaces the plain `spendable ≥ required + fee` affordability check.
@@ -2433,9 +2476,6 @@ public partial class NetworkRoot : Node
     // entirely in ComputeAuctionLedger).
     private static void TryCasinoBotDonation(Block block)
     {
-        int count = DrawCasinoBotDonationCount();
-        if (count == 0) return;
-
         // D-ND4b.4: order targets — active auctions soonest-to-expire first, then not-yet-competing ones
         // — computed ONCE against the chain as of the just-mined block, so every donation slot this
         // block is measured against the SAME starting leader (the D-ND4b.11 same-block tie-break relies
@@ -2443,6 +2483,15 @@ public partial class NetworkRoot : Node
         // ND.6a: each bot then re-orders these per D-ND6.6 (own-slot count first) inside its own pipeline.
         List<NonMinerDonationSummary> ledger = ComputeAuctionLedger(block.Timestamp);
         List<NonMinerDonationSummary> recruitable = ledger.Where(s => s.Status == NonMinerAuctionStatus.InAuction).ToList();
+
+        // Fix B (ND.10a) — refresh the stuck-bidder signal for every (recruitable pool × casino bot) this
+        // block, BEFORE the count==0 early-return, so the escalation advances every block regardless of who
+        // (if anyone) is drawn to bid.
+        SweepStuckBidderSignatures(recruitable, block.Index);
+
+        int count = DrawCasinoBotDonationCount();
+        if (count == 0) return;
+
         List<NonMinerDonationSummary> priorityTargets = recruitable
             .Where(s => s.LeadingBidUnixMs != 0)
             .OrderBy(s => s.WindowCloseUnixMs)
@@ -2566,8 +2615,33 @@ public partial class NetworkRoot : Node
         }
         if (qualifying.Count == 0) return CasinoBotSlotOutcome.NoQualifyingTarget;
 
-        // Step 3 — the affordability walk over the bot-centric order.
-        foreach ((NonMinerDonationSummary target, int ownSlotCount, int bestTier, int occupiedSlots, List<int> ownTiers) in qualifying.OrderBy(q => q.ownSlotCount))
+        // Fix A (ND.10a, 2026-07-22) — escalation-boosted RE-SELECTION. Under the pure spread-wide
+        // (ownSlotCount-ascending) order a bot with a lone below-top-3 slot keeps seeding fresh 0-slot pools
+        // and never re-contests the stuck one, so its escalation never actually fires (the bot_4/BitInstant
+        // finding, §13 audit). Give each such pool an escalating CHANCE to jump the queue: roll its current
+        // escalation (kept live by the Fix-B per-block sweep); the FIRST hit is contested outright this slot,
+        // skipping the ladder re-roll (the escalation roll already decided to bid). None hits ⇒ order is the
+        // unchanged spread-wide walk. An unaffordable pick simply falls through to the normal walk.
+        NonMinerDonationSummary? escalationPick = null;
+        int escalationPickPercent = 0;
+        foreach ((NonMinerDonationSummary target, int ownSlotCount, int bestTier, int _, List<int> _) in qualifying)
+        {
+            if (ownSlotCount != 1 || bestTier <= 3) continue;
+            int esc = PeekStuckEscalationProbabilityPercent(target.NonMinerNodeId, sender.NodeId, bestTier, currentBlockIndex);
+            if (esc > 0 && Random.Shared.Next(100) < esc)
+            {
+                escalationPick = target;
+                escalationPickPercent = esc;
+                break;
+            }
+        }
+
+        // Step 3 — the affordability walk over the bot-centric order (the escalation pick, if any, first).
+        IEnumerable<(NonMinerDonationSummary target, int ownSlotCount, int bestTier, int occupiedSlots, List<int> ownTiers)> ordered =
+            escalationPick == null
+                ? qualifying.OrderBy(q => q.ownSlotCount)
+                : qualifying.OrderByDescending(q => q.target == escalationPick).ThenBy(q => q.ownSlotCount);
+        foreach ((NonMinerDonationSummary target, int ownSlotCount, int bestTier, int occupiedSlots, List<int> ownTiers) in ordered)
         {
             decimal leadingAmount = target.LeadingBidUnixMs == 0 ? 0m : target.LeadingDonorTotal;
             decimal requiredAmount = target.LeadingBidUnixMs == 0 ? MinBidBtc : leadingAmount + RaiseMin(leadingAmount);
@@ -2578,19 +2652,30 @@ public partial class NetworkRoot : Node
             trace.OwnTiersInTarget = string.Join("|", ownTiers);
             trace.RequiredBtc = requiredAmount;
 
+            bool escalationCommitted = escalationPick != null && ReferenceEquals(target, escalationPick);
+
             // Step 4 — the ladder roll (ND.6d mode-aware; ND.6e urgency inside the final 7 window days). ND.8d
             // round-2 refinement: the roll probability is the SUM of the bot's two LOWEST slot probabilities
             // (SumTwoLowestReBidProbabilities) — not the single best-tier value — so a bot spread across
             // multiple non-satisfied slots re-bids harder. A participated pool always has a leading bid, so
             // WindowCloseUnixMs is set here.
-            if (ownSlotCount > 0)
+            if (escalationCommitted)
+            {
+                // Fix A — the escalation roll (above) already decided to bid this stuck pool; record it and
+                // skip the ladder re-roll (no double-roll). The Fix-B sweep owns the signature this block.
+                trace.RolledTier = bestTier;
+                trace.RolledProbabilityPercent = escalationPickPercent;
+            }
+            else if (ownSlotCount > 0)
             {
                 // ND.8d round 3 — ALWAYS update the stuck-bidder signal for this (target, bot) pair, even
                 // on a multi-slot evaluation, so a LATER transition to single-slot (via eviction of the
                 // bot's OTHER slot — not just a rank-push on the surviving one) is correctly detected as a
                 // fresh "since" point rather than reaching back to the surviving slot's own, possibly old,
                 // donation timestamp. (The call is unconditional for that edge-triggered side effect; its
-                // returned value is only nonzero for the lone non-top-3 slot case.)
+                // returned value is only nonzero for the lone non-top-3 slot case.) Since ND.10a Fix B this
+                // is redundant with the per-block sweep on most blocks, but harmless (matching signature ⇒
+                // no-op) and still the source of `stuckProbability` for the max() below.
                 int stuckProbability = ComputeStuckEscalationProbabilityPercent(target, sender.NodeId, ownSlotCount, bestTier, currentBlockIndex);
                 // The pool's mode-appropriate rate (early-rush / urgency / normal) — the round-2 sum, and
                 // for a single slot simply that slot's mode rate.

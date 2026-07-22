@@ -1289,3 +1289,35 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 
 <!-- ND.9x subphase specs are appended below this line as more needs are described. -->
 
+---
+
+## 14. ND.10 — Post-ND.9 UI & auction-behavior fixes (⏳ OPEN, 2026-07-22 — objectives specified incrementally; first subphase is a technical auction-behavior fix diagnosed during ND.9 playtesting)
+
+**Why this phase exists.** ND.9 shipped and was committed successfully. Continuing to play, the developer surfaces further needs — a mix of **UI-detail refinements** (like ND.9) AND **technical/behavioral fixes** where the underlying simulation is wrong, not just its presentation. ND.10 collects both. Unlike ND.9 (presentation-only), ND.10 explicitly ALLOWS engine/behavior changes when the diagnosis calls for one. The first such fix — the stuck-bidder escalation not engaging — was diagnosed from live trace during ND.9 playtesting (§13's BitInstant audit), so it opens the phase.
+
+### 14.1 Subphase roster (appended incrementally)
+
+| Subphase | Title | Kind | Status |
+|---|---|---|---|
+| ND.10a | Stuck-bidder escalation actually engages — Fix A (escalation-boosted re-selection) + Fix B (per-block signature sweep) | technical / auction behavior | ✅ BUILT — verify + commit pending |
+| _(pending — the developer will describe further UI + technical needs)_ | | | |
+
+### 14.2 ND.10a — the stuck-bidder escalation must actually engage (Fix A + Fix B)
+
+**The bug (audited from live trace, 2026-07-22 — the BitInstant / bot_4 case, §13 audit).** BitInstant (`non_miner_8`) received, in order, bids that ranked bot_4's single 3.717 BTC donation (blk 1201) at **tier 2** (top-3) through blk 1224. Then bot_3 (8.62, blk 1225), bot_2 (18.47, blk 1230) and bot_1 (22.10, blk 1231) out-bid it, pushing bot_4's slot to **tier ~5 (below top-3)** — exactly the stuck-single-bidder escalation's target case. **But the escalation never engaged**, and its `AuctioningCompanyDetails` label sat frozen at the flat base (8%).
+
+**Root cause.** The stuck-escalation is only ever updated/consulted when the bot's bid pipeline (`TryBuildCasinoBotBid`) SELECTS that pool — and selection orders by ascending `ownSlotCount` (**spread-wide-first**), returning after the first affordable target. bot_4 always had fresh 0-slot pools to seed (`non_miner_7/9/10`…), so it **never re-selected BitInstant** after dropping below top-3. Consequently: (1) `ComputeStuckEscalationProbabilityPercent(non_miner_8, bot_4)` was never re-called → `_stuckBidderSignatures` stayed at the stale `single:2` (from the tier-2 era) → the roll never escalated; (2) the label's `PeekStuckEscalationProbabilityPercent` saw the `single:2` signature ≠ `single:5` → returned base → frozen. The round-3 fix corrected the escalation MATH but not that the escalation depends on the pool being re-selected — and selection deprioritizes already-held single-slot pools. This is the same structural pattern as the original DeepBit stagnation, one layer deeper.
+
+**The fix (developer-approved 2026-07-22: A + B).**
+
+- **Fix B — a per-block signature sweep (`SweepStuckBidderSignatures`).** Once per block, for EVERY (recruitable pool × casino bot) pair, recompute the bot's slot count/best tier in that pool and update `_stuckBidderSignatures` edge-triggered — **independent of whether the bot is selected to bid**. This keeps the signature accurate as OTHER bots' bids re-rank a pool (the tier 2→5 transition is stamped `single:5` at the block it happens, so `blocksElapsed` then grows correctly), so both the roll and the label reflect the true stuck duration. Also REMOVES the signature when a bot is fully evicted from a pool (a future re-entry starts fresh — closes the round-3 "accepted residual imprecision"). Runs in `TryCasinoBotDonation` right after `recruitable` is computed, BEFORE the `count == 0` early-return (so it advances every block, even donation-less ones). The roll path's own `ComputeStuckEscalationProbabilityPercent` stays (harmless no-op once the sweep has stamped this block; still returns the value for the `max(mode, escalation)` roll).
+- **Fix A — escalation-boosted re-selection.** In `TryBuildCasinoBotBid`, before the affordability walk, roll each qualifying single-slot-below-top-3 pool's current escalation (`PeekStuckEscalationProbabilityPercent`, kept live by Fix B); the FIRST pool that HITS its roll is moved to the front of the walk and, if affordable, contested outright this slot — **skipping the ladder re-roll** (the escalation roll already decided to bid). If none hits, the normal spread-wide order is unchanged. This turns the escalation from a roll-only modifier into an escalating CHANCE to actually re-select and re-contest the stuck pool, growing each block until the bot re-bids (becoming multi-slot → signature resets → escalation clears) or the auction closes. An unaffordable escalation pick simply falls through to the normal walk.
+
+**Why A+B together (not either alone):** B alone makes the label climb toward 100% but bot_4 still never re-bids (selection still deprioritizes it) → a ~100% label that does nothing (misleading). A alone can't roll a correct escalation because the signature is stale/never-updated for a non-selected pool. Together: B keeps the escalation accurate for every pool; A lets that accurate escalation pull the bot back to re-contest.
+
+**Files:** `NetworkRoot.cs` only — `SweepStuckBidderSignatures` (new), `TryCasinoBotDonation` (call the sweep), `TryBuildCasinoBotBid` (escalation pick + reorder + skip-roll-on-commit). No new persisted state (`_stuckBidderSignatures` stays in-memory, D-ND8d.round3). Trace: the escalation-committed bid records its hit % in `casino_bot_bid_trace.csv`'s `rolledProbabilityPercent`.
+
+**Verify in-game:** open BitInstant (or any pool where a bot holds a lone below-top-3 slot) in `AuctioningCompanyDetails` — the bot's per-slot "re-bid NN%" now climbs block by block; and within a few blocks the stuck bot actually re-bids (its slot value jumps, it becomes multi-slot, the label resets). Trace: `rolledProbabilityPercent` on that bot's `non_miner_8` rows climbs, and a `donated` row appears where before there were only `roll-declined`s.
+
+**Status: ✅ BUILT 2026-07-22 — `dotnet build` 0 warnings / 0 errors. Developer in-game verification + commit pending.** (`NetworkRoot.SweepStuckBidderSignatures` new + called in `TryCasinoBotDonation` before the count==0 return; `TryBuildCasinoBotBid` gains the escalation-pick reorder + skip-roll-on-commit. The roll-path `ComputeStuckEscalationProbabilityPercent` is kept — redundant with the sweep but still the `max()` source.)
+
