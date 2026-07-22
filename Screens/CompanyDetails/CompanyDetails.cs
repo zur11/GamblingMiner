@@ -27,6 +27,7 @@ public partial class CompanyDetails : Control
 
 	private NetworkRoot _networkRoot = null!;
 	private SceneManager? _sceneManager;
+	private BtcMarketDataService? _btcMarketDataService;
 	private string _nonMinerAddress = string.Empty;
 
 	private Label _identityLabel = null!;
@@ -51,6 +52,7 @@ public partial class CompanyDetails : Control
 	{
 		_networkRoot = GetNode<NetworkRoot>("NetworkRoot");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+		_btcMarketDataService = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 
@@ -200,6 +202,54 @@ public partial class CompanyDetails : Control
 				{
 					Text = string.Create(CultureInfo.InvariantCulture,
 						$"{FormatDate(rec.ClosedAtMs)}  {rec.Kind}: reserve {rec.ResultReserveScPercent:F0}% SC, market {rec.ResultMarketCategory}{dividend}")
+				});
+			}
+		}
+
+		// ND.8g (§12.5.6) — the PLAYER's own dividend claim history for this company (bot auto-claims never
+		// write here) + lifetime totals. Rebuilt every refresh (not signature-gated like the action panels
+		// below) so a fresh claim shows up immediately without needing a holding/vote-state change.
+		if (gov.PlayerClaimHistory.Count > 0)
+		{
+			_infoVBox.AddChild(new HSeparator());
+			_infoVBox.AddChild(SectionTitle("Dividend Claim History"));
+
+			decimal totalSc = gov.PlayerClaimHistory.Sum(r => r.ScAmount);
+			decimal totalBtc = gov.PlayerClaimHistory.Sum(r => r.BtcAmount);
+			// 2a. Historical value — each payment valued at ITS OWN day's price (never recomputed).
+			decimal historicalScValue = gov.PlayerClaimHistory
+				.Where(r => r.BtcPriceUsdAtClaim is decimal)
+				.Sum(r => r.BtcAmount * r.BtcPriceUsdAtClaim!.Value);
+			// 2b. Current value — the SAME BTC total revalued at TODAY's live price (recomputed every
+			// refresh, the established "always live" convention — TrackedDonation.CurrentValueSc / the
+			// auction's LeadingDonorScValue).
+			decimal? currentPrice = _btcMarketDataService?.GetEffectivePriceUsd(
+				DateTimeOffset.FromUnixTimeMilliseconds(_networkRoot.GetPlayerLatestBlock().Timestamp).LocalDateTime);
+			string currentValueText = currentPrice is decimal price
+				? string.Create(CultureInfo.InvariantCulture, $"{totalBtc * price:F8} SC")
+				: "n/a (no live price yet)";
+
+			_infoVBox.AddChild(new Label { Text = string.Create(CultureInfo.InvariantCulture, $"Total SC received (all-time): {totalSc:F8} SC") });
+			_infoVBox.AddChild(new Label { Text = string.Create(CultureInfo.InvariantCulture, $"Total BTC received (all-time): {totalBtc:F8} BTC") });
+			_infoVBox.AddChild(new Label { Text = string.Create(CultureInfo.InvariantCulture, $"  → Historical BTC/SC payment value: {historicalScValue:F8} SC  (each payment valued at its own day's price)") });
+			_infoVBox.AddChild(new Label { Text = $"  → Current BTC/SC payment value: {currentValueText}  (the same BTC revalued at today's live price)" });
+
+			int shown = Math.Min(30, gov.PlayerClaimHistory.Count);
+			_infoVBox.AddChild(new Label
+			{
+				Text = gov.PlayerClaimHistory.Count > shown
+					? $"Most recent {shown} of {gov.PlayerClaimHistory.Count} claims:"
+					: "All claims:"
+			});
+			foreach (CompanyDividendClaimRecord rec in Enumerable.Reverse(gov.PlayerClaimHistory).Take(shown))
+			{
+				string priceText = rec.BtcPriceUsdAtClaim is decimal claimPrice
+					? string.Create(CultureInfo.InvariantCulture, $"{claimPrice:F8} SC/BTC that day")
+					: "price unavailable";
+				_infoVBox.AddChild(new Label
+				{
+					Text = string.Create(CultureInfo.InvariantCulture,
+						$"{FormatDate(rec.ClaimedAtUnixMs)}   {rec.BtcAmount:F8} BTC + {rec.ScAmount:F8} SC   ({priceText})")
 				});
 			}
 		}

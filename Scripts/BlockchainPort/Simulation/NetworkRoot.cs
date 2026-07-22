@@ -224,6 +224,68 @@ public partial class NetworkRoot : Node
             .Sum();
         return Math.Min(100, sum);
     }
+
+    // ND.8d round 3 (2026-07-21, §12.5.5) — the stuck-single-bidder escalation. A bot holding EXACTLY ONE
+    // tracked donation in a pool, at a non-top-3 tier (4-9), rolls a probability that grows LINEARLY by the
+    // tier's plain NORMAL-mode base each block it has remained stuck at that same tier — reset the instant
+    // its own bid (now ≥2 slots, out of this path entirely) or ANY OTHER party's bid changes its rank.
+    // Diagnosed off The Silk Market (non_miner_6): bot_4 alone at tier 4, rolling a flat unchanging
+    // urgency-8% indefinitely while bot_3 (2 slots elsewhere) never revisited — the round-1/2 fixes solved
+    // the CHALLENGER-COUNT problem, not this lone, flat, never-escalating-probability shape.
+    //
+    // Non-regression floor (2026-07-21 audit fix, §12.5.5 round 3): the CALLER composes this escalation as
+    // `max(mode-appropriate rate, escalation)` — it is NEVER used to REPLACE the pool's mode rate. The
+    // first cut ignored early-rush/urgency and returned the flat NORMAL base outright, which SUPPRESSED
+    // bidding in EARLY-RUSH pools: a single-slot below-top-3 bot there would otherwise roll the steep
+    // early-rush rate (tier 4/5/6 = 34/55/89%), but the raw escalation handed it the NORMAL base (5/8/13%)
+    // on block 1, only climbing back over ~7 blocks — and pool churn kept resetting it to base. That was
+    // the DeepBit (non_miner_7, early-rush) stagnation. With the max() floor the escalation can only ever
+    // ADD aggression on top of the mode rate, never remove it, so young pools stay contested AND a lone
+    // stuck bot still escalates toward 100% the longer it waits.
+    //
+    // Revision (2026-07-21, same day): the first cut derived "since" purely from `TrackedDonations`'
+    // CURRENT snapshot, watching only for a GREATER-valued donation landing after this bot's own — it
+    // missed the case where the bot's OWN OTHER slot gets evicted (dropping it from 2 bids to 1 without
+    // any disturbance ABOVE its surviving slot), which should ALSO restart the escalation from base (the
+    // bot was governed by the round-2 multi-slot roll during the 2-bid period, never "stuck at 1 bid," so
+    // the escalation must start fresh the moment it actually becomes single-slot — not reach back to that
+    // surviving slot's own, possibly old, donation timestamp).
+    //
+    // Fix: an in-memory-only SIGNAL, not derived from a history replay — "does this bot currently hold
+    // ≥2 of the pool's tracked slots?" (true/false), keyed per (company, bot). Every time this signal's
+    // value (folded together with the bot's own best tier, so a same-multiplicity tier change ALSO counts)
+    // CHANGES, the current block index is stamped as the new "since" point — an edge-triggered update, not
+    // a per-frame poll (`_Process`): it happens exactly once per this bot's per-block evaluation inside the
+    // SAME block-mined event that already drives the whole bidding cascade (HandleMinedBlock →
+    // ScheduleBotTransactionsAfterBlock → TryCasinoBotDonation), never oftener.
+    //
+    // Deliberately NOT part of BlockchainStateSnapshot (no checkpoint/pre-genesis/delete-list work) — like
+    // `_lastMinedByNodeId`/`_currentMinerStreak` elsewhere in this file, this is pure bidding-behavior
+    // bookkeeping, not economically meaningful world state; an app restart just resets it, and the
+    // escalation harmlessly restarts from base (exactly how the streak counters already behave).
+    private static readonly Dictionary<(string nonMinerNodeId, string botNodeId), (string signature, int sinceBlockIndex)> _stuckBidderSignatures = new();
+
+    // ND.8d round 3 — reads (and updates, edge-triggered) the stuck-bidder signal for this (target, bot)
+    // pair, then returns the escalating probability if currently single-slot at a non-top-3 tier. Called
+    // once per this bot's evaluation of this target, each block (never per-frame).
+    private static int ComputeStuckEscalationProbabilityPercent(NonMinerDonationSummary target, string botNodeId, int ownSlotCount, int bestTier, int currentBlockIndex)
+    {
+        string signature = ownSlotCount >= 2 ? "multi" : $"single:{bestTier}";
+        var key = (target.NonMinerNodeId, botNodeId);
+        if (!_stuckBidderSignatures.TryGetValue(key, out (string signature, int sinceBlockIndex) recorded) || recorded.signature != signature)
+        {
+            recorded = (signature, currentBlockIndex);
+            _stuckBidderSignatures[key] = recorded;
+        }
+
+        if (ownSlotCount != 1 || bestTier <= 3) return 0; // caller only asks for the single-slot, non-top-3 case
+        if (!ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int baseProbability) || baseProbability <= 0)
+            return 0; // defensive — tiers 4-9 always have a NORMAL-table entry
+
+        int blocksElapsed = Math.Max(0, currentBlockIndex - recorded.sinceBlockIndex);
+        decimal scaled = baseProbability * (decimal)(blocksElapsed + 1);
+        return (int)Math.Min(100m, scaled);
+    }
     // D-ND6.8 — a bid's ENTIRE outgoing amount (required principal + D-ND4b.11 additive tail + network
     // fee) may never commit more than this fraction of the bot's SPENDABLE balance (mature/confirmed —
     // GetAddressSpendableBalance). Replaces the plain `spendable ≥ required + fee` affordability check.
@@ -1385,6 +1447,8 @@ public partial class NetworkRoot : Node
     // change (status-quo bias).
     private const decimal MarketShiftSupermajorityFraction = 0.60m;
     private const int MaxVoteHistoryPerCompany = 40;
+    // ND.8g — defensive cap on a company's PlayerClaimHistory (the BankTransferRecord=500 precedent).
+    private const int MaxPlayerClaimHistoryPerCompany = 500;
 
     // §12.4.3's risk/reward dial, quantified (ND.8b.3 calibration constants, Fibonacci like the ladder
     // tables — tune at the ND.8b playtest): the DEFAULT quarterly dividend rate (% of each reserve side,
@@ -2104,6 +2168,21 @@ public partial class NetworkRoot : Node
             return (false, "Nothing claimable right now." + btcNote);
         }
 
+        // ND.8g (§12.5.6) — log this successful claim to the company's PLAYER-ONLY history (bot auto-claims,
+        // via TryAutoClaimBotDividends, never write here). tipMs is already game time (a block's own
+        // Timestamp), never wall-clock, per the project's canonical rule.
+        gov.PlayerClaimHistory.Add(new CompanyDividendClaimRecord
+        {
+            ClaimedAtUnixMs = tipMs,
+            BtcAmount = paidBtc,
+            ScAmount = paidSc,
+            BtcPriceUsdAtClaim = _marketData?.GetEffectivePriceUsd(DateTimeOffset.FromUnixTimeMilliseconds(tipMs).LocalDateTime)
+        });
+        if (gov.PlayerClaimHistory.Count > MaxPlayerClaimHistoryPerCompany)
+        {
+            gov.PlayerClaimHistory.RemoveAt(0);
+        }
+
         string btcPart = paidBtc > 0m
             ? string.Format(System.Globalization.CultureInfo.InvariantCulture,
                 "{0:F8} BTC broadcast (fee {1:F8}, confirms next block)", paidBtc, fee)
@@ -2237,7 +2316,7 @@ public partial class NetworkRoot : Node
 
         // ND.4a — the casino-bots' own cycle runs first and OUTSIDE the budget (its txids are exempted
         // from the organic-pending count below).
-        TryCasinoBotDonation(block, chain);
+        TryCasinoBotDonation(block);
 
         // The mempool is primed to hover AT the target level, so the next block template (which takes up
         // to MaxBlockTransactions − 1 pending txs by fee) carries ≈ target non-coinbase txs. ORGANIC
@@ -2271,7 +2350,7 @@ public partial class NetworkRoot : Node
     // amounts never repeat as clean round numbers (D-ND4b.11, cap-bounded at ND.6a). These are the ONLY
     // automated sends that qualify as referral auction bids (D-EB.7 — the eligibility filter itself lives
     // entirely in ComputeAuctionLedger).
-    private static void TryCasinoBotDonation(Block block, List<Block> chain)
+    private static void TryCasinoBotDonation(Block block)
     {
         int count = DrawCasinoBotDonationCount();
         if (count == 0) return;
@@ -2339,7 +2418,7 @@ public partial class NetworkRoot : Node
             visitedThisSlot.Add(record.NodeId);
             if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? sender)) continue; // registry hole — pass the slot on
 
-            CasinoBotSlotOutcome outcome = TryBuildCasinoBotBid(priorityTargets, sender, fee, block.Timestamp, out Transaction? tx, out CasinoBotBidTrace trace);
+            CasinoBotSlotOutcome outcome = TryBuildCasinoBotBid(priorityTargets, sender, fee, block.Timestamp, block.Index, out Transaction? tx, out CasinoBotBidTrace trace);
             AppendCasinoBotBidTrace(block, slot, hop, sender.NodeId, outcome, trace);
             hop++;
             if (outcome == CasinoBotSlotOutcome.Donated && tx != null)
@@ -2371,9 +2450,13 @@ public partial class NetworkRoot : Node
     //   4. ONE ladder roll (D-ND6.5), only for a participated target: ND.8d round-2 — the roll probability is
     //      the SUM of the bot's TWO LOWEST slot re-bid probabilities (SumTwoLowestReBidProbabilities; ranked
     //      by PROBABILITY, not tier, since tier 2 > tier 3), so a bot spread across multiple non-satisfied
-    //      slots re-bids harder; a satisfied slot's 0 caps the sum back to a single value. A failed roll = no
-    //      donation this slot, never re-rolled. Unparticipated targets donate deterministically (no ladder).
-    private static CasinoBotSlotOutcome TryBuildCasinoBotBid(List<NonMinerDonationSummary> priorityTargets, NodeAgent sender, decimal fee, long nowMs, out Transaction? tx, out CasinoBotBidTrace trace)
+    //      slots re-bids harder; a satisfied slot's 0 caps the sum back to a single value. ND.8d round-3
+    //      EXCEPTION: a bot stuck at EXACTLY ONE tracked slot below the top-3 (tier 4-9) takes the MAX of
+    //      its mode rate and the escalating stuck-bidder probability (ComputeStuckEscalationProbabilityPercent) —
+    //      a non-regressive floor (§12.5.5 audit fix) that keeps early-rush's steep young-pool rate while still
+    //      escalating toward 100% the longer it stays stuck. A failed roll = no donation this slot, never
+    //      re-rolled. Unparticipated targets donate deterministically (no ladder).
+    private static CasinoBotSlotOutcome TryBuildCasinoBotBid(List<NonMinerDonationSummary> priorityTargets, NodeAgent sender, decimal fee, long nowMs, int currentBlockIndex, out Transaction? tx, out CasinoBotBidTrace trace)
     {
         tx = null;
         string botAddress = sender.WalletAddress;
@@ -2421,8 +2504,24 @@ public partial class NetworkRoot : Node
             // WindowCloseUnixMs is set here.
             if (ownSlotCount > 0)
             {
-                bool urgent = IsAuctionInUrgencyWindow(target.WindowCloseUnixMs, nowMs);
-                int probabilityPercent = SumTwoLowestReBidProbabilities(ownTiers, occupiedSlots, urgent, ownSlotCount);
+                // ND.8d round 3 — ALWAYS update the stuck-bidder signal for this (target, bot) pair, even
+                // on a multi-slot evaluation, so a LATER transition to single-slot (via eviction of the
+                // bot's OTHER slot — not just a rank-push on the surviving one) is correctly detected as a
+                // fresh "since" point rather than reaching back to the surviving slot's own, possibly old,
+                // donation timestamp. (The call is unconditional for that edge-triggered side effect; its
+                // returned value is only nonzero for the lone non-top-3 slot case.)
+                int stuckProbability = ComputeStuckEscalationProbabilityPercent(target, sender.NodeId, ownSlotCount, bestTier, currentBlockIndex);
+                // The pool's mode-appropriate rate (early-rush / urgency / normal) — the round-2 sum, and
+                // for a single slot simply that slot's mode rate.
+                int modeProbability = SumTwoLowestReBidProbabilities(ownTiers, occupiedSlots, IsAuctionInUrgencyWindow(target.WindowCloseUnixMs, nowMs), ownSlotCount);
+                // §12.5.5 round-3 audit fix (2026-07-21) — for a lone below-top-3 slot the escalation is a
+                // FLOOR ON TOP of the mode rate (max), never a REPLACEMENT: in early-rush pools the flat
+                // NORMAL base is far below the early-rush rate the bot would otherwise roll, so replacing it
+                // outright suppressed young-pool bidding (the DeepBit stagnation). max() keeps early-rush's
+                // steep young-pool aggression AND still escalates a genuinely stuck bot toward 100%.
+                int probabilityPercent = ownSlotCount == 1 && bestTier > 3
+                    ? Math.Max(modeProbability, stuckProbability)
+                    : modeProbability;
                 if (probabilityPercent <= 0)
                     return CasinoBotSlotOutcome.RollDeclined; // defensive — the satisfied filter (tier 1, tier 3 at ≥2 bids) and the tier-10 self-eviction guard already excluded every all-0 case above
                 trace.RolledTier = bestTier;
@@ -4383,6 +4482,27 @@ public sealed class CompanyGovernanceState
     public decimal BaselineReserveBtc { get; set; }
     public decimal InflowSinceBaselineBtc { get; set; }
     public List<CompanyVoteRecord> VoteHistory { get; set; } = new();
+    // ND.8g (2026-07-21, §12.5.6) — the PLAYER's own dividend claim log for this company (bot claims,
+    // via TryAutoClaimBotDividends, never write here — this is a player-facing history only). Rides this
+    // same BlockchainStateSnapshot for free, no new persisted file/checkpoint/delete-list work (the same
+    // inheritance argument ClaimableByHolder/VoteHistory themselves already rely on). Capped defensively
+    // (PlayerBankAccountService.BankTransferRecord's 500-cap precedent — a player claiming this many times
+    // from ONE company is not expected; the cap is a safety net, not a real constraint).
+    public List<CompanyDividendClaimRecord> PlayerClaimHistory { get; set; } = new();
+}
+
+// ND.8g — one successful player dividend claim from one company (BTC/SC amounts actually paid THIS press,
+// plus that day's BTC/SC price for the historical-value calculation). Written only when
+// TryClaimPlayerCompanyDividends pays something (paidBtc > 0 || paidSc > 0) — a "nothing to claim"
+// attempt writes nothing. BtcPriceUsdAtClaim is SC-denominated too (SC is USD-pegged 1:1); null only in
+// the practically-unreachable case a founded company predates Market Birth (it can't — Market Birth
+// 2010-07-18 is well before the earliest possible founding).
+public sealed class CompanyDividendClaimRecord
+{
+    public long ClaimedAtUnixMs { get; set; } // game time (CalendarTimeService), never wall-clock
+    public decimal BtcAmount { get; set; }
+    public decimal ScAmount { get; set; }
+    public decimal? BtcPriceUsdAtClaim { get; set; }
 }
 
 // One open vote (D-ND8.18): founding-day, quarterly, or >30%-inflow special. Bots' ballots are cast at

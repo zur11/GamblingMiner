@@ -377,6 +377,7 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 - [x] Update README so future features are not presented as current.
 - [x] Update Player Guide so it describes the actual playable state.
 - [ ] Run longer Basic Mode manual/autobet tests after transaction circulation exists.
+- [ ] **Event-driven design audit** (added 2026-07-21, after the ND.8d round-3 stuck-bidder-escalation fix applied this principle directly). Standing project-wide design rule: `_Process` is for genuinely continuous/real-time work only (the game clock, the background sim loop, autobet animation) — everything else that only re-reads state changing on a discrete event (a bet, a mined block, a transfer, a claim) should be event-driven, the state's owner firing a typed event and consumers subscribing instead of polling on a timer. Full principle, the genuine exceptions, the edge-triggered-signal middle case, and the already-good examples already in this codebase: `CLAUDE.md` "Important Patterns" #6 + `Documentation/ProjectDesignManual.md` Chapter 38. **Before Basic Mode v0.1 is considered complete**, run the dedicated audit pass Chapter 38 describes over every currently-running `_Process` override and migrate the poll-based UI refreshes it lists (≈15 scenes, enumerated in Ch. 38 §38.5) to event-driven design where feasible. Not a blocker on other Basic Mode work — a scheduled cleanup pass, same category as the T1–T3 tasks in §8 below.
 
 ## 7. Design Questions Still Open
 
