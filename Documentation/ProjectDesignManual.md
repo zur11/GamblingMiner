@@ -2190,7 +2190,7 @@ Tiers 1–3 have no entry in any table — that is the **satisfied** state (a bo
 
 **ND.6d — the early probability rush (2026-07-14, calibration fix).** A ~1-in-game-year 2011 playtest confirmed the stall recurred through a different door than ND.6 closed: the player's asymmetric +1-satoshi retakes (§22.8) kept pushing every contested bot's best slot **up** to tier 4/5, where the NORMAL 5%/8% roll left bots declining ~95% of the time — the `casino_bot_bid_trace.csv` tail was pure `roll-declined` at tier 4/5 with spendable ~1000 BTC (affordability was never the constraint) and **zero** donations, so the player won every referral uncontested. The fix is the EARLY-RUSH table above: while a pool is young (<7 tracked slots) the shallow tiers roll 34%/55%/89% instead of 5%/8%/13%, so casino-bots contest young pools hard; once a pool matures to 7 slots (a lot of competition has already happened) it reverts to the calmer NORMAL ladder. Mode is a pure function of the pool's live occupied count — no persisted state, self-correcting as slots fill. The `AuctioningCompanyDetails` pool panel now prints each slot's live re-bid chance (`[re-bid NN%]` / `satisfied`) and the pool's current mode in the section title, sharing the SAME `NetworkRoot.ReBidProbabilityLabel` / `ReBidProbabilityPercentFor` source of truth as the roll.
 
-**Per-slot pipeline.** Each donation slot (§22.7's weighted 0/1/2 per-block draw, unchanged) picks its bot uniformly at random among not-yet-used-this-block bots (D-ND6.1 — a bot keeps its full selection probability even when its own rules will produce no donation), and the chosen bot then runs:
+**Per-slot pipeline.** ⚠️ **Steps 2–4 below are superseded by ND.10c** (spec approved 2026-07-23, build pending — see §22.14 and plan §14.4): the bot draw restricts to *eligible* bots (D-ND6.1 reversed), and the spread-wide ordering + first-affordable walk + single ladder roll (D-ND6.6/6.8/6.5) collapse into **parallel per-pool rolls with a uniform tie-break**. Step 1's qualifying rules and the ladder tables themselves are unchanged. The description below documents the pipeline as it stands until that build lands. Each donation slot (§22.7's weighted 0/1/2 per-block draw, unchanged) picks its bot uniformly at random among not-yet-used-this-block bots (D-ND6.1 — a bot keeps its full selection probability even when its own rules will produce no donation), and the chosen bot then runs:
 
 1. **Qualifying pools (D-ND6.2/6.7)** — all currently `InAuction` non-miners, EXCEPT pools where the bot holds a top-3 tracked slot (satisfied — subsumes the old "never outbid yourself" rule, since the leading bid is by construction tier 1) or the smallest slot of a full pool (the **self-eviction guard**: its own new bid, entering a full pool, would evict its own smallest donation and forfeit the settlement refund already secured as the auction stands, §22.9). "Participation" = holds ≥1 CURRENTLY TRACKED donation there — so a bot whose donations get fully evicted from a pool re-engages it as if new, an intended self-balancing recycling.
 2. **Bot-centric preference order (D-ND6.6)** — qualifying pools sorted by ascending count of the bot's OWN tracked slots (0-participation pools first: spread wide before ever re-bidding), ties broken soonest-to-expire.
@@ -2273,6 +2273,83 @@ A playtest gap surfaced right after §22.12's dividend engine shipped: a player 
 - **Placement and refresh.** Lives in `CompanyDetails.RebuildInfo` (after Vote History), inside the SAME scroll the action panels already share — no new `ScrollContainer`, Ch. 29 compliant by construction. Rebuilt on EVERY 1 s refresh (unlike the holding-gated action panels, which only rebuild on a signature change) so a fresh claim appears immediately without needing a vote/holding-state change to trigger it.
 
 See `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §12.5.6.
+
+### 22.14 — The bid-opportunity model: per-slot vs per-block probability (Step 14 ND.10c, 2026-07-23)
+
+This section exists because ND.10b's `AuctioningCompanyDetails` per-bot panel put a probability on screen, and a number on screen invites the question *"a probability of what, exactly?"* — a question with three defensible answers in this system, which is precisely why it needs pinning down. It documents the layers of chance a single bid passes through, the number the panel reports (**per block**, since ND.10c), and what the earlier **per-slot** number meant and why it was abandoned.
+
+**The three independent layers.** A casino-bot bid is not one roll. In each mined block:
+
+1. **The count draw** — how many donation slots this block gets at all: `0` (15%), `1` (70%), `2` (15%) (`DrawCasinoBotDonationCount`, §22.7). Expected value exactly `1.0`; this is the global throttle on auction activity and is deliberately untouched by ND.10c.
+2. **The bot draw (roll 1)** — each slot picks one bot uniformly among the **eligible** bots: those holding ≥1 qualifying, affordable pool with a nonzero ladder probability (D-ND10c.1; before ND.10c the draw ran over all four regardless, D-ND6.1). Call the eligible count `B`.
+3. **The pool + ladder layer** — the chosen bot rolls **every** qualifying, affordable pool's own ladder probability `r_k` in parallel; the hits are collected and one is picked uniformly (D-ND10c.2). `r_k` is the mode-aware `max(mode rate, stuck escalation)` of §22.10, or a deterministic `1.0` for an unparticipated pool.
+
+#### What "per-slot" meant (ND.10b) and why it was replaced
+
+ND.10b's panel reported layer 3 only — *"given this bot runs its pipeline this block, where does its one action land?"* — deliberately excluding layers 1 and 2 so that a world with a single open auction would degenerate to that pool's raw in-pool rule (its ND.10b Q1 decision). Two artifacts followed:
+
+- **It could not distinguish "unlikely" from "impossible".** Under the pre-ND.10c deterministic pool walk (spread-wide-first, D-ND6.6), a pool the bot never selected got a hard `0%` even while its per-slot ladder label next to it read `[re-bid 94%]`. Both numbers were correct; they simply answered different questions, and the pair read as a contradiction. This is the observation that opened ND.10c.
+- **It was not comparable to anything the developer could observe.** Playtest evidence arrives as *"I watched this pool for 30 blocks and nothing happened"* — a per-block quantity. A per-slot number is off by the count draw and by `B`, so it cannot be checked against play without mental arithmetic.
+
+#### The per-block number (ND.10c)
+
+Fix a bot and a pool `k`. Let `r₁ … r_N` be that bot's qualifying, affordable pools' ladder probabilities this block.
+
+**Step 1 — collapse the parallel rolls into a per-pool share (`q_k`).** All `N` pools roll independently; if several hit, one wins uniformly. So `k` wins when it hits *and* survives the tie-break against however many other pools also hit:
+
+```
+q_k = r_k · Σ_m  P(H₋ₖ = m) / (m + 1)
+```
+
+where `H₋ₖ` is the number of the bot's OTHER pools that hit — a **Poisson-binomial** count (independent trials, different probabilities). Its distribution comes from a standard O(N²) DP: start with `P(H=0) = 1`, then fold in each other pool `j` with `P'(H=h) = P(H=h)·(1−r_j) + P(H=h−1)·r_j`. `N` is small (a bot's qualifying pools rarely exceed a handful), so this is negligible work on a per-block UI refresh.
+
+*Free self-check:* summing over all of the bot's pools must give the probability that it bids **at all** —
+
+```
+Σ_k q_k  =  1 − ∏_k (1 − r_k)
+```
+
+— an exact identity, cheap to assert against the DP.
+
+**Step 2 — fold in the bot draw (roll 1).** Each slot picks uniformly among the `B` eligible bots:
+
+```
+p_k = q_k / B          ← per-slot probability, INCLUDING roll 1
+```
+
+**Step 3 — fold in the count draw.** With `p = p_k` per slot and the two slots treated as independent draws against the same pre-block state:
+
+```
+P_k = 0.70·p + 0.15·(1 − (1−p)²)  =  0.70p + 0.15(2p − p²)  =  p − 0.15·p²
+```
+
+Note this is slightly **less** than `p × E[count] = p × 1.0`: a bot drawn for both slots can bid the same pool twice, but only *one* of those makes it the leading bidder from the panel's point of view — the `−0.15p²` term is exactly that double-count removed. At realistic values the correction is under 4% relative, but it is exact and free, so the panel carries it rather than an approximation.
+
+**Worked example (the BitPaid case that motivated ND.10c).** bot_1, four eligible bots (`B = 4`), three qualifying pools: **BitPaid** `r = 0.02` (tier 3, one own bid, NORMAL mode), **The Silk Market** `r = 0.13`, **DeepBit** `r = 1.00` (unparticipated — always hits).
+
+```
+BitPaid    others {0.13, 1.00} → P(H=1)=0.87, P(H=2)=0.13
+           q = 0.02 · (0.87/2 + 0.13/3) = 0.02 · 0.478333 =  0.009567   ( 0.96%)
+Silk       others {0.02, 1.00} → P(H=1)=0.98, P(H=2)=0.02
+           q = 0.13 · (0.98/2 + 0.02/3) = 0.13 · 0.496667 =  0.064567   ( 6.46%)
+DeepBit    others {0.02, 0.13} → P(H=0)=0.8526, P(H=1)=0.1448, P(H=2)=0.0026
+           q = 1.00 · (0.8526 + 0.1448/2 + 0.0026/3)      =  0.925867   (92.59%)
+                                                    Σ q  =  1.000000   ✓ = 1 − (0.98·0.87·0.00)
+
+BitPaid    p = 0.009567 / 4 = 0.002392        → P = p − 0.15p² = 0.002391  →  shown as  0.24%
+DeepBit    p = 0.925867 / 4 = 0.231467        → P = p − 0.15p² = 0.223431  →  shown as 22.34%
+```
+
+Read against the same pool under the old model: BitPaid showed a flat **`0%`** (never selected by the deterministic walk), while its neighbouring slot label showed **`2%`** (the raw ladder rate, which overstates the real per-block chance by roughly 8×). `0.24%` is the honest figure, and it composes with play directly: over one 20-day auction window (~29.5 blocks at `TargetBlockSeconds = 58,500`) that is `1 − (1 − 0.0024)^29.5 ≈ 6.8%` — a number the developer can falsify by watching. *(That 6.8% is also what makes D-ND10c.3's tier-2/3 escalation necessary: the selection rework alone makes a stuck pool visible, not contested.)*
+
+**Documented approximations.** Two, both deliberate:
+
+- **The two slots are modelled as independent draws against the pre-block state.** In reality slot 2 runs *after* slot 1's bid, so it sees a new leader, shifted tiers, higher required amounts, and an eligible set with the slot-1 donor removed. Modelling that faithfully would mean simulating the whole block; the error is confined to the 15% two-slot case.
+- **`B` and every `r_k` are evaluated against the chain tip**, i.e. the state as of the last mined block — which is exactly the state the next block's pipeline will actually read, so this one is a fidelity feature rather than an approximation.
+
+**Display convention.** Two decimals, `CultureInfo.InvariantCulture` (Ch. 1 number-format rule): realistic values live in `0.10%–25%`, and integer rounding collapses most of them to `0%` — the very ambiguity this model exists to remove. A `0%` in the panel now means genuinely impossible (satisfied, self-eviction-guarded, or unaffordable), never merely unlikely. The per-slot ladder label on each bids-list row (`[re-bid NN%]`) is **kept as an integer percent and kept per-slot on purpose**: it answers the mechanic's question ("what does this occupant roll when it looks at this pool?"), while the right-hand panel answers the player's ("how likely is this bot to take the lead here before the next block?"). The two numbers differing is expected, and §22.14 is where that difference is defined.
+
+Full decision log: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.4 (D-ND10c.1…7).
 
 ---
 

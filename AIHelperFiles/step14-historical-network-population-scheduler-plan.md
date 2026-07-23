@@ -1299,7 +1299,9 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 
 | Subphase | Title | Kind | Status |
 |---|---|---|---|
-| ND.10a | Stuck-bidder escalation actually engages — Fix A (escalation-boosted re-selection) + Fix B (per-block signature sweep) | technical / auction behavior | ✅ BUILT — verify + commit pending |
+| ND.10a | Stuck-bidder escalation actually engages — Fix A (escalation-boosted re-selection) + Fix B (per-block signature sweep) | technical / auction behavior | ✅ BUILT & VERIFIED 2026-07-22 |
+| ND.10b | Per-bot "real leading-bid roll %" panel in `AuctioningCompanyDetails` (priority-diluted across all in-auction pools) + guard-label fix + event-driven migration | UI + technical (probability model) | ✅ BUILT & VERIFIED 2026-07-23 |
+| ND.10c | Bid-opportunity model rework — eligible-bot draw, parallel per-pool ladder rolls, tier-2/3 stuck escalation, true per-block panel probability | technical / auction behavior + UI | ⏳ SPEC APPROVED 2026-07-23 — build pending |
 | _(pending — the developer will describe further UI + technical needs)_ | | | |
 
 ### 14.2 ND.10a — the stuck-bidder escalation must actually engage (Fix A + Fix B)
@@ -1319,5 +1321,118 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 
 **Verify in-game:** open BitInstant (or any pool where a bot holds a lone below-top-3 slot) in `AuctioningCompanyDetails` — the bot's per-slot "re-bid NN%" now climbs block by block; and within a few blocks the stuck bot actually re-bids (its slot value jumps, it becomes multi-slot, the label resets). Trace: `rolledProbabilityPercent` on that bot's `non_miner_8` rows climbs, and a `donated` row appears where before there were only `roll-declined`s.
 
-**Status: ✅ BUILT 2026-07-22 — `dotnet build` 0 warnings / 0 errors. Developer in-game verification + commit pending.** (`NetworkRoot.SweepStuckBidderSignatures` new + called in `TryCasinoBotDonation` before the count==0 return; `TryBuildCasinoBotBid` gains the escalation-pick reorder + skip-roll-on-commit. The roll-path `ComputeStuckEscalationProbabilityPercent` is kept — redundant with the sweep but still the `max()` source.)
+**Status: ✅ BUILT & VERIFIED 2026-07-22 — `dotnet build` 0 warnings / 0 errors; developer in-game verification PASSED (stuck bots now re-bid, labels climb).** (`NetworkRoot.SweepStuckBidderSignatures` new + called in `TryCasinoBotDonation` before the count==0 return; `TryBuildCasinoBotBid` gains the escalation-pick reorder + skip-roll-on-commit. The roll-path `ComputeStuckEscalationProbabilityPercent` is kept — redundant with the sweep but still the `max()` source.)
+
+### 14.3 ND.10b — Per-bot "real leading-bid roll %" panel (⏳ SPEC DRAFT — awaiting Q&A)
+
+**Player intent (2026-07-22).** In each in-auction pool (`AuctioningCompanyDetails`), add a panel **to the RIGHT of the bids list** showing the **4 casino bots** (`bot_1..4`), each with a label = **the real probability that this bot places THE leading bid in THIS pool** (per pipeline run). The number must account for the fact that a bot's single per-slot action is **distributed across ALL in-auction pools by priority order** — "dividing the bot's total first-bid/re-bid probabilities across the in-auction pools per the priority order, shown as faithfully as possible." If only ONE pool is in auction, it degenerates to that pool's own in-pool rule (sum-of-two-lowest / escalation / deterministic first-bid).
+
+**The probability model (derived from the real pipeline, `TryCasinoBotDonation` → `TryBuildCasinoBotBid`).** A bot's single pipeline run picks AT MOST ONE pool to bid, so its per-pool bid probabilities sum to ≤ 1 — the panel shows how that total is split. For bot X, conditional on X running its pipeline this block (i.e. NOT multiplied by the count draw / fair-selection layer — this is what makes the single-pool case reduce to the raw in-pool rule):
+
+1. **Qualifying set** = every in-auction pool EXCEPT where X is satisfied (tier 1, or tier 3 at ≥2 bids), the current leader, or self-eviction-guarded; further filtered by the **half-spendable affordability cap** (`required + fee ≤ spendable × 0.5`).
+2. **Escalation pre-roll** (Fix A) over the qualifying single-slot-below-top-3 pools **in priorityTargets order** (soonest-to-expire, then awaiting-first-bid): `E1..Em` with escalations `e1..em`. First hit commits.
+3. **Ladder fallback** (no escalation commit): the spread-wide first-affordable pool `P*` (ascending own-slot count, ties priorityTargets order) rolls its ladder `r*` (`SumTwoLowestReBidProbabilities`, or `max(mode, escalation)` if single-slot-below-top-3, or **deterministic 1.0** if unparticipated).
+4. **Marginal P(X bids pool P)** = `[if P = Ek: (∏_{j<k}(1−ej)) · ek]` + `[(∏_all(1−ej)) · 1{P*=P} · r*]`. Satisfied/leader/guarded pools → 0.
+
+This reduces correctly for one pool: multi-slot → `sum-of-two-lowest`; unparticipated → `100%`; single-slot-below-top-3 → `e + (1−e)·max(mode,e)` (see Q2 — Fix A gives it TWO chances, so the true value slightly exceeds the raw escalation).
+
+**Implementation shape (proposed):**
+- A new pure `NetworkRoot` method, e.g. `RealLeadingBidRollPercentByBot(string nonMinerNodeId, IReadOnlyList<NonMinerDonationSummary> ledger)` → `Dictionary<string, int>` (bot → percent), computing the model above **once** across the shared ledger (single source of truth, reused by any future consumer). Reuses `PeekStuckEscalationProbabilityPercent`, `SumTwoLowestReBidProbabilities`, `ReBidProbabilityPercentFor`, the affordability cap, and the satisfied/guard rules — so it never drifts from the roll.
+- `AuctioningCompanyDetails`: split the content into a two-column `HBoxContainer` (Ch. 29: **HBox, never HSplit**) — the existing bids list left, the new 4-bot panel right; both inside the existing bounded scroll. 1 s refresh (reuses the ledger already fetched).
+- Bots only (the player bids manually — no row, consistent with the per-slot label blanking the player).
+
+**Q&A resolved (2026-07-22 — all "go with recommendations"):** Q1 per-pipeline-run marginal, NOT ×count/selection (single-pool ⇒ raw in-pool rule). Q2 show the faithful compound (`e+(1−e)·max(mode,e)` for a single-slot-below-top-3 pool that's also `P*`) — the divergence from the per-slot label is "totally natural". Q3 show all 4 bots incl. unparticipated. Q4 satisfied/leader/guard shown as short labels (see the label fix below). Q5 include the half-spendable affordability cap. Q6 **tooltip** with the per-pool breakdown; **event-driven refresh** (see below).
+
+**Bundled label fix (Q4 add-on).** The existing per-slot bids-panel label (`ReBidProbabilityLabelForSlot`) shows a bare `0%` on the tier-10 self-eviction-guard slot. Fix: a donor holding the **smallest slot of a FULL pool** is self-eviction-guarded (won't re-bid the pool at all), so **every one of that donor's slots reads `guard`** (not `0%`, and — per the developer — a tier-3 slot of a guarded donor reads `guard` too, overriding its `satisfied`). Tier 1 (leader) stays `satisfied`. Detection is pure-address (`summary.TrackedDonations` min-amount donor == the row's donor, pool full) — bots are single-address (OQ-8.2). *Note (developer-flagged): whether a tier-3-**satisfied** slot should ALWAYS read `guard` (even when the pool isn't full) vs only when actually self-eviction-guarded is a 1-line toggle — built as the latter (faithful); flip if desired.*
+
+**Event-driven refresh (Q6, per Ch. 38 + developer directive).** `AuctioningCompanyDetails` currently polls on a 1 s timer (it's on Ch. 38 §38.5's migration list). Migrate it: subscribe to the existing `NetworkRoot.BlockAccepted` (`event Action<Block>`, fired once per live accepted block) in `_Ready`, unsubscribe in `_ExitTree` (a static event holding an instance handler MUST be released or it leaks/crashes on a freed scene), rebuild on the event, drop the `_Process`/timer. This is not just cheaper but MORE correct here: everything the scene shows (tracked pool, tiers, escalation %, and even the "days left" — anchored to `GetPlayerLatestBlock().Timestamp`, not the live clock) changes ONLY on a new block.
+
+**Deferred design note (Q5 — the self-eviction guard is predictable):** the self-eviction guard (and the whole affordability/priority ordering) is deterministic enough to be **exploitable** once surfaced this transparently. A later subphase should **vary the guard under to-be-designed conditions** (some randomized/asymmetric slack) to (a) close the exploit of the predictable behavior and (b) add flavor via natural asymmetry. Recorded here + in `PRIVATE_ROADMAP.md`; not scheduled.
+
+**Implementation (as designed):**
+- `NetworkRoot.RealLeadingBidRoll(List<NonMinerDonationSummary> ledger)` (instance) → `Dictionary<string /*botNodeId*/, List<(string poolNodeId, string poolName, int percent)>>` — the full per-bot marginal distribution over in-auction pools, computed in ONE pass per bot: build qualifying+affordable pools in `priorityTargets` order; escalation pass accumulates `prodMiss` and `term_esc(P)`; ladder pass adds `term_ladder(P*)`. Reuses `IsBidderSatisfied` / the self-eviction guard / `MaxBidBalanceFraction` cap / `PeekStuckEscalationProbabilityPercent` / `SumTwoLowestReBidProbabilities` / `RaiseMin` / `NetworkFeePolicy.MedianFeeAt` — single source of truth with the roll. **Accepted approximation:** the real `escalationPick` iterates ALL qualifying (incl. unaffordable) and, if the first hit is unaffordable, abandons the escalation path entirely; the model instead skips unaffordable escalation pools — a rare divergence (bots almost always affordable at ~700+ BTC spendable).
+- `AuctioningCompanyDetails`: split content into an `HBoxContainer` (Ch. 29 — HBox, never HSplit) — bids list left, a new 4-bot panel right (`bot — NN%`), each row's tooltip = its full per-pool breakdown (`pool — NN%`, sorted desc). Bots only. Event-driven refresh as above.
+
+**Status: ✅ BUILT & VERIFIED 2026-07-23 — `dotnet build` 0 warnings / 0 errors; developer in-game verification PASSED.** (`NetworkRoot.RealLeadingBidRoll` new; `ReBidProbabilityLabelForSlot` guard fix; `AuctioningCompanyDetails` migrated to `NetworkRoot.BlockAccepted` event-driven refresh + two-column layout + per-bot panel with per-pool tooltip.)
+
+**What the verification revealed (→ ND.10c).** The panel did exactly its job — it made an invisible pathology legible on its first playtest. Two findings, both from the developer reading the tooltips in a live 2011 world:
+
+1. **A `[re-bid 94%]` slot label sitting next to a `0%` panel value** (bot_1 in BitInstant, holding tiers 2 + 9). Not a bug: the left label is the ladder roll *conditional on the pool being selected*, while the panel value is the *real* probability including selection — and under the spread-wide-first walk (D-ND6.6) a pool where the bot already holds 2 slots is never `P*` while any 0-slot pool is affordable. The pool's carefully calibrated 94% was structurally unreachable.
+2. **bot_1 stuck at tier 3 in BitPaid at a flat 2%** — the shape ND.8d round 3's escalation was built for, except the escalation is hard-gated at `bestTier > 3` in all four call sites, so tiers 2 and 3 never escalate at all. `Tier3NormalOneBidPercent = 2` is therefore a permanent 2%, forever, by construction.
+
+ND.10b's value was diagnostic, not cosmetic: both findings were invisible before the panel existed. ND.10c acts on them.
+
+### 14.4 ND.10c — Bid-opportunity model rework: eligible-bot draw, parallel per-pool rolls, tier-2/3 escalation, true per-block panel (⏳ SPEC APPROVED 2026-07-23 — build pending)
+
+**Why this subphase exists.** ND.10b's panel made two structural pathologies legible (see the ND.10b status block above): a pool's calibrated ladder probability can be **structurally unreachable** because pool selection is deterministic, and a bot parked at tier 2/3 sits at a **flat, never-escalating** low probability forever. The developer proposed a 3-roll redesign (bot roll → pool roll → ladder roll); the analysis below adopts its intent — *every pool with a nonzero chance must be genuinely reachable every block* — while replacing the middle roll with a shape that does not dilute the calibration ND.6/ND.8d spent four rounds establishing.
+
+#### 14.4.1 Why the literal 3-roll model was not adopted verbatim
+
+The proposal's roll 2 divides one action uniformly across the bot's `N` available pools: `P(bid in k) = r_k / (B·N)`. Two consequences, both measured against the current pipeline:
+
+- **Total auction activity collapses.** Today the drawn bot walks its pools by ascending own-slot count and **returns at the first affordable one** (`TryBuildCasinoBotBid` step 3) — normally an unparticipated pool, whose ladder is deterministic `1.0`, so a drawn bot bids *somewhere* almost every time. Under uniform roll 2 a bot's per-slot action rate becomes `mean(r)` instead of `r(P*)`: for pools `{100%, 13%, 8%, 5%, 2%}` that is `25.6%` instead of `~100%` — roughly a 4x drop in bids per block.
+- **It does not unstick the stuck pool.** bot_1's BitPaid 2% would become `(1/4)·(1/5)·2% = 0.1%` per block — about **3% over a whole 20-day window** (~29.5 blocks at `TargetBlockSeconds = 58,500`). Nonzero, still stuck.
+
+The redesign therefore keeps **roll 1 exactly as proposed**, and replaces rolls 2+3 with **parallel per-pool rolls** (D-ND10c.2) — which reaches the same "every pool is reachable" goal while *raising* total activity and preserving each pool's designed rate.
+
+#### 14.4.2 Design decisions
+
+**D-ND10c.1 — Roll 1: the bot draw is restricted to ELIGIBLE bots. (Supersedes D-ND6.1.)** A slot's bot is drawn uniformly among bots that hold **at least one qualifying + affordable pool with a nonzero roll probability** — not among all four. D-ND6.1's rule ("a bot keeps its full selection probability even when its own rules will produce no donation") is explicitly reversed: slots are no longer burned on bots that provably cannot act. The not-yet-used-this-block constraint is unchanged, and eligibility is recomputed per slot (slot 1's bid changes the leader, the tiers and the required amounts that slot 2 sees).
+
+*Consequence for D-ND6.9 (the affordability cascade):* pre-filtering subsumes it — a drawn bot always has an affordable qualifying target by construction. The cascade code and the `NothingAffordable` / `NoQualifyingTarget` outcomes are **kept as defensive paths** and still logged to `casino_bot_bid_trace.csv`; they should now be unreachable, so an appearance in the trace is a bug signal, not normal behavior.
+
+**D-ND10c.2 — Rolls 2+3 collapse into PARALLEL per-pool ladder rolls. (Supersedes D-ND6.6's spread-wide-first ordering and D-ND6.8's "first affordable IS the target" walk.)** The chosen bot rolls **every** qualifying + affordable pool's own ladder probability `r_k` independently, in the same slot:
+
+- collect the pools that **hit**; if more than one hit, pick **one uniformly at random**; that pool is bid.
+- if **no** pool hits, the slot produces no bid (outcome `roll-declined`, as today).
+- the half-spendable cap (`required + tail + fee ≤ spendable × MaxBidBalanceFraction`) becomes a **per-pool filter** rather than a walk terminator — an unaffordable pool simply does not roll.
+
+Why this shape:
+
+- **Each pool keeps the rate ND.6/ND.8d calibrated.** BitPaid stays ~2% per drawn slot, not `2%/N`. The whole point of four rounds of ladder tuning is preserved.
+- **Total activity rises rather than falls:** `P(the bot bids at all) = 1 − ∏(1−r_k) ≥ max_k r_k` — strictly better than today's single-pool roll, and the global throttle stays exactly where it was (the 0/1/2 count draw caps the world at 2 bids per block regardless).
+- **Spread-wide seeding survives without an ordering rule.** An unparticipated pool has `r = 1.0` and therefore *always* hits; it wins the tie-break whenever it is the only hit, and shares it fairly when it is not. The explicit D-ND6.6 ordering becomes unnecessary — the emergent behavior is the same, minus the structural blindness it caused.
+
+**D-ND10c.3 — The stuck-bidder escalation extends to tiers 2 and 3.** The `bestTier > 3` gate (in `PeekStuckEscalationProbabilityPercent`, `ComputeStuckEscalationProbabilityPercent`, the Fix-A pre-roll, and `ReBidProbabilityLabelForSlot`) becomes `bestTier ≥ 2` — tier 1 is always satisfied and never escalates. `EscalatedStuckPercent`'s base lookup falls back, for tiers 2/3, to `ShallowTierProbabilityPercent(tier, earlyRush: false, urgent: false, ownBidCount: 1)` (tier 2 → 5, tier 3 → 2), keeping the existing "the base is always the plain NORMAL-mode value" convention; the composition stays `max(mode rate, escalation)` (the §12.5.5 round-3 non-regression floor is untouched). The single-slot gate (`ownSlotCount == 1`) is unchanged, so a tier-3 holder at ≥2 bids stays satisfied and never enters this path.
+
+*This is the decision that actually fixes BitPaid.* With it, bot_1's 2% climbs 2, 4, 6, 8 … and resolves within roughly a dozen blocks, at which point the bot holds 2 slots, tier 3 becomes satisfied, and the escalation self-terminates. Without it, no selection redesign moves that number.
+
+**D-ND10c.4 — ND.10a's Fix A is deleted; Fix B is kept and becomes the sole writer.** With D-ND10c.2 every qualifying pool rolls every slot, so the escalation-boosted queue jump has nothing left to fix — reachability is now structural. Removed: the `escalationPick` pre-roll, the reorder, and the skip-the-ladder-on-commit branch in `TryBuildCasinoBotBid`. Kept: `SweepStuckBidderSignatures` (the per-block edge-triggered sweep over every recruitable pool × casino bot), which now owns **all** writes to `_stuckBidderSignatures`. Consequently `ComputeStuckEscalationProbabilityPercent` (the side-effecting twin) is **retired** — the roll path reads the pure `PeekStuckEscalationProbabilityPercent`, exactly like the label path already does. Single writer, single reader: strictly simpler than the current three-way arrangement.
+
+**D-ND10c.5 — The panel shows a TRUE PER-BLOCK probability, with 2 decimals.** `RealLeadingBidRoll` is rewritten against the new pipeline and its result now folds in roll 1 (the eligible-bot draw) and the 0/1/2 count draw, so a pool reads `0%` **only** when the bot genuinely cannot bid it. Full derivation, worked example, and the per-slot contrast: **`Documentation/ProjectDesignManual.md` §22.14** (written as part of this subphase, per the developer's request). Summary:
+
+```
+r_k   = pool k's ladder probability for this bot (mode-aware, max(mode, escalation), 1.0 if unparticipated)
+q_k   = r_k · Σ_m  P(H₋ₖ = m) / (m+1)      per-slot, GIVEN this bot is drawn
+                                            H₋ₖ = how many of the bot's OTHER pools hit
+                                            (Poisson-binomial over {r_j}, j≠k — an O(N²) DP)
+p_k   = q_k / B                             per-slot including roll 1; B = number of ELIGIBLE bots
+P_k   = p_k − 0.15 · p_k²                   PER BLOCK, from the 15/70/15 count draw
+```
+
+Identity worth asserting: `Σ_k q_k = 1 − ∏_k (1−r_k)` exactly — a free self-check on the DP.
+
+Display: `bot_1     0.24%`, with the per-pool tooltip breakdown unchanged (also 2 decimals). Integer percent is abandoned — at realistic values (`0.1%–25%`) it rounds almost everything to `0%`, which is precisely the confusion that opened this subphase. The panel's subtitle changes from `(if the bot runs its pipeline this block)` to `(chance this bot lands the leading bid here, this block)`.
+
+**D-ND10c.6 — Telemetry.** `casino_bot_bid_trace.csv` gains three columns: `qualifyingPools` (how many rolled), `hitPools` (how many hit), `chosenAmongHits` (the tie-break draw size). The existing per-visit row shape, outcomes and `rolledProbabilityPercent` (now the *chosen* pool's `r_k`) are unchanged, so historical rows stay readable.
+
+**D-ND10c.7 — Docs.** `Documentation/ProjectDesignManual.md` §22.14 (new — the per-slot vs per-block model, in full), §22.10's "Per-slot pipeline" bullet list amended to point at it and mark D-ND6.1/6.6/6.8 superseded, and `CLAUDE.md`'s referral-auction canonical row updated **when the build lands** (not before — CLAUDE.md documents implemented architecture).
+
+#### 14.4.3 Files
+
+- **`Scripts/BlockchainPort/Simulation/NetworkRoot.cs`** — `TryCasinoBotDonateOnce` (eligible-bot filter, D-ND10c.1); `TryBuildCasinoBotBid` (parallel rolls + random tie-break, Fix-A removal, D-ND10c.2/4); `EscalatedStuckPercent` + the four tier gates (D-ND10c.3); `ComputeStuckEscalationProbabilityPercent` retired (D-ND10c.4); `RealLeadingBidRoll` rewritten with the Poisson-binomial DP + per-block composition (D-ND10c.5); trace columns (D-ND10c.6).
+- **`Screens/AuctioningCompanyDetails/AuctioningCompanyDetails.cs`** — 2-decimal formatting (`CultureInfo.InvariantCulture`, per the number-format rule), subtitle wording, tooltip decimals.
+- **Docs** — as D-ND10c.7.
+
+No new persisted state, no `WorldFormatVersion` bump, no checkpoint/delete-list work (`_stuckBidderSignatures` stays in-memory by D-ND8d round 3).
+
+#### 14.4.4 Verify in-game
+
+1. **BitPaid (or any tier-2/3 lone-slot pool):** the occupant's `[re-bid NN%]` label now **climbs** block by block (2 → 4 → 6 …) instead of sitting at 2%, and within ~a dozen blocks that bot actually re-bids, becomes 2-slot, and the label resets to `satisfied`.
+2. **The `0%` panel entries are gone** except where genuinely impossible (satisfied / guard / unaffordable). A pool where a bot holds a real ladder chance reads a small but nonzero `0.NN%`.
+3. **Activity did not explode.** `casino_bot_bid_trace.csv` should still show ≤ 2 donations per block (the count draw is untouched); `hitPools > 1` rows confirm the tie-break is exercising.
+4. **Defensive outcomes never fire:** zero `nothing-affordable` / `no-qualifying-target` rows after the change (they are now unreachable — any occurrence is a bug).
+5. **Auctions still resolve.** Windows should close on roughly the same cadence; a materially faster close rate means the parallel-roll activity gain needs trimming (the count-draw weights are the throttle to reach for first, not the ladder tables).
+
+**Status: ⏳ SPEC APPROVED 2026-07-23 (developer accepted all five recommendations from the ND.10b verification analysis) — build pending.**
 

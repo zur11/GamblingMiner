@@ -210,8 +210,17 @@ public partial class NetworkRoot : Node
     // via the pure PeekStuckEscalationProbabilityPercent (no mutation — a 1 s UI refresh must never stamp it).
     public string ReBidProbabilityLabelForSlot(NonMinerDonationSummary summary, string donorAddress, int tier, int occupiedSlots, bool urgent, int ownBidCount)
     {
+        // ND.10b (2026-07-22) — the self-eviction guard (D-ND6.7b): a donor holding the SMALLEST slot of a
+        // FULL pool won't re-bid the pool at all, so ALL of that donor's slots read "guard" (was a bare
+        // "0%" only on the tier-10 slot; a guarded donor's tier-3 slot now reads "guard" too, overriding
+        // "satisfied"). Tier 1 (the leader) stays "satisfied" — never relabelled. Pure-address detection
+        // (bots are single-address, OQ-8.2); matches the pipeline's `ownTiers.Contains(slotsByValue.Count)`.
+        if (tier == 1) return "satisfied";
+        bool guarded = occupiedSlots >= MaxTrackedDonations
+            && summary.TrackedDonations.Count > 0
+            && summary.TrackedDonations.OrderByDescending(d => d.AmountBtc).Last().DonorAddress == donorAddress;
+        if (guarded) return "guard";
         if (IsBidderSatisfied(tier, ownBidCount)) return "satisfied";
-        if (occupiedSlots >= MaxTrackedDonations && tier == MaxTrackedDonations) return "0%";
         int pct = ReBidProbabilityPercentFor(tier, occupiedSlots, urgent, ownBidCount);
         if (ownBidCount == 1 && tier > 3)
         {
@@ -224,6 +233,113 @@ public partial class NetworkRoot : Node
             }
         }
         return pct > 0 ? pct + "%" : string.Empty; // integer percent — culture-invariant by construction
+    }
+
+    // ND.10b (2026-07-22) — the REAL per-bot "chance to place the leading bid" in each in-auction pool,
+    // conditional on the bot running its pipeline this block (NOT ×count-draw/selection — so a single pool
+    // reduces to that pool's own in-pool rule). A bot's single pipeline run bids at MOST one pool, so its
+    // per-pool probabilities sum to ≤ 1: this returns the full marginal distribution (bot → its pools with
+    // percent > 0, sorted desc), computed EXACTLY off the live pipeline (`TryBuildCasinoBotBid`) so it can
+    // never drift from the roll. The `AuctioningCompanyDetails` panel reads the viewed pool's entry as the
+    // label and the whole list as the per-pool tooltip breakdown. Model per bot:
+    //   qualifying+affordable pools in priorityTargets order → escalation pass (Fix A pre-roll, accumulating
+    //   ∏(1−eⱼ) and term_esc(Eₖ) = ∏_{j<k}(1−eⱼ)·eₖ) → ladder pass (the spread-wide first-affordable P*,
+    //   term_ladder = ∏_all(1−eⱼ)·r*). Accepted approximation: an UNAFFORDABLE escalation pick (which the
+    //   real code would abandon the whole escalation path for) is skipped instead — rare at ~700+ BTC.
+    public Dictionary<string, List<(string poolNodeId, string poolName, int percent)>> RealLeadingBidRoll(
+        IReadOnlyList<NonMinerDonationSummary> ledger)
+    {
+        var result = new Dictionary<string, List<(string, string, int)>>();
+        List<NonMinerDonationSummary> recruitable = ledger.Where(s => s.Status == NonMinerAuctionStatus.InAuction).ToList();
+        // Same priority order TryCasinoBotDonation feeds the pipeline (soonest-to-expire, then awaiting-first-bid).
+        List<NonMinerDonationSummary> priority = recruitable
+            .Where(s => s.LeadingBidUnixMs != 0)
+            .OrderBy(s => s.WindowCloseUnixMs)
+            .Concat(recruitable.Where(s => s.LeadingBidUnixMs == 0))
+            .ToList();
+
+        Block tip = GetPlayerLatestBlock();
+        long tipMs = tip.Timestamp;
+        int blockIndex = tip.Index;
+        decimal fee = NetworkFeePolicy.MedianFeeAt(tipMs);
+
+        foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
+        {
+            var perPool = new List<(string poolNodeId, string poolName, int percent)>();
+            result[record.NodeId] = perPool;
+            if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
+
+            string botAddr = bot.WalletAddress;
+            decimal spendable = bot.Blockchain.GetAddressSpendableBalance(botAddr);
+            decimal cap = Math.Round(spendable * MaxBidBalanceFraction, 8);
+
+            // Build this bot's qualifying pools (satisfied / self-eviction-guard excluded), in priority order,
+            // each tagged with its affordability under the half-spendable cap.
+            var quals = new List<(NonMinerDonationSummary pool, int ownSlot, int bestTier, int occupied, List<int> ownTiers, bool affordable)>();
+            foreach (NonMinerDonationSummary pool in priority)
+            {
+                List<TrackedDonation> slots = pool.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
+                var ownTiers = new List<int>();
+                for (int i = 0; i < slots.Count; i++)
+                    if (slots[i].DonorAddress == botAddr) ownTiers.Add(i + 1);
+
+                if (ownTiers.Count > 0 && IsBidderSatisfied(ownTiers[0], ownTiers.Count)) continue;
+                if (slots.Count >= MaxTrackedDonations && ownTiers.Contains(slots.Count)) continue;
+
+                decimal leadingAmount = pool.LeadingBidUnixMs == 0 ? 0m : pool.LeadingDonorTotal;
+                decimal required = pool.LeadingBidUnixMs == 0 ? MinBidBtc : leadingAmount + RaiseMin(leadingAmount);
+                bool affordable = required + fee <= cap;
+                quals.Add((pool, ownTiers.Count, ownTiers.Count == 0 ? 0 : ownTiers[0], slots.Count, ownTiers, affordable));
+            }
+
+            var marginal = new Dictionary<string, double>();
+
+            // Escalation pass (Fix A pre-roll): affordable single-slot-below-top-3 pools in priority order.
+            double prodMiss = 1.0;
+            foreach (var q in quals)
+            {
+                if (q.ownSlot != 1 || q.bestTier <= 3 || !q.affordable) continue;
+                int e = PeekStuckEscalationProbabilityPercent(q.pool.NonMinerNodeId, record.NodeId, q.bestTier, blockIndex);
+                if (e <= 0) continue;
+                double ef = e / 100.0;
+                marginal[q.pool.NonMinerNodeId] = marginal.GetValueOrDefault(q.pool.NonMinerNodeId) + prodMiss * ef;
+                prodMiss *= 1 - ef;
+            }
+
+            // Ladder pass: the spread-wide first-affordable pool P* rolls its ladder (only if no escalation
+            // committed, i.e. ×prodMiss). Unparticipated ⇒ deterministic 1.0; else sum-of-two-lowest, with
+            // max(mode, escalation) for a single-slot-below-top-3 P*.
+            var affordableQuals = quals.Where(q => q.affordable).ToList();
+            if (affordableQuals.Count > 0)
+            {
+                var pstar = affordableQuals.OrderBy(q => q.ownSlot).First(); // stable ⇒ ties keep priority order
+                double rstar;
+                if (pstar.ownSlot == 0)
+                {
+                    rstar = 1.0; // unparticipated → deterministic first bid
+                }
+                else
+                {
+                    bool urgent = IsAuctionInUrgencyWindow(pstar.pool.WindowCloseUnixMs, tipMs);
+                    int mode = SumTwoLowestReBidProbabilities(pstar.ownTiers, pstar.occupied, urgent, pstar.ownSlot);
+                    int roll = pstar.ownSlot == 1 && pstar.bestTier > 3
+                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(pstar.pool.NonMinerNodeId, record.NodeId, pstar.bestTier, blockIndex))
+                        : mode;
+                    rstar = roll / 100.0;
+                }
+                marginal[pstar.pool.NonMinerNodeId] = marginal.GetValueOrDefault(pstar.pool.NonMinerNodeId) + prodMiss * rstar;
+            }
+
+            foreach (NonMinerDonationSummary pool in recruitable)
+            {
+                if (!marginal.TryGetValue(pool.NonMinerNodeId, out double p) || p <= 0) continue;
+                int pct = (int)Math.Round(Math.Clamp(p, 0d, 1d) * 100d);
+                if (pct > 0) perPool.Add((pool.NonMinerNodeId, DescribeCompany(pool), pct));
+            }
+            perPool.Sort((a, b) => b.percent.CompareTo(a.percent));
+        }
+
+        return result;
     }
 
     // ND.8d (2026-07-20 round-2 refinement, §12.5.5) — a participated pool's re-bid roll is the SUM of the

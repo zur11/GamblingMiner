@@ -288,6 +288,8 @@ Goal: give non-miner holder bots (`non_miner_1`..`non_miner_40`) a social and ec
 - Claimable in **real time** in a new **`Referrals` scene** (from MainMenu), which also opens a **Miner Referrals** sub-scene.
 - Bot SC winnings come from simulated betting (MartingaleCalculator-derived logic, designed in a later phase).
 
+**Deferred — vary the self-eviction guard to close a predictability exploit (ND.10b, 2026-07-22):** the self-eviction guard (a bot won't re-bid a full pool where it holds the smallest slot, D-ND6.7b) plus the deterministic affordability/priority ordering is now surfaced transparently in `AuctioningCompanyDetails` (the per-bot real-leading-bid-roll panel). That transparency makes the behavior **exploitable** by a player who learns the exact rule. A later subphase should introduce **to-be-designed randomized/asymmetric slack** into the guard (and possibly the ordering) to (a) close the exploit and (b) add flavor via natural asymmetry. Not scheduled.
+
 **Minimum donation rule**: Send amount must be ≥ fee amount (at 0.1 BTC fee, minimum donation is 0.1 BTC).
 
 **Donation ledger**: Updated at block confirmation only — never at broadcast. Schema: `botNodeId`, `senderAddress`, `totalDonatedBtc`, `confirmedAtBlockIndex`, referral award block.

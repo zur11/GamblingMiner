@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using GodotBlockchainPort.Simulation;
+using GodotBlockchainPort.Blockchain;
 using UI.StatusBar;
 #nullable enable
 
@@ -30,9 +31,6 @@ public partial class AuctioningCompanyDetails : Control
 	private Label _sectionTitleLabel = null!;
 	private VBoxContainer _contentVBox = null!;
 
-	private double _refreshTimer;
-	private const double RefreshInterval = 1.0;
-
 	public override void _Ready()
 	{
 		_networkRoot = GetNode<NetworkRoot>("NetworkRoot");
@@ -55,22 +53,31 @@ public partial class AuctioningCompanyDetails : Control
 			return;
 		}
 
+		// ND.10b (Ch. 38) — event-driven: everything shown (tracked pool, tiers, escalation %, and the
+		// days-left, anchored to the latest block's timestamp) changes ONLY on a new block, so rebuild on
+		// BlockAccepted instead of a per-frame timer. Unsubscribed in _ExitTree — a static event holding an
+		// instance handler must be released or it leaks / crashes on the freed scene.
+		NetworkRoot.BlockAccepted += OnBlockAccepted;
 		RefreshAll();
 	}
 
-	public override void _Process(double delta)
+	public override void _ExitTree()
+	{
+		NetworkRoot.BlockAccepted -= OnBlockAccepted;
+	}
+
+	private void OnBlockAccepted(Block block)
 	{
 		if (string.IsNullOrEmpty(_nonMinerAddress)) return;
-		_refreshTimer += delta;
-		if (_refreshTimer < RefreshInterval) return;
-		_refreshTimer = 0d;
-		RefreshAll();
+		// BlockAccepted fires mid-HandleMinedBlock; defer the rebuild (and the possible resolve→forward scene
+		// change) to idle rather than running re-entrantly inside the block processing.
+		Callable.From(RefreshAll).CallDeferred();
 	}
 
 	private void RefreshAll()
 	{
-		NonMinerDonationSummary? summary = _networkRoot.GetNonMinerAuctionLedger()
-			.FirstOrDefault(s => s.NonMinerAddress == _nonMinerAddress);
+		IReadOnlyList<NonMinerDonationSummary> ledger = _networkRoot.GetNonMinerAuctionLedger();
+		NonMinerDonationSummary? summary = ledger.FirstOrDefault(s => s.NonMinerAddress == _nonMinerAddress);
 		if (summary is null)
 		{
 			_identityLabel.Text = _nonMinerAddress;
@@ -94,12 +101,13 @@ public partial class AuctioningCompanyDetails : Control
 		}
 		else
 		{
-			ShowLiveTrackedDonations(summary);
+			ShowLiveTrackedDonations(summary, ledger);
 		}
 	}
 
-	// D-ND5.9 — while InAuction: the live top-10 tracked donation pool (D-ND5.3), auto-refreshing.
-	private void ShowLiveTrackedDonations(NonMinerDonationSummary summary)
+	// D-ND5.9 — while InAuction: the live top-10 tracked donation pool (D-ND5.3). ND.10b — now two columns:
+	// the bids list (left) + the per-bot real leading-bid roll panel (right). Rebuilt on BlockAccepted.
+	private void ShowLiveTrackedDonations(NonMinerDonationSummary summary, IReadOnlyList<NonMinerDonationSummary> ledger)
 	{
 		long nowMs = _networkRoot.GetPlayerLatestBlock().Timestamp;
 		string clock = summary.LeadingBidUnixMs == 0
@@ -124,41 +132,94 @@ public partial class AuctioningCompanyDetails : Control
 		_sectionTitleLabel.Text = $"Tracked Donation Pool ({occupied}/10 by value) — {mode}";
 
 		ClearContent();
+
+		// ND.10b — Ch. 29: an HBoxContainer (never HSplit) inside the existing bounded scroll. Left = bids,
+		// right = the per-bot real leading-bid roll. mouse_filter Pass everywhere so the wheel reaches the
+		// scroll (Ch. 29) AND tooltips still show (Pass, not Ignore).
+		var columns = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
+		columns.AddThemeConstantOverride("separation", 24);
+		_contentVBox.AddChild(columns);
+
+		var leftCol = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
+		columns.AddChild(leftCol);
+		columns.AddChild(new VSeparator());
+		var rightCol = new VBoxContainer { CustomMinimumSize = new Vector2(280, 0), MouseFilter = MouseFilterEnum.Pass };
+		columns.AddChild(rightCol);
+
+		// LEFT — the tracked-pool bids.
 		if (occupied == 0)
 		{
-			_contentVBox.AddChild(new Label { Text = "No qualifying donations tracked yet." });
-			return;
+			leftCol.AddChild(new Label { Text = "No qualifying donations tracked yet.", MouseFilter = MouseFilterEnum.Pass });
+		}
+		else
+		{
+			// ND.8d.2 — each slot's live re-bid % factors the OCCUPANT's own bid-count (how many tracked
+			// slots that donor holds here); a slot held by the PLAYER shows no probability at all (blank).
+			Dictionary<string, int> slotsByDonor = summary.TrackedDonations
+				.GroupBy(d => d.DonorAddress)
+				.ToDictionary(g => g.Key, g => g.Count());
+
+			int tier = 1;
+			foreach (TrackedDonation d in summary.TrackedDonations.OrderByDescending(d => d.AmountBtc))
+			{
+				string scValue = d.CurrentValueSc is decimal sc
+					? string.Create(CultureInfo.InvariantCulture, $"  (≈ {sc:F8} SC today)")
+					: string.Empty;
+				int ownBidCount = slotsByDonor.TryGetValue(d.DonorAddress, out int c) ? c : 1;
+				// ND.8d round-3 label parity — reflects the roll's max(mode rate, stuck-single-bidder
+				// escalation); ND.10b — "guard" (self-eviction) now shown instead of a bare "0%".
+				string prob = _networkRoot.IsPlayerBidderAddress(d.DonorAddress)
+					? string.Empty // the player bids manually; never a ladder re-bid probability
+					: _networkRoot.ReBidProbabilityLabelForSlot(summary, d.DonorAddress, tier, occupied, urgent, ownBidCount);
+				string probCol = prob switch
+				{
+					"" => string.Empty,
+					"satisfied" => "[satisfied]  ",
+					"guard" => "[guard]  ",
+					_ => $"[re-bid {prob}]  ",
+				};
+				string line = string.Create(CultureInfo.InvariantCulture,
+					$"#{tier}  {probCol}{_networkRoot.DescribeAddress(d.DonorAddress)}  {d.AmountBtc:F8} BTC{scValue}  — {FormatDate(d.TimestampMs)}");
+				leftCol.AddChild(new Label { Text = line, MouseFilter = MouseFilterEnum.Pass });
+				tier++;
+			}
 		}
 
-		// ND.8d.2 — each slot's live re-bid % now factors the OCCUPANT's own bid-count (how many tracked
-		// slots that donor holds here); a slot held by the PLAYER shows no probability at all (blank).
-		Dictionary<string, int> slotsByDonor = summary.TrackedDonations
-			.GroupBy(d => d.DonorAddress)
-			.ToDictionary(g => g.Key, g => g.Count());
+		// RIGHT — per-bot real leading-bid roll for THIS pool (tooltip = each bot's full per-pool breakdown).
+		BuildBotRollPanel(rightCol, summary, ledger);
+	}
 
-		int tier = 1;
-		foreach (TrackedDonation d in summary.TrackedDonations.OrderByDescending(d => d.AmountBtc))
+	// ND.10b — the 4 casino bots and each one's REAL chance to place the leading bid in THIS pool this block
+	// (conditional on running its pipeline), diluted across all in-auction pools by priority order — the
+	// single-source computation in NetworkRoot.RealLeadingBidRoll. Each row's tooltip lists that bot's full
+	// per-pool distribution. Bots only (the player bids manually, so no player row).
+	private void BuildBotRollPanel(VBoxContainer col, NonMinerDonationSummary summary, IReadOnlyList<NonMinerDonationSummary> ledger)
+	{
+		var title = new Label { Text = "Real leading-bid roll — this pool", MouseFilter = MouseFilterEnum.Pass };
+		title.AddThemeFontSizeOverride("font_size", 16);
+		col.AddChild(title);
+		col.AddChild(new Label { Text = "(if the bot runs its pipeline this block)", MouseFilter = MouseFilterEnum.Pass });
+
+		Dictionary<string, List<(string poolNodeId, string poolName, int percent)>> rollByBot =
+			_networkRoot.RealLeadingBidRoll(ledger);
+
+		foreach (KeyValuePair<string, List<(string poolNodeId, string poolName, int percent)>> kv
+			in rollByBot.OrderBy(k => k.Key, StringComparer.Ordinal))
 		{
-			string scValue = d.CurrentValueSc is decimal sc
-				? string.Create(CultureInfo.InvariantCulture, $"  (≈ {sc:F8} SC today)")
-				: string.Empty;
-			int ownBidCount = slotsByDonor.TryGetValue(d.DonorAddress, out int c) ? c : 1;
-			string prob = _networkRoot.IsPlayerBidderAddress(d.DonorAddress)
-				? string.Empty // ND.8d.2 — the player bids manually; never a ladder re-bid probability
-				// ND.8d round-3 label parity — reflects the roll's max(mode rate, stuck-single-bidder
-				// escalation), so a lone below-top-3 bot's % visibly climbs (e.g. 8→16→24) instead of
-				// sitting frozen at the static mode rate.
-				: _networkRoot.ReBidProbabilityLabelForSlot(summary, d.DonorAddress, tier, occupied, urgent, ownBidCount);
-			string probCol = prob switch
+			(string poolNodeId, string poolName, int percent) hit =
+				kv.Value.FirstOrDefault(e => e.poolNodeId == summary.NonMinerNodeId);
+			int pct = hit.poolNodeId != null ? hit.percent : 0;
+
+			string tip = kv.Value.Count > 0
+				? "Where this bot's bid lands this block:\n" + string.Join("\n",
+					kv.Value.Select(e => string.Create(CultureInfo.InvariantCulture, $"  {e.poolName}: {e.percent}%")))
+				: "No qualifying pool this block.";
+			col.AddChild(new Label
 			{
-				"" => string.Empty,
-				"satisfied" => "[satisfied]  ",
-				_ => $"[re-bid {prob}]  ",
-			};
-			string line = string.Create(CultureInfo.InvariantCulture,
-				$"#{tier}  {probCol}{_networkRoot.DescribeAddress(d.DonorAddress)}  {d.AmountBtc:F8} BTC{scValue}  — {FormatDate(d.TimestampMs)}");
-			_contentVBox.AddChild(new Label { Text = line });
-			tier++;
+				Text = string.Create(CultureInfo.InvariantCulture, $"{kv.Key}     {pct}%"),
+				MouseFilter = MouseFilterEnum.Pass,
+				TooltipText = tip
+			});
 		}
 	}
 
