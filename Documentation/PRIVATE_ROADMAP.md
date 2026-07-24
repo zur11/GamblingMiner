@@ -312,6 +312,25 @@ Goal: a progression ladder for casino participants (player, and notably **Miner 
 
 Done when a participant's rank is tracked and visibly affects at least the referral commission rate.
 
+### Casino-Bot Treasury Policy — variable reserves & bid affordability (deferred design, hardcoded stopgap shipped at ND.10e)
+
+**Status: a hardcoded stopgap is LIVE** (Step 14 ND.10e, 2026-07-23 — `NetworkRoot`: opening bid worth **$0.10** capped at **1 BTC**, raise band **5–10%**, BTC reserve guard **stop ≤ 200 / resume ≥ 300 BTC**, dividend auto-claim batched at **10× the network fee**). Those five numbers are deliberate placeholders: they were chosen to stop `bot_1..4` de-financing themselves out of the referral auctions, not from any model of what a bot's treasury *should* look like. This entry records the real design so the constants don't quietly become canon.
+
+**Goal:** replace the flat constants with a **reserve policy** each bot evaluates for itself, so reserves look varied and natural across the four bots instead of identical and arbitrary.
+
+Candidate inputs (all already available, none requiring new state):
+- **Live BTC price** (`BtcMarketDataService`) — a fiat-anchored reserve (e.g. "keep $X of BTC") behaves very differently in 2011 vs 2017 and is the same trick ND.10e's opening-bid floor already uses.
+- **The bot's SC position** (`NodeFinancialState.PrincipalBalance`) — a bot flush with SC can afford to run its BTC down; one near a recharge cannot.
+- **Mining income rate** — blocks mined per window, i.e. how fast the reserve actually refills. A reserve should be expressed in *time to recover*, not a flat amount.
+- **Dividend inflow** (§22.12/ND.8g) — a bot holding NST/PST in several founded companies has a recurring BTC income the guard should credit it for.
+- **Per-bot personality** — the same per-world draw pattern used for the bots' governance preferences (D-ND8.13/26) would give each bot its own risk appetite, permanently and reproducibly.
+
+**Two pressures already scheduled that will change the arithmetic** (re-tune only after they land, not before):
+1. **Hardware progression (P5)** — hardware multiplies every casino-miner's attempts/sec and therefore its BTC income; the whole auction economy is sized against pre-hardware income today.
+2. **Dividend inflow** is only now becoming material as companies are founded — with several mature companies paying quarterly, the bots' BTC income stops being mining-only.
+
+**Also wanted:** surface the knobs (reserve floor/ceiling or the policy's parameters, the raise band, the opening-bid anchor, the claim batching multiple) as **DEV-configurable** in the same spirit as `CasinoGamblingFinances`/`WorldEconomy`'s existing sliders, so a calibration run doesn't need a rebuild. Design + the audit that produced the stopgap: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.6.
+
 ### Post-Basic Mode — Divergent Chains / Fork Simulation (revisit AFTER Basic Mode)
 
 **Deferred, not discarded.** The idea is wanted; the system simply has higher priorities until Basic Mode is finished. **Re-plan this only once Basic Mode is complete.**

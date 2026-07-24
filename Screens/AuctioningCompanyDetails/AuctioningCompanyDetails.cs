@@ -31,10 +31,22 @@ public partial class AuctioningCompanyDetails : Control
 	private Label _sectionTitleLabel = null!;
 	private VBoxContainer _contentVBox = null!;
 
+	// ND.10f (2026-07-23) — the auction-time twin of CompanyDetails' ND.9b holding-keyed page border, using
+	// the identical three colours but keyed on the PROJECTED stake: gold when the player currently occupies
+	// a top-3 tier of this pool (it would mint NST if the auction closed at this block), silver when it holds
+	// only lower tiers (PST), black when it holds no tracked slot at all. Same transparent-centre
+	// StyleBoxFlat overlay behind the content, mouse-transparent — Ch. 29-safe, never touches the layout.
+	private Panel _borderPanel = null!;
+	private StyleBoxFlat _borderStyle = null!;
+	private static readonly Color HoldingGold = new(0.85f, 0.65f, 0.13f);   // would mint NST
+	private static readonly Color HoldingSilver = new(0.75f, 0.75f, 0.78f); // would mint PST
+	private static readonly Color HoldingBlack = new(0.05f, 0.05f, 0.05f);  // no tracked slot
+
 	public override void _Ready()
 	{
 		_networkRoot = GetNode<NetworkRoot>("NetworkRoot");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+		BuildBorderOverlay();
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 
@@ -114,7 +126,23 @@ public partial class AuctioningCompanyDetails : Control
 			? "awaiting first bid — no countdown"
 			: string.Create(CultureInfo.InvariantCulture,
 				$"{Math.Max(0d, (summary.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left in the current window");
-		_statusLabel.Text = $"In Auction — {clock}";
+
+		// ND.10f — the page border + caption: what the player WOULD mint if this pool closed right now.
+		// A running forecast, not a promise — every later bid can re-order the tracked pool beneath it.
+		PlayerAuctionStake stake = _networkRoot.GetPlayerProjectedStake(summary);
+		_borderStyle.BorderColor = stake switch
+		{
+			PlayerAuctionStake.Nst => HoldingGold,
+			PlayerAuctionStake.Pst => HoldingSilver,
+			_ => HoldingBlack
+		};
+		string stakeCaption = stake switch
+		{
+			PlayerAuctionStake.Nst => "NST (voting shares)",
+			PlayerAuctionStake.Pst => "PST (dividend shares)",
+			_ => "nothing (no tracked slot)"
+		};
+		_statusLabel.Text = $"In Auction — {clock}  |  If it closed now you would mint: {stakeCaption}";
 
 		// ND.6d — the pool's occupied-slot count selects the casino-bot re-bid mode shown per slot below:
 		// EARLY RUSH while it holds <7 slots (steep tier 4/5/6 probabilities so bots contest young pools
@@ -176,6 +204,8 @@ public partial class AuctioningCompanyDetails : Control
 					"" => string.Empty,
 					"satisfied" => "[satisfied]  ",
 					"guard" => "[guard]  ",
+					"priced out" => "[priced out]  ", // ND.10d — the raise no longer fits its half-spendable cap
+					"reserve" => "[reserve]  ",      // ND.10e — the bot is rebuilding its BTC reserve guard
 					_ => $"[re-bid {prob}]  ",
 				};
 				string line = string.Create(CultureInfo.InvariantCulture,
@@ -189,34 +219,50 @@ public partial class AuctioningCompanyDetails : Control
 		BuildBotRollPanel(rightCol, summary, ledger);
 	}
 
-	// ND.10b — the 4 casino bots and each one's REAL chance to place the leading bid in THIS pool this block
-	// (conditional on running its pipeline), diluted across all in-auction pools by priority order — the
-	// single-source computation in NetworkRoot.RealLeadingBidRoll. Each row's tooltip lists that bot's full
-	// per-pool distribution. Bots only (the player bids manually, so no player row).
+	// ND.10c — the 4 casino bots and each one's REAL chance to place the leading bid in THIS pool, as a
+	// TRUE PER-BLOCK probability: the single-source computation in NetworkRoot.RealLeadingBidRoll folds in
+	// the parallel per-pool rolls + their uniform tie-break, the eligible-bot draw (roll 1) AND the 0/1/2
+	// count draw. A 0% therefore means genuinely impossible (satisfied / self-eviction guard / unaffordable),
+	// never merely "the selection walk never reached this pool" — the ND.10b artifact this replaced.
+	// Two decimals on purpose: realistic values sit in 0.10%–25%, which integer percent rounds to 0%.
+	// Derivation + worked example: Documentation/ProjectDesignManual.md §22.14. Each row's tooltip lists
+	// that bot's full per-pool distribution. Bots only (the player bids manually, so no player row).
 	private void BuildBotRollPanel(VBoxContainer col, NonMinerDonationSummary summary, IReadOnlyList<NonMinerDonationSummary> ledger)
 	{
 		var title = new Label { Text = "Real leading-bid roll — this pool", MouseFilter = MouseFilterEnum.Pass };
 		title.AddThemeFontSizeOverride("font_size", 16);
 		col.AddChild(title);
-		col.AddChild(new Label { Text = "(if the bot runs its pipeline this block)", MouseFilter = MouseFilterEnum.Pass });
+		col.AddChild(new Label { Text = "(chance this bot lands the leading bid here, this block)", MouseFilter = MouseFilterEnum.Pass });
 
-		Dictionary<string, List<(string poolNodeId, string poolName, int percent)>> rollByBot =
+		Dictionary<string, List<(string poolNodeId, string poolName, double percent)>> rollByBot =
 			_networkRoot.RealLeadingBidRoll(ledger);
 
-		foreach (KeyValuePair<string, List<(string poolNodeId, string poolName, int percent)>> kv
+		foreach (KeyValuePair<string, List<(string poolNodeId, string poolName, double percent)>> kv
 			in rollByBot.OrderBy(k => k.Key, StringComparer.Ordinal))
 		{
-			(string poolNodeId, string poolName, int percent) hit =
+			(string poolNodeId, string poolName, double percent) hit =
 				kv.Value.FirstOrDefault(e => e.poolNodeId == summary.NonMinerNodeId);
-			int pct = hit.poolNodeId != null ? hit.percent : 0;
+			double pct = hit.poolNodeId != null ? hit.percent : 0d;
+
+			// ND.10d — a zero here has four very different meanings; say which. "priced out" (the raise no
+			// longer fits the half-spendable cap) is the one that used to read as a contradiction against
+			// the left column's ladder %, which ignored affordability entirely.
+			string shown = pct switch
+			{
+				<= 0d => "0.00%",
+				< 0.01d => "<0.01%", // a real but tiny chance — never round it back into a bare 0%
+				_ => string.Create(CultureInfo.InvariantCulture, $"{pct:F2}%"),
+			};
+			string note = pct > 0d ? string.Empty : _networkRoot.BotPoolExclusionNote(summary, kv.Key);
+			if (note.Length > 0) shown += $"  ({note})";
 
 			string tip = kv.Value.Count > 0
 				? "Where this bot's bid lands this block:\n" + string.Join("\n",
-					kv.Value.Select(e => string.Create(CultureInfo.InvariantCulture, $"  {e.poolName}: {e.percent}%")))
-				: "No qualifying pool this block.";
+					kv.Value.Select(e => string.Create(CultureInfo.InvariantCulture, $"  {e.poolName}: {e.percent:F2}%")))
+				: "No pool this bot can bid this block.";
 			col.AddChild(new Label
 			{
-				Text = string.Create(CultureInfo.InvariantCulture, $"{kv.Key}     {pct}%"),
+				Text = string.Create(CultureInfo.InvariantCulture, $"{kv.Key}     {shown}"),
 				MouseFilter = MouseFilterEnum.Pass,
 				TooltipText = tip
 			});
@@ -230,6 +276,36 @@ public partial class AuctioningCompanyDetails : Control
 	{
 		foreach (Node child in _contentVBox.GetChildren())
 			child.QueueFree();
+	}
+
+	// ND.10f — identical construction to CompanyDetails.BuildBorderOverlay (ND.9b): a mouse-transparent
+	// bordered Panel inset 8 px from the screen edge, behind the content (index 0), transparent centre so
+	// only the coloured frame shows. Colour is set per refresh from the projected stake above.
+	private void BuildBorderOverlay()
+	{
+		_borderStyle = new StyleBoxFlat
+		{
+			BgColor = new Color(0, 0, 0, 0),
+			BorderColor = HoldingBlack,
+			BorderWidthLeft = 4,
+			BorderWidthTop = 4,
+			BorderWidthRight = 4,
+			BorderWidthBottom = 4,
+			CornerRadiusTopLeft = 6,
+			CornerRadiusTopRight = 6,
+			CornerRadiusBottomLeft = 6,
+			CornerRadiusBottomRight = 6
+		};
+
+		_borderPanel = new Panel { MouseFilter = MouseFilterEnum.Ignore };
+		_borderPanel.AddThemeStyleboxOverride("panel", _borderStyle);
+		AddChild(_borderPanel);
+		MoveChild(_borderPanel, 0);
+		_borderPanel.SetAnchorsPreset(LayoutPreset.FullRect);
+		_borderPanel.OffsetLeft = 8;
+		_borderPanel.OffsetTop = 8;
+		_borderPanel.OffsetRight = -8;
+		_borderPanel.OffsetBottom = -8;
 	}
 
 	private static string FormatDate(long unixMs) =>

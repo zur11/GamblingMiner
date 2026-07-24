@@ -72,13 +72,41 @@ public partial class NetworkRoot : Node
     // percentage after the two named weights). A flat "always exactly 1" reads monotone/synthetic.
     private const int CasinoBotDonationWeightZeroPercent = 15;
     private const int CasinoBotDonationWeightOnePercent = 70;
-    private const decimal MinBidBtc = 0.1m; // D-ND4b.5 — the fixed first-donation floor, BTC principal
+    // ND.10e (2026-07-23, D-ND10e.1 — supersedes D-ND4b.5's flat 0.1 BTC `MinBidBtc`): the OPENING bid of
+    // a pool that has no bid yet is **price-anchored**, re-evaluated live on whatever day the first bid
+    // lands. It is always worth `OpeningBidUsdValue` ($0.10), CAPPED at `MaxOpeningBidBtc` (1 BTC — the
+    // historical high-water mark for a company's minimum bid, which binds while BTC trades under $0.10).
+    // Worked: BTC ≤ $0.10 ⇒ 1 BTC · BTC $1 ⇒ 0.1 BTC · BTC $10 ⇒ 0.01 BTC · BTC $30 ⇒ 0.00333 BTC.
+    // Rationale (developer, 2026-07-23): a flat BTC floor is simultaneously too CHEAP in the sub-$0.10
+    // era (auctions opened for pocket change) and ruinously EXPENSIVE later, which — compounded by the
+    // raise band — was de-financing the casino bots faster than their mining income could refill them.
+    // Anchoring the opening bid to a constant fiat value fixes both ends with one rule. Once a pool HAS a
+    // leading bid nothing changes: the player still needs +1 satoshi (ND.4d), the bots the raise band.
+    // Evaluated at the BID's OWN block timestamp, so the chain-replayed ledger stays deterministic.
+    private const decimal OpeningBidUsdValue = 0.10m;
+    private const decimal MaxOpeningBidBtc = 1m;
     // ND.4d (2026-07-10) — the PLAYER's own minimum raise is a flat 1 satoshi above the leading bid, NOT
-    // the 10-20% RaiseMin/RaiseMax formula (that stays exactly as-is for the casino-bots' own bidding).
-    // The player can therefore always retake the lead as cheaply as possible — but a casino-bot's NEXT
-    // raise still jumps 10-20% over whatever the player just bid, so a minimal player raise is an easy
-    // target to overtake; the risk is left for the player to learn empirically, not blocked in code.
+    // the RaiseMin/RaiseMax band (that stays exactly as-is for the casino-bots' own bidding). The player
+    // can therefore always retake the lead as cheaply as possible — but a casino-bot's NEXT raise still
+    // jumps the full band over whatever the player just bid, so a minimal player raise is an easy target
+    // to overtake; the risk is left for the player to learn empirically, not blocked in code.
     private const decimal OneSatoshi = 0.00000001m;
+    // ND.10e (D-ND10e.2) — the casino-bots' raise band, cut from 10-20% to **5-10%** of the leading bid.
+    // The geometric ladder is what ultimately prices every bot out of a mature auction (§22.10, by
+    // design), but at 10-20% per accepted raise it arrived far too fast relative to mining income.
+    private const decimal RaiseMinFraction = 0.05m;
+    private const decimal RaiseMaxFraction = 0.10m;
+    // ND.10e (D-ND10e.3) — the casino-bots' BTC RESERVE GUARD, with hysteresis: a bot that falls to
+    // `BotBidReserveStopBtc` spendable withdraws from EVERY auction until it has rebuilt to
+    // `BotBidReserveResumeBtc`. Deliberately hardcoded for now — the real design (reserve as a function of
+    // the live BTC price, the bot's SC position, hardware income, dividend inflow…) is deferred and
+    // recorded in `Documentation/PRIVATE_ROADMAP.md`.
+    private const decimal BotBidReserveStopBtc = 200m;
+    private const decimal BotBidReserveResumeBtc = 300m;
+    // ND.10e (D-ND10e.4) — a bot auto-claims its accrued BTC dividend only once it is worth at least this
+    // multiple of the network fee, so the fee (which is paid OUT OF the dividend) can never eat most of
+    // the payment. See TryAutoClaimBotDividends for the audit that produced the number.
+    private const decimal BotDividendClaimFeeMultiple = 10m;
     // Step 14 ND.5 (D-ND5.3) — a non-miner's tracked donation pool holds the 10 largest qualifying
     // donations (hoisted from ComputeTrackedDonationPool at ND.6a — the self-eviction guard reads it too).
     private const int MaxTrackedDonations = 10;
@@ -201,8 +229,8 @@ public partial class NetworkRoot : Node
     // guarded tier 10 of a full pool, "" where a percentage is meaningless. (Player-held slots are blanked
     // by the caller — the player never rolls the ladder.)
     //
-    // ND.8d round-3 label parity (2026-07-21, §12.5.5): for a single-slot below-top-3 occupant the shown %
-    // must MATCH the roll's `max(mode rate, escalation)` (TryBuildCasinoBotBid) — the base
+    // ND.8d round-3 label parity (2026-07-21, §12.5.5): for a single-slot occupant the shown % must MATCH
+    // the roll's `max(mode rate, escalation)` (since ND.10c composed in BuildBotPoolOpportunities) — the base
     // ReBidProbabilityPercentFor alone shows only the static mode rate and never the growing escalation, so
     // the label sat frozen (e.g. bot_1's tier-5 BitInstant slot displayed a fixed 8% while its actual roll
     // climbed 8→16→24). This is an INSTANCE method so it can resolve the occupant bot from the donor address
@@ -215,131 +243,283 @@ public partial class NetworkRoot : Node
         // "0%" only on the tier-10 slot; a guarded donor's tier-3 slot now reads "guard" too, overriding
         // "satisfied"). Tier 1 (the leader) stays "satisfied" — never relabelled. Pure-address detection
         // (bots are single-address, OQ-8.2); matches the pipeline's `ownTiers.Contains(slotsByValue.Count)`.
-        if (tier == 1) return "satisfied";
+        if (tier == 1) return ExclusionSatisfied;
         bool guarded = occupiedSlots >= MaxTrackedDonations
             && summary.TrackedDonations.Count > 0
             && summary.TrackedDonations.OrderByDescending(d => d.AmountBtc).Last().DonorAddress == donorAddress;
-        if (guarded) return "guard";
-        if (IsBidderSatisfied(tier, ownBidCount)) return "satisfied";
+        if (guarded) return ExclusionGuard;
+
+        NodeAgent? bot = SharedNodesById.Values.FirstOrDefault(n =>
+            n.WalletAddress == donorAddress || (n.ReceiveWallet?.OwnedAddresses.Contains(donorAddress) ?? false));
+
+        // ND.10d (2026-07-23) — THE affordability check this label never had. The roll has always been
+        // gated by the half-spendable cap (D-ND6.8), but the label only ever computed the ladder rate, so
+        // a bot that can no longer afford the raise still advertised a percentage — and since the stuck
+        // escalation keeps ratcheting regardless, a priced-out lone occupant eventually displayed a
+        // permanent "100%" beside a 0% real chance in the panel (the Silk Market finding: bot_1 stuck at
+        // tier 6 with a 264 BTC cap against a ~371 BTC required raise). A bot priced out of a mature
+        // auction is the DESIGNED economic terminator (§22.10) — so say so instead of quoting odds.
+        // ND.10e — the reserve guard outranks the per-pool rules (same order as BuildBotPoolOpportunities).
+        if (bot != null && _botsRestingOnReserve.Contains(bot.NodeId)) return ExclusionReserve;
+        if (bot != null && !CanAffordNextBid(summary, bot)) return ExclusionPricedOut;
+
+        if (IsBidderSatisfied(tier, ownBidCount)) return ExclusionSatisfied;
         int pct = ReBidProbabilityPercentFor(tier, occupiedSlots, urgent, ownBidCount);
-        if (ownBidCount == 1 && tier > 3)
+        // D-ND10c.3 — tiers 2 and 3 escalate too now (was `tier > 3`), so a lone tier-3 occupant's label
+        // climbs 2 → 4 → 6 … instead of sitting at a flat 2% forever.
+        if (ownBidCount == 1 && tier >= 2 && bot != null)
         {
-            NodeAgent? bot = SharedNodesById.Values.FirstOrDefault(n =>
-                n.WalletAddress == donorAddress || (n.ReceiveWallet?.OwnedAddresses.Contains(donorAddress) ?? false));
-            if (bot != null)
-            {
-                int currentBlockIndex = GetPlayerLatestBlock().Index;
-                pct = Math.Max(pct, PeekStuckEscalationProbabilityPercent(summary.NonMinerNodeId, bot.NodeId, tier, currentBlockIndex));
-            }
+            int currentBlockIndex = GetPlayerLatestBlock().Index;
+            pct = Math.Max(pct, PeekStuckEscalationProbabilityPercent(summary.NonMinerNodeId, bot.NodeId, tier, currentBlockIndex));
         }
         return pct > 0 ? pct + "%" : string.Empty; // integer percent — culture-invariant by construction
     }
 
-    // ND.10b (2026-07-22) — the REAL per-bot "chance to place the leading bid" in each in-auction pool,
-    // conditional on the bot running its pipeline this block (NOT ×count-draw/selection — so a single pool
-    // reduces to that pool's own in-pool rule). A bot's single pipeline run bids at MOST one pool, so its
-    // per-pool probabilities sum to ≤ 1: this returns the full marginal distribution (bot → its pools with
-    // percent > 0, sorted desc), computed EXACTLY off the live pipeline (`TryBuildCasinoBotBid`) so it can
-    // never drift from the roll. The `AuctioningCompanyDetails` panel reads the viewed pool's entry as the
-    // label and the whole list as the per-pool tooltip breakdown. Model per bot:
-    //   qualifying+affordable pools in priorityTargets order → escalation pass (Fix A pre-roll, accumulating
-    //   ∏(1−eⱼ) and term_esc(Eₖ) = ∏_{j<k}(1−eⱼ)·eₖ) → ladder pass (the spread-wide first-affordable P*,
-    //   term_ladder = ∏_all(1−eⱼ)·r*). Accepted approximation: an UNAFFORDABLE escalation pick (which the
-    //   real code would abandon the whole escalation path for) is skipped instead — rare at ~700+ BTC.
-    public Dictionary<string, List<(string poolNodeId, string poolName, int percent)>> RealLeadingBidRoll(
+    // ND.10d — the half-spendable affordability gate (D-ND6.8) as a standalone question: can this node
+    // still afford the raise this pool now demands? Same arithmetic the pipeline uses, so the per-slot
+    // label and the roll agree by construction.
+    private bool CanAffordNextBid(NonMinerDonationSummary summary, NodeAgent bidder)
+    {
+        long tipMs = GetPlayerLatestBlock().Timestamp;
+        decimal leadingAmount = summary.LeadingBidUnixMs == 0 ? 0m : summary.LeadingDonorTotal;
+        decimal requiredAmount = summary.LeadingBidUnixMs == 0
+            ? OpeningBidFloorBtcAt(tipMs)
+            : leadingAmount + RaiseMin(leadingAmount, tipMs);
+        decimal fee = NetworkFeePolicy.MedianFeeAt(tipMs);
+        decimal cap = Math.Round(bidder.Blockchain.GetAddressSpendableBalance(bidder.WalletAddress) * MaxBidBalanceFraction, 8);
+        return requiredAmount + fee <= cap;
+    }
+
+    // ND.10c (2026-07-23, D-ND10c.2) — ONE qualifying pool for ONE bot, carrying the ladder probability
+    // it will actually roll this block. THE shared source of truth: the live pipeline
+    // (TryBuildCasinoBotBid), the eligibility test (D-ND10c.1) and the AuctioningCompanyDetails panel
+    // (RealLeadingBidRoll) all build their view of the world from BuildBotPoolOpportunities below, so a
+    // displayed number can never drift from the roll that produces it.
+    private sealed class BotPoolOpportunity
+    {
+        public NonMinerDonationSummary Target = null!;
+        public int OwnSlotCount;
+        public int BestTier;
+        public int OccupiedSlots;
+        public List<int> OwnTiers = [];
+        public decimal LeadingAmount;
+        public decimal RequiredAmount;
+        public int ProbabilityPercent; // r_k — always 100 for an unparticipated pool (a first bid never rolls)
+        // ND.10d (2026-07-23) — null = the bot MAY bid this pool this slot; otherwise WHY it cannot, as a
+        // short display string shared by the per-slot label and the per-bot panel (see ExclusionSatisfied
+        // and friends). Every consumer filters on `Exclusion == null`; the reason exists so a 0% can say
+        // what kind of zero it is instead of being indistinguishable from "unlikely".
+        public string? Exclusion;
+    }
+
+    // ND.10d — the exclusion vocabulary. Kept as constants so the roll, the per-slot label and the panel
+    // can never disagree on wording (they all render these same strings).
+    private const string ExclusionSatisfied = "satisfied";
+    private const string ExclusionGuard = "guard";
+    private const string ExclusionPricedOut = "priced out";
+    private const string ExclusionReserve = "reserve"; // ND.10e — the bot is rebuilding its BTC reserve
+
+    // ND.10e (D-ND10e.3) — the bots currently RESTING on their reserve guard: entered at ≤ 200 BTC
+    // spendable, released only once back at ≥ 300 BTC. In-memory only, exactly like
+    // `_stuckBidderSignatures` (and `_lastMinedByNodeId`/`_currentMinerStreak` before it): pure bidding
+    // behavior, not economically meaningful world state, so no checkpoint / pre-genesis / delete-list
+    // work. An app restart re-derives it from the live balances on the next block — the only drift is a
+    // bot sitting between the two thresholds, which restarts un-rested; harmless and self-correcting.
+    private static readonly HashSet<string> _botsRestingOnReserve = [];
+
+    // ND.10e — the reserve guard's edge-triggered sweep, run once per block beside
+    // SweepStuckBidderSignatures (single writer, never from a UI refresh — the ND.10c discipline).
+    private static void SweepBotReserveGuard()
+    {
+        foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
+        {
+            if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
+            decimal spendable = bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress);
+            if (_botsRestingOnReserve.Contains(record.NodeId))
+            {
+                if (spendable >= BotBidReserveResumeBtc) _botsRestingOnReserve.Remove(record.NodeId);
+            }
+            else if (spendable <= BotBidReserveStopBtc)
+            {
+                _botsRestingOnReserve.Add(record.NodeId);
+            }
+        }
+    }
+
+    // ND.10c (D-ND10c.2) — every pool this bot MAY bid this block, with its own roll probability. Applies
+    // the unchanged qualifying rules (D-ND8d.1/3 satisfied; D-ND6.7b self-eviction guard) and the
+    // unchanged half-spendable affordability cap (D-ND6.8) — what ND.10c changes is that affordability is
+    // now a per-pool FILTER rather than a walk terminator, and every surviving pool rolls, instead of only
+    // the spread-wide-first one (D-ND6.6, retired: a pool the walk never reached had a structurally
+    // unreachable probability — the ND.10b BitInstant/BitPaid finding, step14 plan §14.4).
+    private static List<BotPoolOpportunity> BuildBotPoolOpportunities(
+        IEnumerable<NonMinerDonationSummary> pools, string botAddress, string botNodeId,
+        decimal fee, decimal bidBudgetCap, long nowMs, int currentBlockIndex)
+    {
+        var opportunities = new List<BotPoolOpportunity>();
+        foreach (NonMinerDonationSummary target in pools)
+        {
+            List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
+            var ownTiers = new List<int>();
+            for (int i = 0; i < slotsByValue.Count; i++)
+            {
+                if (slotsByValue[i].DonorAddress == botAddress) ownTiers.Add(i + 1);
+            }
+
+            int ownSlotCount = ownTiers.Count;
+            int bestTier = ownSlotCount == 0 ? 0 : ownTiers[0];
+            decimal leadingAmount = target.LeadingBidUnixMs == 0 ? 0m : target.LeadingDonorTotal;
+            decimal requiredAmount = target.LeadingBidUnixMs == 0
+                ? OpeningBidFloorBtcAt(nowMs)
+                : leadingAmount + RaiseMin(leadingAmount, nowMs);
+
+            // ND.10d — every in-auction pool now produces an entry; an excluded one carries WHY. The rules
+            // and their order are unchanged (satisfied D-ND8d.1/3, self-eviction guard D-ND6.7b, then the
+            // half-spendable cap D-ND6.8) — only the bookkeeping changed, so a caller can report the reason.
+            string? exclusion = null;
+            // ND.10e (D-ND10e.3) — the reserve guard outranks every per-pool rule: a bot rebuilding its
+            // BTC reserve is out of ALL auctions until it clears the resume threshold.
+            if (_botsRestingOnReserve.Contains(botNodeId)) exclusion = ExclusionReserve;
+            else if (ownSlotCount > 0 && IsBidderSatisfied(bestTier, ownSlotCount)) exclusion = ExclusionSatisfied;
+            else if (slotsByValue.Count >= MaxTrackedDonations && ownTiers.Contains(slotsByValue.Count)) exclusion = ExclusionGuard;
+            else if (requiredAmount + fee > bidBudgetCap) exclusion = ExclusionPricedOut;
+
+            int probabilityPercent = 0;
+            if (exclusion == null)
+            {
+                if (ownSlotCount == 0)
+                {
+                    probabilityPercent = 100; // unparticipated — a first bid is deterministic (D-ND6.5)
+                }
+                else
+                {
+                    // The pool's mode-appropriate rate (early-rush / urgency / normal), summed over the bot's
+                    // two lowest slots (ND.8d round 2), with the stuck escalation as a FLOOR for a lone slot
+                    // (§12.5.5 round-3 max() rule; tiers 2-3 included since D-ND10c.3).
+                    int mode = SumTwoLowestReBidProbabilities(
+                        ownTiers, slotsByValue.Count, IsAuctionInUrgencyWindow(target.WindowCloseUnixMs, nowMs), ownSlotCount);
+                    probabilityPercent = ownSlotCount == 1
+                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(target.NonMinerNodeId, botNodeId, bestTier, currentBlockIndex))
+                        : mode;
+                }
+                if (probabilityPercent <= 0) exclusion = ExclusionSatisfied; // defensive — the rules above already cover every all-0 case
+            }
+
+            opportunities.Add(new BotPoolOpportunity
+            {
+                Target = target,
+                OwnSlotCount = ownSlotCount,
+                BestTier = bestTier,
+                OccupiedSlots = slotsByValue.Count,
+                OwnTiers = ownTiers,
+                LeadingAmount = leadingAmount,
+                RequiredAmount = requiredAmount,
+                ProbabilityPercent = probabilityPercent,
+                Exclusion = exclusion,
+            });
+        }
+        return opportunities;
+    }
+
+    // ND.10c (D-ND10c.5) — the REAL per-bot "chance to place the leading bid in THIS pool", as a TRUE
+    // PER-BLOCK probability: it now folds in BOTH the eligible-bot draw (roll 1) and the 0/1/2 count draw,
+    // where ND.10b's version reported only the in-pool layer conditional on the bot running its pipeline.
+    // A pool therefore reads 0 ONLY when the bot genuinely cannot bid it (satisfied / self-eviction guard /
+    // unaffordable) — never merely because a deterministic walk would not have reached it.
+    //
+    //   r_k = the pool's ladder probability for this bot (BuildBotPoolOpportunities — mode-aware,
+    //         max(mode, escalation) for a lone slot, 1.0 unparticipated)
+    //   q_k = r_k · Σ_m P(H₋ₖ = m)/(m+1)   — all pools roll in parallel; if several hit, one wins the
+    //         uniform tie-break. H₋ₖ = how many of the bot's OTHER pools hit (Poisson-binomial DP).
+    //   p_k = q_k / B                      — B = number of ELIGIBLE bots (D-ND10c.1)
+    //   P_k = w1·p + w2·(2p − p²)          — the count draw; slightly below p·E[count] because a bot drawn
+    //         for both slots can only take the lead once. Weights read from the live draw constants.
+    //
+    // Identity (asserted below): Σ_k q_k = 1 − ∏_k (1−r_k). Full derivation + worked example:
+    // Documentation/ProjectDesignManual.md §22.14.
+    public Dictionary<string, List<(string poolNodeId, string poolName, double percent)>> RealLeadingBidRoll(
         IReadOnlyList<NonMinerDonationSummary> ledger)
     {
-        var result = new Dictionary<string, List<(string, string, int)>>();
+        var result = new Dictionary<string, List<(string, string, double)>>();
         List<NonMinerDonationSummary> recruitable = ledger.Where(s => s.Status == NonMinerAuctionStatus.InAuction).ToList();
-        // Same priority order TryCasinoBotDonation feeds the pipeline (soonest-to-expire, then awaiting-first-bid).
-        List<NonMinerDonationSummary> priority = recruitable
-            .Where(s => s.LeadingBidUnixMs != 0)
-            .OrderBy(s => s.WindowCloseUnixMs)
-            .Concat(recruitable.Where(s => s.LeadingBidUnixMs == 0))
-            .ToList();
 
         Block tip = GetPlayerLatestBlock();
         long tipMs = tip.Timestamp;
         int blockIndex = tip.Index;
         decimal fee = NetworkFeePolicy.MedianFeeAt(tipMs);
 
+        // Pass 1 — each bot's AFFORDABLE opportunities. D-ND10c.1's eligibility test is exactly "this list
+        // is non-empty", so B (the eligible-bot count) falls out of the same pass.
+        var byBot = new Dictionary<string, List<BotPoolOpportunity>>();
         foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
         {
-            var perPool = new List<(string poolNodeId, string poolName, int percent)>();
-            result[record.NodeId] = perPool;
+            result[record.NodeId] = [];
             if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
-
-            string botAddr = bot.WalletAddress;
-            decimal spendable = bot.Blockchain.GetAddressSpendableBalance(botAddr);
+            decimal spendable = bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress);
             decimal cap = Math.Round(spendable * MaxBidBalanceFraction, 8);
+            List<BotPoolOpportunity> biddable =
+                BuildBotPoolOpportunities(recruitable, bot.WalletAddress, record.NodeId, fee, cap, tipMs, blockIndex)
+                    .Where(o => o.Exclusion == null)
+                    .ToList();
+            if (biddable.Count > 0) byBot[record.NodeId] = biddable;
+        }
 
-            // Build this bot's qualifying pools (satisfied / self-eviction-guard excluded), in priority order,
-            // each tagged with its affordability under the half-spendable cap.
-            var quals = new List<(NonMinerDonationSummary pool, int ownSlot, int bestTier, int occupied, List<int> ownTiers, bool affordable)>();
-            foreach (NonMinerDonationSummary pool in priority)
+        int eligibleBots = byBot.Count;
+        if (eligibleBots == 0) return result; // nobody can bid anywhere this block — every pool reads 0
+
+        double weightOne = CasinoBotDonationWeightOnePercent / 100.0;
+        double weightTwo = (100 - CasinoBotDonationWeightZeroPercent - CasinoBotDonationWeightOnePercent) / 100.0;
+
+        foreach ((string botNodeId, List<BotPoolOpportunity> opportunities) in byBot)
+        {
+            double[] r = opportunities.Select(o => o.ProbabilityPercent / 100.0).ToArray();
+            double qSum = 0d;
+            List<(string, string, double)> perPool = result[botNodeId];
+
+            for (int k = 0; k < r.Length; k++)
             {
-                List<TrackedDonation> slots = pool.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
-                var ownTiers = new List<int>();
-                for (int i = 0; i < slots.Count; i++)
-                    if (slots[i].DonorAddress == botAddr) ownTiers.Add(i + 1);
-
-                if (ownTiers.Count > 0 && IsBidderSatisfied(ownTiers[0], ownTiers.Count)) continue;
-                if (slots.Count >= MaxTrackedDonations && ownTiers.Contains(slots.Count)) continue;
-
-                decimal leadingAmount = pool.LeadingBidUnixMs == 0 ? 0m : pool.LeadingDonorTotal;
-                decimal required = pool.LeadingBidUnixMs == 0 ? MinBidBtc : leadingAmount + RaiseMin(leadingAmount);
-                bool affordable = required + fee <= cap;
-                quals.Add((pool, ownTiers.Count, ownTiers.Count == 0 ? 0 : ownTiers[0], slots.Count, ownTiers, affordable));
+                double q = r[k] * ExpectedTieBreakShare(r, k);
+                qSum += q;
+                double p = q / eligibleBots;                        // roll 1 — the eligible-bot draw
+                double perBlock = weightOne * p + weightTwo * (2 * p - p * p); // the count draw
+                if (perBlock <= 0) continue;
+                perPool.Add((opportunities[k].Target.NonMinerNodeId, DescribeCompany(opportunities[k].Target), perBlock * 100.0));
             }
 
-            var marginal = new Dictionary<string, double>();
+            // Free self-check on the DP (never fires in practice — a violation means the tie-break model
+            // and the parallel-roll model have diverged, which would also mean the panel lies).
+            double anyHit = 1d;
+            foreach (double rk in r) anyHit *= 1 - rk;
+            anyHit = 1 - anyHit;
+            if (Math.Abs(qSum - anyHit) > 1e-6)
+                GD.PushWarning($"[ND.10c] RealLeadingBidRoll identity broken for {botNodeId}: Σq={qSum:F8} vs 1−∏(1−r)={anyHit:F8}");
 
-            // Escalation pass (Fix A pre-roll): affordable single-slot-below-top-3 pools in priority order.
-            double prodMiss = 1.0;
-            foreach (var q in quals)
-            {
-                if (q.ownSlot != 1 || q.bestTier <= 3 || !q.affordable) continue;
-                int e = PeekStuckEscalationProbabilityPercent(q.pool.NonMinerNodeId, record.NodeId, q.bestTier, blockIndex);
-                if (e <= 0) continue;
-                double ef = e / 100.0;
-                marginal[q.pool.NonMinerNodeId] = marginal.GetValueOrDefault(q.pool.NonMinerNodeId) + prodMiss * ef;
-                prodMiss *= 1 - ef;
-            }
-
-            // Ladder pass: the spread-wide first-affordable pool P* rolls its ladder (only if no escalation
-            // committed, i.e. ×prodMiss). Unparticipated ⇒ deterministic 1.0; else sum-of-two-lowest, with
-            // max(mode, escalation) for a single-slot-below-top-3 P*.
-            var affordableQuals = quals.Where(q => q.affordable).ToList();
-            if (affordableQuals.Count > 0)
-            {
-                var pstar = affordableQuals.OrderBy(q => q.ownSlot).First(); // stable ⇒ ties keep priority order
-                double rstar;
-                if (pstar.ownSlot == 0)
-                {
-                    rstar = 1.0; // unparticipated → deterministic first bid
-                }
-                else
-                {
-                    bool urgent = IsAuctionInUrgencyWindow(pstar.pool.WindowCloseUnixMs, tipMs);
-                    int mode = SumTwoLowestReBidProbabilities(pstar.ownTiers, pstar.occupied, urgent, pstar.ownSlot);
-                    int roll = pstar.ownSlot == 1 && pstar.bestTier > 3
-                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(pstar.pool.NonMinerNodeId, record.NodeId, pstar.bestTier, blockIndex))
-                        : mode;
-                    rstar = roll / 100.0;
-                }
-                marginal[pstar.pool.NonMinerNodeId] = marginal.GetValueOrDefault(pstar.pool.NonMinerNodeId) + prodMiss * rstar;
-            }
-
-            foreach (NonMinerDonationSummary pool in recruitable)
-            {
-                if (!marginal.TryGetValue(pool.NonMinerNodeId, out double p) || p <= 0) continue;
-                int pct = (int)Math.Round(Math.Clamp(p, 0d, 1d) * 100d);
-                if (pct > 0) perPool.Add((pool.NonMinerNodeId, DescribeCompany(pool), pct));
-            }
-            perPool.Sort((a, b) => b.percent.CompareTo(a.percent));
+            perPool.Sort((a, b) => b.Item3.CompareTo(a.Item3));
         }
 
         return result;
+    }
+
+    // ND.10c (D-ND10c.5) — Σ_m P(H = m)/(m+1) over the OTHER pools' hit probabilities: the share pool
+    // `excludeIndex` keeps after the uniform tie-break when several pools hit in the same slot. Standard
+    // Poisson-binomial DP (independent trials, different probabilities), O(N²) per pool.
+    private static double ExpectedTieBreakShare(double[] probabilities, int excludeIndex)
+    {
+        var dist = new double[Math.Max(1, probabilities.Length)]; // dist[h] = P(exactly h OTHER pools hit)
+        dist[0] = 1d;
+        int size = 1;
+        for (int j = 0; j < probabilities.Length; j++)
+        {
+            if (j == excludeIndex) continue;
+            double pj = probabilities[j];
+            for (int h = size; h >= 1; h--) dist[h] = dist[h] * (1 - pj) + dist[h - 1] * pj;
+            dist[0] *= 1 - pj;
+            size++;
+        }
+
+        double share = 0d;
+        for (int h = 0; h < size; h++) share += dist[h] / (h + 1);
+        return share;
     }
 
     // ND.8d (2026-07-20 round-2 refinement, §12.5.5) — a participated pool's re-bid roll is the SUM of the
@@ -400,42 +580,45 @@ public partial class NetworkRoot : Node
     private static readonly Dictionary<(string nonMinerNodeId, string botNodeId), (string signature, int sinceBlockIndex)> _stuckBidderSignatures = new();
 
     // ND.8d round 3 — the escalation math itself: the tier's plain NORMAL base grown linearly by one step
-    // per block stuck, clamped to 100%. Shared by the roll path (ComputeStuckEscalationProbabilityPercent,
-    // which owns the signature write) and the label path (PeekStuckEscalationProbabilityPercent, pure).
+    // per block stuck, clamped to 100%. Since D-ND10c.4 it has exactly ONE reader,
+    // PeekStuckEscalationProbabilityPercent (pure), consumed by both the roll and the UI label; the
+    // signature writes belong solely to the per-block SweepStuckBidderSignatures.
     private static int EscalatedStuckPercent(int bestTier, int blocksElapsed)
     {
-        if (!ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int baseProbability) || baseProbability <= 0)
-            return 0; // defensive — tiers 4-9 always have a NORMAL-table entry
+        int baseProbability = StuckEscalationBasePercent(bestTier);
+        if (baseProbability <= 0) return 0;
         decimal scaled = baseProbability * (decimal)(Math.Max(0, blocksElapsed) + 1);
         return (int)Math.Min(100m, scaled);
     }
 
-    // ND.8d round 3 — reads (and updates, edge-triggered) the stuck-bidder signal for this (target, bot)
-    // pair, then returns the escalating probability if currently single-slot at a non-top-3 tier. Called
-    // once per this bot's evaluation of this target, each block (never per-frame). THE side-effecting path.
-    private static int ComputeStuckEscalationProbabilityPercent(NonMinerDonationSummary target, string botNodeId, int ownSlotCount, int bestTier, int currentBlockIndex)
+    // D-ND10c.3 (2026-07-23) — the escalation's base is ALWAYS the tier's plain NORMAL-mode value. Tiers
+    // 4-9 read the NORMAL ladder table; **tiers 2-3 now escalate too** (ND.10c) and read the shallow
+    // table's NORMAL / one-own-bid cell (tier 2 → 5, tier 3 → 2). Before ND.10c the whole escalation was
+    // gated at `tier > 3`, so a bot parked at tier 2/3 sat at a flat, never-moving 5%/2% forever — the
+    // BitPaid finding (§14.4 of the step14 plan). Tier 1 is always satisfied and never escalates; tier 10
+    // is excluded by the self-eviction guard before any roll.
+    private static int StuckEscalationBasePercent(int bestTier)
     {
-        string signature = ownSlotCount >= 2 ? "multi" : $"single:{bestTier}";
-        var key = (target.NonMinerNodeId, botNodeId);
-        if (!_stuckBidderSignatures.TryGetValue(key, out (string signature, int sinceBlockIndex) recorded) || recorded.signature != signature)
-        {
-            recorded = (signature, currentBlockIndex);
-            _stuckBidderSignatures[key] = recorded;
-        }
-
-        if (ownSlotCount != 1 || bestTier <= 3) return 0; // caller only asks for the single-slot, non-top-3 case
-        return EscalatedStuckPercent(bestTier, currentBlockIndex - recorded.sinceBlockIndex);
+        if (bestTier == 2 || bestTier == 3)
+            return ShallowTierProbabilityPercent(bestTier, earlyRush: false, urgent: false, ownBidCount: 1);
+        return ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int p) ? p : 0;
     }
 
-    // ND.8d round-3 label parity (2026-07-21, §12.5.5) — the SIDE-EFFECT-FREE twin of the above, for the
-    // AuctioningCompanyDetails per-slot label. The 1 s UI refresh must NEVER stamp `_stuckBidderSignatures`
-    // (that would corrupt the roll's timing), so this only READS: it uses the recorded "since" when the
-    // signature still matches, else predicts what the NEXT roll would compute (a fresh reset ⇒ blocksElapsed
-    // 0 ⇒ base × 1), so the displayed label and the actual roll agree. Single-slot, non-top-3 only (the
-    // caller gates on ownBidCount == 1 && tier > 3); returns 0 otherwise.
+    // ND.8d round-3 label parity (2026-07-21, §12.5.5) — the SIDE-EFFECT-FREE read of the stuck-bidder
+    // signal, shared by the roll and the AuctioningCompanyDetails per-slot label. It only READS: it uses
+    // the recorded "since" when the signature still matches, else predicts what the next roll would
+    // compute (a fresh reset ⇒ blocksElapsed 0 ⇒ base × 1), so label and roll always agree.
+    //
+    // D-ND10c.4 (2026-07-23) — this is now the ONLY escalation reader anywhere: the side-effecting twin
+    // (`ComputeStuckEscalationProbabilityPercent`) is retired, and `SweepStuckBidderSignatures` — which
+    // already refreshes EVERY (recruitable pool × casino bot) pair once per block, before any bid runs —
+    // is the single writer of `_stuckBidderSignatures`. Single-writer/single-reader; no path can stamp
+    // the dictionary from a UI refresh or from a partial pipeline pass.
+    //
+    // Single-slot occupants only (callers gate on `ownSlotCount == 1`); tier 1 never escalates.
     private static int PeekStuckEscalationProbabilityPercent(string nonMinerNodeId, string botNodeId, int bestTier, int currentBlockIndex)
     {
-        if (bestTier <= 3) return 0;
+        if (bestTier <= 1) return 0;
         int sinceBlockIndex = currentBlockIndex;
         if (_stuckBidderSignatures.TryGetValue((nonMinerNodeId, botNodeId), out (string signature, int sinceBlockIndex) recorded)
             && recorded.signature == $"single:{bestTier}")
@@ -449,10 +632,16 @@ public partial class NetworkRoot : Node
     // ONLY when a bot's pipeline SELECTED a pool, so a bot busy seeding fresh pools never updated the signal
     // for a pool it was already stuck in — its signature went stale and neither the roll nor the label
     // escalated (the bot_4/BitInstant tier 2→5 finding, §13 audit). This refreshes EVERY (recruitable pool ×
-    // casino bot) pair each block, edge-triggered (the same rule ComputeStuckEscalationProbabilityPercent
-    // uses to stamp), so a rank-push by ANOTHER bot is recorded at the block it happens and `blocksElapsed`
-    // then grows correctly. It also REMOVES the entry when the bot no longer holds any slot in that pool, so
-    // a future re-entry starts fresh (closes the round-3 "accepted residual imprecision").
+    // casino bot) pair each block, edge-triggered (a stamp whenever the "multi" / "single:{tier}" signature
+    // changes), so a rank-push by ANOTHER bot is recorded at the block it happens and `blocksElapsed` then
+    // grows correctly. It also REMOVES the entry when the bot no longer holds any slot in that pool, so a
+    // future re-entry starts fresh (closes the round-3 "accepted residual imprecision").
+    //
+    // D-ND10c.4 (2026-07-23) — this is now the SINGLE WRITER of `_stuckBidderSignatures`: the side-effecting
+    // ComputeStuckEscalationProbabilityPercent is retired, and every consumer (the bid roll via
+    // BuildBotPoolOpportunities, the panel, the per-slot label) reads through the pure Peek variant. It runs
+    // once per block in TryCasinoBotDonation, BEFORE the count==0 early-return, so the escalation advances
+    // on donation-less blocks too.
     private static void SweepStuckBidderSignatures(List<NonMinerDonationSummary> recruitable, int currentBlockIndex)
     {
         foreach (NonMinerDonationSummary target in recruitable)
@@ -1538,7 +1727,7 @@ public partial class NetworkRoot : Node
             decimal baseTokens = Scripts.Finance.Money.Normalize(participationShare * StockBaseTokenPool);
             decimal bonusFraction = tiers.Sum(SlotBonusPercent) / 100m;
             decimal finalTokens = Scripts.Finance.Money.Normalize(baseTokens * (1m + bonusFraction));
-            bool holdsTopThreeTier = tiers.Any(t => t <= 3);
+            bool holdsTopThreeTier = tiers.Any(t => t <= NstTopTierCount);
 
             string holderId = playerAddresses.Contains(donorAddress)
                 ? PlayerNodeId
@@ -1592,6 +1781,12 @@ public partial class NetworkRoot : Node
         5.2m, 2.6m, 1.3m, 0.65m, 0.325m, 0.1625m, 0.08125m, 0.040625m, 0.0203125m, 0.01015625m
     ];
     private const decimal StockBaseTokenPool = 10_000m;
+
+    // D-ND8.15 step 4 — the NST band: a bidder occupying ANY tier at or above this mints NST (votes +
+    // dividend rights) at founding; every other tracked donor mints PST (dividend rights only). Hoisted
+    // from FoundCompany's literal 3 at ND.10f so GetPlayerProjectedStake below reads the SAME threshold —
+    // the auction-time border colours can then never drift from what founding would actually mint.
+    public const int NstTopTierCount = 3;
 
     private static decimal SlotBonusPercent(int tier) =>
         tier >= 1 && tier <= SlotBonusPercentByTier.Length ? SlotBonusPercentByTier[tier - 1] : 0m;
@@ -2253,28 +2448,55 @@ public partial class NetworkRoot : Node
             // principal (the NodeFinancialState mirror the recharge/settlement paths already use);
             // partial when the reserve is short, remainder stays accrued. Skipped while the bot has no
             // financial state yet (it materializes on its first bet — always long before any dividend).
+            decimal paidSc = 0m;
             if (claim.Sc > 0m && gov.ScReserve > 0m && holder.FinancialState is NodeFinancialState fin)
             {
-                decimal paySc = Math.Min(claim.Sc, gov.ScReserve);
-                fin.PrincipalBalance = Scripts.Finance.Money.Normalize(fin.PrincipalBalance + paySc);
-                gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve - paySc);
-                claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc - paySc);
+                paidSc = Math.Min(claim.Sc, gov.ScReserve);
+                fin.PrincipalBalance = Scripts.Finance.Money.Normalize(fin.PrincipalBalance + paidSc);
+                gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve - paidSc);
+                claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc - paidSc);
             }
 
-            if (claim.Btc <= fee)
+            // ND.10e (D-ND10e.4, 2026-07-23) — BATCH the BTC leg instead of sweeping it the instant it
+            // clears the fee. The old gate (`claim.Btc <= fee`) meant a PST daily drip was sent every
+            // single block at whatever it had accrued: an audit of a live world found claims netting
+            // 0.00039093 BTC against a 0.01 median fee — **96% of that dividend burned as fee** — with
+            // 555 bot claims having paid ~5.55 BTC of fees in total. Waiting until the accrual is worth
+            // `BotDividendClaimFeeMultiple ×` the fee caps the loss at ~1/N of each payment (10%) and,
+            // since the fee comes out of the dividend itself, hands the difference straight back to the
+            // bots' BTC income — one of the cheapest de-financing fixes available.
+            if (claim.Btc < fee * BotDividendClaimFeeMultiple)
             {
-                continue; // physically unpayable (net ≤ 0) — waits for the next accrual to clear the fee
+                // Not yet worth a transaction — the BTC keeps accruing, nothing is lost. The SC leg is
+                // instant and unaffected by fees, so log it on its own when it paid something (it was
+                // previously invisible in telemetry, folded into a row that only reported `btc=`).
+                if (paidSc > 0m)
+                {
+                    AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim_sc", holderId,
+                        string.Format(System.Globalization.CultureInfo.InvariantCulture, "sc={0:F8}", paidSc));
+                }
+                continue;
             }
 
             decimal sendAmount = Scripts.Finance.Money.Normalize(claim.Btc - fee);
-            if (sendAmount <= 0m || BuildAndBroadcastUtxoSpend(company, holder.WalletAddress, sendAmount, fee, null, "DIVIDEND") == null)
+            if (sendAmount <= 0m)
             {
+                continue;
+            }
+
+            if (BuildAndBroadcastUtxoSpend(company, holder.WalletAddress, sendAmount, fee, null, "DIVIDEND") == null)
+            {
+                // ND.10e — a failed broadcast used to vanish silently (the company treasury being short of
+                // spendable UTXOs looks identical to "no dividend was due"). Logged so the trace can prove
+                // whether every accrued dividend actually reached its holder.
+                AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim_failed", holderId,
+                    string.Format(System.Globalization.CultureInfo.InvariantCulture, "btc={0:F8} fee={1:F8}", sendAmount, fee));
                 continue;
             }
 
             claim.Btc = 0m;
             AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim", holderId,
-                string.Format(System.Globalization.CultureInfo.InvariantCulture, "btc={0:F8}", sendAmount));
+                string.Format(System.Globalization.CultureInfo.InvariantCulture, "btc={0:F8} sc={1:F8}", sendAmount, paidSc));
         }
     }
 
@@ -2604,6 +2826,7 @@ public partial class NetworkRoot : Node
         // block, BEFORE the count==0 early-return, so the escalation advances every block regardless of who
         // (if anyone) is drawn to bid.
         SweepStuckBidderSignatures(recruitable, block.Index);
+        SweepBotReserveGuard(); // ND.10e (D-ND10e.3) — same per-block, single-writer discipline
 
         int count = DrawCasinoBotDonationCount();
         if (count == 0) return;
@@ -2655,10 +2878,16 @@ public partial class NetworkRoot : Node
         int hop = 0; // 0 = the slot's fairly-drawn first bot; >0 = D-ND6.9 affordability-cascade substitutes
         while (true)
         {
+            // D-ND10c.1 (2026-07-23) — the draw is restricted to ELIGIBLE bots: those holding at least one
+            // qualifying, AFFORDABLE pool with a nonzero roll probability. This reverses D-ND6.1 ("a bot
+            // keeps its full selection probability even when its own rules will produce no donation") —
+            // a slot is no longer burned on a bot that provably cannot act. Recomputed per hop, since a
+            // bid placed in slot 0 moves the leader, the tiers and the required amounts slot 1 will see.
             List<BotWalletRecord> candidates = BotWalletRegistry.MinerBots
                 .Where(b => !usedBotIds.Contains(b.NodeId) && !visitedThisSlot.Contains(b.NodeId))
+                .Where(b => HasEligibleBidOpportunity(b.NodeId, priorityTargets, fee, block.Timestamp, block.Index))
                 .ToList();
-            if (candidates.Count == 0) return null; // the cascade exhausted every bot — the slot yields nothing
+            if (candidates.Count == 0) return null; // no eligible bot left for this slot — it yields nothing
 
             BotWalletRecord record = candidates[Random.Shared.Next(candidates.Count)];
             visitedThisSlot.Add(record.NodeId);
@@ -2681,27 +2910,24 @@ public partial class NetworkRoot : Node
     // ND.6a — per-slot outcome of one bot's bidding pipeline. Only NothingAffordable cascades (D-ND6.9).
     private enum CasinoBotSlotOutcome { Donated, NoQualifyingTarget, NothingAffordable, RollDeclined, BroadcastFailed }
 
-    // ND.6a — one bot's full bidding pipeline for one donation slot (the saturation ladder, D-ND6.5…6.8):
-    //   1. Qualifying pools (D-ND6.7): every InAuction target EXCEPT pools where this bot holds a top-3
-    //      tracked slot (satisfied) or the smallest slot of a FULL pool (the self-eviction guard — its
-    //      own new bid would evict its own smallest donation, forfeiting the settlement refund already
-    //      secured as the auction stands, D-ND5.4). Both exclusions apply in every participation state.
-    //      (Satisfied subsumes the old rule 1: the leading bid is by construction the pool's tier 1.)
-    //   2. Bot-centric preference order (D-ND6.6): ascending count of the bot's OWN tracked slots
-    //      (0-participation pools first — the spread-wide priority), ties keeping priorityTargets'
-    //      soonest-to-expire-then-awaiting-first-bid order (stable OrderBy).
-    //   3. Half-spendable affordability walk (D-ND6.8): the first pool in that order whose required
-    //      amount + fee fits within spendable × MaxBidBalanceFraction is THE target — unaffordable pools
-    //      are skipped; if none fits, NothingAffordable (the only outcome that cascades).
-    //   4. ONE ladder roll (D-ND6.5), only for a participated target: ND.8d round-2 — the roll probability is
-    //      the SUM of the bot's TWO LOWEST slot re-bid probabilities (SumTwoLowestReBidProbabilities; ranked
-    //      by PROBABILITY, not tier, since tier 2 > tier 3), so a bot spread across multiple non-satisfied
-    //      slots re-bids harder; a satisfied slot's 0 caps the sum back to a single value. ND.8d round-3
-    //      EXCEPTION: a bot stuck at EXACTLY ONE tracked slot below the top-3 (tier 4-9) takes the MAX of
-    //      its mode rate and the escalating stuck-bidder probability (ComputeStuckEscalationProbabilityPercent) —
-    //      a non-regressive floor (§12.5.5 audit fix) that keeps early-rush's steep young-pool rate while still
-    //      escalating toward 100% the longer it stays stuck. A failed roll = no donation this slot, never
-    //      re-rolled. Unparticipated targets donate deterministically (no ladder).
+    // ND.10c (2026-07-23, D-ND10c.2/4) — one bot's full bidding pipeline for one donation slot:
+    //   1. Qualifying + affordable pools, each with its own roll probability — `BuildBotPoolOpportunities`
+    //      (the shared source of truth: same rules, same numbers the panel displays). Unchanged from ND.6:
+    //      pools where the bot is satisfied (D-ND8d.1/3) or self-eviction-guarded (D-ND6.7b) are excluded,
+    //      and the half-spendable cap (D-ND6.8) still bounds the ENTIRE outgoing amount.
+    //   2. PARALLEL ladder rolls (D-ND10c.2): EVERY affordable pool rolls its own probability this slot;
+    //      the pools that hit compete in a uniform tie-break, and the winner is bid. No hit ⇒ no donation
+    //      this slot, never re-rolled.
+    //
+    // What ND.10c replaced: the D-ND6.6 spread-wide-first ordering + D-ND6.8's "first affordable IS the
+    // target" walk + D-ND6.5's single ladder roll. That shape made a pool's carefully calibrated
+    // probability STRUCTURALLY UNREACHABLE whenever the walk stopped earlier (a bot holding slots in a
+    // pool always lost priority to any 0-slot pool), which is what the ND.10b panel exposed. It also
+    // retires ND.10a's Fix A (escalation-boosted re-selection): with every pool rolling every slot,
+    // reachability is structural and the queue-jump has nothing left to fix. The escalation survives as
+    // the `max(mode, escalation)` FLOOR inside BuildBotPoolOpportunities, fed by the per-block Fix-B
+    // sweep (`SweepStuckBidderSignatures`), which is now the single writer of `_stuckBidderSignatures`.
+    // Unparticipated pools still bid deterministically (their probability is 100 by construction).
     private static CasinoBotSlotOutcome TryBuildCasinoBotBid(List<NonMinerDonationSummary> priorityTargets, NodeAgent sender, decimal fee, long nowMs, int currentBlockIndex, out Transaction? tx, out CasinoBotBidTrace trace)
     {
         tx = null;
@@ -2710,132 +2936,93 @@ public partial class NetworkRoot : Node
         decimal bidBudgetCap = Math.Round(spendable * MaxBidBalanceFraction, 8);
         trace = new CasinoBotBidTrace { FeeBtc = fee, SpendableBtc = spendable, BidBudgetCapBtc = bidBudgetCap };
 
-        // Steps 1+2 — qualifying pools with this bot's own slot stats (tiers are 1-based positions in
-        // the pool's value order; a stable sort keeps ties in arrival order — consistent with ND.5's
-        // tie-never-evicts).
-        var qualifying = new List<(NonMinerDonationSummary target, int ownSlotCount, int bestTier, int occupiedSlots, List<int> ownTiers)>();
-        foreach (NonMinerDonationSummary target in priorityTargets)
+        List<BotPoolOpportunity> all =
+            BuildBotPoolOpportunities(priorityTargets, botAddress, sender.NodeId, fee, bidBudgetCap, nowMs, currentBlockIndex);
+        List<BotPoolOpportunity> biddable = all.Where(o => o.Exclusion == null).ToList();
+        trace.QualifyingPools = biddable.Count;
+        if (biddable.Count == 0)
         {
-            List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
-            var ownTiers = new List<int>();
-            for (int i = 0; i < slotsByValue.Count; i++)
-            {
-                if (slotsByValue[i].DonorAddress == botAddress) ownTiers.Add(i + 1);
-            }
-
-            if (ownTiers.Count > 0 && IsBidderSatisfied(ownTiers[0], ownTiers.Count)) continue; // D-ND8d.1/3 — satisfied (tier 1 always; tier 3 at ≥2 own bids; ownTiers is ascending)
-            if (slotsByValue.Count >= MaxTrackedDonations && ownTiers.Contains(slotsByValue.Count)) continue; // D-ND6.7b — self-eviction guard
-
-            // ND.6d — slotsByValue.Count (the pool's current occupied slots) selects early-rush (<7) vs normal (≥7) for the roll below.
-            qualifying.Add((target, ownTiers.Count, ownTiers.Count == 0 ? 0 : ownTiers[0], slotsByValue.Count, ownTiers));
-        }
-        if (qualifying.Count == 0) return CasinoBotSlotOutcome.NoQualifyingTarget;
-
-        // Fix A (ND.10a, 2026-07-22) — escalation-boosted RE-SELECTION. Under the pure spread-wide
-        // (ownSlotCount-ascending) order a bot with a lone below-top-3 slot keeps seeding fresh 0-slot pools
-        // and never re-contests the stuck one, so its escalation never actually fires (the bot_4/BitInstant
-        // finding, §13 audit). Give each such pool an escalating CHANCE to jump the queue: roll its current
-        // escalation (kept live by the Fix-B per-block sweep); the FIRST hit is contested outright this slot,
-        // skipping the ladder re-roll (the escalation roll already decided to bid). None hits ⇒ order is the
-        // unchanged spread-wide walk. An unaffordable pick simply falls through to the normal walk.
-        NonMinerDonationSummary? escalationPick = null;
-        int escalationPickPercent = 0;
-        foreach ((NonMinerDonationSummary target, int ownSlotCount, int bestTier, int _, List<int> _) in qualifying)
-        {
-            if (ownSlotCount != 1 || bestTier <= 3) continue;
-            int esc = PeekStuckEscalationProbabilityPercent(target.NonMinerNodeId, sender.NodeId, bestTier, currentBlockIndex);
-            if (esc > 0 && Random.Shared.Next(100) < esc)
-            {
-                escalationPick = target;
-                escalationPickPercent = esc;
-                break;
-            }
+            // Both defensive since D-ND10c.1 pre-filters ineligible bots out of the draw; the distinction is
+            // preserved so the trace still says WHICH kind of nothing it was if one ever slips through.
+            return all.Any(o => o.Exclusion == ExclusionPricedOut)
+                ? CasinoBotSlotOutcome.NothingAffordable
+                : CasinoBotSlotOutcome.NoQualifyingTarget;
         }
 
-        // Step 3 — the affordability walk over the bot-centric order (the escalation pick, if any, first).
-        IEnumerable<(NonMinerDonationSummary target, int ownSlotCount, int bestTier, int occupiedSlots, List<int> ownTiers)> ordered =
-            escalationPick == null
-                ? qualifying.OrderBy(q => q.ownSlotCount)
-                : qualifying.OrderByDescending(q => q.target == escalationPick).ThenBy(q => q.ownSlotCount);
-        foreach ((NonMinerDonationSummary target, int ownSlotCount, int bestTier, int occupiedSlots, List<int> ownTiers) in ordered)
+        // Step 2 — the parallel rolls. Each pool's probability is mode-aware (early-rush / urgency /
+        // normal), summed over the bot's two lowest slots (ND.8d round 2), floored by the stuck escalation
+        // for a lone slot (now including tiers 2-3, D-ND10c.3), or a flat 100 when unparticipated.
+        var hits = new List<BotPoolOpportunity>();
+        foreach (BotPoolOpportunity opportunity in biddable)
         {
-            decimal leadingAmount = target.LeadingBidUnixMs == 0 ? 0m : target.LeadingDonorTotal;
-            decimal requiredAmount = target.LeadingBidUnixMs == 0 ? MinBidBtc : leadingAmount + RaiseMin(leadingAmount);
-            if (requiredAmount + fee > bidBudgetCap) continue; // D-ND6.8 — unaffordable, keep walking
-
-            // THE target found — from here every outcome (roll fail included) refers to this pool.
-            trace.TargetNodeId = target.NonMinerNodeId;
-            trace.OwnTiersInTarget = string.Join("|", ownTiers);
-            trace.RequiredBtc = requiredAmount;
-
-            bool escalationCommitted = escalationPick != null && ReferenceEquals(target, escalationPick);
-
-            // Step 4 — the ladder roll (ND.6d mode-aware; ND.6e urgency inside the final 7 window days). ND.8d
-            // round-2 refinement: the roll probability is the SUM of the bot's two LOWEST slot probabilities
-            // (SumTwoLowestReBidProbabilities) — not the single best-tier value — so a bot spread across
-            // multiple non-satisfied slots re-bids harder. A participated pool always has a leading bid, so
-            // WindowCloseUnixMs is set here.
-            if (escalationCommitted)
-            {
-                // Fix A — the escalation roll (above) already decided to bid this stuck pool; record it and
-                // skip the ladder re-roll (no double-roll). The Fix-B sweep owns the signature this block.
-                trace.RolledTier = bestTier;
-                trace.RolledProbabilityPercent = escalationPickPercent;
-            }
-            else if (ownSlotCount > 0)
-            {
-                // ND.8d round 3 — ALWAYS update the stuck-bidder signal for this (target, bot) pair, even
-                // on a multi-slot evaluation, so a LATER transition to single-slot (via eviction of the
-                // bot's OTHER slot — not just a rank-push on the surviving one) is correctly detected as a
-                // fresh "since" point rather than reaching back to the surviving slot's own, possibly old,
-                // donation timestamp. (The call is unconditional for that edge-triggered side effect; its
-                // returned value is only nonzero for the lone non-top-3 slot case.) Since ND.10a Fix B this
-                // is redundant with the per-block sweep on most blocks, but harmless (matching signature ⇒
-                // no-op) and still the source of `stuckProbability` for the max() below.
-                int stuckProbability = ComputeStuckEscalationProbabilityPercent(target, sender.NodeId, ownSlotCount, bestTier, currentBlockIndex);
-                // The pool's mode-appropriate rate (early-rush / urgency / normal) — the round-2 sum, and
-                // for a single slot simply that slot's mode rate.
-                int modeProbability = SumTwoLowestReBidProbabilities(ownTiers, occupiedSlots, IsAuctionInUrgencyWindow(target.WindowCloseUnixMs, nowMs), ownSlotCount);
-                // §12.5.5 round-3 audit fix (2026-07-21) — for a lone below-top-3 slot the escalation is a
-                // FLOOR ON TOP of the mode rate (max), never a REPLACEMENT: in early-rush pools the flat
-                // NORMAL base is far below the early-rush rate the bot would otherwise roll, so replacing it
-                // outright suppressed young-pool bidding (the DeepBit stagnation). max() keeps early-rush's
-                // steep young-pool aggression AND still escalates a genuinely stuck bot toward 100%.
-                int probabilityPercent = ownSlotCount == 1 && bestTier > 3
-                    ? Math.Max(modeProbability, stuckProbability)
-                    : modeProbability;
-                if (probabilityPercent <= 0)
-                    return CasinoBotSlotOutcome.RollDeclined; // defensive — the satisfied filter (tier 1, tier 3 at ≥2 bids) and the tier-10 self-eviction guard already excluded every all-0 case above
-                trace.RolledTier = bestTier;
-                trace.RolledProbabilityPercent = probabilityPercent;
-                if (Random.Shared.Next(100) >= probabilityPercent)
-                    return CasinoBotSlotOutcome.RollDeclined;
-            }
-
-            // D-ND4b.6: a raise coin-flips between the two ends of the raise band; a first donation is
-            // pinned at the fixed floor. ND.6a: the principal is clamped under the half-spendable cap —
-            // the RaiseMax end can exceed it even when the required RaiseMin end fits (the clamp can
-            // never drop below requiredAmount, which the affordability gate above already fitted).
-            decimal targetPrincipal = target.LeadingBidUnixMs == 0
-                ? MinBidBtc
-                : (Random.Shared.NextDouble() < 0.5
-                    ? leadingAmount + RaiseMin(leadingAmount)
-                    : leadingAmount + RaiseMax(leadingAmount));
-            targetPrincipal = Math.Min(targetPrincipal, Math.Round(bidBudgetCap - fee, 8));
-
-            // D-ND4b.11: additive random tail — headroom now measured against the D-ND6.8 cap, not the
-            // full spendable balance, so `required + tail + fee ≤ spendable × MaxBidBalanceFraction`
-            // holds for the ENTIRE outgoing amount (OQ-ND6.6's resolution).
-            decimal headroom = Math.Max(0m, bidBudgetCap - fee - targetPrincipal);
-            decimal tail = Math.Round((decimal)Random.Shared.NextDouble() * Math.Min(targetPrincipal, headroom), 8);
-            decimal amount = Math.Round(targetPrincipal + tail, 8);
-            trace.AmountBtc = amount;
-
-            tx = BuildAndBroadcastUtxoSpend(sender, target.NonMinerAddress, amount, fee, null);
-            return tx != null ? CasinoBotSlotOutcome.Donated : CasinoBotSlotOutcome.BroadcastFailed;
+            if (Random.Shared.Next(100) < opportunity.ProbabilityPercent) hits.Add(opportunity);
         }
+        trace.HitPools = hits.Count;
+        if (hits.Count == 0) return CasinoBotSlotOutcome.RollDeclined;
 
-        return CasinoBotSlotOutcome.NothingAffordable;
+        // Uniform tie-break among the hits — an unparticipated pool (always hits) therefore no longer
+        // monopolizes the slot by ordering; it simply shares it fairly with whatever else hit.
+        BotPoolOpportunity pick = hits[Random.Shared.Next(hits.Count)];
+        trace.ChosenAmongHits = hits.Count;
+
+        NonMinerDonationSummary target = pick.Target;
+        decimal leadingAmount = pick.LeadingAmount;
+        trace.TargetNodeId = target.NonMinerNodeId;
+        trace.OwnTiersInTarget = string.Join("|", pick.OwnTiers);
+        trace.RequiredBtc = pick.RequiredAmount;
+        trace.RolledTier = pick.BestTier;
+        trace.RolledProbabilityPercent = pick.ProbabilityPercent;
+
+        // D-ND4b.6: a raise coin-flips between the two ends of the raise band; a first donation is
+        // pinned at the fixed floor. ND.6a: the principal is clamped under the half-spendable cap —
+        // the RaiseMax end can exceed it even when the required RaiseMin end fits (the clamp can
+        // never drop below requiredAmount, which the affordability filter already fitted).
+        decimal targetPrincipal = target.LeadingBidUnixMs == 0
+            ? OpeningBidFloorBtcAt(nowMs)
+            : (Random.Shared.NextDouble() < 0.5
+                ? leadingAmount + RaiseMin(leadingAmount, nowMs)
+                : leadingAmount + RaiseMax(leadingAmount, nowMs));
+        targetPrincipal = Math.Min(targetPrincipal, Math.Round(bidBudgetCap - fee, 8));
+
+        // D-ND4b.11: additive random tail — headroom measured against the D-ND6.8 cap, not the full
+        // spendable balance, so `required + tail + fee ≤ spendable × MaxBidBalanceFraction` holds for
+        // the ENTIRE outgoing amount (OQ-ND6.6's resolution).
+        decimal headroom = Math.Max(0m, bidBudgetCap - fee - targetPrincipal);
+        decimal tail = Math.Round((decimal)Random.Shared.NextDouble() * Math.Min(targetPrincipal, headroom), 8);
+        decimal amount = Math.Round(targetPrincipal + tail, 8);
+        trace.AmountBtc = amount;
+
+        tx = BuildAndBroadcastUtxoSpend(sender, target.NonMinerAddress, amount, fee, null);
+        return tx != null ? CasinoBotSlotOutcome.Donated : CasinoBotSlotOutcome.BroadcastFailed;
+    }
+
+    // D-ND10c.1 — the eligibility test behind the restricted bot draw: does this bot hold ANY qualifying,
+    // affordable pool with a nonzero roll probability? Builds the same opportunity list the pipeline and
+    // the panel use, so all three agree by construction. Cheap enough to run per candidate per slot
+    // (≤ 4 bots × ≤ 2 slots per block, one spendable-balance read each — the UTXO set is chain-cached).
+    private static bool HasEligibleBidOpportunity(string botNodeId, List<NonMinerDonationSummary> pools, decimal fee, long nowMs, int currentBlockIndex)
+    {
+        if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return false;
+        decimal cap = Math.Round(bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress) * MaxBidBalanceFraction, 8);
+        return BuildBotPoolOpportunities(pools, bot.WalletAddress, botNodeId, fee, cap, nowMs, currentBlockIndex)
+            .Any(o => o.Exclusion == null);
+    }
+
+    // ND.10d (2026-07-23) — WHY a bot's chance in this pool is zero, for the AuctioningCompanyDetails panel:
+    // "satisfied" (top-tier / leader), "guard" (self-eviction, D-ND6.7b), "priced out" (the raise no longer
+    // fits the half-spendable cap — the DESIGNED economic terminator of a mature auction, §22.10), or "" when
+    // the bot genuinely can bid (a zero on screen is then just rounding, and the panel prints "<0.01%").
+    // Single pool × single bot, so it costs one spendable-balance read; called only on a 0.00% row.
+    public string BotPoolExclusionNote(NonMinerDonationSummary pool, string botNodeId)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return string.Empty;
+        Block tip = GetPlayerLatestBlock();
+        decimal fee = NetworkFeePolicy.MedianFeeAt(tip.Timestamp);
+        decimal cap = Math.Round(bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress) * MaxBidBalanceFraction, 8);
+        BotPoolOpportunity? opportunity =
+            BuildBotPoolOpportunities([pool], bot.WalletAddress, botNodeId, fee, cap, tip.Timestamp, tip.Index).FirstOrDefault();
+        return opportunity?.Exclusion ?? string.Empty;
     }
 
     // ND.6b — per-visit detail for the casino_bot_bid_trace.csv row (filled progressively as
@@ -2851,6 +3038,11 @@ public partial class NetworkRoot : Node
         public decimal FeeBtc;
         public decimal SpendableBtc;
         public decimal BidBudgetCapBtc;
+        // D-ND10c.6 — the parallel-roll shape: how many pools rolled, how many hit, and how many the
+        // uniform tie-break drew from (= HitPools when a pick happened, 0 when nothing hit).
+        public int QualifyingPools;
+        public int HitPools;
+        public int ChosenAmongHits;
     }
 
     private const string CasinoBotBidTracePath = "user://logs/casino_bot_bid_trace.csv";
@@ -2876,13 +3068,14 @@ public partial class NetworkRoot : Node
             if (file == null) return;
 
             if (exists) file.SeekEnd();
-            else file.StoreLine("blockTimestampMs,blockIndex,slot,hop,botNodeId,outcome,targetNodeId,ownTiersInTarget,rolledTier,rolledProbabilityPercent,requiredBtc,amountBtc,feeBtc,spendableBtc,bidBudgetCapBtc");
+            else file.StoreLine("blockTimestampMs,blockIndex,slot,hop,botNodeId,outcome,targetNodeId,ownTiersInTarget,rolledTier,rolledProbabilityPercent,requiredBtc,amountBtc,feeBtc,spendableBtc,bidBudgetCapBtc,qualifyingPools,hitPools,chosenAmongHits");
 
             file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10:F8},{11:F8},{12:F8},{13:F8},{14:F8}",
+                "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10:F8},{11:F8},{12:F8},{13:F8},{14:F8},{15},{16},{17}",
                 block.Timestamp, block.Index, slot, hop, botNodeId, CasinoBotSlotOutcomeLabel(outcome),
                 trace.TargetNodeId, trace.OwnTiersInTarget, trace.RolledTier, trace.RolledProbabilityPercent,
-                trace.RequiredBtc, trace.AmountBtc, trace.FeeBtc, trace.SpendableBtc, trace.BidBudgetCapBtc));
+                trace.RequiredBtc, trace.AmountBtc, trace.FeeBtc, trace.SpendableBtc, trace.BidBudgetCapBtc,
+                trace.QualifyingPools, trace.HitPools, trace.ChosenAmongHits));
         }
         catch (Exception e)
         {
@@ -2900,9 +3093,24 @@ public partial class NetworkRoot : Node
         _ => "unknown",
     };
 
-    // D-ND4b.6 formula (reproduces both of the developer's worked examples — step14 plan §3.4 ND.4b).
-    private static decimal RaiseMin(decimal leadingBid) => Math.Max(MinBidBtc, 0.10m * leadingBid);
-    private static decimal RaiseMax(decimal leadingBid) => Math.Max(2m * MinBidBtc, 0.20m * leadingBid);
+    // ND.10e (D-ND10e.1) — the live, price-anchored opening floor for a pool that has NO leading bid yet:
+    // always worth $0.10, capped at 1 BTC (which binds while BTC trades under $0.10), never below one
+    // satoshi. Takes the timestamp of the bid being judged — the chain-replayed auction ledger evaluates
+    // each historical first bid against the floor that applied on ITS day, so a replay is deterministic.
+    // No market data (pre-Market-Birth, or the service absent) falls back to the 1 BTC cap.
+    private static decimal OpeningBidFloorBtcAt(long unixMs)
+    {
+        decimal? priceUsd = _marketData?.GetEffectivePriceUsd(DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime);
+        if (priceUsd is not { } usd || usd <= 0m) return MaxOpeningBidBtc;
+        decimal floorBtc = Scripts.Finance.Money.Normalize(OpeningBidUsdValue / usd);
+        return Math.Clamp(floorBtc, OneSatoshi, MaxOpeningBidBtc);
+    }
+
+    // D-ND4b.6 formula (worked examples: step14 plan §3.4 ND.4b), band cut to 5-10% at ND.10e (D-ND10e.2).
+    // The absolute floor term is the live opening floor, so an early tiny leader still demands a
+    // meaningful jump instead of a satoshi-sized one.
+    private static decimal RaiseMin(decimal leadingBid, long nowMs) => Math.Max(OpeningBidFloorBtcAt(nowMs), RaiseMinFraction * leadingBid);
+    private static decimal RaiseMax(decimal leadingBid, long nowMs) => Math.Max(2m * OpeningBidFloorBtcAt(nowMs), RaiseMaxFraction * leadingBid);
 
     // ND.4b (D-ND4b.9) — the live "minimum to compete" figure for the player's wallet send panel: null
     // unless the address is a currently-recruitable (InAuction) non-miner, in which case it's the exact
@@ -2915,8 +3123,12 @@ public partial class NetworkRoot : Node
             .FirstOrDefault(s => s.NonMinerAddress == address);
         if (entry is null || entry.Status != NonMinerAuctionStatus.InAuction) return null;
         // ND.4d — always the PLAYER's own floor (this is only ever called for the player's wallet send
-        // panel): OneSatoshi over the leader, not the casino-bots' RaiseMin/RaiseMax formula.
-        return entry.LeadingBidUnixMs == 0 ? MinBidBtc : entry.LeadingDonorTotal + OneSatoshi;
+        // panel): OneSatoshi over the leader, not the casino-bots' RaiseMin/RaiseMax formula. ND.10e — an
+        // unbid pool quotes the live price-anchored opening floor (worth $0.10, capped 1 BTC), so the
+        // wallet's "minimum to compete" moves with the market exactly as the ledger's own gate does.
+        return entry.LeadingBidUnixMs == 0
+            ? OpeningBidFloorBtcAt(GetPlayerLatestBlockTimestampMsStatic())
+            : entry.LeadingDonorTotal + OneSatoshi;
     }
 
     // ND.8d.6 (D-ND8d.6, 2026-07-20) — the wallet's closing-soon threshold: a bid inside the target
@@ -3267,6 +3479,31 @@ public partial class NetworkRoot : Node
             || (player.ReceiveWallet?.OwnedAddresses.Contains(address) ?? false);
     }
 
+    // ND.10f (2026-07-23) — the PROJECTED stock class the player would mint if this STILL-OPEN auction
+    // closed at the current block: NST when the player occupies any tier ≤ NstTopTierCount of the tracked
+    // pool, PST when it holds only lower tiers, None when it holds no tracked slot at all. Pure, read-only
+    // and side-effect-free — a "what would I get right now" projection for the auction-time border colours
+    // (BlockExplorer's Enroll Mode rows + the AuctioningCompanyDetails page frame), mirroring the founded
+    // companies' holding-keyed gold/silver/black. Deliberately reuses FoundCompany's own two inputs — the
+    // value-descending tracked-pool ranking and NstTopTierCount — so the live projection and the real mint
+    // cannot diverge. It is a PROJECTION, not a promise: every later bid can re-order the pool.
+    public PlayerAuctionStake GetPlayerProjectedStake(NonMinerDonationSummary summary)
+    {
+        EnsureInitialized();
+        int tier = 1;
+        var stake = PlayerAuctionStake.None;
+        foreach (TrackedDonation d in summary.TrackedDonations.OrderByDescending(d => d.AmountBtc))
+        {
+            if (IsPlayerBidderAddress(d.DonorAddress))
+            {
+                if (tier <= NstTopTierCount) return PlayerAuctionStake.Nst; // best possible — stop early
+                stake = PlayerAuctionStake.Pst;
+            }
+            tier++;
+        }
+        return stake;
+    }
+
     // ND.8b.1 — one-line company identity for UI display (BlockExplorer's Enroll Mode,
     // AuctioningCompanyDetails): "Display Name (CB#, market_category)". Falls back to the legacy
     // NodeId if this non-miner has no roster match (should never happen — see the summary's own
@@ -3505,7 +3742,8 @@ public partial class NetworkRoot : Node
             // block are evaluated against the SAME starting leader, never against each other in
             // sequence — the D-ND4b.11 same-block tie-break: both execute, only the higher wins, exact
             // ties broken by earliest seq via the group's own iteration order). Each group's floor is
-            // the current leader's principal + its minimum raise (MinBidBtc if there is no leader yet);
+            // the current leader's principal + its minimum raise (the ND.10e price-anchored opening
+            // floor when there is no leader yet);
             // the first bid in the group to clear a strictly-higher floor than the running best becomes
             // the new leader. A gap of more than AuctionWindowMs between the leader's own bid and the
             // next candidate group means the window ALREADY closed there — permanently (D-ND4b.12): no
@@ -3540,12 +3778,14 @@ public partial class NetworkRoot : Node
                     // ND.4d — the floor a candidate must clear depends on WHO is bidding, not just on
                     // the current leader: the player only needs to clear the leader by one satoshi;
                     // everyone else (the casino-bots) still needs the full RaiseMin jump. Pre-leader,
-                    // both start at the same fixed MinBidBtc opening floor (D-ND4b.5, unaffected).
+                    // both start at the same price-anchored opening floor (D-ND10e.1, superseding D-ND4b.5).
+                    // ND.10e (D-ND10e.1) — the pre-leader opening floor is the price-anchored one, judged
+                    // at THIS bid group's own timestamp (deterministic on replay), not a flat 0.1 BTC.
                     decimal floor = !leader.HasValue
-                        ? MinBidBtc
+                        ? OpeningBidFloorBtcAt(group.Key)
                         : playerAddresses.Contains(d.donor)
                             ? leader.Value.amount + OneSatoshi
-                            : leader.Value.amount + RaiseMin(leader.Value.amount);
+                            : leader.Value.amount + RaiseMin(leader.Value.amount, group.Key);
                     if (d.amount < floor) continue;
                     if (best is null || d.amount > best.Value.amount)
                     {
@@ -3560,8 +3800,8 @@ public partial class NetworkRoot : Node
 
             if (!leader.HasValue)
             {
-                // No bid ever cleared even the initial MinBidBtc floor (the casino-bot cycle always
-                // meets it — this covers a player sending less than 0.1 BTC as their very first send).
+                // No bid ever cleared even the opening floor (the casino-bot cycle always
+                // meets it — this covers a player sending less than that floor as their very first send).
                 summary.Status = NonMinerAuctionStatus.InAuction;
                 result.Add(summary);
                 continue;
@@ -4750,6 +4990,16 @@ public sealed class CompanyShareHolding
     public string HolderId { get; set; } = string.Empty;
     public decimal Nst { get; set; }
     public decimal Pst { get; set; }
+}
+
+// ND.10f — the stock class the player would mint if a STILL-OPEN auction closed at the current block; the
+// auction-time counterpart of a founded company's CompanyShareHolding class. See
+// NetworkRoot.GetPlayerProjectedStake. Purely a UI signal — nothing mechanical reads it.
+public enum PlayerAuctionStake
+{
+    None,
+    Pst,
+    Nst
 }
 
 // ND.8b.3 (D-ND8.17/18/19b) — one founded company's live governance state: applied reserve mix + market

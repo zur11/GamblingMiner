@@ -38,6 +38,8 @@ public partial class BlockExplorer : Control
 
     // ND.9b (extended 2026-07-22) — the same holding-keyed border colours CompanyDetails uses, applied
     // here around each FOUNDED company's title: gold when the player holds NST, silver PST, black neither.
+    // ND.10f (2026-07-23) — the identical three colours now also frame each STILL-OPEN auction pool's
+    // title, keyed on the PROJECTED stake (what would be minted if the pool closed at the current block).
     private static readonly Color HoldingGold = new(0.85f, 0.65f, 0.13f);
     private static readonly Color HoldingSilver = new(0.75f, 0.75f, 0.78f);
     private static readonly Color HoldingBlack = new(0.05f, 0.05f, 0.05f);
@@ -169,7 +171,15 @@ public partial class BlockExplorer : Control
                 $"{NetworkRoot.DescribeCompany(s)}  | recv {s.TotalReceived:F8} ({s.DonorCount} donor)  | {leader}  | {clock}");
 
             var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
-            row.AddChild(new Label { Text = line, SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass });
+
+            // ND.10f (2026-07-23) — the SAME gold/silver/black scheme the founded rows below use, extended
+            // to a still-OPEN auction as a live PROJECTION: if this pool closed at the current block, gold =
+            // the player would mint NST (it holds a top-3 tier), silver = PST only (lower tiers), black = no
+            // tracked slot at all, so nothing would be minted. Every later bid can re-order the pool, so this
+            // is a running forecast, never a promise. Same threshold/ranking as FoundCompany by construction
+            // (NetworkRoot.GetPlayerProjectedStake) — the colour cannot drift from the real mint.
+            var rowLabel = new Label { Text = line, SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
+            row.AddChild(BuildTitlePanel(rowLabel, StakeBorderColor(_networkRoot.GetPlayerProjectedStake(s))));
 
             // D-ND5.2 — the details button appears ONLY once this non-miner has received at least one
             // qualifying bid (a leader exists); a never-bid-on entry has nothing to show yet.
@@ -227,27 +237,7 @@ public partial class BlockExplorer : Control
                 Color borderColor = playerHolding is { Nst: > 0m } ? HoldingGold
                     : playerHolding is { Pst: > 0m } ? HoldingSilver
                     : HoldingBlack;
-                var titleStyle = new StyleBoxFlat
-                {
-                    BgColor = new Color(0, 0, 0, 0),
-                    BorderColor = borderColor,
-                    BorderWidthLeft = 2,
-                    BorderWidthTop = 2,
-                    BorderWidthRight = 2,
-                    BorderWidthBottom = 2,
-                    CornerRadiusTopLeft = 4,
-                    CornerRadiusTopRight = 4,
-                    CornerRadiusBottomLeft = 4,
-                    CornerRadiusBottomRight = 4,
-                    ContentMarginLeft = 8,
-                    ContentMarginRight = 8,
-                    ContentMarginTop = 3,
-                    ContentMarginBottom = 3
-                };
-                var titlePanel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
-                titlePanel.AddThemeStyleboxOverride("panel", titleStyle);
-                titlePanel.AddChild(rowLabel);
-                row.AddChild(titlePanel);
+                row.AddChild(BuildTitlePanel(rowLabel, borderColor));
 
                 string nonMinerAddress = s.NonMinerAddress;
                 detailsBtn.Pressed += () => OnOpenCompanyDetails(nonMinerAddress);
@@ -255,6 +245,43 @@ public partial class BlockExplorer : Control
                 _enrollModeRowsVBox.AddChild(row);
             }
         }
+    }
+
+    // ND.10f — the projected-stake → border-colour mapping, shared by the open-auction rows above and (by
+    // the same three constants) the founded rows: gold NST, silver PST, black nothing.
+    private static Color StakeBorderColor(PlayerAuctionStake stake) => stake switch
+    {
+        PlayerAuctionStake.Nst => HoldingGold,
+        PlayerAuctionStake.Pst => HoldingSilver,
+        _ => HoldingBlack
+    };
+
+    // ND.10f — hoisted from the founded-rows loop (ND.9b) so both row kinds build an identical bordered
+    // title: a transparent-centre StyleBoxFlat around the label, mouse-transparent so the wheel still
+    // reaches the enclosing scroll (Ch. 29).
+    private static PanelContainer BuildTitlePanel(Label titleLabel, Color borderColor)
+    {
+        var titleStyle = new StyleBoxFlat
+        {
+            BgColor = new Color(0, 0, 0, 0),
+            BorderColor = borderColor,
+            BorderWidthLeft = 2,
+            BorderWidthTop = 2,
+            BorderWidthRight = 2,
+            BorderWidthBottom = 2,
+            CornerRadiusTopLeft = 4,
+            CornerRadiusTopRight = 4,
+            CornerRadiusBottomLeft = 4,
+            CornerRadiusBottomRight = 4,
+            ContentMarginLeft = 8,
+            ContentMarginRight = 8,
+            ContentMarginTop = 3,
+            ContentMarginBottom = 3
+        };
+        var titlePanel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
+        titlePanel.AddThemeStyleboxOverride("panel", titleStyle);
+        titlePanel.AddChild(titleLabel);
+        return titlePanel;
     }
 
     private void OnOpenAuctioningCompanyDetails(string nonMinerAddress)
