@@ -1305,8 +1305,8 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 | ND.10d | Zero-truth audit — the per-slot label ignored affordability ("100%" beside a 0% real chance); shared exclusion vocabulary + reasoned zeros in the panel | technical / UI truth | ✅ BUILT 2026-07-23 — in-game verification + commit pending |
 | ND.10e | Bot treasury sustainability — price-anchored opening bid, 5–10% raise band, BTC reserve guard, fee-batched dividend auto-claims | technical / economy | ✅ BUILT 2026-07-23 — in-game verification + commit pending |
 | ND.10f | Projected-stake border colours on OPEN auction pools — ND.9b's gold/silver/black extended from founded companies to in-auction pools | UI (display-only) | ✅ BUILT & VERIFIED 2026-07-23 |
-| ND.10g | Company display names replace `non_miner_#` across every UI-facing surface (send-panel selectors, BlockExplorer balances/mining, wallet history) | UI (display-only) | ⏳ SPEC READY 2026-07-23 — Q&A resolved, ready to implement |
-| ND.10h | The founded-company action button as a four-state pending-work signal (red vote / green dividends / mocha both / black neither) | UI (display-only) | ⏳ SPEC READY 2026-07-23 — Q&A resolved, ready to implement |
+| ND.10g | Company display names replace `non_miner_#` across every UI-facing surface (send-panel selectors, BlockExplorer balances/mining, wallet history) | UI (display-only) | ✅ BUILT & VERIFIED 2026-07-23 |
+| ND.10h | The founded-company action button as a four-state pending-work signal (red vote / green dividends / mocha both / black neither) | UI (display-only) | ✅ BUILT & VERIFIED 2026-07-23 |
 | _(pending — the developer will describe further UI + technical needs)_ | | | |
 
 ### 14.2 ND.10a — the stuck-bidder escalation must actually engage (Fix A + Fix B)
@@ -1531,7 +1531,7 @@ No new persisted state, no `WorldFormatVersion` bump, no checkpoint/delete-list 
 
 **Status: ✅ BUILT & VERIFIED 2026-07-23 — `dotnet build` 0 warnings / 0 errors; developer in-game verification PASSED (open auction pools frame gold/silver/black by projected stake; founded rows unchanged).**
 
-### 14.8 ND.10g — Company display names replace `non_miner_#` everywhere UI-facing (⏳ SPEC READY 2026-07-23 — Q&A resolved, ready to implement)
+### 14.8 ND.10g — Company display names replace `non_miner_#` everywhere UI-facing (✅ BUILT & VERIFIED 2026-07-23)
 
 **Player intent (2026-07-23).** ND.8b.1 gave all 40 auction non-miners real historical company identities (`Data/Companies/company_roster.csv` → `CompanyRoster`), and the auction/company screens use them — but only there. Everywhere else the raw internal id still leaks: **the BTC wallets' recipient selectors** (you send BTC to `non_miner_7`, not to Mt. Gox) and **BlockExplorer's balances / mining list**, plus wallet transaction histories. Replace the id with the company name on every surface the player reads.
 
@@ -1568,9 +1568,11 @@ No new persisted state, no `WorldFormatVersion` bump, no checkpoint/delete-list 
 
 **Verify in-game:** (1) open the BTC wallet send panel — recipients read as company names, and only companies already introduced at the current game date are listed (count them against Auction / Company Mode's "Not yet introduced" figure); (2) send BTC to one and confirm the wallet history, the Block Explorer transaction lookup, and the auction rows all name the same company; (3) BlockExplorer's Network Status still shows the ⛏ rate marker on actively-mining nodes (the re-parse regression); (4) the node selector's transaction/address lookups still resolve (the id-as-data regression); (5) `casino_bot_bid_trace.csv` still keys on `non_miner_#` and its rows are still cross-referenceable against the DEV lists.
 
-**Status: ⏳ SPEC READY 2026-07-23 — Q&A resolved (Q1 name+id in DEV / name alone elsewhere; Q2 hide un-introduced). Not yet implemented.**
+**Build notes (2026-07-23).** Two shared accessors carry the whole subphase rather than per-screen edits: **`GetIntroducedNonMinerAddresses()`** (the D-ND10g.3 filter) and **`GetSendableBotTargets()`** — the ONE recipient list all four send panels now build their bot dropdown from, so the naming rule and the introduced-only filter live in a single place instead of four. The `IsMinerNode` flag turned out to be exactly the discriminator needed: it is `false` only for the 40 auction non-miners (**cast miners register with `IsMinerNode: true`**), so the filter needs no second list lookup. Both spec'd regressions were real and are fixed as designed — `GetNodeStatusLines` now returns `(nodeId, line)` pairs (the ⛏ mining-rate marker no longer re-parses a formatted string) and `BlockExplorer` carries `_selectorNodeIds` parallel to the option items with a `SelectedLookupNodeId()` accessor (the three lookup handlers no longer read a node id out of `GetItemText`). The `DescribeAddress` call-site audit came back clean: all 8 call sites are string interpolation into UI text, none keys a dictionary or compares against a node id.
 
-### 14.9 ND.10h — The founded-company action button as a four-state pending-work signal (⏳ SPEC READY 2026-07-23 — Q&A resolved, ready to implement)
+**Status: ✅ BUILT & VERIFIED 2026-07-23 — `dotnet build` 0 warnings / 0 errors; developer in-game verification PASSED (companies named in the send selectors and BlockExplorer lists, introduced-only filter correct, ⛏ marker and node-selector lookups intact). Commit pending.**
+
+### 14.9 ND.10h — The founded-company action button as a four-state pending-work signal (✅ BUILT & VERIFIED 2026-07-23)
 
 **Player intent (2026-07-23).** In BlockExplorer's Auction / Company Mode, a founded company's row button reads `Details →` and turns **red** with `Vote →` when that company's board vote is waiting on the player (§22.12 — the vote that PAUSES the game). Keep that, and extend it into a **four-state signal that also covers unclaimed dividends**, so one glance down the founded list says exactly what work is outstanding and of which kind:
 
@@ -1601,5 +1603,7 @@ No new persisted state, no `WorldFormatVersion` bump, no checkpoint/delete-list 
 
 **Verify in-game:** with a founded company where the player holds stock — (1) let a board vote open ⇒ red `Vote →` (as today) if nothing is claimable; (2) let a dividend accrue past the fee with the vote still open ⇒ mocha `Vote →`; (3) cast the ballot without claiming, return to BlockExplorer ⇒ green `Claim →`; (4) claim ⇒ normal `Details →` with a black border; (5) claim first and leave the vote ⇒ red `Vote →`. Also confirm a **dust** claimable (below the day's median fee) does NOT tint the button green (D-ND10h.3), and that the border stays visible while hovering the button (D-ND10h.2).
 
-**Status: ⏳ SPEC READY 2026-07-23 — Q&A resolved (Q3 label matches the button; Q4 text follows the state). Not yet implemented.**
+**Build notes (2026-07-23).** Built as spec'd; two additions worth recording. **(1) `HasPlayerClaimableDividends` also requires `gov.ScReserve > 0` for the SC half** — an accrued SC claimable against an empty company SC reserve pays nothing (`TryClaimPlayerCompanyDividends` takes `min(claim.Sc, gov.ScReserve)`), so treating it as claimable would have reproduced the exact dust bug D-ND10h.3 exists to prevent, just on the other leg. **(2) `CompanyDetails`' "Claimable now:" line now reads the same predicate** and appends *"— below the network fee; still accruing"* when a non-zero balance is not yet payable: without it a player seeing a non-zero figure beside an un-green row button has no way to learn why, which is the ND.10d "reasoned zero" lesson applied to a different pair of surfaces. `ApplyButtonBorder` duplicates the existing stylebox per state (`normal`/`hover`/`pressed`/`focus`) rather than constructing a bare one, so the button keeps its theme's background and only gains the border.
+
+**Status: ✅ BUILT & VERIFIED 2026-07-23 — `dotnet build` 0 warnings / 0 errors; developer in-game verification PASSED (all four states render and transition correctly; the border survives hover). Commit pending.**
 

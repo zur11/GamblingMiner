@@ -389,8 +389,9 @@ public partial class FoundersWallets : Control
 		var hal = WalletInitializationService.HalWallet;
 		if (hal != null) AddTarget("Hal", hal.BaseAddress);
 
-		foreach (var bot in BotWalletRegistry.AllBots)
-			AddTarget(bot.NodeId, bot.Address);
+		// ND.10g — company names + introduced-only filter, shared with the other three send panels.
+		foreach ((string displayName, string address) in _networkRoot.GetSendableBotTargets())
+			AddTarget(displayName, address);
 
 		_toDropdown.AddItem("── BTC Address ──");
 		_toAddresses.Add(string.Empty);

@@ -327,8 +327,16 @@ public partial class CompanyDetails : Control
 		if (_claimableLabel != null && gov != null
 			&& gov.ClaimableByHolder.TryGetValue(PlayerNodeId, out CompanyClaimable? claim))
 		{
+			// ND.10h (D-ND10h.3) — the same predicate the BlockExplorer row button lights up on, so the two
+			// surfaces cannot disagree. A balance that exists but sits below the day's network fee is NOT
+			// claimable (the fee is deducted from the claim itself) — say so, otherwise a player looking at a
+			// non-zero figure beside an un-green row button has no way to know why.
+			string claimNote = (claim.Btc > 0m || claim.Sc > 0m)
+				&& !_networkRoot.HasPlayerClaimableDividends(founding.NonMinerNodeId)
+				? "   — below the network fee; still accruing"
+				: string.Empty;
 			_claimableLabel.Text = string.Create(CultureInfo.InvariantCulture,
-				$"Claimable now: {claim.Btc:F8} BTC + {claim.Sc:F8} SC");
+				$"Claimable now: {claim.Btc:F8} BTC + {claim.Sc:F8} SC{claimNote}");
 		}
 	}
 

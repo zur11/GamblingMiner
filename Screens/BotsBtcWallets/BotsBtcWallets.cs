@@ -151,7 +151,9 @@ public partial class BotsBtcWallets : Control
 	{
 		string addr = TruncateAddress(bot.Address);
 		decimal balance = _networkRoot.GetAddressBalanceDetails(bot.Address).confirmedBalance;
-		return string.Create(CultureInfo.InvariantCulture, $"{bot.NodeId,-14} {addr}  {balance:F8} BTC");
+		// ND.10g — DEV form ("Mt. Gox (non_miner_7)"): this is a diagnostic list, read beside the traces.
+		// The column was widened from 14 to 34 to fit a company name + its id without ragged wrapping.
+		return string.Create(CultureInfo.InvariantCulture, $"{NetworkRoot.DescribeNodeForDev(bot.NodeId),-34} {addr}  {balance:F8} BTC");
 	}
 
 	private void RefreshBotListBalances()
@@ -334,7 +336,11 @@ public partial class BotsBtcWallets : Control
 	{
 		bool isMiner = bot.IsMinerNode;
 
-		_badgeLabel.Text = isMiner ? $"Miner Node  ·  {bot.NodeId}" : "Holder Wallet";
+		// ND.10g — a holder wallet now names its company ("Holder Wallet · Mt. Gox (non_miner_7)"); the
+		// bare "Holder Wallet" said nothing about WHICH of the 40 was selected.
+		_badgeLabel.Text = isMiner
+			? $"Miner Node  ·  {bot.NodeId}"
+			: $"Holder Wallet  ·  {NetworkRoot.DescribeNodeForDev(bot.NodeId)}";
 		_addressLabel.Text = $"Address: {bot.Address}";
 
 		(decimal confirmed, decimal pendingOut) = _networkRoot.GetAddressBalanceDetails(bot.Address);
@@ -563,10 +569,11 @@ public partial class BotsBtcWallets : Control
 		_toDropdown.Clear();
 		_toAddresses.Clear();
 
-		foreach (BotWalletRecord bot in BotWalletRegistry.AllBots)
+		// ND.10g — company names + introduced-only filter, shared with the other three send panels.
+		foreach ((string displayName, string address) in _networkRoot.GetSendableBotTargets())
 		{
-			_toDropdown.AddItem($"{bot.NodeId}  {TruncateAddress(bot.Address)}");
-			_toAddresses.Add(bot.Address);
+			_toDropdown.AddItem($"{displayName}  {TruncateAddress(address)}");
+			_toAddresses.Add(address);
 		}
 
 		var playerWallet = WalletInitializationService.PlayerWallet;

@@ -354,10 +354,12 @@ public partial class BTCWallet : Control
 			_toAddresses.Add(casinoWallet.BaseAddress);
 		}
 
-		foreach (var bot in BotWalletRegistry.AllBots)
+		// ND.10g — company display names instead of `non_miner_#`, and only companies that have already
+		// appeared on the historical curve (D-ND10g.3). Both rules live in GetSendableBotTargets.
+		foreach ((string displayName, string address) in _networkRoot.GetSendableBotTargets())
 		{
-			_toDropdown.AddItem($"{bot.NodeId} — {bot.Address[..10]}...");
-			_toAddresses.Add(bot.Address);
+			_toDropdown.AddItem($"{displayName} — {address[..10]}...");
+			_toAddresses.Add(address);
 		}
 
 		_toDropdown.AddItem("── BTC Address ──");

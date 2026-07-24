@@ -2571,6 +2571,27 @@ public partial class NetworkRoot : Node
         return _companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov) ? gov : null;
     }
 
+    // ND.10h (D-ND10h.3, 2026-07-23) — does the player have a dividend here that a claim would ACTUALLY
+    // PAY? The obvious test (`Btc > 0 || Sc > 0`) is wrong and produces a permanently-lit signal that pays
+    // nothing when pressed: TryClaimPlayerCompanyDividends below only sends the BTC leg when
+    // `claim.Btc > fee` (the fee comes out of the claim itself), so a sub-fee dust accrual looks claimable
+    // and is not. Same "is this payment worth its fee" question ND.10e answered for the bots' auto-claims.
+    // The SINGLE source for every surface that advertises a claim — the BlockExplorer row button and
+    // CompanyDetails' Claim panel both read this, so a displayed signal cannot drift from the action.
+    public bool HasPlayerClaimableDividends(string nonMinerNodeId)
+    {
+        EnsureInitialized();
+        if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov)
+            || !gov.ClaimableByHolder.TryGetValue(PlayerNodeId, out CompanyClaimable? claim))
+        {
+            return false;
+        }
+
+        if (claim.Sc > 0m && gov.ScReserve > 0m) return true;
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)) return false;
+        return claim.Btc > NetworkFeePolicy.MedianFeeAt(player.Blockchain.GetLastBlock().Timestamp);
+    }
+
     // The player's manual dividend claim (Quarterly/Daily Dividend panels). The BTC side goes on-chain
     // to the player's BASE address (the D-SW.6 precedent), network fee deducted from the claim itself;
     // the SC side (ND.8b.6) pays instantly from the company's SC reserve into the player's Main Balance
@@ -3391,13 +3412,18 @@ public partial class NetworkRoot : Node
         return chain[index].Difficulty;
     }
 
-    public IReadOnlyList<string> GetNodeStatusLines()
+    // ND.10g — returns the node id ALONGSIDE its formatted line instead of only the line. BlockExplorer's
+    // mining-rate decorator used to recover the id by re-parsing the line's prefix
+    // (`line[..line.IndexOf(" | ")]`), which the DEV rename ("Mt. Gox (non_miner_7) | mined: …") would have
+    // silently broken — the ⛏ marker would simply have stopped appearing. Handing back the id as data
+    // removes the parse entirely.
+    public IReadOnlyList<(string nodeId, string line)> GetNodeStatusLines()
     {
         EnsureInitialized();
         Dictionary<string, int> mined = MinedBlockCountsByNode();
         return SharedNetwork.Nodes
             .OrderBy(n => n.NodeId)
-            .Select(n => $"{n.NodeId} | mined: {(mined.TryGetValue(n.NodeId, out int c) ? c : 0)} | block: {n.Blockchain.Chain.Count} | pending: {n.Blockchain.PendingTransactions.Count} | balance: {AggregateSpendable(n):F8}")
+            .Select(n => (n.NodeId, $"{DescribeNodeForDev(n.NodeId)} | mined: {(mined.TryGetValue(n.NodeId, out int c) ? c : 0)} | block: {n.Blockchain.Chain.Count} | pending: {n.Blockchain.PendingTransactions.Count} | balance: {AggregateSpendable(n):F8}"))
             .ToList();
     }
 
@@ -3439,17 +3465,52 @@ public partial class NetworkRoot : Node
             .OrderBy(n => n.NodeId)
             .Select(n =>
             {
+                // ND.10g — DEV form ("Mt. Gox (non_miner_7)"): this directory exists to be read beside a
+                // trace/CSV row, so the raw id must stay.
                 if (n.ReceiveWallet == null || n.ReceiveWallet.OwnedAddresses.Count <= 1)
-                    return $"{n.NodeId}: {n.WalletAddress}";
+                    return $"{DescribeNodeForDev(n.NodeId)}: {n.WalletAddress}";
                 // Step 8.4 — the player rotates only CHANGE addresses (coinbase stays on base), founders that
                 // rotate spread their REWARDS across fresh addresses (Satoshi). Word it per the node's mode.
                 string kind = n.RotateCoinbaseAddress ? "rewards" : "change";
-                return $"{n.NodeId}: {n.WalletAddress}  (base/identity; {kind} spread across {n.ReceiveWallet.OwnedAddresses.Count} addresses)";
+                return $"{DescribeNodeForDev(n.NodeId)}: {n.WalletAddress}  (base/identity; {kind} spread across {n.ReceiveWallet.OwnedAddresses.Count} addresses)";
             })
             .ToList();
     }
 
+    private const string NonMinerNodeIdPrefix = "non_miner_";
+
+    // ND.10g (2026-07-23, D-ND10g.1) — the ONE company-name resolver, and the only place the
+    // non_miner_{i} <-> CompanyRoster.Auctionable[i-1] pairing (D-ND8.37) is turned into UI text.
+    // Every other node id passes through untouched: `player`, `casino`, `bot_1..4`, the founders, and
+    // the CAST miners — whose ids are already human names (`artforz`, `foundry_usa`, … from
+    // NetworkPopulationScheduler's chronological pool; only the never-expected `miner_extra_N`
+    // fallback is machine-shaped). Falls back to the raw id when the roster has no match (the
+    // documented pool-size-mismatch case, NonMinerBots.Count > Auctionable.Count).
+    // DISPLAY-ONLY — never a dictionary key, never compared against a node id.
+    public static string DescribeNodeForDisplay(string nodeId) =>
+        TryGetCompanyDisplayName(nodeId) ?? nodeId;
+
+    // ND.10g — the DEV/diagnostic twin: "Mt. Gox (non_miner_7)". The raw id stays visible in the
+    // diagnostic lists because it is the JOIN KEY of every CSV trace (casino_bot_bid_trace,
+    // company_founding_trace, company_governance_trace, auction_settlement_trace) and of the
+    // _companyFoundings / _companyGovernance / _stuckBidderSignatures dictionaries — dropping it would
+    // mean cross-referencing a trace row against the roster CSV by hand during a playtest audit.
+    public static string DescribeNodeForDev(string nodeId) =>
+        TryGetCompanyDisplayName(nodeId) is string name ? $"{name} ({nodeId})" : nodeId;
+
+    private static string? TryGetCompanyDisplayName(string nodeId)
+    {
+        if (!nodeId.StartsWith(NonMinerNodeIdPrefix, StringComparison.Ordinal)) return null;
+        if (!int.TryParse(nodeId.AsSpan(NonMinerNodeIdPrefix.Length), out int oneBasedIndex)) return null;
+        string? name = CompanyRoster.ForNonMinerIndex(oneBasedIndex - 1)?.DisplayName;
+        return string.IsNullOrEmpty(name) ? null : name;
+    }
+
     // Maps an address to a registered node id for display, or a shortened address if unknown.
+    // ND.10g (D-ND10g.2) — a non-miner resolves to its COMPANY NAME here, which is what carries the
+    // rename into the auction rows, the tracked-pool bids list and every wallet history panel at once.
+    // Audited at ND.10g: all call sites are display-only (no caller keys a dictionary or compares a
+    // node id against this) — keep it that way, per the §30.9 identity rule.
     public string DescribeAddress(string address)
     {
         EnsureInitialized();
@@ -3460,7 +3521,7 @@ public partial class NetworkRoot : Node
             if (node.WalletAddress == address
                 || (node.ReceiveWallet?.OwnedAddresses.Contains(address) ?? false))
             {
-                return node.NodeId;
+                return DescribeNodeForDisplay(node.NodeId);
             }
         }
 
@@ -3522,6 +3583,45 @@ public partial class NetworkRoot : Node
     // economy that funds the wallet without starting, leading, or winning an auction. A never-bid-on bot
     // stays recruitable indefinitely; every resolved auction has a real winner. Coinbase txs excluded.
     // "now" = latest block timestamp.
+    // ND.10g (D-ND10g.3) — the addresses of every non-miner that has ALREADY APPEARED on the historical
+    // curve (in auction or already founded), for the BTC send panels' recipient lists. Under the raw
+    // `non_miner_#` id, listing all 40 leaked nothing; under real company names it would put Coinbase and
+    // Foundry USA in a 2011 dropdown. "Introduced" is the existing ledger concept — no new state, no new
+    // date math. Callers build a dropdown on ENTERING send mode, not per frame, so the ledger's chain walk
+    // is not a per-frame cost. Mirrors how ScheduleBotTransactionsAfterBlock already restricts its
+    // automated recipients to introduced non-miners.
+    public HashSet<string> GetIntroducedNonMinerAddresses()
+    {
+        EnsureInitialized();
+        return GetNonMinerAuctionLedger()
+            .Where(s => s.Status != NonMinerAuctionStatus.NotIntroduced)
+            .Select(s => s.NonMinerAddress)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    // ND.10g — the ONE recipient list the four BTC send panels (BTCWallet / FoundersWallets /
+    // CasinoFinances / BotsBtcWallets) build their bot dropdowns from, so the naming rule and the
+    // introduced-only filter live in a single place instead of four. Order matches BotWalletRegistry
+    // .AllBots (miner bots, then non-miners, then cast miners); cast miners need no filter — they are only
+    // created as the scheduler spawns them, and their ids ARE their names.
+    public IReadOnlyList<(string displayName, string address)> GetSendableBotTargets()
+    {
+        EnsureInitialized();
+        HashSet<string> introduced = GetIntroducedNonMinerAddresses();
+        var targets = new List<(string, string)>();
+        foreach (BotWalletRecord bot in BotWalletRegistry.AllBots)
+        {
+            // D-ND10g.3 — a company that has not appeared yet on the historical curve is not listed: it
+            // does not exist in the world yet, and its real name would be an anachronism on screen.
+            // IsMinerNode is false ONLY for the 40 auction non-miners (cast miners register as miners).
+            if (!bot.IsMinerNode && !introduced.Contains(bot.Address)) continue;
+
+            targets.Add((DescribeNodeForDisplay(bot.NodeId), bot.Address));
+        }
+
+        return targets;
+    }
+
     public IReadOnlyList<NonMinerDonationSummary> GetNonMinerAuctionLedger()
     {
         EnsureInitialized();

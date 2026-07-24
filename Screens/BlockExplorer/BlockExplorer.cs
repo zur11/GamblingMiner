@@ -17,6 +17,9 @@ public partial class BlockExplorer : Control
     private SimulationService? _simulationService;
 
     private OptionButton _minerNodeOption = null!;
+    // ND.10g — the raw node ids behind _minerNodeOption's items, parallel by index. The item TEXT is the
+    // DEV display form, so the id must be carried as data (see SelectedLookupNodeId).
+    private string[] _selectorNodeIds = [];
     private Label _chainInfoLabel = null!;
     // One scrollable right column (Latest Block + Network Status + Address Directory) — a single
     // internally-scrolling RichTextLabel so the whole column is reachable (incl. Satoshi, last in the directory).
@@ -43,6 +46,19 @@ public partial class BlockExplorer : Control
     private static readonly Color HoldingGold = new(0.85f, 0.65f, 0.13f);
     private static readonly Color HoldingSilver = new(0.75f, 0.75f, 0.78f);
     private static readonly Color HoldingBlack = new(0.05f, 0.05f, 0.05f);
+
+    // ND.10h (2026-07-23, D-ND10h.1) — the founded row's PENDING-WORK colours. A different axis from the
+    // stake borders above: those say "what do I own here?", these say "what must I do here?" — a gold
+    // border beside a green Claim → reads "you hold NST and have a dividend waiting". They share only the
+    // convention that BLACK MEANS NOTHING, which is why the idle button is black-bordered rather than bare.
+    private static readonly Color WorkRed = new(1f, 0.3f, 0.3f);      // #FF4D4D — board vote pending (unchanged)
+    private static readonly Color WorkGreen = new(0.3f, 0.85f, 0.48f); // #4DD97A — dividends waiting
+    // MOCHA (both). NOT an RGB average of the two above — that gives #A6C364, a muddy yellow-green, the
+    // opposite of the requested "mixed like pigments". Pigment mixing is SUBTRACTIVE: in CMY,
+    // #FF4D4D → (0, .70, .70) and #4DD97A → (.70, .15, .52); summed and clamped → (.70, .85, 1.0) → #4D2600,
+    // a deep brown. That is the correct HUE but unreadable as a font colour on a dark theme, so the shipped
+    // constant keeps the hue and lifts the value for legibility. Do not "correct" this toward yellow.
+    private static readonly Color WorkMocha = new(0.75f, 0.52f, 0.32f); // #C08552
 
     // Live auto-refresh so background simulation (mining/balances) shows in real time.
     private double _autoRefreshTimer;
@@ -202,7 +218,10 @@ public partial class BlockExplorer : Control
             // AuctioningCompanyDetails stays the InAuction-only view (D-ND5.9).
             // ND.8b.3 follow-up (developer-requested): a company whose open board vote is WAITING FOR THE
             // PLAYER'S BALLOT paints its whole row red — the locator for "which company paused my game".
-            // Dividend claiming is deliberately NOT highlighted (it never blocks play).
+            // ND.10h (2026-07-23) — that red is now one of FOUR states, so the row also answers "is there
+            // money here I forgot to collect?" (see PendingWorkColor). Dividends never block play, which is
+            // exactly why they were easy to miss — the ND.8g playtest found a genuinely unclaimed PST
+            // balance sitting untouched in ArtForz Cluster.
             var awaitingVote = new HashSet<string>(
                 NetworkRoot.GetCompaniesAwaitingPlayerVote().Select(c => c.nonMinerNodeId));
             foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.Resolved))
@@ -213,21 +232,36 @@ public partial class BlockExplorer : Control
                     ? "no leading bidder (legacy pre-EB.2 world)"
                     : $"founded by {_networkRoot.DescribeAddress(s.WinnerAddress)}";
                 bool votePending = awaitingVote.Contains(s.NonMinerNodeId);
+                // ND.10h — the second half of the state: a dividend the player could ACTUALLY collect
+                // (dust below the day's fee does not count — D-ND10h.3, the predicate is shared with the
+                // Claim panel that performs the action).
+                bool canClaim = _networkRoot.HasPlayerClaimableDividends(s.NonMinerNodeId);
 
                 var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
                 var rowLabel = new Label
                 {
+                    // The ⚠ prefix stays the dedicated, unambiguous channel for "your ballot is pausing the
+                    // game" — colour is never the only signal (§22.15).
                     Text = votePending
                         ? $"⚠ BOARD VOTE PENDING — {NetworkRoot.DescribeCompany(s)}  | {founder}"
                         : $"{NetworkRoot.DescribeCompany(s)}  | {founder}",
                     MouseFilter = MouseFilterEnum.Pass
                 };
-                var detailsBtn = new Button { Text = votePending ? "Vote →" : "Details →" };
-                if (votePending)
+                // D-ND10h.5 — the text carries the state too: a blocking vote outranks a non-blocking claim.
+                var detailsBtn = new Button
                 {
-                    rowLabel.AddThemeColorOverride("font_color", new Color(1f, 0.3f, 0.3f));
-                    detailsBtn.AddThemeColorOverride("font_color", new Color(1f, 0.3f, 0.3f));
+                    Text = votePending ? "Vote →" : canClaim ? "Claim →" : "Details →"
+                };
+                // D-ND10h.4 — label and button always share the state colour, so the row is scannable
+                // without the eye having to land on the button.
+                Color workColor = PendingWorkColor(votePending, canClaim);
+                if (votePending || canClaim)
+                {
+                    rowLabel.AddThemeColorOverride("font_color", workColor);
+                    detailsBtn.AddThemeColorOverride("font_color", workColor);
                 }
+
+                ApplyButtonBorder(detailsBtn, workColor);
 
                 // ND.9b (2026-07-22) — a holding-keyed coloured border around the company TITLE (same
                 // gold/silver/black scheme as CompanyDetails). Independent of the vote-pending red text —
@@ -255,6 +289,34 @@ public partial class BlockExplorer : Control
         PlayerAuctionStake.Pst => HoldingSilver,
         _ => HoldingBlack
     };
+
+    // ND.10h — the four-state pending-work colour. A pure function of the CURRENT state: voting clears the
+    // vote flag and claiming clears the claimable, so nothing about what the player did last visit needs to
+    // be remembered (no history record, no persisted state, no event — it is re-evaluated each refresh).
+    private static Color PendingWorkColor(bool votePending, bool canClaim) =>
+        votePending && canClaim ? WorkMocha
+        : votePending ? WorkRed
+        : canClaim ? WorkGreen
+        : HoldingBlack;
+
+    // ND.10h (D-ND10h.2) — the state colour as a border on the button itself. A Button has FOUR stylebox
+    // states; overriding only "normal" makes the border vanish on hover, which reads as a rendering bug —
+    // so all four get their own duplicate. (ND.10f's BuildTitlePanel is the neighbouring precedent but is a
+    // PanelContainer wrapper, which a Button cannot reuse without swallowing its own click styling.)
+    private static void ApplyButtonBorder(Button button, Color borderColor)
+    {
+        foreach (string state in new[] { "normal", "hover", "pressed", "focus" })
+        {
+            StyleBox? existing = button.GetThemeStylebox(state);
+            var style = existing?.Duplicate() as StyleBoxFlat ?? new StyleBoxFlat { BgColor = new Color(0, 0, 0, 0) };
+            style.BorderColor = borderColor;
+            style.BorderWidthLeft = 2;
+            style.BorderWidthTop = 2;
+            style.BorderWidthRight = 2;
+            style.BorderWidthBottom = 2;
+            button.AddThemeStyleboxOverride(state, style);
+        }
+    }
 
     // ND.10f — hoisted from the founded-rows loop (ND.9b) so both row kinds build an identical bordered
     // title: a transparent-centre StyleBoxFlat around the label, mouse-transparent so the wheel still
@@ -307,14 +369,26 @@ public partial class BlockExplorer : Control
 
     private void PopulateNodeSelectors()
     {
+        // ND.10g — the item TEXT is the DEV form ("Mt. Gox (non_miner_7)"), but the raw node id is kept as
+        // DATA in _selectorNodeIds: the lookup handlers feed the selection straight into
+        // BuildTransactionDetails / BuildAddressDetailsForNode, which resolve real nodes by id. Reading the
+        // id back out of GetItemText() would have broken every lookup the moment the text changed.
         string[] nodeIds = _networkRoot.GetNodeIds().ToArray();
+        _selectorNodeIds = nodeIds;
         _minerNodeOption.Clear();
         foreach (string nodeId in nodeIds)
-            _minerNodeOption.AddItem(nodeId);
+            _minerNodeOption.AddItem(NetworkRoot.DescribeNodeForDev(nodeId));
 
         int playerIndex = Array.IndexOf(nodeIds, "player");
         if (playerIndex >= 0)
             _minerNodeOption.Select(playerIndex);
+    }
+
+    // The node id behind the currently selected item (ND.10g — never GetItemText, that is display text).
+    private string SelectedLookupNodeId()
+    {
+        int index = _minerNodeOption.Selected;
+        return index >= 0 && index < _selectorNodeIds.Length ? _selectorNodeIds[index] : "player";
     }
 
     private string BuildAddressDirectory()
@@ -326,7 +400,7 @@ public partial class BlockExplorer : Control
     {
         string txId = _txLookupInput.Text.Trim();
         if (string.IsNullOrEmpty(txId)) { _lookupResultLabel.Text = "Enter a transaction hash first."; return; }
-        string nodeId = _minerNodeOption.GetItemText(_minerNodeOption.Selected);
+        string nodeId = SelectedLookupNodeId();
         SetLookupResult("[b]Transaction Lookup[/b]\n" + _networkRoot.BuildTransactionDetails(nodeId, txId));
     }
 
@@ -334,7 +408,7 @@ public partial class BlockExplorer : Control
     {
         string address = _addressLookupInput.Text.Trim();
         if (string.IsNullOrEmpty(address)) { _lookupResultLabel.Text = "Enter an address first."; return; }
-        string nodeId = _minerNodeOption.GetItemText(_minerNodeOption.Selected);
+        string nodeId = SelectedLookupNodeId();
         SetLookupResult("[b]Address Lookup[/b]\n" + _networkRoot.BuildAddressDetailsForNode(nodeId, address));
     }
 
@@ -346,7 +420,7 @@ public partial class BlockExplorer : Control
             return;
         }
 
-        string nodeId = _minerNodeOption.GetItemText(_minerNodeOption.Selected);
+        string nodeId = SelectedLookupNodeId();
         Block? block = _networkRoot.GetBlockByIndexForNode(nodeId, blockIndex);
         if (block is null) { _lookupResultLabel.Text = $"Block {blockIndex} not found for node {nodeId}."; return; }
 
@@ -458,10 +532,11 @@ public partial class BlockExplorer : Control
         IReadOnlyDictionary<string, double> rates =
             _simulationService?.GetActiveMiningRates() ?? new Dictionary<string, double>();
 
-        foreach (string line in _networkRoot.GetNodeStatusLines())
+        // ND.10g — the node id now arrives as DATA beside the line. It used to be re-parsed out of the
+        // line's prefix, which the DEV company rename ("Mt. Gox (non_miner_7) | mined: …") would have
+        // silently broken: the lookup would have missed and the ⛏ marker would have vanished.
+        foreach ((string nodeId, string line) in _networkRoot.GetNodeStatusLines())
         {
-            int sep = line.IndexOf(" | ", StringComparison.Ordinal);
-            string nodeId = sep > 0 ? line[..sep] : line;
             yield return rates.TryGetValue(nodeId, out double bps)
                 ? $"{line} | ⛏ {bps:0.#}/s"
                 : line;

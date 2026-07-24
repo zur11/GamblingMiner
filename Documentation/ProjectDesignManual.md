@@ -2393,9 +2393,52 @@ Two properties matter:
 
 #### Signals that coexist
 
-A founded row can be **both** bordered and printed in red: the red text means an open board vote is waiting on the player's ballot and is **pausing the game** (§22.12 / `NetworkRoot.IsAwaitingPlayerVote`), while the border means "your stake here". They are independent and deliberately not merged — one is urgency, the other is exposure. Likewise, the per-slot re-bid `%` and exclusion labels of §22.14 are untouched by the border: those describe the *bots'* behaviour, the border describes the *player's* position.
+A founded row can be **both** bordered and tinted: the tint is about **pending work** (§22.16), the border about **stake**. They are independent and deliberately not merged — one is "what must I do here?", the other "what do I own here?". Likewise, the per-slot re-bid `%` and exclusion labels of §22.14 are untouched by the border: those describe the *bots'* behaviour, the border describes the *player's* position.
 
 Full decision log: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §13 (ND.9b) and §14.7 (D-ND10f.1…3).
+
+### 22.16 — The pending-work tint: red / green / mocha / black (Step 14 ND.10h, 2026-07-23)
+
+**Files**: `BlockExplorer.cs` (`PendingWorkColor`, `ApplyButtonBorder`), `NetworkRoot.cs` (`HasPlayerClaimableDividends`)
+
+The second colour axis on a founded company's row in Auction / Company Mode. Where §22.15's border answers *"what do I own here?"*, the row label + button answer **"what must I do here?"**:
+
+| Board vote pending | Dividends claimable | Colour | Button text |
+|---|---|---|---|
+| yes | yes | **mocha** `#C08552` | `Vote →` |
+| yes | no | **red** `#FF4D4D` | `Vote →` |
+| no | yes | **green** `#4DD97A` | `Claim →` |
+| no | no | **black border**, no tint | `Details →` |
+
+**Why dividends earned a colour at all.** The red vote tint (ND.8b.3) solves an *urgent* problem — a board vote where the player holds NST **pauses the game** (§22.12), so "which company is blocking me?" must be answerable at a glance. Dividends are the exact opposite: never urgent, never blocking, and therefore easy to forget entirely. That is not hypothetical — ND.8g's claim-history panel exists because a playtest found a genuinely earned, genuinely unclaimed ArtForz Cluster PST balance the player had simply never noticed. ND.8g made a forgotten dividend discoverable *once you open the company*; §22.16 makes it visible without opening anything. The mocha state is the one that earns its keep: it says *"you were coming here for the vote anyway — collect while you're in"*, at exactly the moment the player is already navigating there.
+
+**It is a pure function of current state.** Voting clears the vote flag; claiming clears the claimable; the table is re-evaluated on each refresh. Nothing about what the player did on a previous visit is recorded — no history, no persisted state, no event.
+
+#### Two implementation rules worth keeping
+
+**Mocha is hand-picked, and must not be "corrected" to yellow.** The request was red and green *mixed like pigments*. Averaging them in RGB is additive and yields `#A6C364`, a muddy yellow-green — the opposite result. Pigment mixing is **subtractive**: in CMY, `#FF4D4D → (0, .70, .70)` and `#4DD97A → (.70, .15, .52)`; summed and clamped that is `(.70, .85, 1.0)` → `#4D2600`, a deep brown. Correct hue, but unreadable as a font colour on a dark theme — so the shipped constant keeps the hue and lifts the value to `#C08552`.
+
+**"Claimable" means *payable*, not *non-zero*.** The naive test (`claim.Btc > 0 || claim.Sc > 0`) produces a permanently-green button that pays nothing when pressed, because `TryClaimPlayerCompanyDividends` deducts the network fee **from the claim itself** and so skips a BTC leg at or below the fee — and pays the SC leg only up to the company's own `ScReserve`. `NetworkRoot.HasPlayerClaimableDividends` therefore tests `(Sc > 0 && ScReserve > 0) || Btc > medianFee`, and is the **single source** for every surface that advertises a claim: the row button lights from it, and `CompanyDetails`' "Claimable now:" line reads it too, appending *"— below the network fee; still accruing"* so a non-zero figure beside an un-tinted row button explains itself. This is §22.14's "four kinds of zero" lesson (ND.10d) applied to a different pair of surfaces: **a displayed signal must share its source with the action it advertises.** It is also the same fee-vs-payment arithmetic ND.10e found burning 96% of the bots' smallest auto-claims.
+
+**A `Button` has four stylebox states.** `normal`, `hover`, `pressed`, `focus` — overriding only `normal` makes the border disappear the moment the cursor touches it, which reads as a rendering bug. `ApplyButtonBorder` duplicates the existing stylebox per state so the button keeps its theme background and only gains the frame.
+
+Full decision log: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.9 (D-ND10h.1…5).
+
+### 22.17 — Companies are named everywhere the player looks (Step 14 ND.10g, 2026-07-23)
+
+**Files**: `NetworkRoot.cs` (`DescribeNodeForDisplay` / `DescribeNodeForDev` / `GetSendableBotTargets` / `GetIntroducedNonMinerAddresses`), `BTCWallet.cs`, `FoundersWallets.cs`, `CasinoFinances.cs`, `BotsBtcWallets.cs`, `BlockExplorer.cs`
+
+ND.8b.1 gave the 40 auction non-miners real historical company identities, but only the auction and company screens used them. Everywhere else the internal id leaked: the player bid against *The Silk Market*, watched it get founded, claimed its dividends — then opened the BTC wallet to send it money and had to know it was `non_miner_6`. ND.10g closes that, and it is the last structural gap in the Business Migration's fiction.
+
+**Two tiers, on purpose.** Player-facing surfaces show the **company name alone** (`Mt. Gox`). Diagnostic surfaces — BlockExplorer's Network Status, the Node → Address directory, the node selector, `BotsBtcWallets`' holder list — show **both** (`Mt. Gox (non_miner_7)`), because `non_miner_#` is the **join key of every CSV trace in the project** (`casino_bot_bid_trace`, `company_founding_trace`, `company_governance_trace`, `auction_settlement_trace`) and of the `_companyFoundings` / `_companyGovernance` / `_stuckBidderSignatures` dictionaries. Dropping it would mean hand-matching a trace row against the roster CSV during exactly the sort of audit that produced ND.10c/d/e. Traces, logs, persisted JSON and every dictionary key stay on the raw id — they are not UI.
+
+`DescribeNodeForDisplay` / `DescribeNodeForDev` are the only two places the `non_miner_{i}` ↔ `CompanyRoster.Auctionable[i-1]` pairing (D-ND8.37) becomes UI text. Every other node passes through untouched: `player`, `casino`, `bot_1..4` and the founders keep their ids, and the **cast miners already carry human names** (`artforz`, `foundry_usa`, … — `NetworkPopulationScheduler`'s chronological pool), so the rename is scoped precisely to the 40 companies. `DescribeAddress` routes through the display resolver, which is what carries the rename into the auction rows, the tracked-pool bids list and every wallet history panel at once — audited at build time to confirm all its call sites are display-only, per the §30.9 rule that an address is a key and not an identity.
+
+**A company you cannot see yet cannot be sent money.** The four BTC send panels used to list all 40 non-miners unconditionally. Under a raw id that leaked nothing; under real names it would have put *Coinbase* and *Foundry USA* in a 2011 dropdown. They now list only companies already introduced on the historical curve (`GetIntroducedNonMinerAddresses`, using the existing ledger status — no new state, no new date math), which also matches how `ScheduleBotTransactionsAfterBlock` has always picked its automated recipients. This is a small deliberate **behavior** change, not just a rename. All four panels share one `GetSendableBotTargets()` so the naming rule and the filter cannot drift apart; the `IsMinerNode` flag is the discriminator, since it is false **only** for the 40 auction non-miners (cast miners register as miners).
+
+**Two regressions the rename would otherwise have caused, both anticipated and fixed:** `GetNodeStatusLines` now returns `(nodeId, line)` pairs, because BlockExplorer's ⛏ mining-rate decorator used to recover the id by re-parsing the line's own prefix — renaming the prefix would have silently stopped the marker appearing. And BlockExplorer keeps `_selectorNodeIds` parallel to its option items, because the transaction/address/block lookup handlers fed `GetItemText(...)` straight into calls that resolve real nodes by id. **Both are the same mistake in two shapes: recovering data from formatted display text.** When a label's text becomes translatable, prettified, or renamed, every such read breaks silently — carry the id as data.
+
+Full decision log: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.8 (D-ND10g.1…3).
 
 ---
 

@@ -277,10 +277,11 @@ public partial class CasinoFinances : Control
 			_toAddresses.Add(casinoWallet.BaseAddress);
 		}
 
-		foreach (var bot in BotWalletRegistry.AllBots)
+		// ND.10g — company names + introduced-only filter, shared with the other three send panels.
+		foreach ((string displayName, string address) in _networkRoot.GetSendableBotTargets())
 		{
-			_toDropdown.AddItem($"{bot.NodeId} — {bot.Address[..10]}...");
-			_toAddresses.Add(bot.Address);
+			_toDropdown.AddItem($"{displayName} — {address[..10]}...");
+			_toAddresses.Add(address);
 		}
 
 		_toDropdown.AddItem("── BTC Address ──");
