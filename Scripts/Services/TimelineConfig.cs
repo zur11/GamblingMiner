@@ -48,7 +48,7 @@ public static class TimelineConfig
 	// timeline. `0` on `main` FOREVER (canonical 2009-03-21 start, HistoricalBootstrapService behavior
 	// unchanged bit-for-bit); a DEV branch may set 2010-2025 to land directly in that year for testing.
 	// Orthogonal to DevAltTimeline — never set both to a non-default value at once.
-	public const int DevEntryYear = 2010; // ND.4 calibration playtest — restore to 0 before merging to main
+	public const int DevEntryYear = 0; // `0` on `main` — canonical 2009-03-21 start (set 2010-2025 only on a DEV branch)
 
 	public static readonly DateTime EntryDayLocal = DevEntryYear == 0
 		? PlayerStartDayLocal
