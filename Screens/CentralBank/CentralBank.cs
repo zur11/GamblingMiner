@@ -226,6 +226,7 @@ public partial class CentralBank : Control
 			}
 		}
 
+		BuildFbiSection();
 		BuildClosedCompaniesSection();
 
 		AddSpacer(12);
@@ -243,6 +244,42 @@ public partial class CentralBank : Control
 					$"    {row.CompanyDisplay} [{row.CompanyCategory}]  →  {row.FinancierDisplay}  ({row.Tier})"), 15,
 					row.Tier == NetworkRoot.FinancierTierCasino ? ColorSubtle : ColorRepay);
 			}
+		}
+	}
+
+	// Step 15 P15.6 — the FBI board: activation state, its self-funding budget, and every company currently
+	// carrying an investigation file, ordered the way the raid roll orders them (non-banks first by overage,
+	// banks last — D-15.19). Shares GetFbiInvestigationWarning's source with the roll, so a displayed
+	// number cannot drift from the mechanism (§39.13 rule 6).
+	private void BuildFbiSection()
+	{
+		AddSpacer(18);
+		AddLabel("Federal investigations (Step 15 P15.6)", 22, ColorHeading);
+
+		if (!NetworkRoot.FbiActivated)
+		{
+			AddLabel(string.Create(CultureInfo.InvariantCulture,
+				$"    Not active yet — the FBI thread starts {NetworkRoot.FbiActivationDateLocal:yyyy-MM-dd} (Gavin Andresen's In-Q-Tel presentation, D-15.14)."),
+				15, ColorSubtle, wrap: true);
+			return;
+		}
+
+		AddLabel(string.Create(CultureInfo.InvariantCulture,
+			$"    Active since {NetworkRoot.FbiActivationDateLocal:yyyy-MM-dd}   ·   budget {NetworkRoot.FbiScFunds:N2} SC (initial federal grant + seizures)"), 15, ColorSubtle);
+
+		var files = NetworkRoot.GetFbiInvestigationFiles();
+		if (files.Count == 0)
+		{
+			AddLabel("    No company is currently over its category's SC tolerance.", 15, ColorSubtle);
+			return;
+		}
+
+		foreach (var f in files)
+		{
+			bool flagged = f.Score >= NetworkRoot.InvestigationFlagThreshold;
+			AddLabel(string.Create(CultureInfo.InvariantCulture,
+				$"    {(flagged ? "⚑" : "·")} {f.DisplayName} [{f.MarketCategory}{(f.IsBank ? ", bank" : "")}]  score {f.Score:N1}/{NetworkRoot.InvestigationFlagThreshold:N0}  ·  SC {f.ScReserve:N2} vs tolerated {f.ToleranceSc:N2}"),
+				15, flagged ? new Color(1f, 0.4f, 0.4f) : ColorDraw);
 		}
 	}
 

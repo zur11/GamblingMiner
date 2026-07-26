@@ -4276,7 +4276,47 @@ Recovery is stored in **BTC** and converted only for display, which is the point
 
 **Why it lives in the FED scene rather than WorldEconomy.** The phase map nominally puts the recovery tracker and the Closed-Companies list in WorldEconomy (P15.7b). They went into the FED scene instead, for two reasons: the **FED is the absorber** — these are its written-off losses and its custodied wallets, so the readout belongs beside its client accounts — and the banking-layer block was already there from P15.2. P15.7b is free to mirror or move it; nothing else reads the block.
 
-### 39.13 — Conventions this plan established (apply these to later phases)
+### 39.13 — The FBI investigation / seizure thread (P15.6)
+
+**The gate (D-15.14).** The FBI does not exist in-game before **14 Jun 2011** — the date Gavin Andresen presented Bitcoin to the CIA via In-Q-Tel. He did *not* meet the FBI; the CIA connection is flavour only and never mechanically involved. The date is used because it is the historically honest moment "law enforcement noticed Bitcoin," and it is routed through `TimelineConfig.Shift` like every other anchor. Note it precedes the first bank founding (2012-09) by over a year, which is exactly why P15.5's custody model had to work with no heir available (§39.12.2).
+
+**The hybrid (D-15.21).** F1's **investigation meter** decides *who is a target* — deterministic and player-legible, so keeping a company's SC lean is a real lever rather than a prayer. A **capped roll** on top decides *which block the raid actually lands*, so there is suspense without pure randomness punishing good play. Neither half alone was acceptable: a pure meter is gamey and a pure roll can nuke a company the player was managing well.
+
+#### 39.13.1 — Throughput-relative tolerance
+
+Absolute SC ceilings go stale across a 2009–2025 span, so a company's tolerance scales with **its own recent SC throughput**: `tolerance = categoryMultiplier × T`, with placeholder multipliers **Official ∞ · Light-Grey 8× · Dark-Grey 3× · Black 1×**. Darker ⇒ lower: a licensed exchange sitting on a float is normal; a black-market stall sitting on the same fortune is a flag. **Official is exempt entirely** — never flagged on SC alone.
+
+`T` is the company's SC inflow, accumulated on `gov.ScInflowCurrentQuarterSc` at the one place SC ever enters a company (the conversion credit in `TryConvertCompanyReserves`) and rolled to `ScInflowLastQuarterSc` at each quarter close. The effective `T` is the **larger of the two**, so a company that has just started converting is not judged against a stale zero.
+
+**The `T = 0` case is a feature, not an edge case.** A company holding SC with no throughput to explain it sits at the overage cap by construction — which is precisely the reading "unexplained wealth" is supposed to have. A company that converted heavily three quarters ago and has sat on the pile since *should* attract attention.
+
+#### 39.13.2 — The meter, the priority, and the roll
+
+The meter is sized against **quarters, not seconds**, because a block is ~16h40m of game time (≈1.5 blocks/in-game-day, ≈135 per quarter). At pressure 1 a company flags in ~200 blocks (~1.5 quarters); a badly-over black company flags in well under one. Gain is `0.5 × overage × darkness` per block (darkness = category index + 1, so light-grey 2 … black 4), and the overage ratio is capped at 4 so an absurdly over-tolerance company does not flag instantly. Falling back under tolerance **decays** the score at 1.0/block — that decay is the player's lever, and it is what makes "keep this company lean, or vote it lighter" a real strategy rather than advice.
+
+**Priority (D-15.19) is expressed as a single ordering, not a separate pass:** flagged targets sort **banks last**, everything else by how far over it is. The FBI works the small anomalies first and builds evidence before striking a big fish, so a bank can only be reached in the late game once the board is otherwise clean.
+
+**At most one raid per block**, on the single highest-priority flagged target. That falls out of the same ordering and doubles as a throttle — the thread can never clear the board in a burst.
+
+The roll itself is `min(2%, 0.5% × darkness × score/threshold)` per block. The cap is the "capped" half of the hybrid: even a maximally-suspicious black company gets a 2% ceiling, so a raid is a matter of when-ish, never an instant execution.
+
+#### 39.13.3 — Self-funding, and why the grant is a loan
+
+The FBI carries its own SC budget: an initial federal grant at activation, then whatever it seizes. The grant is booked as a **FED loan on client `"fbi"`** rather than conjured into existence — otherwise it would mint SC outside `circulation = grants + debt` and break the invariant the whole monetary layer rests on. It is simply never repaid, exactly like the casino's (D-15.17).
+
+**Seized SC, by contrast, is a plain transfer** and touches neither side of the invariant: the SC already existed in the company's reserve. This is why `DissolveCompany` branches on the closure reason — an FBI seizure moves the reserve to the FBI, while a debt default **burns** it against the FED loan.
+
+The seized **BTC is not moved at all**: it flows straight into P15.5's existing custody chain (§39.12.2), which is what let P15.6 add a whole second dissolution cause without touching the wallet machinery.
+
+#### 39.13.4 — Player agency (P15.6d)
+
+`GetFbiInvestigationWarning` returns a line for `CompanyDetails` stating the state (*under investigation* / *FLAGGED — a raid can land on any block* / *cooling off*), the progress toward the threshold, the SC reserve against the tolerated figure for that category, and what to do about it. It is shown to **any** viewer, not just holders — the risk is a fact about the company, not about the holding — and it returns `null` when there is genuinely nothing to say (FBI inactive, category exempt, comfortably under tolerance), so the panel never carries a permanent decorative warning.
+
+The FED scene gained a matching DEV board listing every open file **in the same order the roll picks its target**, sharing `FbiToleranceScFor`/`FbiOverageRatio` with the roll itself — §39.14 rule 6, so a displayed number cannot drift from the mechanism.
+
+**Every number above is a P15.8 calibration placeholder**: the four tolerance multipliers, `T`'s window, the meter's gain/decay/cap, the roll's base and cap, and the initial grant.
+
+### 39.14 — Conventions this plan established (apply these to later phases)
 
 Six rules came out of building P15.1–P15.5. They are recorded together here because each was first reached as a one-off judgement call and each turned out to apply again a phase or two later — they should be treated as defaults for P15.6–P15.8 and beyond, not re-derived each time.
 

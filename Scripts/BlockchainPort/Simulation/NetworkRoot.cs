@@ -2361,6 +2361,10 @@ public partial class NetworkRoot : Node
                     // Quarter end: credit the closing cycle's NST lumps + residual PST drip BEFORE the
                     // new quarter's vote opens (D-ND8.17 — the lump is paid at quarter end).
                     SettleDividendCycleAtQuarterEnd(gov, founding, block);
+                    // P15.6a — roll the throughput window: the closing quarter's SC inflow becomes the
+                    // reference the FBI's tolerance is measured against for the next one.
+                    gov.ScInflowLastQuarterSc = gov.ScInflowCurrentQuarterSc;
+                    gov.ScInflowCurrentQuarterSc = 0m;
                     // P15.4d — THE PAYMENT DAY. A bank's whole "extra-lazy" carry ends here: it sells just
                     // enough collateral to cover this quarter's FED installment. Runs after the dividend
                     // settlement (the closing quarter's obligations are already met) and before the new
@@ -2395,6 +2399,9 @@ public partial class NetworkRoot : Node
         // dictionary the loop above iterates. Order matters: kill the insolvent first, then (re)assign
         // custodied wallets — a bank that just died releases whatever it was holding — then forward the
         // dead companies' accumulated inflows to whoever now holds them.
+        // P15.6 — the FBI runs BEFORE the dissolution sweep so a raid landing this block flows straight
+        // into the same custody/inheritance chain a debt default does.
+        TickFbiInvestigations(block);
         TryDissolveInsolventBanks(block);
         TryAssignSeizedWallets(block);
         SweepClosedCompanyInflows(block);
@@ -2509,6 +2516,8 @@ public partial class NetworkRoot : Node
         }
 
         gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve + scAmount);
+        // P15.6a — this IS the company's SC throughput: every SC it takes in arrives through a conversion.
+        gov.ScInflowCurrentQuarterSc = Scripts.Finance.Money.Normalize(gov.ScInflowCurrentQuarterSc + scAmount);
         AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "conversion", "btc_to_sc",
             string.Format(System.Globalization.CultureInfo.InvariantCulture,
                 "btc={0:F8};sc={1:F8};price={2:F2};via={3};tier={4}",
@@ -2707,7 +2716,14 @@ public partial class NetworkRoot : Node
 
         decimal scAtClosure = Math.Max(0m, gov.ScReserve);
         decimal repaid = 0m;
-        if (isBank && scAtClosure > 0m && _centralBank != null)
+        if (reason == ClosureReasonFbiSeizure)
+        {
+            // P15.6c — the FBI takes the SC and self-funds on it. This is a TRANSFER of existing SC, so it
+            // touches neither side of `circulation = grants + debt`; a debt default, by contrast, burns it
+            // against the loan below. The BTC is not moved either way — see the custody model (§39.12.2).
+            _fbiScFunds = Scripts.Finance.Money.Normalize(_fbiScFunds + scAtClosure);
+        }
+        else if (isBank && scAtClosure > 0m && _centralBank != null)
         {
             repaid = _centralBank.Repay(fedClientId, scAtClosure, "dissolution");
         }
@@ -2834,6 +2850,207 @@ public partial class NetworkRoot : Node
             closure.RecoveredBtc = Scripts.Finance.Money.Normalize(closure.RecoveredBtc + amount);
             AppendBankCreditTrace(block, "seized_inflow", closure.InheritingBankNodeId, closure.NonMinerNodeId, 0m, amount, 0m);
         }
+    }
+
+    // ── Step 15 P15.6 — the FBI investigation / seizure thread (D-15.14/D-15.19/D-15.21) ───────────────
+    //
+    // THE HYBRID (D-15.21): F1's investigation meter decides *who is a target* — deterministic and
+    // player-legible, so keeping a company's SC lean is a real lever — and a capped F2-style roll on top
+    // decides *which block the raid actually lands*, so there is suspense without pure randomness punishing
+    // good play.
+    //
+    // Timeline gate (D-15.14): the FBI does not exist in-game before **14 Jun 2011**, the date Gavin
+    // Andresen presented Bitcoin to the CIA via In-Q-Tel. (He did not meet the FBI; the CIA connection is
+    // flavour only and never mechanically involved — the date is simply when "law enforcement noticed
+    // Bitcoin" becomes historically honest.) Routed through TimelineConfig.Shift like every other anchor.
+    private static readonly DateTime FbiActivationLocal = TimelineConfig.Shift(new DateTime(2011, 6, 14));
+
+    // Per-category tolerated SC balance, as a multiple of the company's own recent SC throughput (D-15.21).
+    // Darker ⇒ lower: a licensed exchange sitting on a float is normal, a black-market stall sitting on the
+    // same fortune is a flag. Official is EXEMPT — never flagged on SC alone. *All P15.8 calibration knobs.*
+    private static decimal FbiToleranceMultiplier(string marketCategory) => marketCategory switch
+    {
+        "light_grey" => 8m,
+        "dark_grey" => 3m,
+        "black" => 1m,
+        _ => -1m, // official — no ceiling
+    };
+
+    // Meter tuning. A block is ~16h40m of game time (≈1.5 blocks/in-game-day, ≈135 per quarter), so these
+    // are sized against quarters, not seconds: at pressure 1 a company flags in ~200 blocks (~1.5 quarters);
+    // a badly-over black company flags in well under one. *P15.8 knobs.*
+    public const decimal InvestigationFlagThreshold = 100m;
+    private const decimal InvestigationGainPerBlock = 0.5m;
+    private const decimal InvestigationDecayPerBlock = 1.0m;
+    private const decimal InvestigationOverageCap = 4m;   // an overage ratio past this adds no more pressure
+    // The raid roll, applied ONLY to the single highest-priority flagged target each block (see below).
+    private const decimal SeizureRollBasePercent = 0.5m;  // × darkness × (score ÷ threshold)
+    private const decimal SeizureRollCapPercent = 2.0m;   // the "capped" half of the hybrid
+
+    // The FBI's own budget: an initial FED grant at activation, then self-funding from what it seizes
+    // (D-15.21). The grant is booked as a FED loan on client "fbi" rather than conjured, so
+    // `circulation = grants + debt` still holds — it is simply never repaid, like the casino's (D-15.17).
+    // Seized SC is a TRANSFER of existing SC and touches neither side of the invariant.
+    public const string FbiClientId = "fbi";
+    private const decimal FbiInitialGrantSc = 100_000m; // *P15.8 knob*
+    private static decimal _fbiScFunds;
+    private static bool _fbiActivated;
+
+    public static decimal FbiScFunds => _fbiScFunds;
+    public static bool FbiActivated => _fbiActivated;
+    public static DateTime FbiActivationDateLocal => FbiActivationLocal;
+
+    // A company's tolerated SC balance right now. Negative = exempt (Official). Throughput is the larger of
+    // the last completed quarter and the one in progress, so a company that has just started converting is
+    // not judged against a stale zero. *The window itself is a P15.8 knob.*
+    public static decimal FbiToleranceScFor(CompanyGovernanceState gov)
+    {
+        decimal multiplier = FbiToleranceMultiplier(gov.MarketCategory);
+        if (multiplier < 0m) return -1m;
+
+        decimal throughput = Math.Max(gov.ScInflowLastQuarterSc, gov.ScInflowCurrentQuarterSc);
+        return Scripts.Finance.Money.Normalize(multiplier * throughput);
+    }
+
+    // How far over the line, as a ratio, capped. A company holding SC with NO throughput to explain it sits
+    // at the cap by construction — which is the intended reading of "unexplained wealth", not an edge case.
+    private static decimal FbiOverageRatio(CompanyGovernanceState gov, decimal tolerance)
+    {
+        if (tolerance < 0m) return 0m; // exempt
+        if (tolerance == 0m) return gov.ScReserve > 0m ? InvestigationOverageCap : 0m;
+        return Math.Max(0m, Math.Min(InvestigationOverageCap, gov.ScReserve / tolerance - 1m));
+    }
+
+    // Darkness weight: light_grey 2 … black 4 (official never reaches here — it is exempt above).
+    private static decimal FbiDarkness(string marketCategory) => MarketCategoryIndex(marketCategory) + 1m;
+
+    // P15.6a/b/c — one pass per block. Accrues/decays every company's meter, then rolls the raid for the
+    // SINGLE highest-priority flagged target: **non-banks first, ranked by overage; banks LAST** (D-15.19 —
+    // the FBI builds evidence on the small anomalies before striking a big fish). One raid per block at
+    // most, which also keeps the thread from clearing the board in a burst.
+    private static void TickFbiInvestigations(Block block)
+    {
+        if (_companyGovernance.Count == 0) return;
+
+        DateTime nowLocal = DateTimeOffset.FromUnixTimeMilliseconds(block.Timestamp).LocalDateTime;
+        if (nowLocal < FbiActivationLocal) return;
+
+        if (!_fbiActivated)
+        {
+            _fbiActivated = true;
+            _centralBank?.DrawLoan(FbiClientId, FbiInitialGrantSc, "fbi_activation");
+            _fbiScFunds = Scripts.Finance.Money.Normalize(_fbiScFunds + FbiInitialGrantSc);
+            GD.Print($"[NetworkRoot] FBI ACTIVATED ({nowLocal:yyyy-MM-dd}) — initial federal grant {FbiInitialGrantSc:F2} SC (D-15.14).");
+            AppendBankCreditTrace(block, "fbi_activated", FbiClientId, string.Empty, FbiInitialGrantSc, 0m, 0m);
+        }
+
+        var flagged = new List<(CompanyGovernanceState gov, decimal overage, bool isBank)>();
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            decimal tolerance = FbiToleranceScFor(gov);
+            decimal overage = FbiOverageRatio(gov, tolerance);
+
+            if (tolerance >= 0m && overage > 0m)
+            {
+                gov.InvestigationScore = Scripts.Finance.Money.Normalize(
+                    gov.InvestigationScore + InvestigationGainPerBlock * overage * FbiDarkness(gov.MarketCategory));
+            }
+            else
+            {
+                // Back under tolerance: the heat comes off. This is the player's lever — a company kept lean
+                // (or voted lighter) genuinely stops being a target.
+                gov.InvestigationScore = Scripts.Finance.Money.Normalize(
+                    Math.Max(0m, gov.InvestigationScore - InvestigationDecayPerBlock));
+            }
+
+            if (gov.InvestigationScore >= InvestigationFlagThreshold)
+            {
+                flagged.Add((gov, overage, IsBankCompany(gov.NonMinerNodeId)));
+            }
+        }
+
+        if (flagged.Count == 0) return;
+
+        // D-15.19's priority, as a single ordering: banks sort last, everything else by how far over it is.
+        (CompanyGovernanceState gov, decimal overage, bool isBank) target = flagged
+            .OrderBy(f => f.isBank)
+            .ThenByDescending(f => f.overage)
+            .First();
+
+        decimal chance = Math.Min(SeizureRollCapPercent,
+            SeizureRollBasePercent * FbiDarkness(target.gov.MarketCategory)
+                * (target.gov.InvestigationScore / InvestigationFlagThreshold));
+
+        if ((decimal)Random.Shared.NextDouble() * 100m >= chance) return;
+
+        if (_companyFoundings.TryGetValue(target.gov.NonMinerNodeId, out CompanyFounding? founding))
+        {
+            GD.Print($"[NetworkRoot] FBI RAID — {DescribeNodeForDev(target.gov.NonMinerNodeId)} seized (score {target.gov.InvestigationScore:F1}, roll chance {chance:F2}%).");
+            DissolveCompany(target.gov, founding, ClosureReasonFbiSeizure, block);
+        }
+    }
+
+    public readonly record struct FbiInvestigationFile(
+        string NonMinerNodeId,
+        string DisplayName,
+        string MarketCategory,
+        bool IsBank,
+        decimal Score,
+        decimal ScReserve,
+        decimal ToleranceSc,
+        decimal Overage);
+
+    // P15.6 DEV readout — every company carrying a file, in the SAME order the raid roll picks its target
+    // (non-banks first by overage, banks last). Shares FbiToleranceScFor/FbiOverageRatio with the roll, so
+    // a displayed figure cannot drift from the mechanism.
+    public static List<FbiInvestigationFile> GetFbiInvestigationFiles()
+    {
+        EnsureReady();
+        var files = new List<FbiInvestigationFile>();
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            decimal tolerance = FbiToleranceScFor(gov);
+            if (tolerance < 0m) continue; // Official — exempt
+            decimal overage = FbiOverageRatio(gov, tolerance);
+            if (overage <= 0m && gov.InvestigationScore <= 0m) continue;
+
+            files.Add(new FbiInvestigationFile(
+                gov.NonMinerNodeId,
+                DescribeNodeForDev(gov.NonMinerNodeId),
+                gov.MarketCategory,
+                IsBankCompany(gov.NonMinerNodeId),
+                gov.InvestigationScore,
+                gov.ScReserve,
+                tolerance,
+                overage));
+        }
+
+        return files.OrderBy(f => f.IsBank).ThenByDescending(f => f.Overage).ToList();
+    }
+
+    // P15.6d — the player-facing risk line for a company they hold stock in: how close it is to a raid, and
+    // what to do about it. Returns null when there is nothing to warn about (FBI not active yet, category
+    // exempt, or the company comfortably under its tolerance).
+    public static string? GetFbiInvestigationWarning(string nonMinerNodeId)
+    {
+        if (!_fbiActivated || !_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov))
+        {
+            return null;
+        }
+
+        decimal tolerance = FbiToleranceScFor(gov);
+        if (tolerance < 0m) return null; // Official — never flagged on SC alone
+
+        decimal overage = FbiOverageRatio(gov, tolerance);
+        if (overage <= 0m && gov.InvestigationScore <= 0m) return null;
+
+        decimal progress = Math.Min(100m, gov.InvestigationScore / InvestigationFlagThreshold * 100m);
+        string state = gov.InvestigationScore >= InvestigationFlagThreshold
+            ? "FLAGGED — a raid can land on any block"
+            : overage > 0m ? "under investigation — the file is growing" : "cooling off — back under tolerance";
+
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"⚖ Federal investigation: {state} ({progress:F0}% of the threshold). SC reserve {gov.ScReserve:N2} vs a tolerated {tolerance:N2} for a '{gov.MarketCategory}' business. Converting less SC — or holding a lighter market category — brings the heat down.");
     }
 
     // The pre-first-bank fallback (D-15.20 (c)) — unchanged ND.8b.6 behaviour: SC out of the casino's Main
@@ -5501,7 +5718,9 @@ public partial class NetworkRoot : Node
             BotGovernancePreferences = new Dictionary<string, BotGovernancePreference>(_botGovernancePreferences),
             CompanyInflowMultipliers = new Dictionary<string, decimal>(_companyInflowMultipliers),
             BankState = new Dictionary<string, BankBalanceSheet>(_bankState),
-            ClosedCompanies = new Dictionary<string, CompanyClosure>(_closedCompanies)
+            ClosedCompanies = new Dictionary<string, CompanyClosure>(_closedCompanies),
+            FbiActivated = _fbiActivated,
+            FbiScFunds = _fbiScFunds
         };
 
         using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
@@ -5752,6 +5971,9 @@ public partial class NetworkRoot : Node
             if (closure == null) continue;
             _closedCompanies[nodeId] = closure;
         }
+
+        _fbiActivated = snapshot.FbiActivated; // Step 15 P15.6
+        _fbiScFunds = Scripts.Finance.Money.Normalize(Math.Max(0m, snapshot.FbiScFunds));
     }
 
     private static void EnsureDirectory(string path)
@@ -5856,6 +6078,10 @@ public partial class NetworkRoot : Node
         public Dictionary<string, BankBalanceSheet> BankState { get; set; } = new();
         // Step 15 P15.5a — keyed by NonMinerNodeId, mirrors _closedCompanies (same additive-field rule).
         public Dictionary<string, CompanyClosure> ClosedCompanies { get; set; } = new();
+        // Step 15 P15.6 — the FBI's activation latch + self-funding budget (false/0 on an older snapshot,
+        // which is exactly right: the thread simply activates on its date the way it always would).
+        public bool FbiActivated { get; set; }
+        public decimal FbiScFunds { get; set; }
         // ND.8b.3 — keyed by bot NodeId, mirrors _botGovernancePreferences (D-ND8.13/26 world draws).
         public Dictionary<string, BotGovernancePreference> BotGovernancePreferences { get; set; } = new();
         // ND.8b.5 — keyed by companyId, mirrors _companyInflowMultipliers (only non-1.0 entries stored).
@@ -6089,6 +6315,15 @@ public sealed class CompanyGovernanceState
     // dissolution trigger P15.5a reads (D-15.8).
     public decimal PendingShortfallSc { get; set; }
     public decimal UnrecoverableShortfallSc { get; set; }
+    // Step 15 P15.6a — SC THROUGHPUT, the base of the FBI's throughput-relative tolerance (D-15.21): every
+    // conversion that credits ScReserve also accrues here, and the quarter close rolls current → last.
+    // Absolute SC ceilings would go stale across the 2009–2025 span; a company's own recent inflow does not.
+    public decimal ScInflowCurrentQuarterSc { get; set; }
+    public decimal ScInflowLastQuarterSc { get; set; }
+    // Step 15 P15.6b — the F1 investigation meter: accrues while ScReserve sits above the company's
+    // tolerance (∝ overage × category darkness), decays back under it. At/above
+    // NetworkRoot.InvestigationFlagThreshold the company is FLAGGED and eligible for the P15.6c raid roll.
+    public decimal InvestigationScore { get; set; }
 }
 
 // Step 15 P15.2c (D-15.4/D-15.5) — a founded BANK's balance sheet: the LAYER-1 half of the two-layer

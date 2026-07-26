@@ -10,10 +10,12 @@
 > **ALL phases are now broken into subphases in §8 (P15.1a … P15.8)**; P15.1 is fully locked (Fork A,
 > D-15.23) and **✅ IMPLEMENTED (2026-07-26, all five subphases P15.1a–e)**; **P15.2 is likewise ✅
 > IMPLEMENTED (2026-07-26, subphases a–d)**, as is **P15.3 (a–b, which also absorbed P15.4a's quarantine)**
-> **P15.4 (b–e)** and **P15.5 (a–d)**. Later phases inherit the same reviewed data structures and will firm
-> up as each lands. **Next: P15.6a** on branch `bank-companies-sc-provisioning` — P15.5's
-> `ClosureReasonFbiSeizure` + `DissolveCompany` are already in place as the seizure's landing point. In-game
-> verification is deferred to P15.8 by the developer's call — every phase since P15.1 has been
+> **P15.4 (b–e)**, **P15.5 (a–d)** and **P15.6 (a–d)**. **Next: P15.7** on branch
+> `bank-companies-sc-provisioning` — note that P15.7a/b/d and part of P15.7c already shipped early with the
+> mechanisms they observe (the FED scene's Banking layer, Closed-companies + recovery tracker and
+> Federal-investigations boards; `bank_credit_trace.csv`; the shortfall ballot control), so P15.7 is mostly
+> the `CompanyDetails` lending panel plus deciding whether WorldEconomy mirrors the FED-scene blocks.
+> In-game verification is deferred to P15.8 by the developer's call — every phase since P15.1 has been
 > build-verified only.
 >
 > Branch (suggested): `bank-companies-sc-provisioning` off `main` (canonical timeline, `DevEntryYear = 0`).
@@ -839,7 +841,7 @@ shortfall vote; the casino still never repays (D-15.17).
 >
 > **Cross-cutting conventions.** Every judgement call from P15.1–P15.5 is written up in the manual beside
 > the mechanism it belongs to, and the six that recur are collected as standing rules in
-> `ProjectDesignManual.md` **§39.13** — read that before starting P15.6.
+> `ProjectDesignManual.md` **§39.14** — read that before starting a new phase.
 >
 > **Left for the developer's P15.8 verification:** an unrecoverable bank closes and appears in the list with
 > reason `debt_default`; a scheduled inflow to a dead company lands at its heir and is tracked; a
@@ -868,6 +870,40 @@ shortfall vote; the casino still never repays (D-15.17).
 
 **Exit:** banks (and, via P15.6, any company) can die, leaving a Closed-Companies record, redirected
 income, and a category-matched seized-wallet inheritance chain.
+
+### P15.6 — FBI investigation / seizure — ✅ IMPLEMENTED (2026-07-26, subphases a–d)
+
+> **Build log.** `dotnet build` clean. `NetworkRoot.cs`: `FbiActivationLocal` + `FbiToleranceMultiplier` +
+> the meter/roll constants; `ScInflowCurrentQuarterSc`/`ScInflowLastQuarterSc`/`InvestigationScore` on
+> `CompanyGovernanceState` (throughput accrued at the conversion credit, rolled at quarter close);
+> `FbiToleranceScFor`/`FbiOverageRatio`/`FbiDarkness`; `TickFbiInvestigations` (hooked before the P15.5
+> dissolution sweep); the seizure branch in `DissolveCompany`; `_fbiActivated`/`_fbiScFunds` + snapshot
+> fields; `GetFbiInvestigationFiles` + `GetFbiInvestigationWarning`. `CompanyDetails.cs`: the risk line.
+> `CentralBank.cs`: the Federal-investigations board. Docs: `CLAUDE.md` + `ProjectDesignManual.md`
+> **§39.13** (with §39.13.1–.4); the standing-conventions section renumbered §39.13 → **§39.14**.
+>
+> Four decisions taken inside the subphases, all documented in §39.13:
+> - **`T` is accrued at the single conversion-credit site** — the one place SC ever enters a company — and
+>   rolled current→last at quarter close; effective `T` = max(last, current) so a company that has just
+>   started converting is not judged against a stale zero.
+> - **`T = 0` with SC on hand sits at the overage cap deliberately.** That is the intended reading of
+>   "unexplained wealth" (converted heavily three quarters ago, sat on the pile since), not an edge case.
+> - **Priority is one ORDERING, not a second pass:** flagged targets sort banks-last then by overage, and
+>   only the FIRST is rolled each block. D-15.19's rule and a natural one-raid-per-block throttle fall out
+>   of the same line.
+> - **The initial grant is a FED loan on client `"fbi"`, not conjured SC** — otherwise it would mint outside
+>   `circulation = grants + debt`. Seized SC is a plain transfer (invariant untouched), which is why
+>   `DissolveCompany` branches on reason: seizure → the FBI's budget, debt default → burn against the loan.
+>   Seized BTC is not moved at all; it flows into P15.5's custody chain unchanged.
+>
+> **Placeholders for P15.8** (all of them): the four tolerance multipliers, `T`'s window, the meter's
+> gain/decay/overage-cap, the roll's base + cap, and `FbiInitialGrantSc`.
+>
+> **Left for the developer's P15.8 verification:** zero FBI activity before 14 Jun 2011; a black-market
+> SC-hoarder accrues and flags while an official company never does; a bank is only reached after the
+> non-banks are cleared; a sustained-flagged company is eventually seized with its SC landing in the FBI
+> budget and its wallet in federal custody; and the `CompanyDetails` warning appears while over tolerance
+> and clears on de-escalation.
 
 ### P15.6 — FBI investigation / seizure (D-15.21, the hybrid)
 

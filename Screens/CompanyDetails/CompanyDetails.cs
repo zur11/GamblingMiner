@@ -266,6 +266,23 @@ public partial class CompanyDetails : Control
 		_infoVBox.AddChild(new HSeparator());
 		BuildCompanyPolicySection(founding, gov);
 
+		// Step 15 P15.6d — the federal-investigation risk line. Shown to ANY viewer (the risk is a fact about
+		// the company, not about the holding), and only when there is something to say: the FBI is active,
+		// the category is not exempt, and the company is over tolerance or still cooling off.
+		string? fbiWarning = NetworkRoot.GetFbiInvestigationWarning(gov.NonMinerNodeId);
+		if (fbiWarning != null)
+		{
+			_infoVBox.AddChild(new HSeparator());
+			var fbiLabel = new Label { Text = fbiWarning, AutowrapMode = TextServer.AutowrapMode.Word };
+			// Amber while the file grows, red once flagged — the same "colour is never the only signal"
+			// rule as §22.15: the text says which state it is.
+			fbiLabel.AddThemeColorOverride("font_color",
+				gov.InvestigationScore >= NetworkRoot.InvestigationFlagThreshold
+					? new Color(1f, 0.4f, 0.4f)
+					: new Color(1f, 0.75f, 0.3f));
+			_infoVBox.AddChild(fbiLabel);
+		}
+
 		// Governance status (ND.8b.3).
 		_infoVBox.AddChild(new HSeparator());
 		_infoVBox.AddChild(SectionTitle("Governance status"));
