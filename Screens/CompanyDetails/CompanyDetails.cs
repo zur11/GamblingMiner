@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using GodotBlockchainPort.Simulation;
@@ -94,6 +95,57 @@ public partial class CompanyDetails : Control
 		RefreshAll();
 	}
 
+	// Step 15 P15.5d — the liquidation notice. This IS the player's notification that a company they held
+	// stock in is gone (D-15.15: with no player stake the bots resolve everything silently and the player is
+	// told only at the terminal moment). Everything they had already CLAIMED is untouched in their wallet;
+	// what died with the company is the stock itself plus anything still unclaimed.
+	private void ShowClosureNotice(NonMinerDonationSummary summary, CompanyClosure closure)
+	{
+		_borderStyle.BorderColor = HoldingBlack; // no stake remains — §22.15's vocabulary
+		_identityLabel.Text = NetworkRoot.DescribeCompany(summary);
+
+		string when = DateTimeOffset.FromUnixTimeMilliseconds(closure.ClosedAtUnixMs)
+			.LocalDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+		string why = closure.Reason == NetworkRoot.ClosureReasonFbiSeizure
+			? "SEIZED BY THE FBI"
+			: "CLOSED — it could not service its Central Bank debt";
+
+		var lines = new List<string>
+		{
+			$"✗ This company is {why}.",
+			$"Closed {when}."
+		};
+
+		if (closure.PlayerNstAtClosure > 0m || closure.PlayerPstAtClosure > 0m)
+		{
+			string kind = closure.PlayerNstAtClosure > 0m ? "NST (voting)" : "PST (dividend)";
+			decimal amount = closure.PlayerNstAtClosure > 0m ? closure.PlayerNstAtClosure : closure.PlayerPstAtClosure;
+			lines.Add(string.Create(CultureInfo.InvariantCulture,
+				$"Your {amount:N0} {kind} shares were liquidated and are gone, along with all future payments."));
+			if (closure.PlayerUnclaimedBtcAtClosure > 0m || closure.PlayerUnclaimedScAtClosure > 0m)
+			{
+				lines.Add(string.Create(CultureInfo.InvariantCulture,
+					$"Unclaimed at closure and lost: {closure.PlayerUnclaimedBtcAtClosure:N8} BTC / {closure.PlayerUnclaimedScAtClosure:N2} SC."));
+			}
+			lines.Add("Dividends you had already claimed are yours and remain in your wallet.");
+		}
+		else
+		{
+			lines.Add("You held no shares in this company.");
+		}
+
+		if (closure.WasBank)
+		{
+			lines.Add(string.Create(CultureInfo.InvariantCulture,
+				$"Central Bank loss written off: {closure.DebtAtClosureSc:N2} SC. Its wallet ({closure.BtcAtClosure:N8} BTC at closure) passed into federal custody."));
+			lines.Add(string.IsNullOrEmpty(closure.InheritingBankNodeId)
+				? "No solvent bank of its market category has inherited that wallet yet — the Central Bank is holding it as BTC."
+				: $"Now held by {NetworkRoot.DescribeNodeForDev(closure.InheritingBankNodeId)}.");
+		}
+
+		_statusLabel.Text = string.Join("\n", lines);
+	}
+
 	private void RefreshAll()
 	{
 		NonMinerDonationSummary? summary = _networkRoot.GetNonMinerAuctionLedger()
@@ -101,6 +153,16 @@ public partial class CompanyDetails : Control
 		CompanyFounding? founding = _networkRoot.GetCompanyFounding(_nonMinerAddress);
 		if (summary is null || founding is null)
 		{
+			// Step 15 P15.5d (D-15.15) — "no founding" now has TWO meanings: not founded yet, or founded and
+			// since DISSOLVED (closure removes the founding, which is what destroys the holdings). Tell the
+			// two apart rather than showing "not founded yet?" over a company the player watched die.
+			CompanyClosure? closure = summary is null ? null : NetworkRoot.GetCompanyClosure(summary.NonMinerNodeId);
+			if (closure != null)
+			{
+				ShowClosureNotice(summary!, closure);
+				return;
+			}
+
 			_identityLabel.Text = _nonMinerAddress;
 			_statusLabel.Text = "Company not found (not founded yet?).";
 			return;

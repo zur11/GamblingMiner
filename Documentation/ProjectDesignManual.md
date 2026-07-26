@@ -4232,3 +4232,64 @@ The control itself belongs to P15.7c's lending panel, but it was pulled forward 
 `TryRegisterPlayerVote` also gained `dividendsCutPercent` as an **optional** parameter (default 50). That is a deadlock guard, not a convenience: if any caller ever opens this vote kind without the new control wired, it still registers a legal 50/50 ballot and lifts the pause, instead of leaving the game frozen with no way out.
 
 Nothing else of P15.7c was pulled forward — it still owes the rest of the bank lending panel (FED debt, `CollateralBtc` + live value, the quarter installment due, and the P15.6d FBI-investigation warning).
+
+### 39.12 — Dissolution, the Closed-Companies list and seized-wallet custody (P15.5)
+
+Dissolution applies to **every** company, banks included (D-15.17). The casino alone is exempt: it is the player's house, keeps its unlimited FED credit line, and never disappears.
+
+**The trigger that exists today** is debt default: a bank carrying `gov.UnrecoverableShortfallSc > 0` — meaning P15.4e's vote could close the gap with *neither* a full dividends cut *nor* the company's own reserves — is insolvent and dies. P15.6 adds `fbi_seizure` as the second reason (and, for non-banks, the only one — they carry no debt, D-15.19).
+
+**Dissolution is collected and applied OUTSIDE the governance loop.** `TryDissolveInsolventBanks` gathers the doomed first and kills them after, because dissolving mutates the very dictionary `TickCompanyGovernance` iterates. `TickCompanyGovernance`'s early-out also had to widen from "no live companies" to "no live companies *and* no closed ones" — otherwise the closed-company sweeps would stop running the moment the last company died.
+
+#### 39.12.1 — Liquidation is deletion, not a rule to remember
+
+On closure the company is removed from **both** `_companyFoundings` and `_companyGovernance`, leaving only a `CompanyClosure` record. That is a deliberate choice over "keep the record and mark it dead everywhere":
+
+- Removing the founding removes `Holdings`, which **is** the destruction of every holder's NST/PST. Removing the governance state removes `ClaimableByHolder`, which is the loss of everything unclaimed. D-15.15's "holders lose their tokens and the company's future payments" becomes literal — not a condition that twenty other loops each have to remember to check.
+- Every live loop (`AccumulateCompanyInflows`, the vote/dividend/conversion/repayment ticks, `IsAwaitingPlayerVote`, `HasPlayerClaimableDividends`) skips the dead company **for free**, because the entry simply is not there.
+
+What survives is what should: dividends the holder had **already claimed** are in their own wallet and are untouched. The closure record keeps a copy of what the player held at the moment of death purely so the notice can say what was lost.
+
+**The one place this leaks is display**, and it had to be handled explicitly: the BlockExplorer "Founded" list is driven by the **chain-derived auction ledger**, not by `_companyFoundings`, and a resolved auction stays `Resolved` forever (D-ND4b.12). So a dissolved company keeps appearing there with a null founding — which previously meant "founding hasn't fired yet." It now gets its own terminal row (grey, `✗`, reason + date + what the player lost, **no action button**), and `CompanyDetails` distinguishes the two cases rather than showing "not founded yet?" over a company the player watched die.
+
+**Re-founding is not a risk**, worth stating because it looks like one: `TrySettleResolvedAuctions` fires `FoundCompany` only when a status *flips* `InAuction → Resolved` on that block, diffed against the previous block's recomputed ledger. A long-closed company never flips again, so removing its founding cannot resurrect it.
+
+#### 39.12.2 — Custody: seize the wallet, don't move the coins
+
+The FED is an SC-only entity — `CentralBankService` has no node, no keys and no address. But BTC has to live *somewhere*: every satoshi must sit at a real address. So "the FED seizes the wallet" is implemented as **the coins do not move at all**:
+
+- The dead company's wallet stays on-chain exactly as it was, unspendable by anything (no code path owns a dissolved company), and keeps receiving whatever automatic inflows were already scheduled to it — the network does not know it died.
+- That state *is* D-15.18's "held with the FED, 100% as BTC, custodial, no allocation." It needs no FED address, no synthetic transfer, and no new identity file.
+- Its remaining **SC** reserve is different — SC is a plain number the FED can genuinely be repaid with, so it is applied against the debt on the way out and burned, like any repayment.
+
+**Inheritance (P15.5c, D-15.18 "O18-A").** Each block, every custodied wallet looks for a **solvent** founded bank of its **matching market category** — solvency being the meaningful qualifier: a bank carrying its own shortfall cannot be handed more to manage. When one is found the wallet is assigned to it and, from then on, `SweepClosedCompanyInflows` forwards the accumulated balance and every later arrival to that bank (memo `SEIZED`, dust-floored like every other automated send). If the holder later dies itself, the assignment is **released** and the wallet returns to FED custody, eligible again.
+
+This is why the pre-2012-09 seizures the design anticipated are handled without a special case: with no bank founded, there is simply no heir, and the coins sit exactly where they are until one exists.
+
+**What the heir receives is ordinary business inflow, not collateral.** It is a windfall the bank now owns outright; its own band/level governance decides what to do with it (D-15.12 — never force-converted to SC, never a bespoke per-deposit vote).
+
+#### 39.12.3 — The recovery tracker
+
+`CompanyClosure` carries `DebtAtClosureSc` (what the FED wrote off) against `RecoveredBtc` (everything actually delivered to an absorber since). The FED scene's Closed-Companies block values the recovery at the **live** price — never frozen at a historical day, the `AuctioningCompanyDetails`/`BTCWallet` "always live" precedent — and prints the verdict: *RECOVERED (+profit)* / *underwater* / *no loss to recover*.
+
+Recovery is stored in **BTC** and converted only for display, which is the point of the whole thread: the FED eats an SC loss and is repaid in an appreciating asset, so whether it comes out ahead is a genuine question about *when* the company died, not an accounting identity. Non-bank seizures carry no debt, so they show no tracker line (D-15.19).
+
+**Why it lives in the FED scene rather than WorldEconomy.** The phase map nominally puts the recovery tracker and the Closed-Companies list in WorldEconomy (P15.7b). They went into the FED scene instead, for two reasons: the **FED is the absorber** — these are its written-off losses and its custodied wallets, so the readout belongs beside its client accounts — and the banking-layer block was already there from P15.2. P15.7b is free to mirror or move it; nothing else reads the block.
+
+### 39.13 — Conventions this plan established (apply these to later phases)
+
+Six rules came out of building P15.1–P15.5. They are recorded together here because each was first reached as a one-off judgement call and each turned out to apply again a phase or two later — they should be treated as defaults for P15.6–P15.8 and beyond, not re-derived each time.
+
+**1. Never let a persisted figure diverge from reality — fix it in the same phase that creates it.** `_bankState.CollateralBtc` would have claimed BTC the bank had already sold if the quarantine had waited for its nominal phase (§39.9.1). A *persisted number that lies* is a different category of problem from an unfinished feature: the feature is visibly absent, the lie is invisible and compounds. When a phase introduces a tracked quantity, the exclusions that keep it truthful ship with it.
+
+**2. A phase you cannot observe is a phase you cannot sign off — pull the readout forward.** This happened four times: the P15.2 banking-layer block (a phase with *no* behaviour change), `bank_credit_trace.csv` at P15.3 (P15.7d's), the shortfall ballot control at P15.4e (P15.7c's), and the recovery tracker at P15.5 (P15.7b's). The pattern is deliberate — build the minimum surface that makes the new mechanism inspectable, note in the plan which later subphase it was borrowed from, and let that subphase polish rather than originate. **Prefer this to shipping a mechanism nobody can see for two more phases.**
+
+**3. Prefer deletion to a flag when "this thing is over".** Removing a dissolved company from `_companyFoundings`/`_companyGovernance` destroys its holdings and claimables *by construction* and makes every live loop skip it for free (§39.12.1). A `IsDead` flag would have required every present and future loop to remember to check it. The cost is that any consumer reading the record from a *different* source (here, the chain-derived auction ledger) needs an explicit closed-aware branch — find those deliberately rather than discovering them.
+
+**4. Version-bump and wipe by default; re-derive only what is genuinely derivable.** The standing rule (§39.5) is bump + clean reset, never a migration and never a pause to ask. The one exception is a value that is *derivable from static data* — a bank's locked category re-derived from the roster on restore (§39.7) is a simplification, not a migration. Do not contort a design to avoid a bump.
+
+**5. New field on an existing per-entity record → sentinel default + backfill.** When the code that populates a record is guarded by an "already populated?" check, a stance-valued default for a new field produces a world that loads fine, plays fine, and has the new axis silently pinned flat (§39.10). A sentinel makes stale records announce themselves. This is about **silent failure modes**, not about avoiding a bump (see rule 4).
+
+**6. A displayed signal must share its source with the action it advertises.** Inherited from ND.10d and reinforced throughout: `HasPlayerClaimableDividends` backs both the row button and the claim panel; `BuildBotPoolOpportunities` backs the roll, the eligibility test and the panel; `NetworkRoot.GetPlayerProjectedStake` reuses `FoundCompany`'s own ranking so the forecast cannot drift from the mint. When adding a readout, ask what performs the corresponding action and call *that*.
+
+One further habit worth naming, from §39.9.1: **an on-chain display memo can become load-bearing.** `InputDataText` is normally cosmetic, but the `COLLATERAL` tag is what keeps a bank's collateral out of its business-inflow measure — and therefore what stops spurious game-pausing special votes. Before treating a memo as purely decorative, check whether anything reads it.

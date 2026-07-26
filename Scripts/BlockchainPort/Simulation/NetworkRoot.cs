@@ -734,6 +734,10 @@ public partial class NetworkRoot : Node
     // BlockchainStateSnapshot inheritance as the two dictionaries above: a bank can only have a balance
     // sheet once it is FOUNDED (2012-09 at the earliest), so no checkpoint/pre-genesis path of its own.
     private static readonly Dictionary<string, BankBalanceSheet> _bankState = new();
+    // Step 15 P15.5a — dissolved companies, keyed by NonMinerNodeId. An entry here is the authoritative
+    // "this company is dead": it is removed from _companyFoundings/_companyGovernance at closure, so every
+    // live loop skips it for free, and the record is what the Closed-Companies readouts render.
+    private static readonly Dictionary<string, CompanyClosure> _closedCompanies = new();
     // Provisions are far more frequent than FED loan draws (one per company conversion), so each bank's
     // per-client history is capped — oldest trimmed, totals stay exact (the CentralBankService /
     // ScMonetaryLedgerService precedent).
@@ -2324,7 +2328,9 @@ public partial class NetworkRoot : Node
 
     private static void TickCompanyGovernance(Block block)
     {
-        if (_companyGovernance.Count == 0)
+        // P15.5: the closed-company sweeps at the bottom must still run once every company has died, so
+        // the early-out has to consider both books.
+        if (_companyGovernance.Count == 0 && _closedCompanies.Count == 0)
         {
             return;
         }
@@ -2384,6 +2390,14 @@ public partial class NetworkRoot : Node
             TryConvertCompanyReserves(gov, block);
             TryAutoClaimBotDividends(gov, block);
         }
+
+        // Step 15 P15.5 — after the live companies have been processed, because dissolving mutates the
+        // dictionary the loop above iterates. Order matters: kill the insolvent first, then (re)assign
+        // custodied wallets — a bank that just died releases whatever it was holding — then forward the
+        // dead companies' accumulated inflows to whoever now holds them.
+        TryDissolveInsolventBanks(block);
+        TryAssignSeizedWallets(block);
+        SweepClosedCompanyInflows(block);
     }
 
     // ── ND.8b.6 (D-ND8.24/D-ND8.34) — automatic BTC→SC reserve conversion. Since Step 15 P15.3 the
@@ -2402,6 +2416,7 @@ public partial class NetworkRoot : Node
     private const string CompanyConversionMemo = "CONVERSION";
     private const string BankCollateralMemo = "COLLATERAL";
     private const string BankRepaymentMemo = "DEBT SERVICE"; // P15.4d — collateral sold to raise an installment
+    private const string SeizedInflowMemo = "SEIZED";        // P15.5b — a dead company's inflow, forwarded to its absorber
 
     // Moves a founded company's reserves toward its voted ReserveScPercent target: an on-chain BTC send to
     // the financing counterparty (network median fee — the network's cost, never a desk fee) paired with an
@@ -2657,6 +2672,168 @@ public partial class NetworkRoot : Node
             string.Format(System.Globalization.CultureInfo.InvariantCulture,
                 "gap={0:F8};dividendsCutPct={1:F2};dividendCut={2:F8};covered={3:F8};unrecoverable={4:F8}",
                 gap, dividendsCutPercent, dividendCut, covered, unrecoverable));
+    }
+
+    // ── Step 15 P15.5 — dissolution, the Closed-Companies list, and seized-wallet custody ──────────────
+
+    public const string ClosureReasonDebtDefault = "debt_default";
+    public const string ClosureReasonFbiSeizure = "fbi_seizure";
+
+    public static bool IsCompanyClosed(string nonMinerNodeId) => _closedCompanies.ContainsKey(nonMinerNodeId);
+
+    public static CompanyClosure? GetCompanyClosure(string nonMinerNodeId) =>
+        _closedCompanies.TryGetValue(nonMinerNodeId, out CompanyClosure? closure) ? closure : null;
+
+    // Newest closure first — the order both the Closed-Companies readouts want.
+    public static List<CompanyClosure> GetClosedCompanies() =>
+        _closedCompanies.Values.OrderByDescending(c => c.ClosedAtUnixMs).ToList();
+
+    // P15.5a (D-15.15/D-15.17) — kill a company. The record it leaves behind is the ONLY thing that
+    // survives: the founding (and with it every holder's stock) and the governance state are both removed,
+    // which is what makes "NST/PST holders lose their tokens and the company's future payments" literal
+    // rather than a rule some later loop has to remember to honour (D-15.15, P15.5d).
+    //
+    // Anything the holders had ALREADY CLAIMED is theirs and untouched — it is in their own wallet. What
+    // dies with the company is unclaimed claimables plus every future dividend.
+    //
+    // The company's BTC is deliberately NOT moved here: see the CompanyClosure doc comment for the custody
+    // model. Its remaining SC reserve, by contrast, is real money the FED can be repaid with, so it is
+    // applied against the debt on the way out (burning it — the same Option-A rule as any repayment).
+    private static void DissolveCompany(CompanyGovernanceState gov, CompanyFounding founding, string reason, Block block)
+    {
+        string nodeId = gov.NonMinerNodeId;
+        bool isBank = IsBankCompany(nodeId);
+        string fedClientId = CentralBankService.BankClientId(nodeId);
+
+        decimal scAtClosure = Math.Max(0m, gov.ScReserve);
+        decimal repaid = 0m;
+        if (isBank && scAtClosure > 0m && _centralBank != null)
+        {
+            repaid = _centralBank.Repay(fedClientId, scAtClosure, "dissolution");
+        }
+
+        CompanyShareHolding? playerHolding = founding.Holdings.FirstOrDefault(h => h.HolderId == PlayerNodeId);
+        gov.ClaimableByHolder.TryGetValue(PlayerNodeId, out CompanyClaimable? playerClaim);
+
+        var closure = new CompanyClosure
+        {
+            NonMinerNodeId = nodeId,
+            CompanyId = gov.CompanyId,
+            ClosedAtUnixMs = block.Timestamp,
+            Reason = reason,
+            MarketCategory = gov.MarketCategory,
+            WasBank = isBank,
+            DebtAtClosureSc = isBank ? (_centralBank?.OutstandingDebt(fedClientId) ?? 0m) : 0m,
+            ScAtClosure = scAtClosure,
+            BtcAtClosure = CompanyTreasuryBtc(nodeId),
+            PlayerNstAtClosure = playerHolding?.Nst ?? 0m,
+            PlayerPstAtClosure = playerHolding?.Pst ?? 0m,
+            PlayerUnclaimedBtcAtClosure = playerClaim?.Btc ?? 0m,
+            PlayerUnclaimedScAtClosure = playerClaim?.Sc ?? 0m
+        };
+        _closedCompanies[nodeId] = closure;
+
+        _companyGovernance.Remove(nodeId);
+        _companyFoundings.Remove(nodeId);
+
+        AppendBankCreditTrace(block, "dissolution", nodeId, string.Empty, closure.DebtAtClosureSc, closure.BtcAtClosure, 0m);
+        GD.Print($"[NetworkRoot] Company DISSOLVED — {DescribeNodeForDev(nodeId)} ({reason}); FED loss {closure.DebtAtClosureSc:F8} SC (repaid {repaid:F8} from its reserve), {closure.BtcAtClosure:F8} BTC left in custody.");
+    }
+
+    // P15.5a — the debt-default trigger. A bank carrying an unrecoverable shortfall (P15.4e: neither a full
+    // dividends cut nor its own reserves could close the gap) is insolvent and dies. Collected and applied
+    // OUTSIDE the governance loop, since dissolving mutates the very dictionary that loop iterates.
+    private static void TryDissolveInsolventBanks(Block block)
+    {
+        List<CompanyGovernanceState> doomed = _companyGovernance.Values
+            .Where(g => g.UnrecoverableShortfallSc > 0m && IsBankCompany(g.NonMinerNodeId))
+            .ToList();
+
+        foreach (CompanyGovernanceState gov in doomed)
+        {
+            if (_companyFoundings.TryGetValue(gov.NonMinerNodeId, out CompanyFounding? founding))
+            {
+                DissolveCompany(gov, founding, ClosureReasonDebtDefault, block);
+            }
+        }
+    }
+
+    // P15.5c (D-15.18, "O18-A") — the FED assigns each custodied wallet to a SOLVENT bank of the MATCHING
+    // market category, which then processes its inflows through its own band/level and normal governance
+    // votes (D-15.12 — never force-converted, never a bespoke per-deposit vote). Until such a bank exists
+    // — every 2011–2012 seizure predates the first bank founding, and a category may simply have none —
+    // the wallet stays with the FED, held 100% as BTC.
+    //
+    // "Solvent" is the meaningful qualifier: a bank carrying its own shortfall cannot be handed more to
+    // manage, and one that dissolves later releases what it holds back to FED custody (its own closure
+    // clears the assignment below).
+    private static void TryAssignSeizedWallets(Block block)
+    {
+        if (_closedCompanies.Count == 0) return;
+
+        foreach (CompanyClosure closure in _closedCompanies.Values)
+        {
+            // Release an assignment whose holder has since died — back to FED custody, eligible again.
+            if (!string.IsNullOrEmpty(closure.InheritingBankNodeId)
+                && !_companyGovernance.ContainsKey(closure.InheritingBankNodeId))
+            {
+                closure.InheritingBankNodeId = string.Empty;
+                closure.InheritedAtUnixMs = 0;
+            }
+
+            if (!string.IsNullOrEmpty(closure.InheritingBankNodeId)) continue;
+
+            CompanyGovernanceState? heir = FoundedBanks().FirstOrDefault(b =>
+                b.MarketCategory == closure.MarketCategory
+                && b.NonMinerNodeId != closure.NonMinerNodeId
+                && b.PendingShortfallSc <= 0m
+                && b.UnrecoverableShortfallSc <= 0m);
+            if (heir == null) continue; // no matching solvent bank yet — the FED keeps holding it as BTC
+
+            closure.InheritingBankNodeId = heir.NonMinerNodeId;
+            closure.InheritedAtUnixMs = block.Timestamp;
+            AppendBankCreditTrace(block, "wallet_inherited", heir.NonMinerNodeId, closure.NonMinerNodeId, 0m, 0m, 0m);
+            GD.Print($"[NetworkRoot] Seized wallet {DescribeNodeForDev(closure.NonMinerNodeId)} ({closure.MarketCategory}) inherited by {DescribeNodeForDev(heir.NonMinerNodeId)}.");
+        }
+    }
+
+    // P15.5b (D-15.8) — the off-UI income redirection. A dead company's address keeps receiving whatever
+    // automatic inflows were already scheduled to it (the cast sell-flow still picks it, the network does
+    // not know it died). Each block, everything sitting in a closed company's wallet is forwarded to its
+    // absorber — which exists only once P15.5c has assigned a bank. While the FED holds the wallet, the
+    // coins simply accumulate in place, which IS the custody model.
+    //
+    // The forwarded BTC lands as the heir's ordinary business inflow, not as collateral: it is a windfall
+    // it now owns, and its own band/level governance decides what to do with it (D-15.12). Recovery is
+    // tracked in BTC and valued live by the DEV readout — never frozen at a historical price.
+    private static void SweepClosedCompanyInflows(Block block)
+    {
+        if (_closedCompanies.Count == 0) return;
+
+        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
+        foreach (CompanyClosure closure in _closedCompanies.Values)
+        {
+            if (string.IsNullOrEmpty(closure.InheritingBankNodeId)) continue;
+            if (!SharedNodesById.TryGetValue(closure.NonMinerNodeId, out NodeAgent? dead)
+                || !SharedNodesById.TryGetValue(closure.InheritingBankNodeId, out NodeAgent? heir))
+            {
+                continue;
+            }
+
+            decimal balance = AggregateSpendable(dead);
+            decimal amount = Scripts.Finance.Money.Normalize(balance - fee);
+            // Same dust floor as every other automated send: below it the fee eats the transfer, so let it
+            // keep accumulating until it is worth moving.
+            if (amount < Math.Max(MinConversionBtc, fee * 2m)) continue;
+
+            if (BuildAndBroadcastUtxoSpend(dead, heir.WalletAddress, amount, fee, null, SeizedInflowMemo) == null)
+            {
+                continue;
+            }
+
+            closure.RecoveredBtc = Scripts.Finance.Money.Normalize(closure.RecoveredBtc + amount);
+            AppendBankCreditTrace(block, "seized_inflow", closure.InheritingBankNodeId, closure.NonMinerNodeId, 0m, amount, 0m);
+        }
     }
 
     // The pre-first-bank fallback (D-15.20 (c)) — unchanged ND.8b.6 behaviour: SC out of the casino's Main
@@ -5323,7 +5500,8 @@ public partial class NetworkRoot : Node
             CompanyGovernance = new Dictionary<string, CompanyGovernanceState>(_companyGovernance),
             BotGovernancePreferences = new Dictionary<string, BotGovernancePreference>(_botGovernancePreferences),
             CompanyInflowMultipliers = new Dictionary<string, decimal>(_companyInflowMultipliers),
-            BankState = new Dictionary<string, BankBalanceSheet>(_bankState)
+            BankState = new Dictionary<string, BankBalanceSheet>(_bankState),
+            ClosedCompanies = new Dictionary<string, CompanyClosure>(_closedCompanies)
         };
 
         using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
@@ -5566,6 +5744,14 @@ public partial class NetworkRoot : Node
             if (sheet == null) continue;
             _bankState[bankNodeId] = sheet;
         }
+
+        // Step 15 P15.5a — same additive-field rule (absent/null ⇒ no company has died yet).
+        _closedCompanies.Clear();
+        foreach ((string nodeId, CompanyClosure closure) in snapshot.ClosedCompanies ?? new Dictionary<string, CompanyClosure>())
+        {
+            if (closure == null) continue;
+            _closedCompanies[nodeId] = closure;
+        }
     }
 
     private static void EnsureDirectory(string path)
@@ -5668,6 +5854,8 @@ public partial class NetworkRoot : Node
         public Dictionary<string, CompanyGovernanceState> CompanyGovernance { get; set; } = new();
         // Step 15 P15.2c — keyed by the BANK's NonMinerNodeId, mirrors _bankState (same additive-field rule).
         public Dictionary<string, BankBalanceSheet> BankState { get; set; } = new();
+        // Step 15 P15.5a — keyed by NonMinerNodeId, mirrors _closedCompanies (same additive-field rule).
+        public Dictionary<string, CompanyClosure> ClosedCompanies { get; set; } = new();
         // ND.8b.3 — keyed by bot NodeId, mirrors _botGovernancePreferences (D-ND8.13/26 world draws).
         public Dictionary<string, BotGovernancePreference> BotGovernancePreferences { get; set; } = new();
         // ND.8b.5 — keyed by companyId, mirrors _companyInflowMultipliers (only non-1.0 entries stored).
@@ -5941,6 +6129,50 @@ public sealed class BankClientEntry
     public decimal BtcBought { get; set; }
     public decimal ScPaid { get; set; }
     public decimal PriceUsd { get; set; }
+}
+
+// Step 15 P15.5a (D-15.15/D-15.17) — one DISSOLVED company. Dissolution applies to every company, banks
+// included; only the casino is exempt (D-15.17, it is the player's house and keeps its unlimited FED
+// credit line forever). Two reasons today: `debt_default` (a bank that could not service its FED
+// installment by any means, P15.4e) and `fbi_seizure` (P15.6).
+//
+// CUSTODY MODEL (D-15.18): a closure does NOT move the dead company's coins. Its wallet stays on-chain,
+// unspendable by anything (no code path owns a dissolved company), and keeps receiving whatever automatic
+// inflows were already scheduled to it — that IS what "the FED holds it custodially, 100% as BTC" means
+// in a world where every satoshi must live at a real address and the FED has none. Only when a solvent
+// bank of the matching market category inherits the wallet does the BTC actually move (P15.5c), after
+// which new arrivals are forwarded to that bank per block (P15.5b).
+//
+// Rides BlockchainStateSnapshot like every other company record — checkpoint coverage, delete-list
+// membership and the pre-genesis path all inherited (the ND.8g argument).
+public sealed class CompanyClosure
+{
+    public string NonMinerNodeId { get; set; } = string.Empty;
+    public string CompanyId { get; set; } = string.Empty;
+    public long ClosedAtUnixMs { get; set; }
+    public string Reason { get; set; } = string.Empty;         // "debt_default" | "fbi_seizure"
+    public string MarketCategory { get; set; } = string.Empty; // at closure — the P15.5c inheritance key
+    public bool WasBank { get; set; }
+
+    // The loss the FED actually ate: what the company still owed after its last SC was applied.
+    public decimal DebtAtClosureSc { get; set; }
+    // Balances at the moment of closure, for the recovery tracker's "owed vs recovered" readout.
+    public decimal ScAtClosure { get; set; }
+    public decimal BtcAtClosure { get; set; }
+
+    // P15.5b — cumulative BTC actually delivered to an absorber since closure (the swept opening balance
+    // plus every forwarded inflow). Compared against DebtAtClosureSc at live prices by the DEV tracker.
+    public decimal RecoveredBtc { get; set; }
+    // P15.5c — "" while the FED holds the wallet custodially; the bank's nodeId once inherited.
+    public string InheritingBankNodeId { get; set; } = string.Empty;
+    public long InheritedAtUnixMs { get; set; }
+
+    // P15.5d — what the player held when the company died, kept ONLY so the closure notice can say what
+    // was lost. The live holdings themselves are destroyed at closure (liquidation, D-15.15).
+    public decimal PlayerNstAtClosure { get; set; }
+    public decimal PlayerPstAtClosure { get; set; }
+    public decimal PlayerUnclaimedBtcAtClosure { get; set; }
+    public decimal PlayerUnclaimedScAtClosure { get; set; }
 }
 
 // ND.8g — one successful player dividend claim from one company (BTC/SC amounts actually paid THIS press,

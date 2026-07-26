@@ -10,10 +10,11 @@
 > **ALL phases are now broken into subphases in §8 (P15.1a … P15.8)**; P15.1 is fully locked (Fork A,
 > D-15.23) and **✅ IMPLEMENTED (2026-07-26, all five subphases P15.1a–e)**; **P15.2 is likewise ✅
 > IMPLEMENTED (2026-07-26, subphases a–d)**, as is **P15.3 (a–b, which also absorbed P15.4a's quarantine)**
-> and **P15.4 (b–e)**. Later phases inherit the same reviewed data structures and will firm up as each
-> lands. **Next: P15.5a** on branch `bank-companies-sc-provisioning` — the `UnrecoverableShortfallSc` flag
-> P15.4e sets is already waiting as its dissolution trigger. In-game verification is deferred to P15.8 by
-> the developer's call — every phase since P15.1 has been build-verified only.
+> **P15.4 (b–e)** and **P15.5 (a–d)**. Later phases inherit the same reviewed data structures and will firm
+> up as each lands. **Next: P15.6a** on branch `bank-companies-sc-provisioning` — P15.5's
+> `ClosureReasonFbiSeizure` + `DissolveCompany` are already in place as the seizure's landing point. In-game
+> verification is deferred to P15.8 by the developer's call — every phase since P15.1 has been
+> build-verified only.
 >
 > Branch (suggested): `bank-companies-sc-provisioning` off `main` (canonical timeline, `DevEntryYear = 0`).
 
@@ -808,6 +809,42 @@ as the pre-first-bank fallback.
 
 **Exit:** banks service their FED debt lazily from collateral; a BTC drop triggers the greed-weighted
 shortfall vote; the casino still never repays (D-15.17).
+
+### P15.5 — Dissolution, closed-companies list & seized wallets — ✅ IMPLEMENTED (2026-07-26, subphases a–d)
+
+> **Build log.** `dotnet build` clean. `NetworkRoot.cs`: `CompanyClosure` + `_closedCompanies` + snapshot
+> capture/restore; `ClosureReason*` constants + `IsCompanyClosed`/`GetCompanyClosure`/`GetClosedCompanies`;
+> `DissolveCompany`, `TryDissolveInsolventBanks`, `TryAssignSeizedWallets`, `SweepClosedCompanyInflows` +
+> `SeizedInflowMemo`, all three hooked at the end of `TickCompanyGovernance` (whose early-out widened).
+> `BlockExplorer.cs`: `BuildClosedCompanyRow` + the closed branch in the Founded list. `CompanyDetails.cs`:
+> `ShowClosureNotice`. `CentralBank.cs`: the Closed-companies & recovery block. Docs: `CLAUDE.md` +
+> `ProjectDesignManual.md` **§39.12** (with §39.12.1–.3).
+>
+> Four decisions taken inside the subphases, all documented in §39.12:
+> - **Custody is implemented as "the coins do not move".** The FED is SC-only — no node, no keys, no
+>   address — but every satoshi must live at a real address. So a closure leaves the wallet on-chain,
+>   unspendable, still receiving its scheduled inflows; that state IS D-15.18's "held 100% as BTC,
+>   custodial". No FED address, no synthetic transfer, no new identity file. Its leftover **SC** does move
+>   (it is a plain number the FED can be repaid with) and is burned against the debt.
+> - **Closure DELETES the founding + governance entries** rather than flagging them. That makes "holders
+>   lose their tokens and future payments" literal and lets every live loop skip the dead company for free.
+> - **The BlockExplorer leak had to be handled explicitly:** the Founded list is driven by the chain-derived
+>   auction ledger, not by `_companyFoundings`, and a resolved auction stays `Resolved` forever — so a
+>   dissolved company kept appearing with a null founding, which previously meant "not founded yet".
+>   Verified that **re-founding is impossible** (`TrySettleResolvedAuctions` only fires on an
+>   `InAuction → Resolved` flip, so a long-closed company never flips again).
+> - **The recovery tracker + Closed-Companies list went into the FED scene**, not WorldEconomy (P15.7b's
+>   nominal home) — the FED is the absorber, and the banking-layer readout already lives there. P15.7b can
+>   mirror or move it.
+>
+> **Cross-cutting conventions.** Every judgement call from P15.1–P15.5 is written up in the manual beside
+> the mechanism it belongs to, and the six that recur are collected as standing rules in
+> `ProjectDesignManual.md` **§39.13** — read that before starting P15.6.
+>
+> **Left for the developer's P15.8 verification:** an unrecoverable bank closes and appears in the list with
+> reason `debt_default`; a scheduled inflow to a dead company lands at its heir and is tracked; a
+> black-category closure is inherited by the solvent Black bank while an unmatched one stays in FED
+> custody as BTC; and a player PST holder in a closed company loses the holding and sees the closure notice.
 
 ### P15.5 — Dissolution, closed-companies list & seized wallets
 

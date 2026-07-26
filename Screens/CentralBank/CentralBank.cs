@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using GodotBlockchainPort.Simulation;
+using Scripts.Finance;
 using UI.StatusBar;
 
 // The Central Bank (FED) DEV readout — Step 15 P15.1e (D-15.16: a Main Menu entry, DEV-only for now; the
@@ -26,6 +27,8 @@ public partial class CentralBank : Control
 	private CentralBankService      _fed;
 	private ScMonetaryLedgerService _ledger;
 	private SceneManager            _sceneManager;
+	private BtcMarketDataService    _marketData;   // P15.5 — live valuation for the recovery tracker
+	private CalendarTimeService     _calendarTime;
 
 	private Label _totalsLabel;
 	private Label _invariantLabel;
@@ -52,6 +55,8 @@ public partial class CentralBank : Control
 		_fed          = GetNodeOrNull<CentralBankService>("/root/CentralBankService");
 		_ledger       = GetNodeOrNull<ScMonetaryLedgerService>("/root/ScMonetaryLedgerService");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+		_marketData   = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
+		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
 
@@ -221,6 +226,8 @@ public partial class CentralBank : Control
 			}
 		}
 
+		BuildClosedCompaniesSection();
+
 		AddSpacer(12);
 		AddLabel("Financier selection preview (§5.1 / D-15.20)", 20, ColorHeading);
 		var preview = NetworkRoot.PreviewCompanyFinanciers();
@@ -236,6 +243,53 @@ public partial class CentralBank : Control
 					$"    {row.CompanyDisplay} [{row.CompanyCategory}]  →  {row.FinancierDisplay}  ({row.Tier})"), 15,
 					row.Tier == NetworkRoot.FinancierTierCasino ? ColorSubtle : ColorRepay);
 			}
+		}
+	}
+
+	// Step 15 P15.5 — the Closed-Companies list and the post-dissolution RECOVERY TRACKER (D-15.8/15.15).
+	// A dead company's wallet stays on-chain in federal custody and keeps receiving its scheduled inflows;
+	// once a solvent bank of its market category inherits it, those inflows are forwarded there. The
+	// tracker asks the only question that matters: has the redirected income out-earned the debt the FED
+	// wrote off? Recovery is held in BTC and valued at the LIVE price (never frozen at a historical day —
+	// the AuctioningCompanyDetails/BTCWallet "always live" precedent).
+	private void BuildClosedCompaniesSection()
+	{
+		var closures = NetworkRoot.GetClosedCompanies();
+		if (closures.Count == 0) return;
+
+		AddSpacer(18);
+		AddLabel("Closed companies & recovery (Step 15 P15.5)", 22, ColorHeading);
+
+		decimal? price = _marketData?.GetEffectivePriceUsd(
+			_calendarTime?.CurrentLocalDateTime ?? DateTime.Now);
+
+		foreach (var c in closures)
+		{
+			string when = DateTimeOffset.FromUnixTimeMilliseconds(c.ClosedAtUnixMs)
+				.LocalDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+			AddLabel(string.Create(CultureInfo.InvariantCulture,
+				$"    ✗ {NetworkRoot.DescribeNodeForDev(c.NonMinerNodeId)}  ·  {c.Reason}  ·  {when}  ·  category {c.MarketCategory}"), 17, ColorSubtle);
+
+			string custody = string.IsNullOrEmpty(c.InheritingBankNodeId)
+				? "FED custody (100% BTC, no matching solvent bank yet)"
+				: $"held by {NetworkRoot.DescribeNodeForDev(c.InheritingBankNodeId)}";
+			AddLabel(string.Create(CultureInfo.InvariantCulture,
+				$"        FED loss: {c.DebtAtClosureSc:N8} SC     at closure: {c.BtcAtClosure:N8} BTC / {c.ScAtClosure:N8} SC     wallet: {custody}"), 15, ColorSubtle);
+
+			// The tracker line: recovered-vs-owed, and the verdict. Only meaningful for a bank (a non-bank
+			// FBI seizure carries no debt to recover against — D-15.19).
+			if (!c.WasBank) continue;
+
+			decimal recoveredSc = price is decimal p && p > 0m
+				? Money.Normalize(c.RecoveredBtc * p)
+				: 0m;
+			decimal net = Money.Normalize(recoveredSc - c.DebtAtClosureSc);
+			string verdict = c.DebtAtClosureSc <= 0m ? "no loss to recover"
+				: net >= 0m ? "RECOVERED (+profit)"
+				: "underwater";
+			AddLabel(string.Create(CultureInfo.InvariantCulture,
+				$"        recovered {c.RecoveredBtc:N8} BTC ≈ {recoveredSc:N2} SC at today's price  →  net {net:+#,##0.00;-#,##0.00;0.00} SC  ({verdict})"),
+				15, net >= 0m ? ColorRepay : ColorDraw);
 		}
 	}
 
