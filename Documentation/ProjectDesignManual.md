@@ -4099,3 +4099,34 @@ Two conventions it follows deliberately:
 - **Ch. 38 event discipline**, since this is new work: it subscribes to `CentralBankChanged` + `LedgerChanged` rather than polling. Because a casino recharge streak can fire many draws per second, the events set a **dirty flag** coalesced at 0.5 s instead of rebuilding per event, with a slow 5 s fallback as a safety net. It is deliberately **not** a new entry in the §38.5 migration backlog.
 
 The FED's per-client history is capped at its newest 500 records (totals stay exact independently of the cap — the `ScMonetaryLedgerService.MaxEventHistory` precedent), and both the FED scene and `CasinoGamblingFinances` report any surplus as *"(+N older)"* so a count and its list can never look inconsistent.
+
+### 39.7 — The four bank companies: typed, categorised, locked (P15.2)
+
+P15.2 makes the four CB1 roster banks structurally real without changing where a single SC flows — conversions still go to the casino until P15.3.
+
+**The Official→Black gradient (P15.2a, D-15.20/App. A).** The `market_category` column of three bank rows changed: First Satoshi Savings stays `official`, Digital Reserve Trust → `light_grey`, Ledger & Sons → `dark_grey`, Harbor Coin Bank → `black`. This is not flavour — it is the **distance axis** the §5.1 selection algorithm measures on. A darker bank consequently inherits §12.4.3's higher default dividend rate *and* (from P15.6) higher seizure risk: a shady bank that pays well but can be busted. That is the intended trade, confirmed at design lock.
+
+**Identifying a bank: a closed id set, not a CSV column.** `CompanyRoster.BankCompanyIds` (+ `IsBank`/`Banks`) holds the four ids. plan15 explicitly adds behaviour to existing companies and creates none (D-15.6), so the set is closed by design; an `is_bank` column would have touched all 44 rows to encode four `true`s, and would let a 45th row silently become a bank. Every caller goes through `IsBank`/`Banks`, so promoting it to a column later changes nothing else. The loader warns if the set and the CSV ever disagree.
+
+**Locking the category (P15.2b, D-15.12).** Banks are the **only** companies exempt from the ±1 market-shift vote. A drifting bank would silently re-shape which companies bank where; in exchange banks gain the seized-wallet holding feature (P15.5c). Only the *application* is blocked — the supermajority is still computed, and the governance trace records `shift=±1;shift_refused=bank_locked`, so a refused attempt reads as "the holders asked and were denied" rather than "nobody asked."
+
+**A locked category is a DERIVED value — so it self-heals on restore.** Because a bank's category can never move by vote, it is always exactly its roster default, which means re-deriving it from the roster on every snapshot restore is *always* correct. `ApplyStateFromSnapshot` does exactly that. This is what let P15.2a reassign three categories **without a second `WorldFormatVersion` bump**: a bank that founded under the old roster is corrected on the next load instead of stranding a stale category. The general rule worth carrying forward: *if a persisted field is guaranteed derivable from static data, re-derive it on restore rather than bumping the world format to re-seed it.*
+
+**The layer-1 balance sheet (P15.2c, D-15.4/D-15.5).** `NetworkRoot._bankState` maps a bank's `NonMinerNodeId` → `BankBalanceSheet { CollateralBtc, Clients }`, where each `BankClientAccount` carries `{ BtcBought, ScPaid, ProvisionCount, History }`. It rides `BlockchainStateSnapshot`, so checkpoint coverage, delete-list membership and the pre-genesis path are all inherited (the ND.8g argument) — a bank can only have a balance sheet once founded, i.e. 2012-09 at the earliest, so it needs no path of its own. `CollateralBtc` is the **quarantined** account of §3.2: BTC bought from financed companies, deliberately excluded from the bank's own CB1 auto-convert and sold extra-lazily only on a payment day (P15.4). Two BTC streams, one wallet, two books. Per-client history caps at 200 with exact totals — same shape as the FED's and the ledger's.
+
+### 39.8 — `SelectFinanciers`: building the dormant tiers on purpose (P15.2d, D-15.20)
+
+`SelectFinanciers(companyNodeId, amountSc)` returns an ordered list of `FinancierChoice(BankNodeId, AmountSc, Tier)` summing to the requested amount, with a **null `BankNodeId` meaning the casino fallback**.
+
+| Tier | Rule |
+|---|---|
+| 1 `nearest` | The founded bank nearest the company's *current* category by `\|catCompany − catBank\|`; ties break **toward Official** (A1 — "a business reaches for the cleaner bank first"), then toward the earlier-founded bank so the order is total |
+| 2 `funder` | Nearest bank that can fund the **whole** amount alone |
+| 3 `split` | Spread across banks: nearest-category first, most capacity first within an equal preference |
+| — `casino` | No founded bank at all (every date before 2012-09, or a category with no founded bank) — D-15.20 (c) |
+
+**Tiers 2 and 3 are unreachable today, and that is the decision (B1).** `BankFundingCapacitySc` returns `decimal.MaxValue`, because a bank funds every provision with an unlimited FED auto-loan (D-15.1 defers all credit limits to ND.8e), so tier 1 always wins. They were still built because they are *real, compiled, reviewed* code paths that light up the day limits ship — turning the eventual ND.8e work into a change to **one method** rather than a rewrite of the selection logic. `BankFundingCapacitySc` is deliberately `private`: nothing outside selection should read a capacity that is knowingly fake.
+
+Selection is evaluated **fresh at every conversion**, because a company's category can still shift ±1 by vote while a bank's cannot — which is precisely what keeps the axis stable underneath a moving company.
+
+**Verifying a phase that changes no behaviour.** P15.2 deliberately routes nothing new, which would leave it unverifiable in-game — so the FED scene gained a read-only **Banking layer** block: the founded banks (locked category, FED debt, `CollateralBtc`, client count) and a **financier-selection preview** row per founded company showing which counterparty it *would* route to and at which tier. It probes with a nominal 1 SC, honest only because capacity is currently infinite — a note to revisit when ND.8e makes the amount matter. This is an early slice of P15.7a, pulled forward because a phase you cannot observe is a phase you cannot sign off.

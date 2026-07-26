@@ -22,10 +22,10 @@ laundromat,The Laundromat,CB5,dark_grey,2011-10-27,true,4,,,fictional,Mixer arch
 coinwash,CoinWash,CB5,dark_grey,2012-03-14,true,3,,,fictional,Mixer archetype #2
 satoshidice,SatoshiDice,CB4,light_grey,2012-04-24,true,9,2012-07-01,2,real,On-chain betting phenomenon — carried ~half of ALL network txs in its 2012 boom (the expansion step); brand faded — real name
 coinbasis,CoinBasis,CB2,official,2012-06-20,true,9,2013-04-01,2,parody,Riff of Coinbase (living trademark — D-ND8.38); fiat brokerage giant; expansion = the April 2013 bubble
-first_satoshi_savings,First Satoshi Savings,CB1,official,2012-09-03,true,5,,,fictional,Bank clone #1 — the §12.4.6c SC-backbone lender (auctionable clone of the house bank)
+first_satoshi_savings,First Satoshi Savings,CB1,official,2012-09-03,true,5,,,fictional,Bank clone #1 — the §12.4.6c SC-backbone lender (auctionable clone of the house bank); plan15 D-15.20 gradient slot OFFICIAL — category LOCKED (D-15.12)
 satoshis_general_store,Satoshi's General Store,CB1,official,2013-02-11,true,2,,,fictional,Late merchant filler (BTC-accepting goods store)
 lucky_satoshi_casino,Lucky Satoshi Casino,CB4,light_grey,2013-04-08,true,4,,,fictional,Crypto-casino filler (the SatoshiDice-cousin archetype)
-digital_reserve_trust,Digital Reserve Trust,CB1,official,2013-06-17,true,5,,,fictional,Bank clone #2
+digital_reserve_trust,Digital Reserve Trust,CB1,light_grey,2013-06-17,true,5,,,fictional,Bank clone #2 — plan15 D-15.20 gradient slot LIGHT-GREY (a lightly-regulated reserve trust); category LOCKED (D-15.12)
 satoshiwire_remit,SatoshiWire Remittance,CB2,official,2013-08-05,true,3,,,fictional,Remittance desk — fiat-first with meaningful BTC inflow (the CB2 shape)
 ghostroute_vpn,GhostRoute VPN,CB4,light_grey,2013-09-23,true,3,,,fictional,On-chain-paid VPN service
 pacific_coin_exchange,Pacific Coin Exchange,CB3,official,2013-11-11,true,5,,,fictional,Fictional exchange filling the CB3 slot Mt. Gox vacated (D-ND8.39)
@@ -34,10 +34,10 @@ cointeller_atm,CoinTeller ATM Network,CB2,official,2014-02-20,true,3,,,fictional
 nakamoto_desk_otc,Nakamoto Desk OTC,CB2,light_grey,2014-05-12,true,5,,,fictional,OTC / broker desk filler
 onionhost,OnionHost,CB4,dark_grey,2014-08-18,true,3,,,fictional,Bulletproof-hosting filler
 night_bazaar,Night Bazaar,CB4,black,2014-12-15,true,5,,,fictional,Darknet-market filler (mid-era; post-Silk generation)
-harbor_coin_bank,Harbor Coin Bank,CB1,official,2014-11-03,true,4,,,fictional,Bank clone #3
+harbor_coin_bank,Harbor Coin Bank,CB1,black,2014-11-03,true,4,,,fictional,Bank clone #3 — plan15 D-15.20 gradient slot BLACK (an offshore harbor for illicit funds); category LOCKED (D-15.12)
 eastrand_exchange,EastRand Exchange,CB3,dark_grey,2015-04-27,true,4,,,fictional,Loosely-regulated exchange filler (the BTC-e archetype)
 giftsats_cards,GiftSats Cards,CB2,light_grey,2015-07-06,true,2,,,fictional,Gift-card reseller
 frostbyte_pool,Frostbyte Pool,CB5,official,2015-09-14,true,4,,,fictional,Late-era pool filler
-ledger_and_sons,Ledger & Sons Private Bank,CB1,official,2016-03-21,true,4,,,fictional,Bank clone #4
+ledger_and_sons,Ledger & Sons Private Bank,CB1,dark_grey,2016-03-21,true,4,,,fictional,Bank clone #4 — plan15 D-15.20 gradient slot DARK-GREY (secretive old-money private banking); category LOCKED (D-15.12)
 vapor_market,Vapor Market,CB4,black,2016-08-08,true,4,,,fictional,Late darknet-market filler
 dragon_gate_pool,Dragon Gate Pool,CB5,official,2016-12-05,true,5,,,fictional,Late-era pool filler #2

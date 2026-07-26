@@ -726,6 +726,15 @@ public partial class NetworkRoot : Node
     // preference + one market-category preference each), re-rolled per world; drawn lazily on the first
     // vote open (always inside block processing, so the draw lands in that block's snapshot write).
     private static readonly Dictionary<string, BotGovernancePreference> _botGovernancePreferences = new();
+    // Step 15 P15.2c (D-15.4/D-15.5) — the four CB1 banks' layer-1 balance sheets (quarantined
+    // CollateralBtc + the per-client provisioning book), keyed by the bank's NonMinerNodeId. Same
+    // BlockchainStateSnapshot inheritance as the two dictionaries above: a bank can only have a balance
+    // sheet once it is FOUNDED (2012-09 at the earliest), so no checkpoint/pre-genesis path of its own.
+    private static readonly Dictionary<string, BankBalanceSheet> _bankState = new();
+    // Provisions are far more frequent than FED loan draws (one per company conversion), so each bank's
+    // per-client history is capped — oldest trimmed, totals stay exact (the CentralBankService /
+    // ScMonetaryLedgerService precedent).
+    private const int MaxBankClientHistory = 200;
 
     public static void SetNonMinerIntroSchedule(long[] introUnixMs) =>
         _nonMinerIntroScheduleMs = introUnixMs ?? [];
@@ -1907,6 +1916,245 @@ public partial class NetworkRoot : Node
         return index >= 0 ? index : 0;
     }
 
+    // ---- Step 15 P15.2 — the four CB1 bank companies -----------------------------------------------------
+
+    // Is this founded company one of the four SC-dealer banks (D-15.6)? Resolved through the founding's
+    // roster CompanyId, so it is true only ONCE THE COMPANY IS FOUNDED — which is exactly the gate the
+    // selection framework wants (an unfounded bank can finance nothing).
+    public static bool IsBankCompany(string nonMinerNodeId) =>
+        _companyFoundings.TryGetValue(nonMinerNodeId, out CompanyFounding? founding)
+        && CompanyRoster.IsBank(founding.CompanyId);
+
+    // A founded bank's market category — the §5.1 selection distance axis. LOCKED at its roster default
+    // (D-15.12, enforced in CloseCompanyVote), so live and default always agree for a bank; reading the
+    // LIVE value keeps this honest if that guard is ever loosened. Null for anything that isn't a bank.
+    public static string? BankCompanyCategory(string nonMinerNodeId) =>
+        IsBankCompany(nonMinerNodeId) && _companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov)
+            ? gov.MarketCategory
+            : null;
+
+    // Every founded bank, in founding order. Small (≤ 4) and only walked once per conversion.
+    private static IEnumerable<CompanyGovernanceState> FoundedBanks() =>
+        _companyGovernance.Values
+            .Where(g => IsBankCompany(g.NonMinerNodeId))
+            .OrderBy(g => _companyFoundings[g.NonMinerNodeId].FoundedAtUnixMs);
+
+    // P15.2c — a founded bank's layer-1 balance sheet, created on first touch. Only ever called for a
+    // node that IsBankCompany already accepted, so a sheet can never appear on a non-bank.
+    private static BankBalanceSheet BankSheet(string bankNodeId)
+    {
+        if (!_bankState.TryGetValue(bankNodeId, out BankBalanceSheet? sheet))
+        {
+            sheet = new BankBalanceSheet();
+            _bankState[bankNodeId] = sheet;
+        }
+        return sheet;
+    }
+
+    // Read-only view for the DEV/player readouts (P15.7). Null when the bank has never financed anything.
+    public static BankBalanceSheet? GetBankBalanceSheet(string bankNodeId) =>
+        _bankState.TryGetValue(bankNodeId, out BankBalanceSheet? sheet) ? sheet : null;
+
+    public static decimal BankCollateralBtc(string bankNodeId) =>
+        _bankState.TryGetValue(bankNodeId, out BankBalanceSheet? sheet) ? sheet.CollateralBtc : 0m;
+
+    // P15.2c — record one provisioning event on the bank's own client book. Called by P15.3a's bank
+    // provisioning path AFTER both legs have succeeded, so the book never records a half-executed swap.
+    private static void RecordBankProvision(string bankNodeId, string companyNodeId, decimal btcBought, decimal scPaid, decimal priceUsd, Block block)
+    {
+        BankBalanceSheet sheet = BankSheet(bankNodeId);
+        sheet.CollateralBtc = Scripts.Finance.Money.Normalize(sheet.CollateralBtc + btcBought);
+
+        if (!sheet.Clients.TryGetValue(companyNodeId, out BankClientAccount? account))
+        {
+            account = new BankClientAccount();
+            sheet.Clients[companyNodeId] = account;
+        }
+        account.BtcBought = Scripts.Finance.Money.Normalize(account.BtcBought + btcBought);
+        account.ScPaid = Scripts.Finance.Money.Normalize(account.ScPaid + scPaid);
+        account.ProvisionCount++;
+        account.History.Add(new BankClientEntry
+        {
+            AtUnixMs = block.Timestamp,
+            BlockIndex = block.Index,
+            BtcBought = btcBought,
+            ScPaid = scPaid,
+            PriceUsd = priceUsd
+        });
+        if (account.History.Count > MaxBankClientHistory)
+        {
+            account.History.RemoveRange(0, account.History.Count - MaxBankClientHistory);
+        }
+    }
+
+    // ---- §5.1 bank selection (P15.2d / D-15.20: A1 + B1 + casino fallback) --------------------------------
+
+    // One candidate financier for a company's BTC→SC conversion. A null BankNodeId means THE CASINO — the
+    // pre-first-bank fallback (D-15.20 (c)): before 2012-09, and for any category with no founded bank, the
+    // provisional D-ND8.34 path stays exactly as it is today.
+    public readonly record struct FinancierChoice(string? BankNodeId, decimal AmountSc, string Tier);
+
+    public const string FinancierTierNearest = "nearest";   // tier 1 — the nearest-category founded bank
+    public const string FinancierTierFullFunder = "funder"; // tier 2 — any single bank that can fund it all
+    public const string FinancierTierSplit = "split";       // tier 3 — spread across banks, biggest capacity first
+    public const string FinancierTierCasino = "casino";     // the fallback — no founded bank to route to
+
+    // How much SC a founded bank can put up for one provision. In plan15 this is INFINITE: a bank funds
+    // every provision with a FED auto-loan, and D-15.1 defers all credit-capacity limits to ND.8e. The
+    // method exists so tiers 2/3 below are real, exercised code paths the day limits ship — at which point
+    // this becomes the ONE place that has to change (B1: "the eventual limits are a data change, not a
+    // rewrite"). Kept private: nothing outside selection should read a capacity that is deliberately fake.
+    private static decimal BankFundingCapacitySc(string bankNodeId) => decimal.MaxValue;
+
+    // Returns the ordered financiers for `amountSc`, summing to exactly that amount.
+    //
+    // Tier 1 — the founded bank nearest the company's CURRENT market category on the MarketCategoryOrder
+    //          axis (|catCompany − catBank|), ties broken TOWARD OFFICIAL (D-15.20 A1: a business reaches
+    //          for the cleaner bank first), then toward the earlier-founded bank so the result is total.
+    // Tier 2 — no single nearest bank can cover it: the nearest bank that CAN fund the whole amount.
+    // Tier 3 — nobody can alone: split across banks, nearest-category first then most-capacity.
+    // Fallback — no founded bank at all: the casino (a single choice with a null BankNodeId).
+    //
+    // Selection is evaluated FRESH at each conversion, because a company's category can shift ±1 by vote
+    // (§12.4.3) — a bank's cannot (D-15.12, P15.2b), which is what keeps the axis stable underneath.
+    public static List<FinancierChoice> SelectFinanciers(string companyNodeId, decimal amountSc)
+    {
+        var result = new List<FinancierChoice>();
+        amountSc = Scripts.Finance.Money.Normalize(amountSc);
+        if (amountSc <= 0m)
+        {
+            return result;
+        }
+
+        // A bank never finances itself — its own CB1 inflows convert through the normal path (P15.4a).
+        List<CompanyGovernanceState> banks = FoundedBanks()
+            .Where(b => b.NonMinerNodeId != companyNodeId)
+            .ToList();
+        if (banks.Count == 0)
+        {
+            result.Add(new FinancierChoice(null, amountSc, FinancierTierCasino));
+            return result;
+        }
+
+        int companyIndex = _companyGovernance.TryGetValue(companyNodeId, out CompanyGovernanceState? companyGov)
+            ? MarketCategoryIndex(companyGov.MarketCategory)
+            : 0;
+
+        // Distance first; then A1's tie-break toward Official (lower category index); then founding order.
+        List<CompanyGovernanceState> byPreference = banks
+            .OrderBy(b => Math.Abs(MarketCategoryIndex(b.MarketCategory) - companyIndex))
+            .ThenBy(b => MarketCategoryIndex(b.MarketCategory))
+            .ThenBy(b => _companyFoundings[b.NonMinerNodeId].FoundedAtUnixMs)
+            .ToList();
+
+        // Tier 1 — today's ONLY outcome: capacity is infinite, so the nearest bank always takes it whole.
+        CompanyGovernanceState nearest = byPreference[0];
+        if (BankFundingCapacitySc(nearest.NonMinerNodeId) >= amountSc)
+        {
+            result.Add(new FinancierChoice(nearest.NonMinerNodeId, amountSc, FinancierTierNearest));
+            return result;
+        }
+
+        // Tier 2 — the nearest bank that can still fund the WHOLE amount alone (dormant until limits ship).
+        foreach (CompanyGovernanceState bank in byPreference)
+        {
+            if (BankFundingCapacitySc(bank.NonMinerNodeId) >= amountSc)
+            {
+                result.Add(new FinancierChoice(bank.NonMinerNodeId, amountSc, FinancierTierFullFunder));
+                return result;
+            }
+        }
+
+        // Tier 3 — split. Nearest-category first (the preference order above), and within an equal
+        // preference the most free capacity first, so the fewest banks are involved (dormant until limits).
+        decimal remaining = amountSc;
+        foreach (CompanyGovernanceState bank in byPreference.OrderByDescending(b => BankFundingCapacitySc(b.NonMinerNodeId)))
+        {
+            decimal capacity = BankFundingCapacitySc(bank.NonMinerNodeId);
+            if (capacity <= 0m) continue;
+
+            decimal slice = Scripts.Finance.Money.Normalize(Math.Min(capacity, remaining));
+            if (slice <= 0m) continue;
+
+            result.Add(new FinancierChoice(bank.NonMinerNodeId, slice, FinancierTierSplit));
+            remaining = Scripts.Finance.Money.Normalize(remaining - slice);
+            if (remaining <= 0m) break;
+        }
+
+        // The banking layer couldn't raise all of it — the casino covers the remainder rather than letting
+        // a company's conversion silently under-fill (unreachable while capacity is infinite).
+        if (remaining > 0m)
+        {
+            result.Add(new FinancierChoice(null, remaining, FinancierTierCasino));
+        }
+        return result;
+    }
+
+    // ---- P15.2 DEV readouts (consumed by the CentralBank scene; an early slice of P15.7a) -----------------
+
+    public readonly record struct BankLayerRow(
+        string BankNodeId,
+        string DisplayName,
+        string MarketCategory,
+        decimal CollateralBtc,
+        int ClientCount,
+        long FoundedAtUnixMs);
+
+    // The founded banks and their layer-1 books, in founding order. Empty before 2012-09.
+    public static List<BankLayerRow> GetFoundedBankRows()
+    {
+        EnsureReady();
+        return FoundedBanks()
+            .Select(b =>
+            {
+                BankBalanceSheet? sheet = GetBankBalanceSheet(b.NonMinerNodeId);
+                return new BankLayerRow(
+                    b.NonMinerNodeId,
+                    DescribeNodeForDev(b.NonMinerNodeId),
+                    b.MarketCategory,
+                    sheet?.CollateralBtc ?? 0m,
+                    sheet?.Clients.Count ?? 0,
+                    _companyFoundings[b.NonMinerNodeId].FoundedAtUnixMs);
+            })
+            .ToList();
+    }
+
+    public readonly record struct FinancierPreviewRow(
+        string CompanyDisplay,
+        string CompanyCategory,
+        string FinancierDisplay,
+        string Tier);
+
+    // What SelectFinanciers WOULD pick right now for each founded non-bank company. A read-only preview
+    // for verifying P15.2d before P15.3 wires the real reroute — it probes with a nominal 1 SC because
+    // capacity is currently infinite (D-15.1), so the amount cannot change the answer. Revisit this probe
+    // when ND.8e lands real credit limits and the amount starts to matter.
+    public static List<FinancierPreviewRow> PreviewCompanyFinanciers()
+    {
+        EnsureReady();
+        var rows = new List<FinancierPreviewRow>();
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values.OrderBy(g => g.NonMinerNodeId, StringComparer.Ordinal))
+        {
+            if (IsBankCompany(gov.NonMinerNodeId)) continue; // a bank converts its own inflows normally (P15.4a)
+
+            List<FinancierChoice> choices = SelectFinanciers(gov.NonMinerNodeId, 1m);
+            if (choices.Count == 0) continue;
+
+            FinancierChoice first = choices[0];
+            string financier = first.BankNodeId == null
+                ? "The Casino (fallback)"
+                : DescribeNodeForDev(first.BankNodeId);
+            if (choices.Count > 1) financier += $" +{choices.Count - 1} more";
+
+            rows.Add(new FinancierPreviewRow(
+                DescribeNodeForDev(gov.NonMinerNodeId),
+                gov.MarketCategory,
+                financier,
+                first.Tier));
+        }
+        return rows;
+    }
+
     // Quarterly dates are calendar-anchored (founding date + 3 in-game months per quarter), not a flat
     // day count — matches how the roster/timeline anchors every other historical date.
     private static long AddMonthsMs(long baseUnixMs, int months) =>
@@ -2210,7 +2458,8 @@ public partial class NetworkRoot : Node
         decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
         decimal reserveResult = gov.ReserveScPercent;
         decimal payoutResult = 0m;
-        int shiftResult = 0;
+        int shiftResult = 0;          // what the NST holders voted (traced even when it can't be applied)
+        bool categoryLocked = false;  // P15.2b / D-15.12 — true for a bank: the shift is voted but refused
 
         if (totalNst > 0m && vote.Ballots.Count > 0)
         {
@@ -2257,7 +2506,14 @@ public partial class NetworkRoot : Node
                     // weight in one direction, and lands clamped within ±1 of the roster default.
                     if (darkerWeight >= MarketShiftSupermajorityFraction) shiftResult = 1;
                     else if (lighterWeight >= MarketShiftSupermajorityFraction) shiftResult = -1;
-                    if (shiftResult != 0)
+                    // Step 15 P15.2b (D-15.12) — BANKS ARE EXEMPT from the ±1 shift. Their four categories
+                    // span the Official→Black gradient the §5.1 selection distance is measured on, so a
+                    // drifting bank would silently re-shape which companies bank where. In exchange banks
+                    // gain the seized-wallet holding feature (P15.5c). Only the APPLICATION is blocked —
+                    // shiftResult keeps what the holders actually voted, so the governance trace still shows
+                    // a rejected attempt rather than pretending nobody asked.
+                    categoryLocked = IsBankCompany(gov.NonMinerNodeId);
+                    if (shiftResult != 0 && !categoryLocked)
                     {
                         int defaultIndex = MarketCategoryIndex(gov.DefaultMarketCategory);
                         int newIndex = Math.Clamp(
@@ -2322,7 +2578,8 @@ public partial class NetworkRoot : Node
         }
 
         AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "vote_close", vote.Kind,
-            string.Format(System.Globalization.CultureInfo.InvariantCulture, "shift={0}", shiftResult));
+            string.Format(System.Globalization.CultureInfo.InvariantCulture, "shift={0}{1}",
+                shiftResult, categoryLocked && shiftResult != 0 ? ";shift_refused=bank_locked" : string.Empty));
     }
 
     // D-ND8.17 — the PST daily drip: each elapsed in-game day of the active cycle accrues
@@ -4609,7 +4866,8 @@ public partial class NetworkRoot : Node
             CompanyFoundings = new Dictionary<string, CompanyFounding>(_companyFoundings),
             CompanyGovernance = new Dictionary<string, CompanyGovernanceState>(_companyGovernance),
             BotGovernancePreferences = new Dictionary<string, BotGovernancePreference>(_botGovernancePreferences),
-            CompanyInflowMultipliers = new Dictionary<string, decimal>(_companyInflowMultipliers)
+            CompanyInflowMultipliers = new Dictionary<string, decimal>(_companyInflowMultipliers),
+            BankState = new Dictionary<string, BankBalanceSheet>(_bankState)
         };
 
         using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
@@ -4813,6 +5071,24 @@ public partial class NetworkRoot : Node
             _companyGovernance[nonMinerNodeId] = gov;
         }
 
+        // Step 15 P15.2a/b — a BANK's market category is LOCKED to its roster default (D-15.12), which makes
+        // it a DERIVED value rather than a voted one: re-deriving it from the roster on restore is therefore
+        // always correct, and it keeps the P15.2a gradient reassignment (three banks moved off "official")
+        // from stranding a bank that founded under the old roster with a stale category — no world-format
+        // bump needed for a data change the lock already guarantees. Runs after BOTH dictionaries are
+        // restored, since IsBankCompany resolves through _companyFoundings.
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            if (!IsBankCompany(gov.NonMinerNodeId)) continue;
+
+            string? rosterCategory = CompanyRoster.ByCompanyId(gov.CompanyId)?.MarketCategory;
+            if (string.IsNullOrEmpty(rosterCategory) || gov.MarketCategory == rosterCategory) continue;
+
+            GD.Print($"[NetworkRoot] Bank {gov.NonMinerNodeId} ({gov.CompanyId}) category re-derived from the roster: '{gov.MarketCategory}' → '{rosterCategory}' (P15.2b lock).");
+            gov.DefaultMarketCategory = rosterCategory;
+            gov.MarketCategory = rosterCategory;
+        }
+
         _botGovernancePreferences.Clear();
         foreach ((string botNodeId, BotGovernancePreference pref) in snapshot.BotGovernancePreferences ?? new Dictionary<string, BotGovernancePreference>())
         {
@@ -4823,6 +5099,15 @@ public partial class NetworkRoot : Node
         foreach ((string companyId, decimal multiplier) in snapshot.CompanyInflowMultipliers ?? new Dictionary<string, decimal>())
         {
             _companyInflowMultipliers[companyId] = multiplier;
+        }
+
+        // Step 15 P15.2c — the banks' layer-1 balance sheets, same additive-field rule (absent/null on a
+        // pre-plan15 snapshot ⇒ empty, which is exactly right: no bank has financed anything yet).
+        _bankState.Clear();
+        foreach ((string bankNodeId, BankBalanceSheet sheet) in snapshot.BankState ?? new Dictionary<string, BankBalanceSheet>())
+        {
+            if (sheet == null) continue;
+            _bankState[bankNodeId] = sheet;
         }
     }
 
@@ -4924,6 +5209,8 @@ public partial class NetworkRoot : Node
         public Dictionary<string, CompanyFounding> CompanyFoundings { get; set; } = new();
         // ND.8b.3 — keyed by NonMinerNodeId, mirrors _companyGovernance (same additive-field rule).
         public Dictionary<string, CompanyGovernanceState> CompanyGovernance { get; set; } = new();
+        // Step 15 P15.2c — keyed by the BANK's NonMinerNodeId, mirrors _bankState (same additive-field rule).
+        public Dictionary<string, BankBalanceSheet> BankState { get; set; } = new();
         // ND.8b.3 — keyed by bot NodeId, mirrors _botGovernancePreferences (D-ND8.13/26 world draws).
         public Dictionary<string, BotGovernancePreference> BotGovernancePreferences { get; set; } = new();
         // ND.8b.5 — keyed by companyId, mirrors _companyInflowMultipliers (only non-1.0 entries stored).
@@ -5150,6 +5437,46 @@ public sealed class CompanyGovernanceState
     // (PlayerBankAccountService.BankTransferRecord's 500-cap precedent — a player claiming this many times
     // from ONE company is not expected; the cap is a safety net, not a real constraint).
     public List<CompanyDividendClaimRecord> PlayerClaimHistory { get; set; } = new();
+}
+
+// Step 15 P15.2c (D-15.4/D-15.5) — a founded BANK's balance sheet: the LAYER-1 half of the two-layer
+// accounting model (layer 0 = the FED's per-client accounts in CentralBankService). Keyed by the bank's
+// NonMinerNodeId in NetworkRoot._bankState, only for the four CompanyRoster.Banks, and persisted in the
+// same BlockchainStateSnapshot as _companyFoundings/_companyGovernance — so checkpoint coverage,
+// world-reset delete-list membership and the pre-genesis path all come for free (the ND.8g inheritance
+// argument).
+//
+// CollateralBtc (D-15.4) is a QUARANTINED account, deliberately separate from the bank's own CB1 business
+// inflows: it is the BTC bought from the companies the bank finances, held to service the FED debt and
+// sold "extra-lazy" — just enough, only on a quarterly payment day (P15.4). The bank's own inflows keep
+// auto-converting to SC exactly like any other CB1 company. Two BTC streams, one wallet, two books.
+public sealed class BankBalanceSheet
+{
+    public decimal CollateralBtc { get; set; }
+    // The bank's own client book: which company it financed, how much BTC it bought and SC it paid.
+    public Dictionary<string, BankClientAccount> Clients { get; set; } = new();
+}
+
+// One company's account at one bank. Totals are exact and cumulative; History is capped (see
+// NetworkRoot.MaxBankClientHistory) exactly like the FED's own per-client history.
+public sealed class BankClientAccount
+{
+    public decimal BtcBought { get; set; }
+    public decimal ScPaid { get; set; }
+    public int ProvisionCount { get; set; }
+    public List<BankClientEntry> History { get; set; } = new();
+}
+
+// One provisioning event: the bank paid ScPaid to the company and received BtcBought in exchange, priced
+// at that day's clean market rate. AtUnixMs is the mining block's timestamp — game time, like every other
+// persisted timestamp in this file.
+public sealed class BankClientEntry
+{
+    public long AtUnixMs { get; set; }
+    public int BlockIndex { get; set; }
+    public decimal BtcBought { get; set; }
+    public decimal ScPaid { get; set; }
+    public decimal PriceUsd { get; set; }
 }
 
 // ND.8g — one successful player dividend claim from one company (BTC/SC amounts actually paid THIS press,

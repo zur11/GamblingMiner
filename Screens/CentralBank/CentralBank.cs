@@ -137,7 +137,6 @@ public partial class CentralBank : Control
 		{
 			AddLabel("No client has borrowed from the FED yet.", 18, ColorSubtle);
 			AddLabel("The casino draws its first loan on demand — when a client win empties its Bankroll and its Main Balance can't cover a dose.", 15, ColorSubtle, wrap: true);
-			return;
 		}
 
 		foreach (string clientId in clientIds)
@@ -175,11 +174,71 @@ public partial class CentralBank : Control
 
 			// A bare Control defaults to mouse_filter = STOP, which would swallow the wheel over its band
 			// (§29.3 trap #3) — Labels default to IGNORE, so only this spacer needs saying explicitly.
-			var spacer = new Control();
-			spacer.CustomMinimumSize = new Vector2(0, 12);
-			spacer.MouseFilter = MouseFilterEnum.Ignore;
-			_contentVBox.AddChild(spacer);
+			AddSpacer();
 		}
+
+		BuildBankingLayerSection();
+	}
+
+	// Step 15 P15.2 — the layer-1 view beneath the FED's own accounts: which of the four CB1 banks have
+	// founded, their LOCKED market category (D-15.12), their quarantined CollateralBtc and client count,
+	// plus a read-only preview of which financier each founded company would route to. An early slice of
+	// P15.7a, added so P15.2a–d are verifiable in-game before P15.3 wires the real reroute.
+	private void BuildBankingLayerSection()
+	{
+		AddSpacer(18);
+		AddLabel("Banking layer (Step 15 P15.2)", 22, ColorHeading);
+
+		var banks = NetworkRoot.GetFoundedBankRows();
+		if (banks.Count == 0)
+		{
+			AddLabel("    No bank company has founded yet — the first is First Satoshi Savings (2012-09-03).", 15, ColorSubtle);
+			AddLabel("    Until then every company conversion falls back to the casino path (D-15.20 (c)).", 15, ColorSubtle);
+		}
+		else
+		{
+			foreach (var bank in banks)
+			{
+				string founded = DateTimeOffset.FromUnixTimeMilliseconds(bank.FoundedAtUnixMs)
+					.LocalDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+				AddLabel(string.Create(CultureInfo.InvariantCulture,
+					$"    {bank.DisplayName}  ·  category {bank.MarketCategory} (locked)  ·  founded {founded}"), 17);
+				AddLabel(string.Create(CultureInfo.InvariantCulture,
+					$"        FED debt: {NetworkRootFedDebt(bank.BankNodeId):N8} SC     CollateralBtc: {bank.CollateralBtc:N8} BTC     client companies: {bank.ClientCount}"), 15, ColorSubtle);
+			}
+		}
+
+		AddSpacer(12);
+		AddLabel("Financier selection preview (§5.1 / D-15.20)", 20, ColorHeading);
+		var preview = NetworkRoot.PreviewCompanyFinanciers();
+		if (preview.Count == 0)
+		{
+			AddLabel("    No company has founded yet.", 15, ColorSubtle);
+		}
+		else
+		{
+			foreach (var row in preview)
+			{
+				AddLabel(string.Create(CultureInfo.InvariantCulture,
+					$"    {row.CompanyDisplay} [{row.CompanyCategory}]  →  {row.FinancierDisplay}  ({row.Tier})"), 15,
+					row.Tier == NetworkRoot.FinancierTierCasino ? ColorSubtle : ColorRepay);
+			}
+		}
+	}
+
+	// A founded bank's FED account is keyed "bank:<nodeId>" (CentralBankService.BankClientId) — it stays 0
+	// until P15.3a draws the first provisioning loan.
+	private decimal NetworkRootFedDebt(string bankNodeId) =>
+		_fed?.OutstandingDebt(CentralBankService.BankClientId(bankNodeId)) ?? 0m;
+
+	private void AddSpacer(int height = 12)
+	{
+		// A bare Control defaults to mouse_filter = STOP, which would swallow the wheel over its band
+		// (§29.3 trap #3) — Labels default to IGNORE, so only this spacer needs saying explicitly.
+		var spacer = new Control();
+		spacer.CustomMinimumSize = new Vector2(0, height);
+		spacer.MouseFilter = MouseFilterEnum.Ignore;
+		_contentVBox.AddChild(spacer);
 	}
 
 	// "casino" → the house; "bank:first_satoshi_savings" → the bank company (P15.2 onward). The raw client id

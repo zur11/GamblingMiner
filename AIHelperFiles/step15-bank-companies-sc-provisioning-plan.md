@@ -8,9 +8,9 @@
 > seizure thread (activates 14 Jun 2011; non-banks first, banks last). **No open questions remain.**
 > The one soft item is the FBI tolerance numbers, deliberately left as P15.8 calibration placeholders.
 > **ALL phases are now broken into subphases in §8 (P15.1a … P15.8)**; P15.1 is fully locked (Fork A,
-> D-15.23) and **✅ IMPLEMENTED (2026-07-26, all five subphases P15.1a–e)**. Later phases inherit the same
-> reviewed data structures and will firm up as each lands. **Next: P15.2a** on branch
-> `bank-companies-sc-provisioning`.
+> D-15.23) and **✅ IMPLEMENTED (2026-07-26, all five subphases P15.1a–e)**; **P15.2 is likewise ✅
+> IMPLEMENTED (2026-07-26, subphases a–d)**. Later phases inherit the same reviewed data structures and
+> will firm up as each lands. **Next: P15.3a** on branch `bank-companies-sc-provisioning`.
 >
 > Branch (suggested): `bank-companies-sc-provisioning` off `main` (canonical timeline, `DevEntryYear = 0`).
 
@@ -619,7 +619,38 @@ subphases below implement Fork A.
 holds across draw/repay; checkpoint/reset/delete-list complete; `WorldFormatVersion = 4`; **zero casino
 behavior change**. This leaves a clean base for P15.2 to add the bank companies as additional FED clients.
 
-### P15.2 — Bank company balance sheets & selection
+### P15.2 — Bank company balance sheets & selection — ✅ IMPLEMENTED (2026-07-26, subphases a–d)
+
+> **Build log.** `dotnet build` clean. **Modified**: `Data/Companies/company_roster.csv` (the gradient on
+> three bank rows + locked-category notes), `CompanyRoster.cs` (`BankCompanyIds`/`IsBank`/`Banks` + a
+> loader sanity warning), `NetworkRoot.cs` (`IsBankCompany`/`BankCompanyCategory`/`FoundedBanks`; the
+> P15.2b lock in `CloseCompanyVote` + its trace note; `_bankState` + `BankBalanceSheet`/`BankClientAccount`/
+> `BankClientEntry` + snapshot capture/restore + `BankSheet`/`GetBankBalanceSheet`/`BankCollateralBtc`/
+> `RecordBankProvision`; `SelectFinanciers` + `FinancierChoice` + the tier constants; the two DEV readouts),
+> `Screens/CentralBank/CentralBank.cs` (the Banking layer block). Docs: `CLAUDE.md` Implemented list +
+> `Documentation/ProjectDesignManual.md` **§39.7–39.8**.
+>
+> Three decisions taken inside the subphases, all documented in §39.7–39.8:
+> - **Bank identification = a closed id set in `CompanyRoster`, not an `is_bank` CSV column** (the plan
+>   offered either). plan15 creates no companies (D-15.6), so the set is closed by design; a column would
+>   have touched all 44 rows to encode four `true`s and would let a 45th row silently become a bank. Every
+>   caller goes through `IsBank`/`Banks`, so promoting it to a column later changes nothing else.
+> - **No second `WorldFormatVersion` bump for the P15.2a gradient change.** A bank's category is LOCKED,
+>   which makes it a *derived* value — so it is re-derived from the roster in `ApplyStateFromSnapshot`,
+>   correcting any bank that founded under the old roster instead of stranding a stale category.
+> - **`RecordBankProvision` ships unused**, awaiting P15.3a's provisioning path (which must call it only
+>   after BOTH legs succeed, so the client book never records a half-executed swap).
+>
+> **Scope note:** the FED scene's read-only **Banking layer** block (founded banks + a financier-selection
+> preview) is an early slice of **P15.7a**, pulled forward because P15.2 changes no behaviour and would
+> otherwise be unverifiable in-game. The preview probes `SelectFinanciers` with a nominal 1 SC — honest
+> only while capacity is infinite; revisit at ND.8e.
+>
+> **Left for the developer's in-game verification:** the four subphase tests (the banks found with the
+> assigned categories; a bank's NST holders voting a market shift does not move it; an empty balance sheet
+> persists/restores; a 2013 company selects the nearest-category founded bank while a 2011 one shows the
+> casino fallback). Reaching 2012-09+ needs a `DevEntryYear` build — on canon from 2009 the Banking layer
+> correctly reads "No bank company has founded yet."
 
 **Goal:** make the four CB1 banks real FED clients with a balance sheet, assign the locked category
 gradient, and build the §5.1 selection framework — still **no conversions rerouted** (that is P15.3).
