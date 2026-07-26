@@ -211,6 +211,19 @@ public partial class CentralBank : Control
 				AddLabel(string.Create(CultureInfo.InvariantCulture,
 					$"        FED debt: {NetworkRootFedDebt(bank.BankNodeId):N8} SC     CollateralBtc: {bank.CollateralBtc:N8} BTC     client companies: {bank.ClientCount}"), 15, ColorSubtle);
 
+				// P15.7a — the LAYER-1 sub-ledger: which companies this bank financed, and on what terms.
+				// The FED's own client accounts above are layer 0 (bank↔FED); this is bank↔company.
+				var sheet = NetworkRoot.GetBankBalanceSheet(bank.BankNodeId);
+				if (sheet != null && sheet.Clients.Count > 0)
+				{
+					foreach (var kv in sheet.Clients.OrderByDescending(c => c.Value.ScPaid))
+					{
+						var acct = kv.Value;
+						AddLabel(string.Create(CultureInfo.InvariantCulture,
+							$"          → {NetworkRoot.DescribeNodeForDev(kv.Key)}: bought {acct.BtcBought:N8} BTC for {acct.ScPaid:N2} SC over {acct.ProvisionCount} provision(s)"), 14, ColorSubtle);
+					}
+				}
+
 				// P15.4d/e — the two states that say this bank is failing to service its debt.
 				if (bank.PendingShortfallSc > 0m)
 				{
@@ -250,7 +263,7 @@ public partial class CentralBank : Control
 	// Step 15 P15.6 — the FBI board: activation state, its self-funding budget, and every company currently
 	// carrying an investigation file, ordered the way the raid roll orders them (non-banks first by overage,
 	// banks last — D-15.19). Shares GetFbiInvestigationWarning's source with the roll, so a displayed
-	// number cannot drift from the mechanism (§39.13 rule 6).
+	// number cannot drift from the mechanism (§39.15 rule 6).
 	private void BuildFbiSection()
 	{
 		AddSpacer(18);

@@ -4312,11 +4312,27 @@ The seized **BTC is not moved at all**: it flows straight into P15.5's existing 
 
 `GetFbiInvestigationWarning` returns a line for `CompanyDetails` stating the state (*under investigation* / *FLAGGED — a raid can land on any block* / *cooling off*), the progress toward the threshold, the SC reserve against the tolerated figure for that category, and what to do about it. It is shown to **any** viewer, not just holders — the risk is a fact about the company, not about the holding — and it returns `null` when there is genuinely nothing to say (FBI inactive, category exempt, comfortably under tolerance), so the panel never carries a permanent decorative warning.
 
-The FED scene gained a matching DEV board listing every open file **in the same order the roll picks its target**, sharing `FbiToleranceScFor`/`FbiOverageRatio` with the roll itself — §39.14 rule 6, so a displayed number cannot drift from the mechanism.
+The FED scene gained a matching DEV board listing every open file **in the same order the roll picks its target**, sharing `FbiToleranceScFor`/`FbiOverageRatio` with the roll itself — §39.15 rule 6, so a displayed number cannot drift from the mechanism.
 
 **Every number above is a P15.8 calibration placeholder**: the four tolerance multipliers, `T`'s window, the meter's gain/decay/cap, the roll's base and cap, and the initial grant.
 
-### 39.14 — Conventions this plan established (apply these to later phases)
+### 39.14 — Surfacing & telemetry (P15.7)
+
+P15.7 is the phase that mostly **already happened**. Four of its deliverables shipped early, each alongside the mechanism it observes, under §39.15's rule 2 ("a phase you cannot observe is a phase you cannot sign off"): the FED scene's Banking-layer block + financier preview (P15.7a, at P15.2), `bank_credit_trace.csv` (P15.7d, at P15.3), the shortfall ballot control (part of P15.7c, at P15.4e), and the Closed-Companies list + recovery tracker and the Federal-investigations board (P15.7b/c, at P15.5/P15.6).
+
+What P15.7 itself added is the remainder.
+
+**The layer-1 sub-ledger (P15.7a).** Each founded bank in the FED scene now lists the companies it financed — BTC bought, SC paid, provision count. The distinction on that page is worth keeping straight: the **client accounts** at the top are layer 0 (bank ↔ FED), and this strip is layer 1 (bank ↔ company). That is the D-15.5 two-layer model made literally visible on one screen.
+
+**The banking-layer aggregate (P15.7b), and where it deliberately does NOT go.** WorldEconomy is the *macro* monetary scene, so it took the system-wide question — total collateral value vs total FED debt, plus a per-bank strip with an under-collateralized / shortfall / insolvent flag — and a **one-line pointer** to the Central Bank scene for closures. It did **not** take a copy of the Closed-Companies list, the recovery tracker or the FBI board, even though the phase map nominally assigned them here: those belong to the FED's own page (it is the creditor, the absorber and the custodian), and duplicating them would create two places to keep in step. One source per signal — §39.15 rule 6 applied to whole panels rather than single numbers.
+
+Leverage is the honest headline for that block, and it is valued at **today's** price: banks borrow SC and sit on BTC, so "is the banking layer solvent?" is a live price question whose answer legitimately changes every day.
+
+**The bank lending panel (P15.7c).** A bank is not an ordinary company — most of its balance sheet is borrowed, and what kills it is a *date* — so a shareholder needs a picture the other panels never show: Central Bank debt (with drawn/repaid), collateral held and its live value, the **collateral-vs-debt health line** (this is the carry the whole reform exists to create: profitable while BTC rises, dangerous when it falls), the next installment and when it falls due, and the pending-shortfall / insolvent states.
+
+Every figure comes from `NetworkRoot.GetBankLendingSummary`, which computes them from the **same** constants and helpers the repayment itself uses (`BankQuarterlyRepaymentFraction`, the FED account, `BankCollateralBtc`). The installment shown is therefore the installment that will actually be charged — §39.15 rule 6, applied where it matters most: a number the player will make a decision on.
+
+### 39.15 — Conventions this plan established (apply these to later phases)
 
 Six rules came out of building P15.1–P15.5. They are recorded together here because each was first reached as a one-off judgement call and each turned out to apply again a phase or two later — they should be treated as defaults for P15.6–P15.8 and beyond, not re-derived each time.
 

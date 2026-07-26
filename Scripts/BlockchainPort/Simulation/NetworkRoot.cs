@@ -2990,6 +2990,59 @@ public partial class NetworkRoot : Node
         }
     }
 
+    // Step 15 P15.7c (D-15.9) — everything a shareholder needs to judge a BANK they hold stock in. Computed
+    // from the same constants and helpers the mechanisms themselves use (BankQuarterlyRepaymentFraction,
+    // the FED account, BankCollateralBtc), so a displayed installment can never disagree with the one that
+    // will actually be charged — §39.15 rule 6. Collateral is valued LIVE, never at a frozen day.
+    public readonly record struct BankLendingSummary(
+        decimal FedDebtSc,
+        decimal TotalDrawnSc,
+        decimal TotalRepaidSc,
+        decimal CollateralBtc,
+        decimal CollateralValueSc,
+        decimal NextInstallmentSc,
+        long NextPaymentDueMs,
+        int ClientCount,
+        decimal PendingShortfallSc,
+        decimal UnrecoverableShortfallSc);
+
+    // Null for anything that is not a founded bank.
+    public static BankLendingSummary? GetBankLendingSummary(string nonMinerNodeId)
+    {
+        if (!IsBankCompany(nonMinerNodeId)
+            || !_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov))
+        {
+            return null;
+        }
+
+        string fedClientId = CentralBankService.BankClientId(nonMinerNodeId);
+        decimal debt = _centralBank?.OutstandingDebt(fedClientId) ?? 0m;
+        decimal collateral = BankCollateralBtc(nonMinerNodeId);
+
+        // Valued at the chain tip's day — the world's "now" (the ND.8g "always live, never a frozen
+        // historical day" rule). 0 when the market can't price that day, which the caller renders as "n/a"
+        // rather than as a real zero.
+        long nowMs = _lastMinedBlock?.Timestamp ?? 0L;
+        decimal? priceUsd = nowMs > 0L
+            ? _marketData?.GetEffectivePriceUsd(DateTimeOffset.FromUnixTimeMilliseconds(nowMs).LocalDateTime)
+            : null;
+        decimal collateralValue = priceUsd is decimal p && p > 0m
+            ? Scripts.Finance.Money.Normalize(collateral * p)
+            : 0m;
+
+        return new BankLendingSummary(
+            debt,
+            _centralBank?.TotalDrawn(fedClientId) ?? 0m,
+            _centralBank?.TotalRepaid(fedClientId) ?? 0m,
+            collateral,
+            collateralValue,
+            Scripts.Finance.Money.Normalize(debt * BankQuarterlyRepaymentFraction),
+            gov.NextQuarterlyDueMs,
+            GetBankBalanceSheet(nonMinerNodeId)?.Clients.Count ?? 0,
+            gov.PendingShortfallSc,
+            gov.UnrecoverableShortfallSc);
+    }
+
     public readonly record struct FbiInvestigationFile(
         string NonMinerNodeId,
         string DisplayName,

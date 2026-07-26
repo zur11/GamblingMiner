@@ -10,13 +10,11 @@
 > **ALL phases are now broken into subphases in §8 (P15.1a … P15.8)**; P15.1 is fully locked (Fork A,
 > D-15.23) and **✅ IMPLEMENTED (2026-07-26, all five subphases P15.1a–e)**; **P15.2 is likewise ✅
 > IMPLEMENTED (2026-07-26, subphases a–d)**, as is **P15.3 (a–b, which also absorbed P15.4a's quarantine)**
-> **P15.4 (b–e)**, **P15.5 (a–d)** and **P15.6 (a–d)**. **Next: P15.7** on branch
-> `bank-companies-sc-provisioning` — note that P15.7a/b/d and part of P15.7c already shipped early with the
-> mechanisms they observe (the FED scene's Banking layer, Closed-companies + recovery tracker and
-> Federal-investigations boards; `bank_credit_trace.csv`; the shortfall ballot control), so P15.7 is mostly
-> the `CompanyDetails` lending panel plus deciding whether WorldEconomy mirrors the FED-scene blocks.
-> In-game verification is deferred to P15.8 by the developer's call — every phase since P15.1 has been
-> build-verified only.
+> **P15.4 (b–e)**, **P15.5 (a–d)**, **P15.6 (a–d)** and **P15.7**. **Next: P15.8 (the calibration playtest)** on branch
+> `bank-companies-sc-provisioning`. **Every mechanism of the reform is now built**; P15.8 is the DEV
+> entry-year run that tunes the placeholders and confirms the whole loop across a bull and a bear era.
+> In-game verification was deferred to P15.8 by the developer's call, so P15.2–P15.7 have been
+> build-verified only — P15.8 is where they all get exercised for the first time.
 >
 > Branch (suggested): `bank-companies-sc-provisioning` off `main` (canonical timeline, `DevEntryYear = 0`).
 
@@ -841,7 +839,7 @@ shortfall vote; the casino still never repays (D-15.17).
 >
 > **Cross-cutting conventions.** Every judgement call from P15.1–P15.5 is written up in the manual beside
 > the mechanism it belongs to, and the six that recur are collected as standing rules in
-> `ProjectDesignManual.md` **§39.14** — read that before starting a new phase.
+> `ProjectDesignManual.md` **§39.15** — read that before starting a new phase.
 >
 > **Left for the developer's P15.8 verification:** an unrecoverable bank closes and appears in the list with
 > reason `debt_default`; a scheduled inflow to a dead company lands at its heir and is tracked; a
@@ -880,7 +878,7 @@ income, and a category-matched seized-wallet inheritance chain.
 > dissolution sweep); the seizure branch in `DissolveCompany`; `_fbiActivated`/`_fbiScFunds` + snapshot
 > fields; `GetFbiInvestigationFiles` + `GetFbiInvestigationWarning`. `CompanyDetails.cs`: the risk line.
 > `CentralBank.cs`: the Federal-investigations board. Docs: `CLAUDE.md` + `ProjectDesignManual.md`
-> **§39.13** (with §39.13.1–.4); the standing-conventions section renumbered §39.13 → **§39.14**.
+> **§39.13** (with §39.13.1–.4); the standing-conventions section renumbered to **§39.15** (P15.7 later took §39.14).
 >
 > Four decisions taken inside the subphases, all documented in §39.13:
 > - **`T` is accrued at the single conversion-credit site** — the one place SC ever enters a company — and
@@ -926,6 +924,30 @@ income, and a category-matched seized-wallet inheritance chain.
 
 **Exit:** from mid-2011 the FBI cleans up SC-hoarding dark companies first and, in the late game, can
 reach banks — all seizures flowing to the FED and its inheritance chain.
+
+### P15.7 — Surfacing & telemetry — ✅ IMPLEMENTED (2026-07-26; most of it shipped early with P15.2–P15.6)
+
+> **Build log.** `dotnet build` clean. **Already shipped early** (each with the mechanism it observes, per
+> §39.15 rule 2): the FED scene's Banking-layer block + financier preview (P15.7a, at P15.2),
+> `bank_credit_trace.csv` (P15.7d, at P15.3), the shortfall ballot control (part of P15.7c, at P15.4e), and
+> the Closed-Companies list + recovery tracker (P15.7b/c, at P15.5) and Federal-investigations board (at
+> P15.6). **Added here:** the layer-1 per-client sub-ledger under each bank in `CentralBank.cs`; the
+> banking-layer aggregate in `WorldEconomy.cs` (`AppendBankingLayer` — per-bank strip + system solvency
+> line + a closures pointer); and `NetworkRoot.GetBankLendingSummary` + `CompanyDetails.BuildBankLendingPanel`
+> (the player-facing lending book). Docs: `CLAUDE.md` + `ProjectDesignManual.md` **§39.14**; the
+> standing-conventions section renumbered §39.14 → **§39.15** so it stays last.
+>
+> One decision, documented in §39.14:
+> - **WorldEconomy got the AGGREGATE only, not copies.** The phase map nominally assigns the
+>   Closed-Companies list and the recovery tracker here, but they already live in the Central Bank scene —
+>   which is the FED's own page, and the FED is the creditor, absorber and custodian. WorldEconomy takes the
+>   macro question (Σ collateral value vs Σ FED debt, per-bank strip with under-collateralized / shortfall /
+>   insolvent flags) plus a **one-line pointer** to the detail. Duplicating whole panels would mean two
+>   places to keep in step — §39.15 rule 6 applied at panel granularity.
+>
+> **Left for the developer's P15.8 verification:** the lending panel's installment matching what the
+> quarterly repayment actually charges; the solvency line flipping as BTC moves; and the sub-ledger rows
+> appearing as a bank finances companies.
 
 ### P15.7 — Surfacing & telemetry (D-15.22)
 

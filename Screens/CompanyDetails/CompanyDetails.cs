@@ -95,6 +95,83 @@ public partial class CompanyDetails : Control
 		RefreshAll();
 	}
 
+	// Step 15 P15.7c (D-15.9) — a founded bank's lending book, for its shareholders. Every figure comes from
+	// NetworkRoot.GetBankLendingSummary, which computes them from the same constants and helpers the
+	// repayment itself uses — so the installment shown here is the installment that will actually be
+	// charged (§39.15 rule 6). Collateral is valued at the world's current day, never frozen.
+	private void BuildBankLendingPanel(CompanyGovernanceState gov)
+	{
+		NetworkRoot.BankLendingSummary? maybe = NetworkRoot.GetBankLendingSummary(gov.NonMinerNodeId);
+		if (maybe is not NetworkRoot.BankLendingSummary s) return;
+
+		_infoVBox!.AddChild(new HSeparator());
+		_infoVBox.AddChild(SectionTitle("Bank lending book"));
+		_infoVBox.AddChild(new Label
+		{
+			Text = "This company is a bank: it borrows SC from the Central Bank to buy BTC from other companies, and repays a slice of that debt every quarter by selling the BTC it bought.",
+			AutowrapMode = TextServer.AutowrapMode.Word
+		});
+
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"Central Bank debt: {s.FedDebtSc:N2} SC   (drawn {s.TotalDrawnSc:N2} · repaid {s.TotalRepaidSc:N2})")
+		});
+
+		string collateralValue = s.CollateralValueSc > 0m
+			? string.Create(CultureInfo.InvariantCulture, $" ≈ {s.CollateralValueSc:N2} SC today")
+			: " (no market price for today)";
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"Collateral held: {s.CollateralBtc:N8} BTC{collateralValue}   ·   {s.ClientCount} client company(ies)")
+		});
+
+		// The health line: is the BTC it is sitting on still worth what it borrowed? This is the carry the
+		// whole reform exists to create — profitable while BTC rises, dangerous when it falls.
+		if (s.FedDebtSc > 0m && s.CollateralValueSc > 0m)
+		{
+			decimal net = s.CollateralValueSc - s.FedDebtSc;
+			var healthLabel = new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"Collateral vs debt: {net:+#,##0.00;-#,##0.00;0.00} SC  ({(net >= 0m ? "covered" : "UNDER-COLLATERALIZED")})")
+			};
+			healthLabel.AddThemeColorOverride("font_color", net >= 0m ? new Color(0.4f, 1f, 0.4f) : new Color(1f, 0.4f, 0.4f));
+			_infoVBox.AddChild(healthLabel);
+		}
+
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"Next installment: {s.NextInstallmentSc:N2} SC due {FormatDate(s.NextPaymentDueMs)}")
+		});
+
+		if (s.PendingShortfallSc > 0m)
+		{
+			var pending = new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"⚠ Shortfall of {s.PendingShortfallSc:N2} SC — a board vote will decide whether it comes out of dividends or reserves."),
+				AutowrapMode = TextServer.AutowrapMode.Word
+			};
+			pending.AddThemeColorOverride("font_color", new Color(1f, 0.75f, 0.3f));
+			_infoVBox.AddChild(pending);
+		}
+
+		if (s.UnrecoverableShortfallSc > 0m)
+		{
+			var insolvent = new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"✗ INSOLVENT — {s.UnrecoverableShortfallSc:N2} SC could not be covered by any source. This bank will be closed."),
+				AutowrapMode = TextServer.AutowrapMode.Word
+			};
+			insolvent.AddThemeColorOverride("font_color", new Color(1f, 0.4f, 0.4f));
+			_infoVBox.AddChild(insolvent);
+		}
+	}
+
 	// Step 15 P15.5d — the liquidation notice. This IS the player's notification that a company they held
 	// stock in is gone (D-15.15: with no player stake the bots resolve everything silently and the player is
 	// told only at the terminal moment). Everything they had already CLAIMED is untouched in their wallet;
@@ -265,6 +342,11 @@ public partial class CompanyDetails : Control
 		// Dividend rate — each showing initial → current.
 		_infoVBox.AddChild(new HSeparator());
 		BuildCompanyPolicySection(founding, gov);
+
+		// Step 15 P15.7c (D-15.9) — the BANK LENDING PANEL. A bank is not an ordinary company: most of its
+		// balance sheet is borrowed, and the thing that kills it is a payment date, so a shareholder needs
+		// the debt/collateral/installment picture the other panels never show. Shown for any founded bank.
+		BuildBankLendingPanel(gov);
 
 		// Step 15 P15.6d — the federal-investigation risk line. Shown to ANY viewer (the risk is a fact about
 		// the company, not about the holding), and only when there is something to say: the FBI is active,
