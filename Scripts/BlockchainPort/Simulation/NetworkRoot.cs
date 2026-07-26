@@ -708,6 +708,9 @@ public partial class NetworkRoot : Node
     // ND.8b.6 — see _Ready: the provisional casino SC-provisioning path + the player's SC dividend claims.
     private static CasinoScBalanceService? _casinoSc;
     private static PrincipalBalanceService? _principalBalance;
+    // Step 15 P15.3a — the FED a financing bank draws its provisioning SC from (D-15.3). Same plain
+    // autoload-reference pattern; null-guarded, and a null simply keeps the casino fallback in play.
+    private static CentralBankService? _centralBank;
     // ND.8b.1 — non_miner_{i+1} (BotWalletRegistry's fixed creation order) <-> CompanyRoster
     // .Auctionable[i]'s founding record, once (and only once) that company's auction resolves.
     // Keyed by NonMinerNodeId (stable across the whole game, unlike the address — non-miners are
@@ -747,6 +750,7 @@ public partial class NetworkRoot : Node
         // claims land on the Main Balance. Plain autoload references, the _marketData pattern.
         _casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
         _principalBalance = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
+        _centralBank = GetNodeOrNull<CentralBankService>("/root/CentralBankService"); // P15.3a
         EnsureInitialized();
     }
 
@@ -2161,8 +2165,20 @@ public partial class NetworkRoot : Node
         new DateTimeOffset(DateTimeOffset.FromUnixTimeMilliseconds(baseUnixMs).ToLocalTime().LocalDateTime.AddMonths(months))
             .ToUnixTimeMilliseconds();
 
+    // The company's RAW on-chain spendable BTC. For a bank this includes its quarantined CollateralBtc —
+    // use CompanyOwnBtc below anywhere governance means "the company's own money".
     private static decimal CompanyTreasuryBtc(string nonMinerNodeId) =>
         SharedNodesById.TryGetValue(nonMinerNodeId, out NodeAgent? node) ? AggregateSpendable(node) : 0m;
+
+    // Step 15 P15.3a (D-15.4) — THE QUARANTINE. A bank holds two BTC streams in one wallet: its own CB1
+    // business inflows (ordinary company money) and the CollateralBtc it bought while financing other
+    // companies, which backs its FED debt and is sold only on a payment day (P15.4d). Every governance
+    // computation that treats the treasury as the company's own money must therefore net the collateral
+    // out — the reserve-mix conversion base, the quarterly dividend base (dividends on collateral would
+    // pay away the very asset backing the debt) and the >30%-inflow vote baseline. Returns the plain
+    // treasury for every non-bank, since BankCollateralBtc is 0 for them.
+    private static decimal CompanyOwnBtc(string nonMinerNodeId) => Scripts.Finance.Money.Normalize(
+        Math.Max(0m, CompanyTreasuryBtc(nonMinerNodeId) - BankCollateralBtc(nonMinerNodeId)));
 
     // D-ND8.13/D-ND8.26 — the four casino-miner-bots draw, once per world: a distinct 4-of-5 Currency
     // Band preference set (one band always unrepresented) and a distinct full permutation of the 4
@@ -2222,7 +2238,7 @@ public partial class NetworkRoot : Node
             ReserveScPercent = BandDefaultScPercent(band),
             QuarterIndex = 0,
             NextQuarterlyDueMs = AddMonthsMs(founding.FoundedAtUnixMs, QuarterMonths),
-            BaselineReserveBtc = CompanyTreasuryBtc(summary.NonMinerNodeId),
+            BaselineReserveBtc = CompanyOwnBtc(summary.NonMinerNodeId),
             InflowSinceBaselineBtc = 0m
         };
         _companyGovernance[summary.NonMinerNodeId] = gov;
@@ -2282,7 +2298,9 @@ public partial class NetworkRoot : Node
         }
     }
 
-    // ── ND.8b.6 (D-ND8.24/D-ND8.34) — automatic BTC→SC reserve conversion, provisional casino path ──
+    // ── ND.8b.6 (D-ND8.24/D-ND8.34) — automatic BTC→SC reserve conversion. Since Step 15 P15.3 the
+    //    counterparty is the SELECTED BANK (§5.1), with the casino surviving only as the pre-first-bank
+    //    fallback. ──
 
     // Calibration floors (v1): convert only when the SC-side deficit is ≥ 5% of total reserve value AND
     // the BTC to sell clears a dust/value floor — conversions stay chunky instead of one tiny tx per
@@ -2290,16 +2308,24 @@ public partial class NetworkRoot : Node
     private const decimal ConversionDeficitTriggerFraction = 0.05m;
     private const decimal MinConversionBtc = 0.01m;
 
-    // Moves a founded company's reserves toward its voted ReserveScPercent target: an on-chain
-    // company→casino BTC send (network median fee — the network's cost, never a desk fee) paired with an
+    // On-chain display memos for the two conversion counterparties. The bank leg gets its OWN tag because
+    // it is load-bearing, not cosmetic: AccumulateCompanyInflows reads it to keep collateral out of the
+    // receiving bank's business-inflow measure (D-15.4).
+    private const string CompanyConversionMemo = "CONVERSION";
+    private const string BankCollateralMemo = "COLLATERAL";
+
+    // Moves a founded company's reserves toward its voted ReserveScPercent target: an on-chain BTC send to
+    // the financing counterparty (network median fee — the network's cost, never a desk fee) paired with an
     // SC credit into the company's ScReserve at the CLEAN market reference rate (the day's price,
-    // D-ND8.24), funded from the casino's Main Balance with auto-loan chunks when short (the provisional
-    // path — banks take this over at ND.8e, D-ND8.34). Gated on the founding-day vote having closed
-    // ("per preferences + the founding vote"); v1 converts BTC→SC only — the reverse direction needs the
-    // casino to SELL BTC for SC, which is the swap desk/bank's job, deferred with the provisional path.
+    // D-ND8.24). Gated on the founding-day vote having closed ("per preferences + the founding vote"); v1
+    // converts BTC→SC only — the reverse direction (a bank BUYING SC back with BTC) arrives with the
+    // deferred SC→BTC rebalancing work.
+    //
+    // P15.3b: WHO pays the SC is now SelectFinanciers' answer — the nearest-category founded bank, funding
+    // itself with a FED auto-loan (D-15.20), or the casino when no bank has founded yet.
     private static void TryConvertCompanyReserves(CompanyGovernanceState gov, Block block)
     {
-        if (gov.VoteHistory.Count == 0 || gov.ReserveScPercent <= 0m || _casinoSc == null)
+        if (gov.VoteHistory.Count == 0 || gov.ReserveScPercent <= 0m)
         {
             return;
         }
@@ -2311,7 +2337,8 @@ public partial class NetworkRoot : Node
             return; // no market yet (structurally unreachable post-founding — auctions start at Market Birth)
         }
 
-        decimal treasuryBtc = CompanyTreasuryBtc(gov.NonMinerNodeId);
+        // P15.3a — a bank's quarantined CollateralBtc is NOT part of its convertible reserves (D-15.4).
+        decimal treasuryBtc = CompanyOwnBtc(gov.NonMinerNodeId);
         decimal totalValueSc = treasuryBtc * price + gov.ScReserve;
         if (totalValueSc <= 0m)
         {
@@ -2337,28 +2364,106 @@ public partial class NetworkRoot : Node
             return;
         }
 
-        if (!SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company)
-            || !SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
+        if (!SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company))
         {
             return;
         }
 
         decimal scAmount = Scripts.Finance.Money.Normalize(btcToSell * price);
-        if (scAmount <= 0m || !_casinoSc.TryPayCompanyProvisionSc(scAmount, "company_conversion"))
+        if (scAmount <= 0m)
         {
             return;
         }
 
-        if (BuildAndBroadcastUtxoSpend(company, casino.WalletAddress, btcToSell, fee, null, "CONVERSION") == null)
+        // §5.1 — evaluated fresh at every conversion (a company's category can shift by vote; a bank's
+        // cannot, P15.2b). Today this always resolves to exactly ONE financier: capacity is infinite under
+        // FED auto-loans (D-15.1), so tier 1 always wins.
+        List<FinancierChoice> financiers = SelectFinanciers(gov.NonMinerNodeId, scAmount);
+        if (financiers.Count == 0)
         {
-            _casinoSc.ReceiveSwapSc(scAmount); // unwind the SC leg on a failed broadcast (the SW.4 pattern)
+            return;
+        }
+
+        // Tier 3 (a SPLIT across banks) would need the BTC leg split into several sends with their own
+        // fees, which is not built — it is unreachable while capacity is infinite. If credit limits ever
+        // make it reachable, fund the whole conversion from the casino rather than executing a half-split,
+        // and build the multi-leg path THEN (the second of the two places ND.8e must touch — the first is
+        // BankFundingCapacitySc).
+        FinancierChoice choice = financiers[0];
+        if (financiers.Count > 1)
+        {
+            GD.PushWarning($"[NetworkRoot] SelectFinanciers split {scAmount:F8} SC across {financiers.Count} financiers for {gov.NonMinerNodeId}; the multi-leg BTC path is unbuilt — falling back to the casino (P15.3b).");
+            choice = new FinancierChoice(null, scAmount, FinancierTierCasino);
+        }
+
+        bool ok = choice.BankNodeId == null
+            ? TryConvertViaCasino(gov, company, btcToSell, scAmount, fee, price, block)
+            : TryConvertViaBank(gov, company, choice.BankNodeId, btcToSell, scAmount, fee, price, block);
+        if (!ok)
+        {
             return;
         }
 
         gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve + scAmount);
         AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "conversion", "btc_to_sc",
             string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "btc={0:F8};sc={1:F8};price={2:F2}", btcToSell, scAmount, price));
+                "btc={0:F8};sc={1:F8};price={2:F2};via={3};tier={4}",
+                btcToSell, scAmount, price, choice.BankNodeId ?? CasinoNodeId, choice.Tier));
+    }
+
+    // The pre-first-bank fallback (D-15.20 (c)) — unchanged ND.8b.6 behaviour: SC out of the casino's Main
+    // Balance (auto-loan when short, so the draw still lands on the casino's FED account), BTC in.
+    private static bool TryConvertViaCasino(CompanyGovernanceState gov, NodeAgent company, decimal btcToSell, decimal scAmount, decimal fee, decimal price, Block block)
+    {
+        if (_casinoSc == null || !SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
+        {
+            return false;
+        }
+
+        if (!_casinoSc.TryPayCompanyProvisionSc(scAmount, "company_conversion"))
+        {
+            return false;
+        }
+
+        if (BuildAndBroadcastUtxoSpend(company, casino.WalletAddress, btcToSell, fee, null, CompanyConversionMemo) == null)
+        {
+            _casinoSc.ReceiveSwapSc(scAmount); // unwind the SC leg on a failed broadcast (the SW.4 pattern)
+            return false;
+        }
+        return true;
+    }
+
+    // P15.3a — THE BANK PROVISIONING PATH (§3.2). The bank borrows the SC from the FED (minting it as
+    // "bank:<id>" debt), the company receives it, and the BTC the company sells lands in the bank's wallet
+    // as QUARANTINED CollateralBtc. Note what the bank does NOT do: it never touches its own ScReserve —
+    // the borrowed SC passes straight through to the company, leaving the bank with a FED debt on one side
+    // and collateral on the other. That spread, carried until the quarterly repayment (P15.4d), is the
+    // whole economic point of the reform (§1).
+    //
+    // Order mirrors the casino path: SC leg first, then the on-chain send, with the SC leg unwound on a
+    // failed broadcast — here by REPAYING the just-drawn loan, which burns the SC back out of existence
+    // and leaves `circulation = grants + debt` exactly as it was.
+    private static bool TryConvertViaBank(CompanyGovernanceState gov, NodeAgent company, string bankNodeId, decimal btcToSell, decimal scAmount, decimal fee, decimal price, Block block)
+    {
+        if (_centralBank == null || !SharedNodesById.TryGetValue(bankNodeId, out NodeAgent? bank))
+        {
+            return false;
+        }
+
+        string fedClientId = CentralBankService.BankClientId(bankNodeId);
+        _centralBank.DrawLoan(fedClientId, scAmount, "provision");
+
+        if (BuildAndBroadcastUtxoSpend(company, bank.WalletAddress, btcToSell, fee, null, BankCollateralMemo) == null)
+        {
+            _centralBank.Repay(fedClientId, scAmount, "provision_unwind");
+            return false;
+        }
+
+        // Both legs succeeded — only now does the bank's own client book record the provision (so it can
+        // never hold a half-executed swap).
+        RecordBankProvision(bankNodeId, gov.NonMinerNodeId, btcToSell, scAmount, price, block);
+        AppendBankCreditTrace(block, "provision", bankNodeId, gov.NonMinerNodeId, scAmount, btcToSell, price);
+        return true;
     }
 
     // New BTC arriving at a founded company's address this block (its own sends' change excluded) feeds
@@ -2376,6 +2481,16 @@ public partial class NetworkRoot : Node
             foreach (Transaction tx in block.Transactions)
             {
                 if (tx.IsCoinbase || tx.Inputs.Any(i => i.Address == address))
+                {
+                    continue;
+                }
+
+                // P15.3a (D-15.4) — a bank's incoming COLLATERAL is not business inflow: it is the asset
+                // leg of a loan it just took, quarantined from its own reserves. Counting it here would
+                // fire spurious >30%-inflow special votes — and where the player holds NST in that bank,
+                // every one of those PAUSES THE GAME (D-ND8.18). The send is tagged at broadcast
+                // (BankCollateralMemo), the same display-memo channel the swap desk already uses.
+                if (tx.InputDataText == BankCollateralMemo && IsBankCompany(gov.NonMinerNodeId))
                 {
                     continue;
                 }
@@ -2539,7 +2654,9 @@ public partial class NetworkRoot : Node
             // D-ND8.17 — FINALIZE the quarter's dividend as two separately-tracked amounts (never live
             // accrual): each currency side is payoutRate% of the corresponding reserve at finalize time.
             // The SC side is structurally 0 until ND.8b.6 lands the BTC→SC conversions.
-            decimal treasuryBtc = CompanyTreasuryBtc(gov.NonMinerNodeId);
+            // P15.3a — the company's OWN BTC: a bank's quarantined collateral is excluded, so a quarterly
+            // dividend can never pay away the asset backing its FED debt (D-15.4).
+            decimal treasuryBtc = CompanyOwnBtc(gov.NonMinerNodeId);
             gov.QuarterPayoutRatePercent = payoutResult;
             gov.QuarterDividendBtc = Scripts.Finance.Money.Normalize(treasuryBtc * payoutResult / 100m);
             gov.QuarterDividendSc = Scripts.Finance.Money.Normalize(gov.ScReserve * payoutResult / 100m);
@@ -2552,7 +2669,7 @@ public partial class NetworkRoot : Node
 
         // Reset the >30% special-vote baseline at EVERY vote close — "new inflow" is measured from the
         // last governance event (D-ND8.18).
-        gov.BaselineReserveBtc = CompanyTreasuryBtc(gov.NonMinerNodeId);
+        gov.BaselineReserveBtc = CompanyOwnBtc(gov.NonMinerNodeId);
         gov.InflowSinceBaselineBtc = 0m;
 
         gov.VoteHistory.Add(new CompanyVoteRecord
@@ -2941,10 +3058,50 @@ public partial class NetworkRoot : Node
     }
 
     private const string CompanyGovernanceTracePath = "user://logs/company_governance_trace.csv";
+    private const string BankCreditTracePath = "user://logs/bank_credit_trace.csv"; // Step 15
 
     // ND.8b.3 telemetry — one row per governance event (vote_open / vote_close / quarter_settled /
     // bot_claim). Daily drip accruals are deliberately NOT logged (row volume); the quarter_settled and
     // claim rows bracket them for playtest verification.
+    // Step 15 (P15.7d, pulled forward to P15.3a): one row per banking-layer credit event — provisions now,
+    // repayments / shortfalls / dissolutions / seizures as those phases land. This is the ONLY observability
+    // the bank credit loop has until the P15.7 readouts, and the P15.8 calibration run reads it, so it
+    // ships with the mechanism rather than after it. Delete-listed in ResetWorldIfIncompatible (the TL.3
+    // maintenance rule). Join key is the raw nodeId, like every other trace (ND.10g).
+    private static void AppendBankCreditTrace(Block block, string eventType, string bankNodeId, string companyNodeId,
+        decimal sc, decimal btc, decimal priceUsd)
+    {
+        try
+        {
+            if (!DirAccess.DirExistsAbsolute("user://logs"))
+            {
+                DirAccess.MakeDirRecursiveAbsolute("user://logs");
+            }
+
+            bool exists = FileAccess.FileExists(BankCreditTracePath);
+            using FileAccess file = exists
+                ? FileAccess.Open(BankCreditTracePath, FileAccess.ModeFlags.ReadWrite)
+                : FileAccess.Open(BankCreditTracePath, FileAccess.ModeFlags.Write);
+            if (file == null)
+            {
+                return;
+            }
+
+            if (exists) file.SeekEnd();
+            else file.StoreLine("blockTimestampMs,blockIndex,event,bankNodeId,companyNodeId,sc,btc,priceUsd,bankFedDebt,bankCollateralBtc");
+
+            file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0},{1},{2},{3},{4},{5:F8},{6:F8},{7:F2},{8:F8},{9:F8}",
+                block.Timestamp, block.Index, eventType, bankNodeId, companyNodeId, sc, btc, priceUsd,
+                _centralBank?.OutstandingDebt(CentralBankService.BankClientId(bankNodeId)) ?? 0m,
+                BankCollateralBtc(bankNodeId)));
+        }
+        catch (Exception e)
+        {
+            GD.PushWarning($"[BankCreditTrace] failed: {e.Message}");
+        }
+    }
+
     private static void AppendCompanyGovernanceTrace(long timestampMs, int blockIndex, CompanyGovernanceState gov,
         string eventType, string kind, string detail)
     {
@@ -5004,6 +5161,7 @@ public partial class NetworkRoot : Node
         DeleteIfExists(CompanyFoundingTracePath); // ND.6b — was missing since ND.5 (same reasoning as the others); ND.8b.2 renamed the file
         DeleteIfExists(CompanyGovernanceTracePath); // ND.8b.3 — added WITH the feature (the TL.3/ND.6b rule)
         DeleteIfExists(CasinoBotBidTracePath);
+        DeleteIfExists(BankCreditTracePath); // Step 15 P15.3a — added WITH the feature (the TL.3/ND.6b rule)
 
         // The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
         // and the betting stats rebuild from a pristine world.

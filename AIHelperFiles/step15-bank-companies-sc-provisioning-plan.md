@@ -9,8 +9,10 @@
 > The one soft item is the FBI tolerance numbers, deliberately left as P15.8 calibration placeholders.
 > **ALL phases are now broken into subphases in §8 (P15.1a … P15.8)**; P15.1 is fully locked (Fork A,
 > D-15.23) and **✅ IMPLEMENTED (2026-07-26, all five subphases P15.1a–e)**; **P15.2 is likewise ✅
-> IMPLEMENTED (2026-07-26, subphases a–d)**. Later phases inherit the same reviewed data structures and
-> will firm up as each lands. **Next: P15.3a** on branch `bank-companies-sc-provisioning`.
+> IMPLEMENTED (2026-07-26, subphases a–d)**, as is **P15.3 (a–b, which also absorbed P15.4a's quarantine)**.
+> Later phases inherit the same reviewed data structures and will firm up as each lands. **Next: P15.4b**
+> (P15.4a is done) on branch `bank-companies-sc-provisioning`. In-game verification is deferred to P15.8 by
+> the developer's call — every phase since P15.1 has been build-verified only.
 >
 > Branch (suggested): `bank-companies-sc-provisioning` off `main` (canonical timeline, `DevEntryYear = 0`).
 
@@ -681,7 +683,42 @@ gradient, and build the §5.1 selection framework — still **no conversions rer
 **Exit:** the four banks are typed, categorized (locked), carry a persisted balance sheet, and
 `SelectFinanciers` resolves correctly — with conversions still flowing to the casino (unchanged) until P15.3.
 
-### P15.3 — Reroute conversions through banks
+### P15.3 — Reroute conversions through banks — ✅ IMPLEMENTED (2026-07-26, subphases a–b)
+
+> **Build log.** `dotnet build` clean. All in `NetworkRoot.cs`: `_centralBank` autoload reference;
+> `CompanyOwnBtc` (the quarantine helper) replacing `CompanyTreasuryBtc` at the three governance sites;
+> the `COLLATERAL`-memo skip in `AccumulateCompanyInflows`; `TryConvertCompanyReserves` reworked around
+> `SelectFinanciers` + the two new counterparty paths `TryConvertViaBank` / `TryConvertViaCasino`; the
+> `CompanyConversionMemo`/`BankCollateralMemo` constants; `AppendBankCreditTrace` + `BankCreditTracePath`
+> + its delete-list entry. Docs: `CLAUDE.md` Implemented list + `ProjectDesignManual.md` **§39.9/§39.9.1**.
+>
+> Three deviations from the subphase text, all documented in §39.9:
+> - **P15.4a's `CollateralBtc` quarantine shipped HERE, not next phase.** Without it a bank's own
+>   conversion would sell collateral BTC while `_bankState.CollateralBtc` still claimed it existed — a
+>   *persisted figure diverging from reality*, which P15.4d would then try to sell. That is a different
+>   category of problem from an unfinished feature, so the ~3-line netting shipped with the mechanism that
+>   creates the collateral. **P15.4a is therefore already done**; it survives only as a verification item.
+> - **A FOURTH leak the plan didn't list:** `AccumulateCompanyInflows` counts BTC arriving at a company
+>   address for the D-ND8.18 >30% special vote. Collateral arriving at a bank is the asset leg of a loan,
+>   not business inflow — and a spurious special vote **pauses the game** wherever the player holds NST in
+>   that bank. Excluded via the `COLLATERAL` display memo, which makes `InputDataText` load-bearing on this
+>   one tx type.
+> - **`bank_credit_trace.csv` (P15.7d) shipped early**, for the same reason the P15.2 readout did: it is
+>   the only observability the credit loop has before the P15.7 surfaces, and the P15.8 run reads it.
+>
+> **Tier 3 stays honest rather than half-built:** a split answer would need the BTC leg split into several
+> fee-bearing sends, which is unbuilt and unreachable while capacity is infinite. The code detects a
+> multi-financier answer, warns, and funds the whole conversion from the casino. With
+> `BankFundingCapacitySc`, that is the COMPLETE list of what ND.8e must touch to switch real limits on.
+>
+> **No `WorldFormatVersion` bump** (as planned): conversions that already happened stay internally
+> consistent — the counterparty change is forward-only.
+>
+> **Left for the developer's P15.8 verification:** a scripted conversion moving BTC company→bank with SC to
+> the company and FED debt keyed `bank:{id}`; a post-2012-09 exchange routing through the nearest-category
+> bank while pre-first-bank conversions still hit the casino; and the quarantine (a bank's collateral
+> persists across blocks, is never dividended, and never triggers a >30% vote, while a normal inflow to the
+> same bank still converts).
 
 **Goal:** `TryConvertCompanyReserves` (~L2047) provisions through the selected bank instead of the casino.
 
@@ -703,10 +740,12 @@ as the pre-first-bank fallback.
 
 ### P15.4 — Extra-lazy repayment + greed voting
 
-- **P15.4a — `CollateralBtc` quarantine (D-15.4).** Exclude a bank's `CollateralBtc` from its own CB1
-  auto-convert: its business inflows still convert to SC, but collateral is held for debt service. Track
-  the two BTC streams distinctly at the wallet/accounting boundary. **Test:** a bank's collateral persists
-  across blocks (not auto-sold), while a normal inflow to the bank still converts.
+- **P15.4a — `CollateralBtc` quarantine (D-15.4). — ✅ ALREADY IMPLEMENTED at P15.3a** (see that build log:
+  leaving it to this phase would have let `_bankState.CollateralBtc` claim BTC the bank had already sold).
+  Shipped as `NetworkRoot.CompanyOwnBtc` (= treasury − collateral) at the three governance sites, plus a
+  fourth exclusion the plan hadn't listed — `AccumulateCompanyInflows` skipping `COLLATERAL`-memo arrivals
+  so collateral never fires a game-pausing >30% special vote. **Test (still owed, P15.8):** a bank's
+  collateral persists across blocks (not auto-sold), while a normal inflow to the bank still converts.
 - **P15.4b — Greed attribute (D-15.13).** Add `GreedPreference` (enum `not_so_greedy | almost_greedy |
   greedy | extremely_greedy`) to `BotGovernancePreference` (L5232); draw it per world in
   `EnsureBotGovernancePreferences` (a 4th assigned axis) — persisted in the snapshot's

@@ -4130,3 +4130,32 @@ P15.2 makes the four CB1 roster banks structurally real without changing where a
 Selection is evaluated **fresh at every conversion**, because a company's category can still shift ±1 by vote while a bank's cannot — which is precisely what keeps the axis stable underneath a moving company.
 
 **Verifying a phase that changes no behaviour.** P15.2 deliberately routes nothing new, which would leave it unverifiable in-game — so the FED scene gained a read-only **Banking layer** block: the founded banks (locked category, FED debt, `CollateralBtc`, client count) and a **financier-selection preview** row per founded company showing which counterparty it *would* route to and at which tier. It probes with a nominal 1 SC, honest only because capacity is currently infinite — a note to revisit when ND.8e makes the amount matter. This is an early slice of P15.7a, pulled forward because a phase you cannot observe is a phase you cannot sign off.
+
+### 39.9 — The credit loop closes: conversions route through banks (P15.3)
+
+`TryConvertCompanyReserves` keeps every calibration floor and its clean-rate pricing (D-ND8.24); what changed is **who is on the other side**. It now asks `SelectFinanciers` and dispatches to one of two paths:
+
+- **`TryConvertViaCasino`** — byte-for-byte the old ND.8b.6 behaviour, surviving *only* as the pre-first-bank fallback (D-15.20 (c)). SC leaves the casino's Main Balance (auto-loan when short, so the draw still lands on the casino's FED account), BTC comes in, memo `CONVERSION`.
+- **`TryConvertViaBank`** — the reform. The bank draws the SC from the FED (`DrawLoan("bank:<id>", …, "provision")`, minting it as that bank's debt), the company's `ScReserve` is credited, and the BTC lands in the bank's wallet as quarantined `CollateralBtc`, memo `COLLATERAL`.
+
+**What the bank pointedly does NOT do is touch its own `ScReserve`.** The borrowed SC passes straight through to the company, leaving the bank holding a FED debt on one side and collateral on the other. That spread — carried until the quarterly repayment (P15.4d) — *is* the economic point of the whole reform (§1): the bank sits long BTC on borrowed money.
+
+**Unwinding.** Both paths put the SC leg first and unwind it if the broadcast fails, mirroring the SW.4 swap-desk pattern. The bank's unwind is the more interesting one: it **repays the loan it just drew**, which burns the SC back out of existence and leaves `circulation = grants + debt` exactly as it was. The client book is written only after *both* legs succeed, so it can never record a half-executed swap.
+
+**A bank finances peers, never itself.** `SelectFinanciers` filters the requesting company out of the candidate list, so a bank converting its own CB1 business inflows routes to another founded bank — or, while it is the only one (2012-09 → 2013-06), to the casino. Its own inflows convert normally; only the collateral stream is special.
+
+**Tier 3 is where the honesty matters.** A split across banks would need the BTC leg split into several sends with their own fees, which is *not* built — it is unreachable while capacity is infinite. Rather than silently executing a half-split, the code detects a multi-financier answer, warns, and funds the whole conversion from the casino. Together with `BankFundingCapacitySc`, that is the complete list of what ND.8e must touch to switch real credit limits on: two places, both flagged in comments.
+
+#### 39.9.1 — The quarantine, and the three places collateral must not leak
+
+`CollateralBtc` and the bank's own money live in **one wallet but two books**, so every computation that means "the company's own money" has to net the collateral out. The split is expressed as one helper pair: `CompanyTreasuryBtc` (raw on-chain spendable) and **`CompanyOwnBtc` = treasury − quarantined collateral** (which returns the plain treasury for every non-bank, since their collateral is 0). `CompanyOwnBtc` replaced `CompanyTreasuryBtc` at all three governance sites:
+
+1. **The reserve-mix conversion base** — otherwise a bank would try to sell the very collateral backing its debt to top up its own SC reserve.
+2. **The quarterly dividend base** — otherwise shareholders would be paid out of the collateral, draining the asset while the FED debt stayed put.
+3. **The >30%-inflow vote baseline** — see below.
+
+The fourth leak is not a treasury read at all: **`AccumulateCompanyInflows`**, which measures new BTC arriving at a company address to trigger the D-ND8.18 special vote. A collateral arrival is not business inflow — it is the asset leg of a loan — and counting it would fire spurious special votes at a bank. Where the player holds NST in that bank, **every one of those pauses the game**. The fix rides the existing display-memo channel: the provisioning send is tagged `COLLATERAL` at broadcast and skipped here. That makes the memo *load-bearing* rather than cosmetic on this one tx type — worth remembering before treating `InputDataText` as purely a display concern.
+
+**Why this landed in P15.3 rather than P15.4a as planned.** Without the quarantine, a bank's own conversion would sell collateral BTC while `_bankState.CollateralBtc` still claimed it existed — a **persisted figure diverging from reality**, which P15.4d would then try to sell. That is a different category of problem from an unfinished feature, so the ~3-line netting shipped with the mechanism that creates the collateral.
+
+**Telemetry.** `user://logs/bank_credit_trace.csv` (one row per provision now; repayments, shortfalls, dissolutions and seizures as those phases land) also shipped early, for the same reason: it is the only observability the credit loop has before the P15.7 readouts, and the P15.8 calibration run reads it. Delete-listed with the feature, per the TL.3 rule.
