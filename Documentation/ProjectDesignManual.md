@@ -4089,6 +4089,8 @@ The FED answers all three of CLAUDE.md's mandatory questions for a new persisted
 
 **`WorldFormatVersion` 3 → 4 (D-15.10).** The casino's loan fields leave both `casino_sc_balance_state.json` and the checkpoint DTO. Rather than write a migration for a DEV-era save, world-defining banking semantics ride the same clean-reset mechanism every previous bump used. **Every later plan15 file simply joins the delete list — no further bump for the rest of the plan.**
 
+**Standing project rule, restated here because it governs every phase of this plan:** persisted-state changes are resolved by **bumping the version and wiping `user://`**, never by writing migration code and never by pausing to ask. The developer does not keep long-running playtests alive across feature work, so an old world has no value to preserve and migration code is pure cost. The only reason to *avoid* a bump is when the affected value is genuinely **derivable** — re-deriving a bank's locked category from the roster (§39.7) is a simplification, not a migration.
+
 ### 39.6 — The FED DEV scene (P15.1e)
 
 `Screens/CentralBank/` — one section per client (outstanding debt, total drawn/repaid with counts, and the newest 60 movements colour-coded orange=draw / green=repay), plus system totals and the invariant line from §39.3. Pure display: it never draws, repays or mutates anything.
@@ -4159,3 +4161,74 @@ The fourth leak is not a treasury read at all: **`AccumulateCompanyInflows`**, w
 **Why this landed in P15.3 rather than P15.4a as planned.** Without the quarantine, a bank's own conversion would sell collateral BTC while `_bankState.CollateralBtc` still claimed it existed — a **persisted figure diverging from reality**, which P15.4d would then try to sell. That is a different category of problem from an unfinished feature, so the ~3-line netting shipped with the mechanism that creates the collateral.
 
 **Telemetry.** `user://logs/bank_credit_trace.csv` (one row per provision now; repayments, shortfalls, dissolutions and seizures as those phases land) also shipped early, for the same reason: it is the only observability the credit loop has before the P15.7 readouts, and the P15.8 calibration run reads it. Delete-listed with the feature, per the TL.3 rule.
+
+### 39.10 — Greed: a third governance axis (P15.4b/c)
+
+`BotGovernancePreference` gains **`GreedPreference`** ∈ `not_so_greedy · almost_greedy · greedy · extremely_greedy`, drawn per world as its own shuffled permutation alongside the D-ND8.13/26 currency-band and market-category draws — so with four bots all four stances are always represented exactly once, and which bot holds which changes per world.
+
+It answers one question and one only: **money in shareholders' pockets vs. money kept in the company.** It therefore biases the quarterly payout-rate ballot (all companies, P15.4c) and the P15.4e shortfall split — and pointedly **not** the reserve-band (currency-mix) vote, which is a different axis entirely (D-15.13).
+
+The payout ladder is written as a multiplier on the category's default rate — `0.5 / 1.0 / 1.5 / 2.0` — chosen to span exactly the ballot's existing `[0, 2× default]` clamp. Note that `almost_greedy` sits at `1.0`: the pre-greed behaviour ("bots vote the standard") is now *one of four stances* rather than the only one, which is what makes this change additive rather than a re-tuning of existing balance.
+
+**The field defaults to `""`, not to a stance — deliberately.** Greed arrived after the other two axes, and `EnsureBotGovernancePreferences` early-returns once every bot has a preference record, so a world whose preferences were already drawn would never re-draw and would sit on the neutral stance forever, **silently disabling the whole axis**. An empty default makes "absent" distinguishable from "genuinely drew neutral", which is what lets `BackfillGreedPreferences` fill *only* the missing slots while leaving the already-meaningful band/market choices untouched. Readers normalize empty → `almost_greedy`, so an un-backfilled world behaves exactly as it did before.
+
+To be clear about *why* this is worth doing, since it is **not** about dodging a version bump — this project's standing rule is the opposite (see §39.5: wiping `user://` and re-testing clean is the norm, and a bump is always the cheap answer to a persistence change). The sentinel earns its place because the failure mode here is **silent**: a stance-valued default produces a world that loads fine, plays fine, and quietly has one of its three governance axes pinned flat. A bump fixes that only if someone notices it is needed. **The general shape worth copying: when adding a field to an existing per-entity record whose population code is guarded by a "already populated?" check, default to a sentinel and backfill it — so a stale record announces itself instead of masquerading as a valid one.**
+
+### 39.11 — Extra-lazy repayment and the shortfall vote (P15.4d/e)
+
+**The payment day.** On each quarter end — after the closing quarter's dividends settle, before the new quarterly vote opens — a bank owes `BankQuarterlyRepaymentFraction` (placeholder **10%**, a P15.8 knob) of its *outstanding* FED principal. It sells **just enough** collateral to raise exactly that, repays, and the SC is **burned**. Nothing is sold between payment days: that is the "lazy," and it is precisely what leaves the bank long BTC in the interim (§1).
+
+**The fee comes out of the collateral pool**, not the bank's own money. Coin selection cannot tell the two streams apart, so `CollateralBtc` is decremented by `sold + fee` — the book stays conservative and can never claim BTC the wallet has already spent, which is the same §39.9.1 rule that pulled the quarantine forward into P15.3.
+
+#### 39.11.1 — Whose BTC is being sold, and who buys it
+
+This is worth spelling out because the word "collateral" invites two wrong readings.
+
+**The collateral belongs to the BANK, outright.** When a company sells BTC to a bank (§39.9), that is a **clean spot sale** — D-15.11 — and the transaction is *finished the moment it settles*. The company keeps the SC and owes nothing, ever. The BTC is now the bank's property. It is called "collateral" only because the bank earmarks it against the FED loan it took to fund that purchase; it is not posted to anyone, not held in escrow, and not encumbered by any counterparty.
+
+**The only debt anywhere in this system is bank → FED.** Companies carry none (spot sale). The casino carries its own, separately, from its own borrowing. So when a bank sells collateral to service its debt, no other company's obligations are touched or involved in any way — the companies it once financed are entirely out of the picture.
+
+**Why a buyer has to exist at all.** BTC lives on-chain: it cannot be "sold to the market" in the abstract, because every satoshi must end up at a real address. So the design has to name a counterparty. That counterparty is the **casino**, at the day's clean rate (no desk fee — the D-ND8.24 model the company conversions already use). It is the designated SC liquidity backstop: the only party with an unlimited credit line (D-15.17), and already the SC side of both the swap desk and the pre-first-bank conversion path.
+
+**The side effect worth watching (a P15.8 observation).** This is **not always a net burn**:
+
+- If the casino pays out of SC it already holds, circulation genuinely **falls** by the repayment amount — the intended Option-A behaviour.
+- If the casino must draw a FED auto-loan to afford the purchase, the same SC is minted as *casino* debt and immediately burned as *bank* debt. Total circulation is unchanged; the debt has simply **moved** from the bank to the casino, and the BTC moved with it.
+
+Both are coherent, but they mean "banks repay their debt" can quietly become "the casino absorbs it." Which one dominates over a long run is a calibration question for P15.8, and a candidate input for ND.8e's credit-capacity work.
+
+#### 39.11.2 — The shortfall, and what the two "sources" actually are
+
+If selling everything still can't raise the installment, the gap is parked on `gov.PendingShortfallSc` and a **`shortfall` vote** opens — but not immediately. It waits until no other vote is running, which in practice means *after the quarterly closes*, because the dividend it may cut has to have been finalized first. It takes precedence over the >30%-inflow special vote (an unpaid installment is the more urgent question).
+
+**The ballot is one dial**: what share of the gap comes out of shareholders' dividends vs. the company's own SC reserve. Default 50/50 (no or tied vote); bots ballot the §3.3 greed table (`not_so_greedy` 90% dividends-cut … `extremely_greedy` 10%). A greedy holder protects its own dividend and makes the company pay.
+
+**The two "sources" are not two pots.** A company has exactly **one** pot of SC — `gov.ScReserve`. There is no separate balance labelled "dividends," so the shortfall is paid out of the reserve *either way*. What the vote actually decides is whether **shareholders' claim shrinks alongside it**.
+
+Worked example. A bank owes a **1,000 SC** installment, raises **700** by selling collateral, leaving a **gap of 300**. It holds `ScReserve = 500`, and this quarter's finalized `QuarterDividendSc` is `200`:
+
+| Vote | `ScReserve` after | `QuarterDividendSc` after | Balance sheet afterwards |
+|---|---|---|---|
+| **70% dividends cut** | 500 → **200** | 200 → **0** | 200 SC free and clear — shareholders forfeited their whole claim |
+| **10% dividends cut** | 500 → **200** | 200 → **170** | 200 SC of which **170 is already owed out** — only 30 free |
+
+The same 300 SC leaves the company in both rows. The difference is what it can still operate on afterwards: **200 free vs. 30 free**. That is the real trade a greedy shareholder votes for — protect my payout now, leave the company with nothing to run on.
+
+Two consequences fall out of this shape:
+
+- **A dividends cut larger than the dividend that exists simply spills onto the reserve side.** You cannot cut 210 out of a 200 dividend; the remainder was already taken from the reserve regardless.
+- **Already-dripped SC is never clawed back.** A cut only touches what has not yet been paid — it is forward-looking, never retroactive.
+
+The shortfall vote is also the only kind that takes its own exit in `CloseCompanyVote`: it must not move the reserve mix, the market category or the payout rate as a side effect of asking a completely different question.
+
+**Insolvency.** Whatever neither source can close accumulates on `gov.UnrecoverableShortfallSc`. That flag *is* the dissolution trigger P15.5a reads (D-15.8); until it ships, the flag accumulates visibly in the trace and in the FED scene's banking layer (⚠ pending / ✗ INSOLVENT rows).
+
+#### 39.11.3 — The player's ballot, and why its control shipped early
+
+`CompanyDetails`' Board Vote panel **swaps its whole body** for the single shortfall dial when that vote kind is open, rather than adding a fourth row to the usual form.
+
+The control itself belongs to P15.7c's lending panel, but it was pulled forward into P15.4e for a concrete reason: **this vote pauses the game** for a player NST holder (D-ND8.18), and the pre-existing panel would have presented reserve / market / payout dials that the shortfall resolver *ignores*. The player would have been frozen, asked to vote, and given only controls that do nothing — worse than no control at all. Shipping a half-delivered vote for a whole phase was not worth the tidier phase boundary.
+
+`TryRegisterPlayerVote` also gained `dividendsCutPercent` as an **optional** parameter (default 50). That is a deadlock guard, not a convenience: if any caller ever opens this vote kind without the new control wired, it still registers a legal 50/50 ballot and lifts the pause, instead of leaving the game frozen with no way out.
+
+Nothing else of P15.7c was pulled forward — it still owes the rest of the bank lending panel (FED debt, `CollateralBtc` + live value, the quarter installment due, and the P15.6d FBI-investigation warning).

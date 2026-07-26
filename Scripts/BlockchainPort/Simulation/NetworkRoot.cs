@@ -1860,6 +1860,44 @@ public partial class NetworkRoot : Node
     private const string CompanyVoteKindFounding = "founding";   // D-ND8.18 — fires on auction close
     private const string CompanyVoteKindQuarterly = "quarterly"; // dividend amount + reserve/nature direction
     private const string CompanyVoteKindSpecial = "special";     // >30%-inflow reserve vote
+    // Step 15 P15.4e (D-15.15) — banks only: opened when selling ALL of a bank's collateral still can't
+    // raise its quarterly FED installment. The ballot is a single dial: what share of the gap shareholders
+    // absorb (dividends cut) vs. what the company's own SC reserve absorbs.
+    public const string CompanyVoteKindShortfall = "shortfall";
+
+    // ---- Step 15 P15.4b (D-15.13) — the bot GREED axis --------------------------------------------------
+
+    public const string GreedNotSoGreedy = "not_so_greedy";
+    public const string GreedAlmostGreedy = "almost_greedy";
+    public const string GreedGreedy = "greedy";
+    public const string GreedExtremelyGreedy = "extremely_greedy";
+    private static readonly string[] GreedOrder = [GreedNotSoGreedy, GreedAlmostGreedy, GreedGreedy, GreedExtremelyGreedy];
+
+    // P15.4c — greed as a multiplier on the category's DEFAULT quarterly payout rate. The ballot clamp is
+    // [0, 2× default], so the ladder is written to span exactly that legal range, with `almost_greedy`
+    // sitting at 1.0 — i.e. the pre-greed behaviour ("bots vote the standard") is now one of four stances
+    // rather than the only one. *P15.8 calibration knobs.*
+    private static decimal GreedPayoutMultiplier(string greed) => greed switch
+    {
+        GreedNotSoGreedy => 0.5m,
+        GreedGreedy => 1.5m,
+        GreedExtremelyGreedy => 2.0m,
+        _ => 1.0m, // almost_greedy — the neutral stance
+    };
+
+    // P15.4e (§3.3's table) — what share of a bank's shortfall this bot votes to take out of SHAREHOLDERS'
+    // dividends; the complement comes out of the company's own reserves. A greedy holder protects its own
+    // dividend and makes the company pay. Default split with no/tied vote is 50/50. *P15.8 knobs.*
+    private static decimal GreedDividendsCutPercent(string greed) => greed switch
+    {
+        GreedNotSoGreedy => 90m,
+        GreedAlmostGreedy => 70m,
+        GreedGreedy => 30m,
+        GreedExtremelyGreedy => 10m,
+        _ => DefaultShortfallDividendsCutPercent,
+    };
+
+    public const decimal DefaultShortfallDividendsCutPercent = 50m;
 
     // D-ND8.18 — every vote runs one in-game day; its result applies from the next day (the moment the
     // window elapses — the first block past OpenedAt + 1 day) and holds until the next quarter.
@@ -2102,7 +2140,9 @@ public partial class NetworkRoot : Node
         string MarketCategory,
         decimal CollateralBtc,
         int ClientCount,
-        long FoundedAtUnixMs);
+        long FoundedAtUnixMs,
+        decimal PendingShortfallSc,        // P15.4d — awaiting its shortfall vote
+        decimal UnrecoverableShortfallSc); // P15.4e — insolvent; P15.5a will dissolve on this
 
     // The founded banks and their layer-1 books, in founding order. Empty before 2012-09.
     public static List<BankLayerRow> GetFoundedBankRows()
@@ -2118,7 +2158,9 @@ public partial class NetworkRoot : Node
                     b.MarketCategory,
                     sheet?.CollateralBtc ?? 0m,
                     sheet?.Clients.Count ?? 0,
-                    _companyFoundings[b.NonMinerNodeId].FoundedAtUnixMs);
+                    _companyFoundings[b.NonMinerNodeId].FoundedAtUnixMs,
+                    b.PendingShortfallSc,
+                    b.UnrecoverableShortfallSc);
             })
             .ToList();
     }
@@ -2188,22 +2230,56 @@ public partial class NetworkRoot : Node
     private static void EnsureBotGovernancePreferences()
     {
         IReadOnlyList<BotWalletRecord> minerBots = BotWalletRegistry.MinerBots;
-        if (minerBots.Count == 0 || _botGovernancePreferences.Count >= minerBots.Count)
+        if (minerBots.Count == 0)
         {
+            return;
+        }
+
+        if (_botGovernancePreferences.Count >= minerBots.Count)
+        {
+            BackfillGreedPreferences();
             return;
         }
 
         string[] bands = ["CB1", "CB2", "CB3", "CB4", "CB5"];
         string[] markets = (string[])MarketCategoryOrder.Clone();
+        // P15.4b — greed is drawn as a distinct permutation too, so with four bots all four stances are
+        // always represented exactly once: every world has one of each, and which bot holds which changes.
+        string[] greeds = (string[])GreedOrder.Clone();
         ShuffleInPlace(bands);
         ShuffleInPlace(markets);
+        ShuffleInPlace(greeds);
         for (int i = 0; i < minerBots.Count; i++)
         {
             _botGovernancePreferences[minerBots[i].NodeId] = new BotGovernancePreference
             {
                 CurrencyBandPreference = bands[i % bands.Length],
-                MarketCategoryPreference = markets[i % markets.Length]
+                MarketCategoryPreference = markets[i % markets.Length],
+                GreedPreference = greeds[i % greeds.Length]
             };
+        }
+    }
+
+    // P15.4b — greed arrived AFTER the band/market axes, so a world whose preferences were already drawn
+    // carries an empty value for it and would otherwise leave every bot on the neutral stance forever
+    // (the Count >= minerBots.Count early-return above never re-draws). Backfilling only the empty slots
+    // keeps the already-meaningful band/market choices untouched. This is why the field's default is ""
+    // rather than "almost_greedy": a real drawn value has to be distinguishable from an absent one.
+    private static void BackfillGreedPreferences()
+    {
+        var missing = _botGovernancePreferences.Values
+            .Where(p => string.IsNullOrEmpty(p.GreedPreference))
+            .ToList();
+        if (missing.Count == 0)
+        {
+            return;
+        }
+
+        string[] greeds = (string[])GreedOrder.Clone();
+        ShuffleInPlace(greeds);
+        for (int i = 0; i < missing.Count; i++)
+        {
+            missing[i].GreedPreference = greeds[i % greeds.Length];
         }
     }
 
@@ -2279,9 +2355,21 @@ public partial class NetworkRoot : Node
                     // Quarter end: credit the closing cycle's NST lumps + residual PST drip BEFORE the
                     // new quarter's vote opens (D-ND8.17 — the lump is paid at quarter end).
                     SettleDividendCycleAtQuarterEnd(gov, founding, block);
+                    // P15.4d — THE PAYMENT DAY. A bank's whole "extra-lazy" carry ends here: it sells just
+                    // enough collateral to cover this quarter's FED installment. Runs after the dividend
+                    // settlement (the closing quarter's obligations are already met) and before the new
+                    // quarterly vote, which is what a shortfall will later be measured against.
+                    TryBankQuarterlyRepayment(gov, block);
                     gov.QuarterIndex++;
                     gov.NextQuarterlyDueMs = AddMonthsMs(founding.FoundedAtUnixMs, QuarterMonths * (gov.QuarterIndex + 1));
                     OpenCompanyVote(gov, founding, CompanyVoteKindQuarterly, block);
+                }
+                else if (gov.PendingShortfallSc > 0m)
+                {
+                    // P15.4e — takes precedence over the >30% special vote: an unpaid FED installment is
+                    // the more urgent question, and it is opened only once the quarterly has closed, so the
+                    // dividend it may cut has actually been finalized.
+                    OpenCompanyVote(gov, founding, CompanyVoteKindShortfall, block);
                 }
                 else if (gov.BaselineReserveBtc > 0m
                     && gov.InflowSinceBaselineBtc > gov.BaselineReserveBtc * SpecialVoteInflowFraction)
@@ -2313,6 +2401,7 @@ public partial class NetworkRoot : Node
     // receiving bank's business-inflow measure (D-15.4).
     private const string CompanyConversionMemo = "CONVERSION";
     private const string BankCollateralMemo = "COLLATERAL";
+    private const string BankRepaymentMemo = "DEBT SERVICE"; // P15.4d — collateral sold to raise an installment
 
     // Moves a founded company's reserves toward its voted ReserveScPercent target: an on-chain BTC send to
     // the financing counterparty (network median fee — the network's cost, never a desk fee) paired with an
@@ -2409,6 +2498,165 @@ public partial class NetworkRoot : Node
             string.Format(System.Globalization.CultureInfo.InvariantCulture,
                 "btc={0:F8};sc={1:F8};price={2:F2};via={3};tier={4}",
                 btcToSell, scAmount, price, choice.BankNodeId ?? CasinoNodeId, choice.Tier));
+    }
+
+    // ── Step 15 P15.4d/e — extra-lazy FED repayment, and the shortfall it can produce ──────────────────
+
+    // D-15.4 (Hybrid, full-quarter fraction): the share of its OUTSTANDING FED principal a bank owes each
+    // quarter. Nothing is sold between payment days — that is the "lazy", and it is exactly what leaves the
+    // bank long BTC in the interim (§1). *P15.8 calibration knob* (0.10 ⇒ a ~7-quarter half-life).
+    private const decimal BankQuarterlyRepaymentFraction = 0.10m;
+
+    // The bank sells collateral to the CASINO at the day's clean rate (no desk fee — the D-ND8.24 model the
+    // company conversions already use). The casino is the designated SC liquidity backstop: it is the only
+    // counterparty with an unlimited credit line (D-15.17), and it is already the SC side of the swap desk
+    // and of the pre-first-bank conversion path.
+    //
+    // Worth being explicit about the monetary effect, because it is not always a net burn: if the casino
+    // pays out of SC it already holds, circulation genuinely FALLS by the repayment. If the casino has to
+    // auto-loan to buy, the same SC is minted as casino debt and immediately burned as bank debt — a debt
+    // TRANSFER from the bank to the casino (which also ends up holding the BTC). Both are coherent; which
+    // one dominates is a P15.8 observation, and a candidate input for ND.8e's credit-capacity work.
+    private static void TryBankQuarterlyRepayment(CompanyGovernanceState gov, Block block)
+    {
+        if (_centralBank == null || !IsBankCompany(gov.NonMinerNodeId))
+        {
+            return;
+        }
+
+        string fedClientId = CentralBankService.BankClientId(gov.NonMinerNodeId);
+        decimal outstanding = _centralBank.OutstandingDebt(fedClientId);
+        if (outstanding <= 0m)
+        {
+            return;
+        }
+
+        decimal installmentSc = Scripts.Finance.Money.Normalize(outstanding * BankQuarterlyRepaymentFraction);
+        if (installmentSc <= 0m)
+        {
+            return;
+        }
+
+        decimal? priceUsd = _marketData?.GetEffectivePriceUsd(
+            DateTimeOffset.FromUnixTimeMilliseconds(block.Timestamp).LocalDateTime);
+        if (priceUsd is not decimal price || price <= 0m)
+        {
+            return; // unpriceable day — try again next quarter rather than guess at a rate
+        }
+
+        decimal raisedSc = TrySellCollateralForSc(gov.NonMinerNodeId, installmentSc, price, block);
+        if (raisedSc > 0m)
+        {
+            _centralBank.Repay(fedClientId, raisedSc, "quarterly"); // BURN — SC leaves existence
+            AppendBankCreditTrace(block, "repay", gov.NonMinerNodeId, string.Empty, raisedSc,
+                Scripts.Finance.Money.Normalize(raisedSc / price), price);
+        }
+
+        decimal gap = Scripts.Finance.Money.Normalize(installmentSc - raisedSc);
+        if (gap > 0m)
+        {
+            // §3.3 — collateral alone couldn't cover it (BTC fell since purchase, or there was never
+            // enough). The shortfall vote opens on a later tick, once the quarterly vote has closed.
+            gov.PendingShortfallSc = gap;
+            AppendBankCreditTrace(block, "shortfall_pending", gov.NonMinerNodeId, string.Empty, gap, 0m, price);
+        }
+    }
+
+    // Sells at most `wantedSc`-worth of the bank's QUARANTINED collateral to the casino, on-chain, at the
+    // clean rate. Returns the SC actually raised (0 if nothing could be sold). The network fee comes out of
+    // the collateral pool too, so the book stays conservative — CollateralBtc never claims BTC the wallet
+    // has already spent (the §39.9.1 rule that put the quarantine in P15.3 in the first place).
+    private static decimal TrySellCollateralForSc(string bankNodeId, decimal wantedSc, decimal price, Block block)
+    {
+        if (_casinoSc == null
+            || !SharedNodesById.TryGetValue(bankNodeId, out NodeAgent? bank)
+            || !SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
+        {
+            return 0m;
+        }
+
+        BankBalanceSheet? sheet = GetBankBalanceSheet(bankNodeId);
+        if (sheet == null || sheet.CollateralBtc <= 0m)
+        {
+            return 0m;
+        }
+
+        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
+        decimal btcWanted = Scripts.Finance.Money.Normalize(wantedSc / price);
+        decimal btcSellable = Scripts.Finance.Money.Normalize(Math.Max(0m, sheet.CollateralBtc - fee));
+        decimal btcToSell = Math.Min(btcWanted, btcSellable);
+
+        // Same dust floor the conversions use: below it the fee would eat most of the sale, so it is
+        // honestly better to raise nothing and let the whole installment become a shortfall.
+        if (btcToSell < Math.Max(MinConversionBtc, fee * 2m))
+        {
+            return 0m;
+        }
+
+        decimal scRaised = Scripts.Finance.Money.Normalize(btcToSell * price);
+        if (scRaised <= 0m || !_casinoSc.TryPayCompanyProvisionSc(scRaised, "bank_repayment"))
+        {
+            return 0m;
+        }
+
+        if (BuildAndBroadcastUtxoSpend(bank, casino.WalletAddress, btcToSell, fee, null, BankRepaymentMemo) == null)
+        {
+            _casinoSc.ReceiveSwapSc(scRaised); // unwind the casino's SC leg (the SW.4 pattern)
+            return 0m;
+        }
+
+        sheet.CollateralBtc = Scripts.Finance.Money.Normalize(Math.Max(0m, sheet.CollateralBtc - btcToSell - fee));
+        return scRaised;
+    }
+
+    // P15.4e (D-15.7/D-15.15) — apply a closed shortfall vote's split and repay what it raised.
+    //
+    // Both cuts draw the SC out of the SAME place — the company's `ScReserve`, which is the only SC the
+    // company actually holds. What the vote decides is WHO BEARS IT: a dividends cut also shrinks this
+    // quarter's finalized SC dividend by the same amount (shareholders forgo it), while a reserves cut
+    // leaves the dividend whole and lets the company's working capital take the hit. Already-dripped SC is
+    // never clawed back — a cut is forward-looking.
+    private static void ApplyShortfallVote(CompanyGovernanceState gov, decimal dividendsCutPercent, Block block)
+    {
+        decimal gap = gov.PendingShortfallSc;
+        if (gap <= 0m || _centralBank == null)
+        {
+            return; // deliberately does NOT clear the pending gap — an unreachable FED must not erase a debt
+        }
+        gov.PendingShortfallSc = 0m;
+
+        decimal dividendsShare = Scripts.Finance.Money.Normalize(gap * Math.Clamp(dividendsCutPercent, 0m, 100m) / 100m);
+
+        // Whatever the reserve can actually cover, capped at the gap.
+        decimal covered = Scripts.Finance.Money.Normalize(Math.Min(gap, Math.Max(0m, gov.ScReserve)));
+        gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve - covered);
+
+        // The dividend is cut by its voted share of what was ACTUALLY raised (a cut can't exceed the
+        // dividend that exists, so any overflow silently falls on the reserve side — which has already
+        // paid it above).
+        decimal dividendCut = Scripts.Finance.Money.Normalize(Math.Min(gov.QuarterDividendSc, Math.Min(dividendsShare, covered)));
+        gov.QuarterDividendSc = Scripts.Finance.Money.Normalize(gov.QuarterDividendSc - dividendCut);
+
+        if (covered > 0m)
+        {
+            _centralBank.Repay(CentralBankService.BankClientId(gov.NonMinerNodeId), covered, "shortfall");
+        }
+
+        decimal unrecoverable = Scripts.Finance.Money.Normalize(gap - covered);
+        if (unrecoverable > 0m)
+        {
+            // Neither a full dividends cut nor the company's reserves could close it: the bank is
+            // insolvent. P15.5a reads this and dissolves it (D-15.8); until that ships the flag simply
+            // accumulates and is visible in the trace + the FED scene.
+            gov.UnrecoverableShortfallSc = Scripts.Finance.Money.Normalize(gov.UnrecoverableShortfallSc + unrecoverable);
+        }
+
+        AppendBankCreditTrace(block, unrecoverable > 0m ? "shortfall_unrecoverable" : "shortfall_closed",
+            gov.NonMinerNodeId, string.Empty, covered, 0m, 0m);
+        AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "shortfall_apply", CompanyVoteKindShortfall,
+            string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "gap={0:F8};dividendsCutPct={1:F2};dividendCut={2:F8};covered={3:F8};unrecoverable={4:F8}",
+                gap, dividendsCutPercent, dividendCut, covered, unrecoverable));
     }
 
     // The pre-first-bank fallback (D-15.20 (c)) — unchanged ND.8b.6 behaviour: SC out of the casino's Main
@@ -2514,7 +2762,9 @@ public partial class NetworkRoot : Node
         {
             Kind = kind,
             OpenedAtMs = block.Timestamp,
-            ClosesAtMs = block.Timestamp + VoteDurationMs
+            ClosesAtMs = block.Timestamp + VoteDurationMs,
+            // P15.4e — the gap the shortfall ballot is deciding how to split (0 for every other kind).
+            ShortfallScTarget = kind == CompanyVoteKindShortfall ? gov.PendingShortfallSc : 0m
         };
 
         // Bots cast immediately and deterministically from their persisted preferences (D-ND8.4 —
@@ -2545,17 +2795,23 @@ public partial class NetworkRoot : Node
     // A bot's ballot is a pure function of its persisted preferences + the company's current state:
     // Currency — its continuous target IS its preference point (a CB3 "balancer" targets 50/50 and damps
     // swings, D-ND8.19b needs no special-casing); Market — one step toward its preferred category;
-    // Payout — the current category's default rate (bots vote "the standard").
+    // Payout — the category's default rate scaled by its GREED (P15.4c / D-15.13; the clamp is
+    // [0, 2× default] and the ladder spans exactly that); Shortfall — §3.3's greed table (P15.4e).
     private static CompanyBallot BuildBotBallot(string botNodeId, CompanyGovernanceState gov)
     {
         _botGovernancePreferences.TryGetValue(botNodeId, out BotGovernancePreference? pref);
+        // Empty = drawn before greed existed and not yet backfilled; the pre-greed behaviour is the
+        // neutral stance, so normalizing to it is a no-op rather than a silent bias.
+        string greed = string.IsNullOrEmpty(pref?.GreedPreference) ? GreedAlmostGreedy : pref.GreedPreference;
         return new CompanyBallot
         {
             ReserveScPercentTarget = BandDefaultScPercent(pref?.CurrencyBandPreference ?? gov.CurrencyBand),
             MarketShift = pref == null
                 ? 0
                 : Math.Sign(MarketCategoryIndex(pref.MarketCategoryPreference) - MarketCategoryIndex(gov.MarketCategory)),
-            PayoutRatePercent = DefaultQuarterlyPayoutRatePercent(gov.MarketCategory)
+            PayoutRatePercent = Scripts.Finance.Money.Normalize(
+                DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * GreedPayoutMultiplier(greed)),
+            DividendsCutPercent = GreedDividendsCutPercent(greed)
         };
     }
 
@@ -2575,6 +2831,8 @@ public partial class NetworkRoot : Node
         decimal payoutResult = 0m;
         int shiftResult = 0;          // what the NST holders voted (traced even when it can't be applied)
         bool categoryLocked = false;  // P15.2b / D-15.12 — true for a bank: the shift is voted but refused
+        // P15.4e — a shortfall vote's single dial. Stays at the 50/50 default when nobody voted (D-15.7).
+        decimal dividendsCutResult = DefaultShortfallDividendsCutPercent;
 
         if (totalNst > 0m && vote.Ballots.Count > 0)
         {
@@ -2583,6 +2841,7 @@ public partial class NetworkRoot : Node
                 .ToDictionary(h => h.HolderId, h => h.Nst);
 
             decimal votedWeight = 0m, weightedReserve = 0m, weightedPayout = 0m, lighterWeight = 0m, darkerWeight = 0m;
+            decimal weightedDividendsCut = 0m; // P15.4e
             foreach ((string holderId, CompanyBallot ballot) in vote.Ballots)
             {
                 if (!nstByHolder.TryGetValue(holderId, out decimal nst) || nst <= 0m)
@@ -2594,6 +2853,7 @@ public partial class NetworkRoot : Node
                 votedWeight += weight;
                 weightedReserve += weight * ballot.ReserveScPercentTarget;
                 weightedPayout += weight * ballot.PayoutRatePercent;
+                weightedDividendsCut += weight * ballot.DividendsCutPercent;
                 if (ballot.MarketShift > 0) darkerWeight += weight;
                 else if (ballot.MarketShift < 0) lighterWeight += weight;
 
@@ -2608,7 +2868,14 @@ public partial class NetworkRoot : Node
                 });
             }
 
-            if (votedWeight > 0m)
+            if (votedWeight > 0m && vote.Kind == CompanyVoteKindShortfall)
+            {
+                // P15.4e — a shortfall ballot decides ONE thing. It must not move the reserve mix, the
+                // market category or the payout rate as a side effect, so it takes its own exit here.
+                dividendsCutResult = Math.Clamp(
+                    Scripts.Finance.Money.Normalize(weightedDividendsCut / votedWeight), 0m, 100m);
+            }
+            else if (votedWeight > 0m)
             {
                 // D-ND8.19b — reserve %: simple weighted average of the cast targets, clamped to the
                 // band's ±25% range.
@@ -2646,7 +2913,12 @@ public partial class NetworkRoot : Node
             }
         }
 
-        gov.ReserveScPercent = reserveResult;
+        // P15.4e — a shortfall vote changes nothing but the shortfall: the reserve mix is left exactly
+        // where it was, and the split is applied (which is what actually spends the ScReserve below).
+        if (vote.Kind != CompanyVoteKindShortfall)
+        {
+            gov.ReserveScPercent = reserveResult;
+        }
 
         int quarterDays = 0; // ND.9h — quarter length (in-game days), 0 for non-quarterly votes
         if (vote.Kind == CompanyVoteKindQuarterly)
@@ -2665,6 +2937,13 @@ public partial class NetworkRoot : Node
             gov.QuarterDrippedDays = 0;
             gov.QuarterLumpCredited = false;
             quarterDays = Math.Max(1, (int)((gov.QuarterCycleEndMs - gov.QuarterCycleStartMs) / GameDayMs));
+        }
+
+        // P15.4e — apply the split and repay what it raised. Runs before the vote record + trace below, so
+        // both observe the post-cut ScReserve and the possibly-reduced quarter dividend.
+        if (vote.Kind == CompanyVoteKindShortfall)
+        {
+            ApplyShortfallVote(gov, dividendsCutResult, block);
         }
 
         // Reset the >30% special-vote baseline at EVERY vote close — "new inflow" is measured from the
@@ -2920,9 +3199,16 @@ public partial class NetworkRoot : Node
     }
 
     // The Board Vote panel's submit path. Clamps every field into its legal range (band ±25%, shift ∈
-    // {-1,0,1}, payout ∈ [0, 2× default]) rather than rejecting — the UI pre-fills legal values anyway.
-    // Registering the ballot lifts the pause; the vote still closes on its own one-day schedule.
-    public static bool TryRegisterPlayerVote(string nonMinerNodeId, decimal reserveScPercentTarget, int marketShift, decimal payoutRatePercent)
+    // {-1,0,1}, payout ∈ [0, 2× default], dividends-cut ∈ [0,100]) rather than rejecting — the UI pre-fills
+    // legal values anyway. Registering the ballot lifts the pause; the vote still closes on its own
+    // one-day schedule.
+    //
+    // P15.4e: `dividendsCutPercent` is read ONLY by a shortfall vote and is optional so the existing panel
+    // keeps compiling and can never deadlock the pause — an un-wired caller simply votes the 50/50 default
+    // (D-15.7). Wiring the real control is P15.7c; use GetOpenVoteKind/GetOpenVoteShortfallTarget to know
+    // when to show it.
+    public static bool TryRegisterPlayerVote(string nonMinerNodeId, decimal reserveScPercentTarget, int marketShift,
+        decimal payoutRatePercent, decimal dividendsCutPercent = DefaultShortfallDividendsCutPercent)
     {
         if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov)
             || gov.OpenVote is not { } vote
@@ -2938,11 +3224,24 @@ public partial class NetworkRoot : Node
             ReserveScPercentTarget = Math.Clamp(Scripts.Finance.Money.Normalize(reserveScPercentTarget), min, max),
             MarketShift = Math.Clamp(marketShift, -1, 1),
             PayoutRatePercent = Math.Clamp(Scripts.Finance.Money.Normalize(payoutRatePercent), 0m,
-                DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * 2m)
+                DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * 2m),
+            DividendsCutPercent = Math.Clamp(Scripts.Finance.Money.Normalize(dividendsCutPercent), 0m, 100m)
         };
         vote.AwaitingPlayerVote = false;
         return true;
     }
+
+    // P15.4e — what kind of vote is open at this company ("" if none), and the SC gap a shortfall ballot
+    // is deciding how to split. The Board Vote panel (P15.7c) uses these to swap in the shortfall control.
+    public static string GetOpenVoteKind(string nonMinerNodeId) =>
+        _companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov) && gov.OpenVote is { } v
+            ? v.Kind
+            : string.Empty;
+
+    public static decimal GetOpenVoteShortfallTarget(string nonMinerNodeId) =>
+        _companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov) && gov.OpenVote is { } v
+            ? v.ShortfallScTarget
+            : 0m;
 
     public CompanyGovernanceState? GetCompanyGovernanceByNodeId(string nonMinerNodeId)
     {
@@ -5595,6 +5894,13 @@ public sealed class CompanyGovernanceState
     // (PlayerBankAccountService.BankTransferRecord's 500-cap precedent — a player claiming this many times
     // from ONE company is not expected; the cap is a safety net, not a real constraint).
     public List<CompanyDividendClaimRecord> PlayerClaimHistory { get; set; } = new();
+    // Step 15 P15.4d/e — banks only. PendingShortfallSc is the gap a quarterly repayment could not raise
+    // from collateral; it opens a shortfall vote as soon as no other vote is running (the quarterly must
+    // close first, so the dividend the vote may cut has actually been finalized). UnrecoverableShortfallSc
+    // is what remained after the vote applied BOTH cuts — a bank carrying one is insolvent and is the
+    // dissolution trigger P15.5a reads (D-15.8).
+    public decimal PendingShortfallSc { get; set; }
+    public decimal UnrecoverableShortfallSc { get; set; }
 }
 
 // Step 15 P15.2c (D-15.4/D-15.5) — a founded BANK's balance sheet: the LAYER-1 half of the two-layer
@@ -5655,11 +5961,14 @@ public sealed class CompanyDividendClaimRecord
 // open; the player's arrives via TryRegisterPlayerVote while AwaitingPlayerVote pauses the game.
 public sealed class CompanyVote
 {
-    public string Kind { get; set; } = string.Empty; // "founding" | "quarterly" | "special"
+    public string Kind { get; set; } = string.Empty; // "founding" | "quarterly" | "special" | "shortfall"
     public long OpenedAtMs { get; set; }
     public long ClosesAtMs { get; set; }
     public bool AwaitingPlayerVote { get; set; }
     public Dictionary<string, CompanyBallot> Ballots { get; set; } = new(); // holderId → ballot
+    // P15.4e — SHORTFALL votes only: the SC gap this vote must close (what the bank still owes the FED
+    // after selling every satoshi of collateral it had). 0 for every other kind.
+    public decimal ShortfallScTarget { get; set; }
 }
 
 // One NST holder's ballot (D-ND8.19b): a continuous reserve target (clamped to the band), a discrete
@@ -5670,6 +5979,10 @@ public sealed class CompanyBallot
     public decimal ReserveScPercentTarget { get; set; }
     public int MarketShift { get; set; }
     public decimal PayoutRatePercent { get; set; }
+    // Step 15 P15.4e (D-15.7/D-15.15) — SHORTFALL votes only: the share of the gap taken out of
+    // shareholders' dividends; the complement comes out of the company's own SC reserve. Ignored by every
+    // other vote kind. Defaults to the no/tied-vote 50/50 split.
+    public decimal DividendsCutPercent { get; set; } = NetworkRoot.DefaultShortfallDividendsCutPercent;
 }
 
 // One holder's accrued-but-unclaimed dividends in one company (BTC and SC separately, D-ND8.17).
@@ -5724,4 +6037,16 @@ public sealed class BotGovernancePreference
 {
     public string CurrencyBandPreference { get; set; } = "CB3";
     public string MarketCategoryPreference { get; set; } = "official";
+    // Step 15 P15.4b (D-15.13) — a THIRD, independent governance axis drawn per world: how hard this bot
+    // pushes for money in shareholders' pockets over money kept in the company. It biases every
+    // "dividends vs. company money" vote — the quarterly payout rate (all companies) and the P15.4e bank
+    // shortfall split — but deliberately NOT the reserve-band (currency-mix) vote, which is a different
+    // question entirely.
+    //
+    // Deliberately defaults to EMPTY, not to a stance: greed arrived after the other two axes, so a
+    // snapshot whose preferences were drawn before it must be DISTINGUISHABLE from a bot that genuinely
+    // drew the neutral stance — that is what lets NetworkRoot.BackfillGreedPreferences fill only the
+    // absent ones instead of leaving the whole axis stuck. Readers normalize empty to `almost_greedy`
+    // (exactly what every bot did before greed existed).
+    public string GreedPreference { get; set; } = string.Empty;
 }

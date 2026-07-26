@@ -9,9 +9,10 @@
 > The one soft item is the FBI tolerance numbers, deliberately left as P15.8 calibration placeholders.
 > **ALL phases are now broken into subphases in §8 (P15.1a … P15.8)**; P15.1 is fully locked (Fork A,
 > D-15.23) and **✅ IMPLEMENTED (2026-07-26, all five subphases P15.1a–e)**; **P15.2 is likewise ✅
-> IMPLEMENTED (2026-07-26, subphases a–d)**, as is **P15.3 (a–b, which also absorbed P15.4a's quarantine)**.
-> Later phases inherit the same reviewed data structures and will firm up as each lands. **Next: P15.4b**
-> (P15.4a is done) on branch `bank-companies-sc-provisioning`. In-game verification is deferred to P15.8 by
+> IMPLEMENTED (2026-07-26, subphases a–d)**, as is **P15.3 (a–b, which also absorbed P15.4a's quarantine)**
+> and **P15.4 (b–e)**. Later phases inherit the same reviewed data structures and will firm up as each
+> lands. **Next: P15.5a** on branch `bank-companies-sc-provisioning` — the `UnrecoverableShortfallSc` flag
+> P15.4e sets is already waiting as its dissolution trigger. In-game verification is deferred to P15.8 by
 > the developer's call — every phase since P15.1 has been build-verified only.
 >
 > Branch (suggested): `bank-companies-sc-provisioning` off `main` (canonical timeline, `DevEntryYear = 0`).
@@ -737,6 +738,44 @@ gradient, and build the §5.1 selection framework — still **no conversions rer
 
 **Exit:** post-2012-09 company conversions are bank-funded (FED-backed); the casino path survives only
 as the pre-first-bank fallback.
+
+### P15.4 — Extra-lazy repayment + greed voting — ✅ IMPLEMENTED (2026-07-26; a at P15.3, b–e here)
+
+> **Build log.** `dotnet build` clean. `NetworkRoot.cs`: the greed constants + `GreedPayoutMultiplier` /
+> `GreedDividendsCutPercent` ladders; `GreedPreference` on `BotGovernancePreference` (sentinel default) +
+> the greed draw in `EnsureBotGovernancePreferences` + `BackfillGreedPreferences`; `BuildBotBallot` greed
+> bias; `CompanyVoteKindShortfall` + `CompanyBallot.DividendsCutPercent` + `CompanyVote.ShortfallScTarget`
+> + `CompanyGovernanceState.PendingShortfallSc`/`UnrecoverableShortfallSc`; `BankQuarterlyRepaymentFraction`
+> + `TryBankQuarterlyRepayment` + `TrySellCollateralForSc` + `BankRepaymentMemo`; `ApplyShortfallVote`; the
+> shortfall branches in `TickCompanyGovernance` / `OpenCompanyVote` / `CloseCompanyVote`; the optional
+> `dividendsCutPercent` on `TryRegisterPlayerVote` + `GetOpenVoteKind` / `GetOpenVoteShortfallTarget`;
+> shortfall fields on `BankLayerRow`. `CompanyDetails.cs`: `BuildShortfallBallot`. `CentralBank.cs`: the
+> ⚠/✗ shortfall rows. Docs: `CLAUDE.md` + `ProjectDesignManual.md` **§39.10–39.11**.
+>
+> Four decisions taken inside the subphases, all documented in §39.10–39.11:
+> - **`GreedPreference` defaults to `""`, not to a stance.** `EnsureBotGovernancePreferences` early-returns
+>   once every bot has a record, so a world drawn before greed existed would sit on the neutral stance
+>   forever and silently disable the axis. A sentinel makes "absent" distinguishable from "drew neutral",
+>   which is what lets `BackfillGreedPreferences` fill only the missing slots — no format bump needed.
+> - **The casino buys the collateral** (the plan didn't name a counterparty; BTC on-chain needs a real
+>   buyer). It is the designated SC liquidity backstop. Consequence worth watching at P15.8: when the
+>   casino must auto-loan to buy, the effect is a debt TRANSFER bank→casino rather than a net burn.
+> - **Both "sources" of the shortfall draw from the same `ScReserve`** — the vote decides who BEARS it (a
+>   dividends cut also shrinks `QuarterDividendSc`; a reserves cut leaves the dividend whole). A cut larger
+>   than the existing dividend spills onto the reserve side; already-dripped SC is never clawed back.
+> - **The `CompanyDetails` shortfall ballot control shipped here, not at P15.7c.** The vote pauses the game
+>   for a player NST holder, and the existing panel would have shown reserve/market/payout dials the
+>   resolver ignores for this kind — actively misleading. The optional parameter on `TryRegisterPlayerVote`
+>   additionally guarantees the pause can never deadlock.
+>
+> **Placeholders for P15.8:** `BankQuarterlyRepaymentFraction` (0.10), the payout multiplier ladder
+> (0.5/1.0/1.5/2.0) and the §3.3 dividends-cut table (90/70/30/10).
+>
+> **Left for the developer's P15.8 verification:** each bot's greed is stable across a restart; an
+> extremely-greedy bot ballots a higher payout than a not-so-greedy one on the same company; a bank's FED
+> debt steps down each quarter with `circulation = grants + debt` intact and collateral dropping by exactly
+> what was sold; and an engineered BTC drop opens the shortfall vote with the correct SC target, bots
+> resolving per greed and the gap closing from the two sources in the voted proportions.
 
 ### P15.4 — Extra-lazy repayment + greed voting
 

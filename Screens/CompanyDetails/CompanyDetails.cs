@@ -50,6 +50,7 @@ public partial class CompanyDetails : Control
 	private SpinBox? _reserveSpin;
 	private OptionButton? _marketOption;
 	private SpinBox? _payoutSpin;
+	private SpinBox? _dividendsCutSpin; // Step 15 P15.4e — shortfall votes only
 	private Label? _voteFeedbackLabel;
 	private Label? _claimableLabel;
 	private Label? _claimFeedbackLabel;
@@ -346,6 +347,7 @@ public partial class CompanyDetails : Control
 		_reserveSpin = null;
 		_marketOption = null;
 		_payoutSpin = null;
+		_dividendsCutSpin = null;
 		_voteFeedbackLabel = null;
 		_claimableLabel = null;
 		_claimFeedbackLabel = null;
@@ -395,6 +397,16 @@ public partial class CompanyDetails : Control
 		}
 
 		bool quarterly = vote.Kind == "quarterly";
+		// Step 15 P15.4e — a SHORTFALL vote asks exactly one question, and answering the usual reserve /
+		// market / payout dials would be misleading (the resolver ignores them for this kind). So the panel
+		// swaps its whole body out rather than adding a fourth row.
+		bool shortfall = vote.Kind == NetworkRoot.CompanyVoteKindShortfall;
+		if (shortfall)
+		{
+			BuildShortfallBallot(gov, vote);
+			return;
+		}
+
 		(decimal min, decimal max) = NetworkRoot.BandScPercentBounds(gov.CurrencyBand);
 
 		var reserveRow = new HBoxContainer();
@@ -429,20 +441,65 @@ public partial class CompanyDetails : Control
 
 		var submitBtn = new Button { Text = "Submit Ballot" };
 		string nodeId = gov.NonMinerNodeId;
-		submitBtn.Pressed += () => OnSubmitBallot(nodeId, quarterly);
+		submitBtn.Pressed += () => OnSubmitBallot(nodeId, quarterly, shortfall: false, gov.ReserveScPercent);
 		_actionVBox.AddChild(submitBtn);
 
 		_voteFeedbackLabel = new Label { Text = vote.AwaitingPlayerVote ? "The game is paused until you vote." : " " };
 		_actionVBox.AddChild(_voteFeedbackLabel);
 	}
 
-	private void OnSubmitBallot(string nonMinerNodeId, bool quarterly)
+	// Step 15 P15.4e (D-15.7) — the bank shortfall ballot: one dial deciding WHO absorbs the SC this bank
+	// could not raise from collateral to pay its quarterly FED installment. Higher = shareholders forgo
+	// that slice of this quarter's dividend; lower = the company's own SC reserve pays instead. The
+	// no/tied-vote default is 50/50. If neither source can close the gap the bank becomes insolvent.
+	private void BuildShortfallBallot(CompanyGovernanceState gov, CompanyVote vote)
 	{
-		decimal reserveTarget = (decimal)(_reserveSpin?.Value ?? 0d);
+		_actionVBox!.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"This bank could not raise {vote.ShortfallScTarget:N2} SC of its Central Bank installment by selling collateral."),
+			AutowrapMode = TextServer.AutowrapMode.Word
+		});
+		_actionVBox.AddChild(new Label
+		{
+			Text = "Vote how much of that gap comes out of SHAREHOLDERS' dividends; the rest comes out of the company's own SC reserve.",
+			AutowrapMode = TextServer.AutowrapMode.Word
+		});
+
+		var cutRow = new HBoxContainer();
+		cutRow.AddChild(new Label { Text = "Cut from dividends (%, the rest from reserves):  " });
+		_dividendsCutSpin = new SpinBox
+		{
+			MinValue = 0,
+			MaxValue = 100,
+			Step = 5,
+			Value = (double)NetworkRoot.DefaultShortfallDividendsCutPercent
+		};
+		cutRow.AddChild(_dividendsCutSpin);
+		_actionVBox.AddChild(cutRow);
+
+		var submitBtn = new Button { Text = "Submit Ballot" };
+		string nodeId = gov.NonMinerNodeId;
+		submitBtn.Pressed += () => OnSubmitBallot(nodeId, quarterly: false, shortfall: true, gov.ReserveScPercent);
+		_actionVBox.AddChild(submitBtn);
+
+		_voteFeedbackLabel = new Label { Text = vote.AwaitingPlayerVote ? "The game is paused until you vote." : " " };
+		_actionVBox.AddChild(_voteFeedbackLabel);
+	}
+
+	// currentReservePercent is the "no change" echo used when this ballot has no reserve control at all
+	// (a shortfall vote): the resolver ignores the field for that kind, but the recorded ballot should read
+	// "leave the mix where it is" rather than a spurious band-minimum.
+	private void OnSubmitBallot(string nonMinerNodeId, bool quarterly, bool shortfall, decimal currentReservePercent)
+	{
+		decimal reserveTarget = (decimal)(_reserveSpin?.Value ?? (double)currentReservePercent);
 		int marketShift = quarterly ? (_marketOption?.Selected ?? 1) - 1 : 0;
 		decimal payoutRate = quarterly ? (decimal)(_payoutSpin?.Value ?? 0d) : 0m;
+		decimal dividendsCut = shortfall
+			? (decimal)(_dividendsCutSpin?.Value ?? (double)NetworkRoot.DefaultShortfallDividendsCutPercent)
+			: NetworkRoot.DefaultShortfallDividendsCutPercent;
 
-		bool ok = NetworkRoot.TryRegisterPlayerVote(nonMinerNodeId, reserveTarget, marketShift, payoutRate);
+		bool ok = NetworkRoot.TryRegisterPlayerVote(nonMinerNodeId, reserveTarget, marketShift, payoutRate, dividendsCut);
 		if (_voteFeedbackLabel != null)
 		{
 			_voteFeedbackLabel.Text = ok

@@ -205,6 +205,19 @@ public partial class CentralBank : Control
 					$"    {bank.DisplayName}  ·  category {bank.MarketCategory} (locked)  ·  founded {founded}"), 17);
 				AddLabel(string.Create(CultureInfo.InvariantCulture,
 					$"        FED debt: {NetworkRootFedDebt(bank.BankNodeId):N8} SC     CollateralBtc: {bank.CollateralBtc:N8} BTC     client companies: {bank.ClientCount}"), 15, ColorSubtle);
+
+				// P15.4d/e — the two states that say this bank is failing to service its debt.
+				if (bank.PendingShortfallSc > 0m)
+				{
+					AddLabel(string.Create(CultureInfo.InvariantCulture,
+						$"        ⚠ shortfall awaiting a board vote: {bank.PendingShortfallSc:N8} SC"), 15, ColorDraw);
+				}
+				if (bank.UnrecoverableShortfallSc > 0m)
+				{
+					AddLabel(string.Create(CultureInfo.InvariantCulture,
+						$"        ✗ INSOLVENT — unrecoverable: {bank.UnrecoverableShortfallSc:N8} SC (dissolution lands at P15.5a)"), 15,
+						new Color(1f, 0.4f, 0.4f));
+				}
 			}
 		}
 
