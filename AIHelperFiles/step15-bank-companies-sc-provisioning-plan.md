@@ -8,8 +8,9 @@
 > seizure thread (activates 14 Jun 2011; non-banks first, banks last). **No open questions remain.**
 > The one soft item is the FBI tolerance numbers, deliberately left as P15.8 calibration placeholders.
 > **ALL phases are now broken into subphases in §8 (P15.1a … P15.8)**; P15.1 is fully locked (Fork A,
-> D-15.23) and **READY TO IMPLEMENT**. Later phases inherit the same reviewed data structures and will
-> firm up as each lands. No code has changed yet; start at P15.1a on branch `bank-companies-sc-provisioning`.
+> D-15.23) and **✅ IMPLEMENTED (2026-07-26, all five subphases P15.1a–e)**. Later phases inherit the same
+> reviewed data structures and will firm up as each lands. **Next: P15.2a** on branch
+> `bank-companies-sc-provisioning`.
 >
 > Branch (suggested): `bank-companies-sc-provisioning` off `main` (canonical timeline, `DevEntryYear = 0`).
 
@@ -497,7 +498,33 @@ The **FED / Central Bank** is a separate non-auctionable entity (§3.1), not a r
 > for the greed field; `CompanyVoteKind*` constants). Numbers/ratios called out are the decided ones;
 > anything marked *placeholder* is a P15.8 calibration knob.
 
-### P15.1 — The FED entity
+### P15.1 — The FED entity — ✅ IMPLEMENTED (2026-07-26, subphases a–e)
+
+> **Build log.** All five subphases landed together on `bank-companies-sc-provisioning`; `dotnet build`
+> clean. Files: **new** `Scripts/Services/CentralBankService.cs`, `Screens/CentralBank/CentralBank.{tscn,cs}`;
+> **modified** `project.godot` (autoload #19, between `ScMonetaryLedgerService` and
+> `BlockSessionCheckpointService`), `CasinoScBalanceService.cs` (loan state → read-through accessors,
+> `AddLoanRecord` → `DrawFedLoan`, loan fields off its `Snapshot`), `BlockSessionCheckpointService.cs`
+> (`CentralBankState` DTO + restore-before-casino ordering + pre-genesis reset; casino loan DTO fields
+> removed), `ScMonetaryLedgerService.cs` (reconcile + live-state init now read the FED's `OutstandingDebt`,
+> not the casino's `TotalLoaned`; burn comments de-armed), `NetworkRoot.cs` (`WorldFormatVersion` 3 → 4 +
+> `central_bank_state.json` on the delete list), `SceneManager.cs` + `MainMenu.{tscn,cs}` (scene entry),
+> `CasinoGamblingFinances.cs` (reads the FED-backed history, shows draw/repay kind + outstanding debt).
+> Docs updated in the same branch: `CLAUDE.md` (autoload section, checkpoint pattern, file map, nav map,
+> Implemented list) and `Documentation/ProjectDesignManual.md` **Ch. 39**.
+>
+> Two deviations from the subphase text, both deliberate and documented in Ch. 39:
+> - `TotalLoaned` maps to the FED's **`TotalDrawn`** (cumulative) so `CumulativeProfitSinceLoan` keeps its
+>   exact meaning, while the **ledger reconcile** compares against **`OutstandingDebt`** — the two figures
+>   are equal today (nobody repays) and legitimately diverge from P15.4.
+> - The FED account carries `TotalRepaid`/`RepayCount` and a per-client history **cap of 500** (totals stay
+>   exact independently of the cap — the `ScMonetaryLedgerService.MaxEventHistory` precedent); both readouts
+>   report any surplus as "(+N older)".
+>
+> **Left for the developer's in-game verification:** the four subphase tests (boot/persist/reload; a
+> scripted draw→repay leaving the invariant intact; a casino auto-loan appearing as a FED `draw` with
+> `CasinoGamblingFinances` reading identical numbers; block → restart → FED debt restored, and a
+> pre-genesis boot resetting it to empty). Note the version bump means **the first launch wipes the world**.
 
 **Goal of P15.1:** stand up the **Central Bank (FED)** as an explicit, persisted, DEV-visible entity
 that the casino borrows from — with the casino's loan bookkeeping migrated onto it (no double-storage)

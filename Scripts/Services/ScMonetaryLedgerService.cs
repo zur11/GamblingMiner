@@ -19,22 +19,26 @@ using Scripts.Finance;
 //    CasinoClientLedgerService "initial" precedent). Note the bots' balances MATERIALIZE lazily in
 //    code (NetworkRoot.GetOrCreateNodeFinancialState, first time each bot runs), but canonically the
 //    grant exists from world start — the ledger records the canon, not the lazy-init timing.
-//  • LOAN DRAWS — every casino bank-loan draw (CasinoScBalanceService.AddLoanRecord: the bankruptcy
-//    dose path and the dev manual loan — the auction-settlement PayFromMainWithAutoLoan draw site
-//    retired at ND.8b.2, D-ND8.14) MINTS new SC as debt attributed to "casino". The bank is the
-//    off-screen printer until ND.8e's Central Bank makes it explicit.
-//  • BURNS — reserved for ND.8e (Option A): repayment destroys SC, decrementing the borrower's debt.
+//  • LOAN DRAWS — every FED loan draw MINTS new SC as debt attributed to the borrowing client. Since
+//    Step 15 (P15.1b/c) the mint hook lives one layer out, in CentralBankService.DrawLoan, which every
+//    casino draw site funnels through (CasinoScBalanceService.DrawFedLoan: the bankruptcy dose path, the
+//    dev manual loan and the provisional company-provisioning path — the auction-settlement
+//    PayFromMainWithAutoLoan site retired at ND.8b.2, D-ND8.14). The off-screen printer is now the
+//    explicit in-world FED entity; borrower keys are "casino" and (from P15.2) "bank:<companyNodeId>".
+//  • BURNS — LIVE since Step 15 (P15.1b): CentralBankService.Repay destroys the repaid SC, decrementing
+//    the borrower's debt (Option A of the fiat-debt ladder). Exercised for real by bank quarterly
+//    repayments in P15.4; the casino itself never repays (D-15.17).
 //
 // Persisted to user://sc_monetary_ledger.json; checkpoint-covered (BlockSessionCheckpointService DTO,
 // pre-genesis reset, world-reset delete list — the CLAUDE.md three-question rule). No WorldFormatVersion
-// bump: accounting-only, first run in an existing world initializes from live state (grants + the
-// casino's current TotalLoaned). See AIHelperFiles/step14-historical-network-population-scheduler-plan.md
+// bump: accounting-only, first run in an existing world initializes from live state (grants + the FED's
+// current casino debt). See AIHelperFiles/step14-historical-network-population-scheduler-plan.md
 // §12.4.6e + §12.5.1.
 public partial class ScMonetaryLedgerService : Node
 {
 	public const string KindGrant    = "grant";
 	public const string KindLoanDraw = "loan_draw";
-	public const string KindBurn     = "burn"; // reserved — arrives with ND.8e (repayment destroys SC)
+	public const string KindBurn     = "burn"; // live since Step 15 P15.1b — a FED repayment destroys SC
 
 	public const string PartyPlayer = "player";
 	public const string PartyCasino = "casino";
@@ -102,9 +106,8 @@ public partial class ScMonetaryLedgerService : Node
 
 	// ---- Mint API ---------------------------------------------------------------------------------------------
 
-	// A casino bank-loan draw mints `amount` new SC as debt on `borrowerId` (today always "casino").
-	// Called from CasinoScBalanceService.AddLoanRecord — the single funnel all three loan-draw sites
-	// (bankruptcy dose recharge, auction-settlement funding, dev manual loan) already flow through.
+	// A FED loan draw mints `amount` new SC as debt on `borrowerId` ("casino"; "bank:<id>" from P15.2).
+	// Called from CentralBankService.DrawLoan — the single funnel every loan-draw site flows through.
 	public void RegisterLoanDraw(string borrowerId, decimal amount, string reason)
 	{
 		amount = Money.Normalize(amount);
@@ -116,8 +119,9 @@ public partial class ScMonetaryLedgerService : Node
 		LedgerChanged?.Invoke();
 	}
 
-	// Reserved for ND.8e (Option A): a repayment passes SC back up the chain and DESTROYS it, reducing the
-	// borrower's outstanding debt. No caller exists yet — armed so the Central Bank subphase plugs in cleanly.
+	// Option A of the fiat-debt ladder: a repayment passes SC back up the chain to the FED and DESTROYS it,
+	// reducing the borrower's outstanding debt. Armed caller-less at ND.8c; its real caller arrived with the
+	// Central Bank at Step 15 P15.1b (CentralBankService.Repay).
 	public void RegisterBurn(string borrowerId, decimal amount, string reason)
 	{
 		amount = Money.Normalize(amount);
@@ -162,9 +166,9 @@ public partial class ScMonetaryLedgerService : Node
 		Events         = _events.Select(CloneRecord).ToList()
 	};
 
-	// Called by BlockSessionCheckpointService.ApplyCheckpointToServices() on restart, AFTER the casino SC
-	// restore. A null DTO means a legacy checkpoint captured before ND.8c existed — initialize from live
-	// state instead (D-ND8.35): canonical grants + debt synced from the casino's just-restored TotalLoaned.
+	// Called by BlockSessionCheckpointService.ApplyCheckpointToServices() on restart, AFTER the Central Bank
+	// restore (P15.1d). A null DTO means a legacy checkpoint captured before ND.8c existed — initialize from
+	// live state instead (D-ND8.35): canonical grants + debt synced from the FED's just-restored casino account.
 	public void RestoreFromCheckpoint(CheckpointState state)
 	{
 		if (state == null)
@@ -190,14 +194,17 @@ public partial class ScMonetaryLedgerService : Node
 		if (_events.Count > MaxEventHistory)
 			_events.RemoveRange(0, _events.Count - MaxEventHistory);
 
-		// Belt-and-braces: a checkpoint captures the ledger and the casino at the same block, so the two
-		// should already agree — a mismatch means a legacy/mixed checkpoint, resolved toward the casino
-		// (its TotalLoaned is the source of truth for casino debt).
-		CasinoScBalanceService casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
-		if (casinoSc != null && _debtByBorrower.GetValueOrDefault(PartyCasino) != casinoSc.TotalLoaned)
+		// Belt-and-braces: a checkpoint captures the ledger and the Central Bank at the same block, so the two
+		// should already agree — a mismatch means a legacy/mixed checkpoint, resolved toward the FED (P15.1c:
+		// the FED account is the authoritative per-client debt store; this ledger keeps the macro projection).
+		// Compared against OUTSTANDING debt, not cumulative drawn — from P15.4 bank repayments burn SC, and
+		// the two figures diverge for anyone who repays (never the casino, which never repays — D-15.17).
+		CentralBankService fed = GetNodeOrNull<CentralBankService>("/root/CentralBankService");
+		decimal fedCasinoDebt = fed?.OutstandingDebt(PartyCasino) ?? 0m;
+		if (fed != null && _debtByBorrower.GetValueOrDefault(PartyCasino) != fedCasinoDebt)
 		{
-			GD.PushWarning($"[ScMonetaryLedger] Checkpoint debt mismatch (ledger={_debtByBorrower.GetValueOrDefault(PartyCasino):F8} vs casino TotalLoaned={casinoSc.TotalLoaned:F8}) — reconciled to the casino.");
-			if (casinoSc.TotalLoaned > 0m) _debtByBorrower[PartyCasino] = casinoSc.TotalLoaned;
+			GD.PushWarning($"[ScMonetaryLedger] Checkpoint debt mismatch (ledger={_debtByBorrower.GetValueOrDefault(PartyCasino):F8} vs FED casino account={fedCasinoDebt:F8}) — reconciled to the FED.");
+			if (fedCasinoDebt > 0m) _debtByBorrower[PartyCasino] = fedCasinoDebt;
 			else _debtByBorrower.Remove(PartyCasino);
 		}
 
@@ -207,15 +214,15 @@ public partial class ScMonetaryLedgerService : Node
 		LedgerChanged?.Invoke();
 	}
 
-	// First run in an existing world / legacy checkpoint: establish the canonical grants and take the
-	// casino's (already-restored) TotalLoaned as the opening debt, marked by one "init_sync" event so the
-	// log shows the ledger's own starting point honestly rather than pretending to know the loan history.
+	// First run in an existing world / legacy checkpoint: establish the canonical grants and take the FED's
+	// (already-restored) casino debt as the opening debt, marked by one "init_sync" event so the log shows
+	// the ledger's own starting point honestly rather than pretending to know the loan history.
 	private void SyncFromLiveWorld()
 	{
 		bool changed = EnsureCanonicalGenesisGrants();
 
-		CasinoScBalanceService casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
-		decimal liveDebt = casinoSc?.TotalLoaned ?? 0m;
+		CentralBankService fed = GetNodeOrNull<CentralBankService>("/root/CentralBankService");
+		decimal liveDebt = fed?.OutstandingDebt(PartyCasino) ?? 0m;
 		if (_debtByBorrower.GetValueOrDefault(PartyCasino) != liveDebt)
 		{
 			if (liveDebt > 0m)

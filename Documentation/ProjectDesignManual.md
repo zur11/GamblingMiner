@@ -4035,3 +4035,67 @@ Two implementation notes for whoever migrates one of these:
 **Goal, tracked in `Documentation/PRIVATE_ROADMAP.md` §6:** before Basic Mode v0.1 is considered complete, run a dedicated audit pass over every `_Process` override in the project against the §38.1 test, and migrate what's feasible from the §38.5 backlog to event-driven design. This is explicitly **not** a blocker on other Basic Mode work — it is a scheduled cleanup pass, the same category as the T1–T3 tech-debt tasks in `PRIVATE_ROADMAP.md` §8 — but it must happen before v0.1 is called done, both for the runtime cost (fifteen-plus scenes each doing unconditional rebuild work on a timer compounds as more scenes and more session length accumulate) and because every new system built the polling way from here on adds to the very backlog this chapter exists to eventually clear.
 
 **Standing rule for all new work, effective immediately:** before adding a new `_Process` override anywhere in this project, apply the §38.1 test first. If an equivalent event already exists (§38.4), subscribe to it instead of polling. If the state change is genuinely a new discrete event with no owner yet, add the event to whichever service owns that state rather than reaching for a timer in the consumer.
+
+---
+
+## Chapter 39 — The Central Bank (FED): The Two-Layer Debt Architecture (Step 15 P15.1)
+
+**Status**: Implemented 2026-07-26 (Step 15 phase P15.1, subphases a–e), on branch `bank-companies-sc-provisioning`. Design locked in `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` (`D-15.1`, `D-15.3`, `D-15.5`, `D-15.10`, `D-15.16`, `D-15.17`, `D-15.23`). This chapter documents what P15.1 built; the bank companies that become the FED's other clients arrive at P15.2–P15.4.
+
+### 39.1 — What the FED is, and what it deliberately is not
+
+Before Step 15 the casino borrowed SC from an **abstract, off-screen "bank"**: `CasinoScBalanceService` incremented its own `LoanCount`/`TotalLoaned` counters and appended to its own `LoanHistory`, and mirrored each draw into `ScMonetaryLedgerService` as `"casino"` debt. Nobody was on the other side of the transaction. P15.1 makes that counterparty an explicit in-world entity — `CentralBankService` (autoload #19) — with its own persistence (`user://central_bank_state.json`), its own DEV scene (Main Menu → *Central Bank [DEV]*, D-15.16) and per-client accounts.
+
+**What it deliberately is NOT, in plan15 (D-15.1):** it has **no interest rate** and **no credit limit**. Every `DrawLoan` succeeds, exactly as the casino's auto-loan always has. The fed-funds-rate historical replay and the per-client credit-capacity limits are ND.8e's job, one layer *above* the banks; putting them here would have coupled the entity to the policy. Unlimited zero-rate lending is also period-accurate for the ZIRP 2009–2015 window the game spends most of its time in.
+
+**Its clients:** the casino today; the four CB1 bank companies from P15.2 (keyed `bank:<companyNodeId>` via `CentralBankService.BankClientId`). The casino is the sole entity exempt from dissolution (D-15.17) — its credit line never closes.
+
+### 39.2 — The two layers, and why they were NOT merged (Fork A, D-15.23)
+
+The obvious instinct on seeing "the casino stores its debt AND the monetary ledger stores its debt" is to collapse them into one store. The design deliberately collapses only *half* of that:
+
+| Layer | Owner | Holds | Question it answers |
+|---|---|---|---|
+| **Entity / relationship** | `CentralBankService` | Per-client accounts: `OutstandingDebt`, `TotalDrawn`, `TotalRepaid`, `DrawCount`, `RepayCount`, and a capped per-client `History` of draws + repayments | *Who owes the FED what, and how did they get there?* |
+| **Macro accounting** | `ScMonetaryLedgerService` | The mint/burn event log, the genesis grants, `_debtByBorrower`, and the standing invariant `circulation = grants + debt` | *How much SC exists in the world, and why?* |
+
+**Fork A (adopted):** the FED becomes the authoritative *per-client* store, the casino's private copy is deleted, and the ledger keeps its macro projection — synced **for free**, because the FED's write API calls the ledger's existing hooks. `DrawLoan` → `RegisterLoanDraw` (mint); `Repay` → `RegisterBurn` (burn). This is the identical lockstep that already kept `_debtByBorrower["casino"]` equal to `casino.TotalLoaned`, just moved one layer out.
+
+**Fork B (rejected, deferred as optional cleanup):** retire `_debtByBorrower` entirely and have the ledger derive its debt total from the FED. Genuinely *one* debt store — but it refactors the ledger's checkpoint DTO and its reconciliation path, both of which are audited invariant machinery, for a duplication that Fork A already removes at the level that mattered (the casino's copy). Not scheduled.
+
+The two responsibilities are genuinely different questions, and the FED will grow relationship-shaped features the ledger has no business holding (custodial seized wallets at P15.5c, per-client collateral at P15.2c). Keeping them apart is the point, not a compromise.
+
+### 39.3 — `RegisterBurn` finally has a caller
+
+`ScMonetaryLedgerService.RegisterBurn` shipped at ND.8c **armed and caller-less**, with a comment saying it was waiting for the Central Bank subphase. `CentralBankService.Repay` is that caller. A repayment clamps to what the client actually owes, decrements `OutstandingDebt`, appends a `"repay"` record, and burns the SC out of existence — Option A of the ND.8c fiat-debt ladder (repayment destroys SC; Option B fractional-reserve stays post-Basic-Mode, Option C inflation is rejected forever since the 1:1 USD peg is canon).
+
+Nothing in P15.1 repays: the casino never does, by design (D-15.17). The path exists so the invariant `circulation = grants + debt` is provably intact across a draw→repay pair *before* P15.4 makes bank quarterly repayments the real, high-volume caller. The FED scene surfaces this directly — it prints the invariant and an explicit **FED/ledger debt in sync ✓ / OUT OF SYNC ✗** marker, so drift between the two layers is visible rather than silent.
+
+**One subtlety worth stating**, because it is the first place the two figures can legitimately differ: `TotalDrawn` is cumulative and never decreases; `OutstandingDebt` decreases on repayment. The casino's `TotalLoaned` shim maps to **`TotalDrawn`**, deliberately — `CumulativeProfitSinceLoan = TotalSc − TotalLoaned` means "ahead of every loan ever taken," and mapping it to outstanding debt would silently redefine the casino's P/L metric the moment anyone repays. The ledger's reconcile, by contrast, compares against **`OutstandingDebt`**, because that is what "debt" means in the monetary invariant.
+
+### 39.4 — The casino as a read-through client (P15.1c)
+
+`CasinoScBalanceService` keeps no loan state of its own. `LoanCount`, `TotalLoaned` and `LoanHistory` are now **read-through accessors** over its FED account, and `OutstandingFedDebt` is new. Its three draw sites (the bankruptcy dose recharge in `TryAutoRecharge`, the dev `TriggerManualLoan`, and the provisional company-provisioning path `TryPayCompanyProvisionSc`) all funnel through one private `DrawFedLoan` — preserving ND.8c's "one hook covers every draw site" property, one layer further out.
+
+**A load-order note that matters when adding future clients:** `CentralBankService` registers *after* `CasinoScBalanceService` in `project.godot` (it must sit between `ScMonetaryLedgerService` and `BlockSessionCheckpointService`, so it is in the tree before the checkpoint restore/reset runs — the `PlayerBankAccountService`/`CasinoCoinSwapService` precedent). So the casino **cannot** resolve the FED in `_Ready`; it resolves lazily on first use and null-guards. That is also why the casino's `_Ready` print no longer reports loan figures — they would read 0 at that instant, which would look like data loss and isn't.
+
+### 39.5 — Persistence, checkpoint and the version bump (P15.1d)
+
+The FED answers all three of CLAUDE.md's mandatory questions for a new persisted player-facing service:
+
+1. **Checkpoint restore (post-block):** `CaptureCheckpointState()` / `RestoreFromCheckpoint(state)` on the `BlockSessionCheckpointService` snapshot. **Ordering is load-bearing** — the FED restores *before* the casino (which reads its loan figures through the FED) and *before* the monetary ledger (whose reconcile and legacy live-state init both read the FED's casino account).
+2. **Pre-genesis reset:** `ResetToPreGenesisDefaults()` → no accounts at all. It runs *before* the casino's reset, which no longer clears the loan counters that moved here.
+3. **World-reset delete list:** `central_bank_state.json` was added to `NetworkRoot.ResetWorldIfIncompatible` **with the feature** — the TL.3 maintenance rule.
+
+**`WorldFormatVersion` 3 → 4 (D-15.10).** The casino's loan fields leave both `casino_sc_balance_state.json` and the checkpoint DTO. Rather than write a migration for a DEV-era save, world-defining banking semantics ride the same clean-reset mechanism every previous bump used. **Every later plan15 file simply joins the delete list — no further bump for the rest of the plan.**
+
+### 39.6 — The FED DEV scene (P15.1e)
+
+`Screens/CentralBank/` — one section per client (outstanding debt, total drawn/repaid with counts, and the newest 60 movements colour-coded orange=draw / green=repay), plus system totals and the invariant line from §39.3. Pure display: it never draws, repays or mutates anything.
+
+Two conventions it follows deliberately:
+
+- **Ch. 29 layout**, read before building it: bounded chain `MarginContainer → VBoxContainer → ScrollContainer(size_flags_vertical = 3)`, Back button in a **fixed footer outside the scroll** (§29.10), 50 px bottom margin clearing the off-screen band (§29.11), rows as plain `Label`s (Pattern A — they report honest minimum heights and default to `mouse_filter = IGNORE`, so the wheel reaches the scroll; the one bare `Control` spacer sets `IGNORE` explicitly, since `Control` defaults to `STOP`).
+- **Ch. 38 event discipline**, since this is new work: it subscribes to `CentralBankChanged` + `LedgerChanged` rather than polling. Because a casino recharge streak can fire many draws per second, the events set a **dirty flag** coalesced at 0.5 s instead of rebuilding per event, with a slow 5 s fallback as a safety net. It is deliberately **not** a new entry in the §38.5 migration backlog.
+
+The FED's per-client history is capped at its newest 500 records (totals stay exact independently of the cap — the `ScMonetaryLedgerService.MaxEventHistory` precedent), and both the FED scene and `CasinoGamblingFinances` report any surplus as *"(+N older)"* so a count and its list can never look inconsistent.

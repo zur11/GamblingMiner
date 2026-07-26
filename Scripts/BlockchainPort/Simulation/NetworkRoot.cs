@@ -45,7 +45,12 @@ public partial class NetworkRoot : Node
     // carries flat-0.1 fees from 2009-04-26 that the Market-Birth median/mean policy could never
     // produce, and the bootstrap regenerates differently), so the fee-era switch rides the same
     // clean-reset mechanism even though the serialized shape itself is unchanged.
-    private const int WorldFormatVersion = 3;
+    // v4 (Step 15 P15.1d, D-15.10): the Central Bank (FED) becomes the explicit, persisted owner of all
+    // loan bookkeeping — the casino's LoanCount/TotalLoaned/LoanHistory move OFF casino_sc_balance_state.json
+    // and off the checkpoint DTO onto a FED account (D-15.3/D-15.23 Fork A). Rather than write a migration
+    // for a DEV-era save, world-defining banking semantics ride the same clean-reset mechanism. Every LATER
+    // plan15 file just joins the delete list below — no further bump for the rest of the plan.
+    private const int WorldFormatVersion = 4;
     private const string WorldVersionPath = "user://world_format_version.txt";
     // Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
     // A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
@@ -4730,6 +4735,7 @@ public partial class NetworkRoot : Node
         DeleteIfExists("user://casino_pool_state.json");
         DeleteIfExists("user://casino_coin_swap_state.json");
         DeleteIfExists("user://sc_monetary_ledger.json"); // ND.8c — added WITH the feature (the TL.3 maintenance rule)
+        DeleteIfExists("user://central_bank_state.json"); // Step 15 P15.1d — same rule
 
         // DEV trace telemetry: not player-visible, but rows dated under the other timeline would make the
         // traces unreadable (founders_trace is actively used to verify founder pacing) — start them fresh.

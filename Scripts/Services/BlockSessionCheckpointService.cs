@@ -24,9 +24,6 @@ public partial class BlockSessionCheckpointService : Node
 		public decimal CasinoScBankroll       { get; set; }
 		public decimal CasinoScBankrollTarget { get; set; }
 		public decimal CasinoScAutoLoanAmount { get; set; }
-		public int     CasinoScLoanCount      { get; set; }
-		public decimal CasinoScTotalLoaned    { get; set; }
-		public List<CasinoScBalanceService.LoanRecord>     CasinoScLoanHistory     { get; set; } = new();
 		public List<CasinoScBalanceService.RechargeRecord> CasinoScRechargeHistory { get; set; } = new();
 		// Step 12 (SF.0.7): the player's Private Bank Account, bundled as one DTO. Null in a legacy pre-Step-12
 		// checkpoint → PlayerBankAccountService keeps its loaded state (no migration, D-SF2.8).
@@ -43,6 +40,10 @@ public partial class BlockSessionCheckpointService : Node
 		// Step 14 (ND.8c / D-ND8.35): the SC monetary ledger (grants/debt/mint events), bundled as one DTO.
 		// Null in a legacy pre-ND.8c checkpoint → ScMonetaryLedgerService initializes from live state instead.
 		public ScMonetaryLedgerService.CheckpointState ScMonetaryLedgerState { get; set; }
+		// Step 15 (P15.1d / D-15.3): the Central Bank's per-client accounts — including the casino's loan
+		// counters/history, which moved OFF the casino snapshot fields above (P15.1c, no double-storage).
+		// Null only in a pre-plan15 checkpoint, which the WorldFormatVersion 3 → 4 bump already wipes.
+		public CentralBankService.CheckpointState CentralBankState { get; set; }
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -73,6 +74,10 @@ public partial class BlockSessionCheckpointService : Node
 			?.SetBalance(0m);
 		GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService")
 			?.ReplaceState(BankrollProgramService.DefaultAutoRechargeAmount, new List<BankrollProgramService.TransferRecord>(), true); // toggle → ON
+		// P15.1d (D-15.3): the FED resets FIRST — the casino's loan counters/history are its accounts now, and
+		// the casino's own reset below no longer clears them.
+		GetNodeOrNull<CentralBankService>("/root/CentralBankService")
+			?.ResetToPreGenesisDefaults(); // Step 15 (P15.1d): no client has borrowed anything yet
 		GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
 			?.ResetToPreGenesisDefaults();
 		GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")
@@ -133,15 +138,16 @@ public partial class BlockSessionCheckpointService : Node
 			?.SetBalance(CurrentSnapshot.PrincipalBalance);
 		GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService")
 			?.ReplaceState(CurrentSnapshot.AutoRechargeAmount, CurrentSnapshot.TransferRecords, CurrentSnapshot.AutoRechargeEnabled ?? true);
+		// P15.1d: the FED restores BEFORE the casino (the casino reads its loan figures through its FED
+		// account) and before the monetary ledger further down (whose legacy live-state init reads them).
+		GetNodeOrNull<CentralBankService>("/root/CentralBankService")
+			?.RestoreFromCheckpoint(CurrentSnapshot.CentralBankState); // null DTO (pre-plan15) → keeps loaded state
 		GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService")
 			?.RestoreCasinoScState(
 				CurrentSnapshot.CasinoScMainBalance,
 				CurrentSnapshot.CasinoScBankroll,
 				CurrentSnapshot.CasinoScBankrollTarget,
 				CurrentSnapshot.CasinoScAutoLoanAmount,
-				CurrentSnapshot.CasinoScLoanCount,
-				CurrentSnapshot.CasinoScTotalLoaned,
-				CurrentSnapshot.CasinoScLoanHistory,
 				CurrentSnapshot.CasinoScRechargeHistory);
 		GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService")
 			?.RestoreFromCheckpoint(CurrentSnapshot.PlayerBankState); // null DTO (legacy) → keeps loaded state
@@ -151,7 +157,8 @@ public partial class BlockSessionCheckpointService : Node
 			?.RestoreFromCheckpoint(CurrentSnapshot.CasinoCoinSwapState); // null DTO (legacy) → keeps loaded state
 		GetNodeOrNull<ScMonetaryLedgerService>("/root/ScMonetaryLedgerService")
 			?.RestoreFromCheckpoint(CurrentSnapshot.ScMonetaryLedgerState); // null DTO (legacy) → init from live state
-			// (must run AFTER the CasinoScBalanceService restore above — the live-state init reads TotalLoaned)
+			// (must run AFTER the CentralBankService restore above — the live-state init and the reconcile
+			//  both read the FED's casino account, P15.1c)
 
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
 		{
@@ -198,15 +205,6 @@ public partial class BlockSessionCheckpointService : Node
 			CasinoScBankroll       = casinoSc?.Bankroll ?? 0m,
 			CasinoScBankrollTarget = casinoSc?.BankrollTarget ?? 0m,
 			CasinoScAutoLoanAmount = casinoSc?.AutoLoanAmount ?? 0m,
-			CasinoScLoanCount      = casinoSc?.LoanCount ?? 0,
-			CasinoScTotalLoaned    = casinoSc?.TotalLoaned ?? 0m,
-			CasinoScLoanHistory    = casinoSc?.LoanHistory
-				.Select(r => new CasinoScBalanceService.LoanRecord
-				{
-					Amount        = r.Amount,
-					Reason        = r.Reason,
-					GameDateLocal = DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
-				}).ToList() ?? new List<CasinoScBalanceService.LoanRecord>(),
 			CasinoScRechargeHistory = casinoSc?.RechargeHistory
 				.Select(r => new CasinoScBalanceService.RechargeRecord
 				{
@@ -220,6 +218,7 @@ public partial class BlockSessionCheckpointService : Node
 			ClientBetStats = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService")?.CaptureBetStatsForCheckpoint(),
 			CasinoCoinSwapState = GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")?.CaptureCheckpointState(),
 			ScMonetaryLedgerState = GetNodeOrNull<ScMonetaryLedgerService>("/root/ScMonetaryLedgerService")?.CaptureCheckpointState(),
+			CentralBankState = GetNodeOrNull<CentralBankService>("/root/CentralBankService")?.CaptureCheckpointState(),
 			CapturedAtUtc = DateTime.UtcNow
 		};
 
