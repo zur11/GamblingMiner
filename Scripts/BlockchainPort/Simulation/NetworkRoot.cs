@@ -463,8 +463,10 @@ public partial class NetworkRoot : Node
     //
     //   r_k = the pool's ladder probability for this bot (BuildBotPoolOpportunities — mode-aware,
     //         max(mode, escalation) for a lone slot, 1.0 unparticipated)
-    //   q_k = r_k · Σ_m P(H₋ₖ = m)/(m+1)   — all pools roll in parallel; if several hit, one wins the
-    //         uniform tie-break. H₋ₖ = how many of the bot's OTHER pools hit (Poisson-binomial DP).
+    //   q_k = r_k · Σ_W P(W₋ₖ = W)·w_k/(w_k+W)  — all pools roll in parallel; if several hit, one wins the
+    //         WEIGHTED tie-break (ND.10l, superseding the uniform Σ_m P(H₋ₖ=m)/(m+1) count DP). W₋ₖ = the
+    //         total tie-break weight of the bot's OTHER pools that hit; w_k = this pool's own weight
+    //         (its ladder probability, or FreshPoolSeedingWeight when unparticipated).
     //   p_k = q_k / B                      — B = number of ELIGIBLE bots (D-ND10c.1)
     //   P_k = w1·p + w2·(2p − p²)          — the count draw; slightly below p·E[count] because a bot drawn
     //         for both slots can only take the lead once. Weights read from the live draw constants.
@@ -507,12 +509,15 @@ public partial class NetworkRoot : Node
         foreach ((string botNodeId, List<BotPoolOpportunity> opportunities) in byBot)
         {
             double[] r = opportunities.Select(o => o.ProbabilityPercent / 100.0).ToArray();
+            // ND.10l — the tie-break is weighted now, so the share DP needs each pool's WEIGHT as well as
+            // its hit probability (a fresh pool's r is the deterministic sentinel 1.0, its weight is not).
+            int[] w = opportunities.Select(TieBreakWeight).ToArray();
             double qSum = 0d;
             List<(string, string, double)> perPool = result[botNodeId];
 
             for (int k = 0; k < r.Length; k++)
             {
-                double q = r[k] * ExpectedTieBreakShare(r, k);
+                double q = r[k] * ExpectedWeightedTieBreakShare(r, w, k);
                 qSum += q;
                 double p = q / eligibleBots;                        // roll 1 — the eligible-bot draw
                 double perBlock = weightOne * p + weightTwo * (2 * p - p * p); // the count draw
@@ -534,25 +539,59 @@ public partial class NetworkRoot : Node
         return result;
     }
 
-    // ND.10c (D-ND10c.5) — Σ_m P(H = m)/(m+1) over the OTHER pools' hit probabilities: the share pool
-    // `excludeIndex` keeps after the uniform tie-break when several pools hit in the same slot. Standard
-    // Poisson-binomial DP (independent trials, different probabilities), O(N²) per pool.
-    private static double ExpectedTieBreakShare(double[] probabilities, int excludeIndex)
+    // ND.10c (D-ND10c.5), reworked at ND.10l (D-ND10l.3) — the share pool `excludeIndex` keeps when
+    // several pools hit in the same slot. Under the retired UNIFORM draw this was Σ_m P(H₋ₖ=m)/(m+1),
+    // a plain count DP: only HOW MANY others hit mattered. Under the weighted draw it matters WHICH
+    // others hit, so the DP now runs over their total tie-break WEIGHT:
+    //
+    //     share_k = Σ_W P(other hits weigh W) · w_k / (w_k + W)
+    //
+    // The panel MUST track the roll here — a per-block probability that models a tie-break the pipeline
+    // no longer performs would be exactly the ND.10d class of lie, in the one number the whole scene
+    // exists to show (§39.16 rule 6).
+    //
+    // Two collapses keep it cheap. A pool with r ≥ 1 (every unparticipated pool, and any escalation that
+    // has reached 100%) ALWAYS hits, so it is not a random variable at all — its weight folds into a
+    // constant offset. A pool with r ≤ 0 never hits and drops out. Only genuinely stochastic pools enter
+    // the DP, and a bot holds slots in a handful of pools at most, so the weight axis stays small even
+    // when 40 companies are live. The Σq identity asserted by the caller still holds unchanged: any rule
+    // that picks exactly one winner from a non-empty hit set satisfies Σ_k q_k = 1 − ∏_k (1−r_k), so it
+    // now doubles as a check on this DP too.
+    private static double ExpectedWeightedTieBreakShare(double[] probabilities, int[] weights, int excludeIndex)
     {
-        var dist = new double[Math.Max(1, probabilities.Length)]; // dist[h] = P(exactly h OTHER pools hit)
-        dist[0] = 1d;
-        int size = 1;
+        int ownWeight = Math.Max(1, weights[excludeIndex]);
+
+        int certainWeight = 0;
+        var stochastic = new List<(double p, int w)>();
         for (int j = 0; j < probabilities.Length; j++)
         {
             if (j == excludeIndex) continue;
-            double pj = probabilities[j];
-            for (int h = size; h >= 1; h--) dist[h] = dist[h] * (1 - pj) + dist[h - 1] * pj;
-            dist[0] *= 1 - pj;
-            size++;
+            if (probabilities[j] >= 1d) certainWeight += Math.Max(0, weights[j]); // always hits
+            else if (probabilities[j] > 0d) stochastic.Add((probabilities[j], Math.Max(0, weights[j])));
+            // r ≤ 0 — never hits, contributes nothing
+        }
+
+        int maxWeight = 0;
+        foreach ((double _, int w) in stochastic) maxWeight += w;
+
+        var dist = new double[maxWeight + 1]; // dist[W] = P(the stochastic others' hit weights sum to W)
+        dist[0] = 1d;
+        int filled = 0;
+        foreach ((double p, int w) in stochastic)
+        {
+            // 0/1-knapsack convolution, walked DOWNWARD so dist[t − w] is still the pre-update value.
+            for (int t = filled + w; t >= 0; t--)
+            {
+                dist[t] = dist[t] * (1 - p) + (t >= w ? dist[t - w] * p : 0d);
+            }
+            filled += w;
         }
 
         double share = 0d;
-        for (int h = 0; h < size; h++) share += dist[h] / (h + 1);
+        for (int t = 0; t <= maxWeight; t++)
+        {
+            if (dist[t] > 0d) share += dist[t] * ownWeight / (ownWeight + certainWeight + (double)t);
+        }
         return share;
     }
 
@@ -4576,16 +4615,30 @@ public partial class NetworkRoot : Node
             bool hit = Random.Shared.Next(100) < opportunity.ProbabilityPercent;
             if (hit) hits.Add(opportunity);
             // ND.10j — log what each pool rolled BEFORE the tie-break discards all but one (see PoolRolls).
+            // ND.10l — and its tie-break WEIGHT where that differs from the rolled probability (i.e. a
+            // fresh pool's sentinel 100 vs its FreshPoolSeedingWeight), so a row shows not just which
+            // pools hit but why the draw between them resolved as it did.
+            int weight = TieBreakWeight(opportunity);
+            string weightSuffix = weight == opportunity.ProbabilityPercent ? string.Empty : $"w{weight}";
             rollLog.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                $"{opportunity.Target.NonMinerNodeId}:{opportunity.ProbabilityPercent}{(hit ? "*" : string.Empty)}"));
+                $"{opportunity.Target.NonMinerNodeId}:{opportunity.ProbabilityPercent}{(hit ? "*" : string.Empty)}{weightSuffix}"));
         }
         trace.PoolRolls = string.Join("|", rollLog);
         trace.HitPools = hits.Count;
         if (hits.Count == 0) return CasinoBotSlotOutcome.RollDeclined;
 
-        // Uniform tie-break among the hits — an unparticipated pool (always hits) therefore no longer
-        // monopolizes the slot by ordering; it simply shares it fairly with whatever else hit.
-        BotPoolOpportunity pick = hits[Random.Shared.Next(hits.Count)];
+        // ND.10l (2026-07-28, §14.13, D-ND10l.1) — PROBABILITY-WEIGHTED tie-break, replacing D-ND10c.2's
+        // uniform draw. The uniform draw fixed an ordering problem and quietly created its mirror image:
+        // an unparticipated pool ALWAYS hits, so every fresh company introduction halved an escalated
+        // re-bid's real chance that block — diluting exactly the re-bids ND.10c set out to make
+        // reachable. `poolRolls` (ND.10j) is what made it visible: at block 964 bot_2's BitInstant roll
+        // HIT and lost the coin-flip to a 0.03 BTC seed bid on a brand-new pool.
+        //
+        // Weighted by how much each pool actually wants the slot, so a 64% escalated re-bid is no longer
+        // a coin flip against a fresh pool — but still a DRAW, never a priority: an absolute rule
+        // ("expiring auctions first") would starve fresh-pool seeding entirely, and with 40 companies
+        // arriving along the address curve their first bids are how auctions start at all.
+        BotPoolOpportunity pick = WeightedPickAmongHits(hits);
         trace.ChosenAmongHits = hits.Count;
 
         NonMinerDonationSummary target = pick.Target;
@@ -4617,6 +4670,42 @@ public partial class NetworkRoot : Node
 
         tx = BuildAndBroadcastUtxoSpend(sender, target.NonMinerAddress, amount, fee, null);
         return tx != null ? CasinoBotSlotOutcome.Donated : CasinoBotSlotOutcome.BroadcastFailed;
+    }
+
+    // ND.10l (D-ND10l.2) — an unparticipated pool's `ProbabilityPercent` is 100, but that 100 is a
+    // SENTINEL ("a first bid is deterministic, it never rolls" — D-ND6.5), not a statement of how much
+    // the bot wants that slot. Using it as a tie-break weight is a category error, and an expensive one:
+    // it is the largest number in the system, so weighting by the raw probability would hand fresh pools
+    // MORE of the slot than the uniform draw did (a 64% escalated re-bid would fall from ½ to 64/164),
+    // making the ND.10j dilution worse rather than better. A fresh pool therefore carries this explicit
+    // seeding weight instead.
+    //
+    // 34 (Fibonacci per D-ND6.4) places a first bid on a par with a fairly pressed tier-8 NORMAL slot:
+    // clearly beaten by a genuinely stuck escalation, clearly ahead of a calm low-tier re-bid, and still
+    // winning outright on every slot where nothing else hits — which is most of them early on, when the
+    // pools are few. A CALIBRATION PLACEHOLDER like the ND.10e treasury thresholds: it should be re-read
+    // once the R2 block pace is verified, since block frequency changes how often pools contest at all.
+    private const int FreshPoolSeedingWeight = 34;
+
+    private static int TieBreakWeight(BotPoolOpportunity opportunity)
+        => opportunity.OwnSlotCount == 0 ? FreshPoolSeedingWeight : opportunity.ProbabilityPercent;
+
+    // ND.10l — the weighted draw itself. Falls back to a uniform pick if every weight is somehow 0 (not
+    // reachable: an excluded pool never enters `hits`, and a biddable one always carries a positive
+    // probability — D-ND10c's `probabilityPercent <= 0` guard turns any all-zero case into an exclusion).
+    private static BotPoolOpportunity WeightedPickAmongHits(List<BotPoolOpportunity> hits)
+    {
+        int total = 0;
+        foreach (BotPoolOpportunity h in hits) total += TieBreakWeight(h);
+        if (total <= 0) return hits[Random.Shared.Next(hits.Count)];
+
+        int roll = Random.Shared.Next(total);
+        foreach (BotPoolOpportunity h in hits)
+        {
+            roll -= TieBreakWeight(h);
+            if (roll < 0) return h;
+        }
+        return hits[^1]; // unreachable — the walk always consumes the roll
     }
 
     // D-ND10c.1 — the eligibility test behind the restricted bot draw: does this bot hold ANY qualifying,

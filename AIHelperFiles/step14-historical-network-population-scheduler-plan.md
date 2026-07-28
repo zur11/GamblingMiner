@@ -1310,6 +1310,7 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 | ND.10i | The escalation slope collision — tier 2 escalates as fast as tier 4 (DeepBit audit) | technical / auction behavior | ✅ BUILT 2026-07-27 — in-game verification pending |
 | ND.10j | The escalation does not survive a restart — an absent in-memory signal read as "just became stuck" (BitInstant audit) + reserve-guard cold start + decline telemetry | technical / auction behavior + telemetry | ✅ BUILT 2026-07-28 — in-game verification pending |
 | ND.10k | One bid per donor per block — two same-block bids from one party took tiers 1 AND 2 (BitInstant, blk 965) + the pending-bid wallet warning | technical / auction behavior + UI | ✅ BUILT 2026-07-28 — in-game verification pending |
+| ND.10l | The weighted tie-break — fresh pools were crowding out escalated re-bids under D-ND10c.2's uniform draw (resolves §14.11.6) | technical / auction behavior | ✅ BUILT 2026-07-28 — in-game verification pending |
 | _(pending — the developer will describe further UI + technical needs)_ | | | |
 
 ### 14.2 ND.10a — the stuck-bidder escalation must actually engage (Fix A + Fix B)
@@ -1861,3 +1862,45 @@ Composes correctly with ND.10j: bot_1 moves from tier 7 to tier 6, and the chain
 #### 14.12.6 Verify in-game
 
 Open BitInstant: the player must hold exactly **one** slot, at tier 1, with bot_4 restored to tier 2 and the pool showing 8 slots. Then send a bid to any in-auction company and, **before a block is mined**, open the send panel again for that same company — the amber warning must name the pending amount. Send a second, larger bid: after the confirming block, only the larger one may appear in the tracked pool. Confirm the smaller one's BTC is **not** returned (it shows in the company's treasury), and that the leading bid / window close reflect only the participating bid.
+
+---
+
+### 14.13 ND.10l — The weighted tie-break (✅ BUILT 2026-07-28 — in-game verification pending)
+
+Resolves §14.11.6, the open question ND.10j's `poolRolls` column exposed. Developer chose **option (a)**, weighting the tie-break by probability.
+
+#### 14.13.1 Correction to §14.11.6's recommendation
+
+**Option (a) as specified would have made the problem worse, and this was caught before building.** An unparticipated pool's `ProbabilityPercent = 100` is a **sentinel** — D-ND6.5's "a first bid is deterministic, it never rolls" — not a statement of preference. It is the largest number in the system, so weighting the draw by the raw `r_k` hands fresh pools a *bigger* share than the uniform draw did:
+
+| escalated pool `r = 64` vs one fresh pool | P(escalated is bid) |
+|---|---|
+| ND.10c uniform | 0.64 × ½ = **32%** |
+| §14.11.6's option (a), weight = `r` | 0.64 × 64/164 = **25%** ← worse |
+| **ND.10l, weight = `r`, fresh pool = 34** | 0.64 × 64/98 = **42%** |
+
+The mechanism was right; the weight was wrong. **D-ND10l.2 — a fresh pool's tie-break weight is `FreshPoolSeedingWeight` (34, Fibonacci per D-ND6.4), not its sentinel probability.** 34 places a first bid on a par with a fairly pressed tier-8 NORMAL slot: beaten by a genuinely stuck escalation, ahead of a calm low-tier re-bid, and still winning outright on every slot where nothing else hits — which is most of them while few pools are live. A **calibration placeholder** like the ND.10e treasury thresholds; re-read it once R2's block pace is verified, since block frequency changes how often pools contest at all.
+
+**It stays a draw, never a priority (D-ND10l.1).** Options (b) and (d) from §14.11.6 — "a stuck-escalated pool wins outright", "expiring auctions before fresh ones" — were re-examined and both rejected on the same ground: with 4 bots, roughly one bid per block and several open auctions always hitting, an absolute rule starves fresh-pool seeding entirely, and with 40 companies arriving over fifteen in-game years their first bids are how auctions start at all. Weighting biases the draw without ever closing it.
+
+#### 14.13.2 The panel had to follow (D-ND10l.3)
+
+`RealLeadingBidRoll` reports a TRUE per-block probability that folds in the tie-break, so a weighted roll with a uniform-tie-break model would be the ND.10d class of lie in the one number the scene exists to show (§39.16 rule 6). The share DP therefore changes shape: ND.10c's count-based Poisson-binomial (`Σ_m P(H₋ₖ=m)/(m+1)` — only *how many* others hit) becomes a **0/1-knapsack convolution over integer weights** (`Σ_W P(W₋ₖ=W)·w_k/(w_k+W)` — *which* others hit).
+
+Two collapses keep it cheap: a pool with `r ≥ 1` always hits, so it is not a random variable and its weight folds into a constant offset (this absorbs every unparticipated pool, however many are live); a pool with `r ≤ 0` never hits and drops out. Only genuinely stochastic pools enter the DP, and a bot holds slots in a handful of pools at most.
+
+**The `Σ_k q_k = 1 − ∏_k (1−r_k)` identity is unchanged** — it holds for *any* rule that picks exactly one winner from a non-empty hit set — so the existing runtime assertion now guards the weighted DP for free.
+
+**Verified against brute-force subset enumeration** before shipping, to machine precision (max deviation 1.7e-16 across five cases including all-certain, single-pool and equal-weight degenerates; equal weights reproduce the uniform result exactly, and the identity held to 1.1e-16 in every case).
+
+#### 14.13.3 Telemetry
+
+`poolRolls` entries carry the tie-break weight when it differs from the rolled probability — i.e. exactly on fresh pools: `non_miner_8:40*|non_miner_10:100*w34`. A row now shows not just which pools hit but why the draw between them resolved as it did. No new column, no header change (the ND.10j rotation already handles schema drift).
+
+#### 14.13.4 Files
+
+`NetworkRoot.cs` only — `FreshPoolSeedingWeight` + `TieBreakWeight` + `WeightedPickAmongHits` (new), `TryBuildCasinoBotBid` (the pick + the `w` suffix in `poolRolls`), `ExpectedTieBreakShare` → `ExpectedWeightedTieBreakShare` (rewritten), `RealLeadingBidRoll` (passes the weights). **No persisted state, no `WorldFormatVersion` bump, no UI file touched.**
+
+#### 14.13.5 Verify in-game
+
+Open a pool where a bot holds a stuck escalation while fresh companies are still unbid — its right-hand panel percentage should rise noticeably against the ND.10j build, while fresh pools still receive their first bids at a healthy rate (watch for new companies leaving `no bids yet` over a few blocks; if seeding visibly stalls, `FreshPoolSeedingWeight` is too low). In `casino_bot_bid_trace.csv`, rows with two or more hits should now resolve toward the higher-weighted pool more often than half the time, and every fresh pool's entry must carry `w34`. Launch log: **no `[ND.10c] RealLeadingBidRoll identity broken` warning** — one would mean the weighted DP and the roll have diverged.
