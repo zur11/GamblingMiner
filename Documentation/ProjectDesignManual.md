@@ -2466,6 +2466,24 @@ Full decision log: `AIHelperFiles/step14-historical-network-population-scheduler
 
 ---
 
+### 22.18 — An in-memory signal must not read "absent" as "just now" (Step 14 ND.10j, 2026-07-28)
+
+The stuck-bidder escalation (§22.10.1) is deliberately **not persisted**: `_stuckBidderSignatures` is bidding bookkeeping, not world state, and D-ND10e.3 filed a restart wiping it under "harmless and self-correcting", following `_lastMinedByNodeId`. That judgement was right about the *storage* decision and wrong about the *default*.
+
+Its single writer is a per-block sweep. So an absent key does not mean "this bot just became stuck" — it means **"this process has never looked at this pair"**, which is true of every pair after a restart, and of *every* pair before a session's first mined block. Reading absent as "now" gave every stuck bidder `base × 1`. A live BitInstant audit caught it four in-game days from that auction's close: bot_1, a lone tier-5 occupant stuck since block 957, showed and rolled the flat urgency **13%** instead of its true **64%**. With roughly two blocks left in the window there was no way back, and the auction would have resolved on its leader unopposed — the exact stagnation the escalation exists to prevent. The reset is harmless only where nothing is *counting* the blocks; the escalation counts them, and it is the mechanism of last resort in a closing window.
+
+**The rule this yields:** when a value is derived from "how long has X been true", an absent record is a *question*, not an answer. Either persist it, or **derive it** — never let it silently mean zero.
+
+Here the derivation is free, because the chain already knows. A tracked donation ranked *below* a bot cannot have changed that bot's tier, so the bot has held its tier since **the most recent donation ranked at or above it** — its own slot (the block it took the tier) or a later raise that pushed it down. `TrackedDonation.TimestampMs` is a confirming block's timestamp, so it maps straight back to a block index. A *first sight* seeds from that; a key that is **present** with a changed signature still stamps the current block, because that is an exact edge this process observed and must outrank an estimate. One case stays out of reach — an eviction of the bot's *other* slot, which drops it to single-slot without disturbing anything above it, is invisible once the evicted donation is gone. That is the case that forced the in-memory signal to exist in the first place (ND.10a); it is caught exactly while the process runs, and pre-restart it merely over-estimates a long-standing lone occupant, which is much closer to the truth than resetting it to zero.
+
+**The same cold start, one axis over.** `_botsRestingOnReserve` (ND.10e) is written by the same sweep, so before the first block a resting bot advertised a percentage — the §39.16 rule-6 violation ND.10d closed for "priced out", reappearing through a different door. The hysteresis now lives in one predicate that applies it to the **live balance** rather than reading the set, and the sweep is that predicate's write-back. **Generalising: any in-memory cache a per-block sweep owns has a window at process start where it is empty and lying. If a reader can predict the sweep cheaply, it must.**
+
+**And the declines had to become readable.** ND.6b's premise is that declines are the calibration signal, but `rolledProbabilityPercent` was written only after a pick, so every `roll-declined` row logged a bare `0` — which is why this defect needed a chain replay to find rather than a trace read. The new `poolRolls` column records what *every* biddable pool rolled and which hit, making both the escalation and the uniform tie-break observable. It immediately exposed a second, unfixed finding: an unparticipated pool always hits (`r = 1.0`), so each newly introduced company halves an escalated re-bid's chance that block — recorded as an open question with a recommendation rather than changed mid-playtest.
+
+Display-only for the reserve label, behavioral for the escalation; **no persisted field, no `WorldFormatVersion` bump, no wipe** — chosen so a running playtest survives the fix. Full decision log and the deferred tie-break options: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.11 (D-ND10j.1…4).
+
+---
+
 ## Chapter 23 — Scheduled Bot Transactions (BTC Recirculation)
 
 **Files**: `NetworkRoot.cs` (`ScheduleBotTransactionsAfterBlock`, `FirstBlockHeightMinedBy`), `BlockchainService.cs` (no-self-send guard)

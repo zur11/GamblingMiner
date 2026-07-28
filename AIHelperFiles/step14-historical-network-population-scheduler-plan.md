@@ -1308,6 +1308,7 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 | ND.10g | Company display names replace `non_miner_#` across every UI-facing surface (send-panel selectors, BlockExplorer balances/mining, wallet history) | UI (display-only) | ✅ BUILT & VERIFIED 2026-07-23 |
 | ND.10h | The founded-company action button as a four-state pending-work signal (red vote / green dividends / mocha both / black neither) | UI (display-only) | ✅ BUILT & VERIFIED 2026-07-23 |
 | ND.10i | The escalation slope collision — tier 2 escalates as fast as tier 4 (DeepBit audit) | technical / auction behavior | ✅ BUILT 2026-07-27 — in-game verification pending |
+| ND.10j | The escalation does not survive a restart — an absent in-memory signal read as "just became stuck" (BitInstant audit) + reserve-guard cold start + decline telemetry | technical / auction behavior + telemetry | ✅ BUILT 2026-07-28 — in-game verification pending |
 | _(pending — the developer will describe further UI + technical needs)_ | | | |
 
 ### 14.2 ND.10a — the stuck-bidder escalation must actually engage (Fix A + Fix B)
@@ -1705,3 +1706,90 @@ Whether that is a bug or the system working is a genuine design call:
 
 Open DeepBit (or any early-rush pool with a lone occupant at tier 2 and another at tier 4): the tier-4 label must cross its 34 floor and start climbing **before** the tier-2 label leaves its 21 floor, and the two must never read the same value while both are escalating. In a NORMAL-mode pool, a tier-2 and a tier-4 slot stuck since the same block must now differ (3n vs 5n) rather than being identical. Confirm **no top-3 slot ever displays above 34%**, and that one reading `34% (… , capped)` stays there instead of climbing. Escalating slots now read `[re-bid 24% (base 3 ×8 blocks stuck)]` — the base must match the tier (t2 → 3, t3 → 2, t4 → 5, t5 → 8 …) and the multiplier must advance by exactly 1 per block until a re-rank resets it. Trace: `rolledProbabilityPercent` on tier-2 rows grows in steps of 3. Launch log: **no `[ND.10i] Escalation slope ordering VIOLATED` line** — if one appears, a ladder table has been edited into a new collision.
 
+
+---
+
+### 14.11 ND.10j — The escalation does not survive a restart (✅ BUILT 2026-07-28 — in-game verification pending)
+
+**Diagnosed 2026-07-28 from a live BitInstant audit**, four in-game days before that auction's close, at block 964 / 2011-05-06. The developer's reading of the panel was correct and the cause was not in the ladder at all.
+
+#### 14.11.1 The pool, reconstructed from the chain
+
+BitInstant = `non_miner_8`. Every qualifying bid, replayed from `blockchain/blocks-*.json`:
+
+| Tier | Donor | Amount BTC | Confirmed |
+|---|---|---|---|
+| 1 | **bot_4** | 9.74840095 | blk 957 — 2011-04-20 00:42 |
+| 2 | bot_3 | 4.88093138 | blk 956 |
+| 3 | bot_4 | 3.81577101 | blk 954 |
+| 4 | bot_2 | 2.65357005 | blk 950 |
+| 5 | **bot_1** | 1.43127566 | blk 945 |
+| 6 | bot_3 | 0.66183673 | blk 944 |
+| 7 | bot_4 | 0.22108475 | blk 942 |
+
+7 slots ⇒ **NORMAL** mode; window closes **2011-05-10 00:42** (leader blk 957 + 20 d) with **urgency active** since 2011-05-03. bot_1 is a lone tier-5 occupant, stuck there since block 957 — the escalation's exact target case. Its true value is `base 8 × 8 blocks = 64%`. It displayed and rolled the flat urgency rate **13%**.
+
+#### 14.11.2 The defect
+
+`_stuckBidderSignatures` is in-memory (D-ND10e.3 / the `_lastMinedByNodeId` precedent) and its single writer, `SweepStuckBidderSignatures`, runs **once per mined block**. `PeekStuckEscalationDetail` treated an **absent key** identically to a signature mismatch: `sinceBlockIndex = currentBlockIndex` ⇒ `blocksElapsed = 0` ⇒ `base × 1`.
+
+But absent does not mean "just became stuck". It means **"this process has never observed this pair"**, which is true of:
+
+1. **every pair after a restart**, and
+2. **every pair before the session's first mined block** — which is where the audit landed. The session had started at 10:25; the chain tip (964) was mined in the *previous* session at 01:39, and the clock had advanced ~1 in-game day on bets alone without a new block. `casino_bot_bid_trace.csv` had not been written once all session — the visible proof the sweep had never run.
+
+So the whole escalation system was reading "everybody just got stuck this block". ND.10e's code comment calls the reset harmless; **inside a closing window it is not**. At the current pace there were ~2 blocks left, so bot_1 could reach at most ~24% before close, and the auction would resolve on its leader by default — precisely the stagnation ND.8d round 3 introduced the escalation to prevent.
+
+**D-ND10j.1 — an absent signal is SEEDED from the chain, never read as "now".** `SeedStuckSinceBlockIndex` answers "since which block has this bot held this tier?" from the tracked pool itself: a donation ranked *below* the bot can never have changed its tier, so the bot has held its current tier since **the most recent donation ranked at or above it** (which includes its own slot — the block it took the tier — and every later raise that pushed it down). `TrackedDonation.TimestampMs` is its confirming block's timestamp, mapped back through `BlockIndexAtOrBeforeTimestamp`. For bot_1 this yields blk 957 ⇒ 64%, and for bot_2 (tier 4, same rank-setting block) 40% — both exactly the live values.
+
+**Derived, not persisted — deliberately.** ND.10c / D-ND10e.3's line that this is bidding bookkeeping and not world state still holds, so there is **no `BlockchainStateSnapshot` field, no checkpoint work, no delete-list entry and no `WorldFormatVersion` bump** — the developer keeps their running playtest, where a persisted-state fix would have wiped it.
+
+**D-ND10j.2 — observed edges still win over the estimate.** A key that is *present* with a different signature keeps stamping `currentBlockIndex`: that is an exact edge this process actually saw. Only a *first sight* seeds. Same split in both the sweep and the pure `Peek`, so label/roll parity holds by construction.
+
+**Known imprecision, stated rather than hidden.** An **eviction of the bot's other slot** drops it 2 bids → 1 without disturbing anything above it; the evicted donation is gone from the pool, so a chain seed cannot see that the bot only became single-slot at that later block and will over-estimate. This is the same case that forced the in-memory signal to exist (the ND.10a revision); the live sweep still catches it exactly, and it can only apply to history from before the process started. Over-estimating a long-standing lone occupant is strictly closer to the truth than the reset to zero it replaces.
+
+#### 14.11.3 The reserve guard had the same cold start (D-ND10j.3)
+
+`_botsRestingOnReserve` is written by the same per-block sweep, so before the first block it is empty and a resting bot advertises a percentage the next block will replace with `[reserve]` — the §39.16 rule-6 violation ND.10d closed for "priced out". Fixed by moving the hysteresis into one pure predicate, **`IsBotRestingOnReserve`**, which applies it to the **live spendable balance** rather than merely reading the set; the sweep is now just that predicate's write-back, and the label, `BuildBotPoolOpportunities` and the sweep cannot disagree. Also hoisted out of `BuildBotPoolOpportunities`' pool loop — one balance read per call instead of one per pool.
+
+This is what had made bot_1 invisible in the trace since block 946, incidentally: it spent 86.79 BTC on The Silk Market at blk 947 and landed at **198.51 BTC**, under `BotBidReserveStopBtc = 200`, then crawled to 203.43 on dividend drips — nowhere near the 300 release. The restart then *un-rested* it (the documented between-thresholds drift) in the same breath as it disarmed its escalation.
+
+**A related finding, NOT fixed here:** a bot can bid itself into the guard. The half-spendable cap let bot_1 send 86.93 out of 285.30, and the guard is only evaluated on the next block — never against the resulting balance. Together with the 200→300 band being ~345 blocks wide at dividend-only income, this belongs to the deferred **Casino-Bot Treasury Policy** (`PRIVATE_ROADMAP.md`), whose thresholds are already flagged as placeholders pending P5 hardware progression.
+
+#### 14.11.4 The declines carried no calibration signal (D-ND10j.4)
+
+`rolledProbabilityPercent` was written only **after** a pick, so all 52 `roll-declined` rows in the audit logged a bare `0`. ND.6b's whole premise is that "the declines ARE the calibration signal" — they carried none, which is why this took a chain replay rather than a trace read. New column **`poolRolls`** logs every biddable pool's composed probability and which hit: `non_miner_8:40*|non_miner_10:100*`.
+
+It also makes the **uniform tie-break** observable for the first time. Block 964, bot_2: `qualifyingPools=2, hitPools=2, chosenAmongHits=2`, target `non_miner_10` — its BitInstant roll **hit and lost the coin-flip** to a fresh 0.03 BTC seed pool. See §14.11.6.
+
+The writer now **rotates a stale-schema trace to `.csv.old`** instead of appending misaligned rows under an old header (§39.16 rule 1 — a lying number is invisible). No manual delete needed.
+
+#### 14.11.5 Deliberately NOT retuned here: the slopes
+
+The current block pace is **~2.2 in-game days per block** against a 58,500 s (~0.68 d) target — the R2 regulator work in the last commit (`MaxShare` 0.90, asymmetric feedback, `SimulationThrottle`) is aimed at exactly this and **has not been playtested yet**. Since the escalation is denominated **per block**, restoring the intended pace multiplies the blocks inside one 20-day window from ~9 to ~29 — the same slopes then run ~3.2× further per in-game day, and the D-ND10i.2 NST-band ceiling becomes correspondingly more load-bearing.
+
+**So no slope, ceiling or ladder value is touched by ND.10j.** Calibrating them against a pace known to be broken would bake the defect into the table. Re-read §14.10 and this section only after R2 is verified in play.
+
+#### 14.11.6 Deferred — the tie-break dilution (open question, developer's call)
+
+D-ND10c.2 chose a **uniform** tie-break among hits so an unparticipated pool "no longer monopolizes the slot by ordering". The flip side, now visible in `poolRolls`: an unparticipated pool always hits (`r = 1.0`), so **every fresh company introduction halves an escalated re-bid's chance that block**. With 40 companies dripping in along the address curve, this systematically dilutes exactly the re-bids ND.10c set out to make reachable — a priority problem reintroduced in the opposite direction from the one it fixed.
+
+Not built: it changes bidding behavior mid-playtest and amends a canonical decision. Options if taken up:
+
+- **(a)** weight the tie-break by probability (`P(pick k) = r_k / Σr`) — a 100% seed still usually wins, but a 64% escalated re-bid is no longer a coin flip;
+- **(b)** exempt a stuck-escalated pool from the tie-break (it wins outright when it hits) — closest to ND.10a's deleted Fix A, and the strongest anti-stagnation lever;
+- **(c)** accept it, and treat fresh-pool seeding as legitimately higher priority.
+
+Recommendation: **(a)** — it preserves D-ND10c.2's "share it fairly" intent while making "fairly" mean *proportional to how badly each pool wants the slot*, and it needs no new state.
+
+#### 14.11.7 A documented, accepted divergence
+
+For a **multi-slot** occupant the per-slot label shows that slot's own tier rate, while the roll is `SumTwoLowestReBidProbabilities` over the bot's two lowest (bot_3 at BitInstant: labels 5% and 21%, roll 26%). This is not the ND.10d class of lie — the per-slot label is answering a per-slot question — but the authority for "what will this bot actually do" is the right-hand per-bot panel (`RealLeadingBidRoll`), which folds in the sum, the eligible-bot draw and the count draw. Left as is; noted so it is not re-diagnosed as a defect.
+
+#### 14.11.8 Files
+
+`NetworkRoot.cs` only — `IsBotRestingOnReserve` + `SweepBotReserveGuard` (rewritten as its write-back), `SeedStuckSinceBlockIndex` + `BlockIndexAtOrBeforeTimestamp` (new), `PeekStuckEscalationDetail` / `PeekStuckEscalationProbabilityPercent` (signature: the summary + donor address replace the bare node id, so the seed can read the pool), `SweepStuckBidderSignatures` (first-sight vs. observed-change split), `BuildBotPoolOpportunities` + `ReBidProbabilityLabelForSlot` (shared predicate, new call signature), `CasinoBotBidTrace.PoolRolls` + `CasinoBotBidTraceHeader` / `ReadFirstLine` + the rotation. **No persisted state, no `WorldFormatVersion` bump, no UI file touched** — the label already reads the same helper.
+
+#### 14.11.9 Verify in-game
+
+Restart into the running world and open **BitInstant** in `AuctioningCompanyDetails` **before any block is mined**. Slot #5 (bot_1) must read `[re-bid 64% (base 8 ×8 blocks stuck)]`, not the flat `13%`; slot #4 (bot_2) `[re-bid 40% (base 5 ×8 blocks stuck)]`. Both must then climb by exactly their base per mined block, and a re-rank must reset them. Confirm the multiplier does **not** reset to `×1` across a further restart — that is the whole fix. A bot whose spendable is at or under 200 BTC must read `[reserve]` immediately on entering the scene, without waiting for a block. In `casino_bot_bid_trace.csv` (rotated to `.csv.old` on first write) every row including `roll-declined` must now carry a populated `poolRolls`.

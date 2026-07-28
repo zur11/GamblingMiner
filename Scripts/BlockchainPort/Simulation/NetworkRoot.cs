@@ -265,7 +265,8 @@ public partial class NetworkRoot : Node
         // tier 6 with a 264 BTC cap against a ~371 BTC required raise). A bot priced out of a mature
         // auction is the DESIGNED economic terminator (§22.10) — so say so instead of quoting odds.
         // ND.10e — the reserve guard outranks the per-pool rules (same order as BuildBotPoolOpportunities).
-        if (bot != null && _botsRestingOnReserve.Contains(bot.NodeId)) return ExclusionReserve;
+        // ND.10j — through the shared predicate, so the label is right before the first mined block too.
+        if (bot != null && IsBotRestingOnReserve(bot.NodeId)) return ExclusionReserve;
         if (bot != null && !CanAffordNextBid(summary, bot)) return ExclusionPricedOut;
 
         if (IsBidderSatisfied(tier, ownBidCount)) return ExclusionSatisfied;
@@ -276,7 +277,7 @@ public partial class NetworkRoot : Node
         {
             int currentBlockIndex = GetPlayerLatestBlock().Index;
             (int percent, int basePercent, int multiplier, bool capped) escalation =
-                PeekStuckEscalationDetail(summary.NonMinerNodeId, bot.NodeId, tier, currentBlockIndex);
+                PeekStuckEscalationDetail(summary, bot.NodeId, donorAddress, tier, currentBlockIndex);
             // ND.10i suggestion 4 — when the ESCALATION is the binding term, show what it is made of. A bare
             // "40%" cannot be told apart from another tier's "40%" (and after a re-rank stamps every occupant
             // on the same block, equal readings are normal — only the slopes differ), which is exactly how
@@ -343,22 +344,36 @@ public partial class NetworkRoot : Node
     // bot sitting between the two thresholds, which restarts un-rested; harmless and self-correcting.
     private static readonly HashSet<string> _botsRestingOnReserve = [];
 
+    // ND.10j (2026-07-28, §14.11) — THE reserve-guard question, as one pure predicate every consumer
+    // shares: is this bot out of all auctions right now? It applies the hysteresis to the LIVE spendable
+    // balance rather than merely reading the set, so it answers correctly even before the set has ever
+    // been written this process — the cold-start half of the ND.10j defect. `_botsRestingOnReserve` is
+    // in-memory (D-ND10e.3) and its only writer is the per-block sweep below, so between process start
+    // and the first mined block the set is EMPTY: the label and the panel would show a percentage for a
+    // bot the very next block excludes, which is precisely the §39.16 rule-6 violation ND.10d closed for
+    // "priced out". Predicting the next sweep costs one balance read and cannot disagree with it.
+    private static bool IsBotRestingOnReserve(string botNodeId)
+    {
+        bool resting = _botsRestingOnReserve.Contains(botNodeId);
+        if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return resting;
+        decimal spendable = bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress);
+        // Hysteresis, unchanged: resting until rebuilt to Resume; entering only at or below Stop. A bot
+        // sitting BETWEEN the two thresholds keeps whatever state it already had — which on a cold start
+        // is "not resting", the drift D-ND10e.3 documents as harmless and self-correcting.
+        return resting ? spendable < BotBidReserveResumeBtc : spendable <= BotBidReserveStopBtc;
+    }
+
     // ND.10e — the reserve guard's edge-triggered sweep, run once per block beside
     // SweepStuckBidderSignatures (single writer, never from a UI refresh — the ND.10c discipline).
+    // ND.10j — the hysteresis itself moved into IsBotRestingOnReserve so the sweep and every reader
+    // apply literally the same rule; this is now just the write-back of that predicate.
     private static void SweepBotReserveGuard()
     {
         foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
         {
-            if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
-            decimal spendable = bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress);
-            if (_botsRestingOnReserve.Contains(record.NodeId))
-            {
-                if (spendable >= BotBidReserveResumeBtc) _botsRestingOnReserve.Remove(record.NodeId);
-            }
-            else if (spendable <= BotBidReserveStopBtc)
-            {
-                _botsRestingOnReserve.Add(record.NodeId);
-            }
+            if (!SharedNodesById.ContainsKey(record.NodeId)) continue;
+            if (IsBotRestingOnReserve(record.NodeId)) _botsRestingOnReserve.Add(record.NodeId);
+            else _botsRestingOnReserve.Remove(record.NodeId);
         }
     }
 
@@ -373,6 +388,9 @@ public partial class NetworkRoot : Node
         decimal fee, decimal bidBudgetCap, long nowMs, int currentBlockIndex)
     {
         var opportunities = new List<BotPoolOpportunity>();
+        // ND.10j — hoisted out of the pool loop: one live balance read per call instead of one per pool,
+        // and (the point) the guard now answers correctly before the first mined block of a session.
+        bool restingOnReserve = IsBotRestingOnReserve(botNodeId);
         foreach (NonMinerDonationSummary target in pools)
         {
             List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
@@ -395,7 +413,7 @@ public partial class NetworkRoot : Node
             string? exclusion = null;
             // ND.10e (D-ND10e.3) — the reserve guard outranks every per-pool rule: a bot rebuilding its
             // BTC reserve is out of ALL auctions until it clears the resume threshold.
-            if (_botsRestingOnReserve.Contains(botNodeId)) exclusion = ExclusionReserve;
+            if (restingOnReserve) exclusion = ExclusionReserve;
             else if (ownSlotCount > 0 && IsBidderSatisfied(bestTier, ownSlotCount)) exclusion = ExclusionSatisfied;
             else if (slotsByValue.Count >= MaxTrackedDonations && ownTiers.Contains(slotsByValue.Count)) exclusion = ExclusionGuard;
             else if (requiredAmount + fee > bidBudgetCap) exclusion = ExclusionPricedOut;
@@ -415,7 +433,7 @@ public partial class NetworkRoot : Node
                     int mode = SumTwoLowestReBidProbabilities(
                         ownTiers, slotsByValue.Count, IsAuctionInUrgencyWindow(target.WindowCloseUnixMs, nowMs), ownSlotCount);
                     probabilityPercent = ownSlotCount == 1
-                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(target.NonMinerNodeId, botNodeId, bestTier, currentBlockIndex))
+                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(target, botNodeId, botAddress, bestTier, currentBlockIndex))
                         : mode;
                 }
                 if (probabilityPercent <= 0) exclusion = ExclusionSatisfied; // defensive — the rules above already cover every all-0 case
@@ -694,21 +712,94 @@ public partial class NetworkRoot : Node
     // the dictionary from a UI refresh or from a partial pipeline pass.
     //
     // Single-slot occupants only (callers gate on `ownSlotCount == 1`); tier 1 never escalates.
+    //
+    // ND.10j (2026-07-28, §14.11) — an ABSENT key no longer means "stuck as of this block". It means
+    // "this process has never observed this pair", which is true of every pair right after a restart and
+    // of EVERY pair before the session's first mined block (the sweep is the only writer and it runs per
+    // block). Defaulting to `currentBlockIndex` there silently reset every stuck bidder's accumulated
+    // pressure to base×1 — diagnosed off BitInstant (non_miner_8) four in-game days from close: bot_1,
+    // a lone tier-5 occupant stuck since block 957, displayed and rolled the flat urgency rate 13%
+    // instead of its true 8×8 = 64%, because the app had been restarted and no block had been mined yet.
+    // In a closing window there are too few blocks left to rebuild the escalation, so the auction
+    // resolves on its leader by default — the exact stagnation ND.8d round 3 introduced the escalation
+    // to prevent. Now an absent key is SEEDED from the chain (SeedStuckSinceBlockIndex); a key that is
+    // present but carries a DIFFERENT signature still stamps `currentBlockIndex`, because that is an
+    // observed, exact edge this process actually saw and must not be overridden by an estimate.
     private static (int percent, int basePercent, int multiplier, bool capped) PeekStuckEscalationDetail(
-        string nonMinerNodeId, string botNodeId, int bestTier, int currentBlockIndex)
+        NonMinerDonationSummary target, string botNodeId, string botAddress, int bestTier, int currentBlockIndex)
     {
         if (bestTier <= 1) return (0, 0, 0, false);
-        int sinceBlockIndex = currentBlockIndex;
-        if (_stuckBidderSignatures.TryGetValue((nonMinerNodeId, botNodeId), out (string signature, int sinceBlockIndex) recorded)
-            && recorded.signature == $"single:{bestTier}")
+        int sinceBlockIndex;
+        if (_stuckBidderSignatures.TryGetValue((target.NonMinerNodeId, botNodeId), out (string signature, int sinceBlockIndex) recorded))
         {
-            sinceBlockIndex = recorded.sinceBlockIndex;
+            // Known pair: the recorded stamp when the signature still matches, else what the next sweep
+            // will stamp for the change it has not processed yet (label/roll parity, unchanged).
+            sinceBlockIndex = recorded.signature == $"single:{bestTier}" ? recorded.sinceBlockIndex : currentBlockIndex;
+        }
+        else
+        {
+            sinceBlockIndex = SeedStuckSinceBlockIndex(target, botAddress, bestTier, currentBlockIndex);
         }
         return EscalatedStuckDetail(bestTier, currentBlockIndex - sinceBlockIndex);
     }
 
-    private static int PeekStuckEscalationProbabilityPercent(string nonMinerNodeId, string botNodeId, int bestTier, int currentBlockIndex)
-        => PeekStuckEscalationDetail(nonMinerNodeId, botNodeId, bestTier, currentBlockIndex).percent;
+    // ND.10j — the chain-derived answer to "since which block has this bot occupied THIS tier?", used
+    // only to seed a pair the in-memory signal has never seen. Deliberately DERIVED rather than
+    // persisted: the ND.10c/D-ND10e.3 line that `_stuckBidderSignatures` is bidding bookkeeping and not
+    // world state still holds, so this needs no BlockchainStateSnapshot field, no checkpoint work, no
+    // delete-list entry and no WorldFormatVersion bump — the developer keeps their running playtest.
+    //
+    // The derivation: a tracked donation ranked BELOW the bot can never have changed the bot's tier, so
+    // the bot has held its current tier since the most recent donation ranked AT OR ABOVE it — which
+    // includes its own slot (the block it took the tier) and every later raise that pushed it down.
+    //
+    // KNOWN IMPRECISION (the one thing a chain read cannot recover): an EVICTION of this bot's other
+    // slot, which drops it 2 bids → 1 without disturbing anything above it. The evicted donation is gone
+    // from the pool, so a seed cannot see that the bot only became single-slot at that later block, and
+    // will over-estimate how long it has been stuck. The live sweep still detects it exactly (that is
+    // why the in-memory signal exists at all — the ND.10a revision) and this only ever applies to
+    // history from BEFORE the process started. Over-estimating a long-standing lone occupant's pressure
+    // is strictly closer to the truth than the reset it replaces, which under-estimated it to zero.
+    private static int SeedStuckSinceBlockIndex(NonMinerDonationSummary target, string botAddress, int bestTier, int currentBlockIndex)
+    {
+        List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
+        // Both callers derive `bestTier` from this same value-descending order, so the slot at that tier
+        // must belong to this bot. Checking it makes the seed refuse to guess from a stale or mismatched
+        // view (it would otherwise silently date the escalation from another donor's slot).
+        if (bestTier > slotsByValue.Count || slotsByValue[bestTier - 1].DonorAddress != botAddress)
+        {
+            return currentBlockIndex; // no escalation, rather than one built on the wrong slot
+        }
+
+        long sinceMs = 0;
+        for (int i = 0; i < bestTier; i++)
+        {
+            if (slotsByValue[i].TimestampMs > sinceMs) sinceMs = slotsByValue[i].TimestampMs;
+        }
+        if (sinceMs <= 0) return currentBlockIndex;
+
+        int seeded = BlockIndexAtOrBeforeTimestamp(sinceMs, currentBlockIndex);
+        return Math.Clamp(seeded, 0, currentBlockIndex);
+    }
+
+    // ND.10j — a tracked donation carries its CONFIRMING BLOCK's timestamp (ComputeTrackedDonationPool
+    // takes `ts` straight from the bid's block), so this maps one back to a block index: the last block
+    // at or before that instant. A reverse scan rather than a binary search — block timestamps are
+    // non-decreasing today but nothing enforces it, the pool's donations are typically recent so the
+    // loop exits in a handful of steps, and the codebase already scans the chain linearly throughout.
+    private static int BlockIndexAtOrBeforeTimestamp(long timestampMs, int fallbackBlockIndex)
+    {
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)) return fallbackBlockIndex;
+        List<Block> chain = player.Blockchain.Chain;
+        for (int i = chain.Count - 1; i >= 0; i--)
+        {
+            if (chain[i].Timestamp <= timestampMs) return chain[i].Index;
+        }
+        return fallbackBlockIndex;
+    }
+
+    private static int PeekStuckEscalationProbabilityPercent(NonMinerDonationSummary target, string botNodeId, string botAddress, int bestTier, int currentBlockIndex)
+        => PeekStuckEscalationDetail(target, botNodeId, botAddress, bestTier, currentBlockIndex).percent;
 
     // Fix B (ND.10a, 2026-07-22) — the per-block signature sweep. The escalation was previously refreshed
     // ONLY when a bot's pipeline SELECTED a pool, so a bot busy seeding fresh pools never updated the signal
@@ -749,9 +840,20 @@ public partial class NetworkRoot : Node
                 }
 
                 string signature = ownSlotCount >= 2 ? "multi" : $"single:{bestTier}";
-                if (!_stuckBidderSignatures.TryGetValue(key, out (string signature, int sinceBlockIndex) recorded)
-                    || recorded.signature != signature)
+                if (!_stuckBidderSignatures.TryGetValue(key, out (string signature, int sinceBlockIndex) recorded))
                 {
+                    // ND.10j — FIRST SIGHT of this pair (a fresh process, or a pool/bot this session has
+                    // not swept yet). "Never observed" is not "just became stuck": seed from the chain so
+                    // a restart does not zero an escalation that has genuinely been building for blocks.
+                    // A "multi" bot does not escalate, so it costs nothing to stamp it at the current
+                    // block — only the single-slot case needs a real seed.
+                    _stuckBidderSignatures[key] = ownSlotCount >= 2
+                        ? (signature, currentBlockIndex)
+                        : (signature, SeedStuckSinceBlockIndex(target, botAddress, bestTier, currentBlockIndex));
+                }
+                else if (recorded.signature != signature)
+                {
+                    // An OBSERVED change — exact, and never overridden by the estimate above.
                     _stuckBidderSignatures[key] = (signature, currentBlockIndex);
                 }
             }
@@ -4468,10 +4570,16 @@ public partial class NetworkRoot : Node
         // normal), summed over the bot's two lowest slots (ND.8d round 2), floored by the stuck escalation
         // for a lone slot (now including tiers 2-3, D-ND10c.3), or a flat 100 when unparticipated.
         var hits = new List<BotPoolOpportunity>();
+        var rollLog = new List<string>(biddable.Count);
         foreach (BotPoolOpportunity opportunity in biddable)
         {
-            if (Random.Shared.Next(100) < opportunity.ProbabilityPercent) hits.Add(opportunity);
+            bool hit = Random.Shared.Next(100) < opportunity.ProbabilityPercent;
+            if (hit) hits.Add(opportunity);
+            // ND.10j — log what each pool rolled BEFORE the tie-break discards all but one (see PoolRolls).
+            rollLog.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{opportunity.Target.NonMinerNodeId}:{opportunity.ProbabilityPercent}{(hit ? "*" : string.Empty)}"));
         }
+        trace.PoolRolls = string.Join("|", rollLog);
         trace.HitPools = hits.Count;
         if (hits.Count == 0) return CasinoBotSlotOutcome.RollDeclined;
 
@@ -4558,9 +4666,40 @@ public partial class NetworkRoot : Node
         public int QualifyingPools;
         public int HitPools;
         public int ChosenAmongHits;
+        // ND.10j (2026-07-28, §14.11) — EVERY biddable pool's composed probability this slot, and which
+        // of them hit: "non_miner_8:40*|non_miner_10:100*" (`*` = hit; the chosen one is targetNodeId).
+        // Until now `rolledProbabilityPercent` was written only after a pick, so all 52 roll-declined rows
+        // in the BitInstant audit logged a bare 0 — ND.6b's whole premise is that "the declines ARE the
+        // calibration signal", and they carried none. This is also the only place the uniform tie-break
+        // is observable: a pool can hit and still lose the draw (blk 964: bot_4's BitInstant roll hit and
+        // lost the coin-flip to a fresh 0.03 BTC seed pool), which no other column records.
+        public string PoolRolls = string.Empty;
     }
 
     private const string CasinoBotBidTracePath = "user://logs/casino_bot_bid_trace.csv";
+    // ND.10j — hoisted to a const so the writer can compare it against an existing file's first line and
+    // rotate a stale-schema trace instead of appending misaligned rows to it.
+    private const string CasinoBotBidTraceHeader =
+        "blockTimestampMs,blockIndex,slot,hop,botNodeId,outcome,targetNodeId,ownTiersInTarget,rolledTier,"
+        + "rolledProbabilityPercent,requiredBtc,amountBtc,feeBtc,spendableBtc,bidBudgetCapBtc,"
+        + "qualifyingPools,hitPools,chosenAmongHits,poolRolls";
+
+    // ND.10j — one-shot: the schema/rotation check runs on the first append of the process, not per row.
+    private static bool _bidTraceSchemaChecked;
+
+    // ND.10j — the header-schema check for the trace rotation above. Opens read-only and reads one line.
+    private static string ReadFirstLine(string path)
+    {
+        try
+        {
+            using FileAccess file = FileAccess.Open(path, FileAccess.ModeFlags.Read);
+            return file == null ? string.Empty : file.GetLine();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
 
     // ND.6b (§8.6 of the step14 plan) — probabilistic rules cannot be calibrated from gameplay feel
     // alone: one telemetry row per BOT VISIT within a donation slot (= one row per slot when no cascade
@@ -4576,21 +4715,46 @@ public partial class NetworkRoot : Node
                 DirAccess.MakeDirRecursiveAbsolute("user://logs");
             }
 
+            // ND.10j — a trace whose columns no longer match its header is worse than no trace (§39.16
+            // rule 1: a lying number is invisible). When the schema changes, the old file is rotated to
+            // `.old` rather than appended to or destroyed — the developer keeps the previous session's
+            // rows AND gets a correctly-headed file, with no manual delete step. Checked ONCE per process
+            // (this runs several times per block), since nothing else writes the file while we hold it.
             bool exists = FileAccess.FileExists(CasinoBotBidTracePath);
+            if (exists && !_bidTraceSchemaChecked)
+            {
+                _bidTraceSchemaChecked = true;
+                if (ReadFirstLine(CasinoBotBidTracePath) != CasinoBotBidTraceHeader)
+                {
+                    DirAccess.RemoveAbsolute(CasinoBotBidTracePath + ".old");
+                    if (DirAccess.RenameAbsolute(CasinoBotBidTracePath, CasinoBotBidTracePath + ".old") == Error.Ok)
+                    {
+                        exists = false; // rotated — fall through and write a fresh, correctly-headed file
+                    }
+                    else
+                    {
+                        // Practically unreachable (same directory, `.old` just cleared). Say so rather than
+                        // append rows that silently disagree with the header above them.
+                        GD.PushWarning("[CasinoBotBidTrace] stale header and rotation failed — rows appended "
+                            + "to this file will not match its header. Delete casino_bot_bid_trace.csv.");
+                    }
+                }
+            }
+
             using FileAccess file = exists
                 ? FileAccess.Open(CasinoBotBidTracePath, FileAccess.ModeFlags.ReadWrite)
                 : FileAccess.Open(CasinoBotBidTracePath, FileAccess.ModeFlags.Write);
             if (file == null) return;
 
             if (exists) file.SeekEnd();
-            else file.StoreLine("blockTimestampMs,blockIndex,slot,hop,botNodeId,outcome,targetNodeId,ownTiersInTarget,rolledTier,rolledProbabilityPercent,requiredBtc,amountBtc,feeBtc,spendableBtc,bidBudgetCapBtc,qualifyingPools,hitPools,chosenAmongHits");
+            else file.StoreLine(CasinoBotBidTraceHeader);
 
             file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10:F8},{11:F8},{12:F8},{13:F8},{14:F8},{15},{16},{17}",
+                "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10:F8},{11:F8},{12:F8},{13:F8},{14:F8},{15},{16},{17},{18}",
                 block.Timestamp, block.Index, slot, hop, botNodeId, CasinoBotSlotOutcomeLabel(outcome),
                 trace.TargetNodeId, trace.OwnTiersInTarget, trace.RolledTier, trace.RolledProbabilityPercent,
                 trace.RequiredBtc, trace.AmountBtc, trace.FeeBtc, trace.SpendableBtc, trace.BidBudgetCapBtc,
-                trace.QualifyingPools, trace.HitPools, trace.ChosenAmongHits));
+                trace.QualifyingPools, trace.HitPools, trace.ChosenAmongHits, trace.PoolRolls));
         }
         catch (Exception e)
         {
