@@ -275,7 +275,18 @@ public partial class NetworkRoot : Node
         if (ownBidCount == 1 && tier >= 2 && bot != null)
         {
             int currentBlockIndex = GetPlayerLatestBlock().Index;
-            pct = Math.Max(pct, PeekStuckEscalationProbabilityPercent(summary.NonMinerNodeId, bot.NodeId, tier, currentBlockIndex));
+            (int percent, int basePercent, int multiplier, bool capped) escalation =
+                PeekStuckEscalationDetail(summary.NonMinerNodeId, bot.NodeId, tier, currentBlockIndex);
+            // ND.10i suggestion 4 — when the ESCALATION is the binding term, show what it is made of. A bare
+            // "40%" cannot be told apart from another tier's "40%" (and after a re-rank stamps every occupant
+            // on the same block, equal readings are normal — only the slopes differ), which is exactly how
+            // the tier-2/tier-4 collision hid. Where the static mode rate still wins, nothing is appended:
+            // there is no escalation story to tell.
+            if (escalation.percent > pct)
+            {
+                return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                    $"{escalation.percent}% (base {escalation.basePercent} ×{escalation.multiplier} blocks stuck{(escalation.capped ? ", capped" : string.Empty)})");
+            }
         }
         return pct > 0 ? pct + "%" : string.Empty; // integer percent — culture-invariant by construction
     }
@@ -588,23 +599,85 @@ public partial class NetworkRoot : Node
     // per block stuck, clamped to 100%. Since D-ND10c.4 it has exactly ONE reader,
     // PeekStuckEscalationProbabilityPercent (pure), consumed by both the roll and the UI label; the
     // signature writes belong solely to the per-block SweepStuckBidderSignatures.
-    private static int EscalatedStuckPercent(int bestTier, int blocksElapsed)
+    // ND.10i (D-ND10i.2, 2026-07-27) — the CEILING on a top-3 (NST-band) slot's escalation. An accepted bid
+    // always takes the lead (it must clear the leader's floor), which RESETS the 20-day rolling window
+    // (D-ND4b.1) — so an escalation running to 100% at tier 2 is a leapfrog engine: the runner-up bids every
+    // block, becomes leader (tier 1 ⇒ always satisfied, stops), the displaced leader becomes tier 2 and
+    // starts escalating, and the countdown never expires while two solvent bots contest the pool. Capping
+    // the NST band keeps ND.10c's fix (no lone tier-2/3 occupant frozen at a flat 5%/2% forever) without
+    // turning the runner-up into a metronome; below the band the escalation still runs to 100%, because a
+    // bot outside the stock-minting tiers genuinely has nothing to lose by pressing. Fibonacci per D-ND6.4.
+    // Resolution of such a pool then rests where §22.10 always intended it: price-out, the economic
+    // terminator. The ceiling bounds the ESCALATION only — callers compose max(mode rate, escalation), so a
+    // calibrated mode rate above it (none today: tier 2 tops out at 21 in early rush) would still win.
+    private const int MaxTopTierEscalationPercent = 34;
+
+    // ND.10i suggestion 4 — the escalation's COMPOSITION, not just its result: the tier's slope, how many
+    // blocks it has been compounding, and whether the D-ND10i.2 ceiling is binding. The per-slot label shows
+    // these so a reader can see WHY two slots read what they do — the developer diagnosed the slope collision
+    // by noticing two numbers were equal that shouldn't be, which a visible `base × blocks` would have made
+    // obvious on sight instead of requiring a trace audit.
+    private static (int percent, int basePercent, int multiplier, bool capped) EscalatedStuckDetail(int bestTier, int blocksElapsed)
     {
-        int baseProbability = StuckEscalationBasePercent(bestTier);
-        if (baseProbability <= 0) return 0;
-        decimal scaled = baseProbability * (decimal)(Math.Max(0, blocksElapsed) + 1);
-        return (int)Math.Min(100m, scaled);
+        int basePercent = StuckEscalationBasePercent(bestTier);
+        if (basePercent <= 0) return (0, 0, 0, false);
+        int multiplier = Math.Max(0, blocksElapsed) + 1; // the block it got stuck on counts as block 1
+        decimal scaled = basePercent * (decimal)multiplier;
+        decimal ceiling = bestTier <= NstTopTierCount ? MaxTopTierEscalationPercent : 100m;
+        return ((int)Math.Min(ceiling, scaled), basePercent, multiplier, scaled > ceiling);
     }
 
-    // D-ND10c.3 (2026-07-23) — the escalation's base is ALWAYS the tier's plain NORMAL-mode value. Tiers
-    // 4-9 read the NORMAL ladder table; **tiers 2-3 now escalate too** (ND.10c) and read the shallow
-    // table's NORMAL / one-own-bid cell (tier 2 → 5, tier 3 → 2). Before ND.10c the whole escalation was
-    // gated at `tier > 3`, so a bot parked at tier 2/3 sat at a flat, never-moving 5%/2% forever — the
-    // BitPaid finding (§14.4 of the step14 plan). Tier 1 is always satisfied and never escalates; tier 10
-    // is excluded by the self-eviction guard before any roll.
+    private static int EscalatedStuckPercent(int bestTier, int blocksElapsed)
+        => EscalatedStuckDetail(bestTier, blocksElapsed).percent;
+
+    // ND.10i suggestion 3 — the DEV-only ordering assertion. The escalation slopes must ASCEND with tier
+    // depth (deeper = further from the NST band = more desperate), with EXACTLY ONE deliberate exception:
+    // tier 3 sits below tier 2, because that pair is ordered by SATISFACTION, not desperation (tier 3 can be
+    // satisfied at ≥2 own bids, tier 2 never is — D-ND8d.2/3). So the sequence checked is t3 < t2 < t4 < …
+    // < t9. Stripped from release builds by [Conditional] — a broken ladder in an exported build is
+    // undetectable anyway; the point is to catch it the moment a developer edits a table.
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void AssertEscalationSlopesAreOrdered()
+    {
+        int[] tiersInExpectedOrder = [3, 2, 4, 5, 6, 7, 8, 9];
+        for (int i = 1; i < tiersInExpectedOrder.Length; i++)
+        {
+            int previousTier = tiersInExpectedOrder[i - 1], tier = tiersInExpectedOrder[i];
+            int previous = StuckEscalationBasePercent(previousTier), current = StuckEscalationBasePercent(tier);
+            if (current > previous) continue;
+
+            GD.PrintErr(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "[ND.10i] Escalation slope ordering VIOLATED — tier {0} ({1}%/block) must escalate strictly "
+                + "faster than tier {2} ({3}%/block). Expected ascending order t3 < t2 < t4 … < t9 (the t3/t2 "
+                + "swap is the only intended one, D-ND8d.2/3). A shallower slot will now reach certainty as "
+                + "fast as, or faster than, a deeper one — the ND.10i DeepBit defect. Check "
+                + "StuckEscalationBasePercent / the ladder tables it reads.",
+                tier, current, previousTier, previous));
+        }
+    }
+
+    // D-ND10c.3 (2026-07-23) — the escalation's base is the tier's DESPERATION slope: how fast a lone
+    // occupant stuck at that tier grows toward acting. Tiers 4-9 read the plain NORMAL ladder table; tiers
+    // 2-3 escalate too since ND.10c (before it the whole escalation was gated at `tier > 3`, so a bot
+    // parked at tier 2/3 sat at a flat, never-moving 5%/2% forever — the BitPaid finding, §14.4). Tier 1 is
+    // always satisfied and never escalates; tier 10 is excluded by the self-eviction guard before any roll.
+    //
+    // ND.10i (D-ND10i.1, 2026-07-27) — tier 2 has its OWN base (3), no longer the shallow table's NORMAL
+    // one-bid cell (5). ND.10c's rule "the base is the tier's plain NORMAL-mode value" is internally
+    // consistent but landed tier 2 on exactly tier 4's slope (both 5), because the two tables were
+    // calibrated for different questions and had never been read side by side: a bot in 2nd place — INSIDE
+    // the NST band — escalated to certainty as fast as one in 4th and 2.5× faster than one in 3rd, and in a
+    // NORMAL-mode pool tiers 2 and 4 were numerically identical at every block forever (the DeepBit audit).
+    // The shallow table's tier2 > tier3 crossover is about SATISFACTION (tier 3 can be satisfied at ≥2 own
+    // bids, tier 2 never is) — a different question from desperation, and it must not leak into the slope.
+    // So the slopes now read 2 (t3) < 3 (t2) < 5 (t4) < 8 … : the deliberate 2/3 swap survives, the
+    // accidental 2/4 collision does not. 3 is the only Fibonacci-family value between them (D-ND6.4).
+    private const int Tier2EscalationBasePercent = 3;
+
     private static int StuckEscalationBasePercent(int bestTier)
     {
-        if (bestTier == 2 || bestTier == 3)
+        if (bestTier == 2) return Tier2EscalationBasePercent;
+        if (bestTier == 3)
             return ShallowTierProbabilityPercent(bestTier, earlyRush: false, urgent: false, ownBidCount: 1);
         return ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int p) ? p : 0;
     }
@@ -621,17 +694,21 @@ public partial class NetworkRoot : Node
     // the dictionary from a UI refresh or from a partial pipeline pass.
     //
     // Single-slot occupants only (callers gate on `ownSlotCount == 1`); tier 1 never escalates.
-    private static int PeekStuckEscalationProbabilityPercent(string nonMinerNodeId, string botNodeId, int bestTier, int currentBlockIndex)
+    private static (int percent, int basePercent, int multiplier, bool capped) PeekStuckEscalationDetail(
+        string nonMinerNodeId, string botNodeId, int bestTier, int currentBlockIndex)
     {
-        if (bestTier <= 1) return 0;
+        if (bestTier <= 1) return (0, 0, 0, false);
         int sinceBlockIndex = currentBlockIndex;
         if (_stuckBidderSignatures.TryGetValue((nonMinerNodeId, botNodeId), out (string signature, int sinceBlockIndex) recorded)
             && recorded.signature == $"single:{bestTier}")
         {
             sinceBlockIndex = recorded.sinceBlockIndex;
         }
-        return EscalatedStuckPercent(bestTier, currentBlockIndex - sinceBlockIndex);
+        return EscalatedStuckDetail(bestTier, currentBlockIndex - sinceBlockIndex);
     }
+
+    private static int PeekStuckEscalationProbabilityPercent(string nonMinerNodeId, string botNodeId, int bestTier, int currentBlockIndex)
+        => PeekStuckEscalationDetail(nonMinerNodeId, botNodeId, bestTier, currentBlockIndex).percent;
 
     // Fix B (ND.10a, 2026-07-22) — the per-block signature sweep. The escalation was previously refreshed
     // ONLY when a bot's pipeline SELECTED a pool, so a bot busy seeding fresh pools never updated the signal
@@ -764,6 +841,13 @@ public partial class NetworkRoot : Node
         {
             return;
         }
+
+        // ND.10i suggestion 3 (2026-07-27) — DEV-only ladder self-check, stripped from release builds. The
+        // tier-2/tier-4 slope collision existed because two tables are read by ONE consumer and nobody had
+        // ever printed them side by side; this makes the next such collision announce itself at launch
+        // instead of surviving until someone notices two labels behaving alike in a playtest. Same reflex as
+        // P15.9's clamp tripwire: an invariant that only lives in prose is an invariant nobody checks.
+        AssertEscalationSlopesAreOrdered();
 
         // Step 8 / Step 13 (TL.1) — if the on-disk world predates the UTXO model OR was built under the
         // other timeline (canon vs. the DEV alt-timeline simulacrum), wipe the incompatible chain/clock/

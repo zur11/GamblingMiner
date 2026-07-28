@@ -1307,6 +1307,7 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 | ND.10f | Projected-stake border colours on OPEN auction pools — ND.9b's gold/silver/black extended from founded companies to in-auction pools | UI (display-only) | ✅ BUILT & VERIFIED 2026-07-23 |
 | ND.10g | Company display names replace `non_miner_#` across every UI-facing surface (send-panel selectors, BlockExplorer balances/mining, wallet history) | UI (display-only) | ✅ BUILT & VERIFIED 2026-07-23 |
 | ND.10h | The founded-company action button as a four-state pending-work signal (red vote / green dividends / mocha both / black neither) | UI (display-only) | ✅ BUILT & VERIFIED 2026-07-23 |
+| ND.10i | The escalation slope collision — tier 2 escalates as fast as tier 4 (DeepBit audit) | technical / auction behavior | ✅ BUILT 2026-07-27 — in-game verification pending |
 | _(pending — the developer will describe further UI + technical needs)_ | | | |
 
 ### 14.2 ND.10a — the stuck-bidder escalation must actually engage (Fix A + Fix B)
@@ -1606,4 +1607,101 @@ No new persisted state, no `WorldFormatVersion` bump, no checkpoint/delete-list 
 **Build notes (2026-07-23).** Built as spec'd; two additions worth recording. **(1) `HasPlayerClaimableDividends` also requires `gov.ScReserve > 0` for the SC half** — an accrued SC claimable against an empty company SC reserve pays nothing (`TryClaimPlayerCompanyDividends` takes `min(claim.Sc, gov.ScReserve)`), so treating it as claimable would have reproduced the exact dust bug D-ND10h.3 exists to prevent, just on the other leg. **(2) `CompanyDetails`' "Claimable now:" line now reads the same predicate** and appends *"— below the network fee; still accruing"* when a non-zero balance is not yet payable: without it a player seeing a non-zero figure beside an un-green row button has no way to learn why, which is the ND.10d "reasoned zero" lesson applied to a different pair of surfaces. `ApplyButtonBorder` duplicates the existing stylebox per state (`normal`/`hover`/`pressed`/`focus`) rather than constructing a bare one, so the button keeps its theme's background and only gains the border.
 
 **Status: ✅ BUILT & VERIFIED 2026-07-23 — `dotnet build` 0 warnings / 0 errors; developer in-game verification PASSED (all four states render and transition correctly; the border survives hover).
+
+### 14.10 ND.10i — The escalation slope collision: tier 2 escalates as fast as tier 4 (✅ BUILT 2026-07-27 — in-game verification pending)
+
+> **Build log (2026-07-27).** `dotnet build` clean, 0 warnings. Developer decisions: **§14.10.4 → option (b)**
+> as recommended, and **tier 2 base = 3** confirmed. Shipped in `NetworkRoot.cs` only — the new consts
+> `Tier2EscalationBasePercent = 3` (D-ND10i.1) and `MaxTopTierEscalationPercent = 34` (D-ND10i.2, applied in
+> `EscalatedStuckPercent` for `bestTier <= NstTopTierCount`, reusing ND.10f's hoisted NST-band threshold so
+> "the band that mints voting stock" has ONE definition). No persisted state, no `WorldFormatVersion` bump,
+> no UI work — the per-slot label reads the same helper and follows automatically. Documented in
+> `ProjectDesignManual.md` **§22.10.1** and `CLAUDE.md`.
+>
+> **Suggestions 3 and 4 of §14.10.6 also accepted and shipped (same day).**
+> **(3) `AssertEscalationSlopesAreOrdered`** — a `[Conditional("DEBUG")]` self-check run once from
+> `EnsureInitialized`, walking the slopes in their expected ascending order `t3 < t2 < t4 … < t9` and
+> `GD.PrintErr`ing the offending pair if any step fails. It encodes the ONE intended exception (t3 below t2,
+> ordered by *satisfaction* not desperation) so the deliberate swap can never be mistaken for the accidental
+> collision. Stripped from release builds — a broken ladder in an exported build is undetectable anyway; the
+> point is to catch it the moment someone edits a table. Same reflex as P15.9's clamp tripwire, which had
+> proved itself two days earlier: **an invariant that lives only in prose is an invariant nobody checks.**
+> **(4) The per-slot label now shows the escalation's COMPOSITION** when the escalation is the binding term —
+> `[re-bid 24% (base 3 ×8 blocks stuck)]`, with `, capped` appended once D-ND10i.2's ceiling binds. Nothing is
+> appended where the static mode rate still wins (there is no escalation story to tell). New
+> `EscalatedStuckDetail` / `PeekStuckEscalationDetail` return `(percent, basePercent, multiplier, capped)`;
+> the old percent-only helpers became one-line wrappers, so the roll path is untouched and label/roll parity
+> is preserved by construction. The multiplier counts the block it got stuck on as block 1, matching the
+> arithmetic exactly (`3 × 8 = 24`).
+
+**The finding (developer, 2026-07-27, DeepBit / `non_miner_7`).** Watching the pool's per-slot ladder in `AuctioningCompanyDetails`: *"the 2nd tier was climbing faster than the 4th tier, and right now both read 40%"* — which is not how a ladder whose whole vocabulary is *"the worse your position, the more desperate you are"* should behave.
+
+#### 14.10.1 Diagnosis — two independently-calibrated tables meet at a seam nobody checked
+
+`StuckEscalationBasePercent` (`NetworkRoot.cs`) feeds `EscalatedStuckPercent`'s `base × (blocksElapsed + 1)`. Tiers 4-9 read the NORMAL ladder; since D-ND10c.3, tiers 2-3 read the **shallow** table's NORMAL / one-own-bid cell. Laid side by side for the first time:
+
+| tier | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|
+| escalation slope (%/block) | **5** | 2 | **5** | 8 | 13 | 21 | 34 | 55 |
+| blocks to certainty | **20** | 50 | **20** | 13 | 8 | 5 | 3 | 2 |
+
+**`base(tier 2) == base(tier 4) == 5`.** The shallow table was calibrated at ND.8d for a different question — *tier 2 is never satisfied and must out-probability tier 3* — and the deep table at ND.6 for *deeper = more desperate*. ND.10c bridged them with the rule "the escalation's base is ALWAYS the tier's plain NORMAL-mode value", which is internally consistent and lands tier 2 exactly on tier 4's slope. A bot in **2nd place — inside the NST band** — now escalates to certainty as fast as one in 4th, and **2.5× faster than one in 3rd**.
+
+#### 14.10.2 Why tier 2 *appeared* to climb faster (the exact observed sequence)
+
+The displayed value is `max(mode floor, escalation)`, and the floors differ far more than the slopes do:
+
+- **EARLY-RUSH pool** (DeepBit sits well under the 7-slot threshold): tier 2's floor is 21, tier 4's is 34, both slopes 5. Escalation passes 21 at block 5 (→25) but does not pass 34 until block 7 (→35). So **tier 2 visibly climbs 25 → 30 → 35 while tier 4 sits frozen at 34**, and both land on 40 at block 8 — precisely the developer's report, convergence value included.
+- **NORMAL pool**: strictly worse — floor 5 *and* slope 5 on both, so tier 2 and tier 4 are **numerically identical at every block, forever**. The anomaly is not visible there only because there is nothing to see.
+
+**Trace evidence** (`casino_bot_bid_trace.csv`, block 936): `bot_4, non_miner_7, ownTiers=2, rolledTier=2, rolledProbabilityPercent=30` — a tier-2 slot rolling 30 = 5 × 6, already well past its floor. The observed 40/40 is 5 × 8, seven blocks after a **common stamp**: a bid landing ~block 940 re-ranked the pool and `SweepStuckBidderSignatures` stamped *both* occupants on the same block, after which they climb in lockstep. (Before that common reset their stamps differed, which is what made one look faster than the other.)
+
+**Not a display bug.** The label (`ReBidProbabilityLabelForSlot`) and the roll (`BuildBotPoolOpportunities`) both compose `max(mode, escalation)` through the same pure `PeekStuckEscalationProbabilityPercent`. ND.10c/d's shared-source discipline held: the number shown *is* the number rolled. The ladder itself is what's wrong.
+
+#### 14.10.3 The fix — give tier 2 its own escalation base of 3
+
+One value in `StuckEscalationBasePercent`, plus its rationale. Tier 3 stays at 2:
+
+```
+tier 3 → 2    <    tier 2 → 3    <    tier 4 → 5    <    tier 5 → 8    <  …
+```
+
+- The **deliberate** ND.8d exception survives: tier 2 still out-probabilities tier 3 (3 > 2) in the escalation, exactly as it does in the static table (5 > 2 normal · 21 > 13 early · 5 > 3 urgency). That crossover is about **satisfaction** (tier 3 can be satisfied at ≥2 bids, tier 2 never is), not about desperation — it should not leak into the desperation slope.
+- The **accidental** collision dies: no shallow tier out-escalates a deeper one.
+- On screen in early rush, tier 4 unfreezes at block 7 (35 > 34) and tier 2 not until block 8 (27 > 21… reaching 30 at block 9), so the *visible* ordering matches the ladder's meaning.
+- `3` is Fibonacci-family per **D-ND6.4** (every ladder literal is: 2, 3, 5, 8, 13, 21, 34, 55, 89 — never formula-derived), and it is the only value between 2 and 5 that is.
+
+Blocks to certainty after the fix: tier 3 → 50, tier 2 → 34, tier 4 → 20, tier 5 → 13 — monotone in depth apart from the intended 2/3 swap.
+
+#### 14.10.4 OPEN QUESTION — does an escalating runner-up keep auctions open forever?
+
+Raised by the same audit, **not** answered by §14.10.3, and it needs a decision before ND.10i can be called complete.
+
+Any accepted bid must clear the leader's floor, so **every successful re-bid takes the lead and resets the 20-day rolling window** (D-ND4b.1). The current rules then say: the leader is *always satisfied* (tier 1, D-ND8d.1) and the runner-up escalates toward 100%. That is a **leapfrog engine** — runner-up escalates → bids → becomes leader → stops; the displaced leader becomes tier 2 → escalates → bids → … Each cycle resets the countdown, so while two solvent bots contest a pool **the window never expires** and resolution falls entirely to price-out (§22.10's designed economic terminator).
+
+Consistent with the evidence: DeepBit opened ~27 Feb and is still live on 7 Apr in-game — its 20-day window has already been reset at least once.
+
+Whether that is a bug or the system working is a genuine design call:
+
+- **(a) It is fine.** §22.10 says the geometric ladder prices everyone out eventually and that IS the terminator; the countdown is a tie-breaker for *quiet* pools, not the primary mechanism. Lowering tier 2's slope to 3 lengthens each cycle and that is enough.
+- **(b) Cap top-3 escalation.** Let tiers 2-3 escalate only up to a ceiling (e.g. 34%) instead of 100%, so a runner-up stays lively but never becomes a metronome. Keeps ND.10c's BitPaid fix (no flat 5% forever) without the leapfrog engine.
+- **(c) Freeze tier 2 while the pool is *contested*.** Escalate a lone tier-2 occupant only when nobody else has bid recently (the original "stuck" meaning — the BitPaid case *was* a dead pool). A pool with a fresh leader is not stuck; it is working.
+
+**Recommendation: (b)**, with the ceiling as an explicit named constant, because it is the smallest change that preserves both prior fixes and it fails safe — if auctions still drag, the ceiling is one number to tune during the P15.8 run. (c) is the most *semantically* correct ("stuck" should mean stuck) but needs a new "recent bid activity" signal, and that is a bigger change than this finding justifies today.
+
+#### 14.10.5 Files & scope
+
+`NetworkRoot.cs` only — `StuckEscalationBasePercent` (the tier-2 base), plus a ceiling in `EscalatedStuckPercent` if (b) is chosen. No new persisted state (`_stuckBidderSignatures` stays in-memory), no `WorldFormatVersion` bump, no UI work: the label already reads the same helper, so it follows automatically. Trace needs no new column — `rolledProbabilityPercent` already records what was rolled.
+
+#### 14.10.6 Questions & suggestions
+
+1. **[Decision needed] The §14.10.4 open question — (a) accept, (b) cap, or (c) contested-freeze?** Recommending **(b)** with a named `MaxTopTierEscalationPercent = 34`. Only this blocks the build.
+2. **[Confirm] Tier 2 base = 3.** The alternative reading is that tier 2 *should* be aggressive because it is one raise from the lead — but that argument applies to the **static** rate (already 21% in early rush, the second-steepest shallow value), not to the desperation slope. Confirming 3.
+3. **Suggestion — an ordering assertion, DEV-only. ✅ ACCEPTED & SHIPPED.** The seam broke because two tables are read by one consumer and nobody ever printed them together. A startup check that walks the slopes and `GD.PrintErr`s if the ordering breaks (excluding the intended 2/3 swap) catches the next such collision at launch instead of in a playtest. Same reflex as the P15.9 tripwire — **make the invariant say so when it breaks** — and cheap.
+4. **Suggestion — one line in the panel. ✅ ACCEPTED & SHIPPED.** Where a slot shows an escalated percentage, append its base and elapsed blocks (`24% (base 3 ×8 blocks stuck)`). The developer diagnosed this by noticing two numbers were equal that shouldn't be; showing the *composition* makes the ladder self-explaining and would have made the collision obvious on sight.
+5. **Observation, no action asked.** The common-stamp behaviour of `SweepStuckBidderSignatures` (one incoming bid re-ranks a pool and stamps every occupant at the same block, so they then climb in lockstep) is correct and worth keeping — but it does mean equal displayed percentages are *expected* after any re-rank, and only the **slopes** distinguish tiers. That makes §14.10.3's fix more important than it first appears: with equal slopes, a re-rank makes tier 2 and tier 4 permanently indistinguishable.
+
+#### 14.10.7 Verify in-game
+
+Open DeepBit (or any early-rush pool with a lone occupant at tier 2 and another at tier 4): the tier-4 label must cross its 34 floor and start climbing **before** the tier-2 label leaves its 21 floor, and the two must never read the same value while both are escalating. In a NORMAL-mode pool, a tier-2 and a tier-4 slot stuck since the same block must now differ (3n vs 5n) rather than being identical. Confirm **no top-3 slot ever displays above 34%**, and that one reading `34% (… , capped)` stays there instead of climbing. Escalating slots now read `[re-bid 24% (base 3 ×8 blocks stuck)]` — the base must match the tier (t2 → 3, t3 → 2, t4 → 5, t5 → 8 …) and the multiplier must advance by exactly 1 per block until a re-rank resets it. Trace: `rolledProbabilityPercent` on tier-2 rows grows in steps of 3. Launch log: **no `[ND.10i] Escalation slope ordering VIOLATED` line** — if one appears, a ladder table has been edited into a new collision.
 
