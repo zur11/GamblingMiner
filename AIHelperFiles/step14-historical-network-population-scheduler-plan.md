@@ -1402,6 +1402,8 @@ Why this shape:
 - **Total activity rises rather than falls:** `P(the bot bids at all) = 1 − ∏(1−r_k) ≥ max_k r_k` — strictly better than today's single-pool roll, and the global throttle stays exactly where it was (the 0/1/2 count draw caps the world at 2 bids per block regardless).
 - **Spread-wide seeding survives without an ordering rule.** An unparticipated pool has `r = 1.0` and therefore *always* hits; it wins the tie-break whenever it is the only hit, and shares it fairly when it is not. The explicit D-ND6.6 ordering becomes unnecessary — the emergent behavior is the same, minus the structural blindness it caused.
 
+> ⚠️ **The tie-break in D-ND10c.2 was changed from UNIFORM to WEIGHTED at ND.10l (§14.13, 2026-07-28).** This bullet is exactly where the flaw lived: "shares it fairly when it is not" is true, and that is the problem — a pool that *always* hits taking an *equal* share means every fresh company introduction halves an escalated re-bid's real chance. Everything else in D-ND10c.2 (parallel per-pool rolls, per-pool affordability filter, each pool keeping its calibrated rate) stands unchanged; only how a multi-hit slot is allocated is superseded. `RealLeadingBidRoll`'s share DP (D-ND10c.5) was reworked with it.
+
 **D-ND10c.3 — The stuck-bidder escalation extends to tiers 2 and 3.** The `bestTier > 3` gate (in `PeekStuckEscalationProbabilityPercent`, `ComputeStuckEscalationProbabilityPercent`, the Fix-A pre-roll, and `ReBidProbabilityLabelForSlot`) becomes `bestTier ≥ 2` — tier 1 is always satisfied and never escalates. `EscalatedStuckPercent`'s base lookup falls back, for tiers 2/3, to `ShallowTierProbabilityPercent(tier, earlyRush: false, urgent: false, ownBidCount: 1)` (tier 2 → 5, tier 3 → 2), keeping the existing "the base is always the plain NORMAL-mode value" convention; the composition stays `max(mode rate, escalation)` (the §12.5.5 round-3 non-regression floor is untouched). The single-slot gate (`ownSlotCount == 1`) is unchanged, so a tier-3 holder at ≥2 bids stays satisfied and never enters this path.
 
 *This is the decision that actually fixes BitPaid.* With it, bot_1's 2% climbs 2, 4, 6, 8 … and resolves within roughly a dozen blocks, at which point the bot holds 2 slots, tier 3 becomes satisfied, and the escalation self-terminates. Without it, no selection redesign moves that number.
@@ -1762,7 +1764,7 @@ This is what had made bot_1 invisible in the trace since block 946, incidentally
 
 `rolledProbabilityPercent` was written only **after** a pick, so all 52 `roll-declined` rows in the audit logged a bare `0`. ND.6b's whole premise is that "the declines ARE the calibration signal" — they carried none, which is why this took a chain replay rather than a trace read. New column **`poolRolls`** logs every biddable pool's composed probability and which hit: `non_miner_8:40*|non_miner_10:100*`.
 
-It also makes the **uniform tie-break** observable for the first time. Block 964, bot_2: `qualifyingPools=2, hitPools=2, chosenAmongHits=2`, target `non_miner_10` — its BitInstant roll **hit and lost the coin-flip** to a fresh 0.03 BTC seed pool. See §14.11.6.
+It also makes the **tie-break** observable for the first time. Block 964, bot_2: `qualifyingPools=2, hitPools=2, chosenAmongHits=2`, target `non_miner_10` — its BitInstant roll **hit and lost the coin-flip** to a fresh 0.03 BTC seed pool. That single row is what opened §14.11.6 and, through it, ND.10l (§14.13), which replaced the uniform draw with a weighted one.
 
 The writer now **rotates a stale-schema trace to `.csv.old`** instead of appending misaligned rows under an old header (§39.16 rule 1 — a lying number is invisible). No manual delete needed.
 
@@ -1772,17 +1774,19 @@ The current block pace is **~2.2 in-game days per block** against a 58,500 s (~0
 
 **So no slope, ceiling or ladder value is touched by ND.10j.** Calibrating them against a pace known to be broken would bake the defect into the table. Re-read §14.10 and this section only after R2 is verified in play.
 
-#### 14.11.6 Deferred — the tie-break dilution (open question, developer's call)
+#### 14.11.6 The tie-break dilution — ✅ RESOLVED at ND.10l (§14.13), 2026-07-28
 
 D-ND10c.2 chose a **uniform** tie-break among hits so an unparticipated pool "no longer monopolizes the slot by ordering". The flip side, now visible in `poolRolls`: an unparticipated pool always hits (`r = 1.0`), so **every fresh company introduction halves an escalated re-bid's chance that block**. With 40 companies dripping in along the address curve, this systematically dilutes exactly the re-bids ND.10c set out to make reachable — a priority problem reintroduced in the opposite direction from the one it fixed.
 
-Not built: it changes bidding behavior mid-playtest and amends a canonical decision. Options if taken up:
+Options put to the developer:
 
-- **(a)** weight the tie-break by probability (`P(pick k) = r_k / Σr`) — a 100% seed still usually wins, but a 64% escalated re-bid is no longer a coin flip;
+- **(a)** weight the tie-break by probability (`P(pick k) = r_k / Σr`) — ⚠️ **the arithmetic in this line is WRONG, see below**;
 - **(b)** exempt a stuck-escalated pool from the tie-break (it wins outright when it hits) — closest to ND.10a's deleted Fix A, and the strongest anti-stagnation lever;
 - **(c)** accept it, and treat fresh-pool seeding as legitimately higher priority.
 
-Recommendation: **(a)** — it preserves D-ND10c.2's "share it fairly" intent while making "fairly" mean *proportional to how badly each pool wants the slot*, and it needs no new state.
+**Outcome: (a) chosen, then corrected before building.** Weighting by the raw `r_k` does the OPPOSITE of what (a) claimed — a fresh pool's `r = 100` is a **sentinel** (D-ND6.5, "a first bid never rolls"), not a preference, and it is the largest number in the system, so it would take a *bigger* share than uniform gave it (a 64% escalated re-bid falling from ½ to 64/164 ≈ 39%, i.e. 32% → 25% per block). The mechanism was right and the weight was wrong: ND.10l ships the weighted draw with an explicit `FreshPoolSeedingWeight = 34` for unparticipated pools, lifting that same re-bid to ~42%. **(b) was re-examined and rejected** — an absolute priority starves fresh-pool seeding, which is how auctions start at all. Full decision log, the corrected arithmetic and the DP rework: **§14.13**.
+
+*(Kept in full rather than rewritten: the error is the useful part of the record. A plausible-sounding formula — "weight by probability" — was wrong because one of the quantities in it was a sentinel wearing a number's clothes, and nothing but working the arithmetic would have caught it.)*
 
 #### 14.11.7 A documented, accepted divergence
 

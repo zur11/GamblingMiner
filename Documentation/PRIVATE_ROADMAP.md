@@ -325,9 +325,13 @@ Candidate inputs (all already available, none requiring new state):
 - **Dividend inflow** (§22.12/ND.8g) — a bot holding NST/PST in several founded companies has a recurring BTC income the guard should credit it for.
 - **Per-bot personality** — the same per-world draw pattern used for the bots' governance preferences (D-ND8.13/26) would give each bot its own risk appetite, permanently and reproducibly.
 
+**A structural defect the policy must fix, not just a number** (found 2026-07-28, ND.10j's BitInstant audit — plan §14.11.3): **a bot can bid itself into the reserve guard.** The half-spendable cap is evaluated per bid, and the guard only runs on the *next* block sweep — never against the balance a bid would leave behind. `bot_1` sent 86.93 BTC out of 285.30 (legal under the cap) and landed at 198.51, under the 200 stop, in one move. Compounding it, the 200→300 hysteresis band is ~345 blocks wide at dividend-only income, so the "rest" is closer to a retirement: `bot_1` was out of every auction from block 947 to 964 and only re-entered because a process restart re-derived the in-memory set while it sat between the thresholds. **Whatever replaces the flat constants must be a pre-commit check** ("would this bid breach my reserve?"), not a post-hoc sweep, and its recovery band must be expressed in *time to refill* rather than a flat BTC gap.
+
 **Two pressures already scheduled that will change the arithmetic** (re-tune only after they land, not before):
 1. **Hardware progression (P5)** — hardware multiplies every casino-miner's attempts/sec and therefore its BTC income; the whole auction economy is sized against pre-hardware income today.
 2. **Dividend inflow** is only now becoming material as companies are founded — with several mature companies paying quarterly, the bots' BTC income stops being mining-only.
+
+**A third constant now sits in the same category:** `FreshPoolSeedingWeight` (34, ND.10l §14.13) — the tie-break weight an unbid pool carries against a contested one. It trades first-bid seeding against escalated re-bids, and block frequency changes how often the two compete at all, so it belongs to the same post-R2/post-P5 calibration pass.
 
 **Also wanted:** surface the knobs (reserve floor/ceiling or the policy's parameters, the raise band, the opening-bid anchor, the claim batching multiple) as **DEV-configurable** in the same spirit as `CasinoGamblingFinances`/`WorldEconomy`'s existing sliders, so a calibration run doesn't need a rebuild. Design + the audit that produced the stopgap: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.6.
 
