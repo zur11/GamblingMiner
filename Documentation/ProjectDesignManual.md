@@ -4312,27 +4312,65 @@ The seized **BTC is not moved at all**: it flows straight into P15.5's existing 
 
 `GetFbiInvestigationWarning` returns a line for `CompanyDetails` stating the state (*under investigation* / *FLAGGED — a raid can land on any block* / *cooling off*), the progress toward the threshold, the SC reserve against the tolerated figure for that category, and what to do about it. It is shown to **any** viewer, not just holders — the risk is a fact about the company, not about the holding — and it returns `null` when there is genuinely nothing to say (FBI inactive, category exempt, comfortably under tolerance), so the panel never carries a permanent decorative warning.
 
-The FED scene gained a matching DEV board listing every open file **in the same order the roll picks its target**, sharing `FbiToleranceScFor`/`FbiOverageRatio` with the roll itself — §39.15 rule 6, so a displayed number cannot drift from the mechanism.
+The FED scene gained a matching DEV board listing every open file **in the same order the roll picks its target**, sharing `FbiToleranceScFor`/`FbiOverageRatio` with the roll itself — §39.16 rule 6, so a displayed number cannot drift from the mechanism.
 
 **Every number above is a P15.8 calibration placeholder**: the four tolerance multipliers, `T`'s window, the meter's gain/decay/cap, the roll's base and cap, and the initial grant.
 
 ### 39.14 — Surfacing & telemetry (P15.7)
 
-P15.7 is the phase that mostly **already happened**. Four of its deliverables shipped early, each alongside the mechanism it observes, under §39.15's rule 2 ("a phase you cannot observe is a phase you cannot sign off"): the FED scene's Banking-layer block + financier preview (P15.7a, at P15.2), `bank_credit_trace.csv` (P15.7d, at P15.3), the shortfall ballot control (part of P15.7c, at P15.4e), and the Closed-Companies list + recovery tracker and the Federal-investigations board (P15.7b/c, at P15.5/P15.6).
+P15.7 is the phase that mostly **already happened**. Four of its deliverables shipped early, each alongside the mechanism it observes, under §39.16's rule 2 ("a phase you cannot observe is a phase you cannot sign off"): the FED scene's Banking-layer block + financier preview (P15.7a, at P15.2), `bank_credit_trace.csv` (P15.7d, at P15.3), the shortfall ballot control (part of P15.7c, at P15.4e), and the Closed-Companies list + recovery tracker and the Federal-investigations board (P15.7b/c, at P15.5/P15.6).
 
 What P15.7 itself added is the remainder.
 
 **The layer-1 sub-ledger (P15.7a).** Each founded bank in the FED scene now lists the companies it financed — BTC bought, SC paid, provision count. The distinction on that page is worth keeping straight: the **client accounts** at the top are layer 0 (bank ↔ FED), and this strip is layer 1 (bank ↔ company). That is the D-15.5 two-layer model made literally visible on one screen.
 
-**The banking-layer aggregate (P15.7b), and where it deliberately does NOT go.** WorldEconomy is the *macro* monetary scene, so it took the system-wide question — total collateral value vs total FED debt, plus a per-bank strip with an under-collateralized / shortfall / insolvent flag — and a **one-line pointer** to the Central Bank scene for closures. It did **not** take a copy of the Closed-Companies list, the recovery tracker or the FBI board, even though the phase map nominally assigned them here: those belong to the FED's own page (it is the creditor, the absorber and the custodian), and duplicating them would create two places to keep in step. One source per signal — §39.15 rule 6 applied to whole panels rather than single numbers.
+**The banking-layer aggregate (P15.7b), and where it deliberately does NOT go.** WorldEconomy is the *macro* monetary scene, so it took the system-wide question — total collateral value vs total FED debt, plus a per-bank strip with an under-collateralized / shortfall / insolvent flag — and a **one-line pointer** to the Central Bank scene for closures. It did **not** take a copy of the Closed-Companies list, the recovery tracker or the FBI board, even though the phase map nominally assigned them here: those belong to the FED's own page (it is the creditor, the absorber and the custodian), and duplicating them would create two places to keep in step. One source per signal — §39.16 rule 6 applied to whole panels rather than single numbers.
 
 Leverage is the honest headline for that block, and it is valued at **today's** price: banks borrow SC and sit on BTC, so "is the banking layer solvent?" is a live price question whose answer legitimately changes every day.
 
 **The bank lending panel (P15.7c).** A bank is not an ordinary company — most of its balance sheet is borrowed, and what kills it is a *date* — so a shareholder needs a picture the other panels never show: Central Bank debt (with drawn/repaid), collateral held and its live value, the **collateral-vs-debt health line** (this is the carry the whole reform exists to create: profitable while BTC rises, dangerous when it falls), the next installment and when it falls due, and the pending-shortfall / insolvent states.
 
-Every figure comes from `NetworkRoot.GetBankLendingSummary`, which computes them from the **same** constants and helpers the repayment itself uses (`BankQuarterlyRepaymentFraction`, the FED account, `BankCollateralBtc`). The installment shown is therefore the installment that will actually be charged — §39.15 rule 6, applied where it matters most: a number the player will make a decision on.
+Every figure comes from `NetworkRoot.GetBankLendingSummary`, which computes them from the **same** constants and helpers the repayment itself uses (`BankQuarterlyRepaymentFraction`, the FED account, `BankCollateralBtc`). The installment shown is therefore the installment that will actually be charged — §39.16 rule 6, applied where it matters most: a number the player will make a decision on.
 
-### 39.15 — Conventions this plan established (apply these to later phases)
+### 39.15 — Bot ballots must be legal ballots: projecting a stance into a company's band (P15.9)
+
+Found by the developer during the P15.8 run, at Papa's Pizzeria's first quarterly vote — and it is the most instructive bug of the plan, because everything about it was *working as written*.
+
+**The symptom.** The Board Vote panel offers the player a reserve dial bounded to the company's currency band. Papa's Pizzeria is **CB1**, so that dial runs `[75, 100]`. Beside it, the cast bot ballots read **0%** and **50%**. The player is held to the charter; the bots are not.
+
+**The cause.** `BuildBotBallot` filled the reserve dial from the bot's *own* band preference — `BandDefaultScPercent(pref.CurrencyBandPreference)`, i.e. its global stance (CB1 100% … CB5 0%) — with no reference at all to the company being voted at. The player's ballot is bounded twice (the SpinBox, and `TryRegisterPlayerVote`'s clamp); the bot path had no bound anywhere.
+
+**Why it mattered far more than the display.** `CloseCompanyVote` clamps only the **final weighted average** to the band. The four casino bots are drawn as a permutation of the five bands (§39.10's draw), so a CB1 company reliably carries two or three sub-75 ballots; the average landed below the floor; the clamp pinned the result to **exactly 75, every quarter, forever**. The vote produced a constant — and the player's ballot, the one input the game *pauses the entire simulation* to collect (D-ND8.18), could not move it, because it was being averaged against values the rules forbid. A governance system that visibly asks for your vote and structurally discards it is worse than one that never asked.
+
+**The fix is a projection, not a clamp — and that distinction is the whole design (D-15.24).** A bot's band preference is a position on a global "SC-ness" axis, not a literal target; the band is the company's *identity* (fixed at founding, never voted on) and the ballot is a tuning dial *inside* it. So the stance is mapped into the company's range rather than cut off at its edge. Clamping would have collapsed the CB5, CB4 and CB3 bots onto exactly 75 in a CB1 company — three identical ballots, and a result still pinned near the floor. It would have fixed the *displayed* value and left the *behaviour* broken. Projection keeps all five stances distinct in every band, which is precisely what gives the player's vote leverage.
+
+`NetworkRoot.ProjectStanceIntoBand` is **default-anchored**: the bot's own band default maps to the company's band default, interpolating linearly on each side. That makes the map the identity when the two bands agree — a CB2 bot at a CB2 company votes CB2's own 75 — which plain `[0,100] → [min,max]` interpolation does *not* give for CB2 and CB4, whose defaults do not sit at the centre of their own ranges. Results round to a whole percent (matching the player's `Step = 1` SpinBox), `.5` away from zero.
+
+| Bot stance | CB1 `[75,100]` | CB2 `[50,100]` | CB3 `[25,75]` | CB4 `[0,50]` | CB5 `[0,25]` |
+|---|---|---|---|---|---|
+| CB5 — 0% | 75 | 50 | 25 | 0 | *0* |
+| CB4 — 25% | 81 | 58 | 38 | *25* | 6 |
+| CB3 — 50% | 88 | 67 | *50* | 33 | 13 |
+| CB2 — 75% | 94 | *75* | 63 | 42 | 19 |
+| CB1 — 100% | *100* | 100 | 75 | 50 | 25 |
+
+**Expected consequence, and it is the point:** reserve outcomes now vary within the band instead of sitting on a bound. All four banks are CB1 (§39.7), so their SC/BTC mix is where this shows first and hardest, against P15.3's conversion volumes.
+
+**Two habits this reinforces.** First — *the clamp hid the bug for an entire plan*, so it now announces itself: `CloseCompanyVote` `GD.PrintErr`s when the raw average actually falls outside the band. Post-P15.9 it should never fire; if it does, some new ballot source is bypassing the projection. A guard that silently absorbs illegal input is indistinguishable from a guard that is never needed — make it say which it is. Second — the DEV stance printout used to read `targets 50% SC`, which after this fix is a number no bot will ever cast; it now prints the global stance *and* what it votes in each of the five bands, computed through `ProjectStanceIntoBand` itself (§39.16 rule 6: the printout exists to be read against observed ballots, so it must not describe a number that does not appear). The `CompanyDetails` ballot list — the readout that surfaced this — now names the band range in its header, so an out-of-band value is obvious on sight instead of requiring the reader to remember the company's charter.
+
+**The sibling case, deferred to P15.10.** A bank's market category is locked (§39.7 / D-15.12): the shift is voted, then refused. Nothing illegal is stored there, but its shareholders are still offered a control that cannot act. Same principle, separate phase.
+
+#### 39.15.1 — The first live verification, and what the tripwire bought (P15.9f)
+
+One quarter after the fix shipped, the reserve at Papa's Pizzeria still read 75% and it looked like the projection had not taken. It had — and the tripwire had already written the explanation to the log: *"cast an OUT-OF-BAND reserve average 37.55%, clamped to 75%"*.
+
+**Ballots are cast when a vote OPENS, not when it closes**, and an open vote's ballots are persisted in the snapshot. The vote that closed had opened *before* the rebuild, so closing it averaged pre-fix raw ballots (`0.4235×0 + 0.4021×50 + 0.1745×100 = 37.55%`) and clamped them back to the floor. The vote opened *after* the rebuild carried `bot_1 → 75` and `bot_3 → 88`, exactly the table. **A rebuild mid-playtest leaves any already-open vote carrying pre-fix ballots** — expected, self-clearing, never a reason to wipe a world.
+
+That is the argument for suggestion 4 in one incident: the guard named the company, the raw average and the band, which turned "the fix looks broken" into a five-minute audit with an arithmetic answer. It is worth generalizing — **when a clamp, a `Math.Max`, or a fallback exists to enforce an invariant that should already hold upstream, make it say so when it fires.** Otherwise a guard doing real work every day is indistinguishable from one that has never been needed, and the upstream defect lives behind it indefinitely. This one had.
+
+**And the readout gap it exposed (P15.9f).** The original bug was spotted in the Last Vote Snapshot's ballot list — which shows a **closed** vote. There was no equivalent for the vote actually in front of the player: bots cast the instant a vote opens, so at the moment the game *pauses* and demands a ballot, every other ballot is already known, persisted, and was being hidden. The Board Vote panel now lists them (each holder's resolver weight, its cast ballot or *not voted yet*) plus a live **"if the vote closed now"** line under the dial. Both that preview and `CloseCompanyVote` resolve through one pure static, `NetworkRoot.ComputeReserveVoteOutcome` — §39.16 rule 6 in its sharpest form: **a preview is a promise about what the resolver will do**, so two implementations of the same weighted average would drift the first time either side changed, and the player would be deciding on the stale one.
+
+### 39.16 — Conventions this plan established (apply these to later phases)
 
 Six rules came out of building P15.1–P15.5. They are recorded together here because each was first reached as a one-off judgement call and each turned out to apply again a phase or two later — they should be treated as defaults for P15.6–P15.8 and beyond, not re-derived each time.
 

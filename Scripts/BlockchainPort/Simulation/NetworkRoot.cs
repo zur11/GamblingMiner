@@ -831,6 +831,13 @@ public partial class NetworkRoot : Node
         NormalizeGenesisAcrossNodes();
         EnsureSecondBlockBootstrapPendingTx();
         RescanFounderReceiveWallets(); // Step 8.2 — position founders' fresh-coinbase frontier from the chain
+        // The four casino miner-bots' governance identities (band / market category / greed) are drawn HERE,
+        // at world creation, rather than lazily at the first company vote — so the stances are printed and
+        // committed from the world's very first launch (developer request ahead of the P15.8 run) instead of
+        // appearing only once the first company happens to found, years of game time later. The draw still
+        // lands in a snapshot write (the PersistStateToDisk immediately below), which is the property the
+        // original lazy call site was protecting; the vote path keeps calling it as an idempotent safety net.
+        EnsureBotGovernancePreferences();
         PersistStateToDisk();
         _isInitialized = true;
     }
@@ -1952,6 +1959,51 @@ public partial class NetworkRoot : Node
         _ => (0m, 25m), // CB5
     };
 
+    // P15.9a (2026-07-27) — project a BOT's global band stance onto the band of the company it is voting
+    // at. A bot's CurrencyBandPreference is a position on a global "SC-ness" axis (CB1 100% … CB5 0%), NOT
+    // a literal target. Casting it raw put ballots OUTSIDE the company's charter — at a CB1 company
+    // (range [75,100]) a CB5 bot cast a literal 0, while the player's own dial is bounded to [75,100] at
+    // both ends. And because CloseCompanyVote clamps only the FINAL weighted average, two or three
+    // sub-floor ballots (the four bots are drawn as a permutation of the five bands) dragged that average
+    // below the floor every quarter, pinning the result to exactly 75 forever — so the one ballot the game
+    // PAUSES to collect could never move the outcome.
+    //
+    // PROJECT, never clamp (P15.9.1): Math.Clamp would collapse the CB5/CB4/CB3 bots onto the same floor —
+    // three identical ballots and a result still pinned near it. Projection keeps all five stances distinct
+    // inside every band, which is what makes the player's vote matter.
+    //
+    // Option C, "default-anchored" (D-15.24): the bot's OWN band default maps to the COMPANY's band
+    // default, interpolating linearly on each side. That makes this the IDENTITY when the two bands agree
+    // (a CB2 bot at a CB2 company votes CB2's own 75) — which plain [0,100]→[min,max] interpolation does
+    // NOT give for the asymmetric bands CB2/CB4, whose default does not sit at the centre of their range.
+    // Rounded to a whole percent (the player's SpinBox uses Step = 1, so whole percents are the shared
+    // vocabulary), .5 away from zero. The final Clamp is a guard for the day a bound stops being an
+    // integer, not a redundancy.
+    public static decimal ProjectStanceIntoBand(decimal stanceScPercent, string companyBand)
+    {
+        (decimal min, decimal max) = BandScPercentBounds(companyBand);
+        decimal anchor = BandDefaultScPercent(companyBand);
+        decimal stance = Math.Clamp(stanceScPercent, 0m, 100m);
+
+        // The two anchors that sit ON a bound (CB1's 100, CB5's 0) leave one side of the piecewise map
+        // degenerate — the guards route the whole stance range through the side that exists.
+        decimal projected;
+        if (stance <= anchor && anchor > 0m)
+        {
+            projected = min + stance / anchor * (anchor - min);
+        }
+        else if (anchor < 100m)
+        {
+            projected = anchor + (stance - anchor) / (100m - anchor) * (max - anchor);
+        }
+        else
+        {
+            projected = anchor;
+        }
+
+        return Math.Clamp(Math.Round(projected, 0, MidpointRounding.AwayFromZero), min, max);
+    }
+
     // §12.4.3 — light → dark, the axis a quarterly vote may shift by at most ±1 category, clamped within
     // ±1 of the roster DEFAULT (D-ND8.7 — a company never drifts more than one step from its nature).
     private static readonly string[] MarketCategoryOrder = ["official", "light_grey", "dark_grey", "black"];
@@ -2227,10 +2279,13 @@ public partial class NetworkRoot : Node
         Math.Max(0m, CompanyTreasuryBtc(nonMinerNodeId) - BankCollateralBtc(nonMinerNodeId)));
 
     // D-ND8.13/D-ND8.26 — the four casino-miner-bots draw, once per world: a distinct 4-of-5 Currency
-    // Band preference set (one band always unrepresented) and a distinct full permutation of the 4
-    // market categories (all stances represented, one per bot). Drawn lazily on the first vote open —
-    // always inside block processing, so the draw lands in that same block's snapshot write and stays
-    // stable for the rest of the world's life.
+    // Band preference set (one band always unrepresented), a distinct full permutation of the 4 market
+    // categories, and (P15.4b) a distinct permutation of the 4 greed stances — so all four stances of each
+    // axis are always represented exactly once, and which bot holds which changes per world.
+    //
+    // Called at world creation (EnsureInitialized, so the stances exist and are printed from launch #1) and
+    // again on every vote open as an idempotent safety net. Both call sites land inside a snapshot write,
+    // which is what keeps the draw stable for the rest of the world's life.
     private static void EnsureBotGovernancePreferences()
     {
         IReadOnlyList<BotWalletRecord> minerBots = BotWalletRegistry.MinerBots;
@@ -2262,6 +2317,55 @@ public partial class NetworkRoot : Node
                 GreedPreference = greeds[i % greeds.Length]
             };
         }
+
+        PrintBotGovernanceStances("drawn for this world");
+    }
+
+    // DEV observability (2026-07-26, developer request ahead of the P15.8 run) — print the four CASINO
+    // MINER-BOTS' governance stances whenever they are decided or reloaded, so their behaviour over a long
+    // session can be read against who they actually are. Each line carries the DERIVED effect of the greed
+    // stance too (its payout multiplier and its shortfall dividends-cut %), because those are the numbers
+    // that actually show up in the votes you will be watching — reading them off the same helpers the
+    // ballots use, so the printout cannot drift from behaviour (§39.16 rule 6).
+    //
+    // Scope: bot_1..4 only. The Step-14 CAST miners (artforz, foundry_usa, …) have no governance identity —
+    // they never bet, never bid and never hold stock — so there is nothing to print for them.
+    private static void PrintBotGovernanceStances(string reason)
+    {
+        if (_botGovernancePreferences.Count == 0)
+        {
+            return;
+        }
+
+        GD.Print($"[Governance] Casino miner-bot stances ({reason}):");
+        foreach (BotWalletRecord bot in BotWalletRegistry.MinerBots)
+        {
+            if (!_botGovernancePreferences.TryGetValue(bot.NodeId, out BotGovernancePreference? pref))
+            {
+                continue;
+            }
+
+            string greed = string.IsNullOrEmpty(pref.GreedPreference) ? GreedAlmostGreedy : pref.GreedPreference;
+            // P15.9b — the band column is a GLOBAL stance, not a ballot: since P15.9a it is projected into
+            // each company's own band before it is cast, so printing it bare would name a number that never
+            // appears in any vote (§39.16 rule 6 — this printout exists to be read against observed
+            // ballots). The per-band projections are spelled out so a stance can be matched to what it
+            // actually votes, wherever it votes, off the SAME helper the ballot uses.
+            GD.Print(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "  {0,-6} · band {1,-3} (global SC stance {2,3:F0}% → votes CB1 {7:F0} · CB2 {8:F0} · CB3 {9:F0} · CB4 {10:F0} · CB5 {11:F0}) · market {3,-10} · greed {4,-17} (payout ×{5:0.0} of category default, shortfall {6:F0}% from dividends)",
+                bot.NodeId,
+                pref.CurrencyBandPreference,
+                BandDefaultScPercent(pref.CurrencyBandPreference),
+                pref.MarketCategoryPreference,
+                greed,
+                GreedPayoutMultiplier(greed),
+                GreedDividendsCutPercent(greed),
+                ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB1"),
+                ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB2"),
+                ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB3"),
+                ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB4"),
+                ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB5")));
+        }
     }
 
     // P15.4b — greed arrived AFTER the band/market axes, so a world whose preferences were already drawn
@@ -2285,6 +2389,8 @@ public partial class NetworkRoot : Node
         {
             missing[i].GreedPreference = greeds[i % greeds.Length];
         }
+
+        PrintBotGovernanceStances($"greed backfilled for {missing.Count} bot(s)");
     }
 
     private static void ShuffleInPlace(string[] values)
@@ -2993,7 +3099,7 @@ public partial class NetworkRoot : Node
     // Step 15 P15.7c (D-15.9) — everything a shareholder needs to judge a BANK they hold stock in. Computed
     // from the same constants and helpers the mechanisms themselves use (BankQuarterlyRepaymentFraction,
     // the FED account, BankCollateralBtc), so a displayed installment can never disagree with the one that
-    // will actually be charged — §39.15 rule 6. Collateral is valued LIVE, never at a frozen day.
+    // will actually be charged — §39.16 rule 6. Collateral is valued LIVE, never at a frozen day.
     public readonly record struct BankLendingSummary(
         decimal FedDebtSc,
         decimal TotalDrawnSc,
@@ -3240,8 +3346,9 @@ public partial class NetworkRoot : Node
     }
 
     // A bot's ballot is a pure function of its persisted preferences + the company's current state:
-    // Currency — its continuous target IS its preference point (a CB3 "balancer" targets 50/50 and damps
-    // swings, D-ND8.19b needs no special-casing); Market — one step toward its preferred category;
+    // Currency — its band stance PROJECTED into this company's band (P15.9a / D-15.24: the stance is a
+    // position on a global SC-ness axis, and a ballot outside the company's charter is not a legal vote);
+    // Market — one step toward its preferred category;
     // Payout — the category's default rate scaled by its GREED (P15.4c / D-15.13; the clamp is
     // [0, 2× default] and the ladder spans exactly that); Shortfall — §3.3's greed table (P15.4e).
     private static CompanyBallot BuildBotBallot(string botNodeId, CompanyGovernanceState gov)
@@ -3252,13 +3359,81 @@ public partial class NetworkRoot : Node
         string greed = string.IsNullOrEmpty(pref?.GreedPreference) ? GreedAlmostGreedy : pref.GreedPreference;
         return new CompanyBallot
         {
-            ReserveScPercentTarget = BandDefaultScPercent(pref?.CurrencyBandPreference ?? gov.CurrencyBand),
+            ReserveScPercentTarget = ProjectStanceIntoBand(
+                BandDefaultScPercent(pref?.CurrencyBandPreference ?? gov.CurrencyBand), gov.CurrencyBand),
             MarketShift = pref == null
                 ? 0
                 : Math.Sign(MarketCategoryIndex(pref.MarketCategoryPreference) - MarketCategoryIndex(gov.MarketCategory)),
             PayoutRatePercent = Scripts.Finance.Money.Normalize(
                 DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * GreedPayoutMultiplier(greed)),
             DividendsCutPercent = GreedDividendsCutPercent(greed)
+        };
+    }
+
+    // P15.9f (2026-07-27) — the reserve outcome of a set of ballots, extracted so that CompanyDetails'
+    // "if the vote closed now" preview and CloseCompanyVote's REAL resolution cannot diverge (§39.16
+    // rule 6). A preview is a promise about what the resolver will do, which is the sharpest form of the
+    // case that rule exists for: two implementations of the same weighted average would drift the first
+    // time either side changed, and the player would be making a decision on the stale one.
+    //
+    // The math is D-ND8.19b's: weight = holder's NST ÷ total NST (holders with no NST are ignored, and a
+    // ballot from one carries no weight), averaged over the ballots ACTUALLY CAST — so a half-voted ballot
+    // set previews the outcome among those who have voted so far — then clamped to the band.
+    public sealed class ReserveVoteOutcome
+    {
+        public decimal TotalNst { get; init; }
+        public decimal VotedWeight { get; init; }  // 0..1 — the share of all NST that has cast a ballot
+        public decimal RawAverage { get; init; }   // the weighted average before the band clamp
+        public decimal Outcome { get; init; }      // RawAverage clamped into the band (or the fallback)
+        public decimal BandMin { get; init; }
+        public decimal BandMax { get; init; }
+        public bool WasClamped { get; init; }
+        public bool HasVotes => VotedWeight > 0m;
+    }
+
+    public static ReserveVoteOutcome ComputeReserveVoteOutcome(CompanyFounding founding, string band,
+        IReadOnlyDictionary<string, CompanyBallot> ballots, decimal fallbackOutcome)
+    {
+        (decimal min, decimal max) = BandScPercentBounds(band);
+        decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
+        if (totalNst <= 0m || ballots.Count == 0)
+        {
+            return new ReserveVoteOutcome { BandMin = min, BandMax = max, Outcome = fallbackOutcome };
+        }
+
+        Dictionary<string, decimal> nstByHolder = founding.Holdings
+            .Where(h => h.Nst > 0m)
+            .ToDictionary(h => h.HolderId, h => h.Nst);
+
+        decimal votedWeight = 0m, weightedReserve = 0m;
+        foreach ((string holderId, CompanyBallot ballot) in ballots)
+        {
+            if (!nstByHolder.TryGetValue(holderId, out decimal nst) || nst <= 0m)
+            {
+                continue;
+            }
+
+            decimal weight = nst / totalNst;
+            votedWeight += weight;
+            weightedReserve += weight * ballot.ReserveScPercentTarget;
+        }
+
+        if (votedWeight <= 0m)
+        {
+            return new ReserveVoteOutcome { TotalNst = totalNst, BandMin = min, BandMax = max, Outcome = fallbackOutcome };
+        }
+
+        decimal raw = Scripts.Finance.Money.Normalize(weightedReserve / votedWeight);
+        decimal clamped = Math.Clamp(raw, min, max);
+        return new ReserveVoteOutcome
+        {
+            TotalNst = totalNst,
+            VotedWeight = votedWeight,
+            RawAverage = raw,
+            Outcome = clamped,
+            BandMin = min,
+            BandMax = max,
+            WasClamped = raw != clamped
         };
     }
 
@@ -3325,9 +3500,28 @@ public partial class NetworkRoot : Node
             else if (votedWeight > 0m)
             {
                 // D-ND8.19b — reserve %: simple weighted average of the cast targets, clamped to the
-                // band's ±25% range.
-                (decimal min, decimal max) = BandScPercentBounds(gov.CurrencyBand);
-                reserveResult = Math.Clamp(Scripts.Finance.Money.Normalize(weightedReserve / votedWeight), min, max);
+                // band's ±25% range. P15.9f — computed by the SAME helper the CompanyDetails preview calls,
+                // so "if the vote closed now" and what actually happens here can never be two different
+                // numbers (§39.16 rule 6). The local weightedReserve/votedWeight accumulated above still
+                // serve the payout / market / shortfall dials.
+                ReserveVoteOutcome outcome = ComputeReserveVoteOutcome(
+                    founding, gov.CurrencyBand, vote.Ballots, gov.ReserveScPercent);
+                decimal min = outcome.BandMin, max = outcome.BandMax, rawReserve = outcome.RawAverage;
+                reserveResult = outcome.Outcome;
+
+                // P15.9.5 (2026-07-27) — the tripwire. Since P15.9a every ballot is band-legal at the point
+                // it is CAST (bots projected here, the player clamped in TryRegisterPlayerVote), so the
+                // average is in-band by construction and this clamp is a no-op. It stays as the guarantee,
+                // not as a redundancy — and if it ever bites again, some new ballot source is bypassing the
+                // projection and silently pinning the result to a bound, exactly the bug P15.9 fixed. That
+                // failure hid for a whole plan because nothing announced it.
+                if (rawReserve != reserveResult)
+                {
+                    GD.PrintErr(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                        "[Governance] P15.9 tripwire — {0} ({1}) cast an OUT-OF-BAND reserve average {2:F2}%, clamped to {3:F0}% (band {4}: {5:F0}–{6:F0}). A ballot source is bypassing ProjectStanceIntoBand.",
+                        DescribeNodeForDev(gov.NonMinerNodeId), vote.Kind, rawReserve, reserveResult,
+                        gov.CurrencyBand, min, max));
+                }
 
                 if (vote.Kind == CompanyVoteKindQuarterly)
                 {
@@ -6001,6 +6195,9 @@ public partial class NetworkRoot : Node
         {
             _botGovernancePreferences[botNodeId] = pref;
         }
+        // DEV: restate the stances on every world load, so a long session's log always carries them near
+        // the top rather than only in the (possibly weeks-old) block where they were first drawn.
+        PrintBotGovernanceStances("restored with the world");
 
         _companyInflowMultipliers.Clear();
         foreach ((string companyId, decimal multiplier) in snapshot.CompanyInflowMultipliers ?? new Dictionary<string, decimal>())

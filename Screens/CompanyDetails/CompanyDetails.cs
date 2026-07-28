@@ -52,6 +52,7 @@ public partial class CompanyDetails : Control
 	private OptionButton? _marketOption;
 	private SpinBox? _payoutSpin;
 	private SpinBox? _dividendsCutSpin; // Step 15 P15.4e — shortfall votes only
+	private Label? _reservePreviewLabel; // Step 15 P15.9f — live "if the vote closed now" line
 	private Label? _voteFeedbackLabel;
 	private Label? _claimableLabel;
 	private Label? _claimFeedbackLabel;
@@ -98,7 +99,7 @@ public partial class CompanyDetails : Control
 	// Step 15 P15.7c (D-15.9) — a founded bank's lending book, for its shareholders. Every figure comes from
 	// NetworkRoot.GetBankLendingSummary, which computes them from the same constants and helpers the
 	// repayment itself uses — so the installment shown here is the installment that will actually be
-	// charged (§39.15 rule 6). Collateral is valued at the world's current day, never frozen.
+	// charged (§39.16 rule 6). Collateral is valued at the world's current day, never frozen.
 	private void BuildBankLendingPanel(CompanyGovernanceState gov)
 	{
 		NetworkRoot.BankLendingSummary? maybe = NetworkRoot.GetBankLendingSummary(gov.NonMinerNodeId);
@@ -509,6 +510,7 @@ public partial class CompanyDetails : Control
 		_marketOption = null;
 		_payoutSpin = null;
 		_dividendsCutSpin = null;
+		_reservePreviewLabel = null;
 		_voteFeedbackLabel = null;
 		_claimableLabel = null;
 		_claimFeedbackLabel = null;
@@ -546,6 +548,14 @@ public partial class CompanyDetails : Control
 			return;
 		}
 
+		// Step 15 P15.9f — the ballots ALREADY CAST in this vote. Until now the only ballot list in the
+		// scene was the Last Vote Snapshot, which shows a CLOSED vote — always one quarter too late to be
+		// useful. The bots cast the instant the vote opens, so at the moment the game pauses and asks the
+		// player to vote, every other ballot is already known and persisted; not showing them meant voting
+		// blind against information the engine had in hand. Shown for every vote kind and whether or not
+		// the player has voted yet.
+		BuildOpenVoteBallotList(founding, gov, vote);
+
 		bool playerVoted = vote.Ballots.ContainsKey(PlayerNodeId);
 		if (playerVoted && !vote.AwaitingPlayerVote)
 		{
@@ -575,6 +585,14 @@ public partial class CompanyDetails : Control
 		_reserveSpin = new SpinBox { MinValue = (double)min, MaxValue = (double)max, Step = 1, Value = (double)gov.ReserveScPercent };
 		reserveRow.AddChild(_reserveSpin);
 		_actionVBox.AddChild(reserveRow);
+
+		// P15.9f — the live "where does my dial land the result" line, recomputed on every turn of the
+		// SpinBox through the SAME helper CloseCompanyVote resolves with, so what is promised here is what
+		// the vote will do (§39.16 rule 6).
+		_reservePreviewLabel = new Label { AutowrapMode = TextServer.AutowrapMode.Word };
+		_actionVBox.AddChild(_reservePreviewLabel);
+		UpdateReservePreview(founding, gov, vote);
+		_reserveSpin.ValueChanged += _ => UpdateReservePreview(founding, gov, vote);
 
 		if (quarterly)
 		{
@@ -607,6 +625,79 @@ public partial class CompanyDetails : Control
 
 		_voteFeedbackLabel = new Label { Text = vote.AwaitingPlayerVote ? "The game is paused until you vote." : " " };
 		_actionVBox.AddChild(_voteFeedbackLabel);
+	}
+
+	// Step 15 P15.9f — every ballot already cast in the OPEN vote, plus who has not voted yet. The weights
+	// are the resolver's own (holder NST ÷ total NST, D-ND8.19b), so a holder can see exactly how much of
+	// the outcome their own ballot commands before they cast it.
+	private void BuildOpenVoteBallotList(CompanyFounding founding, CompanyGovernanceState gov, CompanyVote vote)
+	{
+		decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
+		if (totalNst <= 0m) return;
+
+		bool shortfall = vote.Kind == NetworkRoot.CompanyVoteKindShortfall;
+		(decimal min, decimal max) = NetworkRoot.BandScPercentBounds(gov.CurrencyBand);
+		string header = shortfall
+			? "Ballots cast so far (shortfall split):"
+			: string.Create(CultureInfo.InvariantCulture,
+				$"Ballots cast so far (band {gov.CurrencyBand}: {min:F0}–{max:F0}% SC):");
+		_actionVBox.AddChild(new Label { Text = header });
+
+		foreach (CompanyShareHolding h in founding.Holdings.Where(h => h.Nst > 0m).OrderByDescending(h => h.Nst))
+		{
+			decimal weight = h.Nst / totalNst;
+			string who = h.HolderId == PlayerNodeId ? "You" : _networkRoot.DescribeAddress(h.HolderId);
+			string cast;
+			if (!vote.Ballots.TryGetValue(h.HolderId, out CompanyBallot? ballot))
+			{
+				cast = h.HolderId == PlayerNodeId ? "— not voted yet (this vote is waiting on you)" : "— not voted yet";
+			}
+			else if (shortfall)
+			{
+				cast = string.Create(CultureInfo.InvariantCulture,
+					$"— voted: {ballot.DividendsCutPercent:F0}% out of dividends / {100m - ballot.DividendsCutPercent:F0}% out of reserves");
+			}
+			else
+			{
+				string extra = vote.Kind == "quarterly"
+					? string.Create(CultureInfo.InvariantCulture,
+						$", market {MarketShiftLabel(ballot.MarketShift)}, payout {ballot.PayoutRatePercent:F1}%")
+					: string.Empty;
+				cast = string.Create(CultureInfo.InvariantCulture,
+					$"— voted: reserve {ballot.ReserveScPercentTarget:F0}%{extra}");
+			}
+
+			_actionVBox.AddChild(new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture, $"   {who}  —  weight {weight:P2}  {cast}")
+			});
+		}
+	}
+
+	// Step 15 P15.9f — "if the vote closed now", live against the reserve dial. Two numbers, because they
+	// answer different questions: where the already-cast ballots stand on their own, and where the player's
+	// current dial position would land the result once their weight joins.
+	private void UpdateReservePreview(CompanyFounding founding, CompanyGovernanceState gov, CompanyVote vote)
+	{
+		if (_reservePreviewLabel == null) return;
+
+		NetworkRoot.ReserveVoteOutcome cast = NetworkRoot.ComputeReserveVoteOutcome(
+			founding, gov.CurrencyBand, vote.Ballots, gov.ReserveScPercent);
+
+		var hypothetical = new Dictionary<string, CompanyBallot>(vote.Ballots)
+		{
+			[PlayerNodeId] = new CompanyBallot { ReserveScPercentTarget = (decimal)(_reserveSpin?.Value ?? 0d) }
+		};
+		NetworkRoot.ReserveVoteOutcome withMine = NetworkRoot.ComputeReserveVoteOutcome(
+			founding, gov.CurrencyBand, hypothetical, gov.ReserveScPercent);
+
+		string others = cast.HasVotes
+			? string.Create(CultureInfo.InvariantCulture,
+				$"Ballots in so far ({cast.VotedWeight:P0} of the votes) average {cast.RawAverage:F2}% SC.")
+			: "No other ballot has been cast yet.";
+
+		_reservePreviewLabel.Text = string.Create(CultureInfo.InvariantCulture,
+			$"{others}  With your ballot at {_reserveSpin?.Value ?? 0d:F0}%, the vote would close at {withMine.Outcome:F2}% SC (now {gov.ReserveScPercent:F2}%).");
 	}
 
 	// Step 15 P15.4e (D-15.7) — the bank shortfall ballot: one dial deciding WHO absorbs the SC this bank
@@ -890,7 +981,16 @@ public partial class CompanyDetails : Control
 		// ND.9g — every participant's cast ballot.
 		if (rec.Ballots.Count > 0)
 		{
-			_infoVBox.AddChild(new Label { Text = "Ballots cast:" });
+			// P15.9 — name the band range in the header. This is the readout that surfaced the out-of-band
+			// bot ballots (bots voted their raw global stance, e.g. 0% at a CB1 company whose charter allows
+			// only 75–100), and reading a bare "voted: reserve 0%" required remembering which band this
+			// company is. With the range stated, an illegal value is obvious on sight.
+			(decimal ballotMin, decimal ballotMax) = NetworkRoot.BandScPercentBounds(gov.CurrencyBand);
+			_infoVBox.AddChild(new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"Ballots cast (band {gov.CurrencyBand}: {ballotMin:F0}–{ballotMax:F0}% SC):")
+			});
 			foreach (VoteBallotRecord b in rec.Ballots.OrderByDescending(b => b.Weight))
 			{
 				string market = rec.Kind == "quarterly"

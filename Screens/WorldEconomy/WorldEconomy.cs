@@ -110,7 +110,7 @@ public partial class WorldEconomy : Control
 	// system-wide question ("is the banking layer solvent?") and a per-bank strip; the PER-CLIENT detail,
 	// the movement histories, the Closed-Companies list and the FBI board live in the Central Bank [DEV]
 	// scene, which is the FED's own page — duplicating them here would mean two places to keep in step
-	// (§39.15 rule 6's spirit: one source per signal). The closure line below is a pointer, not a copy.
+	// (§39.16 rule 6's spirit: one source per signal). The closure line below is a pointer, not a copy.
 	//
 	// Leverage is the honest headline: banks borrow SC and sit on BTC, so their solvency is a live price
 	// question, valued at TODAY's price — never frozen at a historical day.

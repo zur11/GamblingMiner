@@ -284,6 +284,21 @@ list** (D-15.15) — a sibling view to `CompanyDetails` recording the closure ti
   via the existing `RegisterLoanDraw`/`RegisterBurn` hooks. Fork B (retiring `_debtByBorrower` so the
   FED is the single debt store) is a **deferred optional cleanup**, not scheduled.
 
+### Round 4 (2026-07-27, from the P15.8 playtest — see P15.9)
+
+- **D-15.24 (P15.9):** a bot's `CurrencyBandPreference` is a position on a **global SC-ness axis**, not a
+  literal ballot. Every bot ballot is **projected into the band of the company being voted at** —
+  **default-anchored** (the bot's own band default maps to the company's band default, linear on each
+  side, so the map is the identity when the two bands agree), rounded to a whole percent, `.5` away from
+  zero. **Project, never clamp:** clamping collapses every out-of-band bot onto the same bound, which is
+  what left the final average pinned there. The final clamp in `CloseCompanyVote` stays as the guarantee
+  and now announces itself (`GD.PrintErr`) if it ever bites.
+- **D-15.25 (P15.10):** a bank's locked market dial is **disabled with its reason shown, never hidden**;
+  **bot ballots are left untouched** (the `shift_refused=bank_locked` trace records a real intent — an
+  honest refusal beats a silent one); and the **result** line in the Last Vote Snapshot names the refusal,
+  **re-derived** from the stored ballot weights rather than persisted as a new field. Build it when the
+  playtest reaches a founded bank, not before (§39.16 rule 2).
+
 ---
 
 ## 5. Implementation picks (all DECIDED — see D-15.20…22)
@@ -457,6 +472,15 @@ Once these three land, the design is complete enough to lock P15.0 and start bui
 - **P15.8 — Calibration playtest.** One DEV entry-year run (temporarily set `DevEntryYear`, restore to 0
   before merge) to verify conversions route through banks, debts accrue/repay, the carry behaves across
   a BTC bull/bear era, and the monetary invariant holds.
+- **P15.9 — Bot ballots must respect the company's currency band** *(found during P15.8)*. Bots cast their
+  raw global band stance (0/25/50/75/100) regardless of the company's charter, so a CB1 company's vote is
+  averaged over illegal ballots and pins to its floor every quarter while the player is held to `[75,100]`.
+  Project each bot's stance into the company's band instead of clamping it (D-15.24, default-anchored).
+  **→ §8; ✅ IMPLEMENTED 2026-07-27.**
+- **P15.10 — The market-shift dial a bank's shareholders cannot move** *(from P15.9 question 5)*. A bank's
+  category is locked (D-15.12), so its NST holders are offered a Market-direction control whose every
+  option is refused. Present it honestly rather than silently. **→ §8; ⏸ DEFERRED by design — decisions
+  locked (D-15.25), start when the P15.8 run reaches a founded bank (first: 2012-09-03).**
 
 ---
 
@@ -839,7 +863,8 @@ shortfall vote; the casino still never repays (D-15.17).
 >
 > **Cross-cutting conventions.** Every judgement call from P15.1–P15.5 is written up in the manual beside
 > the mechanism it belongs to, and the six that recur are collected as standing rules in
-> `ProjectDesignManual.md` **§39.15** — read that before starting a new phase.
+> `ProjectDesignManual.md` **§39.16** (was §39.15 until P15.9 took that number) — read that before
+> starting a new phase.
 >
 > **Left for the developer's P15.8 verification:** an unrecoverable bank closes and appears in the list with
 > reason `debt_default`; a scheduled inflow to a dead company lands at its heir and is tracked; a
@@ -970,6 +995,22 @@ player-facing) and traced.
 
 ### P15.8 — Calibration playtest
 
+> **⚠ ACTIVE DEV SETTING (2026-07-26): `TimelineConfig.DevEntryYear = 2010`.** The first launch after this
+> change **wipes the world automatically** (the Tag becomes `CANON-2009-01-03+ENTRY-2010`, so
+> `ResetWorldIfIncompatible`'s existing guard fires) and the bootstrap fast-builds real history from
+> 2009-03-21 to land the player on **21 Mar 2010**. A `[ENTRY-2010 DEV]` StatusBar watermark is shown for
+> as long as this is non-zero (added here, mirroring the TL.2 alt-timeline watermark rule — an entry-year
+> world is canon-COMPATIBLE and therefore *easier* to mistake for a real playthrough).
+> **MUST be restored to `0` before merging to `main`.**
+>
+> **What 2010-03-21 does and does not exercise.** It lands ~4 months BEFORE Market Birth (2010-07-18) and
+> ~2.5 years before the first bank founds (First Satoshi Savings, 2012-09-03). At the landing instant there
+> is therefore no BTC price, no fees, no auctions, no companies and no banks — **the entire plan15 banking
+> layer is dormant** and the Central Bank scene will correctly read "No bank company has founded yet."
+> This is the right setting for watching the whole economy unfold from before the market exists; it is NOT
+> the setting for calibrating the plan15 placeholders, which needs the world to reach 2013+ (either by
+> playing forward from here, or by a separate run at `DevEntryYear = 2013`+).
+
 - One **DEV entry-year** run (temporarily set `TimelineConfig.DevEntryYear` to a chosen year — restore to
   `0` before merge, the step14 lesson): verify conversions route through banks, FED debts accrue and repay,
   the BTC carry behaves across **a bull and a bear era**, shortfall votes + dissolutions + FBI seizures
@@ -980,3 +1021,419 @@ player-facing) and traced.
 
 **Exit:** plan15 behaves across eras with the invariant intact; ready to merge to `main` (restore
 `DevEntryYear = 0` first).
+
+### P15.9 — Bot ballots must respect the company's currency band — ✅ IMPLEMENTED (2026-07-27, found at P15.8)
+
+> **Build log.** `dotnet build` clean, 0 warnings. All five questions in §P15.9.5 answered by the developer
+> the same day: **Option C** (default-anchored projection, D-15.24) · rounding **nearest, .5 up**
+> (`MidpointRounding.AwayFromZero` — `87.4 → 87`, `87.5 → 88`) · both suggestions accepted (band range in
+> the ballot-list header, clamp tripwire) · and the market-shift review taken as its own phase (**P15.10**).
+> Shipped: `NetworkRoot.ProjectStanceIntoBand` + its one call site in `BuildBotBallot`; the `CloseCompanyVote`
+> tripwire; the reworked `PrintBotGovernanceStances` line; `CompanyDetails`' ballot-list header. Docs:
+> `CLAUDE.md` + `ProjectDesignManual.md` **§39.15**, standing conventions renumbered §39.15 → **§39.16** so
+> they stay last.
+
+> **The finding (developer, P15.8 run, Papa's Pizzeria's first quarterly vote).** The Board Vote panel
+> offers the player a reserve dial bounded to the company's band — Papa's Pizzeria is **CB1**, so the
+> SpinBox is `[75, 100]` — yet the bot ballots listed beside it read **0%**, **50%**, etc. The player is
+> held to the band; the bots are not. That is not a cosmetic mismatch: those out-of-band ballots enter the
+> weighted average as real numbers.
+
+#### P15.9.0 — Diagnosis (confirmed by inspection, no repro needed)
+
+`NetworkRoot.BuildBotBallot` fills the reserve dial from the bot's **own** band preference, with no
+reference to the company being voted on:
+
+```csharp
+ReserveScPercentTarget = BandDefaultScPercent(pref?.CurrencyBandPreference ?? gov.CurrencyBand),
+```
+
+`BandDefaultScPercent` returns the bot's global stance — CB1 100 · CB2 75 · CB3 50 · CB4 25 · CB5 0 — so a
+CB5 bot voting at a CB1 company casts a literal `0`, twenty-five points below anything that company's
+charter permits. The player's ballot, by contrast, is band-bounded twice: the SpinBox
+(`CompanyDetails.cs:571-575`) and `TryRegisterPlayerVote`'s `Math.Clamp(..., min, max)`
+(`NetworkRoot.cs:3719-3722`).
+
+**The consequence is worse than the display.** `CloseCompanyVote` clamps only the *final weighted average*
+to `BandScPercentBounds` (`NetworkRoot.cs:3380-3381`). With the four bots drawn as a permutation of the
+five bands, a CB1 company typically carries two or three sub-75 ballots, the average lands below the floor,
+and the clamp pins the result to **exactly 75 every single quarter**. The vote produces a constant. The
+player's ballot — the one input the game *pauses* to collect (D-ND8.18) — cannot move the outcome, because
+it is being averaged against values the rules forbid. This is a §39.16 rule 1 violation: a displayed figure
+(the cast ballot) that does not correspond to a legal state of the thing it describes.
+
+Scope: `BuildBotBallot` is shared by **all** vote kinds, so founding, quarterly and >30%-special votes are
+all affected. The market-shift, payout and shortfall dials are **not** affected — their bot values are
+already inside their own clamps (`{-1,0,1}`, `[0, 2× default]`, `[0,100]`).
+
+#### P15.9.1 — The rule
+
+A bot's band preference is a position on a global **"SC-ness" axis**, not a literal target. A ballot must
+express that same position **inside whatever range the company's charter allows** — the band is the
+company's identity (fixed at founding, never voted on), the ballot is a tuning dial within it.
+
+So: **project, don't clamp.** Clamping (`Math.Clamp(pref, min, max)`) would collapse the CB5, CB4 and CB3
+bots onto exactly 75 in a CB1 company — three identical ballots, and a result still pinned near the floor.
+Projection preserves the full five-way spread in every band, which is what makes the player's vote matter.
+
+**The projection is default-anchored (D-15.24, Option C).** The bot's OWN band default maps to the
+COMPANY's band default, interpolating linearly on each side:
+
+```
+stance ≤ companyDefault :  min        + (stance / companyDefault)               × (companyDefault − min)
+stance ≥ companyDefault :  companyDefault + ((stance − companyDefault) / (100 − companyDefault)) × (max − companyDefault)
+```
+
+This is the **identity when the two bands agree** — a CB2 bot at a CB2 company votes CB2's own 75 — which
+plain `[0,100] → [min,max]` interpolation does not give for the asymmetric bands CB2/CB4, whose default does
+not sit at the centre of their own range. The two anchors that sit ON a bound (CB1's 100, CB5's 0) leave one
+side degenerate; the guards route the whole stance through the side that exists, and there the two options
+coincide. Result rounded to a whole percent — **nearest, `.5` away from zero** (`87.4 → 87`, `87.5 → 88`) —
+then `Math.Clamp`ed to the band as a guard for the day a bound stops being an integer.
+
+| Bot stance | Pulls toward | CB1 `[75,100]` | CB2 `[50,100]` | CB3 `[25,75]` | CB4 `[0,50]` | CB5 `[0,25]` |
+|---|---|---|---|---|---|---|
+| CB5 — `0%` | all-BTC extreme | **75** | 50 | 25 | 0 | *0* |
+| CB4 — `25%` | | 81 | 58 | 38 | *25* | 6 |
+| CB3 — `50%` | the middle | **88** | 67 | *50* | 33 | 13 |
+| CB2 — `75%` | | 94 | *75* | 63 | 42 | 19 |
+| CB1 — `100%` | all-SC extreme | ***100*** | 100 | 75 | 50 | 25 |
+
+*Italics = the anchor cell, where the bot's band matches the company's and the projection is the identity.*
+Both figures the developer named land exactly: `0% → 75`, `50% → 87.5 → 88`.
+
+#### P15.9.2 — Subphases
+
+- **P15.9a — The projection helper. ✅** `NetworkRoot.ProjectStanceIntoBand(decimal stanceScPercent,
+  string companyBand)`, a pure static beside `BandScPercentBounds` implementing the anchored map above.
+  Public/static so the DEV printout and any future UI read the **same** helper the ballot does (§39.16
+  rule 6). One call site — `BuildBotBallot`'s `ReserveScPercentTarget`, now
+  `ProjectStanceIntoBand(BandDefaultScPercent(pref?.CurrencyBandPreference ?? gov.CurrencyBand), gov.CurrencyBand)`.
+- **P15.9b — The DEV stance printout. ✅** `PrintBotGovernanceStances` printed `targets 50% SC` — after
+  P15.9a that is no ballot any bot will ever cast. The band column is now labelled a **global SC stance**
+  and each line spells out what it votes in all five bands
+  (`global SC stance 50% → votes CB1 88 · CB2 67 · CB3 50 · CB4 33 · CB5 13`), computed through
+  `ProjectStanceIntoBand` itself so the printout cannot drift from the ballots it exists to be read
+  against (§39.16 rule 6).
+- **P15.9c — The clamp tripwire (accepted suggestion 4). ✅** `CloseCompanyVote` now `GD.PrintErr`s when the
+  raw weighted average falls outside the band and the clamp actually bites, naming the company, vote kind,
+  raw vs. clamped value and the band. Post-P15.9 it should never fire; if it does, some new ballot source
+  is bypassing the projection. This exact failure hid for a whole plan precisely because nothing announced
+  it — the clamp silently absorbed it.
+- **P15.9d — Ballot-list header (accepted suggestion 3). ✅** `CompanyDetails`' Last Vote Snapshot now reads
+  `Ballots cast (band CB1: 75–100% SC):`. That readout is what surfaced this bug, and a bare
+  `voted: reserve 0%` required the reader to remember the company's band; with the range stated an illegal
+  value is obvious on sight.
+- **P15.9e — Verification (developer, in-game).** Open Papa's Pizzeria's next quarterly vote: every listed
+  ballot reads a value inside `75–100`; the result is no longer pinned at exactly 75; moving the player's
+  own dial visibly moves the outcome; no tripwire line in the log. Second check in a non-CB1 company (a
+  CB3/CB4 roster company) that the spread also lands inside *its* band. Also worth one glance at the
+  `[Governance]` stance printout on launch — the five projections per bot should match the table above.
+- **P15.9f — The OPEN vote's ballots, in the Board Vote panel. ✅** (2026-07-27, from the first live
+  verification — see §P15.9.6.) The only ballot list in the scene was the Last Vote Snapshot, which shows a
+  **closed** vote: always one quarter too late to inform the ballot being cast. Bots cast the instant a vote
+  opens, so at the moment the game **pauses** and asks the player to vote, every other ballot is already
+  known and persisted — and was being hidden. Added to `BuildBoardVotePanel`: (a) `BuildOpenVoteBallotList`
+  — one row per NST holder with the resolver's own weight and either its cast ballot (kind-aware: reserve /
+  market / payout, or the shortfall split) or *not voted yet*; and (b) a live **"if the vote closed now"**
+  line under the reserve dial, recomputed on every turn of the SpinBox. Both the preview and
+  `CloseCompanyVote` now resolve through ONE new pure static, `NetworkRoot.ComputeReserveVoteOutcome`
+  (§39.16 rule 6 — a preview is a *promise about what the resolver will do*, the sharpest case for that
+  rule: two implementations of the same weighted average would drift the first time either changed, and the
+  player would be deciding on the stale one). Display-only; no persisted state, no bump. Layout re-checked
+  against Ch. 29 — `ActionVBox` already lives inside the bounded `ContentScroll` with the Back button as a
+  footer sibling, so the added rows extend the scroll and clip nothing.
+
+#### P15.9.3 — Explicitly NOT changed
+
+- **The player's path.** Already correct at both ends (SpinBox + `TryRegisterPlayerVote` clamp).
+- **The final clamp in `CloseCompanyVote`.** It stays — with every ballot now in-band the average is in-band
+  by construction and the clamp becomes a no-op, but it is the guard that makes that guarantee, not a
+  redundancy to delete.
+- **Persisted state / `WorldFormatVersion`.** No new field, no changed meaning of an existing one. Old
+  `VoteBallotRecord` rows in `VoteHistory` keep their out-of-band values — that is honest history of how
+  the vote actually ran, not data to migrate (and the P15.8 world gets wiped on the next entry-year change
+  anyway). **No bump.**
+- **The band itself.** `gov.CurrencyBand` is set once at founding and never voted on. That is the premise
+  this fix rests on, and it stays.
+
+#### P15.9.4 — Expected behaviour change (not a regression)
+
+CB1 company reserve results will **rise off the 75 floor** and start varying quarter to quarter. That is
+the fix working: today's constant is the clamp swallowing illegal ballots. Every band is affected the same
+way — outcomes move from "pinned at whichever bound the illegal ballots dragged them to" toward a genuine
+weighted average of five legal positions. The **banks are all CB1** (Appendix A), so their SC/BTC reserve
+mix is exactly where this will show up first and most — worth watching against P15.3's conversion volumes
+during the rest of the P15.8 run.
+
+#### P15.9.5 — Questions & suggestions — ALL ANSWERED (developer, 2026-07-27)
+
+1. **The asymmetric-band wrinkle — pure linear (A) or default-anchored (C)? → C (D-15.24).** Pure linear
+   had one oddity: a **CB2 bot voting at a CB2 company** would cast `88`, not the `75` that *is* its own
+   stated stance, because CB2's default sits below the centre of CB2's range `[50,100]` (same for CB4;
+   CB1/CB3/CB5 are unaffected, their default sits at a bound or at the centre). C pins the bot's own band
+   default to the company's band default and interpolates on each side, so "a bot in a company that shares
+   its band votes that band's default" is true everywhere. Both options produce the **identical CB1
+   column**, so the two figures the developer named were never in question.
+2. **Rounding → nearest, `.5` up** (`MidpointRounding.AwayFromZero`): `87.4 → 87`, `87.5 → 88`. Under
+   Option C this changes one cell against the originally-proposed ceiling (CB4 stance at a CB1 company:
+   `81.25` → **81**, not 82); every other value lands exactly or on a `.5`, which still rounds up.
+3. **Band range in the ballot-list header → accepted** (shipped as P15.9d).
+4. **Clamp tripwire → accepted** (shipped as P15.9c).
+5. **Parallel review of the market-shift ballot → yes, as its own phase (P15.10).** It is *not* out of
+   range (bots vote `Math.Sign` of a category difference, always `{-1,0,1}`), but it has the structurally
+   similar shape this phase is about: a bank's shift is voted and then refused
+   (`shift_refused=bank_locked`, D-15.12), so bank shareholders — the player among them — cast a dial that
+   cannot move anything. Deliberate and traced, but the same "don't offer a dial that cannot act"
+   principle applies. Scoped separately below.
+
+#### P15.9.6 — First live verification (2026-07-27): the tripwire caught its own transition
+
+The developer reported the reserve **still reading 75%** at Papa's Pizzeria one quarter after the fix.
+Audited against the live save (`blockchain/state.json`) and `godot.log` — **the fix was working, and the
+tripwire had already explained it**:
+
+> `[Governance] P15.9 tripwire — Papa's Pizzeria (non_miner_2) (quarterly) cast an OUT-OF-BAND reserve
+> average 37.55%, clamped to 75% (band CB1: 75–100). A ballot source is bypassing ProjectStanceIntoBand.`
+
+**Ballots are cast when a vote OPENS, not when it closes**, and an open vote's `Ballots` dictionary is
+persisted in `BlockchainStateSnapshot`. The quarterly that closed had opened at block 890 — *before* the
+rebuild — so closing it merely averaged pre-fix raw ballots: `0.4235×0 + 0.4021×50 + 0.1745×100 = 37.55%`,
+clamped back up to the 75 floor. The **currently open** vote (block 939), opened post-fix, carries
+`bot_1 → 75` (CB5 stance) and `bot_3 → 88` (CB3 stance) — exactly the projection table — so the next close
+lands at `67.14 + 0.1745 × (player ballot)`, i.e. **80.2–84.6%**: off the floor for the first time, with the
+player's 17.45% weight moving it ~4.4 points. ArtForz Cluster (CB5) showed the identical transitional
+signature (raw 37.30% → clamped 25%).
+
+**Two conclusions worth keeping.** (1) A rebuild mid-playtest leaves any *already-open* vote carrying
+pre-fix ballots — expected, self-clearing at the next open, and not a reason to wipe. (2) The suggestion-4
+tripwire paid for itself on its first day: it named the company, the raw average and the band, which is what
+turned "the fix looks broken" into a five-minute audit with an exact arithmetic answer. **A guard that
+silently absorbs illegal input is indistinguishable from a guard that is never needed.**
+
+The same session surfaced P15.9f above: the developer had spotted the original bug in the Last Vote
+Snapshot's ballot list, then found no equivalent for the vote actually in front of them — because that list
+only ever showed *closed* votes.
+
+**Exit:** every ballot cast at a company — bot or player — lies inside that company's currency band; the
+reserve result varies within the band instead of pinning to a bound; the DEV stance printout describes the
+numbers that actually appear; a voter can see every ballot already cast in the vote they are being asked to
+decide, and what their own dial does to it; `dotnet build` clean; developer-verified in-game on a CB1 and a
+non-CB1 company.
+
+### P15.10 — The market-shift dial a bank's shareholders cannot move — ⏸ DEFERRED, decisions locked (D-15.25)
+
+> **DO NOT BUILD THIS YET.** It is deliberately parked until the P15.8 run reaches a founded bank, for the
+> §39.16 rule 2 reason: the panel it changes cannot be opened before then, so building it now would ship a
+> second unobservable phase into the middle of a playtest. Everything needed to execute it in one sitting is
+> written below — trigger, decisions, exact touch points, gotchas, verification. **Pick it up at the trigger,
+> not before.**
+
+#### P15.10.0 — When to start (the trigger)
+
+**The first bank founds `2012-09-03`** — First Satoshi Savings (Appendix A). Two conditions, and only the
+first is guaranteed by the calendar:
+
+1. **A bank has founded.** Check in BlockExplorer → Enroll Mode → the Founded list, or the CB scene's
+   Banking layer (it stops saying "No bank company has founded yet"). The roster date is when the company
+   is *introduced*; founding needs its auction to actually resolve, so it can land later.
+2. **You hold NST in it** — otherwise the Board Vote panel never renders and there is nothing to look at.
+   That means bidding into that bank's auction and finishing in a **top-3 tracked tier** (§22.15's gold
+   projection on the `AuctioningCompanyDetails` frame tells you live whether you are on track). **If you
+   miss it, do not restart anything** — the next bank (Digital Reserve Trust, 2013-06-17) works identically,
+   and the P15.10c half below is visible to *any* viewer regardless of holding.
+
+**Before touching code, look at the thing first** (this is the observation that makes the phase worth
+doing): open the bank's quarterly vote and note that the Market-direction dropdown offers three options, all
+of which are counted and then thrown away, and that the Last Vote Snapshot's `Market level:` line shows the
+category unchanged with no explanation of why.
+
+#### P15.10.1 — What is wrong (and what is deliberately NOT wrong)
+
+A bank's market category is **LOCKED** (D-15.12): `CloseCompanyVote` counts the shift vote, then refuses to
+apply it and traces `shift_refused=bank_locked`. So a bank's NST holders — including the player, whose vote
+*pauses the entire simulation* — are offered a dial whose every option is a no-op.
+
+Same family as P15.9, one axis over, but a **weaker** case and it must not be over-fixed: nothing illegal is
+stored, no number lies, and the lock itself is load-bearing (a drifting bank silently re-shapes the §5.1
+selection distance every other company banks on). **The values are correct; only the presentation is
+dishonest.** So this phase changes what is *shown*, and deliberately changes no mechanism.
+
+#### P15.10.2 — Decisions (D-15.25, locked 2026-07-27 — developer accepted all three recommendations)
+
+1. **Disable + explain, never hide.** Hiding the row invites "why does this company have fewer controls than
+   the others?", and the reason — this is a bank, its category is what other companies' financier selection
+   is measured against — is the *interesting* part, worth teaching rather than concealing.
+2. **Bot ballots are NOT changed.** Making bots cast `MarketShift = 0` at banks was the obvious symmetric
+   move and it is **rejected**: the current behaviour deliberately records "a rejected attempt rather than
+   pretending nobody asked" (the D-15.12 comment), and that intent is real signal in the trace and the
+   ballot list. Erasing it would trade an honest refusal for a silent one.
+3. **Label the RESULT instead.** The unexplained non-event in the Last Vote Snapshot is the actual defect;
+   naming the refusal there fixes it without touching a single ballot.
+
+#### P15.10.3 — Subphases
+
+- **P15.10a — `CompanyDetails` vote panel.** In `BuildVotePanel`'s `if (quarterly)` market block
+  (`Screens/CompanyDetails/CompanyDetails.cs`, the `_marketOption` row): when
+  `NetworkRoot.IsBankCompany(gov.NonMinerNodeId)` — the public test already exists — keep the row, set
+  `_marketOption.Disabled = true`, leave it on `Select(1)` ("Hold the current category"), and add a short
+  reason line beneath it, e.g. *"Category locked — a bank's category is fixed at its roster default, because
+  it is the distance other companies' financier selection is measured on (D-15.12)."*
+  **Gotcha:** do NOT simply skip creating `_marketOption`. `OnSubmitBallot` reads
+  `(_marketOption?.Selected ?? 1) - 1`, so a null field is *safe* (it yields shift 0) — but the field
+  survives panel rebuilds, so if you ever take the hide-it route, null it explicitly in that branch. With
+  the disabled control kept on index 1 the submitted shift is 0 by construction, which is what you want.
+- **P15.10b — The Last Vote Snapshot refusal line.** In `BuildLastVoteSnapshot`, beside the
+  `Market level: X → Y` line, append a refusal note when this is a bank and the closed vote actually carried
+  a shift attempt. **Re-derive, do not persist:** `VoteBallotRecord` already stores `Weight` and
+  `MarketShift`, so the same test `CloseCompanyVote` ran is reproducible from the record —
+  `Σ weight where MarketShift > 0 ≥ 0.60m` (darker) or the same for `< 0` (lighter), against
+  `MarketShiftSupermajorityFraction`. A new persisted `MarketShiftRefused` bool would be the tempting
+  alternative and is **worse**: it defaults to `false` on every pre-existing record, which reads as "no
+  refusal happened" on exactly the historical bank votes where one did (§39.16 rule 5's silent-failure
+  shape), for a value that was derivable all along (rule 4). No new field ⇒ **no `WorldFormatVersion`
+  bump**. If a supermajority was reached: *"market shift refused — category locked (bank)"*; if the vote
+  simply did not reach 60%, the existing line already tells the true story and needs nothing.
+- **P15.10c — Verification.** As an NST holder in a founded bank: the market row is present but greyed with
+  its reason; submitting a ballot still works and the vote closes normally; the snapshot names the refusal
+  when the bots did push a shift, and stays quiet when they did not. Then open **any non-bank** founded
+  company and confirm its market dial is fully live and unchanged. `dotnet build` clean.
+
+**Exit:** no company offers its shareholders a governance control that cannot change anything, and where a
+vote is structurally refused the UI says so instead of leaving it silent — with the bots' attempts, and the
+`shift_refused=bank_locked` trace, left exactly as they are.
+
+---
+
+## 9. P15.8 — Developer observation checklist (the `DevEntryYear = 2010` run)
+
+> Everything in P15.2–P15.7 has been **build-verified only** — this run is the first time any of it
+> executes. The list is ordered by **when each thing becomes reachable** as you play forward from
+> 2010-03-21, so it can be worked top-to-bottom rather than hunted for. Each item names where to look, what
+> a correct reading looks like, and the failure signature to watch for.
+>
+> Two shorthands used below: **CB scene** = Main Menu → *Central Bank [DEV]*; **WE scene** = Main Menu →
+> *World Economy [DEV]*.
+
+### A — Immediately at landing (2010-03-21)
+
+| # | What to check | Correct | Failure signature |
+|---|---|---|---|
+| A1 | StatusBar carries the orange **`[ENTRY-2010 DEV]`** watermark | Present on every screen | Missing ⇒ the const didn't take / stale build |
+| A2 | Game clock reads **2010-03-21**, chain has real intervening history | Block Explorer shows blocks dated 2009-03 → 2010-03 with cast miners spawning | A 2009-03 clock ⇒ the world didn't wipe; delete `user://world_timeline.stamp` and relaunch |
+| A3 | **CB scene opens** and reads "No client has borrowed from the FED yet" | Empty client list + the pre-loan explanation | A crash or blank page |
+| A4 | CB scene → **Banking layer**: "No bank company has founded yet…" | Expected at this date (first bank 2012-09) | A bank listed here in 2010 |
+| A5 | CB scene → **financier preview**: no companies yet, or all → *The Casino (fallback)* | `(casino)` tier on every row | A bank named as financier before 2012-09 |
+| A6 | WE scene → circulation **200,000 SC** = grants 200,000 + debt 0 | The five 40,000 genesis grants, nothing else | Any non-zero debt before the casino's first loan |
+
+### B — The casino's first FED loan (play until a win empties the casino Bankroll)
+
+| # | What to check | Correct | Failure signature |
+|---|---|---|---|
+| B1 | `CasinoGamblingFinances` → the loan line now reads **"FED loans taken: 1 … Outstanding: 40,000.00000000 SC"** | Count/total/outstanding all populated | Zeros after a loan clearly fired (the read-through accessors aren't resolving the FED) |
+| B2 | Its history list shows a **`draw`** kind column | `2010-… | draw | 40,000.00000000 SC | auto` | Missing kind ⇒ stale scene |
+| B3 | CB scene → a **`The Casino (casino)`** account appears, same figures as B1 | Outstanding = total drawn = 40,000; 1 draw | Numbers disagreeing between the two scenes ⇒ double-storage regression |
+| B4 | CB scene → the invariant line reads **"FED/ledger debt in sync ✓"** | Green/subtle, `✓` | `OUT OF SYNC ✗` ⇒ the DrawLoan→RegisterLoanDraw lockstep broke |
+| B5 | WE scene → debt 40,000 under borrower `casino`; circulation 240,000 | grants 200,000 + debt 40,000 | Circulation ≠ grants + debt |
+| B6 | **Mine a block, then restart the app** | The FED account survives with identical figures | Reset to zero ⇒ checkpoint capture/restore ordering broken |
+
+### C — Market Birth (2010-07-18) and the auction era
+
+| # | What to check | Correct | Failure signature |
+|---|---|---|---|
+| C1 | BTC ticker appears in the StatusBar; swap desk unlocks | Price from the dataset | Still locked after 2010-07-18 |
+| C2 | Non-miners start being introduced; bids begin (bots + you) | Block Explorer → Enroll Mode shows in-auction rows | No introductions at all by ~2010-09 |
+| C3 | First **company founds** (~20 in-game days after its first bid) | Row moves to *Founded (out of auction)* with a "Details →" | — |
+| C4 | Founded company → `CompanyDetails` → its conversions begin once the founding vote closes | `ScReserve` grows; the governance trace logs `conversion` rows | `ScReserve` stuck at 0 long after the founding vote |
+| C5 | CB scene → financier preview still says **casino fallback** for every company | Correct until 2012-09 | A bank named before any bank founds |
+| C6 | **(P15.9)** At any founded company's quarterly vote, every listed ballot lies **inside** the band named in the new `Ballots cast (band CBn: x–y% SC):` header | e.g. a CB1 company shows only 75–100 values, spread apart rather than identical | A `0%`/`50%` at a CB1 company ⇒ stale build; **any** `[Governance] P15.9 tripwire` line in the log ⇒ a ballot source bypassing `ProjectStanceIntoBand` |
+| C7 | **(P15.9)** The reserve result **varies** quarter to quarter instead of sitting on a band bound, and your own dial visibly moves it | Result somewhere inside the band, shifting as bots' weights change | Pinned at exactly the floor every quarter ⇒ the projection is not being applied |
+| C8 | **(P15.9)** Launch log → `[Governance]` stances print `global SC stance N% → votes CB1 … CB5 …` | The five projections match the §8 P15.9 table | Still printing `targets N% SC` ⇒ stale build |
+
+### D — FBI activation (14 Jun 2011)
+
+| # | What to check | Correct | Failure signature |
+|---|---|---|---|
+| D1 | Before that date, CB scene → **Federal investigations** reads "Not active yet — starts 2011-06-14" | Inactive | Any FBI activity before the date |
+| D2 | On/after it: "Active since 2011-06-14 · budget 100,000.00 SC" | The initial federal grant landed | Budget 0 ⇒ the grant draw didn't fire |
+| D3 | WE scene → a **`fbi`** borrower appears with 100,000 SC debt; circulation rises by the same 100,000 | The grant is a FED loan, so the invariant still balances | Circulation ≠ grants + debt after activation |
+| D4 | Over time, **non-official** companies with SC piles accumulate a score | Rows appear in the FBI board with `score N/100` | An `official` company ever appearing (it must be exempt) |
+| D5 | A company that stops converting / spends its SC **decays** back down | Score falls ~1.0 per block | Score only ever rises ⇒ decay branch not reached |
+| D6 | `CompanyDetails` on a listed company shows the **⚖ investigation line** | Amber while growing, red once flagged | No line while the CB board lists it ⇒ the two readouts disagree |
+| D7 | Eventually a flagged company is **seized** | It leaves the live list; CB scene → Closed companies shows reason `fbi_seizure`; the FBI budget grows by its SC | Seizure with no closure record, or SC vanishing |
+| D8 | **Banks are never seized before non-banks are cleared** | Banks sort last in the FBI board | A bank raided while non-bank files are open |
+
+### E — The first bank founds (2012-09-03 — the credit loop goes live)
+
+| # | What to check | Correct | Failure signature |
+|---|---|---|---|
+| E1 | *First Satoshi Savings* founds with category **`official`** | CB scene → Banking layer lists it "category official (locked)" | Wrong category ⇒ roster/derive path broken |
+| E2 | As the others found: Digital Reserve Trust **light_grey** (2013-06), Harbor Coin Bank **black** (2014-11), Ledger & Sons **dark_grey** (2016-03) | The Official→Black gradient | Any bank showing `official` other than the first |
+| E3 | A bank's NST holders vote a market shift → **it does not move** | Category stays; `company_governance_trace.csv` logs `shift_refused=bank_locked` | Category drifts |
+| E4 | CB scene → financier preview now names a **bank** for post-2012 companies, tier `nearest` | Nearest-category bank chosen, ties toward Official | Still `casino` after a bank founded |
+| E5 | A company conversion routes through it: CB scene → **`bank:first_satoshi_savings`** account appears with FED debt | Debt = the SC it provisioned | Casino debt growing instead |
+| E6 | Bank row shows **CollateralBtc > 0** and a client count | The BTC it bought | Collateral 0 while debt > 0 |
+| E7 | Its **layer-1 sub-ledger** lists the financed company | `→ <Company>: bought X BTC for Y SC over N provision(s)` | Empty while E5/E6 populated |
+| E8 | `bank_credit_trace.csv` has `provision` rows | One per conversion | File absent ⇒ trace path/permissions |
+| E9 | The bank's own collateral is **not** auto-converted away | Collateral persists block to block | Collateral shrinking outside a payment day |
+| E10 | No spurious **special vote** fires at the bank from collateral arriving | Only founding/quarterly votes | A >30% special vote right after a provision ⇒ the `COLLATERAL` memo skip failed |
+
+> **⏸ P15.10 STARTS HERE.** E3 is the observation the deferred phase acts on: the shift is voted, refused,
+> and *nothing on screen says so*. Once a bank has founded — and ideally once you hold NST in one, which
+> takes a top-3 tracked tier in its auction — stop and build **P15.10** (§8; decisions already locked as
+> D-15.25, so it is a build, not a design session). If you would rather keep playing, note the date you
+> passed this point and come back; the next bank (2013-06-17) gives the same opportunity.
+
+### F — The first bank quarterly (~2012-12) — repayment and the carry
+
+| # | What to check | Correct | Failure signature |
+|---|---|---|---|
+| F1 | On the payment day, FED debt **steps down ~10%** | CB scene → the bank's outstanding drops; a `repay` row in its movement history | No movement on the quarterly date |
+| F2 | Collateral drops by exactly what was sold (+ the fee) | Never more | Collateral < 0, or unchanged while debt fell |
+| F3 | WE scene → circulation **falls** by the repayment (or debt moves casino-ward if the casino auto-loaned) | Invariant still balances either way | Circulation unchanged AND casino debt unchanged |
+| F4 | `CompanyDetails` on the bank → **Bank lending book** panel | Debt, collateral + live value, health line, next installment + date | Panel missing on a founded bank |
+| F5 | The panel's **next installment** matches what F1 actually charged | Same number | Divergence ⇒ shared-source rule broken |
+| F6 | WE scene → banking-layer **system solvency line** | `collateral X vs FED debt Y → net Z (solvent)` | Missing block after a bank founded |
+| F7 | Over a bull era the health line stays **covered**; watch it flip in a drawdown | The carry working as designed | — |
+
+### G — Stress states (opportunistic — may need a bear era or engineering)
+
+| # | What to check | Correct |
+|---|---|---|
+| G1 | A BTC drop leaves a bank unable to cover an installment → **shortfall vote opens** | New vote kind `shortfall`; CB scene shows "⚠ shortfall awaiting a board vote: N SC" |
+| G2 | If you hold NST there, the **game pauses** and `CompanyDetails` shows the **single dividends-cut dial** (not the reserve/market/payout form) | Submitting resumes play |
+| G3 | Bots resolve it per **greed** when you hold nothing | `company_governance_trace.csv` → `shortfall_apply` with `dividendsCutPct` |
+| G4 | The gap closes from `ScReserve`, and a dividends cut also shrinks `QuarterDividendSc` | Both move together per §39.11.2 |
+| G5 | An unclosable gap → **INSOLVENT** then **dissolution** | CB scene → "✗ INSOLVENT"; then Closed companies with reason `debt_default` |
+| G6 | The dead company's Block Explorer row becomes a grey **`✗` terminal row with no button** | And `CompanyDetails` shows the liquidation notice, not "not founded yet?" |
+| G7 | If you held stock there, the notice states **what you lost** | NST/PST + unclaimed BTC/SC; already-claimed dividends untouched in your wallet |
+| G8 | A closed wallet with a matching solvent bank is **inherited**; without one it stays in FED custody | CB scene → "held by X" vs "FED custody (100% BTC…)" |
+| G9 | Later inflows to the dead address are **forwarded** to the heir | `RecoveredBtc` grows; `bank_credit_trace.csv` `seized_inflow` rows |
+| G10 | The **recovery tracker** verdict updates with the live price | `RECOVERED (+profit)` / `underwater` |
+
+### H — Invariants to spot-check at any moment
+
+- **`circulation = grants + debt`** on the WE scene, always. Genesis grants stay at exactly 200,000 SC forever.
+- **CB scene invariant line = "in sync ✓"** at all times.
+- The casino's `LoanCount` / `Total loaned` / `Outstanding` agree between `CasinoGamblingFinances` and the CB scene.
+- After **any** block + restart, every figure above returns to its last-block value (never a between-blocks value).
+- No company ever shows a **negative** ScReserve, collateral, or debt.
+
+### I — Telemetry to read afterwards (`user://logs/`)
+
+| File | What it should contain |
+|---|---|
+| `bank_credit_trace.csv` | `provision`, `repay`, `shortfall_pending`, `shortfall_closed`/`shortfall_unrecoverable`, `dissolution`, `wallet_inherited`, `seized_inflow`, `fbi_activated` |
+| `company_governance_trace.csv` | `conversion` rows carrying `via=` + `tier=`; `vote_close` with `shift_refused=bank_locked` for banks; `shortfall_apply` |
+| `company_founding_trace.csv` | The foundings feeding all of the above |
+
+### J — Placeholders to form an opinion on (the actual point of P15.8)
+
+Note whether each **feels** right; exact values are meant to be tuned here, not defended.
+
+- `BankQuarterlyRepaymentFraction` **0.10** — do banks deleverage too fast / too slowly?
+- Greed payout ladder **0.5 / 1.0 / 1.5 / 2.0** and the shortfall table **90 / 70 / 30 / 10**.
+- FBI tolerance multipliers **∞ / 8× / 3× / 1×** and the `T` window (one quarter).
+- Meter gain **0.5**, decay **1.0**, overage cap **4**; roll base **0.5%**, cap **2%**.
+- `FbiInitialGrantSc` **100,000**.
+- Are seizures too frequent/rare? Do banks ever actually die, or never?

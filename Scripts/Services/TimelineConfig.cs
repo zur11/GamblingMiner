@@ -48,7 +48,10 @@ public static class TimelineConfig
 	// timeline. `0` on `main` FOREVER (canonical 2009-03-21 start, HistoricalBootstrapService behavior
 	// unchanged bit-for-bit); a DEV branch may set 2010-2025 to land directly in that year for testing.
 	// Orthogonal to DevAltTimeline — never set both to a non-default value at once.
-	public const int DevEntryYear = 0; // `0` on `main` — canonical 2009-03-21 start (set 2010-2025 only on a DEV branch)
+	// ⚠ DEV BRANCH ONLY — currently 2010: the first-launch bootstrap fast-builds real intervening history
+	// and lands the player on 21 Mar 2010. MUST be restored to 0 before merging to main (the step14 EB.1
+	// lesson, repeated at P15.8). A StatusBar watermark is shown for as long as this is non-zero.
+	public const int DevEntryYear = 2010; // `0` on `main` — canonical 2009-03-21 start (set 2010-2025 only on a DEV branch)
 
 	public static readonly DateTime EntryDayLocal = DevEntryYear == 0
 		? PlayerStartDayLocal

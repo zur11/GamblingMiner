@@ -34,6 +34,19 @@ namespace UI.StatusBar
 				watermark.AddThemeColorOverride("font_color", new Color(1f, 0.15f, 0.15f));
 				watermark.AddThemeFontSizeOverride("font_size", 24);
 			}
+
+			// Step 15 (P15.8 prep) — the same watermark rule for the EB.1 DEV ENTRY-YEAR bootstrap. An
+			// entry-year world is canon-COMPATIBLE (genesis and the founders keep their true dates; the
+			// intervening history is really built), which makes it far easier to mistake for a canonical
+			// playthrough than the alt-timeline simulacrum ever was — so it needs the marker MORE, not less.
+			// Same compile-time-const dead-code situation, same CS0162 suppression.
+			if (TimelineConfig.DevEntryYear != 0)
+			{
+				var entryWatermark = BuildLabel();
+				entryWatermark.Text = $"[ENTRY-{TimelineConfig.DevEntryYear} DEV]";
+				entryWatermark.AddThemeColorOverride("font_color", new Color(1f, 0.55f, 0.1f));
+				entryWatermark.AddThemeFontSizeOverride("font_size", 24);
+			}
 #pragma warning restore CS0162
 
 			_mainBalanceLabel = BuildLabel();

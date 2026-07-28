@@ -263,7 +263,7 @@ public partial class CentralBank : Control
 	// Step 15 P15.6 — the FBI board: activation state, its self-funding budget, and every company currently
 	// carrying an investigation file, ordered the way the raid roll orders them (non-banks first by overage,
 	// banks last — D-15.19). Shares GetFbiInvestigationWarning's source with the roll, so a displayed
-	// number cannot drift from the mechanism (§39.15 rule 6).
+	// number cannot drift from the mechanism (§39.16 rule 6).
 	private void BuildFbiSection()
 	{
 		AddSpacer(18);
