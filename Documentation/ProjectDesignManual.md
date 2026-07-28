@@ -2484,6 +2484,24 @@ Display-only for the reserve label, behavioral for the escalation; **no persiste
 
 ---
 
+### 22.19 — A rule written for two parties has a same-party case (Step 14 ND.10k, 2026-07-28)
+
+ND.8d.6 stopped a leader from bidding against itself. D-ND4b.11 decided how two bidders racing in the **same block** resolve: they are judged against the same starting leader, never against each other in sequence. Both are correct. Put together they left a hole neither owner would have looked for — because the self-raise test reads the leader *as of the start of the group*, **two bids from the same party in one block are both "not the leader"**, and both count.
+
+That is how one participant came to hold tiers **1 and 2** of BitInstant's pool: a 10 BTC bid sat unconfirmed in the mempool (invisible to the ledger, which is a pure chain replay — Pattern 2), the player sent another believing the first had failed, and one block confirmed both.
+
+It matters because the tracked pool is not just a leaderboard — it is the **stock mint**. Two slots for the same total BTC means two entries in the 5.2%-halving slot-bonus ladder (D-ND8.15) and one fewer NST seat for anybody else, so **splitting a bid strictly beats making it once**. Bots can reach it too: D-ND6.9's affordability cascade deliberately leaves a declining bot un-marked, so one bot can be drawn twice in a block.
+
+**The rule:** within a block, a donor participates with its **highest** bid only; the rest are ignored exactly as a leader self-raise is — no lead, no window reset, no slot, no stock, and (D-ND10k.2) **no refund**. Highest rather than first keeps it consistent with D-ND4b.11's own same-block resolution and means a small accidental send cannot knock out a large deliberate one. The refund was considered and declined: D-ND8d.7 refunds a post-close bid because it never had a chance to participate, whereas an ignored same-block bid is a duplicate of one that *did*.
+
+**Two general lessons.** First: **when two rules each own part of a state machine, the gap is the case neither one names.** ND.8d.6 says "not the leader"; D-ND4b.11 says "same starting leader"; nobody wrote "and the same donor twice". Worth asking, of any pair of interacting rules, what the *conjunction* permits — the answer is rarely in either comment.
+
+Second, the UX half: **the mempool is a state the player cannot see, and the game never said so.** The ledger, every panel and every warning are chain-derived, so an unconfirmed bid exists nowhere on screen — which made re-sending the rational move. The fix is a fourth non-blocking wallet warning that reads `PendingTransactions` **directly** rather than the ledger, precisely because the ledger structurally cannot see it. Generalising: where a system's read model is a replay, any pending-but-uncommitted action needs its own explicit surface, or the player will act as though it never happened.
+
+The ledger holds no persisted state, so the rule applies to history already on chain (consistent with D-ND4b.12 — only a *win* is permanent). Full decision log: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.12 (D-ND10k.1…3).
+
+---
+
 ## Chapter 23 — Scheduled Bot Transactions (BTC Recirculation)
 
 **Files**: `NetworkRoot.cs` (`ScheduleBotTransactionsAfterBlock`, `FirstBlockHeightMinedBy`), `BlockchainService.cs` (no-self-send guard)

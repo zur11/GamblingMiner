@@ -1309,6 +1309,7 @@ Requested 2026-07-21, right after confirming ArtForz Cluster's PST claim genuine
 | ND.10h | The founded-company action button as a four-state pending-work signal (red vote / green dividends / mocha both / black neither) | UI (display-only) | ✅ BUILT & VERIFIED 2026-07-23 |
 | ND.10i | The escalation slope collision — tier 2 escalates as fast as tier 4 (DeepBit audit) | technical / auction behavior | ✅ BUILT 2026-07-27 — in-game verification pending |
 | ND.10j | The escalation does not survive a restart — an absent in-memory signal read as "just became stuck" (BitInstant audit) + reserve-guard cold start + decline telemetry | technical / auction behavior + telemetry | ✅ BUILT 2026-07-28 — in-game verification pending |
+| ND.10k | One bid per donor per block — two same-block bids from one party took tiers 1 AND 2 (BitInstant, blk 965) + the pending-bid wallet warning | technical / auction behavior + UI | ✅ BUILT 2026-07-28 — in-game verification pending |
 | _(pending — the developer will describe further UI + technical needs)_ | | | |
 
 ### 14.2 ND.10a — the stuck-bidder escalation must actually engage (Fix A + Fix B)
@@ -1793,3 +1794,70 @@ For a **multi-slot** occupant the per-slot label shows that slot's own tier rate
 #### 14.11.9 Verify in-game
 
 Restart into the running world and open **BitInstant** in `AuctioningCompanyDetails` **before any block is mined**. Slot #5 (bot_1) must read `[re-bid 64% (base 8 ×8 blocks stuck)]`, not the flat `13%`; slot #4 (bot_2) `[re-bid 40% (base 5 ×8 blocks stuck)]`. Both must then climb by exactly their base per mined block, and a re-rank must reset them. Confirm the multiplier does **not** reset to `×1` across a further restart — that is the whole fix. A bot whose spendable is at or under 200 BTC must read `[reserve]` immediately on entering the scene, without waiting for a block. In `casino_bot_bid_trace.csv` (rotated to `.csv.old` on first write) every row including `roll-declined` must now carry a populated `poolRolls`.
+
+---
+
+### 14.12 ND.10k — One bid per donor per block (✅ BUILT 2026-07-28 — in-game verification pending)
+
+**Found by the developer immediately after the ND.10j verification restart**, entering the BitInstant auction manually with 10 BTC.
+
+#### 14.12.1 What happened
+
+Block **965** (2011-05-06 07:20, miner `theymos`) confirmed **two** 10 BTC sends from the player's base address to BitInstant — different input UTXOs, so two genuinely separate sends, not a double-spend:
+
+```
+[5] in gm1qhrtsjd33… → non_miner_8 10.00000000 + change 39.99   (spends 763e1062…:0)
+[6] in gm1qhrtsjd33… → non_miner_8 10.00000000 + change 39.99   (spends f98f3121…:0)
+```
+
+The developer's question — *"how did the earlier one get registered if no block was mined?"* — has a Pattern 2 answer: it had **not** been registered. It sat in the **mempool**, invisible to the ledger (which is a pure chain replay) and to every panel, until block 965 confirmed **both at once**. The first send looking like it had failed is precisely what prompted the second.
+
+#### 14.12.2 The defect
+
+ND.8d.6's last-bid preservation is a **cross-block** rule. Bids sharing a block timestamp form one group evaluated against the **pre-block leader** (D-ND4b.11 — same-block bids race the same starting leader, never each other in sequence), and `leader` is only advanced *after* the group is scanned. So the self-raise test
+
+```csharp
+if (leader.HasValue && d.donor == leader.Value.donor)
+```
+
+saw bot_4 as the leader for **both** player bids. Neither was a self-raise, both cleared the floor (9.7484 + 1 satoshi), the first became leader, and **both entered the tracked pool** — leaving one party holding tiers **1 and 2** of the same pool.
+
+D-ND4b.11 was written for two *different* bidders racing a common leader. It has no same-donor case.
+
+**This is an exploit, not a cosmetic issue.** Splitting one bid into two buys the same total participation but **two** entries in the 5.2%-halving slot-bonus ladder (D-ND8.15), and denies a third party an NST seat. It is reachable by the bots too: D-ND6.9's affordability cascade deliberately does not mark a declining bot as used, so one bot can be drawn for two slots in the same block.
+
+**D-ND10k.1 — within a block, a donor participates with its HIGHEST bid only.** Every other bid it made in that block joins `ignoredBidSeqs` and is treated exactly like a leader self-raise: no lead, no window reset, no tracked slot, no stock. *Highest* rather than *first* keeps this consistent with D-ND4b.11's existing same-block resolution and means a small accidental send can never knock out a large deliberate one; exact ties keep the earliest `seq`, also per D-ND4b.11. Implemented as a **pass 1** over each group ahead of the unchanged floor/best scan; the set formerly named `ignoredSelfRaiseSeqs` is renamed **`ignoredBidSeqs`**, since it now carries two independent ignore rules.
+
+**D-ND10k.2 — an ignored bid is NOT refunded.** The coins reach the company as a plain non-participating transfer, byte-for-byte the treatment ND.8d.6 already gives a cross-block leader self-raise. Deliberately *not* extended to D-ND8d.7's stale-bid refund path: that refund exists because a post-close bid never had a chance to participate, whereas an ignored same-block bid is a duplicate of one that **did**. Developer's decision, taken with the retroactive cost known — see §14.12.4.
+
+**D-ND10k.3 — the wallet warns about the unconfirmed bid.** A fourth non-blocking line in the BTCWallet send panel (`GetPendingAuctionBidBtc`), which reads `PendingTransactions` **directly** rather than the ledger — the ledger is a chain replay and by construction cannot see the mempool, which is exactly why this was invisible:
+
+> You already sent 10.00000000 BTC to this company and it is still UNCONFIRMED (waiting for the next block). If both confirm in the same block only your HIGHEST bid participates in the auction — the other is a plain send that earns no slot and no stock, and is NOT refunded.
+
+Non-blocking, per the standing D-ND8d.6 convention: the send always proceeds. Donor identity resolves through `IsPlayerBidderAddress` (the §30.9 owned-address rule), so a bid whose coin selection spent a change-address UTXO still counts as the player's.
+
+#### 14.12.3 Scope note — why "one per block" and not "one NST slot per participant"
+
+Holding tiers 1 **and** 2 essentially *requires* a same-block double bid. Across blocks the leader self-raise rule already blocks the direct route, and any legitimate sequence lands the party on non-adjacent tiers (player 10 → bot 11 → player 12 gives 12/11/10 = tiers 1, 2, 3 across *two* parties, with the player at 1 and 3). So the narrow rule achieves the developer's requirement in practice, symmetrically for player and bots, without having to invent an arbitrary remedy for a second slot legitimately won in a different block (drop it? demote it below the band?) that would change the founding mint for cases that are not exploits.
+
+#### 14.12.4 Retroactive effect on the live playtest (accepted)
+
+The ledger holds no persisted state and re-derives from the chain on every call, so the rule applies to **history already on-chain**. BitInstant's pool changes from 9 slots to 8 the moment this ships:
+
+| | before | after |
+|---|---|---|
+| tier 1 | player 10.00000000 | player 10.00000000 |
+| tier 2 | **player 10.00000000** | bot_4 9.74840095 |
+| tier 3 | bot_4 9.74840095 | bot_3 4.88093138 |
+
+The second 10 BTC stays in BitInstant's treasury with no slot and no stock. This is consistent with **D-ND4b.12**, which already accepts that a ratchet rework may re-interpret an in-progress auction retroactively (only a *win* is permanent). The leader, and therefore the window close of **2011-05-26 07:20**, is unchanged — bid A is still the leading bid.
+
+Composes correctly with ND.10j: bot_1 moves from tier 7 to tier 6, and the chain seed dates its escalation from block 965 — the block whose bid genuinely re-ranked it. Pool stays ≥ 7 slots, so it remains in NORMAL mode.
+
+#### 14.12.5 Files
+
+`NetworkRoot.cs` — `ComputeAuctionLedger` (pass 1 + the `ignoredBidSeqs` rename), `GetPendingAuctionBidBtc` (new). `BTCWallet.cs` — the fourth warning line. **No persisted state, no `WorldFormatVersion` bump, no telemetry change.**
+
+#### 14.12.6 Verify in-game
+
+Open BitInstant: the player must hold exactly **one** slot, at tier 1, with bot_4 restored to tier 2 and the pool showing 8 slots. Then send a bid to any in-auction company and, **before a block is mined**, open the send panel again for that same company — the amber warning must name the pending amount. Send a second, larger bid: after the confirming block, only the larger one may appear in the tracked pool. Confirm the smaller one's BTC is **not** returned (it shows in the company's treasury), and that the leading bid / window close reflect only the participating bid.

@@ -4826,6 +4826,39 @@ public partial class NetworkRoot : Node
         return IsPlayerBidderAddress(entry.LeadingDonorAddress);
     }
 
+    // ND.10k (D-ND10k.3, 2026-07-28) — how much the player has ALREADY sent to this company that is still
+    // sitting UNCONFIRMED in the mempool (null when nothing is pending). This is the warning the BitInstant
+    // incident needed: nothing between blocks is persisted or visible in the ledger (Pattern 2), so a bid
+    // that has not been mined yet is invisible everywhere — the player sent a second one believing the
+    // first had failed, and block 965 confirmed BOTH into the same bid group. Under D-ND10k.1 only the
+    // HIGHEST of a donor's same-block bids participates, so the other becomes a plain non-participating
+    // send with no refund. Warned, never blocked (the D-ND8d.6 convention: the send always proceeds).
+    //
+    // Reads `PendingTransactions` directly rather than the ledger, because the ledger is a pure CHAIN
+    // replay and by construction cannot see the mempool — which is exactly why this was invisible.
+    public decimal? GetPendingAuctionBidBtc(string address)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)) return null;
+
+        NonMinerDonationSummary? entry = ComputeAuctionLedger(GetPlayerLatestBlockTimestampMsStatic())
+            .FirstOrDefault(s => s.NonMinerAddress == address);
+        if (entry is null || entry.Status != NonMinerAuctionStatus.InAuction) return null;
+
+        decimal pending = 0m;
+        foreach (Transaction tx in player.Blockchain.PendingTransactions)
+        {
+            // Same identity rule the ratchet uses (§30.9): an address is a key, not an identity — a bid
+            // whose coin selection spent a change-address UTXO is still the player's.
+            if (!tx.Inputs.Any(i => IsPlayerBidderAddress(i.Address))) continue;
+            foreach (TxOutput o in tx.Outputs)
+            {
+                if (o.Address == address) pending += o.Amount;
+            }
+        }
+        return pending > 0m ? Math.Round(pending, 8) : null;
+    }
+
     // ND.8d.6 — in-game days remaining before the recipient company's auction closes (null unless it's an
     // InAuction company with a live countdown). The wallet warns when this is ≤ AuctionClosingSoonWarningDays:
     // a bid may not be counted if no block is mined before the window closes (D-ND8d.7 refunds it if so).
@@ -5508,12 +5541,17 @@ public partial class NetworkRoot : Node
             // bid after that point can revive or re-win a resolved auction, however large.
             (string donor, decimal amount, long ts, long seq)? leader = null;
             long? resolvedAtMs = null;
-            // ND.8d.6 (D-ND8d.6, 2026-07-20 revision) — LAST-BID PRESERVATION: a further bid from the party
-            // that is ALREADY the current leader does not count as a donation — it never becomes a new
-            // leading bid, never resets the 20-day window, and is excluded from the tracked pool below. (In
-            // practice only the player can trigger this — bot_1..4's tier-1 satisfied rule already keeps
-            // them off their own leader pool; the player's manual wallet send is warned but non-blocking.)
-            var ignoredSelfRaiseSeqs = new HashSet<long>();
+            // The bids this walk decided do NOT participate at all — excluded from the leading-bid ratchet
+            // AND from the tracked pool below (so: no lead, no window reset, no slot, no stock). Two rules
+            // populate it, and neither refunds the coins (D-ND10k.2 — they reach the company as a plain
+            // non-participating transfer):
+            //   • ND.8d.6 (D-ND8d.6, 2026-07-20) — LAST-BID PRESERVATION, cross-block: a further bid from
+            //     the party that is ALREADY the current leader. (In practice only the player triggers this
+            //     — bot_1..4's tier-1 satisfied rule keeps them off their own leader pool.)
+            //   • ND.10k (D-ND10k.1, 2026-07-28) — ONE BID PER DONOR PER BLOCK: within a same-block group,
+            //     every bid a donor made except its highest. See the pass-1 comment in the loop.
+            // Both are warned in the BTC wallet before the send, and both are non-blocking.
+            var ignoredBidSeqs = new HashSet<long>();
             foreach (IGrouping<long, (string donor, decimal amount, long ts, long seq)> group in bids.GroupBy(d => d.ts).OrderBy(g => g.Key))
             {
                 if (resolvedAtMs.HasValue) break;
@@ -5523,16 +5561,64 @@ public partial class NetworkRoot : Node
                     break;
                 }
 
-                (string donor, decimal amount, long ts, long seq)? best = null;
+                // ND.10k (2026-07-28, §14.12, D-ND10k.1) — PASS 1: ONE PARTICIPATING BID PER DONOR PER
+                // BLOCK. ND.8d.6's last-bid preservation is a CROSS-block rule — it compares each bid
+                // against the leader as of the START of this group, and `leader` is only advanced after
+                // the whole group is scanned (D-ND4b.11: same-block bids race the same starting leader,
+                // never each other in sequence). That rule was written for two DIFFERENT bidders racing;
+                // it has no same-donor case, so TWO bids from one party confirmed in the SAME block both
+                // counted and both entered the tracked pool. Found in a live playtest: the player sent
+                // 10 BTC to BitInstant, it sat unconfirmed in the mempool, they sent 10 BTC again, and
+                // block 965 confirmed both — leaving one party holding tiers 1 AND 2 of the same pool.
+                //
+                // That is an EXPLOIT, not a cosmetic issue: splitting one bid in two buys the same total
+                // participation but TWO entries in the 5.2%-halving slot-bonus ladder (D-ND8.15), and it
+                // denies a third party an NST seat. It is reachable by the bots too — D-ND6.9's
+                // affordability cascade deliberately does not mark a declining bot as used, so one bot
+                // can be drawn for two slots in the same block.
+                //
+                // The rule: within a block, a donor participates with its HIGHEST bid only; every other
+                // bid it made in that block is ignored exactly like a leader self-raise — no lead, no
+                // window reset, no tracked slot, no stock. Highest (not first) keeps this consistent with
+                // D-ND4b.11's existing same-block resolution, and means a small accidental send can never
+                // knock out a large deliberate one; exact ties keep the earliest seq, also per D-ND4b.11.
+                // D-ND10k.2: an ignored bid is NOT refunded — the coins reach the company as a plain
+                // non-participating transfer, byte-for-byte the treatment ND.8d.6 already gives a leader
+                // self-raise. The wallet warns before the send (GetPendingAuctionBidBtc).
+                var groupBids = new List<(string donor, decimal amount, long ts, long seq)>();
+                var keptIndexByDonor = new Dictionary<string, int>();
                 foreach ((string donor, decimal amount, long ts, long seq) d in group)
                 {
                     // ND.8d.6 — the current leader re-bidding on itself is ignored (last-bid preservation):
                     // it neither re-leads nor resets the window, and is dropped from the tracked pool.
                     if (leader.HasValue && d.donor == leader.Value.donor)
                     {
-                        ignoredSelfRaiseSeqs.Add(d.seq);
+                        ignoredBidSeqs.Add(d.seq);
                         continue;
                     }
+
+                    if (keptIndexByDonor.TryGetValue(d.donor, out int kept))
+                    {
+                        if (d.amount > groupBids[kept].amount)
+                        {
+                            ignoredBidSeqs.Add(groupBids[kept].seq); // superseded by this larger one
+                            groupBids[kept] = d;
+                        }
+                        else
+                        {
+                            ignoredBidSeqs.Add(d.seq); // lower or tied — the earlier/larger one stands
+                        }
+                        continue;
+                    }
+
+                    keptIndexByDonor[d.donor] = groupBids.Count;
+                    groupBids.Add(d);
+                }
+
+                // PASS 2 — the floor / best-of-group scan, unchanged, over the surviving one-per-donor set.
+                (string donor, decimal amount, long ts, long seq)? best = null;
+                foreach ((string donor, decimal amount, long ts, long seq) d in groupBids)
+                {
                     // ND.4d — the floor a candidate must clear depends on WHO is bidding, not just on
                     // the current leader: the player only needs to clear the leader by one satoshi;
                     // everyone else (the casino-bots) still needs the full RaiseMin jump. Pre-leader,
@@ -5584,7 +5670,7 @@ public partial class NetworkRoot : Node
             // resolved company's late bids (which CancelAndRefundStaleAuctionBids then refunds). Also excludes
             // the ND.8d.6 leader self-raises — an ignored bid "doesn't participate in the auction" at all.
             summary.TrackedDonations = ComputeTrackedDonationPool(
-                bids.Where(bd => bd.ts <= summary.WindowCloseUnixMs && !ignoredSelfRaiseSeqs.Contains(bd.seq)).ToList(), nowMs);
+                bids.Where(bd => bd.ts <= summary.WindowCloseUnixMs && !ignoredBidSeqs.Contains(bd.seq)).ToList(), nowMs);
 
             if (resolvedAtMs.HasValue || nowMs >= summary.WindowCloseUnixMs)
             {
