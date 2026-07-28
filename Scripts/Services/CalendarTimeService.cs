@@ -19,6 +19,21 @@ public partial class CalendarTimeService : Node
 	// resets to 1 on restart. Set via the DEV time-scale selector in DiceGame / BlockExplorer.
 	public int DevTimeScale { get; set; } = 1;
 
+	// R2-C1 (2026-07-27, btc-pools-hardware-plan.md §R2.3a/§R2.7) — the fraction of last frame's simulated
+	// time the bet engine actually retained. `1.0` = it kept up, and the clock advances exactly as it always
+	// has; below 1 the engine's backlog clamp discarded simulated time, and the calendar must NOT spend what
+	// was never simulated.
+	//
+	// Why this exists: the comment above claims attempts-per-IN-GAME-second is invariant under DevTimeScale.
+	// That was only true while the engine kept up. Past its saturation knee (≈45 fps at 90×) the bet loop
+	// silently dropped work while this clock kept its full stride, so in-game block intervals stretched by
+	// exactly the dropped fraction — measured at up to 6× during a founder power spike. Throttling here
+	// converts that into an honest wall-clock slowdown instead of a corrupted simulation.
+	//
+	// Written by SimulationService each frame while it drives the sim, and reset to 1.0 when it stops (the
+	// calendar also runs outside the delegated autobet, where nothing is being dropped).
+	public double SimulationThrottle { get; set; } = 1.0;
+
 	private DateTime _gamePresent = DateTime.Now;
 	public DateTime GamePresentLocalDateTime => _gamePresent;
 
@@ -53,7 +68,8 @@ public partial class CalendarTimeService : Node
 			return;
 		}
 
-		CurrentLocalDateTime = CurrentLocalDateTime.AddSeconds(delta * SpeedMultiplier * Math.Max(1, DevTimeScale));
+		CurrentLocalDateTime = CurrentLocalDateTime.AddSeconds(
+			delta * SpeedMultiplier * Math.Max(1, DevTimeScale) * Math.Clamp(SimulationThrottle, 0d, 1d));
 	}
 
 	public void SetLocalDateTime(DateTime localDateTime)

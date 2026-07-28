@@ -995,6 +995,8 @@ Sub-options, least→most invasive; pick based on what F0 shows:
 
 ### Recommendation — FINAL (all tests done, 2026-06-25)
 
+> ⚠️ **Superseded in scope by Round 2 (2026-07-27, below).** This verdict remains correct **for what it tested** — steady-state powers 1/2/10 and clean up/down steps, where requested power is always executable. Round 2 documents a failure mode outside that envelope: the regulator being handed a power figure the machine cannot hash, which no amount of correct regulation can fix. Read both before touching the regulator.
+
 **No code changes to the regulator. Close this section.** Three steady-state regimes (power 1, 2, 10) confirmed difficulty settles at `anchor = InitialDifficulty × power` with ratio ≈ 1; the up-step (2→10) and down-step (10→1) both transition cleanly in ~2–3 blocks with only mild, variance-driven, **symmetric** overshoot/undershoot. The power-accounting audit found the count correct. Test Run #1's apparent ~1.4× anchor offset was an un-converged transient (unlucky variance), **not** a calibration error or accounting bug.
 
 - **F1 (EMA on power)** — ⚪ not implemented; overshoot is mild (1.13×) and short (~2 blocks). Would only cosmetically smooth a noisy transient and would *slow* the anchor's legitimate response.
@@ -1013,3 +1015,244 @@ Sub-options, least→most invasive; pick based on what F0 shows:
 | `Scripts/BlockchainPort/Blockchain/BlockchainService.cs` | `EaseAlphaUp`/`EaseAlphaDown` (F2); default `α` (F4, fallback) | F2/F4 |
 | ~~`SimulationService` accumulator jitter / backlog clamp / cold-start grace~~ | ⚪ dropped (F3) | — |
 | Block Explorer / log writer | difficulty trace surface | F0/F5 |
+
+---
+
+## Difficulty Regulator — Round 2: the un-executable power ceiling (2026-07-27) 📋 SPEC — awaiting the §R2.5 decisions
+
+> **Why this section reopens a "closed" one.** The 2026-06-25 verdict — *"no code changes to the regulator, close this section"* — **still stands for what it tested**: three steady-state regimes (power 1, 2, 10) and clean up/down steps. Round 2 is a different failure, invisible at those powers: the regulator is *correct* and still produces 1.5-day blocks, because it is handed a power figure the simulation **cannot execute**. Everything below was diagnosed from the permanent assets that verdict kept — `difficulty_trace.csv`, `founders_trace.csv`, `network_population_trace.csv` — which is exactly what they were kept for.
+
+### R2.0 — The report
+
+Developer, mid-P15.8 playtest (in-game ~2011-04/05, chain blocks 947-964), mining with the **casino pool** and **2 hardware pieces on the player and on each of the four miner-bots**: *"the difficulty regulator isn't calibrating — blocks are averaging almost 2 days"*. Target is `TargetBlockSeconds = 58,500` s ≈ **0.68 in-game days**.
+
+### R2.1 — It is NOT the casino pool
+
+`network_population_trace.csv` carries `playerBotsPower = 10.000` on **every row** of the window — 5 nodes × 2 hardware credits, flat. The pool routes *where* attempts are credited, never *how many*, and `GetTotalActiveMiningPower` counts each node's `HardwareRate` exactly once (the comment there already says pool attempts are inside each node's rate; the 2026-06-25 power-accounting audit confirmed it). The correlation with "first run in weeks using the pool" is coincidental. **Ruled out by data, not by argument.**
+
+### R2.2 — The trigger: Satoshi's end-game catch-up ramp saturating `MaxShare`
+
+`founders_trace.csv`:
+
+| block | satoshiPower | satoshiShare | satoshiBtc |
+|---|---|---|---|
+| 953 | 50.0 | 0.41 | 10,607 |
+| 957 | 154.2 | 0.69 | 10,657 |
+| 958 | 363.6 | 0.84 | 10,707 |
+| **959** | **7,037.7** | **0.9900** | 10,757 |
+| 962 | 144.6 | 0.67 | 10,907 |
+| **964** | **0.0** | — | **11,007 → `satoshiRetired = 1`** |
+
+He entered the **2011-04-26** floor date (`SatoshiEarliestDisappearance`) ~400 BTC short of `SatoshiTargetBtc = 11,000`, so the exponential ramp (`Growth = 1.15`/block) fired and pinned at **`MaxShare = 0.99`**. That constant is the share fed to `shareToWeight`, and `w = s/(1−s)` ⇒ **w = 99**: Satoshi alone at *99× the entire rest of the network*. The arithmetic checks out — `99 × (playerBots 10 + cast 62) ≈ 7,128` against the logged 7,037.7. The cap did exactly what it says; the cap is simply enormous.
+
+**Note the positive feedback:** slow blocks ⇒ fewer blocks mined by the deadline ⇒ Satoshi further short ⇒ steeper ramp ⇒ slower blocks. The system was pushing itself further from the target it was chasing.
+
+### R2.3 — The mechanism: the anchor prices a hashrate nobody can execute
+
+`difficulty_trace.csv` (`configuredPower` = what the regulator was told, `realizedPower = difficulty × 100 / solveSec` = what the machine actually delivered):
+
+| block | configuredPower | realizedPower | difficulty | solveRatio |
+|---|---|---|---|---|
+| 958 | 225.7 | 36.9 | 57,189 | 2.65× |
+| 960 | 7,110.1 | 1,142.8 | 109,362 | 0.16× |
+| 961 | 1,917.5 | 2,545.5 | **1,651,122** | 1.11× |
+| 962 | 1,428.2 | 247.3 | 952,435 | **6.58×** |
+| 963 | 216.6 | 143.2 | 578,218 | **6.90×** |
+| 964 | 460.3 | 180.8 | 217,833 | 2.06× |
+
+Window aggregates (18 blocks, the protocol's own yardstick): mean **solveRatio 2.23×** (≈1.5 in-game days, worst 4.7), aggregate realized power `100 × Σdifficulty / ΣsolveSec` = **173** against a mean configured of ~365. Three stacked facts:
+
+1. **The anchor trusts configured power unconditionally.** `SetActiveMiningPower(playerBots + founders + scheduled)` flows straight into `anchor = InitialDifficulty × power`. Nothing asks whether those attempts can be performed.
+2. **The attempt engine saturates; the clock does not.** `FoundersMiningService.AddDrained` is *uncapped* — `accumulator += nonFounderAttempts × (Power / otherMinersPower)`, i.e. **703 hashes per player bet** at the peak — while `CalendarTimeService._Process` advances game time every frame regardless of how much mining work actually got done. At block 960 the engine delivered **16%** of the demanded attempts, so game time ran ~6× ahead of the mining, and *that ratio is the inflated block interval*. `DevTimeScale` amplifies it: it multiplies demanded hashes per real second while the clock keeps its full speed. (Note `realizedPower` divides out `DevTimeScale` on both sides, so the configured-vs-realized comparison is valid at any time scale — the saturation is real, not a measurement artifact.)
+3. **The overhang unwinds slowly, and that is what the developer is watching now.** `feedbackTrim` is clamped to `[0.5×, 2×]` with `DifficultyEaseAlpha = 0.7`, so from difficulty 217,833 against a post-retirement anchor of ~51,900 (`585 × 88.8`) it needs ~4-5 blocks to converge — each itself slow. **Satoshi retired at block 964: the trigger is already gone and only the tail remains.**
+
+**The generalizable statement:** the regulator's feed-forward is an open-loop bet that requested power equals delivered power. That held for every regime F0-F5 tested (powers 1-10, all executable). It fails silently the moment any participant's power exceeds what the frame budget can hash — and nothing in the system notices or reports it.
+
+### R2.4 — The four options
+
+- **R2-A — Bound the founders' power to something executable.** Lower `MaxShare` (0.99 ⇒ w=99; **0.90 ⇒ w=9**, 0.75 ⇒ w=3) and/or add an absolute "no single miner exceeds N× the rest of the network" clamp. Smallest change, directly removes the 99× spike. Risk: a lower ceiling makes Satoshi's historical 11,000-BTC target harder to reach if the chain is behind schedule — he may retire late or short, which is a **canon** question (`SatoshiTargetBtc` is called "a HISTORICAL requirement, not a tunable"), so the acceptable failure mode needs stating.
+- **R2-B — Anchor on delivered power, not requested power.** Feed the regulator `min(configured, k × recentRealized)` (or clamp per-block anchor growth). This is the **general** cure: it makes the whole class of "a power figure nobody can execute" harmless, whatever produces it — founders, a future hardware tier, a pool, ND.2's invisible mass. Risk: realized power is a lagging, noisy signal; a naive `min` could suppress a *legitimate* power step (exactly what F1's EMA was rejected for). Needs an asymmetry — trust configured on the way up only as fast as realization confirms it.
+- **R2-C — Let the clock know mining is behind.** If the attempt engine saturates, game time should not keep running. This is the deepest fix and the only one that makes the simulation honest under CPU pressure; it converts a *performance* limit into an honest slowdown rather than a *simulation* artifact. Risk: touches `CalendarTimeService`, the one service everything else derives from; a feedback path from mining into the clock could interact with `DevTimeScale`, the pause-for-board-vote path, and checkpoint timestamps. Highest reward, highest blast radius.
+- **R2-D — Asymmetric feedback (F2, revived).** Allow the trim to fall faster than it rises (`EaseAlphaDown > EaseAlphaUp`, and/or widen the clamp's lower bound below 0.5×). F2 was dropped in 2026-06 because down-steps ceded in ~3 blocks — but that was a 10→1 step, not a 30× overhang. This does not prevent the spike; it shortens the tail. **Cheap, additive, and useful regardless of which of A/B/C ships.**
+
+**Recommended order: R2-A + R2-D now (bound the cause, shorten the tail), R2-B next (the general guard), R2-C only if it recurs from a source A doesn't cover.** A and D are small, independently testable, and together would have reduced this incident to a couple of mildly slow blocks.
+
+### R2.5 — Questions & suggestions
+
+1. **[Decision needed] Which options, in which order?** Recommending **A + D now, B next, C deferred**. A alone leaves the general hole open; B alone leaves a 99× founder spike legal (just re-priced); C alone fixes everything but is the riskiest single edit in the codebase.
+2. **[Canon question, blocks R2-A] What is allowed to give when Satoshi cannot reach 11,000 BTC by 2011-04-26 at a bounded power?** Three honest answers: (a) he retires **late** — keep ramping at a bounded rate until the target is met, date slips; (b) he retires **short** — the date is canon, the number is not; (c) the target scales with how many blocks the chain actually produced. Today the code implicitly chooses "whatever power it takes", which is why this happened. The step7 plan calls the ~10% share "a HISTORICAL requirement, not a tunable" — so this needs the developer's call, not mine.
+3. **Suggestion — a saturation telemetry column, before any fix.** Add `demandedAttempts` / `deliveredAttempts` per block to `difficulty_trace.csv` (or a plain `saturated` flag). Right now saturation is *inferred* from `configured` vs `realized`; measuring it directly makes R2-B's signal available and would let the next occurrence be diagnosed in one glance. This is the F0 move again — **instrument before changing logic** — and it is the honest prerequisite for B and C.
+4. **Suggestion — assert the executable-power invariant.** Same reflex as ND.10i's slope assertion and P15.9's clamp tripwire: `GD.PrintErr` once when `configuredPower` exceeds delivered throughput by more than ~2× for N consecutive blocks. The regulator has now been "verified correct" twice while producing wrong block times for reasons outside itself; a standing alarm is what turns that into a five-minute diagnosis.
+5. **Observation — `Growth = 1.15`/block compounds 50 → 7,037 in six blocks.** Even under a lower `MaxShare`, that slope alone can disturb pacing for a few blocks. Worth considering a per-block ceiling on the *ramp* (not just the terminal share) if A proves insufficient.
+6. **Observation — the ND.2 scheduler was NOT a contributor here** (`invisiblePower = 0.000`, cast 11 × 5.6 ≈ 62 of a 7,110 total), but it carries the same latent shape: `MaxScheduledAttemptsPerFrame = 5000` is a per-FRAME cap that does not scale with `DevTimeScale`, and its own comment already concedes "a sustained shortfall just slows blocks slightly, which the LWMA feedback then trims". With the trim clamped at 0.5×, that self-correction has a hard floor. R2-B would cover this case too — a second reason to prefer the general guard.
+
+### R2.3a — REFINEMENT (2026-07-27, found while specifying the build): the saturation has an exact location
+
+R2.3 said "the attempt engine saturates" and left the ceiling as a vague CPU limit. It is not vague. `SimulationService.Tick`:
+
+```csharp
+double simDelta = Math.max(0, delta) * max(1, DevTimeScale);              // sim-seconds this frame
+_accumulatorSeconds = Math.Min(_accumulatorSeconds + simDelta, MaxBacklogSeconds);   // ← 2.0
+while (_accumulatorSeconds >= interval && executed < MaxBetsPerFrame …)   // ← 10
+```
+
+With `MaxBacklogSeconds = 2.0`, `MaxBetsPerFrame = 10` and the player's `interval = 1/HardwareRate = 0.5 s` (2 credits), **the bet engine can consume at most `min(2.0, 10 × 0.5) = 2.0 sim-seconds per frame — ever.** Everything beyond that is silently discarded by the `Math.Min`. Meanwhile `CalendarTimeService._Process` advances the clock by the **full** `delta × SpeedMultiplier × DevTimeScale`, unthrottled.
+
+So the drop is a pure function of frame time. At `DevTimeScale = 90`:
+
+| fps | simDelta/frame | consumed | sim-time DISCARDED |
+|---|---|---|---|
+| 60 | 1.5 s | 1.5 s | 0% |
+| 45 | 2.0 s | 2.0 s | 0% (the knee) |
+| 30 | 3.0 s | 2.0 s | 33% |
+| 10 | 9.0 s | 2.0 s | 78% |
+| 3 | 30 s | 2.0 s | **93%** |
+
+And it is **self-reinforcing**: Satoshi at 703 hashes per player bet tanks the frame rate, which enlarges `simDelta`, which discards a larger fraction, while the clock keeps its full stride. Because founder/scheduled attempts are drained *per executed bet*, every discarded bet removes its whole entourage of attempts too — so total delivered power falls in exact proportion, which is precisely the `configured / realized` ratio the trace shows. The block-962 figure (5.8×) corresponds to ~29 sim-seconds offered against 2.0 consumed, i.e. roughly 3 fps — consistent with a frame hashing hundreds of thousands of times.
+
+**Two consequences for the plan.** (1) The `SimulationService` comment claiming *"attempts-per-IN-GAME-second stay invariant; only wall-clock time compresses"* is true **only below the knee** — it silently stops holding the moment `simDelta > 2.0 s`, i.e. below ~45 fps at 90×. That invariant is load-bearing for every measurement in this document. (2) It promotes **R2-C** from "vaguest and riskiest" to *the actual root fix*, and shrinks it: the cure is not a new feedback path from mining into the clock, it is **advancing the clock by the sim-time the engine actually consumed** instead of the raw delta. That is a small, local change — but it changes core time semantics, so it is specced below as **R2-C1** and left for the developer's explicit decision rather than folded into the agreed scope.
+
+### R2.6 — Verification protocol
+
+Reuse the existing universal protocol (clean the CSV, one session, no restart, judge by ≥20-30-block aggregates — per-block solvetime is ≈ exponential). The specific run this needs: **play through a Satoshi-ramp window** (or force one by putting him behind target) and confirm (1) `configuredPower` never exceeds a few × `realizedPower`, (2) mean `solveRatio` over the window stays within ~1.0 ± 0.3, (3) Satoshi still reaches the canon outcome chosen in question 2, and (4) the post-ramp overhang clears in ≤2 blocks with R2-D in.
+
+### R2.7 — IMPLEMENTATION PHASE (✅ BUILT 2026-07-27 — in-game verification pending)
+
+> **Build log.** `dotnet build` clean, 0 warnings. **All four pieces shipped, including R2-C1** — the
+> developer resolved D-R2.5 with "ship it now". Files: `SimulationService.cs` (retention measurement + the
+> throttle + the R2-T push), `CalendarTimeService.cs` (`SimulationThrottle` applied to the clock),
+> `FoundersMiningService.cs` (`MaxShare` 0.99 → 0.90), `BlockchainService.cs` (`MinFeedbackTrim` 0.25 +
+> `DifficultyEaseAlphaDown` 0.9), `NetworkRoot.cs` (two trace columns, `AccumulateSimSaturation`, the alarm).
+> No persisted state, no `WorldFormatVersion` bump, no UI.
+>
+> **One implementation refinement worth recording: the retained fraction is measured, not estimated.** The
+> spec said "consumed = executed × interval", which would have under-counted — the accumulator's leftover
+> remainder is *carried*, not lost, and executes next frame. Only the `Math.Min(…, MaxBacklogSeconds)` clamp
+> destroys simulated time. So the code measures exactly that (`offered − dropped`), power-weighted across the
+> player and every running bot since each keeps its own accumulator. Consequence: below the saturation knee
+> the throttle is **exactly 1.0** and the clock behaves byte-for-byte as before — the change is inert until
+> the engine actually drops work.
+>
+> **`MaxStepDown` (0.5) is now unread** — `MinFeedbackTrim` (0.25) replaced it in the clamp. Kept as the
+> documented historical value with a comment pointing at this section, rather than deleted, since it is the
+> symmetric partner of `MaxStepUp` in the anti-oscillation vocabulary.
+>
+> **Left for the developer's verification run:** §R2.6's protocol, plus the two R2-C1-specific checks in
+> "Build order & verification" below.
+
+#### Decisions log
+
+- **D-R2.1 (canon, answers §R2.5 q2) — Satoshi retires SHORT.** If he cannot reach `SatoshiTargetBtc = 11,000`
+  by `SatoshiEarliestDisappearance` (2011-04-26) **at a bounded power**, the **date is canon and the number is
+  a target**: he retires on schedule with whatever he actually accumulated. This is what makes R2-A safe to
+  ship — under the old "whatever power it takes" reading, any ceiling would have been a contradiction. It also
+  removes the positive feedback loop at its source: a Satoshi who is allowed to fall short has no reason to
+  escalate without limit, so slow blocks can no longer beget slower ones.
+- **D-R2.2 (scope, q1) — ship R2-A + R2-D now; R2-B next; R2-C deferred pending D-R2.5.**
+- **D-R2.3 (q3) — the saturation telemetry ships FIRST**, before any logic change. F0 discipline: this
+  section's whole history is "measure, then decide", and the one number nobody has ever logged is the one that
+  would have made this a five-minute diagnosis.
+- **D-R2.4 (q4) — the executable-power alarm ships with it.** The regulator has now been declared correct
+  twice while producing wrong block times for reasons outside itself.
+- **D-R2.5 (RESOLVED 2026-07-27) — R2-C1 SHIPS NOW.** The developer took the recommendation immediately. So
+  the root fix lands with the palliatives rather than after them, and the discard mechanism is closed for
+  every future power source, not just for the founder ramp that exposed it.
+
+#### R2-T — Saturation telemetry (build FIRST, no behaviour change)
+
+- **`SimulationService.Tick`**: alongside the existing loop compute `simTimeConsumed = executed × interval`,
+  and accumulate two counters since the last block: `_simSecondsOffered += simDelta`,
+  `_simSecondsConsumed += simTimeConsumed`. Bots carry their own intervals — sum them the same way in
+  `TickBots` so the figure covers the whole bet engine, not only the player.
+- **Expose** `LastBlockSimTimeOfferedSeconds` / `…ConsumedSeconds`, reset by the same block-boundary hook that
+  already drives `RecomputeFoundersOnNewBlock`.
+- **`NetworkRoot.AppendDifficultyTrace`**: two new columns, `simSecOffered,simSecConsumed`. A header change is
+  free here — the protocol already says to delete `difficulty_trace.csv` before a run.
+- **Acceptance**: at 100X on a quiet network the two columns match within a few percent; force a heavy frame
+  (high `DevTimeScale` + a founder ramp) and `consumed/offered` must fall visibly below 1 **and track
+  `realizedPower / configuredPower`**. If it does, §R2.3a is confirmed by measurement rather than derivation,
+  and R2-B has its input signal.
+
+#### R2-A — Bound the founders' power (the trigger)
+
+- **`FoundersMiningService`**: `MaxShare` **0.99 → 0.90**. It feeds `shareToWeight` where `w = s/(1−s)`, so
+  this is the difference between a **99×** and a **9×** multiplier over the rest of the network — the single
+  constant that produced the 7,037 spike.
+- Keep the exponential ramp (`Growth = 1.15`) as-is: against a bounded ceiling it now *approaches* the cap
+  instead of running away, and under D-R2.1 falling short is a legal outcome. §R2.5 q5's per-block ramp
+  ceiling stays a **contingency**, for use only if the playtest shows 0.90 is still too steep.
+- **Acceptance**: across a full ramp window `satoshiShare` tops out at 0.90, `satoshiPower` never exceeds
+  `9 × (playerBots + scheduled)`, and `configuredPower` peaks near a tenth of the 7,110 seen here.
+- **Watch — D-R2.1's visible consequence**: Satoshi may now retire with **less than 11,000 BTC**. Record the
+  final figure from `founders_trace.csv`; it is the number that says whether 0.90 is the right ceiling or the
+  historical shape needs a different lever.
+
+#### R2-D — Asymmetric feedback (shortens the tail; F2 revived)
+
+- **`BlockchainService.GetNextBlockDifficulty`**: split the trim clamp and the easing by direction.
+  `MinFeedbackTrim` **0.5 → 0.25** (a 4× down-trim per block); `MaxFeedbackTrim` stays **2.0**;
+  `DifficultyEaseAlphaDown = 0.9` when `target < current`, `DifficultyEaseAlpha = 0.7` unchanged upward.
+- **Why asymmetry is the safe direction**: an overhang makes blocks *slow* (annoying, self-correcting); an
+  under-shoot makes blocks *flood* (breaks pacing, mints coins early). Ceding fast and rising slow errs the
+  right way. F2 was dropped in 2026-06 because a 10→1 step cleared in ~3 blocks — that was a 10× step, not the
+  **30×** overhang measured here.
+- **Acceptance (arithmetic, checkable on paper before the run)**: from the real post-retirement state
+  (difficulty 217,833, anchor 51,946) the unwind becomes `217,833 → 33,471 → 15,034` — **≤2 blocks**, against
+  4-5 today.
+
+#### R2-ASSERT — The executable-power alarm (D-R2.4)
+
+- One `GD.PrintErr` when `configuredPower > 2 × realizedPower` for **3 consecutive** blocks — evaluated in
+  `AppendDifficultyTrace`, which already holds both figures — naming both, the ratio and the block index.
+- The consecutive gate matters: single-block solvetimes are ≈exponentially distributed, so a one-block ratio
+  means nothing. This document's own protocol says judge by aggregates; the alarm must obey its own rule.
+- Third instance of the same reflex in one week (ND.10i's slope assertion, P15.9's clamp tripwire):
+  **an invariant that lives only in prose is an invariant nobody checks.**
+
+#### R2-C1 — Clock/engine coupling (✅ SHIPPED — D-R2.5 resolved "now")
+
+- **The change**: advance the calendar by the sim-time the bet engine actually **consumed**, not by the raw
+  `delta × SpeedMultiplier × DevTimeScale`. The discard site is a single `Math.Min` (§R2.3a); the cure is to
+  stop the clock spending time the engine could not.
+- **Why it is the real fix**: R2-A bounds *one* source of excess demand and R2-D shortens the tail, but the
+  discard mechanism survives both — any future power source (a hardware tier, a pool, ND.2's invisible mass at
+  scale) reopens it, and the failure is silent by construction. It also restores the `SimulationService`
+  invariant that every measurement in this document depends on.
+- **Why it is not in scope by default**: it changes core time semantics. `CalendarTimeService` is the service
+  everything else derives from — checkpoint timestamps, the game-time rule (Pattern 2), `DevTimeScale`, the
+  board-vote pause. A bug here is a bug in *everything*, and it is the one change in this section that cannot
+  be validated by the difficulty trace alone.
+- **If it ships**: gate it behind R2-T (build the telemetry, confirm `consumed/offered` reproduces the ratio,
+  *then* touch the clock), and verify the §24.9 rule — "the clock always exactly equals the timestamp of the
+  block that most recently defines the checkpointed world" — still holds bit-for-bit across a restart.
+- **The honest alternative if it does not ship**: raise `MaxBacklogSeconds` / `MaxBetsPerFrame` so the knee
+  sits far above any realistic frame time. A palliative — it moves the cliff instead of removing it — but a
+  two-constant change with no semantic risk; at `DevTimeScale = 90` a ~30 s backlog would cover down to 3 fps.
+
+#### Build order & verification
+
+1. ✅ **R2-T** (telemetry) — `simSecOffered,simSecConsumed` in `difficulty_trace.csv`.
+2. ✅ **R2-A** + **R2-D** + **R2-ASSERT** + **R2-C1**.
+3. ⏳ Full §R2.6 protocol run: clean CSV, one session, ≥20-30 blocks through a Satoshi-ramp window.
+4. ⚪ **R2-B** afterwards *if still needed* — with R2-C1 in, the clock can no longer outrun the engine, so the
+   "anchor on delivered power" guard may now be redundant. **Decide it from the run's data, not in advance:**
+   if `configuredPower / realizedPower` stays near 1 with `simSecConsumed / simSecOffered` near 1, R2-B has
+   nothing left to fix and should be dropped rather than built for symmetry.
+
+**R2-C1-specific checks for the run** (beyond §R2.6):
+
+- **The clock must be inert below the knee.** At 100X on a quiet network, `simSecConsumed ≈ simSecOffered`
+  and the calendar advances exactly as before. If in-game time is now visibly slower at low `DevTimeScale`,
+  the throttle is firing when it should not.
+- **Above the knee, wall-clock slows instead of block-time stretching.** At a high `DevTimeScale` with a heavy
+  network, expect the game to advance *more slowly in real time* than it used to — that is the fix working.
+  `solveRatio` should stay near 1 while `simSecConsumed/simSecOffered` dips below it.
+- **§24.9's exact-clock rule still holds.** Mine a block, restart, and confirm the calendar lands exactly on
+  the last block's timestamp (`BlockSessionCheckpointService`). The throttle scales the clock's *rate*, never
+  its checkpointed value, so this should be untouched — but it is the one invariant a clock change could
+  break silently, and it is cheap to check.
+
+**Files**: `SimulationService.cs` (R2-T counters), `FoundersMiningService.cs` (`MaxShare`),
+`BlockchainService.cs` (trim clamp + directional easing), `NetworkRoot.cs` (two trace columns + the alarm).
+No persisted state, no `WorldFormatVersion` bump, no UI. `difficulty_trace.csv` gains two columns — delete it
+before the run.

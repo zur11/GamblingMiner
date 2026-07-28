@@ -4166,6 +4166,50 @@ public partial class NetworkRoot : Node
     // (TargetBlockSeconds / InitialDifficulty) / power, so realizedPower = difficulty × clockSpeed / solveSec.
     private const string DifficultyTracePath = "user://logs/difficulty_trace.csv";
 
+    // R2-T (2026-07-27) — simulated seconds OFFERED to the bet engine vs. those it actually retained,
+    // accumulated by SimulationService since the last block and drained by AppendDifficultyTrace. The
+    // SetActiveMiningPower precedent: SimulationService pushes the fact, NetworkRoot only records it.
+    // Saturation used to be inferable only by comparing configured to realized power AFTER the fact; this
+    // measures it at the source, and is the input signal R2-B will consume.
+    private static double _simSecondsOffered;
+    private static double _simSecondsConsumed;
+
+    public static void AccumulateSimSaturation(double offeredSeconds, double consumedSeconds)
+    {
+        if (offeredSeconds <= 0d) return;
+        _simSecondsOffered += offeredSeconds;
+        _simSecondsConsumed += Math.Clamp(consumedSeconds, 0d, offeredSeconds);
+    }
+
+    // R2-ASSERT (D-R2.4) — the executable-power alarm. The regulator has twice been audited and declared
+    // correct while producing wrong block times, because the fault was upstream: it was handed a power
+    // figure nothing could hash. Gated on THREE CONSECUTIVE blocks because single-block solvetimes are
+    // ≈exponentially distributed — the plan's own protocol says judge by aggregates, so the alarm obeys it.
+    private const double ExecutablePowerAlarmRatio = 2.0;
+    private const int ExecutablePowerAlarmBlocks = 3;
+    private static int _executablePowerBreachStreak;
+
+    private static void CheckExecutablePowerAlarm(int blockIndex, double configuredPower, double realizedPower)
+    {
+        if (configuredPower <= 0d || realizedPower <= 0d
+            || configuredPower <= ExecutablePowerAlarmRatio * realizedPower)
+        {
+            _executablePowerBreachStreak = 0;
+            return;
+        }
+
+        if (++_executablePowerBreachStreak < ExecutablePowerAlarmBlocks) return;
+        _executablePowerBreachStreak = 0; // re-arm, so a long saturation reports periodically, not per block
+
+        GD.PrintErr(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "[R2] Difficulty is pricing UN-EXECUTABLE power — block {0}: configured {1:F1} vs realized "
+            + "{2:F1} ({3:F1}× ) for {4} consecutive blocks. Blocks will run ≈{3:F1}× slow until it clears. "
+            + "Check for a founder/scheduled power spike (founders_trace.csv, network_population_trace.csv) "
+            + "and the simSecOffered/simSecConsumed columns for engine saturation.",
+            blockIndex, configuredPower, realizedPower, configuredPower / realizedPower,
+            ExecutablePowerAlarmBlocks));
+    }
+
     private static void AppendDifficultyTrace(NodeAgent miner, Block block)
     {
         try
@@ -4211,13 +4255,20 @@ public partial class NetworkRoot : Node
             }
             else
             {
-                file.StoreLine("utcMs,miner,index,configuredPower,realizedPower,difficulty,anchor,solveSec,solveRatio");
+                file.StoreLine("utcMs,miner,index,configuredPower,realizedPower,difficulty,anchor,solveSec,solveRatio,simSecOffered,simSecConsumed");
             }
 
+            // R2-T — the saturation figures for the interval that just closed, then reset for the next block.
+            double simOffered = _simSecondsOffered, simConsumed = _simSecondsConsumed;
+            _simSecondsOffered = 0d;
+            _simSecondsConsumed = 0d;
+
             file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "{0},{1},{2},{3:F4},{4:F4},{5:F4},{6:F4},{7:F1},{8:F4}",
+                "{0},{1},{2},{3:F4},{4:F4},{5:F4},{6:F4},{7:F1},{8:F4},{9:F2},{10:F2}",
                 block.Timestamp, miner.NodeId, block.Index, configuredPower, realizedPower,
-                block.Difficulty, anchor, solveSec, solveRatio));
+                block.Difficulty, anchor, solveSec, solveRatio, simOffered, simConsumed));
+
+            CheckExecutablePowerAlarm(block.Index, configuredPower, realizedPower);
         }
         catch (Exception e)
         {

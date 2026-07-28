@@ -36,7 +36,19 @@ public partial class FoundersMiningService : Node
 	// Exponential ramp base used only when past the floor date and still short of target.
 	private const double Growth = 1.15;
 	// Max win-share fed to shareToWeight, so the weight never diverges (s→1 ⇒ w→∞).
-	private const double MaxShare = 0.99;
+	//
+	// R2-A (2026-07-27, btc-pools-hardware-plan.md §R2.7) — 0.99 → 0.90. shareToWeight is w = s/(1−s), so
+	// this is the difference between authorizing a 99× and a 9× multiplier over the whole rest of the
+	// network. At 0.99 the catch-up ramp drove Satoshi to 7,037 power against a player+bots+cast total of
+	// 72 (measured: satoshiShare pinned at exactly 0.9900), the difficulty anchor followed it to 4.16M, and
+	// blocks ran 4-7× target for a dozen blocks — a hashrate nothing could execute. 0.90 keeps a large
+	// catch-up allowance while bounding the anchor to something the engine can actually deliver.
+	//
+	// This is only safe because of D-R2.1: the retirement DATE is canon, the 11,000 BTC is a TARGET. Under
+	// a bounded ceiling Satoshi may now retire SHORT, and that is the accepted outcome — the alternative
+	// ("whatever power it takes") is what produced the spike, and it also created a feedback loop, since
+	// slow blocks meant fewer blocks by the deadline, which demanded even more power.
+	private const double MaxShare = 0.90;
 
 	// ── Hal decay (step7 plan §2.3, Q-N2) ──────────────────────────────────────
 	// Hal keeps ONE participant's worth of power (baseline 1.0 — kept as-is, never lowered): as the network
