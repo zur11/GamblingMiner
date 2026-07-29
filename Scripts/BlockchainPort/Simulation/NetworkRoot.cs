@@ -37,6 +37,9 @@ public partial class NetworkRoot : Node
     private const int HalvingIntervalBlocks = 2100;
     private const string BlockchainDir = "user://blockchain";
     private const string StatePath = "user://blockchain/state.json";
+    // INC-001 / D-15.26 — the staging file for the atomic snapshot write (write here, close, rename over
+    // StatePath). Never read as world state except as the corrupt-main fallback in TryLoadSnapshot.
+    private const string StateTempPath = "user://blockchain/state.json.tmp";
     // Step 8 (full UTXO model) — bumped when the on-disk chain format changes incompatibly. The old
     // account/balance chain has no input→output (UTXO) linkage, so it cannot be replayed into a UTXO set;
     // on a version change we wipe the chain + clock + financial state and re-bootstrap a fresh world (the
@@ -6524,6 +6527,18 @@ public partial class NetworkRoot : Node
     // in-memory state; it becomes durable when the next block is mined.
     private static void PersistStateToDisk()
     {
+        // INC-001 / D-15.26 — a session whose snapshot FAILED to load must never write back over the file it
+        // could not read. On 2026-07-29 a truncated state.json made EnsureInitialized throw; the 1,666-block
+        // world survived only because that throw happened to land before any writer ran. This makes the
+        // guarantee explicit instead of accidental: one catch-and-continue in the wrong place would otherwise
+        // replace a real chain with an empty one at the next mined block.
+        if (_snapshotLoadFailed)
+        {
+            GD.PrintErr("[NetworkRoot] Refusing to persist — the world snapshot failed to load this session " +
+                        "(see the error above). The on-disk state is left untouched.");
+            return;
+        }
+
         EnsureDirectory(BlockchainDir);
         NodeAgent player = SharedNodesById[PlayerNodeId];
 
@@ -6556,33 +6571,40 @@ public partial class NetworkRoot : Node
             FbiScFunds = _fbiScFunds
         };
 
-        using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
-        file.StoreString(JsonSerializer.Serialize(snapshot, JsonOptions));
-
-        WriteMonthlyChunks(player.Blockchain.Chain);
-    }
-
-    private static void WriteMonthlyChunks(List<Block> chain)
-    {
-        string absoluteDir = ProjectSettings.GlobalizePath(BlockchainDir);
-        if (System.IO.Directory.Exists(absoluteDir))
+        // INC-001 / D-15.26 — ATOMIC write. This used to truncate StatePath and stream ~9 MB straight into
+        // it, so a process death mid-write left a page-aligned, plausible-looking, INVALID file (the crash
+        // that ended the P15.8 session left it 7 bytes short of parseable). Now: serialize → write a temp
+        // file → CLOSE it → rename over the target. A rename either fully succeeds or leaves the previous
+        // file untouched, so a reader can never observe a half-written world.
+        //
+        // GOTCHA: the `using` must be an explicit BLOCK, not a using-declaration. A declaration lives until
+        // the method returns, which would leave the handle open across the rename below.
+        string serialized = JsonSerializer.Serialize(snapshot, JsonOptions);
+        using (FileAccess file = FileAccess.Open(StateTempPath, FileAccess.ModeFlags.Write))
         {
-            foreach (string staleFile in System.IO.Directory.GetFiles(absoluteDir, "blocks-*.json"))
+            if (file is null)
             {
-                System.IO.File.Delete(staleFile);
+                GD.PrintErr($"[NetworkRoot] Could not open {StateTempPath} for writing " +
+                            $"({FileAccess.GetOpenError()}) — world NOT persisted this block.");
+                return;
             }
+
+            file.StoreString(serialized);
+            file.Flush();
         }
 
-        Dictionary<string, List<Block>> byMonth = chain
-            .Where(b => b.Index > 0)
-            .GroupBy(b => DateTimeOffset.FromUnixTimeMilliseconds(b.Timestamp).UtcDateTime.ToString("yyyy-MM"))
-            .ToDictionary(g => g.Key, g => g.ToList());
-
-        foreach ((string month, List<Block> blocks) in byMonth)
+        try
         {
-            string path = $"{BlockchainDir}/blocks-{month}.json";
-            using FileAccess file = FileAccess.Open(path, FileAccess.ModeFlags.Write);
-            file.StoreString(JsonSerializer.Serialize(blocks, JsonOptions));
+            System.IO.File.Move(ProjectSettings.GlobalizePath(StateTempPath),
+                                ProjectSettings.GlobalizePath(StatePath),
+                                overwrite: true);
+        }
+        catch (Exception e)
+        {
+            // The previous snapshot is intact by construction — the rename is what would have replaced it.
+            // Loud, but not fatal: the next mined block retries the whole write.
+            GD.PrintErr($"[NetworkRoot] Snapshot rename failed — the previous world state is still on disk " +
+                        $"and this block was NOT committed: {e.Message}");
         }
     }
 
@@ -6662,6 +6684,7 @@ public partial class NetworkRoot : Node
                  "): resetting chain + clock + financial state (clean reset).");
 
         DeleteIfExists(StatePath);
+        DeleteIfExists(StateTempPath); // INC-001 — a stale staged write must not survive a world wipe
         DeleteIfExists("user://block_session_checkpoint.json");
         DeleteIfExists("user://calendar_state.json");
         DeleteIfExists("user://bankroll_state.json");
@@ -6717,12 +6740,100 @@ public partial class NetworkRoot : Node
             DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(userPath));
     }
 
+    // INC-001 / D-15.26 — set when the world snapshot exists but cannot be read. Guards PersistStateToDisk
+    // so a session that failed to load can never write over the file it failed to read.
+    private static bool _snapshotLoadFailed;
+
+    // The `Try` prefix is a PROMISE that this function handles its own failure — and for two whole steps it
+    // did not: a raw Deserialize threw straight out of EnsureInitialized, which aborted before registering a
+    // single node, leaving _isInitialized false, every consumer looking at an empty world, and NOTHING in the
+    // log. The money services persist to their own files and restored perfectly, so a total world-load
+    // failure presented as "some screens are blank" — about the least diagnosable shape available.
+    //
+    // Now: a corrupt snapshot is reported with its path, size and reason; the atomic writer's temp file is
+    // tried as a fallback (it can only be adopted if it fully parses); and if neither can be read the load
+    // ABORTS LOUDLY rather than handing back an empty-but-plausible world. See Documentation/INCIDENT_LOG.md
+    // INC-001 and ProjectDesignManual.md Ch. 40.
     private static BlockchainStateSnapshot? TryLoadSnapshot()
     {
-        if (!FileAccess.FileExists(StatePath)) return null;
-        using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Read);
-        string json = file.GetAsText();
-        return JsonSerializer.Deserialize<BlockchainStateSnapshot>(json);
+        // A rename replaces its target, so StatePath being absent means it never existed: a genuine first
+        // run or a post-reset world. Any leftover temp file here can only be a partial first write.
+        if (!FileAccess.FileExists(StatePath))
+        {
+            return null;
+        }
+
+        (BlockchainStateSnapshot? snapshot, string? error) = ReadSnapshotFile(StatePath);
+        if (snapshot is not null)
+        {
+            return snapshot;
+        }
+
+        GD.PrintErr($"[NetworkRoot] CORRUPT world snapshot at {StatePath} " +
+                    $"({DescribeFileSize(StatePath)}): {error}");
+
+        if (FileAccess.FileExists(StateTempPath))
+        {
+            (BlockchainStateSnapshot? staged, string? tempError) = ReadSnapshotFile(StateTempPath);
+            if (staged is not null)
+            {
+                GD.PrintErr($"[NetworkRoot] Recovered the world from {StateTempPath} — a previous run died " +
+                            "between the staged write and the rename.");
+                return staged;
+            }
+
+            GD.PrintErr($"[NetworkRoot] The staged fallback {StateTempPath} is unreadable too: {tempError}");
+        }
+
+        _snapshotLoadFailed = true;
+        GD.PrintErr("[NetworkRoot] WORLD LOAD ABORTED. Nothing will be persisted this session, so the " +
+                    "on-disk state is safe to repair or restore from a backup. " +
+                    "See Documentation/INCIDENT_LOG.md (INC-001) for the repair procedure.");
+        throw new InvalidOperationException(
+            $"World snapshot at {StatePath} could not be loaded: {error}");
+    }
+
+    // Returns (snapshot, null) on success, (null, reason) on any failure. Never throws — the caller decides
+    // what a failure means, which is the whole point of the split.
+    private static (BlockchainStateSnapshot? Snapshot, string? Error) ReadSnapshotFile(string path)
+    {
+        try
+        {
+            string json;
+            using (FileAccess file = FileAccess.Open(path, FileAccess.ModeFlags.Read))
+            {
+                if (file is null)
+                {
+                    return (null, $"could not be opened ({FileAccess.GetOpenError()})");
+                }
+
+                json = file.GetAsText();
+            }
+
+            BlockchainStateSnapshot? snapshot = JsonSerializer.Deserialize<BlockchainStateSnapshot>(json);
+            if (snapshot is null)
+            {
+                return (null, "deserialized to null");
+            }
+
+            return (snapshot, null);
+        }
+        catch (Exception e)
+        {
+            return (null, e.Message);
+        }
+    }
+
+    private static string DescribeFileSize(string userPath)
+    {
+        try
+        {
+            return $"{new System.IO.FileInfo(ProjectSettings.GlobalizePath(userPath)).Length:N0} bytes";
+        }
+        catch
+        {
+            return "size unknown";
+        }
     }
 
     private static void ApplyStateFromSnapshot(BlockchainStateSnapshot? snapshot)

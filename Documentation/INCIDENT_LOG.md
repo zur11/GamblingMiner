@@ -126,10 +126,25 @@ The post-crash boot (`godot.log`) goes straight from `Hardware allocation loaded
 - **The playtest state itself survived**: the chain, every balance, the FED, the casino, all company and
   bank state, and the in-flight First Satoshi Savings auction.
 
-**Recovery** — See **P15.11a** in `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md`: back up the
-whole `user://` directory, append the 7 missing characters to `state.json`, and delete the bet-history files
-outright under the developer's explicit authorization (they are stats, not world state, they are already in
-the world-reset delete list, and per F4 they are wrong).
+**Recovery** — Executed **2026-07-29** (P15.11a):
+
+- Backup at `%APPDATA%\Godot\GamblingMiner_backup_INC001_2026-07-29\` — 1.43 GB. Everything except the
+  journal was **copied**; the 115 `bet_history*.jsonl` files were **moved** into it (same volume ⇒ a rename,
+  instant and costing no extra disk), so the deleted history is archived rather than destroyed.
+- `state.json` repaired by `TrimEnd()` + `"\r\n  }\r\n}\r\n"`: **9,256,960 → 9,256,967 bytes**, brace and
+  bracket depth 0, no open string. Then validated with a **real JSON parser**, not just a balance scan:
+  **1,666 blocks**, last index 1666, tip `2012-09-22 18:08:27` UTC, **20** `CompanyFoundings` and **20**
+  `CompanyGovernance` entries, 4 bot governance stances, `FbiActivated = true`, and `BankState` empty —
+  which is the correct reading, since First Satoshi Savings had not founded yet.
+- Deleted: the 115 journal files (moved, above) and 40 write-only `blocks-*.json` (5.2 MB).
+- **Save directory: 1.43 GB → 9 MB.** The CSV traces in `logs/` were deliberately kept — they are the P15.8
+  calibration record, and the rotated `godot2026-07-28*.log` was kept too, since it is the healthy-boot
+  reference that made the `[Governance]` diagnosis possible.
+
+**Known artifact, recorded rather than smoothed over:** the checkpoint file was written for block *N* and the
+interrupted snapshot contains block *N+1*, so the restored clock (`2012-09-21 10:47` local) sits about a day
+behind the chain tip. The crash landed **between two files' writes** — the same atomicity gap, visible across
+files instead of inside one. D-15.26 closes it for a single file; a cross-file transaction is not attempted.
 
 **Fix** — **P15.11** (`AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` §8): atomic snapshot
 write, a loud `TryLoadSnapshot`, the journal-rebuild rotation fix, a history retention policy, and the

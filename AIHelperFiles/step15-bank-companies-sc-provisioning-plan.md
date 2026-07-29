@@ -557,7 +557,7 @@ Once these three land, the design is complete enough to lock P15.0 and start bui
   world silently unloadable; the underlying cause was a 1.13 GB bet journal whose rotation policy its own
   rebuild path defeated. Repair the world, wipe the (already double-counted) history under explicit
   authorization, make the snapshot write atomic and its loader loud, and cap what accumulates.
-  **→ §8; ⚠️ BLOCKS the rest of P15.8 — the playtest cannot continue until the world is repaired.**
+  **→ §8; ✅ IMPLEMENTED 2026-07-29 (a–e) — world recovered, P15.8 unblocked; f is the launch verification.**
 
 ---
 
@@ -1382,10 +1382,18 @@ vote is structurally refused the UI says so instead of leaving it silent — wit
 
 ---
 
-### P15.11 — Persistence survivability & the bet-journal blowup — ⚠️ BLOCKS P15.8 (from INC-001, 2026-07-29)
+### P15.11 — Persistence survivability & the bet-journal blowup — ✅ IMPLEMENTED (2026-07-29, subphases a–e; f = developer verification)
 
-> **Do this before anything else in plan15.** The P15.8 world is currently unloadable and the playtest cannot
-> continue until P15.11a has run. The forensic record — evidence, log lines, exact byte counts — is
+> **World recovered 2026-07-29.** P15.11a executed: backup at
+> `%APPDATA%\Godot\GamblingMiner_backup_INC001_2026-07-29\` (1.43 GB — the 115 history files were **moved**
+> into it, not copied, so the archive cost nothing beyond what was already on disk); `state.json` repaired
+> `9,256,960 → 9,256,967` bytes and **validated with a real JSON parser**: 1,666 blocks, tip
+> `2012-09-22 18:08:27` UTC, 20 `CompanyFoundings` + 20 `CompanyGovernance`, 4 bot stances,
+> `FbiActivated = true`, `BankState` empty (correct — First Satoshi Savings was still in auction). Save
+> directory **1.43 GB → 9 MB**. b–e are built and `dotnet build` is clean with 0 warnings; **f is the
+> developer's launch check.**
+>
+> The forensic record — evidence, log lines, exact byte counts — is
 > `Documentation/INCIDENT_LOG.md` **INC-001**; the design statement is `Documentation/ProjectDesignManual.md`
 > **Chapter 40**. This section is the executable part.
 
