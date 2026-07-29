@@ -153,7 +153,7 @@ public partial class CasinoCoinSwapService : Node
 		// §1.1 event set — availability is event-driven, never per-frame. Handlers no-op until the deferred
 		// initial recompute has run (the checkpoint restore fires BalanceChanged during autoload boot, before
 		// the blockchain world should be touched).
-		if (_casinoSc != null) _casinoSc.BalanceChanged += OnAvailabilityInputChanged;
+		if (_casinoSc != null) _casinoSc.BalanceChanged += OnCasinoScBalanceChanged;
 		if (_market != null)   _market.MarketDayChanged += OnMarketDayChanged;
 		NetworkRoot.BlockAccepted += OnBlockAccepted;
 		CallDeferred(nameof(InitializeAvailability));
@@ -163,7 +163,7 @@ public partial class CasinoCoinSwapService : Node
 
 	public override void _ExitTree()
 	{
-		if (_casinoSc != null) _casinoSc.BalanceChanged -= OnAvailabilityInputChanged;
+		if (_casinoSc != null) _casinoSc.BalanceChanged -= OnCasinoScBalanceChanged;
 		if (_market != null)   _market.MarketDayChanged -= OnMarketDayChanged;
 		NetworkRoot.BlockAccepted -= OnBlockAccepted; // static event — must not outlive the autoload
 	}
@@ -300,9 +300,48 @@ public partial class CasinoCoinSwapService : Node
 		RecomputeAvailability(notify: true);
 	}
 
+	// ── R3 (2026-07-28) — the SC-balance trigger must be COALESCED, never per-bet ──────────────────────
+	// RecomputeAvailability is a CHAIN-side recompute: AggregateSpendable walks the casino's whole address
+	// book, each address scanning the full UTXO set, and GetCasinoBtcSettlement re-derives every
+	// undistributed pool event. CasinoScBalanceService.BalanceChanged, however, fires on EVERY settled bet
+	// — since ND.8f that is all five clients, up to ~20 bets per frame — and an SC balance movement cannot
+	// change one single chain-side figure. That made the swap desk the dominant term in the simulation's
+	// frame time (measured at DevTimeScale 90: the bet engine sustained only 2 sim-seconds per frame, so
+	// R2-C1's honest throttle held the clock at ~1/6 of the requested speed).
+	//
+	// So: the inputs that genuinely move the chain-side figures — a new block, a new market day — still
+	// recompute IMMEDIATELY (they fire once per block / once per in-game day). An SC-balance change only
+	// raises a dirty flag, drained at most every AvailabilityCoalesceSeconds in _Process. This is CLAUDE.md
+	// Pattern 6's documented hybrid: the per-frame cost is one bool test, and the real work sits behind it.
+	private const double AvailabilityCoalesceSeconds = 0.25;
+	private bool   _availabilityDirty;
+	private double _availabilityCoalesceTimer;
+
+	public override void _Process(double delta)
+	{
+		if (!_availabilityDirty) return;
+
+		_availabilityCoalesceTimer += delta;
+		if (_availabilityCoalesceTimer < AvailabilityCoalesceSeconds) return;
+
+		_availabilityCoalesceTimer = 0d;
+		_availabilityDirty = false;
+		RecomputeAvailability(notify: true);
+	}
+
+	// Immediate path — for inputs that actually move the chain/market side.
 	private void OnAvailabilityInputChanged()
 	{
-		if (_availabilityReady) RecomputeAvailability(notify: true);
+		if (!_availabilityReady) return;
+		_availabilityDirty = false;
+		_availabilityCoalesceTimer = 0d;
+		RecomputeAvailability(notify: true);
+	}
+
+	// Coalesced path — the casino's SC balance moved (a settled bet, a recharge, a loan draw).
+	private void OnCasinoScBalanceChanged()
+	{
+		if (_availabilityReady) _availabilityDirty = true;
 	}
 
 	private void OnMarketDayChanged(MarketDay day) => OnAvailabilityInputChanged();

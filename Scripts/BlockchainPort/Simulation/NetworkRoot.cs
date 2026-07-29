@@ -2692,8 +2692,10 @@ public partial class NetworkRoot : Node
                     // Quarter end: credit the closing cycle's NST lumps + residual PST drip BEFORE the
                     // new quarter's vote opens (D-ND8.17 — the lump is paid at quarter end).
                     SettleDividendCycleAtQuarterEnd(gov, founding, block);
-                    // P15.6a — roll the throughput window: the closing quarter's SC inflow becomes the
-                    // reference the FBI's tolerance is measured against for the next one.
+                    // P15.6a — roll the SC throughput window. NOTE (R3, 2026-07-28): this is no longer the
+                    // FBI's tolerance basis — that moved to the charter reserve, see FbiToleranceScFor. The
+                    // per-quarter inflow is kept because it is an accurate, cheap business-activity metric
+                    // (and a P15.8 calibration input); it is simply not what the meter reads any more.
                     gov.ScInflowLastQuarterSc = gov.ScInflowCurrentQuarterSc;
                     gov.ScInflowCurrentQuarterSc = 0m;
                     // P15.4d — THE PAYMENT DAY. A bank's whole "extra-lazy" carry ends here: it sells just
@@ -3218,6 +3220,24 @@ public partial class NetworkRoot : Node
     private const decimal SeizureRollBasePercent = 0.5m;  // × darkness × (score ÷ threshold)
     private const decimal SeizureRollCapPercent = 2.0m;   // the "capped" half of the hybrid
 
+    // R3 (2026-07-28) — THE SCORE ITSELF NEEDS A CEILING, not just its gain rate. InvestigationOverageCap
+    // bounds how fast the meter climbs; nothing bounded how HIGH it climbed, and gain (up to
+    // 0.5 × 4 overage × 4 darkness = 8/block for a black company) outruns decay (1.0/block) by 8×. So a
+    // company held over tolerance for 200 blocks accrued ~1,600 and then needed ~1,600 blocks — well over
+    // two in-game years — to cool back to zero, staying red on the FED board the whole time. The decay is
+    // documented as "the player's lever"; unbounded accumulation quietly took the lever away.
+    //
+    // The value is not arbitrary: the raid roll is min(2%, 0.5% × darkness × score/threshold), which
+    // SATURATES at its 2% cap by score = 2 × threshold for the LIGHTEST non-exempt category (darkness 2)
+    // and earlier for every darker one. Past 2× threshold, extra score therefore changes nothing about the
+    // risk — it is pure dead weight that only lengthens the cooldown. Capping there bounds the worst-case
+    // cool-off at 200 blocks (~4.5 in-game months) while leaving time-to-flag completely unchanged.
+    //
+    // Applied on every accrual, so it also self-corrects the inflated scores that companies accumulated
+    // under the retired throughput basis (see FbiToleranceScFor) — they clamp to the ceiling on the next
+    // block rather than needing a one-off amnesty pass. *P15.8 knob like the rest of the meter.*
+    private const decimal InvestigationScoreCap = 2m * InvestigationFlagThreshold;
+
     // The FBI's own budget: an initial FED grant at activation, then self-funding from what it seizes
     // (D-15.21). The grant is booked as a FED loan on client "fbi" rather than conjured, so
     // `circulation = grants + debt` still holds — it is simply never repaid, like the casino's (D-15.17).
@@ -3231,16 +3251,46 @@ public partial class NetworkRoot : Node
     public static bool FbiActivated => _fbiActivated;
     public static DateTime FbiActivationDateLocal => FbiActivationLocal;
 
-    // A company's tolerated SC balance right now. Negative = exempt (Official). Throughput is the larger of
-    // the last completed quarter and the one in progress, so a company that has just started converting is
-    // not judged against a stale zero. *The window itself is a P15.8 knob.*
+    // A company's tolerated SC balance right now. Negative = exempt (Official, or unpriceable — see below).
+    //
+    // R3 (2026-07-28) — THE BASIS IS THE CHARTER, NOT RECENT THROUGHPUT. The original P15.6a rule measured
+    // the tolerance off `max(ScInflowLastQuarterSc, ScInflowCurrentQuarterSc)`, i.e. a FLOW over ≤2 quarters
+    // judged against a STOCK that is meant to be HELD. The two disagree structurally: TryConvertCompanyReserves
+    // stops converting the moment a company reaches its voted reserve target, so a perfectly healthy company
+    // reports zero throughput two quarters later, `tolerance` collapses to 0.00, FbiOverageRatio pins it at the
+    // overage cap, and it is flagged within ~13–25 blocks depending on darkness. Every non-Official company
+    // that ever reaches its target was therefore guaranteed a federal file — which is what a 2011 playtest hit
+    // (three companies under investigation, all reading "0.00 SC tolerated"). The wealth was not unexplained;
+    // it was explained by a conversion the window had simply forgotten.
+    //
+    // "Explained wealth" is now what the company's OWN shareholders voted to hold: the charter reserve
+    // (`ReserveScPercent` of total company value), times the category's tolerance multiple. A company sitting
+    // exactly at its target has overage 0 and cools off; one hoarding SC well beyond its charter still heats
+    // up. The player's levers stay legible and get sharper — vote the reserve % down, or hold a lighter
+    // category — and neither is a stale accident of when the last conversion happened.
+    //
+    // Valuation basis is deliberately IDENTICAL to TryConvertCompanyReserves' own (CompanyOwnBtc at the
+    // chain-tip day's price + ScReserve), so the figure the FBI judges can never drift from the figure the
+    // conversion targets (§39.16 rule 6). No market price ⇒ exempt this block rather than judged against a
+    // BTC treasury we cannot value; structurally unreachable post-founding (auctions start at Market Birth).
+    //
+    // A 0% charter is a REAL zero, not the accidental one this replaced: it means "our charter says hold no
+    // SC" while the company holds some, which is exactly what the meter is for — and it is escapable, since
+    // dividends drain SC and the reserve % is itself votable. *The multiples remain P15.8 knobs.*
     public static decimal FbiToleranceScFor(CompanyGovernanceState gov)
     {
         decimal multiplier = FbiToleranceMultiplier(gov.MarketCategory);
         if (multiplier < 0m) return -1m;
 
-        decimal throughput = Math.Max(gov.ScInflowLastQuarterSc, gov.ScInflowCurrentQuarterSc);
-        return Scripts.Finance.Money.Normalize(multiplier * throughput);
+        long nowMs = _lastMinedBlock?.Timestamp ?? 0L;
+        decimal? priceUsd = nowMs > 0L
+            ? _marketData?.GetEffectivePriceUsd(DateTimeOffset.FromUnixTimeMilliseconds(nowMs).LocalDateTime)
+            : null;
+        if (priceUsd is not decimal price || price <= 0m) return -1m;
+
+        decimal totalValueSc = CompanyOwnBtc(gov.NonMinerNodeId) * price + gov.ScReserve;
+        decimal charterSc = totalValueSc * gov.ReserveScPercent / 100m;
+        return Scripts.Finance.Money.Normalize(multiplier * charterSc);
     }
 
     // How far over the line, as a ratio, capped. A company holding SC with NO throughput to explain it sits
@@ -3254,6 +3304,15 @@ public partial class NetworkRoot : Node
 
     // Darkness weight: light_grey 2 … black 4 (official never reaches here — it is exempt above).
     private static decimal FbiDarkness(string marketCategory) => MarketCategoryIndex(marketCategory) + 1m;
+
+    // R3 — how many blocks a file still needs to close, at the decay rate, if it stays under tolerance.
+    // Shares InvestigationDecayPerBlock with the tick itself, so the estimate cannot drift from the
+    // mechanism (§39.16 rule 6). Exists because "will this red row ever go away?" was a question the board
+    // could not answer, which is exactly the ambiguity rule 6 exists to prevent.
+    public static int FbiBlocksToClear(decimal score) =>
+        score <= 0m || InvestigationDecayPerBlock <= 0m
+            ? 0
+            : (int)Math.Ceiling(score / InvestigationDecayPerBlock);
 
     // P15.6a/b/c — one pass per block. Accrues/decays every company's meter, then rolls the raid for the
     // SINGLE highest-priority flagged target: **non-banks first, ranked by overage; banks LAST** (D-15.19 —
@@ -3283,18 +3342,28 @@ public partial class NetworkRoot : Node
 
             if (tolerance >= 0m && overage > 0m)
             {
-                gov.InvestigationScore = Scripts.Finance.Money.Normalize(
-                    gov.InvestigationScore + InvestigationGainPerBlock * overage * FbiDarkness(gov.MarketCategory));
+                // Clamped to InvestigationScoreCap: past 2× threshold the roll has saturated, so further
+                // accrual would only buy an unpayable cooldown later (R3 — see the constant).
+                gov.InvestigationScore = Scripts.Finance.Money.Normalize(Math.Min(InvestigationScoreCap,
+                    gov.InvestigationScore + InvestigationGainPerBlock * overage * FbiDarkness(gov.MarketCategory)));
             }
             else
             {
                 // Back under tolerance: the heat comes off. This is the player's lever — a company kept lean
-                // (or voted lighter) genuinely stops being a target.
+                // (or voted lighter) genuinely stops being a target. The ceiling is applied on the way DOWN
+                // too, so a file inflated under the retired throughput basis drops to it on its first cooling
+                // block instead of serving out a sentence for a defect.
                 gov.InvestigationScore = Scripts.Finance.Money.Normalize(
-                    Math.Max(0m, gov.InvestigationScore - InvestigationDecayPerBlock));
+                    Math.Max(0m, Math.Min(InvestigationScoreCap, gov.InvestigationScore) - InvestigationDecayPerBlock));
             }
 
-            if (gov.InvestigationScore >= InvestigationFlagThreshold)
+            // A raid needs a LIVE case, not just a thick file (R3, 2026-07-28). The score decays at
+            // InvestigationDecayPerBlock, so a company that gets back under its tolerance still carries a
+            // ≥threshold score for ~100 blocks — during which it could be seized for a condition that no
+            // longer holds. Requiring overage > 0 to be raid-eligible makes the decay mean what it says
+            // ("cooling off"), turns the player's lever into an IMMEDIATE effect rather than a 100-block
+            // wait, and keeps the file itself intact so a relapse re-arms at once instead of from zero.
+            if (gov.InvestigationScore >= InvestigationFlagThreshold && overage > 0m)
             {
                 flagged.Add((gov, overage, IsBankCompany(gov.NonMinerNodeId)));
             }
@@ -3429,12 +3498,23 @@ public partial class NetworkRoot : Node
         if (overage <= 0m && gov.InvestigationScore <= 0m) return null;
 
         decimal progress = Math.Min(100m, gov.InvestigationScore / InvestigationFlagThreshold * 100m);
-        string state = gov.InvestigationScore >= InvestigationFlagThreshold
+        // Rule 6 — this line must state exactly what TickFbiInvestigations will do, and since R3 a raid needs
+        // BOTH a ≥threshold file and a live overage. A thick file with no current overage is "open, not
+        // active": no raid can land while it stays that way, but the file has not been closed either.
+        bool raidEligible = gov.InvestigationScore >= InvestigationFlagThreshold && overage > 0m;
+        string state = raidEligible
             ? "FLAGGED — a raid can land on any block"
-            : overage > 0m ? "under investigation — the file is growing" : "cooling off — back under tolerance";
+            : overage > 0m
+                ? "under investigation — the file is growing"
+                : gov.InvestigationScore >= InvestigationFlagThreshold
+                    ? "file open but INACTIVE — back under tolerance, no raid while it stays there"
+                    : "cooling off — back under tolerance";
 
+        // R3: the advice names the ACTUAL lever now that the basis is the charter — the reserve % is voted,
+        // so the board can bring the heat down itself; the old text told the player to "convert less SC",
+        // which was never a control any shareholder held.
         return string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"⚖ Federal investigation: {state} ({progress:F0}% of the threshold). SC reserve {gov.ScReserve:N2} vs a tolerated {tolerance:N2} for a '{gov.MarketCategory}' business. Converting less SC — or holding a lighter market category — brings the heat down.");
+            $"⚖ Federal investigation: {state} ({progress:F0}% of the threshold). SC reserve {gov.ScReserve:N2} vs a tolerated {tolerance:N2} for a '{gov.MarketCategory}' business holding a {gov.ReserveScPercent:F0}% SC charter. Voting the SC reserve % up to cover what it actually holds — or holding a lighter market category — brings the heat down.");
     }
 
     // The pre-first-bank fallback (D-15.20 (c)) — unchanged ND.8b.6 behaviour: SC out of the casino's Main
@@ -4306,6 +4386,9 @@ public partial class NetworkRoot : Node
     // filter by the `miner` column. realizedPower inverts the equilibrium calibration solvetime = difficulty ×
     // (TargetBlockSeconds / InitialDifficulty) / power, so realizedPower = difficulty × clockSpeed / solveSec.
     private const string DifficultyTracePath = "user://logs/difficulty_trace.csv";
+    private const string DifficultyTraceHeader =
+        "utcMs,miner,index,configuredPower,realizedPower,difficulty,anchor,solveSec,solveRatio,simSecOffered,simSecConsumed";
+    private static bool _difficultyTraceSchemaChecked;
 
     // R2-T (2026-07-27) — simulated seconds OFFERED to the bet engine vs. those it actually retained,
     // accumulated by SimulationService since the last block and drained by AppendDifficultyTrace. The
@@ -4381,7 +4464,29 @@ public partial class NetworkRoot : Node
                 DirAccess.MakeDirRecursiveAbsolute("user://logs");
             }
 
+            // ND.10j's rule, applied here too (R3, 2026-07-28): R2-T appended simSecOffered/simSecConsumed
+            // without rotating, so every existing world's file carries the 9-column pre-R2 header above
+            // 11-column rows — the saturation columns, the very signal R2-C1 exists to expose, could only be
+            // read by counting commas. Rotate to `.old` on a header mismatch, checked once per process.
             bool exists = FileAccess.FileExists(DifficultyTracePath);
+            if (exists && !_difficultyTraceSchemaChecked)
+            {
+                _difficultyTraceSchemaChecked = true;
+                if (ReadFirstLine(DifficultyTracePath) != DifficultyTraceHeader)
+                {
+                    DirAccess.RemoveAbsolute(DifficultyTracePath + ".old");
+                    if (DirAccess.RenameAbsolute(DifficultyTracePath, DifficultyTracePath + ".old") == Error.Ok)
+                    {
+                        exists = false; // rotated — fall through and write a fresh, correctly-headed file
+                    }
+                    else
+                    {
+                        GD.PushWarning("[DifficultyTrace] stale header and rotation failed — rows appended "
+                            + "to this file will not match its header. Delete difficulty_trace.csv.");
+                    }
+                }
+            }
+
             using FileAccess file = exists
                 ? FileAccess.Open(DifficultyTracePath, FileAccess.ModeFlags.ReadWrite)
                 : FileAccess.Open(DifficultyTracePath, FileAccess.ModeFlags.Write);
@@ -4396,7 +4501,7 @@ public partial class NetworkRoot : Node
             }
             else
             {
-                file.StoreLine("utcMs,miner,index,configuredPower,realizedPower,difficulty,anchor,solveSec,solveRatio,simSecOffered,simSecConsumed");
+                file.StoreLine(DifficultyTraceHeader);
             }
 
             // R2-T — the saturation figures for the interval that just closed, then reset for the next block.
@@ -6081,10 +6186,17 @@ public partial class NetworkRoot : Node
         if (node.ReceiveWallet == null)
             return node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
 
+        // ONE pass over the UTXO set for the whole owned set, not one pass PER address (R3, 2026-07-28):
+        // GetAddressSpendableBalance walks the entire UTXO set and rebuilds the pending-spent outpoint set
+        // on every call, so the per-address loop cost O(addresses × utxos) — and the casino, whose change
+        // rotation gives it the largest address book in the world, is exactly the node the swap desk asked
+        // for on every settled bet. GetSpendableUtxos already accepts the whole set and applies the same
+        // spendable/maturity/pending filters, so the result is identical by construction (an outpoint has
+        // exactly one address, so no double counting is possible).
         var addresses = new HashSet<string>(node.ReceiveWallet.OwnedAddresses) { node.WalletAddress };
         decimal total = 0m;
-        foreach (string address in addresses)
-            total += node.Blockchain.GetAddressSpendableBalance(address);
+        foreach (var utxo in node.Blockchain.GetSpendableUtxos(addresses))
+            total += utxo.amount;
         return total;
     }
 

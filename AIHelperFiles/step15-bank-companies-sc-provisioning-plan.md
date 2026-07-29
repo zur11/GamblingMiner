@@ -277,6 +277,41 @@ list** (D-15.15) — a sibling view to `CompanyDetails` recording the closure ti
 - **D-15.21 (§5.2):** FBI = the **hybrid** (F1 investigation meter chooses targets + a capped F2 roll
   fires the raid); **throughput-relative tolerances** `tolerance = categoryMultiplier × recentScThroughput`
   (placeholders Official ∞ / Light-Grey 8× / Dark-Grey 3× / Black 1×, calibrated in P15.8).
+- **D-15.25 (R3, 2026-07-28 — AMENDS D-15.21's basis; multipliers, meter and roll unchanged):** the
+  tolerance basis is the **charter reserve**, not recent throughput:
+  `tolerance = categoryMultiplier × ReserveScPercent × (CompanyOwnBtc × price + ScReserve)`, valued on the
+  byte-identical basis `TryConvertCompanyReserves` targets; no market price ⇒ exempt that block. **Why:**
+  the throughput basis judged a FLOW (SC converted in the last ≤2 quarters) against a STOCK the design
+  intends to be HELD — conversions stop the moment a company reaches its voted target, so `T` falls to 0
+  two quarters later, tolerance reads `0.00`, the overage pins at the cap, and **every** non-Official
+  company that ever reached its target was guaranteed a federal file within ~13–25 blocks. Found in a
+  Nov-2011 playtest (three companies under investigation, all "0.00 SC tolerated"); the 2011 price crash
+  sharpened it, since a falling price shrinks the SC target and so removes the deficit that drives
+  conversions. "Explained wealth" is now what a company's own shareholders voted to hold, which also makes
+  the player's lever the **reserve % vote** rather than a stale accident of conversion timing. A `0%`
+  charter becomes a REAL zero (holding SC the charter forbids) and stays escapable via dividends/a new
+  vote. `ScInflow*QuarterSc` are kept and still maintained (activity metric + P15.8 input; deleting a
+  persisted field would force a `WorldFormatVersion` wipe of a live playtest) but are no longer read by
+  the meter. **Companion:** raid eligibility becomes `score ≥ threshold` **AND** `overage > 0` — with a
+  1.0/block decay a company back under tolerance otherwise stayed seizable for ~100 blocks for a condition
+  that no longer held; the file stays open (a relapse re-arms instantly) but inactive, and
+  `GetFbiInvestigationWarning` gained the matching fourth state. No format bump; display + rule only.
+- **D-15.26 (R3, same day — the meter's missing ceiling):** `InvestigationScoreCap = 2 ×
+  InvestigationFlagThreshold`. `InvestigationOverageCap` capped the meter's gain RATE; nothing capped its
+  accumulated HEIGHT, and gain (up to `0.5 × 4 × 4 = 8`/block, black at the overage cap) outruns decay
+  (`1.0`/block) **8:1** — 200 blocks over tolerance bought ~1,600 score and a >2-in-game-year cool-off,
+  which silently removed the lever the decay is supposed to BE. **The value is derived, not picked:** the
+  roll `min(2%, 0.5% × darkness × score/threshold)` saturates at its 2% cap by `score = 2 × threshold` for
+  the lightest non-exempt category (darkness 2) and earlier for darker ones, so beyond that point extra
+  score alters no risk and only lengthens the cooldown. Worst-case cool-off becomes 200 blocks (~4.5
+  in-game months); **time-to-flag is unchanged**. Clamped on the DECAY branch too, so files inflated under
+  the retired throughput basis drop to the ceiling on their first cooling block — this is deliberately
+  used *instead of* a one-off amnesty pass, which would have needed a persisted "already amnestied" marker.
+  **Board parity:** the FED scene's red/orange split keyed on `score ≥ threshold` alone and so painted an
+  already-closing file as a live threat; it now tests both halves of raid eligibility (red ⚑ eligible now ·
+  orange over-tolerance and growing · grey cooling) and states the blocks remaining via the new shared
+  `NetworkRoot.FbiBlocksToClear` — §39.16 rule 6, since a status colour is a claim about what the tick will
+  do next. No format bump.
 - **D-15.22 (§5.3):** adopt **all three DEV/UI surfaces** — the DEV-only FED scene, the WorldEconomy
   additions, and the player-facing `CompanyDetails` lending panel (all in P15.7).
 - **D-15.23 (§8 fork):** **Fork A** — a new `CentralBankService` owns the per-client FED accounts +

@@ -287,12 +287,24 @@ public partial class CentralBank : Control
 			return;
 		}
 
+		// R3 — a row now says which of THREE states it is in, because "score 340/100, SC under tolerance"
+		// read as a live threat when it was in fact a file already closing. Raid eligibility is
+		// `score ≥ threshold AND overage > 0` (TickFbiInvestigations), so the colour must test both:
+		//   red    ⚑ — raid-eligible RIGHT NOW
+		//   orange ·  — over tolerance, file still growing toward the threshold
+		//   grey   ·  — under tolerance, cooling; shows the blocks left before the row disappears
 		foreach (var f in files)
 		{
-			bool flagged = f.Score >= NetworkRoot.InvestigationFlagThreshold;
+			bool overTolerance = f.Overage > 0m;
+			bool raidEligible = f.Score >= NetworkRoot.InvestigationFlagThreshold && overTolerance;
+			string tail = overTolerance
+				? "  ·  OVER TOLERANCE"
+				: string.Create(CultureInfo.InvariantCulture,
+					$"  ·  under tolerance, cooling — clears in ~{NetworkRoot.FbiBlocksToClear(f.Score)} blocks (no raid meanwhile)");
+
 			AddLabel(string.Create(CultureInfo.InvariantCulture,
-				$"    {(flagged ? "⚑" : "·")} {f.DisplayName} [{f.MarketCategory}{(f.IsBank ? ", bank" : "")}]  score {f.Score:N1}/{NetworkRoot.InvestigationFlagThreshold:N0}  ·  SC {f.ScReserve:N2} vs tolerated {f.ToleranceSc:N2}"),
-				15, flagged ? new Color(1f, 0.4f, 0.4f) : ColorDraw);
+				$"    {(raidEligible ? "⚑" : "·")} {f.DisplayName} [{f.MarketCategory}{(f.IsBank ? ", bank" : "")}]  score {f.Score:N1}/{NetworkRoot.InvestigationFlagThreshold:N0}  ·  SC {f.ScReserve:N2} vs tolerated {f.ToleranceSc:N2}{tail}"),
+				15, raidEligible ? new Color(1f, 0.4f, 0.4f) : overTolerance ? ColorDraw : ColorSubtle);
 		}
 	}
 

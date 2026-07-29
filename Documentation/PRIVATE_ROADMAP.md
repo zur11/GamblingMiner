@@ -335,6 +335,28 @@ Candidate inputs (all already available, none requiring new state):
 
 **Also wanted:** surface the knobs (reserve floor/ceiling or the policy's parameters, the raise band, the opening-bid anchor, the claim batching multiple) as **DEV-configurable** in the same spirit as `CasinoGamblingFinances`/`WorldEconomy`'s existing sliders, so a calibration run doesn't need a rebuild. Design + the audit that produced the stopgap: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.6.
 
+### Bot Seed Phrases & Full UTXO Integration (OQ-8.2) — PROMOTED, schedule right after Step 15
+
+**Status: promoted out of the Post-Basic-Mode checklist (2026-07-28).** Design and implement **at the end of Step 15** if the plan closes cleanly; otherwise as the step immediately after. Original design: `AIHelperFiles/step8-utxo-realism-plan.md` OQ-8.2.
+
+**Why it was deferred, and why that reason is now gone.** At Step 8 the number of mining bots was an open question, and handing a seed phrase + full `DerivedAddressWallet` integration to an unknown (possibly large) population looked like a poor trade. The game has since settled: the casino-miner population is **exactly four** (`bot_1..4`), fixed by the ND.8c genesis-grant set and the D-EB.7 "only casino players may bid" rule. At four, per-bot seeds are cheap and the migration is straightforward — the original objection no longer applies.
+
+**What it fixes, concretely.** Bots are the last single-address participants in the world. In `BuildAndBroadcastUtxoSpend` the change address is `sender.ReceiveWallet?.NextReceiveAddress() ?? sender.WalletAddress` — with no `ReceiveWallet`, **a bot's change returns to the very address it just spent from**, so receipts and change pile up as dozens of UTXOs on one address. Observed on block 1274 (2011-12-11): `bot_1`'s 193.73 BTC auction bid on `non_miner_18` combined **nine inputs, all printing the same address**, while three other transactions in that same block paid *into* it. It is correct UTXO behaviour and correct coin selection (`SelectUtxos`: exact match, else largest-first) — but the address repetition is an artefact of the missing rotation, not of the model.
+
+**A finding that de-risks the migration** (from the block-1274 audit): `NetworkRoot.TryResolveInputKeys` resolves the **base address** (the node's own keypair) and **derived addresses** (`ReceiveWallet.TryFindSpendingContext`) through two independent branches. So a bot's base address does **not** have to be seed-derived — it can keep the registry address it already carries all over the chain, and take a `DerivedAddressWallet` purely for change rotation. **That suggests no `WorldFormatVersion` bump / chain wipe is required**; confirm during design before relying on it (the player/casino/founders all have base == seed-derived, so this combination has never been exercised).
+
+**The enabling change:** `BotWalletRecord` (`Scripts/BlockchainPort/Blockchain/WalletModels.cs`) stores keys but explicitly no seed — *"gm1q… only; no seed words stored"*. It needs a seed field. Note `bot_wallet_registry.json` is an **identity file, deliberately spared** by `NetworkRoot.ResetWorldIfIncompatible`'s delete list, so existing records survive every reset with the field absent — this is exactly §39.16 rule 5 (sentinel default + backfill), and the backfill must not disturb the existing `Address`.
+
+**Scope decision to make during design — how far the migration reaches:**
+1. **`bot_1..4`** (4 nodes) — the ask, and the only participants with real economic agency (bets, bids, dividends, pool payouts).
+2. **Cast miners** (`BotWalletRegistry.CastMiners`, up to ~33 by 2025, spawned one per block) — also single-address. Larger and dynamic, but they only mine and run the sell-flow.
+3. **Non-miner companies** (40) — also single-address; they receive bids, inflows and conversions.
+4. **Ghost miners** — **never.** D-14.11 makes their coins frozen forever by design; they are session-transient with no persisted keys, and giving them wallets would contradict the whole mechanic.
+
+**The scope choice decides a second deliverable:** the two Block Explorer cosmetics `IsSelfChangeTransaction` / `ExternalOutputs` (§29.9) hide change-to-self outputs and exist *solely* because of single-address participants — CLAUDE.md wants them gone before the referral/rank systems ship. They can only be removed once the **last** single-address participant is migrated, i.e. under scope 1+2+3. Under scope 1 alone the cosmetics must stay, and the display stays filtered (block 1274's transaction really has **two** outputs — the 6.05 BTC change back to `bot_1` is hidden, which is what makes its arithmetic look wrong).
+
+**Related, do at the same time if scope allows:** OQ-8.3 (player/casino incoming deposit-address rotation) is the same family — full HD receive behaviour rather than change-on-send only — and is still parked in the Post-Basic-Mode list below.
+
 ### Post-Basic Mode — Divergent Chains / Fork Simulation (revisit AFTER Basic Mode)
 
 **Deferred, not discarded.** The idea is wanted; the system simply has higher priorities until Basic Mode is finished. **Re-plan this only once Basic Mode is complete.**
@@ -352,7 +374,7 @@ Start when: Basic Mode is complete and stable. Until then, leave mining committi
 Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is complete and stable. Each links to its design. (Everything else carried forward — fee activation, casino referral/rank, founder long-term timelines — belongs to **Basic Mode**; see the §6 checklist.)
 
 - [ ] **Patoshi pattern — mining-forensic view (Step 8, Phase 8.5).** An *optional, clearly-labelled cosmetic* Block-Explorer view that highlights Satoshi-mined blocks as a contiguous band (echoing Lerner's ExtraNonce-vs-height plot) with a teaching caption. Our engine can't reproduce the real ExtraNonce/decrementing-nonce/timestamp artifacts (random-nonce search, no ExtraNonce field), so it is an honest stand-in. **This is distinct from address non-reuse** (the many-addresses wallet pattern, already implemented) — the D0 terminology correction already shipped; only this forensic view is deferred. Design: `AIHelperFiles/step8-utxo-realism-plan.md` (Phase 8.5 + OQ-8.5).
-- [ ] **Bots multi-address (Step 8, OQ-8.2).** Give miner/non-miner bots their own seed so they get change-address rotation like the player/casino/founders. Blocked today because bots use random/registry keypairs (no stored seed). Revisit with gradual-miner-spawning. Design: `step8-utxo-realism-plan.md` OQ-8.2.
+- [x] ~~**Bots multi-address (Step 8, OQ-8.2).**~~ **PROMOTED out of this list (2026-07-28)** — the deferral reason (an unknown, possibly large miner-bot population) is gone now that the casino-miner set is fixed at four. Scheduled for the end of Step 15; see **"Bot Seed Phrases & Full UTXO Integration (OQ-8.2)"** in §5 above for the why-now, the scope tiers and the design constraints.
 - [ ] **Player/casino deposit-address rotation (Step 8, OQ-8.3).** Rotate the *incoming* receive address after each external deposit (full HD behavior). v1 delivers UTXO realism via change-on-send only. Design: `step8-utxo-realism-plan.md` OQ-8.3.
 - [ ] **Divergent Chains / Fork Simulation** — see the "Post-Basic Mode — Divergent Chains / Fork Simulation" section above (`IMPLEMENTATION_ROADMAP.md` Step 10).
 
