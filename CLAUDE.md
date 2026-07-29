@@ -599,6 +599,8 @@ This is the service-to-service half of a broader project-wide principle — see 
 
 Full rationale and the bugs this resolved: `Documentation/ProjectDesignManual.md` §24.8 (post-first-block), §24.9 (pre-genesis + the exact-timestamp rule), and §24.10 (the wall-clock-vs-game-time audit).
 
+**⚠️ This rule governs commit TIMING, not commit DURABILITY — they are separate problems (INC-001, 2026-07-29).** "A block is the only commit" says *when* to write and is silent on what a half-written file means. A force-close during a block commit left `blockchain/state.json` truncated 7 bytes short of valid; `TryLoadSnapshot` had no `try`, so the `JsonException` escaped `EnsureInitialized` and **every subsequent launch produced an empty world with nothing printed in the log** — chain, wallets and explorer blank while the money services (own files) restored perfectly. The good file survived only because the throw landed before any writer ran. When persisting player-owned state, answer all three: **is the write atomic** (write `.tmp` → flush → rename, never truncate-and-stream), **does a corrupt read fail loudly** (a `Try` prefix is a promise — honour it or drop it), and **can a failed load ever be persisted back over the good copy** (guard the writer, not just the reader). The same incident exposed a scale limitation — several subsystems encode the hand-play premise (~585 bets/block) as an invariant rather than a tuning parameter, and do not degrade when the background simulator runs them at 9000X: the bet journal reached **1.13 GB / ~5.3M records loaded per boot**, with no retention policy anywhere, and its lifetime stats had been silently double-counting. Full statement: `Documentation/ProjectDesignManual.md` **Chapter 40** (limits + the durability rules) and §39.16 rule 7; forensic record: `Documentation/INCIDENT_LOG.md` INC-001; fix: `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` **P15.11**.
+
 ### 3. Fractional Profit Accumulation
 
 `BetService` accumulates sub-satoshi remainders internally. Never round individual bet payouts at the call site — let `BetService` handle precision.
@@ -819,6 +821,7 @@ Detailed design documents are in `Documentation/`:
 | `GLOSSARY.md` | Canonical terminology (source of truth for naming) |
 | `PLAYER_GUIDE.md` | What is playable now (updated for each release) |
 | `PRIVATE_ROADMAP.md` | Internal priorities P0–P8, canonical decisions, open questions |
+| `INCIDENT_LOG.md` | **Significant design crashes** — data-loss/corruption events whose cause is a design limitation, not a typo. One entry per incident: symptom, timeline, proximate vs. root fault, evidence, blast radius, recovery, the phase that fixes it, and the generalized lesson. Add an entry whenever a crash costs a world/playtest or reveals a persisted figure that had been silently wrong. Currently: INC-001 (the 1.13 GB bet journal + truncated world snapshot, 2026-07-29) |
 
 ---
 

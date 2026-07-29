@@ -23,6 +23,7 @@ All project files, public documentation, UI text, code names, and backend termin
 - Legacy `Principal Balance` code-facing names should move toward `Main Balance` where reasonable.
 - Bots must matter in Basic Mode, but the bot/non-node wallet and transaction system needs a coherent model before long-session testing.
 - Casino finances are part of the simulation and need their own internal scene, even if the player should not have access to it later.
+- **Persistence was sized for hand-play and is now driven by a simulator** (INC-001, 2026-07-29 — cost a P15.8 playtest session). The commit rule ("a block is the only commit") covers *when* to write and never covered *durability*: writes are not atomic, a corrupt snapshot loaded silently into an empty world, no store has a retention policy, and lifetime stats had been double-counting for an unknown period. Fixed at **P15.11**; the limits deliberately left open (snapshot cost linear in chain length, no persisted lifetime aggregate) are named in `ProjectDesignManual.md` §40.6.
 
 ## 2. Product Direction
 
@@ -334,6 +335,14 @@ Candidate inputs (all already available, none requiring new state):
 **A third constant now sits in the same category:** `FreshPoolSeedingWeight` (34, ND.10l §14.13) — the tie-break weight an unbid pool carries against a contested one. It trades first-bid seeding against escalated re-bids, and block frequency changes how often the two compete at all, so it belongs to the same post-R2/post-P5 calibration pass.
 
 **Also wanted:** surface the knobs (reserve floor/ceiling or the policy's parameters, the raise band, the opening-bid anchor, the claim batching multiple) as **DEV-configurable** in the same spirit as `CasinoGamblingFinances`/`WorldEconomy`'s existing sliders, so a calibration run doesn't need a rebuild. Design + the audit that produced the stopgap: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.6.
+
+### Persistence Durability & History Retention (P15.11) — SCHEDULED, blocks the rest of P15.8
+
+**Status: scheduled and blocking (2026-07-29).** Spec: `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` **P15.11**. Forensics: `Documentation/INCIDENT_LOG.md` **INC-001**. Design statement: `ProjectDesignManual.md` **Chapter 40**.
+
+**What ships:** atomic snapshot writes (`.tmp` → rename) with a loader that fails loudly and a writer guarded against ever persisting over a failed load (D-15.26); the journal-rebuild path made to obey the same rotation/cleanup invariants as the incremental writer (D-15.27); a retention cap that bounds the boot load by construction (D-15.28/29); and the removal of the write-only `blocks-*.json` mirror (D-15.30). The crashed world is repaired rather than reset (D-15.31) — the bet history is deleted under explicit authorization, since it is stats-only and was already inflated by duplication.
+
+**Deliberately deferred, recorded so it is a decision and not an oversight:** a **persisted lifetime stats aggregate** (so totals stop meaning "over retained history"), and making the world snapshot **incremental** rather than a full 9.25 MB rewrite whose cost grows linearly with chain length. Both become worth doing when a run goes materially past ~1,666 blocks; revisit alongside P5 (hardware progression), which changes how fast blocks accumulate.
 
 ### Bot Seed Phrases & Full UTXO Integration (OQ-8.2) — PROMOTED, schedule right after Step 15
 

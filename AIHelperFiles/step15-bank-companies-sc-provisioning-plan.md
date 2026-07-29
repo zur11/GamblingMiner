@@ -334,6 +334,42 @@ list** (D-15.15) — a sibling view to `CompanyDetails` recording the closure ti
   **re-derived** from the stored ballot weights rather than persisted as a new field. Build it when the
   playtest reaches a founded bank, not before (§39.16 rule 2).
 
+### Round 5 (2026-07-29, from the crash that ended the P15.8 session — see P15.11 and `Documentation/INCIDENT_LOG.md` INC-001)
+
+- **D-15.26 (P15.11):** **persisted world state is written atomically** — `<file>.tmp` → flush → rename over
+  the target — and **its loader fails loudly**. `TryLoadSnapshot` will parse inside a `try`, log the path and
+  reason on failure, and **abort initialization rather than return an empty-but-plausible snapshot**. The
+  incident's world survived only because the throw happened to land before any writer; a single well-meaning
+  `catch`-and-continue would have overwritten a 1,666-block chain with an empty one at the next block. The
+  commit *timing* rule (§24.8) is untouched; this is the durability half it never covered (§39.16 rule 7).
+- **D-15.27 (P15.11):** **invariants belong to the file, not to a function.** `RebuildJournalFromCurrentState`
+  must obey every rule `Flush` obeys — rotate at `MaxJournalEntriesPerChunkFile`, and **delete the chunk
+  files it supersedes**. A "rebuild from current state" path that quietly writes an un-rotated 1.13 GB
+  monolith beside the chunks it duplicated is how the rotation policy was defeated for an unknown number of
+  sessions.
+- **D-15.28 (P15.11):** **the bet history is expendable and is being deleted, by explicit developer
+  authorization.** Rationale is not merely convenience: (a) it is stats, never world state, and it is
+  already in the `ResetWorldIfIncompatible` delete list; (b) per INC-001 fault F4 it has been
+  **double-counting** into the lifetime totals, so what is being deleted is a record that was already wrong;
+  (c) the bank-testing surface (P15.2–P15.10) reads none of it. Going forward the journal gets a **retention
+  cap** — an ever-growing store with no stated policy is how this arrived.
+- **D-15.29 (P15.11):** **never load an UNBOUNDED history to compute a bounded summary.** The boot load is
+  not removed — it is **bounded by construction** once D-15.28's retention cap exists, which keeps every
+  existing consumer semantically intact mid-playtest; if it still measures as material afterwards, the full
+  load moves behind the screens that genuinely browse history and `UserStatsService._Ready()` keeps the
+  cheap latest-chunk path. The proper fix — a persisted lifetime aggregate — is **deferred**, and the
+  interim behaviour (totals scoped to retained history) is **stated in the UI** rather than left under a
+  "lifetime" caption it no longer earns (§39.16 rule 1: no figure that lies).
+- **D-15.30 (P15.11):** **`blocks-*.json` stops being written.** Nothing in the codebase reads it; it costs
+  ~5 MB of I/O per mined block and its delete-all-then-rewrite was the first casualty of the interrupted
+  write. If a per-month chain view is ever wanted it should be generated on demand, not maintained as a
+  write-only mirror of `state.json`.
+- **D-15.31 (P15.11):** **the recovery is a repair, not a reset.** `state.json` is 7 characters short of
+  valid and its `PlayerChain`, financial, company, bank and FBI sections are all intact, so the world is
+  restored by completing the file — **no `WorldFormatVersion` bump, no clean wipe** (the standing bump-and-
+  wipe default, §39.16 rule 4, applies to *format* changes; this is a truncation, and wiping would discard a
+  perfectly good 1,666-block playtest five in-game days from the first bank's auction close).
+
 ---
 
 ## 5. Implementation picks (all DECIDED — see D-15.20…22)
@@ -516,6 +552,12 @@ Once these three land, the design is complete enough to lock P15.0 and start bui
   category is locked (D-15.12), so its NST holders are offered a Market-direction control whose every
   option is refused. Present it honestly rather than silently. **→ §8; ⏸ DEFERRED by design — decisions
   locked (D-15.25), start when the P15.8 run reaches a founded bank (first: 2012-09-03).**
+- **P15.11 — Persistence survivability & the bet-journal blowup** *(from INC-001, the crash that ended the
+  P15.8 session on 2026-07-29)*. A force-close during a block commit left `state.json` truncated and the
+  world silently unloadable; the underlying cause was a 1.13 GB bet journal whose rotation policy its own
+  rebuild path defeated. Repair the world, wipe the (already double-counted) history under explicit
+  authorization, make the snapshot write atomic and its loader loud, and cap what accumulates.
+  **→ §8; ⚠️ BLOCKS the rest of P15.8 — the playtest cannot continue until the world is repaired.**
 
 ---
 
@@ -1337,6 +1379,186 @@ dishonest.** So this phase changes what is *shown*, and deliberately changes no 
 **Exit:** no company offers its shareholders a governance control that cannot change anything, and where a
 vote is structurally refused the UI says so instead of leaving it silent — with the bots' attempts, and the
 `shift_refused=bank_locked` trace, left exactly as they are.
+
+---
+
+### P15.11 — Persistence survivability & the bet-journal blowup — ⚠️ BLOCKS P15.8 (from INC-001, 2026-07-29)
+
+> **Do this before anything else in plan15.** The P15.8 world is currently unloadable and the playtest cannot
+> continue until P15.11a has run. The forensic record — evidence, log lines, exact byte counts — is
+> `Documentation/INCIDENT_LOG.md` **INC-001**; the design statement is `Documentation/ProjectDesignManual.md`
+> **Chapter 40**. This section is the executable part.
+
+#### P15.11.0 — What happened, in three sentences
+
+At ~9000X, five in-game days before **First Satoshi Savings** (the first bank, and the entire point of the
+P15.8 run) closed its auction with the player leading, the app stopped responding on a scene change and was
+force-closed **during a block's `PersistStateToDisk()`**. That left `user://blockchain/state.json` truncated
+7 characters short of valid, and because `TryLoadSnapshot` had no `try`, every restart since has produced an
+**empty world with no error printed** — BlockExplorer blank, no recent bets, while the money services (which
+persist to their own files) restored perfectly and made the failure look selective. The freeze itself was
+not caused by the auction screen: the bet journal had grown to **1.13 GB**, and every boot was deserializing
+**~5.33 million** records while every rollback re-serialized them back out on the main thread.
+
+#### P15.11.1 — The two faults (and one that was already happening)
+
+| | Fault | Where |
+|---|---|---|
+| **F1** | *Proximate.* World snapshot written non-atomically (truncate + stream 9.25 MB); corrupt snapshot then fails **silently** — `JsonException` escapes `EnsureInitialized` before a single node is registered, `_isInitialized` stays `false`, nothing is logged | `NetworkRoot.PersistStateToDisk` (~L6525), `NetworkRoot.TryLoadSnapshot` (~L6720), called at `EnsureInitialized` (~L1001) |
+| **F2** | *Root.* `RebuildJournalFromCurrentState` writes the whole in-memory history into the **base** file with no cap, no rotation, and without deleting the chunks it duplicates — so base + chunks are both loaded next boot and the duplication compounds per session | `BetHistoryRepository.RebuildJournalFromCurrentState` (~L617) vs `Flush` (~L523) |
+| **F3** | *Collateral.* `WriteMonthlyChunks` deletes every `blocks-*.json` before rewriting them; it died partway. Harmless only because **nothing reads those files** | `NetworkRoot.WriteMonthlyChunks` (~L6565) |
+| **F4** | *Already wrong, nobody knew.* `RebuildStatsFromLoadedHistory` counts the duplicated records, so lifetime bets / wagered / net profit have been **inflated for an unknown number of sessions** | `UserStatsService._Ready` (~L28) |
+
+**The world survived only by accident.** The throw lands before any static state is touched, so
+`EnsureInitialized`'s own closing `PersistStateToDisk()` is never reached and the good file was never
+overwritten. One `catch`-and-continue in the wrong place would have replaced a 1,666-block chain with an
+empty one at the next block.
+
+#### P15.11.2 — The design limitation this exposed (2010-03-21 → 2012-09-22)
+
+Recorded here because it is the reason this is a *phase* and not a hotfix. Full statement in **Chapter 40**.
+
+The persistence layer was designed under the canonical premise — **1 bet = 1 nonce attempt = 100 in-game
+seconds**, `TargetBlockSeconds = 58,500`, therefore **~585 player bets per block**, a person clicking or a
+modest autobet. Under that premise "load the whole bet history at boot and replay it for the lifetime
+stats" is not sloppy, it is the simplest correct thing.
+
+What runs now is a **simulator**: a background autobet plus four bot runners across every scene, hours at a
+time, at up to 9000X. What that produced in this world:
+
+| Measure | Value |
+|---|---|
+| In-game span | 2010-03-21 → **2012-09-22**, ~2.5 in-game years |
+| Blocks | **1,666** |
+| `state.json` | **9.25 MB**, fully rewritten **every block** |
+| `blocks-*.json` | ~5 MB more per block — **read by nothing** |
+| Journal records loaded **every boot** | **~5,330,000** (1.126 GB base + 293 MB of chunks, overlapping) |
+| Records per block | **~3,200** (about half duplicates) |
+
+Even discounting the duplication that is several times the design premise — partly because of the known
+block-pace defect recorded at ND.10j (~2.2 in-game days/block against a 0.68 target, so each block absorbs
+roughly three times the intended bets; the R2 regulator work addresses the pace, not this).
+
+**The point is not that the numbers grew.** It is that these subsystems encode the hand-play premise as an
+*invariant* rather than a *tuning parameter*, so they do not degrade gracefully — they work perfectly until
+they fail completely, in the least visible way available:
+
+- **No retention policy exists anywhere.** Nothing has ever deleted a bet record except a world reset.
+- **Lifetime stats are derived by replaying every record ever written** — there is no aggregate, so the
+  totals cannot be known without holding the entire history in RAM (~5.3M `BetRecord` objects, an estimated
+  1.5–2.5 GB of managed heap, on an Intel UHD 620 laptop).
+- **Whole-file rewrites happen synchronously on the main thread** — `RollbackToUtc` on every checkpoint
+  restore and every DiceGame entry; `PersistStateToDisk` on every block.
+- **Snapshot cost is linear in chain length and paid per block** — 9.25 MB at 1,666 blocks, with nothing in
+  the design that stops it at 10,000.
+
+Same shape as §38.7's inverse-poll incident: a decision stayed correct while the premise underneath it was
+multiplied, and **nothing was re-examined at the moment the premise changed**.
+
+#### P15.11.3 — What is vital vs. expendable (the deletion authorization)
+
+The developer has explicitly authorized deleting the statistics and anything else not required for the bank
+testing the player is entering. Applying that:
+
+**KEEP — vital to the bank testing (P15.2–P15.10) and to the world's identity**
+
+`blockchain/state.json` (repaired — the chain, `NodeFinancialStates`, `CompanyFoundings`,
+`CompanyGovernance`, `BankState`, `ClosedCompanies`, FBI state) · `block_session_checkpoint.json` ·
+`central_bank_state.json` · `casino_sc_balance_state.json` · `sc_monetary_ledger.json` ·
+`casino_client_ledger.json` · `player_bank_account_state.json` · `casino_coin_swap_state.json` ·
+`casino_pool_state.json` · `hardware_allocation.json` · `principal_balance_state.json` ·
+`bankroll_state.json` · `bankroll_program_state.json` · `calendar_state.json` · the identity files
+(`bot_wallet_registry.json`, the five `*_wallet_state.json`, `wordlist_256.json`,
+`saved_betting_strategies.json`) · both stamps (`world_format_version.txt` = `4`, `world_timeline.stamp` =
+`CANON-2009-01-03+ENTRY-2010`) · `logs/*.csv` — **the traces are the P15.8 calibration record**, keep them.
+
+**DELETE — expendable**
+
+`bet_history.jsonl` + all 114 `bet_history_*.jsonl` (**1.4 GB**; stats only, already in the world-reset
+delete list, and per F4 already wrong) · `blockchain/blocks-*.json` (write-only, already partially
+destroyed) · the rotated `logs/godot2026-*.log`.
+
+**What deleting the history actually costs:** lifetime bet counters, the `BetsHistoryExplorer` /
+`CalendarsNavigator` browsable history, and DiceGame's seeded recent-bets list start empty. The
+since-deposit / since-recharge scopes in `FinancialBettingStats` read `CasinoClientLedgerService`, which is
+**kept**. No balance, no BTC, no company, bank, FED or auction state depends on the journal.
+
+#### P15.11.4 — Subphases
+
+- **P15.11a — Recover the crashed world. DO THIS FIRST, before any code change or relaunch.**
+  1. **Back up** the entire `%APPDATA%\Godot\app_userdata\GamblingMiner\` directory. Non-negotiable — every
+     step below is destructive and the world is currently one bad write from gone.
+  2. **Repair `blockchain/state.json`**: read it as text, `TrimEnd()`, append `"\r\n  }\r\n}\r\n"`. That
+     closes `BotGovernancePreferences` and the root object. Verified: the result balances to brace-depth 0,
+     bracket-depth 0, no unterminated string. `CompanyInflowMultipliers` (the last property, never written)
+     is absent and deserializes to empty = all ×1.0 — the only loss, and it is DEV knobs.
+  3. **Delete** `bet_history.jsonl`, every `bet_history_*.jsonl`, and every `blockchain/blocks-*.json`.
+  4. **Relaunch and verify** before touching anything else — see P15.11f.
+
+  **Known artifact, stated not hidden:** the checkpoint (`block_session_checkpoint.json`, clock
+  `2012-09-21 10:47` local) was written for block *N*, and the interrupted snapshot contains block *N+1*
+  (tip `2012-09-22 18:08:27` UTC). The crash landed **between the two files' writes** — which is precisely
+  the atomicity gap D-15.26 closes, here visible across two files rather than inside one. Expected to be
+  benign (the money state is a valid earlier commit and the clock advances forward from it), but confirm the
+  First Satoshi Savings auction still reads correctly before continuing the run.
+
+- **P15.11b — Atomic snapshot write + a loader that fails loudly (D-15.26).** `NetworkRoot`.
+  - `PersistStateToDisk`: serialize to a string, write it to `user://blockchain/state.json.tmp`, **close the
+    handle**, then `System.IO.File.Move(tmpAbs, targetAbs, overwrite: true)` on globalized paths (atomic
+    replace on Windows). **Gotcha:** the `using FileAccess` scope must *end* before the move — a `using`
+    declaration at method scope lives until the method returns, so this needs an explicit block.
+  - `TryLoadSnapshot`: parse inside `try`; on `JsonException`/`IOException` `GD.PrintErr` the path, the file
+    size and the exception message, set a new static `_snapshotLoadFailed = true`, and rethrow.
+  - `PersistStateToDisk`: early-return with a `GD.PrintErr` when `_snapshotLoadFailed` — **the guarantee that
+    a failed load can never be written back over the good file**. This is the part that makes the incident
+    non-repeatable, more than the atomic write is.
+  - Optional, cheap: if `state.json` is unreadable and `state.json.tmp` parses, prefer the tmp and say so.
+
+- **P15.11c — The journal rebuild must obey the file's invariants (D-15.27).** `BetHistoryRepository`.
+  - Extract the rotation loop out of `Flush` into a shared private writer (`WriteEntriesRotating`) that
+    appends, counts, and rotates at `MaxJournalEntriesPerChunkFile`.
+  - `RebuildJournalFromCurrentState` then: **delete the base file and every existing chunk first** (glob
+    strictly on `Path.GetFileNameWithoutExtension(_filePath) + "_*" + ext` in the journal's own folder — the
+    same pattern `GetJournalChunkPaths` already parses; never a looser glob), reset the counters, and write
+    the deposits + records through the shared writer.
+  - **Gotcha:** on exit `_activeJournalPath` / `_activeJournalLineCount` must point at the **last chunk
+    written**, not the base file, or the next `Flush` appends into a file the loader will read twice.
+
+- **P15.11d — Retention cap, so the boot load is bounded by construction (D-15.28/29).**
+  - Add a retention cap — `MaxRetainedJournalChunks` (recommend **20**, ≈200,000 records ≈57 MB) — enforced
+    in `RotateToNextChunkFile` and after a rebuild: delete the oldest chunks beyond the cap.
+  - With a cap in place `EnsureAllChunksLoaded()` is bounded, so the boot load can **stay** — which keeps
+    every existing consumer semantically intact mid-playtest. Measure it once the cap is live; if it is
+    still material, move the full load behind `BetsHistoryExplorer`/`CalendarsNavigator` and leave
+    `UserStatsService._Ready` on the cheap latest-chunk path.
+  - **Say what the number means (§39.16 rule 1).** Once history is capped, "lifetime" totals are really
+    "over retained history". Label them that way in `FinancialBettingStats` / `BetsHistoryExplorer` rather
+    than letting a bounded figure keep a lifetime caption. A persisted lifetime aggregate is the correct
+    long-term answer and is **deferred**, not smuggled in here.
+
+- **P15.11e — Stop writing `blocks-*.json` (D-15.30).** Delete `WriteMonthlyChunks` and its call in
+  `PersistStateToDisk`. Keep the `blocks-*` delete loop in `ResetWorldIfIncompatible` so pre-existing files
+  are cleaned up. Saves ~5 MB of I/O per block and removes a delete-all-then-rewrite that can only ever lose
+  data.
+
+- **P15.11f — Verification.**
+  1. **World restored:** the boot log prints `[Governance] Casino miner-bot stances (restored with the
+     world)` between `Hardware allocation loaded.` and `[CasinoScBalanceService] Ready` — its **absence is
+     the signature of this whole incident**. BlockExplorer shows a chain tip at **2012-09-22**, ~**1,666**
+     blocks; wallets and balances populate; the FED scene still shows 2 clients / 260,000 SC outstanding.
+  2. **The auction survived:** First Satoshi Savings still in auction with the player leading and a close
+     ~5 in-game days out (`AuctioningCompanyDetails`, gold frame per §22.15).
+  3. **Atomicity:** with the game running, kill the process during a block commit. Relaunch — either the
+     previous world loads cleanly, or the log carries an explicit snapshot-load error. **Never a silent
+     empty world.**
+  4. **Rotation:** play until a rollback fires (enter DiceGame), then check `user://` — the base file is
+     ≤ one chunk's worth, chunk count ≤ the cap, and no chunk predates the rebuild.
+  5. **No regression to the bank surface:** conversions still route through `SelectFinanciers`, the monetary
+     invariant still reconciles in the CB scene, `dotnet build` clean.
+
+**Exit:** the P15.8 world is playable again from where it stopped; a force-close can no longer produce a
+silently empty world; the journal cannot outgrow its own rotation policy; and the plan carries an honest
+statement of the scale limit the run exposed, with the parts deliberately left unfixed named in Chapter 40.6.
 
 ---
 

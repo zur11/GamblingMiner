@@ -4497,3 +4497,168 @@ Six rules came out of building P15.1–P15.5. They are recorded together here be
 **6. A displayed signal must share its source with the action it advertises.** Inherited from ND.10d and reinforced throughout: `HasPlayerClaimableDividends` backs both the row button and the claim panel; `BuildBotPoolOpportunities` backs the roll, the eligibility test and the panel; `NetworkRoot.GetPlayerProjectedStake` reuses `FoundCompany`'s own ranking so the forecast cannot drift from the mint. When adding a readout, ask what performs the corresponding action and call *that*.
 
 One further habit worth naming, from §39.9.1: **an on-chain display memo can become load-bearing.** `InputDataText` is normally cosmetic, but the `COLLATERAL` tag is what keeps a bank's collateral out of its business-inflow measure — and therefore what stops spurious game-pausing special votes. Before treating a memo as purely decorative, check whether anything reads it.
+
+**7. Commit *timing* is not commit *durability* (added 2026-07-29, from INC-001 — see Chapter 40).** "A block is the only commit to disk" tells you *when* to write. It is silent on what a half-written file means, and for two whole steps nobody asked. Any code that persists player-owned state must also answer: is the write atomic, does a corrupt read fail loudly, and can a failed load ever be persisted back over the good copy? Full statement, plus the simulation-scale limitation the same incident exposed, in **Chapter 40**.
+
+---
+
+## Chapter 40 — Persistence Durability & Simulation Scale: The Limits of a Design Sized for Hand-Play
+
+> Written 2026-07-29, immediately after **INC-001** (`Documentation/INCIDENT_LOG.md`) destroyed a P15.8
+> playtest session five in-game days before the first bank company's auction closed. The incident entry is
+> the forensic record — what broke, in what order, with what evidence. **This chapter is the design
+> statement**: what the crash proved about assumptions this project has been carrying since long before
+> Step 15, and which of them are now known to be false.
+>
+> The fix is **P15.11** in `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md`.
+
+### 40.1 — The blind spot inside "a block is the only commit to disk"
+
+The commit rule (Ch. 24 §24.8, CLAUDE.md Important Pattern 2) is one of this project's best decisions. It
+gives a single, legible commit point; it makes an app restart mean something exact ("the world reverts to
+the last mined block"); it kept a dozen services from inventing their own save cadences.
+
+It also answers exactly one question — **when** to write — and we treated it as if it answered the whole
+subject. Three questions it never addressed, all of which INC-001 answered for us:
+
+1. **Is the write atomic?** It was not. `NetworkRoot.PersistStateToDisk` truncates `state.json` and streams
+   9.25 MB into it. A process death mid-write leaves a file that is page-aligned, plausible-looking, and
+   invalid — in the incident, 7 characters short of parseable.
+2. **Does a corrupt read fail loudly?** It did not. `TryLoadSnapshot` had no `try`, so the `JsonException`
+   escaped `EnsureInitialized` before it registered a single node, leaving `_isInitialized = false` and
+   every consumer looking at an empty world **with nothing printed**. The money services, persisting to
+   their own files, restored perfectly — so the failure presented as "some screens are blank", which is
+   about the least diagnosable shape a total world-load failure could take.
+3. **Can a failed load be written back over the good copy?** In this case no, and **only by accident**: the
+   throw happened before any static state was touched, so the closing `PersistStateToDisk()` was never
+   reached and the good file survived. A slightly more forgiving code path — one `catch` that logged and
+   continued with an empty snapshot — would have overwritten a 1,666-block chain with an empty one at the
+   next mined block. The world was recoverable because of where the exception landed, not because anything
+   protected it.
+
+**The general form:** a rule about persistence *timing* needs a companion rule about persistence
+*durability*, and the second does not follow from the first. This is now §39.16 rule 7.
+
+### 40.2 — The scale limitation this world exposed (2010-03-21 → 2012-09-22)
+
+The crashed world is the most demanding one this project has ever produced, and it is worth stating exactly
+what it contained, because the numbers are the argument:
+
+| Measure | Value |
+|---|---|
+| In-game span | **2010-03-21 → 2012-09-22** — ~2.5 in-game years |
+| Blocks mined | **1,666** |
+| World snapshot (`state.json`) | **9.25 MB**, fully rewritten **on every block** |
+| Monthly block chunks (`blocks-*.json`) | ~5 MB more per block — **deleted and rewritten wholesale**, and **read by nothing** |
+| Bet-journal records loaded **at every boot** | **~5,330,000** |
+| Bet records per block | **~3,200** (~half of them duplicates — see §40.4) |
+
+Compare that against the premise the persistence layer was designed under. The canonical loop is
+**1 bet = 1 nonce attempt = 100 in-game seconds**, and `TargetBlockSeconds = 58,500`, so the intended
+arithmetic is **~585 player bets per block** — a person clicking, or a modest autobet, generating a few
+hundred rows between commits. Under that premise, "load the entire bet history at boot and rebuild the
+lifetime stats from it" is not merely acceptable, it is the *simplest correct thing*.
+
+What actually runs now is a **simulator**: `SimulationService` ticking a background autobet plus four bot
+runners across every scene, at `DevTimeScale` up to 9000X, for hours. Even after discounting the
+duplication, the true history sits in the low millions of records for 1,666 blocks — several times the
+design premise. (Part of that multiple is the known block-pace defect recorded at ND.10j: blocks were
+running at ~2.2 in-game days against a 0.68-day target, so each block absorbed roughly three times the
+intended number of bets. The R2 regulator work addresses the pace; it does not change the conclusion below.)
+
+**The conclusion is not "the numbers got big".** It is that **several subsystems encode the hand-play
+premise as an invariant rather than as a tuning parameter**, so they do not degrade as the scale grows —
+they work perfectly until they stop working at all, and they stop in the least visible way available.
+
+### 40.3 — Where the hand-play premise is still baked in
+
+An honest inventory, as of this world. Each of these is correct under the original premise and wrong under
+the simulator:
+
+- **Unbounded lifetime history.** `UserStatsService._Ready()` calls `EnsureAllChunksLoaded()`
+  unconditionally, because lifetime stats are derived by replaying every record ever written. There is no
+  aggregate snapshot, so there is no way to know the totals without holding the whole history in RAM. **No
+  retention policy exists anywhere** — nothing has ever deleted a bet record except a world reset.
+- **Synchronous whole-file rewrites on the main thread.** `RollbackToUtc` re-serializes the entire history;
+  `PersistStateToDisk` re-serializes the entire chain. Both were microseconds at design scale. At this
+  world's scale the first is a multi-second-to-minutes main-thread stall on a 1.1 GB file, which is the
+  proximate reason the app appeared to hang on a scene change.
+- **Snapshot growth is linear in chain length, and it is rewritten per block.** By construction, the cost
+  of committing block *N* is proportional to *N*. At 1,666 blocks that is 9.25 MB per block; there is
+  nothing in the design that stops it at 10,000 blocks.
+- **Write amplification nobody is reading.** `WriteMonthlyChunks` deletes every `blocks-*.json` and rewrites
+  them on each commit. Grep confirms **no code path reads them**. They cost ~5 MB of I/O per block and, in
+  the incident, were the first casualty of the interrupted write.
+- **In-memory record objects, not a compact store.** ~5.3M `BetRecord` objects with per-record `Id` and
+  `GameId` strings — an estimated 1.5–2.5 GB of managed heap, on a laptop with an Intel UHD 620.
+
+None of these is a bug in the sense of a mistake. Each is a reasonable decision whose premise expired
+quietly when the game acquired a background simulator and a 9000X dev scale, and **nothing was re-examined
+at the moment the premise changed** — the same failure mode as §38.7's inverse-poll incident, where an event
+subscription stayed correct while the event's frequency was multiplied by five.
+
+### 40.4 — The specific defect: two writers, one file, different rules
+
+Worth isolating, because it is the most transferable lesson in the incident.
+
+`BetHistoryRepository` has **two** code paths that write the journal:
+
+- `Flush()` — the incremental writer. Appends, counts lines, and **rotates to a new chunk every 10,000
+  lines**. Correct.
+- `RebuildJournalFromCurrentState()` — the "write everything out from current state" path, called by
+  `RollbackToUtc` and `ClearAll` (so: every checkpoint restore, every DiceGame entry). It points the write
+  target back at the **base** file, dumps the entire in-memory history with `FileMode.Create`, applies **no
+  cap and no rotation**, and **does not delete the chunk files it has just duplicated**.
+
+Because `GetJournalChunkPaths(includeLegacyBaseFile: true)` loads the base file *and* the chunks, the next
+boot reads every record twice, and the next rollback writes that doubled set back into the base file. It
+compounds per session — 1.126 GB in the base file against 293 MB of chunks covering the same period.
+
+Two consequences, and the second is worse than the first:
+
+1. The rotation policy — the thing specifically designed to keep file sizes manageable — was **defeated by
+   the project's own code**, silently, for an unknown number of sessions.
+2. `RebuildStatsFromLoadedHistory()` counts whatever was loaded, so **the player's lifetime bet count, total
+   wagered and net profit have been inflated by duplication**, with nothing to compare against and no way to
+   notice. This is §39.16 rule 1 (*a persisted figure that lies is invisible and compounds*) observed in the
+   wild rather than reasoned about.
+
+**The rule:** when two paths write the same file, the invariants belong to the **file**, not to whichever
+function grew them first. A "rebuild from current state" path must satisfy every invariant the incremental
+path does — rotation, capping, and cleanup of what it supersedes — or it must not exist.
+
+### 40.5 — Durability rules going forward
+
+These are now defaults, not one-offs:
+
+1. **Write persisted state atomically.** Write `<file>.tmp`, flush, then rename over the target. A rename is
+   atomic on every platform we target; a truncate-and-stream is not. Applies to anything a player would be
+   upset to lose.
+2. **A loader that can fail must fail loudly, and must never let a failed load reach a writer.** If a
+   snapshot cannot be parsed, say so in the log with the path and the reason, and leave the file untouched.
+   A `Try` prefix is a promise that the function handles its own failure — either honour it or drop the
+   prefix.
+3. **Never delete the old copy before the new one is complete.** `WriteMonthlyChunks`'s delete-all-then-
+   rewrite is the anti-pattern; if a derived artefact must be regenerated wholesale, build it beside the
+   old one and swap.
+4. **Every unbounded, ever-growing store needs a stated retention policy at the moment it is created** —
+   even if the policy is "unbounded, and here is the arithmetic showing that is fine at expected scale".
+   The bet journal had no such statement, so nobody ever noticed the arithmetic had stopped being fine.
+5. **Do not load an unbounded history to compute a bounded summary.** Lifetime totals want a persisted
+   aggregate; full history loads belong behind the screens that actually browse history.
+6. **When a system's operating scale changes, re-audit what was sized for the old scale.** The background
+   simulator and `DevTimeScale` were introduced as *features*; neither was accompanied by a pass over the
+   subsystems whose cost is per-bet or per-block. §38.7 is the same lesson in the event-frequency domain.
+
+### 40.6 — What is deliberately not being fixed
+
+Scope discipline, so P15.11 does not become an infrastructure project in the middle of a bank playtest:
+
+- **Snapshot growth remains linear in chain length.** At 1,666 blocks and 9.25 MB it is affordable, and
+  making it incremental means a real chain-store redesign. It is recorded as a limit here and in
+  `PRIVATE_ROADMAP.md`, not scheduled.
+- **The stats aggregate is not being built now.** P15.11 stops the boot from loading everything and caps
+  what accumulates; a proper persisted lifetime aggregate is the correct long-term answer and is deferred.
+- **Nothing is being made crash-proof at the bet level.** The commit rule stands: a restart still reverts
+  to the last mined block, and that is the intended contract, not a limitation.
+
