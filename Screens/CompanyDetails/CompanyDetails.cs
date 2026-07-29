@@ -606,6 +606,26 @@ public partial class CompanyDetails : Control
 			marketRow.AddChild(_marketOption);
 			_actionVBox.AddChild(marketRow);
 
+			// Step 15 P15.10a (D-15.25) — a bank's category is LOCKED (D-15.12), so every option in this
+			// dropdown is counted and then refused. Disable + explain rather than hide: the reason IS the
+			// interesting part (this company's category is the distance other companies' financier selection
+			// is measured on), and a silently missing control invites "why does this one have fewer dials?".
+			// Left on index 1, so the submitted shift is 0 by construction — never null the field instead,
+			// OnSubmitBallot reads it and it survives panel rebuilds.
+			if (NetworkRoot.IsBankCompany(gov.NonMinerNodeId))
+			{
+				_marketOption.Disabled = true;
+				var lockedNote = new Label
+				{
+					Text = "Category locked — a bank's category is fixed at its roster default, because it is "
+						+ "the distance other companies' financier selection is measured on (D-15.12). Ballots "
+						+ "for a shift are still recorded, and still refused.",
+					AutowrapMode = TextServer.AutowrapMode.Word
+				};
+				lockedNote.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.65f));
+				_actionVBox.AddChild(lockedNote);
+			}
+
 			decimal defaultRate = NetworkRoot.DefaultQuarterlyPayoutRatePercent(gov.MarketCategory);
 			var payoutRow = new HBoxContainer();
 			payoutRow.AddChild(new Label
@@ -959,6 +979,23 @@ public partial class CompanyDetails : Control
 				Text = string.Create(CultureInfo.InvariantCulture,
 					$"   Market level: {beforeMkt} ({beforeDark}% dark)  →  {afterMkt} ({afterDark}% dark)")
 			});
+
+			// Step 15 P15.10b (D-15.25) — an unchanged Market level is normally self-explanatory (nobody
+			// reached the 60% supermajority), but at a BANK it can also mean the holders DID win a shift and
+			// the lock refused it. That case is the one this line exists for; where no supermajority was
+			// reached the line above already tells the true story and nothing is appended. Re-derived from
+			// the record's own ballots through the resolver's predicate — no persisted flag, so it reads
+			// correctly on votes closed before this shipped, and no WorldFormatVersion bump.
+			if (NetworkRoot.WasMarketShiftRefused(rec, gov.NonMinerNodeId))
+			{
+				var refused = new Label
+				{
+					Text = "      ↳ market shift refused — category locked (bank)",
+					AutowrapMode = TextServer.AutowrapMode.Word
+				};
+				refused.AddThemeColorOverride("font_color", new Color(1f, 0.75f, 0.3f));
+				_infoVBox.AddChild(refused);
+			}
 			if (rec.Kind == "quarterly")
 			{
 				_infoVBox.AddChild(new Label

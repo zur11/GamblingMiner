@@ -550,8 +550,10 @@ Once these three land, the design is complete enough to lock P15.0 and start bui
   **→ §8; ✅ IMPLEMENTED 2026-07-27.**
 - **P15.10 — The market-shift dial a bank's shareholders cannot move** *(from P15.9 question 5)*. A bank's
   category is locked (D-15.12), so its NST holders are offered a Market-direction control whose every
-  option is refused. Present it honestly rather than silently. **→ §8; ⏸ DEFERRED by design — decisions
-  locked (D-15.25), start when the P15.8 run reaches a founded bank (first: 2012-09-03).**
+  option is refused. Present it honestly rather than silently. **→ §8; ✅ IMPLEMENTED 2026-07-29** — picked
+  up at its trigger (First Satoshi Savings' first quarterly, 2012-12-28), with one correction to the spec:
+  the refusal re-derivation must be gated on `Kind == "quarterly"`, because bots fill `MarketShift` on every
+  vote kind while only a quarterly ever evaluates it.
 - **P15.11 — Persistence survivability & the bet-journal blowup** *(from INC-001, the crash that ended the
   P15.8 session on 2026-07-29)*. A force-close during a block commit left `state.json` truncated and the
   world silently unloadable; the underlying cause was a 1.13 GB bet journal whose rotation policy its own
@@ -1298,13 +1300,21 @@ numbers that actually appear; a voter can see every ballot already cast in the v
 decide, and what their own dial does to it; `dotnet build` clean; developer-verified in-game on a CB1 and a
 non-CB1 company.
 
-### P15.10 — The market-shift dial a bank's shareholders cannot move — ⏸ DEFERRED, decisions locked (D-15.25)
+### P15.10 — The market-shift dial a bank's shareholders cannot move — ✅ IMPLEMENTED (2026-07-29)
 
-> **DO NOT BUILD THIS YET.** It is deliberately parked until the P15.8 run reaches a founded bank, for the
-> §39.16 rule 2 reason: the panel it changes cannot be opened before then, so building it now would ship a
-> second unobservable phase into the middle of a playtest. Everything needed to execute it in one sitting is
-> written below — trigger, decisions, exact touch points, gotchas, verification. **Pick it up at the trigger,
-> not before.**
+> **Picked up at its trigger, as designed.** First Satoshi Savings founded `2012-09-27`, and its **first
+> quarterly vote opened `2012-12-28` (block 1800, `awaiting_player`)** — the phase was built with the game
+> paused inside that very vote, which cost no playtest progress (the clock is frozen while awaiting a
+> ballot, and the open vote rides `BlockchainStateSnapshot`, committed at block 1800 before
+> `PersistStateToDisk`, so the rebuild's restart resumed into the identical pause).
+>
+> **The founding vote was NOT a missed opportunity** (checked before building): `company_governance_trace.csv`
+> shows `first_satoshi_savings,vote_close,founding,...,shift=0` and **zero** `shift_refused` rows in the whole
+> file. A founding vote neither renders the dial (`CompanyDetails` gates the row on `quarterly`) nor evaluates
+> a shift (`CloseCompanyVote` gates on `vote.Kind == CompanyVoteKindQuarterly`), so there was nothing to
+> refuse and nothing to label.
+>
+> **One correction to P15.10b's spec, found while building — see the Kind gate note in P15.10b below.**
 
 #### P15.10.0 — When to start (the trigger)
 
@@ -1371,14 +1381,43 @@ dishonest.** So this phase changes what is *shown*, and deliberately changes no 
   shape), for a value that was derivable all along (rule 4). No new field ⇒ **no `WorldFormatVersion`
   bump**. If a supermajority was reached: *"market shift refused — category locked (bank)"*; if the vote
   simply did not reach 60%, the existing line already tells the true story and needs nothing.
+  **⚠ CORRECTION found while building (2026-07-29) — the re-derivation MUST be gated on
+  `rec.Kind == "quarterly"`.** The spec above describes only the weight test, and that test alone is wrong:
+  `BuildBotBallot` has no kind parameter and fills `MarketShift` for **every** vote kind, while
+  `CloseCompanyVote` only evaluates a shift inside `if (vote.Kind == CompanyVoteKindQuarterly)`. So a
+  **founding** or **special** record can carry a ≥60% supermajority of `+1` ballots that nothing ever
+  considered — and the ungated test would have printed "market shift refused" on a vote where no shift was
+  ever on the table, replacing the old silence with a new falsehood. Implemented as
+  `NetworkRoot.WasMarketShiftRefused(rec, nodeId)` (kind gate + bank gate + the weights), sharing the
+  supermajority verdict with `CloseCompanyVote` through a new pure `ResolveMarketShift(darker, lighter)` —
+  the same §39.16 rule 6 shape P15.9f used for `ComputeReserveVoteOutcome`, so the note and the resolution
+  cannot drift apart.
 - **P15.10c — Verification.** As an NST holder in a founded bank: the market row is present but greyed with
   its reason; submitting a ballot still works and the vote closes normally; the snapshot names the refusal
   when the bots did push a shift, and stays quiet when they did not. Then open **any non-bank** founded
   company and confirm its market dial is fully live and unchanged. `dotnet build` clean.
 
+- **P15.10d — The immaterial shortfall (found in the same panel, 2026-07-29).** Not part of the original
+  phase; it surfaced in the very screenshot taken for P15.10.0's "look at the thing first" step, on the same
+  company, and would have paused the game within one in-game day. First Satoshi Savings' first quarterly
+  repayment succeeded (repaid `1,721.32` = 10% of `17,213.20`) but left a **sub-cent rounding residue**, and
+  `TryBankQuarterlyRepayment`'s `gap > 0m` test recorded it as a real shortfall. Since
+  `TickCompanyGovernance` opens a shortfall vote on that same `> 0` test, the world was one block away from
+  **pausing the entire simulation** for a board vote splitting a gap the UI renders as `⚠ Shortfall of
+  0.00 SC`. Three parts: a named `MinMaterialShortfallSc = 0.01m` (one cent — the point at which the figure
+  becomes visible in the N2 readouts that report it, so "if the game cannot display it, it cannot be worth a
+  vote over"; a *P15.8 calibration knob*); a `shortfall_dust` trace row for the sub-threshold case, so the
+  cutoff's own frequency is observable rather than silently discarded; and a **self-heal on snapshot
+  restore** clearing a pre-fix residue, because tightening the writer only stops NEW dust while the trigger
+  reads the PERSISTED field — the same shape as the P15.2b category re-derivation directly above it in
+  `TryLoadSnapshot`, and equally free of a format bump. Monetarily safe by construction: `Repay()` burns
+  `raisedSc` and never the installment, so the un-repaid residue simply stays outstanding FED debt and is
+  chipped at next quarter — no figure diverges from reality (§39.16 rule 1).
+
 **Exit:** no company offers its shareholders a governance control that cannot change anything, and where a
 vote is structurally refused the UI says so instead of leaving it silent — with the bots' attempts, and the
-`shift_refused=bank_locked` trace, left exactly as they are.
+`shift_refused=bank_locked` trace, left exactly as they are. No board vote — and therefore no simulation
+pause — is ever opened over a quantity the game cannot display.
 
 ---
 
@@ -1688,7 +1727,7 @@ statement of the scale limit the run exposed, with the parts deliberately left u
 
 | File | What it should contain |
 |---|---|
-| `bank_credit_trace.csv` | `provision`, `repay`, `shortfall_pending`, `shortfall_closed`/`shortfall_unrecoverable`, `dissolution`, `wallet_inherited`, `seized_inflow`, `fbi_activated` |
+| `bank_credit_trace.csv` | `provision`, `repay`, `shortfall_pending`, `shortfall_dust` (P15.10d — a sub-cent residue deliberately NOT made a shortfall), `shortfall_closed`/`shortfall_unrecoverable`, `dissolution`, `wallet_inherited`, `seized_inflow`, `fbi_activated` |
 | `company_governance_trace.csv` | `conversion` rows carrying `via=` + `tier=`; `vote_close` with `shift_refused=bank_locked` for banks; `shortfall_apply` |
 | `company_founding_trace.csv` | The foundings feeding all of the above |
 

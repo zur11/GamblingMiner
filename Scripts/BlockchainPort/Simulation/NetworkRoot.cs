@@ -2867,6 +2867,19 @@ public partial class NetworkRoot : Node
     // bank long BTC in the interim (§1). *P15.8 calibration knob* (0.10 ⇒ a ~7-quarter half-life).
     private const decimal BankQuarterlyRepaymentFraction = 0.10m;
 
+    // Step 15 P15.10d (2026-07-29) — the smallest gap worth calling a shortfall. Selling collateral for
+    // "just enough" SC lands a rounding residue short of the installment almost every time (8-decimal money
+    // divided by a BTC price), and the naive `gap > 0` test treated a few hundred-millionths of an SC as a
+    // funding crisis: it opened a full board vote — which PAUSES THE WHOLE SIMULATION wherever the player
+    // holds NST — to decide who absorbs a quantity every readout in the game renders as "0.00 SC".
+    //
+    // One cent is not an arbitrary epsilon: it is exactly the point where the figure becomes VISIBLE in the
+    // panels that report it (all N2), so the rule is "if the game cannot display it, it cannot be worth a
+    // vote over". Dropping the residue is monetarily safe because Repay() burns `raisedSc`, never the
+    // installment — the un-repaid dust simply stays outstanding FED debt and is chipped at next quarter, so
+    // no figure diverges from reality (§39.16 rule 1). *P15.8 calibration knob.*
+    private const decimal MinMaterialShortfallSc = 0.01m;
+
     // The bank sells collateral to the CASINO at the day's clean rate (no desk fee — the D-ND8.24 model the
     // company conversions already use). The casino is the designated SC liquidity backstop: it is the only
     // counterparty with an unlimited credit line (D-15.17), and it is already the SC side of the swap desk
@@ -2913,12 +2926,19 @@ public partial class NetworkRoot : Node
         }
 
         decimal gap = Scripts.Finance.Money.Normalize(installmentSc - raisedSc);
-        if (gap > 0m)
+        if (gap >= MinMaterialShortfallSc)
         {
             // §3.3 — collateral alone couldn't cover it (BTC fell since purchase, or there was never
             // enough). The shortfall vote opens on a later tick, once the quarterly vote has closed.
             gov.PendingShortfallSc = gap;
             AppendBankCreditTrace(block, "shortfall_pending", gov.NonMinerNodeId, string.Empty, gap, 0m, price);
+        }
+        else if (gap > 0m)
+        {
+            // Sub-cent residue: left as outstanding debt, deliberately NOT a shortfall (see
+            // MinMaterialShortfallSc). Traced anyway so P15.8 can see how often it happens and whether the
+            // threshold is set sensibly — a silently discarded quantity is exactly what hides a bad cutoff.
+            AppendBankCreditTrace(block, "shortfall_dust", gov.NonMinerNodeId, string.Empty, gap, 0m, price);
         }
     }
 
@@ -3678,6 +3698,40 @@ public partial class NetworkRoot : Node
         };
     }
 
+    // P15.10b (2026-07-29) — the market-shift half of the same rule-6 argument. CloseCompanyVote resolves a
+    // shift from the two directional weights; the Last Vote Snapshot has to re-derive the SAME verdict from
+    // the persisted ballots to say whether a bank's shift was refused. Both go through this one predicate so
+    // the note can never claim a refusal the resolver did not make (D-15.25 chose re-derivation over a
+    // persisted flag: the flag would default to false on every pre-existing record, reading as "no refusal"
+    // on exactly the historical votes where one happened — §39.16 rule 5's silent-failure shape).
+    public static int ResolveMarketShift(decimal darkerWeight, decimal lighterWeight) =>
+        darkerWeight >= MarketShiftSupermajorityFraction ? 1
+        : lighterWeight >= MarketShiftSupermajorityFraction ? -1
+        : 0;
+
+    // True when this closed vote carried a shift the holders actually won and the bank lock then refused.
+    //
+    // The Kind gate is load-bearing, not defensive. BuildBotBallot fills MarketShift for EVERY vote kind
+    // (it has no kind parameter), but CloseCompanyVote only EVALUATES a shift on a quarterly — so a founding
+    // or special record can hold a supermajority of +1 ballots that was never considered by anything. Testing
+    // the weights without this gate would report a refusal for a vote where no shift was ever on the table.
+    public static bool WasMarketShiftRefused(CompanyVoteRecord? rec, string nonMinerNodeId)
+    {
+        if (rec == null || rec.Kind != CompanyVoteKindQuarterly || !IsBankCompany(nonMinerNodeId))
+        {
+            return false;
+        }
+
+        decimal darkerWeight = 0m, lighterWeight = 0m;
+        foreach (VoteBallotRecord b in rec.Ballots)
+        {
+            if (b.MarketShift > 0) darkerWeight += b.Weight;
+            else if (b.MarketShift < 0) lighterWeight += b.Weight;
+        }
+
+        return ResolveMarketShift(darkerWeight, lighterWeight) != 0;
+    }
+
     // P15.9f (2026-07-27) — the reserve outcome of a set of ballots, extracted so that CompanyDetails'
     // "if the vote closed now" preview and CloseCompanyVote's REAL resolution cannot diverge (§39.16
     // rule 6). A preview is a promise about what the resolver will do, which is the sharpest form of the
@@ -3835,8 +3889,9 @@ public partial class NetworkRoot : Node
                 {
                     // D-ND8.19b — a market shift is discrete and riskier: it needs ≥60% of TOTAL voting
                     // weight in one direction, and lands clamped within ±1 of the roster default.
-                    if (darkerWeight >= MarketShiftSupermajorityFraction) shiftResult = 1;
-                    else if (lighterWeight >= MarketShiftSupermajorityFraction) shiftResult = -1;
+                    // P15.10b — shared with WasMarketShiftRefused, so the snapshot's refusal note and this
+                    // resolution are the same verdict by construction.
+                    shiftResult = ResolveMarketShift(darkerWeight, lighterWeight);
                     // Step 15 P15.2b (D-15.12) — BANKS ARE EXEMPT from the ±1 shift. Their four categories
                     // span the Official→Black gradient the §5.1 selection distance is measured on, so a
                     // drifting bank would silently re-shape which companies bank where. In exchange banks
@@ -6885,6 +6940,20 @@ public partial class NetworkRoot : Node
             GD.Print($"[NetworkRoot] Bank {gov.NonMinerNodeId} ({gov.CompanyId}) category re-derived from the roster: '{gov.MarketCategory}' → '{rosterCategory}' (P15.2b lock).");
             gov.DefaultMarketCategory = rosterCategory;
             gov.MarketCategory = rosterCategory;
+        }
+
+        // Step 15 P15.10d — clear a sub-cent shortfall a PRE-FIX snapshot already recorded. Tightening
+        // TryBankQuarterlyRepayment only stops NEW dust; a world that banked some before the fix would still
+        // open its pointless game-pausing vote on the next tick, because the trigger reads the persisted
+        // field. Same self-healing-on-restore shape as the category re-derivation above (§39.16 rule 5's
+        // backfill, applied to an already-wrong value rather than an absent one) — no format bump, and it is
+        // idempotent: post-fix worlds never carry a value in this range.
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            if (gov.PendingShortfallSc <= 0m || gov.PendingShortfallSc >= MinMaterialShortfallSc) continue;
+
+            GD.Print($"[NetworkRoot] {DescribeNodeForDev(gov.NonMinerNodeId)}: dropped an immaterial pending shortfall of {gov.PendingShortfallSc:F8} SC (below {MinMaterialShortfallSc:F2}) — it stays as outstanding FED debt (P15.10d).");
+            gov.PendingShortfallSc = 0m;
         }
 
         _botGovernancePreferences.Clear();
