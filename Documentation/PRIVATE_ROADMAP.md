@@ -446,9 +446,9 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 - When exactly should BTC trading unlock in Basic Mode?
 - Should private mempool fees be available in Basic Mode or postponed?
 
-## 8. Tech-Debt & Cleanup Tasks (2026-06-24 — ✅ all implemented)
+## 8. Tech-Debt & Cleanup Tasks
 
-Three concrete tasks identified while fixing the clock/persistence bugs (see `Documentation/ProjectDesignManual.md` §24.8). All three are now done — details per task below.
+T1–T3 (2026-06-24, ✅ all implemented) came out of the clock/persistence bug fixes — see `Documentation/ProjectDesignManual.md` §24.8. **T4 (2026-07-29, OPEN) is a standing technical objective**, not a scheduled task: it is the structural answer to INC-001 and to the progressive frame-rate decay observed in the same run.
 
 ### T1 — Stop transactions/consensus from committing financial state to disk ✅ DONE (2026-06-24)
 
@@ -476,3 +476,44 @@ The mining readout embedded in DiceGame did not track the live (retargeted) diff
 - **Was**: DiceGame's `BuildMiningStatusLine` used `Blockchain.GetExpectedAttemptsForCurrentDifficulty()`, which returns `EffectiveDifficulty(Chain[^1])` — the **last already-mined block's** difficulty, ignoring the live `_activeMiningPower` feed-forward. BlockExplorer instead used `NetworkRoot.GetPlayerNextBlockDifficulty()` (the locked candidate difficulty, else the prospective next-block difficulty at current power), so only it reflected the retarget.
 - **Fix shipped**: extracted a shared `GetNextOrCandidateDifficulty(node)` helper (locked candidate difficulty, else `GetNextBlockDifficulty(_activeMiningPower)`); `GetPlayerNextBlockDifficulty()` now delegates to it, and `BuildMiningStatusLine` uses it too — so both readouts compute the in-progress block's difficulty from the same live source. The DiceGame line was relabelled `Mining difficulty: {x:F2}  (~{x:F0} attempts/block)` to match the Block Explorer format. `GetExpectedAttemptsForCurrentDifficulty()` is left in place (now only a validation helper referenced by `100x-time-scale-migration-plan.md`).
 - **Result**: the DiceGame mining display and BlockExplorer agree on the in-progress block's difficulty and both update live as power/difficulty change.
+
+### T4 — Simulation-Scale Refactor: chain state, stats persistence & a cost budget — 🎯 OPEN technical objective (not scheduled)
+
+**Why this exists.** Two signals from the same 2026-07-29 run: **INC-001** (`Documentation/INCIDENT_LOG.md`) — a 1.13 GB bet journal and a world that failed to load silently — and the developer's report that **fluidity at 9000X decayed progressively over the last days of the playtest ("cada vez más lag")**. P15.11 fixed the *durability* half. This entry is the *scale* half: the reason those numbers were allowed to grow at all. Design context: `ProjectDesignManual.md` **Chapter 40**.
+
+**Not a priority.** Nothing here blocks Basic Mode, and none of it should interrupt the bank testing. It is written down now because the run that exposed it is the largest world this project has produced, and that evidence has a short half-life.
+
+#### T4.0 — What was actually measured (2026-07-29), so the proposals are not guesses
+
+1. **The bet journal is PLAYER-ONLY — the bots cost nothing.** `UserStatsService.OnBetExecutedRegisterBet` has exactly two callers: `DiceGame` (manual bets) and `SimulationService.ExecutePlayerBetOnce`, the latter guarded by `if (_config.IsPlayerActive)`. Bot bets go to `CasinoClientLedgerService.RegisterSettledBet`, which keeps **aggregate `ClientBetStats` counters** (bets/wins/losses/wagered/net) flushed on a 1 s dirty flag. So the four bots — who bet far more than the player — are ~O(1) each, while the player's own bets are the millions of rows. **The correct pattern is already in this codebase; it was simply never applied to the player.** That answers the open question directly: it is the player, not the bots, and not the two together.
+2. **Per-block cost grows with chain length, which is the shape of "increasing lag".** Every node keeps its **own** `BlockchainService` (~62 of them: player + 4 bots + 40 non-miners + 14 cast miners + casino + 3 founders). `NetworkSimulator.BroadcastBlock` calls `TryAcceptMinedBlock` on **every** node, each bumping its own `_chainVersion` — which invalidates **every** node's UTXO cache. `GetUtxoSet()` then rebuilds by **replaying the entire chain**, and `AggregateSpendable(node)` reads `node.Blockchain`, so a balance query on N distinct nodes in one block triggers N full replays. At 1,666 blocks × up to 24 txs that is ~40,000 tx-visits per rebuild, and the bot/company/bank sweeps query dozens of nodes per block. **The per-block cost therefore rises linearly as the chain grows** — a run that starts smooth and degrades, exactly as reported.
+3. **The world snapshot is 9.25 MB rewritten every block**, also linear in chain length.
+4. **Heap pressure:** ~5.3M `BetRecord` objects (est. 1.5–2.5 GB) before the wipe, on an Intel UHD 620 laptop — rising Gen2 GC cost as the list grows.
+
+> **(2) is a strong structural hypothesis, not a profiled fact.** It has the right shape and the right growth curve, but nothing has been timed. See T4.6 — measure before refactoring anything.
+
+#### T4.1 — Incremental UTXO maintenance (highest leverage, lowest risk)
+
+Applying a newly-accepted block's transactions to the cached UTXO set costs **O(txs in that block)**; replaying the chain costs **O(all txs ever)**. `TryAcceptMinedBlock` / `MineBlock` already know exactly which block arrived, so the incremental update is a few lines beside the existing `_chainVersion++`. Keep the full replay for `TryReplaceChain` (a genuine chain swap) and as a DEBUG-only cross-check — *assert the incremental set equals the replayed set* every N blocks, which is the §39.16-rule-1 shape: the cheap path must be provably identical to the truthful one.
+
+#### T4.2 — One canonical chain + one UTXO set, instead of 62 copies
+
+The per-node `BlockchainService` is already acknowledged as vestigial — `NetworkRoot` (~L5209) says *"single-shared-chain design (every node already holds the same canonical chain via BroadcastBlock)"*, and `RunConsensusRound` was deleted at T2 for the same reason. A single shared chain + one shared UTXO index, with `NodeAgent` reduced to identity + owned addresses, removes the 62× invalidation storm at its source and collapses `BroadcastBlock` to a no-op. **Blocked-by-design consideration:** per-node chains are the substrate the deferred **Divergent Chains / Fork Simulation** wants. The honest resolution is to make the shared chain the default and reintroduce per-node chains *deliberately* when forks ship, rather than paying for 62 unused copies for years.
+
+#### T4.3 — Address → outpoint index
+
+`GetSpendableUtxos(addresses)` walks the whole UTXO set. An `address → outpoints` dictionary maintained alongside T4.1's incremental update makes every wallet panel, bot affordability check and company treasury read **O(that node's outpoints)**. This is the natural follow-on to the R3 fix (§38.7) that already collapsed `AggregateSpendable` from `O(addresses × utxos)` to `O(utxos)` — T4.3 takes it to `O(owned)`.
+
+#### T4.4 — Player stats as aggregate counters; the journal as a bounded recent window
+
+Generalize `ClientBetStats` to **all five clients including the player**, so lifetime totals are maintained incrementally and are exact regardless of retention. The per-bet journal then serves only what genuinely needs rows — `BetsHistoryExplorer`, `CalendarsNavigator`, DiceGame's recent list — and can stay retention-capped (P15.11d) without the "General" scope having to apologize for it. This retires the current situation where *lifetime totals are derived by replaying every record ever written*, which is both the memory cost and the reason F4's double-counting was invisible.
+
+#### T4.5 — Bounded / incremental world persistence
+
+The snapshot rewrites the full chain per block. Options, cheapest first: (a) **split the chain out** of `state.json` and append only new blocks (the mutable governance/financial state stays a small whole-file atomic write); (b) write the chain in **immutable sealed segments** (the deleted `blocks-*.json` had the right *idea* and the wrong *lifecycle* — it rewrote all of them every block and nothing ever read them); (c) leave it and accept the cost, which is defensible below a few thousand blocks. Whatever is chosen must keep P15.11b's atomicity and the "a block is the only commit" contract intact.
+
+#### T4.6 — A per-block cost budget (DO THIS FIRST)
+
+Everything above is a hypothesis until the frame is instrumented. Add per-block timings to the existing `difficulty_trace.csv` (which already carries R2's `simSecOffered,simSecConsumed`, the honest retention signal that caught §38.7's inverse-poll defect): **ms spent in UTXO rebuilds, in snapshot serialization, in the governance tick, in the bot/company sweeps, plus managed heap size and block index.** Then the question "why did it get slower over three days?" is answered by reading a column instead of reasoning about it — and each T4 item above can be accepted or dropped on evidence. §38.7's third rule applies throughout: **a displayed throttle is a measurement, not a diagnosis** — a `SimulationThrottle` below 1 means "find what is eating the frame", never "raise the budget".
+
+**Suggested order:** T4.6 → T4.1 → T4.4 → T4.3 → T4.2 → T4.5. The first two are small and independent; T4.2 is the one that needs a real decision about fork simulation.

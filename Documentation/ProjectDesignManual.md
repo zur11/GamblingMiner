@@ -4650,9 +4650,9 @@ These are now defaults, not one-offs:
    simulator and `DevTimeScale` were introduced as *features*; neither was accompanied by a pass over the
    subsystems whose cost is per-bet or per-block. §38.7 is the same lesson in the event-frequency domain.
 
-### 40.6 — What is deliberately not being fixed
+### 40.6 — What is deliberately not being fixed (and where it went instead)
 
-Scope discipline, so P15.11 does not become an infrastructure project in the middle of a bank playtest:
+Scope discipline, so P15.11 does not become an infrastructure project in the middle of a bank playtest. Everything below — plus the **progressive frame-rate decay** reported in the same run, which P15.11 does not address at all — is collected as **`PRIVATE_ROADMAP.md` §8 T4, "Simulation-Scale Refactor"**: an open technical objective, deliberately unscheduled. Its headline finding is worth repeating here, because it reframes the whole problem: **the bet journal is player-only** — the four bots already use aggregate `ClientBetStats` counters, so **the correct pattern was in the codebase all along and had simply never been applied to the player**. T4 also names the strongest structural suspect for the decay: ~62 per-node `BlockchainService` instances whose UTXO caches are all invalidated every block and rebuilt by full chain replay, so per-block cost grows linearly with chain length.
 
 - **Snapshot growth remains linear in chain length.** At 1,666 blocks and 9.25 MB it is affordable, and
   making it incremental means a real chain-store redesign. It is recorded as a limit here and in

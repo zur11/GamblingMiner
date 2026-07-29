@@ -146,9 +146,20 @@ interrupted snapshot contains block *N+1*, so the restored clock (`2012-09-21 10
 behind the chain tip. The crash landed **between two files' writes** — the same atomicity gap, visible across
 files instead of inside one. D-15.26 closes it for a single file; a cross-file transaction is not attempted.
 
-**Fix** — **P15.11** (`AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` §8): atomic snapshot
-write, a loud `TryLoadSnapshot`, the journal-rebuild rotation fix, a history retention policy, and the
-removal of the write-only monthly chunks.
+**Fix** — **P15.11** (`AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` §8), shipped 2026-07-29:
+atomic snapshot write, a loud `TryLoadSnapshot` plus a writer guarded against ever persisting over a failed
+load, the journal-rebuild rotation fix, a retention cap, and the removal of the write-only monthly chunks.
+
+**Follow-up (structural, unscheduled)** — `PRIVATE_ROADMAP.md` §8 **T4, "Simulation-Scale Refactor"**. P15.11
+closed the durability half; T4 is the scale half, and it also carries the **progressive frame-rate decay**
+reported over the last days of this same run, which P15.11 does not address. Two findings from the T4
+groundwork are worth recording against this incident: **(a)** the journal is **player-only** — the four bots
+already keep aggregate `ClientBetStats` counters, so the pattern that would have prevented the blowup existed
+in the codebase and had never been applied to the player; **(b)** the strongest structural explanation for
+the decay is that ~62 per-node `BlockchainService` instances have their UTXO caches invalidated on *every*
+block and rebuilt by *full chain replay*, making per-block cost grow linearly with chain length — a run that
+starts smooth and degrades. That second one is an unprofiled hypothesis; T4.6 (instrument the per-block cost
+budget) exists precisely so the next such question is answered by reading a column.
 
 **Lesson** — Four, in order of how much they generalize:
 
