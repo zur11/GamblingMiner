@@ -344,6 +344,32 @@ Candidate inputs (all already available, none requiring new state):
 
 **Deliberately deferred, recorded so it is a decision and not an oversight:** a **persisted lifetime stats aggregate** (so totals stop meaning "over retained history"), and making the world snapshot **incremental** rather than a full 9.25 MB rewrite whose cost grows linearly with chain length. Both become worth doing when a run goes materially past ~1,666 blocks; revisit alongside P5 (hardware progression), which changes how fast blocks accumulate.
 
+### Player Holdings Hub — one screen to claim, vote and find your companies (design + implement, after Step 16)
+
+**Status: recorded 2026-07-30, not yet scheduled.** Deliberately **not** in Step 16 (developer's call) — that step makes the votes worth casting and the dividends cheap to pay; this one makes them *findable*.
+
+**The problem, in the developer's words:** the only way to reach a company the player holds stock in is to hunt for it among all 40 in `BlockExplorer`'s Enroll Mode. Everything the player owns is scattered across a list dominated by companies they have nothing to do with.
+
+**What it is:** a single player-facing screen listing **only the companies where the player holds NST or PST** — claim dividends, cast/see votes, and open `CompanyDetails` from one place. The signals it should carry already exist and are already computed: the **stake border colours** (gold NST / silver PST / black none, §22.15), the **pending-work tint** (red vote · green claim · mocha both · black nothing, §22.16 — `HasPlayerClaimableDividends` is already the shared "payable, not non-zero" source), the FBI investigation warning (`GetFbiInvestigationWarning`), and the bank lending summary. **Reuse those sources, never re-derive them** (§39.16 rule 6): this screen is an *index*, and an index that disagrees with the page it points at is worse than no index.
+
+**The larger idea it belongs to** is the audit's **D2, "decision inbox"** (`step15-…-plan.md` §10.5 handoff): the game generates far more events than it shows — votes opening, dividends becoming payable, auctions closing, FBI heat on a holding — and they live in five different scenes. A holdings hub with a **badge count in the StatusBar** is the smallest version of that idea and probably the highest engagement-per-line change available. Once Step 16's per-company pause toggle exists (D-16.11), this screen is also the natural place to manage those toggles in bulk.
+
+### Ghost Miner Typology — four kinds instead of one (design open, after Step 16)
+
+**Status: recorded 2026-07-30 from the Step 16 Round-2 discussion.** Full note: `AIHelperFiles/step16-living-governance-and-bot-wallets-plan.md` **§6.1** (D-16.17).
+
+Today every ghost is **session-transient with no persisted keys**, which is exactly what makes its coinbase frozen forever (D-14.11). The proposal keeps that as the majority case and adds three biographies: **(1) always a ghost** (~80%, unchanged), **(2) active → ghost**, **(3) active → ghost → active** — the *"max sudden whale"* — and **(4) ghost → active** late in the timeline.
+
+**Why it is not a cosmetic change:** kinds 2–4 need keys that survive the process, which is the precise boundary D-14.11 drew. They become real identities (a fourth `BotWalletRegistry` list, seeded and derived-wallet-backed exactly like everything Step 16's P16.2 touches — after that step it is a handful of lines). Kind 1 stays free and keyless.
+
+**Design notes worth keeping:** transitions should be **schedule-driven from the historical curve** (the `ComputeNonMinerIntroSchedule` / `ComputeAndPushFeeSchedule` pattern — derive once, push into a pure static holder), which makes them time-shiftable for free (D-14.7) and gives an entry-year world the same ghost biographies. **Kind 3 is the most valuable of the four**: dormant 2009–2011 coins suddenly moving is a real, recurring Bitcoin event, and it is exactly the sort of thing a player should be able to *notice* in the Block Explorer.
+
+### Promoting Cast Miners to Casino-Player Status — a lever, not a migration (permanently open)
+
+**Status: deferred at Step 16 (D-16.16), recorded as a standing option.** After Step 16's P16.2 the cast miners hold seeds, derived wallets and change rotation like every other participant, so the *mechanics* are ready; what remains is purely an **auction-balance** question (D-EB.7 currently restricts bidding to the player + `bot_1..4`).
+
+**The framing to build toward** (developer, 2026-07-30): introduce them **gradually, as a lever against stagnation and for company variety** — e.g. admitting one or two cast miners as bidders into a pool that has stalled — rather than promoting the whole cast at once. That makes it a **dial the auction system can reach for**, which is a better shape than a one-time migration. Revisit alongside the §22.10 price-out terminator and the ND.10 escalation ladder, since those are the systems a larger bidder population would perturb.
+
 ### Bot Seed Phrases & Full UTXO Integration (OQ-8.2) — PROMOTED, schedule right after Step 15
 
 **Status: promoted out of the Post-Basic-Mode checklist (2026-07-28).** Design and implement **at the end of Step 15** if the plan closes cleanly; otherwise as the step immediately after. Original design: `AIHelperFiles/step8-utxo-realism-plan.md` OQ-8.2.

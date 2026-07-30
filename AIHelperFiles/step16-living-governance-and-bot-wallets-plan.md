@@ -1,6 +1,11 @@
 # Step 16 — Living Governance & Full UTXO Participation
 
-> **Status: DESIGN DRAFT — Round 1 written 2026-07-30, awaiting the developer's Round-2 picks (§6).**
+> **Status: DESIGN LOCKED (Rounds 1–2 complete, 2026-07-30) — READY TO IMPLEMENT.** All five Round-2
+> questions are resolved (`D-16.14…18` in §6); `D-16.1…13` carry Round 1. Subphases are broken out in **§7
+> (P16.1a … P16.6)**; suggested build order **P16.2 → P16.1 → P16.4 → P16.5 → P16.3 → P16.6**. One design
+> is recorded as **deliberately open** and constrains this step only by a single discipline: the **ghost
+> typology** (§6.1) — P16.2 must key every decision off *"does this record carry a seed?"*, never off *"is
+> this a ghost?"*.
 > Scope fixed by the developer: **D + E + A + B** from the step15 §10 handoff — the dividend-traffic fix,
 > OQ-8.2 (bot seed phrases / full UTXO integration, promoted in `PRIVATE_ROADMAP.md` §5 to "right after
 > Step 15"), living probabilistic governance, and the end of the pause tax. **Company evolution levels and
@@ -114,7 +119,10 @@ small despite covering four areas.
   no change output, so ghosts do **not** block the removal of the two Block Explorer cosmetics
   (`IsSelfChangeTransaction` / `ExternalOutputs`). **If that check fails, the cosmetics stay and the
   finding is recorded** — they may only be deleted when the last *spending* single-address participant is
-  gone.
+  gone. **Amended by D-16.17/§6.1:** "excluded" means *no seed today*, **not** *ghosts can never have
+  keys*. Every wiring decision in P16.2 keys off **"does this record carry a seed?"**, never off "is this
+  a ghost?" — that is what leaves the ghost-typology door open, and it is why a future spending ghost
+  would arrive already rotating change and could not reintroduce these cosmetics.
 - **D-16.7 (P16.2):** **the wallet scenes split three ways** — `BotsBtcWallets` keeps **only** the four
   casino-miner bots, the 40 companies move to a new **`CompaniesWallets`**, and the cast miners get a new
   **`CastMinerWallets`**. Today one scene mixes two populations that share nothing but a registry file.
@@ -256,32 +264,181 @@ because it is the only purely-cosmetic block and the easiest to defer if the ste
 
 ---
 
-## 6. Open questions for the developer (Round 2)
+## 6. Round 2 — the developer's picks (2026-07-30), all five resolved
 
-1. **Where does the pause toggle + standing policy persist?** Riding `CompanyGovernanceState` in
-   `BlockchainStateSnapshot` is free (the ND.8g inheritance argument) but means a *player preference* gets
-   rolled back to the last block on restart — at most a few minutes' loss, but it is conceptually odd. The
-   alternative is a small `user://` settings file, which then needs its own checkpoint/delete-list
-   reasoning (the three-question rule). **Recommendation: ride the snapshot**, and accept the rollback.
-2. **Should the settlement transaction be per company per quarter, or per company whenever N holders are
-   payable?** The quarter is simpler and matches the dividend cycle; an N-threshold would smooth the
-   traffic but reintroduces a tuning constant. **Recommendation: per quarter.**
-3. **Cast miners in the auction/casino economy?** They now get real wallets and change rotation, which
-   makes "promote cast miners to casino-player status" (deferred since ND.4b) mechanically closer.
-   **Recommendation: still out of scope** — it changes who can bid, which is an auction-balance question,
-   not a wallet one.
-4. **Do you want the D-16.6 ghost check to be able to KEEP the cosmetics?** As written, a failed check
-   leaves them in place and records why. The alternative is to make ghosts spend-incapable by assertion.
-   **Recommendation: as written** — an honest check that can fail is worth more than a forced result.
-5. **Does P16.4's variation assertion belong in DEBUG only, or should a flat quarter print a warning in
-   release too?** `AssertEscalationSlopesAreOrdered` is `[Conditional("DEBUG")]`; this one is arguably a
-   live-world health signal. **Recommendation: DEBUG for the ballot-identity check, and a release-safe
-   trace column for the per-vote spread**, so a long run can be audited afterwards from the CSV — the way
-   this whole class of defect was found in the first place.
+- **D-16.14 (Q1 — P16.5):** **the pause toggle and standing policy ride `CompanyGovernanceState` in
+  `BlockchainStateSnapshot`** (the ND.8g inheritance argument — checkpoint coverage, delete-list membership
+  and the pre-genesis path all come free). Accepted consequence: a *player preference* rolls back to the
+  last block on restart. At most a few minutes of setting, and the alternative — a `user://` settings file
+  — buys correctness on a preference at the price of a fourth answer to the three-question rule.
+- **D-16.15 (Q2 — P16.1):** **one settlement per company per quarter**, not an N-payable-holders threshold.
+  It matches the dividend cycle that already exists and introduces **no new tuning constant** — and this
+  plan is a reaction to a step whose open placeholders could not be priced.
+- **D-16.16 (Q3 — scope):** **cast miners stay OUT of the auction/casino economy in this step** — the base
+  remains the four casino-miner bots (D-EB.7). **Recorded as a permanently open option, not a closed
+  door:** promoting cast miners to casino-player status is now *mechanically cheap* (after P16.2 they hold
+  seeds, derived wallets and change rotation like everybody else), so the remaining question is purely one
+  of **auction balance**. The developer's framing: introduce them **gradually, as a lever against
+  stagnation and for company variety** — e.g. admitting one or two cast miners as bidders when a pool has
+  stalled, rather than promoting the whole cast at once. That makes it a **tuning dial the auction can
+  reach for**, which is a better shape than a one-time migration. Revisit alongside the §22.10 price-out
+  terminator and the ND.10 escalation ladder, since those are the systems a new bidder population would
+  perturb.
+- **D-16.17 (Q4 — P16.2):** **the ghost check stays as written** (an honest check that can fail beats a
+  forced result), **and the ghost model gains a recorded, deliberately-open future design** — see §6.1. The
+  resolution that matters for *this* step: **any future ghost that can spend would be seed-backed like
+  every other participant**, because P16.2 makes that the default path — so the ghost typology can never
+  reintroduce the change-to-self cosmetics D-16.6 removes. The two questions are decoupled by construction.
+- **D-16.18 (Q5 — P16.4):** **DEBUG assertion for ballot identity, plus a release-safe trace column for the
+  per-vote ballot spread.** `AssertEscalationSlopesAreOrdered`'s `[Conditional("DEBUG")]` shape catches the
+  gross failure during development; the CSV column is what lets a long run be audited *afterwards* — which
+  is exactly how F1 was found (the trace read column-wise, not the game watched).
+
+### 6.1 — Ghost typology: recorded now, designed later (from Q4)
+
+Today every ghost is one thing: a **session-transient** `NodeAgent` with a random one-off wallet
+(`EnsureGhostNodeRegistered`), whose keys die with the process — which is *precisely* what makes its
+coinbase frozen forever (D-14.11). The developer's proposed typology replaces that single kind with four:
+
+| # | Kind | Share | Life |
+|---|---|---|---|
+| 1 | **Always a ghost** | ~80% | mines, never spends, frozen forever — **today's behavior, unchanged** |
+| 2 | **Active → ghost** | | participates, then goes dark and stays dark |
+| 3 | **Active → ghost → active** | | the **"max sudden whale"** — three states; a dormant pile that reawakens |
+| 4 | **Ghost → active** | | silent for years, then joins the economy late |
+
+**The one thing to understand before building it:** this is **not a display feature — it is a change to the
+persistence model.** Kinds 2, 3 and 4 all require keys that *survive the process*, which is the exact
+boundary D-14.11 drew and the reason ghost coins are frozen at all. So the shape is:
+
+- Kind 1 stays **exactly as it is** — session-transient, no registry entry, no keys, frozen. It is 80% of
+  the population and it must stay free.
+- Kinds 2–4 become **real identities**: a fourth `BotWalletRegistry` list, seeded and derived-wallet-backed
+  like everything P16.2 touches. After this step that is a handful of lines, which is why recording it now
+  costs nothing and why the skeleton must not assume "ghost ⇒ keyless".
+- **Their transitions should be schedule-driven, not random per session** — the established pattern is
+  `ComputeNonMinerIntroSchedule` / `ComputeAndPushFeeSchedule`: derive the dates once from the historical
+  curve, push them into a pure static holder. That keeps it **time-shiftable for free** (D-14.7) and makes
+  an entry-year world reproduce the same ghost biographies.
+- **Kind 3 has real historical resonance** and is the most valuable of the four: dormant 2009–2011 coins
+  suddenly moving is a genuine, recurring event in Bitcoin's history, and it is exactly the kind of thing
+  the player should be able to *notice* in the Block Explorer.
+
+**Constraint on this step:** nothing in P16.2 may assume a ghost is keyless — the wiring keys off *"does
+this record carry a seed?"*, never off *"is this a ghost?"*. That single discipline is what leaves the door
+open. Full design deferred; tracked in `PRIVATE_ROADMAP.md`.
 
 ---
 
-## 7. Verification checklist (P16.6)
+## 7. Detailed subphase breakdowns
+
+> Each subphase is individually buildable and individually verifiable. The order inside a phase matters;
+> the order *between* phases is §5's suggested order (P16.2 → P16.1 → P16.4 → P16.5 → P16.3 → P16.6).
+
+### P16.2 — Bot seeds + `ReceiveWallet` (do first; it forces the wipe)
+
+- **P16.2a — `BotWalletRecord` carries a seed.** Add `SeedWords` (string array, the existing
+  `wordlist_256.json` generator the player/casino/founders already use) to the record and to `BotDto`.
+  Generate it in `CreateRegistry` (miners + non-miners) and in `AddCastMiner`. **The base address becomes
+  `CryptoUtils.DeriveGmAddress(seed)`** — i.e. `DerivedAddressWallet.DeriveAddress(0)` — and the signing
+  keys `DeriveSigningKeypair(seed)` / `DeriveSecp256k1CompressedPublicKeyBase64(seed)`, replacing
+  `GenerateWallet()` (D-16.3). **A record with no seed keeps its existing generated address and behaves
+  exactly as today** — the sentinel-default path (§39.16 rule 5), and the reason a stale registry
+  degrades rather than crashes.
+- **P16.2b — version-gate the registry regeneration (D-16.4).** `bot_wallet_registry.json` is an identity
+  file **exempt from the world-reset delete list**, so a `WorldFormatVersion` bump alone will *not* renew
+  it — and a stale registry means seedless records, meaning the whole phase silently appears not to work.
+  Add a registry-format marker: on mismatch, regenerate from scratch and log it loudly. **Do not** put the
+  registry in the world delete list (that would destroy identity on every timeline switch, which is the
+  distinction Ch. 35 §35.1 exists to preserve).
+- **P16.2c — wire the node.** In `CreateAndRegisterNode`, when the record carries a seed:
+  `node.ReceiveWallet = new DerivedAddressWallet(seed); node.RotateCoinbaseAddress = false;` (D-16.5 —
+  coinbase non-reuse stays Satoshi-only). Same two lines in **`RegisterCastMinerNode`**, the mid-session
+  spawn path. **Key off the seed's presence, never off the node's kind** (D-16.6 as amended).
+- **P16.2d — widen the rescan.** `RescanFounderReceiveWallets` → `RescanDerivedReceiveWallets`: every
+  registered node holding a `ReceiveWallet`, not just the founders. It already builds its used-address set
+  in a single pass, so the added cost is address derivation (~20 SHA256 per node past the frontier), not
+  chain scans. **Verify the cost at 74 nodes** — if it is material at launch, that is a finding for T4, not
+  a reason to skip the rescan.
+- **P16.2e — `WorldFormatVersion` 4 → 5** and confirm the delete list is complete for the new world.
+- **P16.2f — the ghost check, then the cosmetics.** Confirm no ghost ever *spends* (they receive a coinbase
+  and are frozen — D-14.11). If confirmed: delete `BlockExplorer.IsSelfChangeTransaction` and
+  `ExternalOutputs`, and remove §29.9's cosmetic note from the docs. **If not confirmed: keep both, record
+  why, and say so in CLAUDE.md** — a documented exception beats a quiet one.
+
+### P16.1 — Dividend settlement batching
+
+- **P16.1a — the multi-output settlement.** At a company's quarter close in `TickCompanyGovernance`,
+  collect every holder with a **payable** BTC claimable (D-16.2 — the `HasPlayerClaimableDividends`
+  "payable, not non-zero" test is the model) and pay them in **one transaction** through
+  `DistributePoolEventAsSingleTx`'s path. Zero those claimables only on a successful broadcast; on failure
+  leave them accruing and log it (see P16.1b).
+- **P16.1b — telemetry parity.** ND.10e closed two blind spots — `bot_claim_failed` on a silent broadcast
+  failure, and the SC leg's visibility (`sc=` + the standalone `bot_claim_sc` row). **Both must survive
+  into the batched path.** A batched settlement that fails silently is a worse blind spot than the one it
+  replaces, because it now hides N holders instead of one.
+- **P16.1c — the trace.** One `dividend_settlement` row per settlement carrying holder count, total BTC,
+  fee, and the per-holder breakdown or a count — replacing up to N `bot_claim` rows. Keep the retired
+  row-kind's name out of the new schema, and **rotate the trace to `.csv.old` on a schema change** (the
+  ND.10j rule — the difficulty trace learned this the hard way).
+- **Leave the player's manual claim untouched** (D-16.1). It is player-initiated and rare, and it is the
+  one claim whose immediacy is a feature.
+
+### P16.4 — Living ballots
+
+- **P16.4a — the persona axes.** Add `Conviction`, `RiskAversion`, `Horizon` to `BotGovernancePreference`,
+  drawn as shuffled permutations in `EnsureBotGovernancePreferences` with a `Backfill…` twin per the
+  greed precedent (empty string = "drawn before this axis existed", filled only where absent). Extend
+  `PrintBotGovernanceStances` so the launch log shows the full persona — that readout is how P15.9's own
+  fix was verified.
+- **P16.4b — the drift terms.** Implement §4.3's table as pure functions `(bot, company, date) → decimal`,
+  summed and scaled by `Conviction`. **Every term moves the STANCE**; `ProjectStanceIntoBand` stays the
+  last step before the ballot (D-16.8). Build them one at a time and log each term's contribution — a
+  single fused number is unattributable when it misbehaves.
+- **P16.4c — jitter + abstention.** Jitter seeded on `(companyId, quarterIndex, botNodeId)` (D-16.9 — an
+  open vote's ballots are persisted and must not change under the player on restart). Abstention as a
+  per-bot roll; an abstaining holder shows as *not voted yet* in P15.9f's open-vote list, and
+  `ComputeReserveVoteOutcome` already handles it with no resolver change (D-16.10).
+- **P16.4d — the variation guards (D-16.18).** A `[Conditional("DEBUG")]` assertion that the ballots at one
+  vote are not all identical, **plus** a release-safe ballot-spread column in
+  `company_governance_trace.csv`'s `vote_close` row. The CSV column is the one that matters: it is how a
+  long run gets audited afterwards, which is how F1 was found in the first place.
+
+### P16.5 — Pause toggle + standing policy
+
+- **P16.5a — the state.** `CompanyGovernanceState` gains `PlayerPauseOnVotes` (default **false**) and a
+  standing policy (reserve %, payout %, shortfall split), riding the snapshot (D-16.14). Defaults are the
+  **currently-applied** company values, so an unconfigured policy is a status-quo no-op (D-16.12).
+- **P16.5b — the gate.** In `OpenCompanyVote`, a player NST holding sets `AwaitingPlayerVote` **only** when
+  that company's toggle is on; otherwise cast the standing policy immediately via the same path
+  `TryRegisterPlayerVote` uses, marked `auto` (D-16.13). **Shortfall votes take the same rule** — one
+  toggle per company, no hidden exception, or the toggle lies.
+- **P16.5c — the UI.** The toggle and the policy fields on `CompanyDetails`, with an "if the vote closed
+  now" preview through `ComputeReserveVoteOutcome` (never a second implementation — §39.16 rule 6). The
+  vote history must render an auto-cast ballot **as auto**, so it can never imply the player deliberated.
+
+### P16.3 — Wallet scene split (last of the build work)
+
+- **P16.3a — trim `BotsBtcWallets`** to the four casino-miner bots. **Read Ch. 29 before touching the
+  `.tscn`** — bounded scroll chain, fixed footer *outside* the scroll, and do not mirror another scene's
+  layout without checking it first.
+- **P16.3b — `CompaniesWallets`** (new): the 40 companies. Natural place to show treasury / `ScReserve` /
+  `CollateralBtc` beside each address, since this is where a developer will look when a company's money
+  does not add up.
+- **P16.3c — `CastMinerWallets`** (new): the cast. Register both in `SceneManager.SceneId` + `Paths`, and
+  use `DescribeNodeForDev`'s two-tier naming — DEV form (`Mt. Gox (non_miner_7)`), because these screens
+  are read beside the CSV traces whose join key is the raw id (ND.10g).
+
+### P16.6 — Verification run
+
+Work §8's checklist top to bottom on a fresh world. **This is not another multi-hour calibration run** —
+every check below is reachable within the first in-game year except the quarterly ones, which need one
+company founded plus a quarter (~2010-08 onward at `DevEntryYear = 2010`). Set `DevEntryYear` back to `0`
+before merging, and back up `user://logs/*.csv` first if the run is worth keeping (the §10 lesson).
+
+---
+
+## 8. Verification checklist (P16.6)
 
 | # | Check | Correct | Failure signature |
 |---|---|---|---|
