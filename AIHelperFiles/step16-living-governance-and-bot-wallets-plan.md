@@ -393,7 +393,37 @@ open. Full design deferred; tracked in `PRIVATE_ROADMAP.md`.
   `ExternalOutputs`, and remove §29.9's cosmetic note from the docs. **If not confirmed: keep both, record
   why, and say so in CLAUDE.md** — a documented exception beats a quiet one.
 
-### P16.1 — Dividend settlement batching
+### P16.1 — Dividend settlement batching — ✅ IMPLEMENTED (2026-07-30, subphases a–c)
+
+> **Build log.** `dotnet build` clean. Three notes for P16.6's verification:
+>
+> **1. The split is BTC-batched / SC-per-block, and the old function was split in two to say so.**
+> `TryAutoClaimBotDividends` → `PayBotScDividends` (SC only, per block — it costs no transaction, no fee
+> and no block space, and prompt SC funds the bots' bidding) + `SettleCompanyDividendsBtc` (one
+> multi-output transaction per company per quarter). Renaming rather than keeping one function with half
+> its body removed is the P16.2d lesson applied on purpose: a name that describes the old behaviour is a
+> stale label, and stale labels are what make the next reader wrong.
+>
+> **2. Where it is called is load-bearing.** Immediately after `SettleDividendCycleAtQuarterEnd` (which
+> credits the closing quarter's claimables) and **before** `TryBankQuarterlyRepayment`. That repayment's
+> own comment has always claimed "the closing quarter's obligations are already met" — which was *aspirational*
+> while dividends trickled out across the whole quarter, and is now actually true.
+>
+> **3. `BotDividendClaimFeeMultiple` is retired but kept commented, with why.** ND.10e bounded the per-claim
+> COST (10× fee) and that was correct; it never bounded the claim RATE, which is what the audit measured
+> at 8.66 tx/block. **Bounding a per-event cost is not the same as bounding the event rate, and only the
+> second protects a shared budget.**
+>
+> Telemetry (P16.1b/c): `bot_claim` is gone with the per-holder transaction that produced it. Replacements
+> — `dividend_settlement` (holders + net BTC + fee, once per company per quarter),
+> `dividend_settlement_failed` (**carrying a reason**: `insufficient_utxos` / `unresolvable_key` /
+> `rejected_by_mempool` — ND.10e's rule that a failed payout must never be indistinguishable from "nothing
+> was due", which matters MORE once one row covers N holders), and `bot_claim_sc` aggregated per company
+> per block instead of per holder (the rule was that the SC leg be *visible*, not that it be one row each,
+> and per-block telemetry I/O is itself one of the F5 per-block costs).
+>
+> Claimables are cleared **only after a successful broadcast**, so a failed settlement leaves every holder's
+> accrual intact for the next quarter.
 
 - **P16.1a — the multi-output settlement.** At a company's quarter close in `TickCompanyGovernance`,
   collect every holder with a **payable** BTC claimable (D-16.2 — the `HasPlayerClaimableDividends`

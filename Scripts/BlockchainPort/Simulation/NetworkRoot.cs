@@ -118,10 +118,14 @@ public partial class NetworkRoot : Node
     // recorded in `Documentation/PRIVATE_ROADMAP.md`.
     private const decimal BotBidReserveStopBtc = 200m;
     private const decimal BotBidReserveResumeBtc = 300m;
-    // ND.10e (D-ND10e.4) — a bot auto-claims its accrued BTC dividend only once it is worth at least this
-    // multiple of the network fee, so the fee (which is paid OUT OF the dividend) can never eat most of
-    // the payment. See TryAutoClaimBotDividends for the audit that produced the number.
-    private const decimal BotDividendClaimFeeMultiple = 10m;
+    // ND.10e (D-ND10e.4) — RETIRED at Step 16 P16.1a, kept as documentation of a fix that was correct and
+    // insufficient. It batched bot dividend claims by VALUE (send only once the accrual is worth 10× the
+    // fee), which solved the fee waste it was aimed at — 96% of a payment being burned as fee — but never
+    // bounded the claim COUNT, and the count is what the step15 §10 audit then measured at 8.66 tx/block.
+    // SettleCompanyDividendsBtc replaces it with a per-quarter batch, which subsumes both problems: one
+    // transaction, one fee, ~0.2 tx/block. The lesson is the generalizable part — bounding a per-event COST
+    // is not the same as bounding the EVENT RATE, and only the second one protects a shared budget.
+    // private const decimal BotDividendClaimFeeMultiple = 10m;
     // Step 14 ND.5 (D-ND5.3) — a non-miner's tracked donation pool holds the 10 largest qualifying
     // donations (hoisted from ComputeTrackedDonationPool at ND.6a — the self-eviction guard reads it too).
     private const int MaxTrackedDonations = 10;
@@ -2728,6 +2732,13 @@ public partial class NetworkRoot : Node
                     // Quarter end: credit the closing cycle's NST lumps + residual PST drip BEFORE the
                     // new quarter's vote opens (D-ND8.17 — the lump is paid at quarter end).
                     SettleDividendCycleAtQuarterEnd(gov, founding, block);
+                    // Step 16 P16.1a — and PAY the accrued BTC out in ONE multi-output transaction, here
+                    // rather than per holder per block (D-16.1). It must run AFTER the line above (which is
+                    // what credits the closing quarter's claimables) and BEFORE TryBankQuarterlyRepayment
+                    // below, whose comment's "the closing quarter's obligations are already met" is only
+                    // true once the dividends have actually been sent — previously they trickled out across
+                    // the whole quarter, so nothing enforced that ordering.
+                    SettleCompanyDividendsBtc(gov, block);
                     // P15.6a — roll the SC throughput window. NOTE (R3, 2026-07-28): this is no longer the
                     // FBI's tolerance basis — that moved to the charter reserve, see FbiToleranceScFor. The
                     // per-quarter inflow is kept because it is an accurate, cheap business-activity metric
@@ -2758,10 +2769,12 @@ public partial class NetworkRoot : Node
             }
 
             // 3) Advance the live dividend cycle: PST daily-drip accrual, then the ND.8b.6 reserve
-            //    conversion (fills the SC reserve BEFORE claims draw on it), then bot auto-claims.
+            //    conversion (fills the SC reserve BEFORE claims draw on it), then the bots' SC payout.
+            //    Step 16 P16.1a — only the SC leg is per-block now; the BTC leg is one batched
+            //    transaction at the quarter close (SettleCompanyDividendsBtc, called above).
             AccrueDailyDrip(gov, founding, block);
             TryConvertCompanyReserves(gov, block);
-            TryAutoClaimBotDividends(gov, block);
+            PayBotScDividends(gov, block);
         }
 
         // Step 15 P15.5 — after the live companies have been processed, because dissolving mutates the
@@ -4112,21 +4125,25 @@ public partial class NetworkRoot : Node
         return claim;
     }
 
-    // Bots auto-claim EVERY dividend arrival (developer directive, 2026-07-20 — normal/NST lumps and
-    // preferred/PST drips alike, superseding the initial 2×fee value floor): each accrual is swept with
-    // a real on-chain company→bot send on the same block it lands, the network fee deducted from the
-    // dividend itself (the ND.5 sweep precedent — accepted shortfall). The only remaining gate is the
-    // physical one — the claim must NET something (claimable > fee), since a send cannot pay out less
-    // than its own fee; a sub-fee accrual just waits for the next drip day to push it over. A failed
-    // broadcast (treasury momentarily tied up) retries on a later block — the claimable never disappears.
-    private static void TryAutoClaimBotDividends(CompanyGovernanceState gov, Block block)
+    // Step 16 P16.1a (D-16.1/D-16.15) — the SC HALF of bot dividends, which stays per-block.
+    //
+    // SC is not on-chain: paying it costs no transaction, no fee and no block space, so there is nothing
+    // to batch and real value in bots having their SC promptly (it funds their auction bidding). What
+    // moved to a quarterly batch is the BTC leg — see SettleCompanyDividendsBtc below for why.
+    //
+    // The trace row is AGGREGATED per company per block rather than one row per holder. ND.10e's rule was
+    // that the SC leg must be VISIBLE (it had been folded into a row reporting only `btc=`), not that it
+    // must be one row each — and per-block telemetry I/O is itself one of the per-block costs the step15
+    // §10 audit named (F5).
+    private static void PayBotScDividends(CompanyGovernanceState gov, Block block)
     {
-        if (gov.ClaimableByHolder.Count == 0 || !SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company))
+        if (gov.ClaimableByHolder.Count == 0)
         {
             return;
         }
 
-        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
+        decimal totalPaidSc = 0m;
+        int paidHolders = 0;
         foreach ((string holderId, CompanyClaimable claim) in gov.ClaimableByHolder)
         {
             if (holderId == PlayerNodeId)
@@ -4134,65 +4151,195 @@ public partial class NetworkRoot : Node
                 continue; // the player claims manually (CompanyDetails panel)
             }
 
-            if (!SharedNodesById.TryGetValue(holderId, out NodeAgent? holder))
+            if (claim.Sc <= 0m || gov.ScReserve <= 0m
+                || !SharedNodesById.TryGetValue(holderId, out NodeAgent? holder)
+                || holder.FinancialState is not NodeFinancialState fin)
             {
                 continue;
             }
 
-            // ND.8b.6 — the SC side pays instantly from the company's SC reserve into the bot's own SC
-            // principal (the NodeFinancialState mirror the recharge/settlement paths already use);
-            // partial when the reserve is short, remainder stays accrued. Skipped while the bot has no
-            // financial state yet (it materializes on its first bet — always long before any dividend).
-            decimal paidSc = 0m;
-            if (claim.Sc > 0m && gov.ScReserve > 0m && holder.FinancialState is NodeFinancialState fin)
-            {
-                paidSc = Math.Min(claim.Sc, gov.ScReserve);
-                fin.PrincipalBalance = Scripts.Finance.Money.Normalize(fin.PrincipalBalance + paidSc);
-                gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve - paidSc);
-                claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc - paidSc);
-            }
-
-            // ND.10e (D-ND10e.4, 2026-07-23) — BATCH the BTC leg instead of sweeping it the instant it
-            // clears the fee. The old gate (`claim.Btc <= fee`) meant a PST daily drip was sent every
-            // single block at whatever it had accrued: an audit of a live world found claims netting
-            // 0.00039093 BTC against a 0.01 median fee — **96% of that dividend burned as fee** — with
-            // 555 bot claims having paid ~5.55 BTC of fees in total. Waiting until the accrual is worth
-            // `BotDividendClaimFeeMultiple ×` the fee caps the loss at ~1/N of each payment (10%) and,
-            // since the fee comes out of the dividend itself, hands the difference straight back to the
-            // bots' BTC income — one of the cheapest de-financing fixes available.
-            if (claim.Btc < fee * BotDividendClaimFeeMultiple)
-            {
-                // Not yet worth a transaction — the BTC keeps accruing, nothing is lost. The SC leg is
-                // instant and unaffected by fees, so log it on its own when it paid something (it was
-                // previously invisible in telemetry, folded into a row that only reported `btc=`).
-                if (paidSc > 0m)
-                {
-                    AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim_sc", holderId,
-                        string.Format(System.Globalization.CultureInfo.InvariantCulture, "sc={0:F8}", paidSc));
-                }
-                continue;
-            }
-
-            decimal sendAmount = Scripts.Finance.Money.Normalize(claim.Btc - fee);
-            if (sendAmount <= 0m)
-            {
-                continue;
-            }
-
-            if (BuildAndBroadcastUtxoSpend(company, holder.WalletAddress, sendAmount, fee, null, "DIVIDEND") == null)
-            {
-                // ND.10e — a failed broadcast used to vanish silently (the company treasury being short of
-                // spendable UTXOs looks identical to "no dividend was due"). Logged so the trace can prove
-                // whether every accrued dividend actually reached its holder.
-                AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim_failed", holderId,
-                    string.Format(System.Globalization.CultureInfo.InvariantCulture, "btc={0:F8} fee={1:F8}", sendAmount, fee));
-                continue;
-            }
-
-            claim.Btc = 0m;
-            AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim", holderId,
-                string.Format(System.Globalization.CultureInfo.InvariantCulture, "btc={0:F8} sc={1:F8}", sendAmount, paidSc));
+            // ND.8b.6 — pays from the company's SC reserve into the bot's own SC principal (the
+            // NodeFinancialState mirror the recharge/settlement paths already use); partial when the
+            // reserve is short, remainder stays accrued.
+            decimal paidSc = Math.Min(claim.Sc, gov.ScReserve);
+            fin.PrincipalBalance = Scripts.Finance.Money.Normalize(fin.PrincipalBalance + paidSc);
+            gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve - paidSc);
+            claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc - paidSc);
+            totalPaidSc += paidSc;
+            paidHolders++;
         }
+
+        if (paidHolders > 0)
+        {
+            AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim_sc", "batch",
+                string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "holders={0} sc={1:F8}", paidHolders, totalPaidSc));
+        }
+    }
+
+    // Step 16 P16.1a (D-16.1/D-16.2/D-16.15) — ONE multi-output transaction pays every bot holder's
+    // accrued BTC dividend, once per quarter, at the quarter close.
+    //
+    // WHY. ND.10e already batched these claims by VALUE (wait until the accrual is worth 10× the fee)
+    // and that fixed the fee waste it was aimed at — but nothing ever bounded their COUNT. The step15 §10
+    // audit measured the result in a live world: **8.66 dividend transactions per block**, against an
+    // ND.4a historical budget of ~5 tx/block and 23 usable block slots. `pendingTxs` sat at 26–28, so
+    // `owed = max(0, target − pending)` was structurally 0 and the automated transaction layer had
+    // effectively stopped — including the cast sell-flow that FUNDS these companies. A subsystem's own
+    // plumbing was consuming the shared budget it depends on (D-15.36).
+    //
+    // SHAPE. This is DistributePoolEventAsSingleTx's pattern, which exists for a closely related bug: N
+    // sequential sends have the first spend consume the only confirmed UTXO, leaving sends 2..N with
+    // nothing spendable until the change confirms. One coin selection covering the TOTAL need avoids that
+    // by construction, and ~30 companies × 1 tx/quarter ≈ 0.2 tx/block replaces 8.66.
+    //
+    // FEE (D-16.2). ONE transaction pays ONE fee, split PRO-RATA across the holders — not one fee each.
+    // Pro-rata scales every holder equally, so a holder is only ever dropped by 8-decimal rounding on a
+    // dust claim; the loop below is that dust fixed point (dropping a holder raises the others' share),
+    // and it converges on the first pass in every normal case. Whatever is not paid stays accrued.
+    //
+    // The player is excluded on purpose: their claim is player-initiated and rare, and its immediacy is a
+    // feature (TryClaimPlayerCompanyDividends is untouched).
+    private static void SettleCompanyDividendsBtc(CompanyGovernanceState gov, Block block)
+    {
+        if (gov.ClaimableByHolder.Count == 0 || !SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company))
+        {
+            return;
+        }
+
+        var payees = new List<(string holderId, string address, decimal gross, CompanyClaimable claim)>();
+        foreach ((string holderId, CompanyClaimable claim) in gov.ClaimableByHolder)
+        {
+            if (holderId == PlayerNodeId || claim.Btc <= 0m
+                || !SharedNodesById.TryGetValue(holderId, out NodeAgent? holder)
+                || string.IsNullOrEmpty(holder.WalletAddress)
+                || holder.WalletAddress == company.WalletAddress)
+            {
+                continue;
+            }
+
+            payees.Add((holderId, holder.WalletAddress, claim.Btc, claim));
+        }
+
+        if (payees.Count == 0)
+        {
+            return;
+        }
+
+        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
+        var netByHolder = new Dictionary<string, decimal>(payees.Count);
+        while (payees.Count > 0)
+        {
+            decimal grossTotal = payees.Sum(p => p.gross);
+            if (grossTotal <= fee)
+            {
+                return; // the whole batch cannot cover a single fee — everything keeps accruing
+            }
+
+            netByHolder.Clear();
+            var kept = new List<(string, string, decimal, CompanyClaimable)>(payees.Count);
+            foreach ((string holderId, string address, decimal gross, CompanyClaimable claim) in payees)
+            {
+                decimal net = Scripts.Finance.Money.Normalize(gross - fee * (gross / grossTotal));
+                if (net <= 0m)
+                {
+                    continue; // dust: below its own share of the fee, stays accrued for a later quarter
+                }
+
+                kept.Add((holderId, address, gross, claim));
+                netByHolder[holderId] = net;
+            }
+
+            if (kept.Count == payees.Count)
+            {
+                break; // stable
+            }
+
+            payees = kept;
+        }
+
+        if (payees.Count == 0)
+        {
+            return;
+        }
+
+        // Coin-select across ALL the company's addresses (base + derived change addresses since P16.2).
+        decimal need = netByHolder.Values.Sum() + fee;
+        HashSet<string> owned = company.ReceiveWallet != null
+            ? new HashSet<string>(company.ReceiveWallet.OwnedAddresses) { company.WalletAddress }
+            : new HashSet<string> { company.WalletAddress };
+
+        IReadOnlyList<(OutPoint outpoint, string address, decimal amount)> available =
+            company.Blockchain.GetSpendableUtxos(owned);
+        List<(OutPoint outpoint, string address, decimal amount)>? chosen = SelectUtxos(available, need);
+        if (chosen is null)
+        {
+            // P16.1b — ND.10e's rule survives the batching: a failed settlement must never vanish. The
+            // treasury being momentarily short of spendable UTXOs looks exactly like "no dividend was
+            // due", and this row is now the difference between the two. Nothing is lost — every
+            // claimable is untouched and the next quarter's settlement pays it.
+            AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "dividend_settlement_failed", "batch",
+                string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "holders={0} btc={1:F8} fee={2:F8} reason=insufficient_utxos", payees.Count, need - fee, fee));
+            return;
+        }
+
+        var inputs = new List<(OutPoint, string, string, string, string)>(chosen.Count);
+        decimal gathered = 0m;
+        foreach ((OutPoint outpoint, string address, decimal value) in chosen)
+        {
+            if (!TryResolveInputKeys(company, address, out (string pub, string priv, string secp) keys))
+            {
+                AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "dividend_settlement_failed", "batch",
+                    $"holders={payees.Count} reason=unresolvable_key address={address}");
+                return;
+            }
+
+            inputs.Add((outpoint, address, keys.pub, keys.priv, keys.secp));
+            gathered += value;
+        }
+
+        var outputs = new List<TxOutput>(payees.Count + 1);
+        foreach ((string holderId, string address, decimal _, CompanyClaimable _) in payees)
+        {
+            outputs.Add(new TxOutput { Address = address, Amount = netByHolder[holderId] });
+        }
+
+        decimal change = gathered - need;
+        bool hasChange = change > 0m;
+        if (hasChange)
+        {
+            string changeAddr = company.ReceiveWallet?.NextReceiveAddress() ?? company.WalletAddress;
+            outputs.Add(new TxOutput { Address = changeAddr, Amount = change });
+        }
+
+        Transaction tx = company.BuildSignedSpend(inputs, outputs, fee, null);
+        tx.InputDataText = "DIVIDEND"; // display-only; excluded from the txid/sighash
+        if (!company.Blockchain.AddTransactionToPendingTransactions(tx))
+        {
+            AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "dividend_settlement_failed", "batch",
+                string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "holders={0} btc={1:F8} reason=rejected_by_mempool", payees.Count, need - fee));
+            return;
+        }
+
+        SharedNetwork.BroadcastTransaction(company.NodeId, tx);
+        if (hasChange)
+        {
+            company.ReceiveWallet?.MarkReceiveConsumed();
+        }
+
+        // Only now are the claimables cleared — a settlement that never broadcast must leave them intact.
+        decimal paidTotal = 0m;
+        foreach ((string holderId, string _, decimal gross, CompanyClaimable claim) in payees)
+        {
+            claim.Btc = Scripts.Finance.Money.Normalize(claim.Btc - gross);
+            paidTotal += netByHolder[holderId];
+        }
+
+        AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "dividend_settlement", "batch",
+            string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "holders={0} btc={1:F8} fee={2:F8}", payees.Count, paidTotal, fee));
     }
 
     // ── ND.8b.3 public surface (the pause gate + the CompanyDetails scene's read/act API) ─────────────
@@ -4367,7 +4514,7 @@ public partial class NetworkRoot : Node
         }
 
         // ND.8g (§12.5.6) — log this successful claim to the company's PLAYER-ONLY history (bot auto-claims,
-        // via TryAutoClaimBotDividends, never write here). tipMs is already game time (a block's own
+        // via the bots' own dividend paths, never write here). tipMs is already game time (a block's own
         // Timestamp), never wall-clock, per the project's canonical rule.
         gov.PlayerClaimHistory.Add(new CompanyDividendClaimRecord
         {
@@ -4397,8 +4544,13 @@ public partial class NetworkRoot : Node
     private const string BankCreditTracePath = "user://logs/bank_credit_trace.csv"; // Step 15
 
     // ND.8b.3 telemetry — one row per governance event (vote_open / vote_close / quarter_settled /
-    // bot_claim). Daily drip accruals are deliberately NOT logged (row volume); the quarter_settled and
-    // claim rows bracket them for playtest verification.
+    // dividend_settlement). Daily drip accruals are deliberately NOT logged (row volume); the
+    // quarter_settled and settlement rows bracket them for playtest verification.
+    // Step 16 P16.1c — the per-holder `bot_claim` row is gone with the per-holder transaction that
+    // produced it. Its replacements: `dividend_settlement` (one per company per quarter, holders + net BTC
+    // + fee), `dividend_settlement_failed` (ND.10e's rule that a failed payout must never look identical
+    // to "nothing was due" — now carrying a reason), and `bot_claim_sc` (the SC leg, aggregated per
+    // company per block rather than per holder).
     // Step 15 (P15.7d, pulled forward to P15.3a): one row per banking-layer credit event — provisions now,
     // repayments / shortfalls / dissolutions / seizures as those phases land. This is the ONLY observability
     // the bank credit loop has until the P15.7 readouts, and the P15.8 calibration run reads it, so it
@@ -7393,7 +7545,7 @@ public sealed class CompanyGovernanceState
     public decimal InflowSinceBaselineBtc { get; set; }
     public List<CompanyVoteRecord> VoteHistory { get; set; } = new();
     // ND.8g (2026-07-21, §12.5.6) — the PLAYER's own dividend claim log for this company (bot claims,
-    // via TryAutoClaimBotDividends, never write here — this is a player-facing history only). Rides this
+    // via the bots' own dividend paths, never write here — this is a player-facing history only). Rides this
     // same BlockchainStateSnapshot for free, no new persisted file/checkpoint/delete-list work (the same
     // inheritance argument ClaimableByHolder/VoteHistory themselves already rely on). Capped defensively
     // (PlayerBankAccountService.BankTransferRecord's 500-cap precedent — a player claiming this many times
