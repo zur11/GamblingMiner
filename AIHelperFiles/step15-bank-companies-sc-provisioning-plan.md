@@ -10,13 +10,21 @@
 > **ALL phases are now broken into subphases in §8 (P15.1a … P15.8)**; P15.1 is fully locked (Fork A,
 > D-15.23) and **✅ IMPLEMENTED (2026-07-26, all five subphases P15.1a–e)**; **P15.2 is likewise ✅
 > IMPLEMENTED (2026-07-26, subphases a–d)**, as is **P15.3 (a–b, which also absorbed P15.4a's quarantine)**
-> **P15.4 (b–e)**, **P15.5 (a–d)**, **P15.6 (a–d)** and **P15.7**. **Next: P15.8 (the calibration playtest)** on branch
-> `bank-companies-sc-provisioning`. **Every mechanism of the reform is now built**; P15.8 is the DEV
-> entry-year run that tunes the placeholders and confirms the whole loop across a bull and a bear era.
-> In-game verification was deferred to P15.8 by the developer's call, so P15.2–P15.7 have been
-> build-verified only — P15.8 is where they all get exercised for the first time.
+> **P15.4 (b–e)**, **P15.5 (a–d)**, **P15.6 (a–d)**, **P15.7**, **P15.9**, **P15.10** and **P15.11**.
+> **Every mechanism of the reform is built and the whole credit loop has now been observed running.**
 >
-> Branch (suggested): `bank-companies-sc-provisioning` off `main` (canonical timeline, `DevEntryYear = 0`).
+> **⏸ CLOSING STATUS (2026-07-30): the step ships; P15.8 is SUSPENDED, not failed.** The calibration
+> playtest ran from 2010-03-21 to **~Oct 2014 (block 2699, 30 companies, 2 banks, FBI active)** and
+> verified checklist sections **A–F end to end with zero errors and zero tripwires**. It **cannot** reach
+> section **G** (dissolution / seizure / insolvency) by playing forward: in 3⅓ in-game years past FBI
+> activation the world produced **one** `shortfall_pending` and **no** seizure or dissolution at all. Those
+> states are gated behind gameplay depth that does not exist yet, so the placeholder tuning they were meant
+> to inform (§9 J) stays **explicitly unfinished and is not a merge blocker**. The run's full audit — six
+> findings with the numbers behind them — plus the exact conditions for resuming are **§10**.
+> **Resume P15.8-G after Step 16**, which builds the gameplay depth that makes those states reachable.
+>
+> Branch: `bank-companies-sc-provisioning` off `main` (canonical timeline, `DevEntryYear = 0` restored
+> before merge). **Merged to `main` 2026-07-30.**
 
 ---
 
@@ -370,6 +378,46 @@ list** (D-15.15) — a sibling view to `CompanyDetails` recording the closure ti
   wipe default, §39.16 rule 4, applies to *format* changes; this is a truncation, and wiping would discard a
   perfectly good 1,666-block playtest five in-game days from the first bank's auction close).
 
+### Round 6 (2026-07-30, from the audit that closed the P15.8 run — see §10)
+
+- **D-15.32 (P15.8):** **a phase whose exit condition depends on states the game cannot currently produce
+  is suspended, not failed, and it says which one.** P15.8-G needs a bank to actually die; 3⅓ in-game years
+  past FBI activation produced one `shortfall_pending` and zero seizures. More hours of the same era carry
+  **no new information**, so the run stops and the placeholder tuning it was meant to inform (§9 J) stays
+  openly unfinished. The generalization is §39.16 rule 2's mirror image: *rule 2 says pull a readout
+  forward to where you can observe it; this says when you CANNOT observe it at all, name the missing
+  precondition and stop, rather than grinding for a signal the world cannot emit.*
+- **D-15.33 (P15.8/Step 16):** **the FBI thread's calibration is deferred to Step 16, and its numbers stay
+  placeholders until then.** Every value in §9 J is untouched by this run's evidence, because the mechanism
+  never fired. The honest reading is not "the tolerances are right" — it is "no company ever got close
+  enough to test them", which is itself the finding (§10 F6). Do not tune blind.
+- **D-15.34 (audit):** **a governance system whose ballots are pure functions of persisted constants is a
+  constant, and the trace proves it.** `BuildBotBallot` reads only `(persisted preference, company state)`,
+  both invariant between votes, so 517 votes produced ~2 outcome changes and **the player is the only
+  source of variance in the entire system** (§10 F1). This is a design fault, not a tuning miss, and no
+  amount of playtesting would have surfaced it as anything but "the numbers look static" — it needed the
+  trace read column-wise. **Rule: when a system is meant to feel alive, assert that its output actually
+  VARIES, the same way §39.16 rule 1 asserts a figure does not lie.**
+- **D-15.35 (audit):** **the pause is the game's most expensive interaction and it must be spent on
+  decisions that can change something.** 93 of 517 votes froze the whole simulation awaiting the player, to
+  produce ~2 different outcomes. Step 16 gates the freeze on **pivotality** and gives every holding a
+  **standing policy** that auto-casts otherwise. Recorded here because the cost was created by plan15's own
+  vote kinds (the shortfall vote adds a fourth) and because the frequency scales with how *successful* the
+  player's holdings are — success currently buys friction.
+- **D-15.36 (audit):** **a subsystem's own plumbing must not consume the shared budget it depends on.**
+  Bot dividend auto-claims run at **8.66 transactions per block** against an ND.4a historical budget of
+  **~5** and 23 usable block slots, so `owed = max(0, target − pending)` has been **structurally zero** for
+  most of the run — the historical transaction-shape simulation is drowned by the companies' own dividend
+  traffic, and the cast sell-flow that funds those companies is starved by it. ND.10e batched the claims'
+  *fees*; nothing ever bounded their *count*. Fix belongs to Step 16 (settle bot claims internally or per
+  company at quarter close, not per holder on-chain).
+- **D-15.37 (audit):** **the R2 regulator is confirmed correct and the frame-rate complaint is a separate
+  problem with a different shape.** Mean solvetime **62,373 s vs the 58,500 s target (+6.6%)** across 1,472
+  blocks closes the Round-2 question. The retention throttle averages **0.713 with no monotone decay across
+  1,500 blocks**, which *contradicts* a purely chain-length-linear cost and points at chronic saturation
+  plus periodic per-block spikes. T4.6 (instrument first) is therefore the right next move and T4.2's
+  urgency is mildly demoted — see `Documentation/PRIVATE_ROADMAP.md` §8 T4, updated with this evidence.
+
 ---
 
 ## 5. Implementation picks (all DECIDED — see D-15.20…22)
@@ -540,9 +588,11 @@ Once these three land, the design is complete enough to lock P15.0 and start bui
   investigation meter + capped roll (§5.2 pick), activation at 14 Jun 2011, self-funding, seizure → FED.
 - **P15.7 — Surfacing & telemetry.** FED scene rows, WorldEconomy additions, `CompanyDetails` lending
   panel, `bank_credit_trace.csv`.
-- **P15.8 — Calibration playtest.** One DEV entry-year run (temporarily set `DevEntryYear`, restore to 0
-  before merge) to verify conversions route through banks, debts accrue/repay, the carry behaves across
-  a BTC bull/bear era, and the monetary invariant holds.
+- **P15.8 — Calibration playtest. ⏸ SUSPENDED 2026-07-30 (A–F ✅ verified, G unreachable).** One DEV
+  entry-year run (temporarily set `DevEntryYear`, restore to 0 before merge) to verify conversions route
+  through banks, debts accrue/repay, the carry behaves across a BTC bull/bear era, and the monetary
+  invariant holds. Ran 2010-03-21 → ~Oct 2014 and confirmed all of that; **stopped at section G**, which
+  needs stress states the current game cannot produce (D-15.32). Full audit + resume conditions: **§10**.
 - **P15.9 — Bot ballots must respect the company's currency band** *(found during P15.8)*. Bots cast their
   raw global band stance (0/25/50/75/100) regardless of the company's charter, so a CB1 company's vote is
   averaged over illegal ballots and pins to its floor every quarter while the player is held to `[75,100]`.
@@ -1072,8 +1122,15 @@ reach banks — all seizures flowing to the FED and its inheritance chain.
 **Exit:** every new account and flow is inspectable (FED scene + WorldEconomy DEV, `CompanyDetails`
 player-facing) and traced.
 
-### P15.8 — Calibration playtest
+### P15.8 — Calibration playtest — ⏸ SUSPENDED (2026-07-30; sections A–F ✅ verified, G unreachable)
 
+> **How this phase ended.** The run reached **~Oct 2014 (block 2699)** with 30 companies founded, 2 banks
+> live, the FBI active since 2011-06-14, and **zero errors, zero exceptions and zero P15.9 tripwires** in a
+> 4.4 MB log. Checklist sections **A–F all pass**. Section **G never became reachable** and cannot be
+> reached by playing longer (D-15.32), so the run was stopped deliberately rather than continued for a
+> signal the world cannot emit. **§10 is the audit** — six findings with the trace numbers behind them, what
+> is verified, what is left, and the exact conditions for picking this up again after Step 16.
+>
 > **⚠ ACTIVE DEV SETTING (2026-07-26): `TimelineConfig.DevEntryYear = 2010`.** The first launch after this
 > change **wipes the world automatically** (the Tag becomes `CANON-2009-01-03+ENTRY-2010`, so
 > `ResetWorldIfIncompatible`'s existing guard fires) and the bootstrap fast-builds real history from
@@ -1100,6 +1157,12 @@ player-facing) and traced.
 
 **Exit:** plan15 behaves across eras with the invariant intact; ready to merge to `main` (restore
 `DevEntryYear = 0` first).
+
+**Exit as actually taken (2026-07-30).** The invariant held throughout, conversions/repayments/foundings
+all routed correctly, and the step merged to `main` — but with **two of the three exit clauses met**: the
+bear era arrived (BTC 2013-12 → 2014-10 is a real drawdown in the dataset) and the carry survived it
+without ever producing an insolvency, so the *stress* half of "behaves across eras" is untested rather than
+passed. **Left open on purpose, tracked as P15.8-G in §10.4.**
 
 ### P15.9 — Bot ballots must respect the company's currency band — ✅ IMPLEMENTED (2026-07-27, found at P15.8)
 
@@ -1618,6 +1681,12 @@ statement of the scale limit the run exposed, with the parts deliberately left u
 >
 > Two shorthands used below: **CB scene** = Main Menu → *Central Bank [DEV]*; **WE scene** = Main Menu →
 > *World Economy [DEV]*.
+>
+> **RESULT (2026-07-30, run ended at ~Oct 2014 / block 2699):** **A ✅ · B ✅ · C ✅ · D ✅ (except D7) ·
+> E ✅ · F ✅ · G ⏸ never reached · H ✅ held throughout · I ✅ read (→ §10) · J ⏸ not answerable.**
+> D7 (a seizure lands) and all of G share one cause: no company was ever seized and no bank ever became
+> insolvent, so the entire stress half of the checklist — and therefore the J placeholders that only a
+> stress state can price — is **carried forward to P15.8-G after Step 16** (D-15.32/33, §10.4).
 
 ### A — Immediately at landing (2010-03-21)
 
@@ -1741,3 +1810,129 @@ Note whether each **feels** right; exact values are meant to be tuned here, not 
 - Meter gain **0.5**, decay **1.0**, overage cap **4**; roll base **0.5%**, cap **2%**.
 - `FbiInitialGrantSc` **100,000**.
 - Are seizures too frequent/rare? Do banks ever actually die, or never?
+
+> **Answered by the run (2026-07-30): the last question, and only the last one.** *Banks never die, and
+> seizures never happen* — across 3⅓ in-game years past FBI activation the world produced one
+> `shortfall_pending`, eleven `shortfall_dust`, and **zero** seizures or dissolutions. Every other bullet
+> here is **still unanswered**, because a placeholder can only be priced by the state it governs and none
+> of those states occurred. They are carried to P15.8-G (§10.4), NOT silently accepted (D-15.33).
+
+---
+
+## 10. P15.8 — Run outcome, audit and suspension (2026-07-30)
+
+> This section is the **closing record of the step**. It states what the calibration run actually proved,
+> what it disproved, what it left untouched, and the conditions under which P15.8 resumes. It is written
+> from the run's own telemetry rather than from impressions, because the traces are the only artifact of a
+> 4½-in-game-year world that survives it (INC-001's lesson: *that evidence has a short half-life*).
+
+### 10.1 The run
+
+| | |
+|---|---|
+| World | `DevEntryYear = 2010`, `WorldFormatVersion 4`, stamp `CANON-2009-01-03+ENTRY-2010` |
+| Span | landed **2010-03-21**, stopped **~Oct 2014** — block **2699**, ~1,472 blocks traced after the INC-001 rotation |
+| Population | **30 companies founded**, **2 banks live** (First Satoshi Savings, Digital Reserve Trust), FBI active since 2011-06-14 |
+| Volume | 517 company votes · 444 bank provisions · 12 repayments · 13,691 bot dividend claims |
+| Health | **0 errors, 0 exceptions, 0 P15.9 tripwires** in a 4.4 MB log; the monetary invariant reconciled at every check |
+
+**The plan15 machinery is correct.** Nothing below is a defect in the banking reform. What the run found is
+that the reform is *inert* — it works perfectly and almost nothing in the world pushes on it.
+
+### 10.2 The six findings
+
+**F1 — Governance is a constant function, and the player is its only source of variance.**
+`vote_close` rows, reserve% across each company's whole life: `coinwash` 11.96 × 10 quarters; `casascius`
+75.00 × 20 votes; `btc_guild` 14.11 × 18 votes; `digital_reserve_trust` 83.74 × 5. Exactly one company's
+reserve target ever moved — `first_satoshi_savings` 78.05 → 90.30 — **and it is the one where the player
+holds NST.** Cause is structural: `BuildBotBallot` is a pure function of `(persisted preference, company
+state)`, both constant between votes, so the NST-weighted average is constant forever. P15.9 made the
+ballots *legal*; nothing made them *alive* (D-15.34).
+
+**F2 — The pause tax.** `vote_open … awaiting_player` = **93** of 517. Ninety-three full-simulation
+freezes bought ~2 outcome changes. At active companies the `special` (>30% inflow) votes outnumber the
+quarterlies, so **the freeze rate scales with how successful the player's holdings are** (D-15.35).
+
+**F3 — The mempool is saturated by the companies' own dividend plumbing.**
+`network_population_trace.csv`: `txTargetPerBlock` ≈ **5.07**, `pendingTxs` = **26–28** against a 24-tx cap
+(23 usable). `bot_claim` averages **8.66 tx/block** — 1.7× the entire historical budget. `owed =
+max(0, target − pending)` is therefore structurally **0**, so ND.4a's cast sell-flow and non-miner
+exchanges have effectively stopped — and cast sell-flow is what *funds the companies* (D-15.36).
+
+**F4 — The money supply is a one-way ratchet.** FED at the stop: casino **2,560,000** outstanding over
+**64 draws and 0 repayments**; `fbi` 100,000; `bank:non_miner_22` 2,469,509 (of 3,723,997 drawn);
+`bank:non_miner_25` 3,853,132 (of 4,973,349 drawn). **Total outstanding 8,982,641 SC against 200,000 SC of
+genesis grants — 97.8% of all SC in existence is debt**, up ~45× in 4½ in-game years. The invariant holds
+exactly; what is missing is any *feedback*. Banks deleverage (10%/quarter, working as designed); the casino
+never does, because nothing was ever built to make it. This is not a bug — it is the ND.8e credit-capacity
+layer's absence, now measured.
+
+**F5 — R2 is confirmed; the lag has a different shape than assumed.** Over 1,472 blocks: mean solvetime
+**62,373 s vs the 58,500 s target (+6.6%)** — the Round-2 regulator question is closed. Retention throttle
+mean **0.713**, by 200-block bucket `0.752 · 0.693 · 0.801 · 0.806 · 0.653 · 0.599 · 0.706 · 0.688` — **no
+monotone decay with chain length**, which does not fit a purely `O(chain)` cost and does fit *chronic
+saturation plus periodic per-block spikes* (the developer's "processes a second, stalls a second"). Per
+block the engine now does: a ~9 MB snapshot serialize written twice for P15.11 atomicity, 62 UTXO cache
+invalidations each repaired by full replay, ~8.7 dividend-claim transactions, and appends to five CSV
+traces (`company_governance_trace.csv` alone reached 2 MB). **T4.6 first — instrument, then choose**
+(D-15.37).
+
+**F6 — Zero stress states, and that is the finding.** One `shortfall_pending`, eleven `shortfall_dust`
+(P15.10d's cutoff doing its job), **no** seizure, **no** dissolution, **no** insolvency — through a real
+historical drawdown. So §9 G and D7 never became observable, and every §9 J placeholder that only a stress
+state can price remains **unpriced**.
+
+### 10.3 What plan15 may claim, and what it may not
+
+| Claim | Status |
+|---|---|
+| The FED entity, per-client accounts, two-layer debt architecture | ✅ Verified live (§9 A/B) |
+| Conversions route through banks; collateral quarantined; client sub-ledger | ✅ Verified live (§9 E) — 444 provisions |
+| Quarterly repayment burns SC and steps FED debt down | ✅ Verified live (§9 F) — 12 repayments |
+| Bank categories locked; the refusal surfaced honestly | ✅ Verified live (P15.10) |
+| Ballots legal and in-band | ✅ Verified live — 0 tripwires in 517 votes |
+| `circulation = grants + debt` across 4½ in-game years and ~9 M SC | ✅ Held throughout |
+| The BTC carry survives a bull era | ✅ Observed |
+| The BTC carry survives a **drawdown into insolvency** | ⏸ **Untested — never occurred** |
+| Shortfall vote → cuts → unrecoverable → dissolution chain | ⏸ **Untested past `shortfall_pending`** |
+| Seized-wallet custody, inheritance, recovery tracker | ⏸ **Untested — no seizure ever fired** |
+| FBI tolerances / meter / roll calibrated | ⏸ **Unpriced — the mechanism never engaged** |
+
+### 10.4 P15.8-G — the carried-forward phase
+
+**Why it is not a merge blocker.** Everything in the "untested" column is a *terminal* path: it destroys
+companies. None of it can corrupt the world while it never fires, and all of it is behind explicit
+triggers. Shipping the reform with its stress paths build-verified-only is the same bargain P15.2–P15.7
+already took to reach P15.8 — with the difference that this one is now written down instead of assumed.
+
+**Resume conditions — any one of these makes G observable:**
+
+1. **Step 16's evolution/dividend rework** gives companies a reason to run lean and a way to over-extend,
+   which is the natural producer of both shortfalls and FBI-visible SC piles.
+2. **A forced-scenario DEV harness** (recommended, cheap): a WorldEconomy button that injects a shortfall,
+   or drops a chosen bank's collateral value, or sets a company's `InvestigationScore` at the flag
+   threshold. This tests the *chain of consequences*, which is what G actually cares about — the arrival
+   probability is a separate question and a tuning one.
+3. **A `DevEntryYear = 2013` run** landing directly in the drawdown with banks already founded, so the
+   carry is stressed within minutes instead of hours.
+
+**Do this when resuming, in order:** (a) build the harness in 2; (b) walk G1→G10 with it; (c) *only then*
+tune §9 J, because a placeholder priced against a forced scenario is at least priced against something.
+**Do not tune the FBI numbers before the mechanism has been seen firing** (D-15.33).
+
+### 10.5 Handoff to Step 16
+
+F1/F2 (governance is constant, the pause is expensive) and F3/F6 (nothing pushes on the mechanisms) are
+one problem wearing three hats: **the world has no depth for the banking layer to react to.** Step 16
+addresses that directly — dynamic persona-driven voting, pivotality-gated pauses, company evolution levels
+with NST/PST funding rounds, and the dividend-claim traffic fix (D-15.36). F5 hands the performance thread
+to `PRIVATE_ROADMAP.md` §8 **T4**, starting at T4.6. `OQ-8.2` (bot seed phrases / full UTXO integration),
+promoted to "right after Step 15", joins Step 16 as its own phase.
+
+### 10.6 Where the evidence lives
+
+`user://logs/` from this world, deliberately preserved (the INC-001 precedent — the CSV traces are the
+calibration record): `difficulty_trace.csv` (F5), `company_governance_trace.csv` (F1/F2/F3),
+`network_population_trace.csv` (F3), `bank_credit_trace.csv` (F6), `company_founding_trace.csv`,
+`casino_bot_bid_trace.csv`, plus `central_bank_state.json` for the F4 balances. Every number quoted above
+is reproducible from those files; none of it is reconstructible once the world is wiped.

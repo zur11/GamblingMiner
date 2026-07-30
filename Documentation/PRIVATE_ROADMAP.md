@@ -492,6 +492,19 @@ The mining readout embedded in DiceGame did not track the live (retargeted) diff
 
 > **(2) is a strong structural hypothesis, not a profiled fact.** It has the right shape and the right growth curve, but nothing has been timed. See T4.6 — measure before refactoring anything.
 
+#### T4.0b — What the RESUMED run measured (2026-07-30), which partly contradicts T4.0
+
+The P15.8 world was played on to **~Oct 2014 / block 2699** after the P15.11 repair, and `difficulty_trace.csv` now covers 1,472 blocks. Reading it changes two of the assumptions above (full audit: `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` §10, finding F5; decision D-15.37):
+
+1. **The R2 difficulty regulator is confirmed correct** — mean solvetime **62,373 s against the 58,500 s target (+6.6%)**. Block pace is no longer a suspect in anything.
+2. **The retention throttle is chronically ~0.71 and does NOT decay with chain length.** By 200-block bucket: `0.752 · 0.693 · 0.801 · 0.806 · 0.653 · 0.599 · 0.706 · 0.688`. A cost that grows linearly with chain length would show a monotone downward trend across 1,500 blocks and does not. **This does not refute T4.0 (2)** — the run is a window inside an already-large chain, so a linear term could be present and swamped — but it does mean the *dominant* term behaves like **chronic saturation plus periodic per-block spikes**, which matches the developer's description ("processes a second, stalls a second") better than a smooth linear decay. **T4.2's urgency is mildly demoted; T4.6 is confirmed as the correct first move.**
+3. **Two per-block cost sources the original T4.0 did not name**, both new since it was written:
+   - **Dividend-claim transactions: ~8.66 per block** (13,691 `bot_claim` rows over 1,586 blocks). Each is a real on-chain send. Besides the frame cost this saturates the mempool — `pendingTxs` sat at **26–28** against a 24-tx block cap and an ND.4a historical budget of ~5 — so the automated transaction layer has been at `owed = 0` for most of the run. Fixing it is scheduled in **Step 16** (settle bot claims internally, or per company at quarter close, instead of per holder on-chain); it is listed here because it is also a *performance* item.
+   - **Telemetry I/O**: five CSV traces appended per block, `company_governance_trace.csv` alone reaching 2 MB. Small individually, but it is per-block file I/O sitting next to the snapshot write.
+   - Also note **P15.11b's atomic write doubles the snapshot's write volume** (`.tmp` then rename). That was the correct trade, and it belongs in the budget T4.6 measures rather than being reverted.
+
+**Instrument these five together** in T4.6 — UTXO rebuilds, snapshot serialize+rename, governance tick, the bot/company sweeps, and claim-transaction construction — plus managed heap and block index. That set now covers every hypothesis on the table.
+
 #### T4.1 — Incremental UTXO maintenance (highest leverage, lowest risk)
 
 Applying a newly-accepted block's transactions to the cached UTXO set costs **O(txs in that block)**; replaying the chain costs **O(all txs ever)**. `TryAcceptMinedBlock` / `MineBlock` already know exactly which block arrived, so the incremental update is a few lines beside the existing `_chainVersion++`. Keep the full replay for `TryReplaceChain` (a genuine chain swap) and as a DEBUG-only cross-check — *assert the incremental set equals the replayed set* every N blocks, which is the §39.16-rule-1 shape: the cheap path must be provably identical to the truthful one.
