@@ -48,11 +48,16 @@ public static class TimelineConfig
 	// timeline. `0` on `main` FOREVER (canonical 2009-03-21 start, HistoricalBootstrapService behavior
 	// unchanged bit-for-bit); a DEV branch may set 2010-2025 to land directly in that year for testing.
 	// Orthogonal to DevAltTimeline — never set both to a non-default value at once.
-	// Restored to 0 on 2026-07-30 when P15.8 was suspended and step15 merged to main (see the step15 plan
-	// §10). While a DEV branch has this non-zero, a StatusBar watermark is shown and the world carries an
-	// `+ENTRY-<year>` timeline tag, so restoring it to 0 wipes that world on the next launch — back up
-	// `user://logs/*.csv` first if the run's telemetry still matters (they are in the reset delete list).
-	public const int DevEntryYear = 0; // `0` on `main` — canonical 2009-03-21 start (set 2010-2025 only on a DEV branch)
+	// ⚠ DEV BRANCH ONLY — currently 2011 for the Step 16 P16.6 verification run: landing on 2011-03-21 puts
+	// Market Birth, live auctions, founded companies and cycling quarterly votes immediately in reach, which
+	// is what P16.6's checks 1/2/3/7/9 need (from a canonical 2009 start they are ~1.5 in-game years away).
+	// FBI activation follows in June of the same year.
+	// MUST be restored to 0 before merging to main (the step14 EB.1 lesson, repeated at P15.8 and here). A
+	// StatusBar watermark is shown for as long as this is non-zero, and changing it either way re-tags the
+	// world (`+ENTRY-2011`) so the next launch wipes and rebuilds — deliberate, and cheap for a fresh world.
+	// NOTE the wipe does NOT touch bot_wallet_registry.json (identity file, Ch. 35 §35.1): the seeds P16.2
+	// generated survive the timeline switch, which is correct — identities are not world state.
+	public const int DevEntryYear = 2011; // `0` on `main` — canonical 2009-03-21 start (set 2010-2025 only on a DEV branch)
 
 	public static readonly DateTime EntryDayLocal = DevEntryYear == 0
 		? PlayerStartDayLocal

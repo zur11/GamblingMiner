@@ -19,12 +19,29 @@ public static class WordlistBootstrapper
 		WriteIndented = true
 	};
 
+	// Step 16 P16.2f (found in the P16.6 launch log) — the list is a FIXED 256-word subset, immutable once
+	// generated, so it is read from disk at most once per process.
+	//
+	// Until P16.2a this was called about twice per launch and re-parsing was free. P16.2a made
+	// BotWalletRegistry.AddCastMiner call it for EVERY cast-miner spawn, which turned it into a per-spawn
+	// disk read + JSON parse + log line — 11 of them visible in a single entry-year bootstrap, and one more
+	// on every mid-session spawn for the rest of the world's life. The defect was invisible in code review
+	// and obvious in the log, interleaved between the cast-miner lines.
+	//
+	// General rule: an "Ensure…" that re-does its work on every call is fine while it has two callers and a
+	// liability the moment it gains a hot one. When you add a call site to a helper, check what the helper
+	// does on the SECOND call.
+	private static List<WordEntry>? _cached;
+
 	public static List<WordEntry> EnsureWordlist()
 	{
-		if (FileAccess.FileExists(StorePath))
-			return Load();
+		if (_cached is { Count: > 0 })
+		{
+			return _cached;
+		}
 
-		return Generate();
+		_cached = FileAccess.FileExists(StorePath) ? Load() : Generate();
+		return _cached;
 	}
 
 	public static string[] GenerateThreeWords(List<WordEntry> wordlist, Random rng)
