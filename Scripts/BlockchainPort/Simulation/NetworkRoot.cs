@@ -53,7 +53,14 @@ public partial class NetworkRoot : Node
     // and off the checkpoint DTO onto a FED account (D-15.3/D-15.23 Fork A). Rather than write a migration
     // for a DEV-era save, world-defining banking semantics ride the same clean-reset mechanism. Every LATER
     // plan15 file just joins the delete list below — no further bump for the rest of the plan.
-    private const int WorldFormatVersion = 4;
+    // v5 (Step 16 P16.2e, D-16.3/D-16.4): OQ-8.2 — every bot, company and cast miner gains a seed phrase,
+    // and its base address is now DERIVED from that seed rather than randomly generated. Every one of those
+    // ~74 on-chain identities therefore changes, so an existing chain would reference addresses whose keys
+    // no longer exist anywhere. Note this bump alone is NOT sufficient: bot_wallet_registry.json is an
+    // identity file, deliberately EXEMPT from the delete list below (Ch. 35 §35.1), so it carries its own
+    // RegistryFormatVersion (BotWalletRegistry, P16.2b) — the two must be bumped TOGETHER, and the registry's
+    // is the one that actually regenerates the seeds.
+    private const int WorldFormatVersion = 5;
     private const string WorldVersionPath = "user://world_format_version.txt";
     // Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
     // A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
@@ -1058,7 +1065,7 @@ public partial class NetworkRoot : Node
         ApplyStateFromSnapshot(savedState);
         NormalizeGenesisAcrossNodes();
         EnsureSecondBlockBootstrapPendingTx();
-        RescanFounderReceiveWallets(); // Step 8.2 — position founders' fresh-coinbase frontier from the chain
+        RescanDerivedReceiveWallets(); // Step 8.2 — position founders' fresh-coinbase frontier from the chain
         // The four casino miner-bots' governance identities (band / market category / greed) are drawn HERE,
         // at world creation, rather than lazily at the first company vote — so the stances are printed and
         // committed from the world's very first launch (developer request ahead of the P15.8 run) instead of
@@ -1089,7 +1096,7 @@ public partial class NetworkRoot : Node
                 // address, but RotateCoinbaseAddress = false keeps every mined reward on the base address (coinbase
                 // spread is a Satoshi-only trait). The player's wallet becomes multi-address only by spending: each
                 // send's change lands on a fresh derived address. addr(0) == BaseAddress, so existing balances and
-                // the chain rescan (RescanFounderReceiveWallets) are untouched.
+                // the chain rescan (RescanDerivedReceiveWallets) are untouched.
                 node.ReceiveWallet = new DerivedAddressWallet(seedPhrase);
                 node.RotateCoinbaseAddress = false;
             }
@@ -1103,7 +1110,10 @@ public partial class NetworkRoot : Node
             // Bot nodes: registry (authoritative) → saved snapshot (migration fallback) → fresh random wallet.
             BotWalletRecord? botRecord = BotWalletRegistry.GetBot(nodeId);
             if (botRecord?.HasFullWallet == true)
+            {
                 node = new(nodeId, botRecord.Address, botRecord.SigningPublicKeyBase64!, botRecord.SigningPrivateKeyBase64!, botRecord.Secp256k1PublicKeyBase64!);
+                AttachDerivedWalletIfSeeded(node, botRecord);
+            }
             else if (savedState?.NodeWallets?.TryGetValue(nodeId, out NodeWalletSnapshot? wallet) == true && wallet?.IsComplete() == true)
                 node = new(nodeId, wallet.Address, wallet.SigningPublicKeyBase64, wallet.SigningPrivateKeyBase64, wallet.Secp256k1PublicKeyBase64);
             else
@@ -1112,6 +1122,29 @@ public partial class NetworkRoot : Node
 
         SharedNodesById[nodeId] = node;
         return node;
+    }
+
+    // Step 16 P16.2c (OQ-8.2, D-16.3/5) — the single promotion point from "single-address participant" to
+    // "full UTXO citizen". Every caller routes through here, and the test is ALWAYS `record.HasSeed`,
+    // NEVER the node's kind (D-16.6 as amended by D-16.17): a casino-miner bot, a company and a cast miner
+    // are the same case, and a future ghost that gains a seed becomes the same case for free — which is
+    // what keeps §6.1's ghost typology implementable without reopening this decision.
+    //
+    // RotateCoinbaseAddress stays FALSE: coinbase address non-reuse remains a Satoshi-only trait (Step 8,
+    // D0). A seeded node mines to its base address and becomes multi-address only by SPENDING — each
+    // send's change lands on a fresh derived address, exactly as the player/casino/Hal/Hearn already do.
+    //
+    // Because P16.2a derives the record's Address from the same seed, addr(0) == node.WalletAddress here,
+    // matching every other seeded node in the project (the combination this project has actually run).
+    private static void AttachDerivedWalletIfSeeded(NodeAgent node, BotWalletRecord record)
+    {
+        if (!record.HasSeed)
+        {
+            return; // pre-Step-16 identity: behaves exactly as before (§39.16 rule 5's sentinel default)
+        }
+
+        node.ReceiveWallet = new DerivedAddressWallet(record.SeedPhrase);
+        node.RotateCoinbaseAddress = false;
     }
 
     private static void RegisterFounderNode(FounderWalletState? founder)
@@ -1134,7 +1167,7 @@ public partial class NetworkRoot : Node
         // single base address (coinbase spread stays Satoshi-only), and they become multi-address only when
         // they SEND (change → fresh address). Hal mines + receives E4; Mike Hearn makes one outgoing tx (E6b
         // Hearn → Satoshi 32.51, an exact-match send → no change, so rotation is inert today but kept for
-        // consistency/future-proofing). The frontier is positioned from the chain by RescanFounderReceiveWallets().
+        // consistency/future-proofing). The frontier is positioned from the chain by RescanDerivedReceiveWallets().
         node.ReceiveWallet = new DerivedAddressWallet(seed);
         if (founder.FounderId != "satoshi")
         {
@@ -6304,6 +6337,13 @@ public partial class NetworkRoot : Node
     // Derives a NodeAgent for a passphrase wallet on demand and registers it in SharedNetwork
     // for the session so it can sign and broadcast transactions. Syncs the player chain so UTXO
     // checks see existing confirmed balance. Returns the nodeId for CreateAndBroadcastTransactionToAddress.
+    //
+    // Step 16 P16.2f — passphrase wallets were the participant OQ-8.2's own scope list never mentioned, and
+    // they SPEND, which made them the last single-address change-producer standing. Found by asking the
+    // question the phase exists to ask ("who can still make a change-to-self output?") instead of trusting
+    // the list. Without this, removing the two BlockExplorer cosmetics would have started hiding nothing
+    // while a real self-change case still existed. The wiring is exact rather than approximate: the caller
+    // derives `walletAddress` as DeriveGmAddress(seedPhrase), so base == DeriveAddress(0) here too.
     public string RegisterPassphraseWallet(string seedPhrase, string walletAddress)
     {
         EnsureInitialized();
@@ -6312,13 +6352,35 @@ public partial class NetworkRoot : Node
         {
             (string signPub, string signPriv) = CryptoUtils.DeriveSigningKeypair(seedPhrase);
             string secp256k1Pub = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seedPhrase);
-            var node = new NodeAgent(nodeId, walletAddress, signPub, signPriv, secp256k1Pub);
+            var node = new NodeAgent(nodeId, walletAddress, signPub, signPriv, secp256k1Pub)
+            {
+                ReceiveWallet = new DerivedAddressWallet(seedPhrase),
+                RotateCoinbaseAddress = false // coinbase non-reuse stays Satoshi-only (D-16.5)
+            };
             if (SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
                 node.Blockchain.TryReplaceChain(player.Blockchain.Chain, player.Blockchain.PendingTransactions);
+            // LOAD-BEARING, not a nicety: unlike every other seeded node, a passphrase wallet is created
+            // mid-session and so misses the init-time RescanDerivedReceiveWallets entirely. An unscanned
+            // frontier would leave change-held funds unowned (invisible balance) and reuse DeriveAddress(1)
+            // on every unlock — the exact Step 8 defect documented at BuildUsedAddressSet.
+            RescanReceiveWallet(node);
             SharedNetwork.RegisterNode(node);
             SharedNodesById[nodeId] = node;
         }
         return nodeId;
+    }
+
+    // Positions ONE node's derived-address frontier from the chain — the single-node twin of
+    // RescanDerivedReceiveWallets, for wallets that come into existence after initialization.
+    private void RescanReceiveWallet(NodeAgent node)
+    {
+        if (node.ReceiveWallet == null || !SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+        {
+            return;
+        }
+
+        HashSet<string> used = BuildUsedAddressSet(player);
+        node.ReceiveWallet.Rescan(used.Contains);
     }
 
     // Step 14 (ND.2) — registers a freshly-spawned cast miner mid-session (its BotWalletRegistry record
@@ -6340,6 +6402,8 @@ public partial class NetworkRoot : Node
         }
 
         var node = new NodeAgent(nodeId, record.Address, record.SigningPublicKeyBase64!, record.SigningPrivateKeyBase64!, record.Secp256k1PublicKeyBase64!);
+        // P16.2c — a cast miner spawned mid-session is no less a UTXO citizen than one registered at boot.
+        AttachDerivedWalletIfSeeded(node, record);
         if (SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
             node.Blockchain.TryReplaceChain(player.Blockchain.Chain, player.Blockchain.PendingTransactions);
         SharedNetwork.RegisterNode(node);
@@ -6393,7 +6457,7 @@ public partial class NetworkRoot : Node
 
     // Single-pass scan of EVERY address appearing on a node's confirmed chain — every output's recipient
     // (incl. change outputs at vout ≥ 1) and every input's owner. Static + no EnsureInitialized so it is safe
-    // to call from inside EnsureInitialized (RescanFounderReceiveWallets) without re-entrancy.
+    // to call from inside EnsureInitialized (RescanDerivedReceiveWallets) without re-entrancy.
     //
     // CRITICAL (Step 8 bug fix): must iterate the full Inputs/Outputs lists, NOT the legacy Sender/Recipient
     // shims (which expose only Inputs[0]/Outputs[0]). A CHANGE output lives at Outputs[1], so the old shim
@@ -6421,7 +6485,18 @@ public partial class NetworkRoot : Node
     // rotating founders (Satoshi's coinbases) and the player (whose frontier advances on change outputs).
     // Called at init after the chain is loaded/normalized; in-session the frontier then advances incrementally
     // via NodeAgent.ReceiveWallet.MarkReceiveConsumed as each rotated receive (coinbase / change) is committed.
-    private static void RescanFounderReceiveWallets()
+    //
+    // Step 16 P16.2d — RENAMED from RescanFounderReceiveWallets. The body needed no widening at all: it has
+    // always walked EVERY registered node and rescanned whichever ones carry a ReceiveWallet, so the ~74
+    // seeded bots/companies/cast miners P16.2c introduces are picked up for free. Only the NAME and the
+    // comment above it were still describing a founders-only world — which is precisely the kind of stale
+    // label that makes a reader believe a widening is needed when the code already does the right thing.
+    //
+    // Cost note (P16.2d): BuildUsedAddressSet is ONE chain pass shared by every wallet, so the added cost
+    // is address DERIVATION (~20 SHA256 per node past its frontier), not extra chain scans. If that ever
+    // measures as material at launch it is a T4 finding, never a reason to skip the rescan — an unscanned
+    // frontier reuses change addresses and unattributes change-held funds (the Step 8 bug at L6426).
+    private static void RescanDerivedReceiveWallets()
     {
         if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
             return;

@@ -1,4 +1,5 @@
 using Godot;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -11,6 +12,21 @@ namespace GodotBlockchainPort.Simulation;
 public static class BotWalletRegistry
 {
 	private const string RegistryPath = "user://bot_wallet_registry.json";
+
+	// Step 16 P16.2b (D-16.4) — the registry's OWN format version, deliberately separate from
+	// WorldFormatVersion.
+	//
+	// This file is an IDENTITY file and is therefore EXEMPT from NetworkRoot.ResetWorldIfIncompatible's
+	// delete list (Ch. 35 §35.1 — wallet seeds, saved strategies and the notepad survive a world wipe on
+	// purpose). So a WorldFormatVersion bump does NOT renew it, and P16.2a's seeds would never reach an
+	// existing installation: every record would load seedless, every bot would stay single-address, and
+	// the whole phase would appear not to work WITHOUT PRINTING ANYTHING — the exact silent-failure shape
+	// §39.16 rule 5 exists to catch. Bumping this instead regenerates the identities and says so.
+	//
+	// Version history: 1 = pre-Step-16 (no seed words). 2 = Step 16 P16.2a (seed-derived addresses).
+	// Bump ONLY when the identities themselves must be regenerated — never for a world-state change.
+	private const int RegistryFormatVersion = 2;
+
 	private const int MinerBotCount = 4;
 	// Step 14 round 3 (D-EB.8, 2026-07-09): raised 10 -> 40 (OQ-EB.5). MUST match
 	// BtcNetworkDataService.NonMinerPoolSize exactly — that constant sizes the historical intro
@@ -38,9 +54,8 @@ public static class BotWalletRegistry
 
 	public static void EnsureAll()
 	{
-		if (FileAccess.FileExists(RegistryPath))
+		if (FileAccess.FileExists(RegistryPath) && LoadRegistry())
 		{
-			LoadRegistry();
 			GD.Print($"[BotWalletRegistry] Loaded — {MinerBots.Count} miner bots, {NonMinerBots.Count} non-miner bots, {CastMiners.Count} cast miners.");
 			return;
 		}
@@ -64,19 +79,39 @@ public static class BotWalletRegistry
 			return existing;
 		}
 
-		var (address, sigPub, sigPriv, secp256k1Pub) = CryptoUtils.GenerateWallet();
-		var record = new BotWalletRecord(
+		// P16.2a — a mid-session spawn is seeded exactly like a boot-time one, so a cast miner that appears
+		// in 2014 is no less a UTXO citizen than one the registry was born with.
+		BotWalletRecord record = CreateSeededRecord(nodeId, isMinerNode: true,
+			WordlistBootstrapper.EnsureWordlist(), new Random());
+		CastMiners = [..CastMiners, record];
+		SaveRegistry();
+		GD.Print($"[BotWalletRegistry] Cast miner {nodeId} — {record.Address}");
+		return record;
+	}
+
+	// P16.2a (D-16.3) — the ONE construction path for a seeded participant. Address and both keypairs all
+	// derive from the same 3-word phrase, so base == DerivedAddressWallet.DeriveAddress(0) and a bot is
+	// structurally identical to the player/casino/founders. The alternative (keep CryptoUtils.GenerateWallet's
+	// random address and bolt a seed beside it) is supported by TryResolveInputKeys but would leave 74 nodes
+	// on a base != DeriveAddress(0) combination nothing in this project has ever run.
+	private static BotWalletRecord CreateSeededRecord(
+		string nodeId, bool isMinerNode, List<WordlistBootstrapper.WordEntry> wordlist, Random rng)
+	{
+		string[] words = WordlistBootstrapper.GenerateThreeWords(wordlist, rng);
+		string seedPhrase = string.Join(" ", words);
+		string address = CryptoUtils.DeriveGmAddress(seedPhrase);
+		(string sigPub, string sigPriv) = CryptoUtils.DeriveSigningKeypair(seedPhrase);
+		string secp256k1Pub = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seedPhrase);
+
+		return new BotWalletRecord(
 			NodeId: nodeId,
 			Address: address,
 			SigningPublicKeyBase64: sigPub,
 			SigningPrivateKeyBase64: sigPriv,
 			Secp256k1PublicKeyBase64: secp256k1Pub,
-			IsMinerNode: true
+			IsMinerNode: isMinerNode,
+			SeedWords: words
 		);
-		CastMiners = [..CastMiners, record];
-		SaveRegistry();
-		GD.Print($"[BotWalletRegistry] Cast miner {nodeId} — {address}");
-		return record;
 	}
 
 	// Updates IsActive and ReactivationBlockHeight for a non-miner bot and re-saves the registry.
@@ -93,107 +128,106 @@ public static class BotWalletRegistry
 
 	private static void CreateRegistry()
 	{
+		// EnsureWordlist is idempotent (loads if present, generates otherwise) — WalletInitializationService
+		// already called it before us, but asking again keeps this class self-sufficient.
+		List<WordlistBootstrapper.WordEntry> wordlist = WordlistBootstrapper.EnsureWordlist();
+		var rng = new Random();
+
 		var miners = new List<BotWalletRecord>(MinerBotCount);
 		for (int i = 1; i <= MinerBotCount; i++)
 		{
-			var (address, sigPub, sigPriv, secp256k1Pub) = CryptoUtils.GenerateWallet();
-			miners.Add(new BotWalletRecord(
-				NodeId: $"bot_{i}",
-				Address: address,
-				SigningPublicKeyBase64: sigPub,
-				SigningPrivateKeyBase64: sigPriv,
-				Secp256k1PublicKeyBase64: secp256k1Pub,
-				IsMinerNode: true
-			));
-			GD.Print($"[BotWalletRegistry] Miner bot_{i} — {address}");
+			BotWalletRecord record = CreateSeededRecord($"bot_{i}", isMinerNode: true, wordlist, rng);
+			miners.Add(record);
+			GD.Print($"[BotWalletRegistry] Miner bot_{i} — {record.Address}");
 		}
 
 		var nonMiners = new List<BotWalletRecord>(NonMinerBotCount);
 		for (int i = 1; i <= NonMinerBotCount; i++)
 		{
-			var (address, sigPub, sigPriv, secp256k1Pub) = CryptoUtils.GenerateWallet();
-			nonMiners.Add(new BotWalletRecord(
-				NodeId: $"non_miner_{i}",
-				Address: address,
-				SigningPublicKeyBase64: sigPub,
-				SigningPrivateKeyBase64: sigPriv,
-				Secp256k1PublicKeyBase64: secp256k1Pub,
-				IsMinerNode: false
-			));
-			GD.Print($"[BotWalletRegistry] Non-miner non_miner_{i} — {address}");
+			BotWalletRecord record = CreateSeededRecord($"non_miner_{i}", isMinerNode: false, wordlist, rng);
+			nonMiners.Add(record);
+			GD.Print($"[BotWalletRegistry] Non-miner non_miner_{i} — {record.Address}");
 		}
 
 		MinerBots = miners;
 		NonMinerBots = nonMiners;
+		// A regenerated registry starts with no cast: they are spawn-dripped by NetworkPopulationScheduler
+		// as the historical curve grows, each seeded through AddCastMiner.
+		CastMiners = [];
 	}
 
-	private static void LoadRegistry()
+	// Returns false when the caller must regenerate instead (unreadable, or an outdated format version).
+	// P16.2b: the version check is LOUD. A registry silently kept at version 1 would leave every bot
+	// seedless and single-address — a phase that appears not to work while printing nothing.
+	private static bool LoadRegistry()
 	{
-		using FileAccess file = FileAccess.Open(RegistryPath, FileAccess.ModeFlags.Read);
-		RegistryDto? dto = JsonSerializer.Deserialize<RegistryDto>(file.GetAsText(), JsonOptions);
-		if (dto is null) { CreateRegistry(); return; }
+		RegistryDto? dto;
+		try
+		{
+			using FileAccess file = FileAccess.Open(RegistryPath, FileAccess.ModeFlags.Read);
+			dto = JsonSerializer.Deserialize<RegistryDto>(file.GetAsText(), JsonOptions);
+		}
+		catch (Exception ex)
+		{
+			// INC-001 lesson 2 — a loader that can fail on data the player owns must fail LOUDLY. These are
+			// identities, not world state: regenerating is correct, but it must never happen in silence.
+			GD.PrintErr($"[BotWalletRegistry] Could not read {RegistryPath} ({ex.GetType().Name}: {ex.Message}) — regenerating identities.");
+			return false;
+		}
 
-		MinerBots = dto.Miners
-			.Select(d => new BotWalletRecord(
-				d.NodeId, d.Address,
-				d.SigningPublicKeyBase64, d.SigningPrivateKeyBase64, d.Secp256k1PublicKeyBase64,
-				d.IsActive, d.ReactivationBlockHeight, IsMinerNode: true))
-			.ToList();
+		if (dto is null)
+		{
+			GD.PrintErr($"[BotWalletRegistry] {RegistryPath} deserialized to null — regenerating identities.");
+			return false;
+		}
 
-		NonMinerBots = dto.NonMiners
-			.Select(d => new BotWalletRecord(
-				d.NodeId, d.Address,
-				d.SigningPublicKeyBase64, d.SigningPrivateKeyBase64, d.Secp256k1PublicKeyBase64,
-				d.IsActive, d.ReactivationBlockHeight, IsMinerNode: false))
-			.ToList();
+		if (dto.FormatVersion != RegistryFormatVersion)
+		{
+			GD.Print($"[BotWalletRegistry] Registry format {dto.FormatVersion} != {RegistryFormatVersion} "
+				+ "(Step 16 P16.2a — seed-derived bot addresses). Regenerating ALL bot/company/cast identities. "
+				+ "Their previous on-chain addresses are abandoned, which is why this ships with a WorldFormatVersion bump (D-16.4).");
+			return false;
+		}
 
+		MinerBots = dto.Miners.Select(d => ToRecord(d, isMinerNode: true)).ToList();
+		NonMinerBots = dto.NonMiners.Select(d => ToRecord(d, isMinerNode: false)).ToList();
 		// Pre-ND.2 registry files have no Cast array — loads as empty, backward compatible.
-		CastMiners = (dto.Cast ?? [])
-			.Select(d => new BotWalletRecord(
-				d.NodeId, d.Address,
-				d.SigningPublicKeyBase64, d.SigningPrivateKeyBase64, d.Secp256k1PublicKeyBase64,
-				d.IsActive, d.ReactivationBlockHeight, IsMinerNode: true))
-			.ToList();
+		CastMiners = (dto.Cast ?? []).Select(d => ToRecord(d, isMinerNode: true)).ToList();
+		return true;
 	}
+
+	private static BotWalletRecord ToRecord(BotDto d, bool isMinerNode) => new(
+		d.NodeId, d.Address,
+		d.SigningPublicKeyBase64, d.SigningPrivateKeyBase64, d.Secp256k1PublicKeyBase64,
+		d.IsActive, d.ReactivationBlockHeight, isMinerNode, d.SeedWords);
 
 	private static void SaveRegistry()
 	{
 		var dto = new RegistryDto
 		{
-			Miners = MinerBots.Select(b => new BotDto
-			{
-				NodeId = b.NodeId,
-				Address = b.Address,
-				SigningPublicKeyBase64 = b.SigningPublicKeyBase64,
-				SigningPrivateKeyBase64 = b.SigningPrivateKeyBase64,
-				Secp256k1PublicKeyBase64 = b.Secp256k1PublicKeyBase64,
-				IsActive = b.IsActive,
-				ReactivationBlockHeight = b.ReactivationBlockHeight
-			}).ToList(),
-			NonMiners = NonMinerBots.Select(b => new BotDto
-			{
-				NodeId = b.NodeId,
-				Address = b.Address,
-				SigningPublicKeyBase64 = b.SigningPublicKeyBase64,
-				SigningPrivateKeyBase64 = b.SigningPrivateKeyBase64,
-				Secp256k1PublicKeyBase64 = b.Secp256k1PublicKeyBase64,
-				IsActive = b.IsActive,
-				ReactivationBlockHeight = b.ReactivationBlockHeight
-			}).ToList(),
-			Cast = CastMiners.Select(b => new BotDto
-			{
-				NodeId = b.NodeId,
-				Address = b.Address,
-				SigningPublicKeyBase64 = b.SigningPublicKeyBase64,
-				SigningPrivateKeyBase64 = b.SigningPrivateKeyBase64,
-				Secp256k1PublicKeyBase64 = b.Secp256k1PublicKeyBase64,
-				IsActive = b.IsActive,
-				ReactivationBlockHeight = b.ReactivationBlockHeight
-			}).ToList()
+			FormatVersion = RegistryFormatVersion,
+			Miners = MinerBots.Select(ToDto).ToList(),
+			NonMiners = NonMinerBots.Select(ToDto).ToList(),
+			Cast = CastMiners.Select(ToDto).ToList()
 		};
 		using FileAccess file = FileAccess.Open(RegistryPath, FileAccess.ModeFlags.Write);
 		file.StoreString(JsonSerializer.Serialize(dto, JsonOptions));
 	}
+
+	// One mapping, three lists. The three hand-copied blocks this replaces are exactly the shape INC-001's
+	// lesson 3 warns about: when several paths write the same file, the rules belong to the FILE — and a
+	// new field (SeedWords) would otherwise have had to be remembered in three places.
+	private static BotDto ToDto(BotWalletRecord b) => new()
+	{
+		NodeId = b.NodeId,
+		Address = b.Address,
+		SigningPublicKeyBase64 = b.SigningPublicKeyBase64,
+		SigningPrivateKeyBase64 = b.SigningPrivateKeyBase64,
+		Secp256k1PublicKeyBase64 = b.Secp256k1PublicKeyBase64,
+		IsActive = b.IsActive,
+		ReactivationBlockHeight = b.ReactivationBlockHeight,
+		SeedWords = b.SeedWords
+	};
 
 	private sealed class BotDto
 	{
@@ -204,10 +238,16 @@ public static class BotWalletRegistry
 		public string? Secp256k1PublicKeyBase64 { get; set; }
 		public bool IsActive { get; set; } = true;
 		public int? ReactivationBlockHeight { get; set; }
+		// P16.2a — absent in a version-1 file; that file is regenerated rather than read, so this is null
+		// only for a hand-edited registry (which then degrades to single-address behaviour, not a crash).
+		public string[]? SeedWords { get; set; }
 	}
 
 	private sealed class RegistryDto
 	{
+		// Absent in a pre-Step-16 file ⇒ deserializes to 0 ⇒ != RegistryFormatVersion ⇒ regenerate. The
+		// default doing the right thing is deliberate: no explicit "is this old?" test to forget.
+		public int FormatVersion { get; set; }
 		public List<BotDto> Miners { get; set; } = [];
 		public List<BotDto> NonMiners { get; set; } = [];
 		public List<BotDto>? Cast { get; set; }

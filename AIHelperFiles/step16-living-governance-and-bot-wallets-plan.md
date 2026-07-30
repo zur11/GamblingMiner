@@ -335,7 +335,34 @@ open. Full design deferred; tracked in `PRIVATE_ROADMAP.md`.
 > Each subphase is individually buildable and individually verifiable. The order inside a phase matters;
 > the order *between* phases is §5's suggested order (P16.2 → P16.1 → P16.4 → P16.5 → P16.3 → P16.6).
 
-### P16.2 — Bot seeds + `ReceiveWallet` (do first; it forces the wipe)
+### P16.2 — Bot seeds + `ReceiveWallet` — ✅ IMPLEMENTED (2026-07-30, subphases a–f)
+
+> **Build log.** `dotnet build` clean, 0 warnings. Two things went differently from the spec, both worth
+> reading before P16.3:
+>
+> **1. P16.2d needed no widening at all.** `RescanFounderReceiveWallets` has *always* walked every
+> registered node and rescanned whichever carry a `ReceiveWallet` — only its NAME and comment still
+> described a founders-only world. Renamed to `RescanDerivedReceiveWallets` and the comment corrected.
+> *A stale label made a reader (me, writing §7) believe a widening was needed when the code already did
+> the right thing* — the mirror of a stale figure that lies.
+>
+> **2. P16.2f found a participant the OQ-8.2 scope list never had: PASSPHRASE WALLETS.**
+> `NetworkRoot.RegisterPassphraseWallet` builds a spending node with no `ReceiveWallet`, so it was the last
+> single-address change-producer standing — and the cosmetics could not honestly be deleted while it
+> existed. Found by asking the phase's actual question (*"who can still produce a change-to-self
+> output?"*) against the code, rather than trusting the list in `PRIVATE_ROADMAP.md` §5. They are migrated
+> too. **Two sub-findings:** its base address is already `DeriveGmAddress(seedPhrase)` at the call sites, so
+> `base == DeriveAddress(0)` holds exactly; and because it is created **mid-session** it misses the
+> init-time rescan entirely — without a single-node rescan at registration (new `RescanReceiveWallet`) its
+> change-held funds would go unowned and every unlock would reuse `DeriveAddress(1)`, which is precisely
+> the Step 8 defect documented at `BuildUsedAddressSet`.
+>
+> **General rule earned here: when deleting a workaround, re-derive the set of cases it covered from the
+> CODE — never trust the scope list written when the workaround was added.** Recorded in §29.9 (now
+> history) and CLAUDE.md.
+>
+> Ghosts were confirmed spend-incapable (they are registered and mined with, and appear in no spend path),
+> so D-16.6's check passed and did not block the removal.
 
 - **P16.2a — `BotWalletRecord` carries a seed.** Add `SeedWords` (string array, the existing
   `wordlist_256.json` generator the player/casino/founders already use) to the record and to `BotDto`.

@@ -3139,9 +3139,27 @@ Each non-bot wallet (BTCWallet, CasinoFinances, FoundersWallets) has a **"Transa
 - **"Hide mining rewards" `CheckBox` (default checked)** — a mining wallet accrues *hundreds* of coinbase entries that bury the actual transfers, so coinbases are hidden by default with a "… N mining reward(s) hidden — untick to show" note. This is the opposite default polarity from "View empty addresses" (checked = hide), chosen because the noise is the common case for transfers visibility; each label is self-explanatory.
 - Same scroll-preservation + trailing-blank-lines rules as the address book (29.7). FoundersWallets' panel is always-visible in Base mode (with the founder economics/dev panels); BTCWallet/CasinoFinances gate it behind a "Show transactions ▸" expander like the address list.
 
-### 29.9 — Block Explorer display filter for OQ-8.2 bot change-to-self (P10 / cosmetic)
+### 29.9 — Block Explorer display filter for OQ-8.2 bot change-to-self (P10 / cosmetic) — ✅ REMOVED (Step 16 P16.2f, 2026-07-30)
 
-**Context:** Bots are single-address — they have no `ReceiveWallet` (no persistent seed, OQ-8.2). Every bot spend therefore produces a change output addressed back to the bot's own input address. This is valid UTXO behaviour, but it creates visual noise in the Block Explorer: a bot donation to a non-miner shows two outputs, one external and one going straight back to the sender's address.
+> **This section is HISTORY.** Both helpers and all their callers were deleted once every spending
+> participant gained a `DerivedAddressWallet` (Step 16 P16.2, OQ-8.2 resolved). The Block Explorer now shows
+> every transaction and every output exactly as it is on-chain. Kept here because the *reasoning* still
+> matters: a cosmetic filter that hides a real output makes a real spend's arithmetic fail to add up (block
+> 1274's nine-input bot bid appeared to lose 6.05 BTC), and a filter is only ever removable when the **last**
+> participant that can produce the hidden shape is migrated.
+>
+> **What the removal check actually found (P16.2f):** the migration list everyone had been working from —
+> casino-miner bots, cast miners, companies, ghosts-excluded — was **incomplete**. **Passphrase wallets**
+> (`NetworkRoot.RegisterPassphraseWallet`) spend, had no `ReceiveWallet`, and were therefore the last
+> single-address change-producer standing. They were found by asking *"who can still produce a
+> change-to-self output?"* rather than by trusting the list. **General rule: when deleting a workaround,
+> re-derive the set of cases it covered from the code — do not trust the scope list written when it was
+> added.** Two related gotchas recorded with it: a passphrase wallet is created **mid-session**, so it
+> misses the init-time `RescanDerivedReceiveWallets` and needs a single-node rescan at registration or its
+> change-held funds go unowned; and ghosts stay keyless by design (D-14.11) but never spend, so they never
+> blocked this.
+
+**Context (as it was):** Bots were single-address — they have no `ReceiveWallet` (no persistent seed, OQ-8.2). Every bot spend therefore produces a change output addressed back to the bot's own input address. This is valid UTXO behaviour, but it creates visual noise in the Block Explorer: a bot donation to a non-miner shows two outputs, one external and one going straight back to the sender's address.
 
 Two helpers in `BlockExplorer.cs` apply a **display-only cosmetic filter** until OQ-8.2 is resolved (bots get simplified seeds + `DerivedAddressWallet`):
 
@@ -3150,7 +3168,7 @@ Two helpers in `BlockExplorer.cs` apply a **display-only cosmetic filter** until
 
 **What remains visible:** coinbases are never filtered (no inputs → `IsSelfChangeTransaction` is false). A bot donation to a non-miner still appears with `Outputs (1)` showing only the recipient — the change leg is invisible. Casino pool distributions and player/founder sends are unaffected (their change goes to a fresh derived address, so it never matches any input address).
 
-**When to remove:** delete `IsSelfChangeTransaction`, `ExternalOutputs`, and all their callers in `BlockExplorer.cs` once bots have `DerivedAddressWallet` (before the casino referral / rank systems ship). The display will then naturally show all outputs correctly.
+**When to remove:** ✅ **DONE — Step 16 P16.2f (2026-07-30).** `IsSelfChangeTransaction`, `ExternalOutputs` and all their callers are deleted; the display shows all outputs correctly, as predicted.
 
 ### 29.10 — Persistent nav / footer buttons live OUTSIDE the scroll (Step 12 fix)
 
