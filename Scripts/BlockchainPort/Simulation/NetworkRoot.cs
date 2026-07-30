@@ -2141,6 +2141,75 @@ public partial class NetworkRoot : Node
     // absorb (dividends cut) vs. what the company's own SC reserve absorbs.
     public const string CompanyVoteKindShortfall = "shortfall";
 
+    // ---- Step 16 P16.4a (D-16.8) — the three axes that make a ballot a DRAW instead of a constant -------
+    //
+    // The step15 §10 audit (F1) measured what a purely persona-driven ballot produces: `BuildBotBallot` was
+    // a pure function of (persisted preference, company state), both constant between votes, so 517 votes
+    // produced ~2 outcome changes and the PLAYER was the only source of variance in the whole system.
+    //
+    // These axes do not add opinions — they add REACTION. Each has a distinct mechanical job, chosen so no
+    // two overlap (the existing band/market/greed axes already cover "what do I want" and "how much do I
+    // want paid out"):
+    //
+    //   Conviction   — HOW HARD the bot reacts to everything below (scales the whole drift sum).
+    //   RiskAversion — how much the DEFENSIVE signals weigh (FBI heat, an unpaid installment).
+    //   Horizon      — WHICH WAY it reads a price move: short-horizon bots FOLLOW the momentum, long-horizon
+    //                  bots FADE it. This is what makes two bots disagree about the same market.
+    //
+    // Drawn per world as distinct 4-permutations (the greed precedent), and defaulting to EMPTY so an
+    // already-drawn world is backfilled rather than left stuck (§39.16 rule 5).
+
+    public const string ConvictionSteadfast = "steadfast";   // barely moves off its stance
+    public const string ConvictionMeasured = "measured";
+    public const string ConvictionResponsive = "responsive";
+    public const string ConvictionReactive = "reactive";     // swings hard on any signal
+    private static readonly string[] ConvictionOrder =
+        [ConvictionSteadfast, ConvictionMeasured, ConvictionResponsive, ConvictionReactive];
+
+    public const string RiskBold = "bold";                   // shrugs off heat and shortfalls
+    public const string RiskSteady = "steady";
+    public const string RiskCautious = "cautious";
+    public const string RiskFearful = "fearful";             // dumps SC at the first federal file
+    private static readonly string[] RiskOrder = [RiskBold, RiskSteady, RiskCautious, RiskFearful];
+
+    public const string HorizonTrader = "trader";            // follows the move hardest
+    public const string HorizonShort = "short_term";
+    public const string HorizonLong = "long_term";
+    public const string HorizonGenerational = "generational"; // fades the move hardest
+    private static readonly string[] HorizonOrder = [HorizonTrader, HorizonShort, HorizonLong, HorizonGenerational];
+
+    // Multiplier on the summed drift. Steadfast ≈ the pre-P16.4 behaviour (nearly its bare stance), so the
+    // old constant ballot survives as ONE of four temperaments rather than as the only one — the same shape
+    // P15.4c gave greed. *Calibration knobs.*
+    private static decimal ConvictionDriftMultiplier(string conviction) => conviction switch
+    {
+        ConvictionReactive => 1.5m,
+        ConvictionResponsive => 1.0m,
+        ConvictionMeasured => 0.6m,
+        _ => 0.25m, // steadfast
+    };
+
+    // Weight on the DEFENSIVE drift terms only (FBI heat, pending/unrecoverable shortfall).
+    private static decimal RiskAversionWeight(string risk) => risk switch
+    {
+        RiskFearful => 1.5m,
+        RiskCautious => 1.0m,
+        RiskSteady => 0.6m,
+        _ => 0.25m, // bold
+    };
+
+    // SIGNED weight on the price-momentum term: positive = FOLLOW the move (a rising BTC price argues for
+    // holding less SC), negative = FADE it (a rally is when a long-horizon holder takes profits INTO the
+    // stable asset). The sign is the whole point — it is what makes two bots read one market oppositely,
+    // which no amount of tuning a single-signed term can produce.
+    private static decimal HorizonMomentumWeight(string horizon) => horizon switch
+    {
+        HorizonTrader => 1.0m,
+        HorizonShort => 0.5m,
+        HorizonLong => -0.5m,
+        _ => -1.0m, // generational
+    };
+
     // ---- Step 15 P15.4b (D-15.13) — the bot GREED axis --------------------------------------------------
 
     public const string GreedNotSoGreedy = "not_so_greedy";
@@ -2561,7 +2630,7 @@ public partial class NetworkRoot : Node
 
         if (_botGovernancePreferences.Count >= minerBots.Count)
         {
-            BackfillGreedPreferences();
+            BackfillMissingStances();
             return;
         }
 
@@ -2570,16 +2639,28 @@ public partial class NetworkRoot : Node
         // P15.4b — greed is drawn as a distinct permutation too, so with four bots all four stances are
         // always represented exactly once: every world has one of each, and which bot holds which changes.
         string[] greeds = (string[])GreedOrder.Clone();
+        // P16.4a — the three reaction axes, drawn the same way. With four bots and four stances each, every
+        // world contains one of each temperament, so the SPREAD of behaviour is guaranteed while WHO holds
+        // which is not — the property that makes two worlds feel different without either feeling broken.
+        string[] convictions = (string[])ConvictionOrder.Clone();
+        string[] risks = (string[])RiskOrder.Clone();
+        string[] horizons = (string[])HorizonOrder.Clone();
         ShuffleInPlace(bands);
         ShuffleInPlace(markets);
         ShuffleInPlace(greeds);
+        ShuffleInPlace(convictions);
+        ShuffleInPlace(risks);
+        ShuffleInPlace(horizons);
         for (int i = 0; i < minerBots.Count; i++)
         {
             _botGovernancePreferences[minerBots[i].NodeId] = new BotGovernancePreference
             {
                 CurrencyBandPreference = bands[i % bands.Length],
                 MarketCategoryPreference = markets[i % markets.Length],
-                GreedPreference = greeds[i % greeds.Length]
+                GreedPreference = greeds[i % greeds.Length],
+                ConvictionPreference = convictions[i % convictions.Length],
+                RiskAversionPreference = risks[i % risks.Length],
+                HorizonPreference = horizons[i % horizons.Length]
             };
         }
 
@@ -2611,6 +2692,13 @@ public partial class NetworkRoot : Node
             }
 
             string greed = string.IsNullOrEmpty(pref.GreedPreference) ? GreedAlmostGreedy : pref.GreedPreference;
+            // P16.4a — the three reaction axes, printed with their DERIVED effects for the same reason the
+            // greed line already carries its multipliers: the stance NAMES are flavour, the numbers are what
+            // shows up in the ballots being watched. `momentum ×+1.0` vs `×−1.0` is the line that explains
+            // why two bots move opposite ways in the same quarter.
+            string conviction = string.IsNullOrEmpty(pref.ConvictionPreference) ? ConvictionMeasured : pref.ConvictionPreference;
+            string risk = string.IsNullOrEmpty(pref.RiskAversionPreference) ? RiskSteady : pref.RiskAversionPreference;
+            string horizon = string.IsNullOrEmpty(pref.HorizonPreference) ? HorizonShort : pref.HorizonPreference;
             // P15.9b — the band column is a GLOBAL stance, not a ballot: since P15.9a it is projected into
             // each company's own band before it is cast, so printing it bare would name a number that never
             // appears in any vote (§39.16 rule 6 — this printout exists to be read against observed
@@ -2630,6 +2718,12 @@ public partial class NetworkRoot : Node
                 ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB3"),
                 ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB4"),
                 ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB5")));
+            GD.Print(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "         reacts: conviction {0,-11} (drift ×{1:0.00}) · risk {2,-8} (defensive ×{3:0.00}) · horizon {4,-13} (momentum ×{5:+0.0;-0.0} — {6} the move)",
+                conviction, ConvictionDriftMultiplier(conviction),
+                risk, RiskAversionWeight(risk),
+                horizon, HorizonMomentumWeight(horizon),
+                HorizonMomentumWeight(horizon) >= 0m ? "follows" : "fades"));
         }
     }
 
@@ -2638,24 +2732,46 @@ public partial class NetworkRoot : Node
     // (the Count >= minerBots.Count early-return above never re-draws). Backfilling only the empty slots
     // keeps the already-meaningful band/market choices untouched. This is why the field's default is ""
     // rather than "almost_greedy": a real drawn value has to be distinguishable from an absent one.
-    private static void BackfillGreedPreferences()
+    //
+    // P16.4a generalized it: greed was the first axis to need this, the three reaction axes were the second
+    // through fourth, and writing a fourth near-identical method would have been the moment the pattern
+    // should have been named. One table of (name, read, write, order) now covers every axis, so the NEXT
+    // one is a row rather than a method.
+    private static void BackfillMissingStances()
     {
-        var missing = _botGovernancePreferences.Values
-            .Where(p => string.IsNullOrEmpty(p.GreedPreference))
-            .ToList();
-        if (missing.Count == 0)
+        (string axis, Func<BotGovernancePreference, string> read, Action<BotGovernancePreference, string> write, string[] order)[] axes =
+        [
+            ("greed", p => p.GreedPreference, (p, v) => p.GreedPreference = v, GreedOrder),
+            ("conviction", p => p.ConvictionPreference, (p, v) => p.ConvictionPreference = v, ConvictionOrder),
+            ("risk", p => p.RiskAversionPreference, (p, v) => p.RiskAversionPreference = v, RiskOrder),
+            ("horizon", p => p.HorizonPreference, (p, v) => p.HorizonPreference = v, HorizonOrder),
+        ];
+
+        var filled = new List<string>();
+        foreach ((string axis, Func<BotGovernancePreference, string> read, Action<BotGovernancePreference, string> write, string[] order) in axes)
         {
-            return;
+            List<BotGovernancePreference> missing = _botGovernancePreferences.Values
+                .Where(p => string.IsNullOrEmpty(read(p)))
+                .ToList();
+            if (missing.Count == 0)
+            {
+                continue;
+            }
+
+            string[] stances = (string[])order.Clone();
+            ShuffleInPlace(stances);
+            for (int i = 0; i < missing.Count; i++)
+            {
+                write(missing[i], stances[i % stances.Length]);
+            }
+
+            filled.Add($"{axis} ×{missing.Count}");
         }
 
-        string[] greeds = (string[])GreedOrder.Clone();
-        ShuffleInPlace(greeds);
-        for (int i = 0; i < missing.Count; i++)
+        if (filled.Count > 0)
         {
-            missing[i].GreedPreference = greeds[i % greeds.Length];
+            PrintBotGovernanceStances($"backfilled: {string.Join(", ", filled)}");
         }
-
-        PrintBotGovernanceStances($"greed backfilled for {missing.Count} bot(s)");
     }
 
     private static void ShuffleInPlace(string[] values)
@@ -3681,6 +3797,139 @@ public partial class NetworkRoot : Node
         }
     }
 
+    // ---- Step 16 P16.4b/c (D-16.8/9/10) — the ballot as a draw ------------------------------------------
+
+    // How far each signal can move a bot's stance, in SC percentage POINTS, before Conviction scales it.
+    // Deliberately small next to the 25-point band width: these are meant to shift an outcome, not to
+    // overwhelm the bot's own identity. *Calibration knobs, like every ND/P15 ladder.*
+    private const decimal MomentumMaxDriftPoints = 18m;
+    private const decimal FbiHeatMaxDriftPoints = 25m;   // the loudest signal: a federal file is existential
+    private const decimal ShortfallDriftPoints = 12m;
+    private const decimal BallotJitterMaxPoints = 3m;
+    private const int MomentumLookbackDays = 90;
+    // P16.4c — how often a bot simply does not show up. This is the cheapest source of "this vote matters":
+    // ComputeReserveVoteOutcome already resolves over ballots ACTUALLY CAST, so an abstention changes every
+    // other holder's relative weight — including the player's.
+    private const int BotAbstentionPercent = 15;
+
+    // A process-stable hash. string.GetHashCode() is randomized per process in .NET, so using it here would
+    // make an open vote's ballots change across a restart — exactly what D-16.9 forbids (ballots are cast at
+    // vote OPEN and persisted; a restart before the close must reproduce them). FNV-1a, 32-bit.
+    private static uint StableHash(string value)
+    {
+        unchecked
+        {
+            uint hash = 2166136261u;
+            foreach (char c in value)
+            {
+                hash ^= c;
+                hash *= 16777619u;
+            }
+
+            return hash;
+        }
+    }
+
+    // Deterministic 0..1 draw for one (company, quarter, bot, purpose) tuple — the seed D-16.9 specifies.
+    private static decimal DeterministicUnit(string companyId, int quarterIndex, string botNodeId, string purpose) =>
+        StableHash($"{companyId}|{quarterIndex}|{botNodeId}|{purpose}") / (decimal)uint.MaxValue;
+
+    // D-16.10 — deterministic, and NEVER on a shortfall vote: that ballot decides whether a bank survives
+    // and who eats the gap, which is not a meeting anyone skips. (It also protects CloseCompanyVote's
+    // shortfall path from resolving with no ballots at all.)
+    private static bool BotAbstainsFromVote(string botNodeId, CompanyGovernanceState gov, string kind)
+    {
+        if (kind == CompanyVoteKindShortfall)
+        {
+            return false;
+        }
+
+        return DeterministicUnit(gov.CompanyId, gov.QuarterIndex, botNodeId, "abstain") * 100m < BotAbstentionPercent;
+    }
+
+    // The BTC price move over the last MomentumLookbackDays, as a fraction clamped to ±1. Null when the
+    // market has no price on either end (pre-Market-Birth), which makes the whole term inert rather than
+    // guessing — the ND.7/D-13.x habit of returning null instead of 0 for "no data".
+    private static decimal? PriceMomentum(long blockTimestampMs)
+    {
+        if (_marketData == null)
+        {
+            return null;
+        }
+
+        DateTime nowLocal = DateTimeOffset.FromUnixTimeMilliseconds(blockTimestampMs).LocalDateTime;
+        decimal? now = _marketData.GetEffectivePriceUsd(nowLocal);
+        decimal? then = _marketData.GetEffectivePriceUsd(nowLocal.AddDays(-MomentumLookbackDays));
+        if (now is not > 0m || then is not > 0m)
+        {
+            return null;
+        }
+
+        return Math.Clamp((now.Value - then.Value) / then.Value, -1m, 1m);
+    }
+
+    // The full ballot computation (D-16.8). Reads ONLY facts a bot could plausibly observe: the market, the
+    // company's own books, and its own temperament.
+    //
+    // Every term is expressed in the GLOBAL stance space and summed BEFORE the projection, never after —
+    // adding a term to an already-projected value would be a category error (the projected number lives in
+    // the company's charter band) and would need its own clamp, quietly re-creating the P15.9 bug where a
+    // ballot could land outside the charter.
+    //
+    // NOT implemented, and the reason is worth keeping: a PEER-ANCHORING term (drift a fraction toward last
+    // quarter's applied result) was designed in §4.3 and dropped here. `gov.ReserveScPercent` is a
+    // BAND-space number; pulling a global stance toward it mixes the two spaces, and inverting the
+    // projection to fix that is machinery for no gain — the momentum term already supplies the slow trend
+    // that peer anchoring was there to create, because BTC prices move continuously.
+    private static decimal ComputeBotReserveBallot(
+        string botNodeId, BotGovernancePreference? pref, CompanyGovernanceState gov, Block block)
+    {
+        string band = pref?.CurrencyBandPreference ?? gov.CurrencyBand;
+        decimal stance = BandDefaultScPercent(band);
+
+        string conviction = string.IsNullOrEmpty(pref?.ConvictionPreference) ? ConvictionMeasured : pref.ConvictionPreference;
+        string risk = string.IsNullOrEmpty(pref?.RiskAversionPreference) ? RiskSteady : pref.RiskAversionPreference;
+        string horizon = string.IsNullOrEmpty(pref?.HorizonPreference) ? HorizonShort : pref.HorizonPreference;
+
+        decimal drift = 0m;
+
+        // 1) PRICE MOMENTUM — the only two-sided term. A rising BTC price argues for holding less SC if you
+        //    follow the move, and for taking profits INTO SC if you fade it; HorizonMomentumWeight carries
+        //    the sign. `-` because a POSITIVE return with a POSITIVE (following) weight means LESS SC.
+        decimal? momentum = PriceMomentum(block.Timestamp);
+        if (momentum.HasValue)
+        {
+            drift -= HorizonMomentumWeight(horizon) * momentum.Value * MomentumMaxDriftPoints;
+        }
+
+        // 2) FBI HEAT — the loop that ties three shipped systems together (investigation meter → board vote
+        //    → SC holdings). A company under a federal file is holding SC its charter cannot justify, and
+        //    the board's answer is to hold less of it. Scaled by the meter's progress toward the flag
+        //    threshold, so a cooling file stops arguing.
+        if (gov.InvestigationScore > 0m && InvestigationFlagThreshold > 0m)
+        {
+            decimal heat = Math.Clamp(gov.InvestigationScore / InvestigationFlagThreshold, 0m, 1m);
+            drift -= RiskAversionWeight(risk) * heat * FbiHeatMaxDriftPoints;
+        }
+
+        // 3) COMPANY HEALTH — an unpaid FED installment is paid in SC, so a bank carrying one wants MORE of
+        //    it. Unrecoverable weighs the same as pending: by then it is the company's survival.
+        if (gov.PendingShortfallSc > 0m || gov.UnrecoverableShortfallSc > 0m)
+        {
+            drift += RiskAversionWeight(risk) * ShortfallDriftPoints;
+        }
+
+        drift *= ConvictionDriftMultiplier(conviction);
+
+        // The projection is the last legality step (D-16.8) — then a small deterministic jitter, clamped
+        // back into the band so the jitter itself can never push a ballot out of the charter.
+        decimal projected = ProjectStanceIntoBand(stance + drift, gov.CurrencyBand);
+        decimal jitter = (DeterministicUnit(gov.CompanyId, gov.QuarterIndex, botNodeId, "jitter") * 2m - 1m)
+            * BallotJitterMaxPoints;
+        (decimal min, decimal max) = BandScPercentBounds(gov.CurrencyBand);
+        return Math.Clamp(Math.Round(projected + jitter, 0, MidpointRounding.AwayFromZero), min, max);
+    }
+
     private static void OpenCompanyVote(CompanyGovernanceState gov, CompanyFounding founding, string kind, Block block)
     {
         EnsureBotGovernancePreferences();
@@ -3711,21 +3960,80 @@ public partial class NetworkRoot : Node
                 continue;
             }
 
-            vote.Ballots[holding.HolderId] = BuildBotBallot(holding.HolderId, gov);
+            // P16.4c (D-16.10) — a bot that does not show up casts nothing. ComputeReserveVoteOutcome
+            // already resolves over the ballots actually cast, so this needs no resolver change and it is
+            // what makes every other holder's relative weight (the player's included) move between votes.
+            if (BotAbstainsFromVote(holding.HolderId, gov, kind))
+            {
+                continue;
+            }
+
+            vote.Ballots[holding.HolderId] = BuildBotBallot(holding.HolderId, gov, block);
         }
 
         gov.OpenVote = vote;
+        AssertBotBallotsVary(gov, vote);
         AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "vote_open", kind,
-            vote.AwaitingPlayerVote ? "awaiting_player" : "bots_only");
+            string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0} ballots={1} spread={2:F1}",
+                vote.AwaitingPlayerVote ? "awaiting_player" : "bots_only",
+                vote.Ballots.Count,
+                BallotSpread(vote)));
     }
 
-    // A bot's ballot is a pure function of its persisted preferences + the company's current state:
-    // Currency — its band stance PROJECTED into this company's band (P15.9a / D-15.24: the stance is a
-    // position on a global SC-ness axis, and a ballot outside the company's charter is not a legal vote);
+    // P16.4d (D-16.18) — the reserve-ballot spread at this vote, in SC percentage points. Written to the
+    // trace on EVERY vote (release-safe) because that is how F1 was found in the first place: not by
+    // watching the game, but by reading a column and noticing it never changed. A column that would have
+    // read 0.0 for 517 consecutive votes is the cheapest possible detector for this whole class of defect.
+    private static decimal BallotSpread(CompanyVote vote)
+    {
+        if (vote.Ballots.Count < 2)
+        {
+            return 0m;
+        }
+
+        decimal min = decimal.MaxValue, max = decimal.MinValue;
+        foreach (CompanyBallot ballot in vote.Ballots.Values)
+        {
+            min = Math.Min(min, ballot.ReserveScPercentTarget);
+            max = Math.Max(max, ballot.ReserveScPercentTarget);
+        }
+
+        return max - min;
+    }
+
+    // P16.4d (D-16.18) — the DEBUG half. §39.16 rule 1 says never let a persisted figure diverge from
+    // reality; this is its sibling for BEHAVIOUR: a system built to feel alive must assert that its output
+    // actually VARIES (D-15.34). Identical ballots are not always a bug — two bots CAN legitimately land on
+    // the same value in a narrow band — so this fires only on the signature of the defect it exists for:
+    // three or more bots, all casting the exact same number, which is what a constant function produces.
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void AssertBotBallotsVary(CompanyGovernanceState gov, CompanyVote vote)
+    {
+        if (vote.Ballots.Count < 3 || BallotSpread(vote) > 0m)
+        {
+            return;
+        }
+
+        GD.PrintErr(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "[Governance] P16.4 tripwire — {0} ({1}): all {2} bot ballots cast the identical reserve target "
+            + "{3:F0}% (band {4}). That is the signature of a ballot that has stopped being a draw: check "
+            + "the drift terms and the jitter seed in ComputeBotReserveBallot.",
+            gov.CompanyId, gov.NonMinerNodeId, vote.Ballots.Count,
+            vote.Ballots.Values.First().ReserveScPercentTarget, gov.CurrencyBand));
+    }
+
+    // A bot's ballot, by field:
+    // Currency — Step 16 P16.4b: NO LONGER a pure function of the persisted stance. The stance is the
+    //   starting point; live drift (price momentum read through the bot's Horizon, FBI heat and an unpaid
+    //   installment read through its RiskAversion, all scaled by its Conviction) moves it, the P15.9a
+    //   projection into this company's charter band stays the last legality step, and a deterministic
+    //   jitter breaks ties. See ComputeBotReserveBallot. It is still DETERMINISTIC — same world, same
+    //   quarter, same ballot (D-16.9) — but no longer CONSTANT, which is what F1 measured;
     // Market — one step toward its preferred category;
     // Payout — the category's default rate scaled by its GREED (P15.4c / D-15.13; the clamp is
     // [0, 2× default] and the ladder spans exactly that); Shortfall — §3.3's greed table (P15.4e).
-    private static CompanyBallot BuildBotBallot(string botNodeId, CompanyGovernanceState gov)
+    private static CompanyBallot BuildBotBallot(string botNodeId, CompanyGovernanceState gov, Block block)
     {
         _botGovernancePreferences.TryGetValue(botNodeId, out BotGovernancePreference? pref);
         // Empty = drawn before greed existed and not yet backfilled; the pre-greed behaviour is the
@@ -3733,8 +4041,11 @@ public partial class NetworkRoot : Node
         string greed = string.IsNullOrEmpty(pref?.GreedPreference) ? GreedAlmostGreedy : pref.GreedPreference;
         return new CompanyBallot
         {
-            ReserveScPercentTarget = ProjectStanceIntoBand(
-                BandDefaultScPercent(pref?.CurrencyBandPreference ?? gov.CurrencyBand), gov.CurrencyBand),
+            // P16.4b/c — the stance is no longer the ballot. Drift (what the world looks like right now)
+            // is added to it, the projection into the company's charter band stays the LAST legality step
+            // (D-16.8 — never bypassed, so the P15.9 tripwire remains the guard), and a deterministic
+            // jitter breaks the remaining ties. See ComputeBotReserveBallot.
+            ReserveScPercentTarget = ComputeBotReserveBallot(botNodeId, pref, gov, block),
             MarketShift = pref == null
                 ? 0
                 : Math.Sign(MarketCategoryIndex(pref.MarketCategoryPreference) - MarketCategoryIndex(gov.MarketCategory)),
@@ -7759,4 +8070,12 @@ public sealed class BotGovernancePreference
     // absent ones instead of leaving the whole axis stuck. Readers normalize empty to `almost_greedy`
     // (exactly what every bot did before greed existed).
     public string GreedPreference { get; set; } = string.Empty;
+
+    // Step 16 P16.4a (D-16.8) — the three REACTION axes. Same empty-default contract as greed above, and
+    // for exactly the same reason: they arrived after the world-creation draw existed, so an absent value
+    // must stay distinguishable from a drawn one or BackfillMissingStances cannot tell them apart. What
+    // each one does: see the Conviction / RiskAversion / Horizon block above GreedOrder in NetworkRoot.
+    public string ConvictionPreference { get; set; } = string.Empty;
+    public string RiskAversionPreference { get; set; } = string.Empty;
+    public string HorizonPreference { get; set; } = string.Empty;
 }

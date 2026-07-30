@@ -441,7 +441,47 @@ open. Full design deferred; tracked in `PRIVATE_ROADMAP.md`.
 - **Leave the player's manual claim untouched** (D-16.1). It is player-initiated and rare, and it is the
   one claim whose immediacy is a feature.
 
-### P16.4 — Living ballots
+### P16.4 — Living ballots — ✅ IMPLEMENTED (2026-07-30, subphases a–d)
+
+> **Build log.** `dotnet build` clean. Four notes:
+>
+> **1. The three axes were chosen so no two overlap.** Band/market/greed already answer *what do I want* and
+> *how much do I want paid out*; these add **reaction**, not more opinion. `Conviction` scales the whole
+> drift sum, `RiskAversion` weights only the defensive terms (FBI heat, an unpaid installment), and
+> **`Horizon` carries a SIGNED weight on price momentum** — short-horizon bots follow a rally, long-horizon
+> bots fade it into the stable asset. That sign is the load-bearing part: it is what makes two bots read one
+> market *oppositely*, which no amount of tuning a single-signed term can produce. `Steadfast` conviction
+> (×0.25) keeps the pre-P16.4 near-constant ballot alive as one of four temperaments, the shape P15.4c
+> already gave greed.
+>
+> **2. `BackfillGreedPreferences` became `BackfillMissingStances`.** Greed was the first axis to need the
+> empty-default + backfill contract; these were the second through fourth, and a fourth near-identical
+> method was the moment to name the pattern. One table of `(axis, read, write, order)` now covers all of
+> them — **the next axis is a row, not a method.**
+>
+> **3. Peer anchoring was designed in §4.3 and deliberately NOT built.** `gov.ReserveScPercent` is a
+> **band-space** number; drifting a **global** stance toward it mixes the two spaces, and inverting the
+> projection to fix that is machinery for no gain. The momentum term already supplies the slow trend peer
+> anchoring existed to create, because BTC prices move continuously. Recorded in code beside the terms so
+> the omission reads as a decision, not a gap.
+>
+> **4. Every term is summed BEFORE the projection, never after** (D-16.8). Adding a term to an
+> already-projected value would be a category error *and* would need its own clamp — quietly re-creating
+> the exact P15.9 bug where a ballot lands outside the charter. The jitter is the only post-projection
+> term and it is re-clamped to the band.
+>
+> **Abstention (D-16.10)** is deterministic per `(company, quarter, bot)` at 15%, and is **disabled for
+> shortfall votes** — that ballot decides whether a bank survives and who eats the gap, which is not a
+> meeting anyone skips (it also keeps `CloseCompanyVote`'s shortfall path from ever resolving with zero
+> ballots). Determinism throughout comes from a **stable FNV-1a hash**, not `string.GetHashCode()`, which is
+> randomized per process in .NET and would have made an open vote's persisted ballots change across a
+> restart — precisely what D-16.9 forbids.
+>
+> **Guards (P16.4d):** `vote_open` now carries `ballots=N spread=X.X` on **every** vote (release-safe), and
+> a `[Conditional("DEBUG")]` tripwire fires when **three or more** bots cast the identical target — the
+> signature of a constant function, while two bots agreeing in a narrow band is legitimate. The spread
+> column is the cheap detector for this entire class of defect: **it would have read `0.0` for 517
+> consecutive votes.**
 
 - **P16.4a — the persona axes.** Add `Conviction`, `RiskAversion`, `Horizon` to `BotGovernancePreference`,
   drawn as shuffled permutations in `EnsureBotGovernancePreferences` with a `Backfill…` twin per the
