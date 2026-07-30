@@ -70,6 +70,30 @@ public partial class SimulationService : Node
 	private const double MaxBacklogSeconds = 2.0;
 	private const int MaxAutoBetBaseAps = 99;
 
+	// ── Round 2 (R2-T / R2-C1, 2026-07-27) — simulated-time saturation ────────────────────────────────
+	// The bet engine can retain at most MaxBacklogSeconds of simulated time per frame: the Math.Min below
+	// DISCARDS everything beyond it, permanently. Until now the calendar advanced by the FULL frame delta
+	// regardless, so whenever a frame offered more sim-time than the engine could hold (≈ any frame under
+	// ~45 fps at DevTimeScale 90), game time silently ran ahead of the mining work — which is what turned a
+	// founder power spike into 1.5-day blocks (btc-pools-hardware-plan.md §R2.3a). Note the accumulator's
+	// CARRIED remainder is not a loss: it executes next frame. Only the Math.Min clamp loses time.
+	//
+	// Two consumers: R2-C1 throttles the clock by the retained fraction (power-weighted across the player
+	// and every running bot, since each keeps its own accumulator), and R2-T reports the same figures per
+	// block into difficulty_trace.csv so saturation is measured instead of inferred.
+	private double _frameWeightedOffered;
+	private double _frameWeightedRetained;
+
+	// One frame's contribution for a single bet engine (player or bot): how much of `simDelta` survived the
+	// backlog clamp, weighted by that node's rate so the aggregate is attempts-accurate rather than
+	// node-count-accurate.
+	private void RecordSimTimeRetention(double offeredSeconds, double droppedSeconds, double betsPerSecond)
+	{
+		if (offeredSeconds <= 0d || betsPerSecond <= 0d) return;
+		_frameWeightedOffered += offeredSeconds * betsPerSecond;
+		_frameWeightedRetained += Math.Max(0d, offeredSeconds - droppedSeconds) * betsPerSecond;
+	}
+
 	private CalendarTimeService? _calendar;
 	private UserStatsService? _userStats;
 	private PrincipalBalanceService? _principal;
@@ -224,6 +248,14 @@ public partial class SimulationService : Node
 		}
 		_userStats?.SetHighFrequencyMode(false);
 		_networkRoot?.SetActiveMiningPower(0d); // idle → difficulty feed-forward no-ops
+		// R2-C1: an idle engine must not leave the clock throttled — nothing is being dropped when nothing
+		// is running, and CalendarTimeService is used outside the delegated autobet too.
+		if (_calendar != null)
+		{
+			_calendar.SimulationThrottle = 1d;
+		}
+		_frameWeightedOffered = 0d;
+		_frameWeightedRetained = 0d;
 	}
 
 	// Live betting rate for a node = its current total hardware credits (1 credit = 1 bet/sec, Phase 3).
@@ -320,7 +352,12 @@ public partial class SimulationService : Node
 
 		double betsPerSecond = HardwareRate(_config.ActiveNodeId);
 		double interval = 1.0d / betsPerSecond;
-		_accumulatorSeconds = Math.Min(_accumulatorSeconds + simDelta, MaxBacklogSeconds);
+		// R2-T/R2-C1: measure what the backlog clamp discards before applying it.
+		_frameWeightedOffered = 0d;
+		_frameWeightedRetained = 0d;
+		double offeredBacklog = _accumulatorSeconds + simDelta;
+		_accumulatorSeconds = Math.Min(offeredBacklog, MaxBacklogSeconds);
+		RecordSimTimeRetention(simDelta, offeredBacklog - _accumulatorSeconds, betsPerSecond);
 
 		int executed = 0;
 		while (_accumulatorSeconds >= interval && executed < MaxBetsPerFrame && _session.IsRunning)
@@ -340,6 +377,24 @@ public partial class SimulationService : Node
 		// Step 14 (ND.2): drive the scheduled network (visible cast + invisible mass) the same way —
 		// concurrent miners in lockstep with the player's time advancement, never clock movers.
 		DriveScheduledMining(executed + botExecuted, otherMinersPower);
+
+		// R2-C1 (D-R2.5) — THE CLOCK MAY NOT SPEND TIME THE ENGINE COULD NOT SIMULATE. The retained
+		// fraction is 1.0 whenever nothing was discarded, which is every frame that keeps up: below the
+		// saturation knee this is byte-for-byte the previous behaviour. Above it, the calendar slows to
+		// exactly the pace the bet engine sustained, so attempts-per-IN-GAME-second stays invariant — the
+		// property SimulationService has always claimed and only actually had below the knee (§R2.3a).
+		// Consequence: at a high DevTimeScale the game now advances more slowly in WALL-CLOCK terms instead
+		// of quietly stretching in-game block times. That trade is the whole point — a simulation that runs
+		// slower is honest; one that silently drops simulated work is not.
+		double retainedFraction = _frameWeightedOffered > 0d
+			? Math.Clamp(_frameWeightedRetained / _frameWeightedOffered, 0d, 1d)
+			: 1d;
+		if (_calendar != null)
+		{
+			_calendar.SimulationThrottle = retainedFraction;
+		}
+		// R2-T — the same figures, accumulated for the per-block difficulty trace.
+		NetworkRoot.AccumulateSimSaturation(simDelta, simDelta * retainedFraction);
 	}
 
 	// Recompute founder powers exactly once per new block on the canonical chain. Satoshi's confirmed-BTC
@@ -796,7 +851,12 @@ public partial class SimulationService : Node
 
 			double betsPerSecond = HardwareRate(runner.NodeId);
 			double interval = 1.0d / Math.Max(0.0001d, betsPerSecond);
-			runner.AccumulatorSeconds = Math.Min(runner.AccumulatorSeconds + Math.Max(0d, delta), MaxBacklogSeconds);
+			// R2-T/R2-C1: each bot keeps its OWN accumulator, so each can saturate independently — a bot's
+			// dropped sim-time removes its bets AND the founder/scheduled attempts drained off them.
+			double botOffered = Math.Max(0d, delta);
+			double botBacklog = runner.AccumulatorSeconds + botOffered;
+			runner.AccumulatorSeconds = Math.Min(botBacklog, MaxBacklogSeconds);
+			RecordSimTimeRetention(botOffered, botBacklog - runner.AccumulatorSeconds, betsPerSecond);
 
 			int executed = 0;
 			while (runner.AccumulatorSeconds >= interval && executed < MaxBetsPerFrame && runner.Session.IsRunning)

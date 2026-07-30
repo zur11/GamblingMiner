@@ -122,6 +122,19 @@ As you play, historical companies get founded from the referral auctions, and yo
 
 To keep a vote, cast it and then let the game run until **at least one block is mined** (place a bet or two, or leave autobet on for a moment) before you stop. This is expected behavior, not a bug.
 
+## Bidding in a Referral Auction
+
+You bid on a company by sending BTC to it from your BTC wallet. Two things about that are easy to get wrong, and both cost real BTC — so the send panel warns you about them in amber. **The warnings never block the send**; they are there so the choice is yours.
+
+**A bid you just sent is not counted until a block is mined.** Like everything else in the game, a transaction only becomes real when it lands in a block. Until then it sits pending and appears **nowhere** — not in the auction's bid list, not in the company's details. This looks exactly like a failed send, and it isn't.
+
+**Do not send twice while the first one is still pending.** If both land in the same block, **only your highest bid participates in the auction** — the other reaches the company as an ordinary transfer that earns no slot, no shares, and **is not refunded**. The wallet tells you when you already have an unconfirmed bid to that company and how much it was for. If you want to raise, wait for a block, then send the higher amount.
+
+Two related warnings you may also see:
+
+- **You already hold the leading bid.** Sending more won't count — bidding against yourself is ignored, and your existing leading bid (and its countdown) is kept. The BTC still leaves your wallet.
+- **The auction closes very soon.** If no block is mined before it closes, your bid may not be counted in time.
+
 ## Planned Systems
 
 These systems are part of the design direction but should not be treated as finished gameplay yet:

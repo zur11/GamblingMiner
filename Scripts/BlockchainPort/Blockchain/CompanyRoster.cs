@@ -24,10 +24,38 @@ public static class CompanyRoster
     // AppearanceDateLocal: BotWalletRegistry.NonMinerBots[i] <-> Auctionable[i], slot-for-slot.
     private static List<CompanyRecord> _auctionable = [];
     private static List<CompanyRecord> _nonAuctionable = [];
+    private static List<CompanyRecord> _banks = [];
 
     public static IReadOnlyList<CompanyRecord> All => _all;
     public static IReadOnlyList<CompanyRecord> Auctionable => _auctionable;
     public static IReadOnlyList<CompanyRecord> NonAuctionable => _nonAuctionable;
+
+    // Step 15 P15.2a (D-15.6): the four roster companies that become SC dealers — FED clients with a
+    // CollateralBtc book and a per-client ledger. plan15 adds BEHAVIOR to existing companies and creates
+    // none, so this is a fixed, closed set of four ids rather than a new CSV column: a 45th row can never
+    // silently become a bank, and the alternative (an `is_bank` column) would touch all 44 rows to encode
+    // four `true`s. If banks ever stop being a closed set, promote this to a column — every caller goes
+    // through IsBank/Banks, so nothing else would change.
+    private static readonly HashSet<string> BankCompanyIds =
+    [
+        "first_satoshi_savings",   // official   — 2012-09-03, the first bank founded
+        "digital_reserve_trust",   // light_grey — 2013-06-17
+        "harbor_coin_bank",        // black      — 2014-11-03
+        "ledger_and_sons",         // dark_grey  — 2016-03-21
+    ];
+
+    // The four banks, ordered by appearance date (the Auctionable ordering, so index-based reasoning
+    // about founding order holds here too).
+    public static IReadOnlyList<CompanyRecord> Banks
+    {
+        get
+        {
+            EnsureLoaded();
+            return _banks;
+        }
+    }
+
+    public static bool IsBank(string companyId) => BankCompanyIds.Contains(companyId);
 
     public static void EnsureLoaded()
     {
@@ -99,9 +127,14 @@ public static class CompanyRoster
         _all = all;
         _auctionable = all.Where(c => c.Auctionable).OrderBy(c => c.AppearanceDateLocal).ToList();
         _nonAuctionable = all.Where(c => !c.Auctionable).OrderBy(c => c.AppearanceDateLocal).ToList();
+        _banks = all.Where(c => BankCompanyIds.Contains(c.CompanyId)).OrderBy(c => c.AppearanceDateLocal).ToList();
 
         GD.Print($"[CompanyRoster] Loaded {_all.Count} companies " +
-            $"({_auctionable.Count} auctionable, {_nonAuctionable.Count} non-auctionable).");
+            $"({_auctionable.Count} auctionable, {_nonAuctionable.Count} non-auctionable, {_banks.Count} banks).");
+        if (_banks.Count != BankCompanyIds.Count)
+        {
+            GD.PushWarning($"[CompanyRoster] Expected {BankCompanyIds.Count} bank rows, matched {_banks.Count} — a bank id in the set no longer exists in the CSV (plan15 P15.2a).");
+        }
     }
 
     private static DateTime ParseDate(string raw) => DateTime.SpecifyKind(

@@ -27,6 +27,7 @@ public partial class SceneManager : Node
 		AuctioningCompanyDetails,
 		CompanyDetails,
 		WorldEconomy,
+		CentralBank,
 	}
 
 	private static readonly Dictionary<SceneId, string> Paths = new()
@@ -53,6 +54,7 @@ public partial class SceneManager : Node
 		[SceneId.AuctioningCompanyDetails] = "res://Screens/AuctioningCompanyDetails/AuctioningCompanyDetails.tscn",
 		[SceneId.CompanyDetails]           = "res://Screens/CompanyDetails/CompanyDetails.tscn",
 		[SceneId.WorldEconomy]              = "res://Screens/WorldEconomy/WorldEconomy.tscn",
+		[SceneId.CentralBank]               = "res://Screens/CentralBank/CentralBank.tscn",
 	};
 
 	// Overlay stack: scenes added on top without replacing the current scene.

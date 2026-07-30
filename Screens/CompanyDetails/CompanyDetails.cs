@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using GodotBlockchainPort.Simulation;
@@ -50,6 +51,8 @@ public partial class CompanyDetails : Control
 	private SpinBox? _reserveSpin;
 	private OptionButton? _marketOption;
 	private SpinBox? _payoutSpin;
+	private SpinBox? _dividendsCutSpin; // Step 15 P15.4e — shortfall votes only
+	private Label? _reservePreviewLabel; // Step 15 P15.9f — live "if the vote closed now" line
 	private Label? _voteFeedbackLabel;
 	private Label? _claimableLabel;
 	private Label? _claimFeedbackLabel;
@@ -93,6 +96,134 @@ public partial class CompanyDetails : Control
 		RefreshAll();
 	}
 
+	// Step 15 P15.7c (D-15.9) — a founded bank's lending book, for its shareholders. Every figure comes from
+	// NetworkRoot.GetBankLendingSummary, which computes them from the same constants and helpers the
+	// repayment itself uses — so the installment shown here is the installment that will actually be
+	// charged (§39.16 rule 6). Collateral is valued at the world's current day, never frozen.
+	private void BuildBankLendingPanel(CompanyGovernanceState gov)
+	{
+		NetworkRoot.BankLendingSummary? maybe = NetworkRoot.GetBankLendingSummary(gov.NonMinerNodeId);
+		if (maybe is not NetworkRoot.BankLendingSummary s) return;
+
+		_infoVBox!.AddChild(new HSeparator());
+		_infoVBox.AddChild(SectionTitle("Bank lending book"));
+		_infoVBox.AddChild(new Label
+		{
+			Text = "This company is a bank: it borrows SC from the Central Bank to buy BTC from other companies, and repays a slice of that debt every quarter by selling the BTC it bought.",
+			AutowrapMode = TextServer.AutowrapMode.Word
+		});
+
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"Central Bank debt: {s.FedDebtSc:N2} SC   (drawn {s.TotalDrawnSc:N2} · repaid {s.TotalRepaidSc:N2})")
+		});
+
+		string collateralValue = s.CollateralValueSc > 0m
+			? string.Create(CultureInfo.InvariantCulture, $" ≈ {s.CollateralValueSc:N2} SC today")
+			: " (no market price for today)";
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"Collateral held: {s.CollateralBtc:N8} BTC{collateralValue}   ·   {s.ClientCount} client company(ies)")
+		});
+
+		// The health line: is the BTC it is sitting on still worth what it borrowed? This is the carry the
+		// whole reform exists to create — profitable while BTC rises, dangerous when it falls.
+		if (s.FedDebtSc > 0m && s.CollateralValueSc > 0m)
+		{
+			decimal net = s.CollateralValueSc - s.FedDebtSc;
+			var healthLabel = new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"Collateral vs debt: {net:+#,##0.00;-#,##0.00;0.00} SC  ({(net >= 0m ? "covered" : "UNDER-COLLATERALIZED")})")
+			};
+			healthLabel.AddThemeColorOverride("font_color", net >= 0m ? new Color(0.4f, 1f, 0.4f) : new Color(1f, 0.4f, 0.4f));
+			_infoVBox.AddChild(healthLabel);
+		}
+
+		_infoVBox.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"Next installment: {s.NextInstallmentSc:N2} SC due {FormatDate(s.NextPaymentDueMs)}")
+		});
+
+		if (s.PendingShortfallSc > 0m)
+		{
+			var pending = new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"⚠ Shortfall of {s.PendingShortfallSc:N2} SC — a board vote will decide whether it comes out of dividends or reserves."),
+				AutowrapMode = TextServer.AutowrapMode.Word
+			};
+			pending.AddThemeColorOverride("font_color", new Color(1f, 0.75f, 0.3f));
+			_infoVBox.AddChild(pending);
+		}
+
+		if (s.UnrecoverableShortfallSc > 0m)
+		{
+			var insolvent = new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"✗ INSOLVENT — {s.UnrecoverableShortfallSc:N2} SC could not be covered by any source. This bank will be closed."),
+				AutowrapMode = TextServer.AutowrapMode.Word
+			};
+			insolvent.AddThemeColorOverride("font_color", new Color(1f, 0.4f, 0.4f));
+			_infoVBox.AddChild(insolvent);
+		}
+	}
+
+	// Step 15 P15.5d — the liquidation notice. This IS the player's notification that a company they held
+	// stock in is gone (D-15.15: with no player stake the bots resolve everything silently and the player is
+	// told only at the terminal moment). Everything they had already CLAIMED is untouched in their wallet;
+	// what died with the company is the stock itself plus anything still unclaimed.
+	private void ShowClosureNotice(NonMinerDonationSummary summary, CompanyClosure closure)
+	{
+		_borderStyle.BorderColor = HoldingBlack; // no stake remains — §22.15's vocabulary
+		_identityLabel.Text = NetworkRoot.DescribeCompany(summary);
+
+		string when = DateTimeOffset.FromUnixTimeMilliseconds(closure.ClosedAtUnixMs)
+			.LocalDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+		string why = closure.Reason == NetworkRoot.ClosureReasonFbiSeizure
+			? "SEIZED BY THE FBI"
+			: "CLOSED — it could not service its Central Bank debt";
+
+		var lines = new List<string>
+		{
+			$"✗ This company is {why}.",
+			$"Closed {when}."
+		};
+
+		if (closure.PlayerNstAtClosure > 0m || closure.PlayerPstAtClosure > 0m)
+		{
+			string kind = closure.PlayerNstAtClosure > 0m ? "NST (voting)" : "PST (dividend)";
+			decimal amount = closure.PlayerNstAtClosure > 0m ? closure.PlayerNstAtClosure : closure.PlayerPstAtClosure;
+			lines.Add(string.Create(CultureInfo.InvariantCulture,
+				$"Your {amount:N0} {kind} shares were liquidated and are gone, along with all future payments."));
+			if (closure.PlayerUnclaimedBtcAtClosure > 0m || closure.PlayerUnclaimedScAtClosure > 0m)
+			{
+				lines.Add(string.Create(CultureInfo.InvariantCulture,
+					$"Unclaimed at closure and lost: {closure.PlayerUnclaimedBtcAtClosure:N8} BTC / {closure.PlayerUnclaimedScAtClosure:N2} SC."));
+			}
+			lines.Add("Dividends you had already claimed are yours and remain in your wallet.");
+		}
+		else
+		{
+			lines.Add("You held no shares in this company.");
+		}
+
+		if (closure.WasBank)
+		{
+			lines.Add(string.Create(CultureInfo.InvariantCulture,
+				$"Central Bank loss written off: {closure.DebtAtClosureSc:N2} SC. Its wallet ({closure.BtcAtClosure:N8} BTC at closure) passed into federal custody."));
+			lines.Add(string.IsNullOrEmpty(closure.InheritingBankNodeId)
+				? "No solvent bank of its market category has inherited that wallet yet — the Central Bank is holding it as BTC."
+				: $"Now held by {NetworkRoot.DescribeNodeForDev(closure.InheritingBankNodeId)}.");
+		}
+
+		_statusLabel.Text = string.Join("\n", lines);
+	}
+
 	private void RefreshAll()
 	{
 		NonMinerDonationSummary? summary = _networkRoot.GetNonMinerAuctionLedger()
@@ -100,6 +231,16 @@ public partial class CompanyDetails : Control
 		CompanyFounding? founding = _networkRoot.GetCompanyFounding(_nonMinerAddress);
 		if (summary is null || founding is null)
 		{
+			// Step 15 P15.5d (D-15.15) — "no founding" now has TWO meanings: not founded yet, or founded and
+			// since DISSOLVED (closure removes the founding, which is what destroys the holdings). Tell the
+			// two apart rather than showing "not founded yet?" over a company the player watched die.
+			CompanyClosure? closure = summary is null ? null : NetworkRoot.GetCompanyClosure(summary.NonMinerNodeId);
+			if (closure != null)
+			{
+				ShowClosureNotice(summary!, closure);
+				return;
+			}
+
 			_identityLabel.Text = _nonMinerAddress;
 			_statusLabel.Text = "Company not found (not founded yet?).";
 			return;
@@ -202,6 +343,28 @@ public partial class CompanyDetails : Control
 		// Dividend rate — each showing initial → current.
 		_infoVBox.AddChild(new HSeparator());
 		BuildCompanyPolicySection(founding, gov);
+
+		// Step 15 P15.7c (D-15.9) — the BANK LENDING PANEL. A bank is not an ordinary company: most of its
+		// balance sheet is borrowed, and the thing that kills it is a payment date, so a shareholder needs
+		// the debt/collateral/installment picture the other panels never show. Shown for any founded bank.
+		BuildBankLendingPanel(gov);
+
+		// Step 15 P15.6d — the federal-investigation risk line. Shown to ANY viewer (the risk is a fact about
+		// the company, not about the holding), and only when there is something to say: the FBI is active,
+		// the category is not exempt, and the company is over tolerance or still cooling off.
+		string? fbiWarning = NetworkRoot.GetFbiInvestigationWarning(gov.NonMinerNodeId);
+		if (fbiWarning != null)
+		{
+			_infoVBox.AddChild(new HSeparator());
+			var fbiLabel = new Label { Text = fbiWarning, AutowrapMode = TextServer.AutowrapMode.Word };
+			// Amber while the file grows, red once flagged — the same "colour is never the only signal"
+			// rule as §22.15: the text says which state it is.
+			fbiLabel.AddThemeColorOverride("font_color",
+				gov.InvestigationScore >= NetworkRoot.InvestigationFlagThreshold
+					? new Color(1f, 0.4f, 0.4f)
+					: new Color(1f, 0.75f, 0.3f));
+			_infoVBox.AddChild(fbiLabel);
+		}
 
 		// Governance status (ND.8b.3).
 		_infoVBox.AddChild(new HSeparator());
@@ -346,6 +509,8 @@ public partial class CompanyDetails : Control
 		_reserveSpin = null;
 		_marketOption = null;
 		_payoutSpin = null;
+		_dividendsCutSpin = null;
+		_reservePreviewLabel = null;
 		_voteFeedbackLabel = null;
 		_claimableLabel = null;
 		_claimFeedbackLabel = null;
@@ -383,6 +548,14 @@ public partial class CompanyDetails : Control
 			return;
 		}
 
+		// Step 15 P15.9f — the ballots ALREADY CAST in this vote. Until now the only ballot list in the
+		// scene was the Last Vote Snapshot, which shows a CLOSED vote — always one quarter too late to be
+		// useful. The bots cast the instant the vote opens, so at the moment the game pauses and asks the
+		// player to vote, every other ballot is already known and persisted; not showing them meant voting
+		// blind against information the engine had in hand. Shown for every vote kind and whether or not
+		// the player has voted yet.
+		BuildOpenVoteBallotList(founding, gov, vote);
+
 		bool playerVoted = vote.Ballots.ContainsKey(PlayerNodeId);
 		if (playerVoted && !vote.AwaitingPlayerVote)
 		{
@@ -395,6 +568,16 @@ public partial class CompanyDetails : Control
 		}
 
 		bool quarterly = vote.Kind == "quarterly";
+		// Step 15 P15.4e — a SHORTFALL vote asks exactly one question, and answering the usual reserve /
+		// market / payout dials would be misleading (the resolver ignores them for this kind). So the panel
+		// swaps its whole body out rather than adding a fourth row.
+		bool shortfall = vote.Kind == NetworkRoot.CompanyVoteKindShortfall;
+		if (shortfall)
+		{
+			BuildShortfallBallot(gov, vote);
+			return;
+		}
+
 		(decimal min, decimal max) = NetworkRoot.BandScPercentBounds(gov.CurrencyBand);
 
 		var reserveRow = new HBoxContainer();
@@ -402,6 +585,14 @@ public partial class CompanyDetails : Control
 		_reserveSpin = new SpinBox { MinValue = (double)min, MaxValue = (double)max, Step = 1, Value = (double)gov.ReserveScPercent };
 		reserveRow.AddChild(_reserveSpin);
 		_actionVBox.AddChild(reserveRow);
+
+		// P15.9f — the live "where does my dial land the result" line, recomputed on every turn of the
+		// SpinBox through the SAME helper CloseCompanyVote resolves with, so what is promised here is what
+		// the vote will do (§39.16 rule 6).
+		_reservePreviewLabel = new Label { AutowrapMode = TextServer.AutowrapMode.Word };
+		_actionVBox.AddChild(_reservePreviewLabel);
+		UpdateReservePreview(founding, gov, vote);
+		_reserveSpin.ValueChanged += _ => UpdateReservePreview(founding, gov, vote);
 
 		if (quarterly)
 		{
@@ -414,6 +605,26 @@ public partial class CompanyDetails : Control
 			_marketOption.Select(1);
 			marketRow.AddChild(_marketOption);
 			_actionVBox.AddChild(marketRow);
+
+			// Step 15 P15.10a (D-15.25) — a bank's category is LOCKED (D-15.12), so every option in this
+			// dropdown is counted and then refused. Disable + explain rather than hide: the reason IS the
+			// interesting part (this company's category is the distance other companies' financier selection
+			// is measured on), and a silently missing control invites "why does this one have fewer dials?".
+			// Left on index 1, so the submitted shift is 0 by construction — never null the field instead,
+			// OnSubmitBallot reads it and it survives panel rebuilds.
+			if (NetworkRoot.IsBankCompany(gov.NonMinerNodeId))
+			{
+				_marketOption.Disabled = true;
+				var lockedNote = new Label
+				{
+					Text = "Category locked — a bank's category is fixed at its roster default, because it is "
+						+ "the distance other companies' financier selection is measured on (D-15.12). Ballots "
+						+ "for a shift are still recorded, and still refused.",
+					AutowrapMode = TextServer.AutowrapMode.Word
+				};
+				lockedNote.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.65f));
+				_actionVBox.AddChild(lockedNote);
+			}
 
 			decimal defaultRate = NetworkRoot.DefaultQuarterlyPayoutRatePercent(gov.MarketCategory);
 			var payoutRow = new HBoxContainer();
@@ -429,20 +640,138 @@ public partial class CompanyDetails : Control
 
 		var submitBtn = new Button { Text = "Submit Ballot" };
 		string nodeId = gov.NonMinerNodeId;
-		submitBtn.Pressed += () => OnSubmitBallot(nodeId, quarterly);
+		submitBtn.Pressed += () => OnSubmitBallot(nodeId, quarterly, shortfall: false, gov.ReserveScPercent);
 		_actionVBox.AddChild(submitBtn);
 
 		_voteFeedbackLabel = new Label { Text = vote.AwaitingPlayerVote ? "The game is paused until you vote." : " " };
 		_actionVBox.AddChild(_voteFeedbackLabel);
 	}
 
-	private void OnSubmitBallot(string nonMinerNodeId, bool quarterly)
+	// Step 15 P15.9f — every ballot already cast in the OPEN vote, plus who has not voted yet. The weights
+	// are the resolver's own (holder NST ÷ total NST, D-ND8.19b), so a holder can see exactly how much of
+	// the outcome their own ballot commands before they cast it.
+	private void BuildOpenVoteBallotList(CompanyFounding founding, CompanyGovernanceState gov, CompanyVote vote)
 	{
-		decimal reserveTarget = (decimal)(_reserveSpin?.Value ?? 0d);
+		decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
+		if (totalNst <= 0m) return;
+
+		bool shortfall = vote.Kind == NetworkRoot.CompanyVoteKindShortfall;
+		(decimal min, decimal max) = NetworkRoot.BandScPercentBounds(gov.CurrencyBand);
+		string header = shortfall
+			? "Ballots cast so far (shortfall split):"
+			: string.Create(CultureInfo.InvariantCulture,
+				$"Ballots cast so far (band {gov.CurrencyBand}: {min:F0}–{max:F0}% SC):");
+		_actionVBox.AddChild(new Label { Text = header });
+
+		foreach (CompanyShareHolding h in founding.Holdings.Where(h => h.Nst > 0m).OrderByDescending(h => h.Nst))
+		{
+			decimal weight = h.Nst / totalNst;
+			string who = h.HolderId == PlayerNodeId ? "You" : _networkRoot.DescribeAddress(h.HolderId);
+			string cast;
+			if (!vote.Ballots.TryGetValue(h.HolderId, out CompanyBallot? ballot))
+			{
+				cast = h.HolderId == PlayerNodeId ? "— not voted yet (this vote is waiting on you)" : "— not voted yet";
+			}
+			else if (shortfall)
+			{
+				cast = string.Create(CultureInfo.InvariantCulture,
+					$"— voted: {ballot.DividendsCutPercent:F0}% out of dividends / {100m - ballot.DividendsCutPercent:F0}% out of reserves");
+			}
+			else
+			{
+				string extra = vote.Kind == "quarterly"
+					? string.Create(CultureInfo.InvariantCulture,
+						$", market {MarketShiftLabel(ballot.MarketShift)}, payout {ballot.PayoutRatePercent:F1}%")
+					: string.Empty;
+				cast = string.Create(CultureInfo.InvariantCulture,
+					$"— voted: reserve {ballot.ReserveScPercentTarget:F0}%{extra}");
+			}
+
+			_actionVBox.AddChild(new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture, $"   {who}  —  weight {weight:P2}  {cast}")
+			});
+		}
+	}
+
+	// Step 15 P15.9f — "if the vote closed now", live against the reserve dial. Two numbers, because they
+	// answer different questions: where the already-cast ballots stand on their own, and where the player's
+	// current dial position would land the result once their weight joins.
+	private void UpdateReservePreview(CompanyFounding founding, CompanyGovernanceState gov, CompanyVote vote)
+	{
+		if (_reservePreviewLabel == null) return;
+
+		NetworkRoot.ReserveVoteOutcome cast = NetworkRoot.ComputeReserveVoteOutcome(
+			founding, gov.CurrencyBand, vote.Ballots, gov.ReserveScPercent);
+
+		var hypothetical = new Dictionary<string, CompanyBallot>(vote.Ballots)
+		{
+			[PlayerNodeId] = new CompanyBallot { ReserveScPercentTarget = (decimal)(_reserveSpin?.Value ?? 0d) }
+		};
+		NetworkRoot.ReserveVoteOutcome withMine = NetworkRoot.ComputeReserveVoteOutcome(
+			founding, gov.CurrencyBand, hypothetical, gov.ReserveScPercent);
+
+		string others = cast.HasVotes
+			? string.Create(CultureInfo.InvariantCulture,
+				$"Ballots in so far ({cast.VotedWeight:P0} of the votes) average {cast.RawAverage:F2}% SC.")
+			: "No other ballot has been cast yet.";
+
+		_reservePreviewLabel.Text = string.Create(CultureInfo.InvariantCulture,
+			$"{others}  With your ballot at {_reserveSpin?.Value ?? 0d:F0}%, the vote would close at {withMine.Outcome:F2}% SC (now {gov.ReserveScPercent:F2}%).");
+	}
+
+	// Step 15 P15.4e (D-15.7) — the bank shortfall ballot: one dial deciding WHO absorbs the SC this bank
+	// could not raise from collateral to pay its quarterly FED installment. Higher = shareholders forgo
+	// that slice of this quarter's dividend; lower = the company's own SC reserve pays instead. The
+	// no/tied-vote default is 50/50. If neither source can close the gap the bank becomes insolvent.
+	private void BuildShortfallBallot(CompanyGovernanceState gov, CompanyVote vote)
+	{
+		_actionVBox!.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture,
+				$"This bank could not raise {vote.ShortfallScTarget:N2} SC of its Central Bank installment by selling collateral."),
+			AutowrapMode = TextServer.AutowrapMode.Word
+		});
+		_actionVBox.AddChild(new Label
+		{
+			Text = "Vote how much of that gap comes out of SHAREHOLDERS' dividends; the rest comes out of the company's own SC reserve.",
+			AutowrapMode = TextServer.AutowrapMode.Word
+		});
+
+		var cutRow = new HBoxContainer();
+		cutRow.AddChild(new Label { Text = "Cut from dividends (%, the rest from reserves):  " });
+		_dividendsCutSpin = new SpinBox
+		{
+			MinValue = 0,
+			MaxValue = 100,
+			Step = 5,
+			Value = (double)NetworkRoot.DefaultShortfallDividendsCutPercent
+		};
+		cutRow.AddChild(_dividendsCutSpin);
+		_actionVBox.AddChild(cutRow);
+
+		var submitBtn = new Button { Text = "Submit Ballot" };
+		string nodeId = gov.NonMinerNodeId;
+		submitBtn.Pressed += () => OnSubmitBallot(nodeId, quarterly: false, shortfall: true, gov.ReserveScPercent);
+		_actionVBox.AddChild(submitBtn);
+
+		_voteFeedbackLabel = new Label { Text = vote.AwaitingPlayerVote ? "The game is paused until you vote." : " " };
+		_actionVBox.AddChild(_voteFeedbackLabel);
+	}
+
+	// currentReservePercent is the "no change" echo used when this ballot has no reserve control at all
+	// (a shortfall vote): the resolver ignores the field for that kind, but the recorded ballot should read
+	// "leave the mix where it is" rather than a spurious band-minimum.
+	private void OnSubmitBallot(string nonMinerNodeId, bool quarterly, bool shortfall, decimal currentReservePercent)
+	{
+		decimal reserveTarget = (decimal)(_reserveSpin?.Value ?? (double)currentReservePercent);
 		int marketShift = quarterly ? (_marketOption?.Selected ?? 1) - 1 : 0;
 		decimal payoutRate = quarterly ? (decimal)(_payoutSpin?.Value ?? 0d) : 0m;
+		decimal dividendsCut = shortfall
+			? (decimal)(_dividendsCutSpin?.Value ?? (double)NetworkRoot.DefaultShortfallDividendsCutPercent)
+			: NetworkRoot.DefaultShortfallDividendsCutPercent;
 
-		bool ok = NetworkRoot.TryRegisterPlayerVote(nonMinerNodeId, reserveTarget, marketShift, payoutRate);
+		bool ok = NetworkRoot.TryRegisterPlayerVote(nonMinerNodeId, reserveTarget, marketShift, payoutRate, dividendsCut);
 		if (_voteFeedbackLabel != null)
 		{
 			_voteFeedbackLabel.Text = ok
@@ -650,6 +979,23 @@ public partial class CompanyDetails : Control
 				Text = string.Create(CultureInfo.InvariantCulture,
 					$"   Market level: {beforeMkt} ({beforeDark}% dark)  →  {afterMkt} ({afterDark}% dark)")
 			});
+
+			// Step 15 P15.10b (D-15.25) — an unchanged Market level is normally self-explanatory (nobody
+			// reached the 60% supermajority), but at a BANK it can also mean the holders DID win a shift and
+			// the lock refused it. That case is the one this line exists for; where no supermajority was
+			// reached the line above already tells the true story and nothing is appended. Re-derived from
+			// the record's own ballots through the resolver's predicate — no persisted flag, so it reads
+			// correctly on votes closed before this shipped, and no WorldFormatVersion bump.
+			if (NetworkRoot.WasMarketShiftRefused(rec, gov.NonMinerNodeId))
+			{
+				var refused = new Label
+				{
+					Text = "      ↳ market shift refused — category locked (bank)",
+					AutowrapMode = TextServer.AutowrapMode.Word
+				};
+				refused.AddThemeColorOverride("font_color", new Color(1f, 0.75f, 0.3f));
+				_infoVBox.AddChild(refused);
+			}
 			if (rec.Kind == "quarterly")
 			{
 				_infoVBox.AddChild(new Label
@@ -672,7 +1018,16 @@ public partial class CompanyDetails : Control
 		// ND.9g — every participant's cast ballot.
 		if (rec.Ballots.Count > 0)
 		{
-			_infoVBox.AddChild(new Label { Text = "Ballots cast:" });
+			// P15.9 — name the band range in the header. This is the readout that surfaced the out-of-band
+			// bot ballots (bots voted their raw global stance, e.g. 0% at a CB1 company whose charter allows
+			// only 75–100), and reading a bare "voted: reserve 0%" required remembering which band this
+			// company is. With the range stated, an illegal value is obvious on sight.
+			(decimal ballotMin, decimal ballotMax) = NetworkRoot.BandScPercentBounds(gov.CurrencyBand);
+			_infoVBox.AddChild(new Label
+			{
+				Text = string.Create(CultureInfo.InvariantCulture,
+					$"Ballots cast (band {gov.CurrencyBand}: {ballotMin:F0}–{ballotMax:F0}% SC):")
+			});
 			foreach (VoteBallotRecord b in rec.Ballots.OrderByDescending(b => b.Weight))
 			{
 				string market = rec.Kind == "quarterly"

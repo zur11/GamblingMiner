@@ -34,11 +34,30 @@ public sealed class BlockchainService
     public const double TargetBlockSeconds = 58_500d; // matches the 100X bootstrap pace (≈16h40m/block)
     public const int LwmaWindow = 20;
     public const double MaxStepUp = 2.0d;             // difficulty can at most double per block…
-    public const double MaxStepDown = 0.5d;           // …or halve per block (anti-oscillation clamp)
+    // R2-D: superseded as the trim floor by MinFeedbackTrim (0.25) below — kept as the documented historical
+    // value and because it is the symmetric partner of MaxStepUp in the anti-oscillation vocabulary. Nothing
+    // reads it now; do not re-wire it into the clamp without re-reading §R2.7's cede-fast/rise-slow argument.
+    public const double MaxStepDown = 0.5d;
     public const double MinDifficulty = 1.0d;         // floor (1 expected attempt = every hash passes)
     // Easing (D.2, Option A): fraction of the gap to the target closed each block, so a power change ramps
     // in over a few blocks instead of snapping in one. 1.0 = instant; 0.7 ≈ ~97% closed in 3 blocks (tuned by test).
     public const double DifficultyEaseAlpha = 0.7d;
+
+    // R2-D (2026-07-27, btc-pools-hardware-plan.md §R2.7) — ASYMMETRIC response. F2 proposed this in
+    // 2026-06 and it was dropped because a 10→1 power step already ceded in ~3 blocks; the case that
+    // revives it is a 30× OVERHANG (difficulty 217,833 against an anchor of 51,946 after a founder power
+    // spike collapsed), where the symmetric response needed 4-5 blocks — each of them itself 2-7× slow.
+    //
+    // The two directions are NOT equally dangerous, so they should not share constants:
+    //   • difficulty too HIGH  → blocks run slow. Annoying, visible, self-correcting.
+    //   • difficulty too LOW   → blocks FLOOD: pacing breaks and coinbase is minted early, which is
+    //                            economically irreversible.
+    // So: cede fast, take on slowly. MinFeedbackTrim 0.5 → 0.25 lets the LWMA ask for a 4× cut in one
+    // block (the ceiling stays 2× — nothing may double difficulty faster than before), and the downward
+    // easing closes 90% of the gap instead of 70%. Verified on the measured post-spike state: the unwind
+    // becomes 217,833 → 33,471 → 15,034, i.e. ≤2 blocks.
+    public const double MinFeedbackTrim = 0.25d;
+    public const double DifficultyEaseAlphaDown = 0.9d;
 
     // 2²⁵⁶ — the space of a 256-bit (64-hex) double-SHA256 hash. Acceptance threshold = MaxHash256 / Difficulty.
     private static readonly BigInteger MaxHash256 = BigInteger.Pow(2, 256);
@@ -388,7 +407,8 @@ public sealed class BlockchainService
     //   for the current power; when a miner joins/leaves or hardware changes the target updates at once. When
     //   power is unknown (0: historical bootstrap / idle), hold at the current difficulty (feedback-only).
     // • feedbackTrim = LWMA(TargetBlockSeconds / recent solvetimes) — the "real-process" block-time signal that
-    //   trims calibration drift + PoW variance. CLAMPED to [MaxStepDown, MaxStepUp] per block (anti-oscillation).
+    //   trims calibration drift + PoW variance. CLAMPED to [MinFeedbackTrim, MaxStepUp] per block — asymmetric
+    //   since R2-D (0.25× down, 2× up): an overhang is cheap to hold, an under-shoot mints coins early.
     // • easing (Option A) — instead of snapping to target, close a fraction DifficultyEaseAlpha of the gap each
     //   block, so the change ramps in over a few blocks rather than instantly.
     public double GetNextBlockDifficulty(double networkPower)
@@ -425,11 +445,13 @@ public sealed class BlockchainService
 
             feedbackTrim = TargetBlockSeconds / (weightedSum / weightTotal);
         }
-        feedbackTrim = Math.Clamp(feedbackTrim, MaxStepDown, MaxStepUp);
+        feedbackTrim = Math.Clamp(feedbackTrim, MinFeedbackTrim, MaxStepUp);
 
         // Ease toward the target rather than snapping, so a power change ramps in over a few blocks.
+        // R2-D: asymmetric — cede an overhang fast, take on difficulty slowly (see the constants above).
         double target = anchor * feedbackTrim;
-        double next = current + DifficultyEaseAlpha * (target - current);
+        double alpha = target < current ? DifficultyEaseAlphaDown : DifficultyEaseAlpha;
+        double next = current + alpha * (target - current);
         return Math.Max(next, MinDifficulty);
     }
 

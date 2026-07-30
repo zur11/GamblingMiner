@@ -14,6 +14,12 @@ namespace Scripts.History
 		private const int FlushEveryMutations = 200;
 		private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(3);
 		private const int MaxJournalEntriesPerChunkFile = 10000;
+		// INC-001 / D-15.28 — retention cap. An ever-growing store with no stated policy is how a 1.13 GB
+		// journal (~5.3M records deserialized at EVERY boot) arrived unnoticed; nothing had ever deleted a
+		// bet record except a world reset. 20 segments ≈ 200,000 records ≈ 57 MB, which bounds the boot load
+		// by construction. The segment currently being filled is not yet on disk when the cap is enforced,
+		// so the true ceiling is cap + 1 in-progress file. `0` disables the cap.
+		private const int MaxRetainedJournalChunks = 20;
 		private const int ChunkIndexDigits = 6;
 		private const int MaxPendingJournalEntriesWhileSuspended = 2000;
 		private static readonly TimeSpan SuspendedFlushMinInterval = TimeSpan.FromSeconds(0.5);
@@ -290,6 +296,67 @@ namespace Scripts.History
 
 			_activeJournalPath = BuildChunkPath(nextIndex);
 			_activeJournalLineCount = 0;
+
+			// The new segment does not exist on disk yet, so it can never be the one trimmed away here.
+			EnforceRetentionCap();
+		}
+
+		// INC-001 / D-15.28 — deletes the OLDEST segments beyond MaxRetainedJournalChunks. Ordering comes
+		// from GetJournalChunkPaths (legacy base file first, then chunks by ascending index), which is also
+		// chronological order, so trimming from the front discards the oldest history first. The base file
+		// is deliberately included: after a rebuild it is the oldest segment, and exempting it is how a
+		// "chunked" store ends up with one un-trimmable monolith at its head.
+		private void EnforceRetentionCap()
+		{
+			// `excess <= 0` covers the disabled case (cap 0 or negative ⇒ nothing is ever trimmed), so no
+			// separate early-return guard is needed — and a `const`-folded one only earns a CS0162.
+			List<string> segments = GetJournalChunkPaths(includeLegacyBaseFile: true);
+			int excess = MaxRetainedJournalChunks > 0 ? segments.Count - MaxRetainedJournalChunks : 0;
+
+			for (int i = 0; i < excess; i++)
+			{
+				string path = segments[i];
+				if (string.Equals(path, _activeJournalPath, StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				try
+				{
+					File.Delete(path);
+				}
+				catch
+				{
+					// Best-effort: a locked segment simply survives until the next rotation.
+				}
+			}
+		}
+
+		// Deletes every file this repository owns — the base file and every chunk. Uses
+		// GetJournalChunkPaths so the match is the same strictly-parsed `<base>_<index><ext>` set the loader
+		// reads, never a looser glob: this method deletes files, so its notion of "mine" must be exact.
+		private void DeleteAllJournalFiles()
+		{
+			foreach (string path in GetJournalChunkPaths(includeLegacyBaseFile: true))
+			{
+				try
+				{
+					File.Delete(path);
+				}
+				catch
+				{
+					// Best-effort — a survivor is re-read next boot, which is wrong but not destructive.
+				}
+			}
+		}
+
+		private void EnsureJournalFolderExists()
+		{
+			string folderPath = Path.GetDirectoryName(_activeJournalPath) ?? string.Empty;
+			if (!string.IsNullOrWhiteSpace(folderPath))
+			{
+				Directory.CreateDirectory(folderPath);
+			}
 		}
 
 		private void LoadFromJournalFile(string path)
@@ -511,35 +578,39 @@ namespace Scripts.History
 				_activeJournalPath = _filePath;
 			}
 
-			string folderPath = Path.GetDirectoryName(_activeJournalPath) ?? string.Empty;
-			if (!string.IsNullOrWhiteSpace(folderPath))
-			{
-				Directory.CreateDirectory(folderPath);
-			}
+			EnsureJournalFolderExists();
+			WriteEntriesRotating(_pendingJournalEntries);
 
+			_pendingJournalEntries.Clear();
+			_mutationsSinceLastSave = 0;
+			_lastSaveUtc = DateTime.UtcNow;
+		}
+
+		// INC-001 / D-15.27 — THE single writer. Both the incremental path (Flush) and the wholesale path
+		// (RebuildJournalFromCurrentState) go through here, because the rotation rule belongs to the FILE,
+		// not to whichever function grew it first. Previously only Flush rotated; the rebuild wrote the
+		// entire in-memory history into the base file uncapped, which silently defeated the chunking policy
+		// and produced a 1.13 GB monolith sitting beside the 114 chunks it had just duplicated.
+		private void WriteEntriesRotating(IReadOnlyList<HistoryJournalEntry> entries)
+		{
 			int index = 0;
-			while (index < _pendingJournalEntries.Count)
+			while (index < entries.Count)
 			{
 				if (_activeJournalLineCount >= MaxJournalEntriesPerChunkFile)
 				{
 					RotateToNextChunkFile();
-					folderPath = Path.GetDirectoryName(_activeJournalPath) ?? string.Empty;
-					if (!string.IsNullOrWhiteSpace(folderPath))
-					{
-						Directory.CreateDirectory(folderPath);
-					}
+					EnsureJournalFolderExists();
 				}
 
 				int remainingCapacity = Math.Max(1, MaxJournalEntriesPerChunkFile - _activeJournalLineCount);
-				int toWrite = Math.Min(remainingCapacity, _pendingJournalEntries.Count - index);
+				int toWrite = Math.Min(remainingCapacity, entries.Count - index);
 
 				using (var stream = new FileStream(_activeJournalPath, FileMode.Append, System.IO.FileAccess.Write, FileShare.Read))
 				using (var writer = new StreamWriter(stream))
 				{
 					for (int i = 0; i < toWrite; i++)
 					{
-						HistoryJournalEntry entry = _pendingJournalEntries[index + i];
-						string line = JsonSerializer.Serialize(entry, _jsonOptions);
+						string line = JsonSerializer.Serialize(entries[index + i], _jsonOptions);
 						writer.WriteLine(line);
 					}
 				}
@@ -547,10 +618,6 @@ namespace Scripts.History
 				index += toWrite;
 				_activeJournalLineCount += toWrite;
 			}
-
-			_pendingJournalEntries.Clear();
-			_mutationsSinceLastSave = 0;
-			_lastSaveUtc = DateTime.UtcNow;
 		}
 
 		public void Flush()
@@ -614,33 +681,40 @@ namespace Scripts.History
 			}
 		}
 
+		// INC-001 / D-15.27 — rewrites the journal from the in-memory state (called by RollbackToUtc and
+		// ClearAll: every checkpoint restore and every DiceGame entry). Three things it must do, and used to
+		// get wrong:
+		//   1. DELETE what it supersedes. It used to truncate only the base file and leave every chunk in
+		//      place — and since the loader reads base + chunks, the next boot counted the same records
+		//      twice, the next rebuild wrote the doubled set back, and it compounded per session. That is
+		//      also why the lifetime stats had been inflated for an unknown number of sessions.
+		//   2. ROTATE. It wrote everything into one file with no cap (see WriteEntriesRotating).
+		//   3. Leave _activeJournalPath on the LAST segment written, so the next Flush appends to the
+		//      newest file instead of re-opening one the loader has already read.
 		private void RebuildJournalFromCurrentState()
 		{
+			DeleteAllJournalFiles();
+
 			_activeJournalPath = _filePath;
 			_activeJournalLineCount = 0;
+			EnsureJournalFolderExists();
 
-			string folderPath = Path.GetDirectoryName(_activeJournalPath) ?? string.Empty;
-			if (!string.IsNullOrWhiteSpace(folderPath))
-			{
-				Directory.CreateDirectory(folderPath);
-			}
-
-			using var stream = new FileStream(_activeJournalPath, FileMode.Create, System.IO.FileAccess.Write, FileShare.Read);
-			using var writer = new StreamWriter(stream);
+			var entries = new List<HistoryJournalEntry>(_deposits.Count + _records.Count);
 
 			foreach (DepositRecord deposit in _deposits.OrderBy(d => d.TimestampUtc))
 			{
-				string line = JsonSerializer.Serialize(HistoryJournalEntry.FromDeposit(deposit), _jsonOptions);
-				writer.WriteLine(line);
-				_activeJournalLineCount++;
+				entries.Add(HistoryJournalEntry.FromDeposit(deposit));
 			}
 
 			foreach (BetRecord record in _records.OrderBy(r => r.TimestampUtc))
 			{
-				string line = JsonSerializer.Serialize(HistoryJournalEntry.FromBet(record), _jsonOptions);
-				writer.WriteLine(line);
-				_activeJournalLineCount++;
+				entries.Add(HistoryJournalEntry.FromBet(record));
 			}
+
+			// Chronological by construction (deposits then timestamp-ordered bets), which matches the order
+			// GetJournalChunkPaths hands the segments back to the loader.
+			WriteEntriesRotating(entries);
+			EnforceRetentionCap();
 		}
 
 		private void ApplyJournalEntry(HistoryJournalEntry entry)

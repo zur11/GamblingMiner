@@ -1,9 +1,11 @@
 using Godot;
 using System;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using GodotBlockchainPort.Blockchain;
 using GodotBlockchainPort.Simulation;
+using Scripts.Finance;
 using UI.StatusBar;
 
 // Step 14 ND.8c (D-ND8.25 / D-ND8.35) — the World Economy DEV hub. Hosts the SC Monetary Ledger readout
@@ -104,6 +106,62 @@ public partial class WorldEconomy : Control
 
 	private static string Sc(decimal v) => v.ToString("N8", CultureInfo.InvariantCulture);
 
+	// Step 15 P15.7b — the BANKING-LAYER AGGREGATE. This scene is the macro monetary view, so it carries the
+	// system-wide question ("is the banking layer solvent?") and a per-bank strip; the PER-CLIENT detail,
+	// the movement histories, the Closed-Companies list and the FBI board live in the Central Bank [DEV]
+	// scene, which is the FED's own page — duplicating them here would mean two places to keep in step
+	// (§39.16 rule 6's spirit: one source per signal). The closure line below is a pointer, not a copy.
+	//
+	// Leverage is the honest headline: banks borrow SC and sit on BTC, so their solvency is a live price
+	// question, valued at TODAY's price — never frozen at a historical day.
+	private void AppendBankingLayer(StringBuilder sb)
+	{
+		var banks = NetworkRoot.GetFoundedBankRows();
+		sb.Append("\n[color=aqua]Banking layer[/color] (Step 15 — the four CB1 banks as FED clients):\n");
+		if (banks.Count == 0)
+		{
+			sb.Append("  (no bank company has founded yet — company conversions still route to the casino)\n");
+			return;
+		}
+
+		var fed = GetNodeOrNull<CentralBankService>("/root/CentralBankService");
+		var market = GetNodeOrNull<BtcMarketDataService>("/root/BtcMarketDataService");
+		var calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		decimal? price = market?.GetEffectivePriceUsd(calendar?.CurrentLocalDateTime ?? DateTime.Now);
+
+		decimal totalDebt = 0m, totalCollateral = 0m;
+		foreach (var b in banks)
+		{
+			decimal debt = fed?.OutstandingDebt(CentralBankService.BankClientId(b.BankNodeId)) ?? 0m;
+			totalDebt += debt;
+			totalCollateral += b.CollateralBtc;
+
+			decimal collateralSc = price is decimal p && p > 0m ? Money.Normalize(b.CollateralBtc * p) : 0m;
+			bool under = debt > 0m && collateralSc < debt;
+			string flag = under ? "  [color=red]UNDER-COLLATERALIZED[/color]" : string.Empty;
+			if (b.UnrecoverableShortfallSc > 0m) flag = "  [color=red]INSOLVENT[/color]";
+			else if (b.PendingShortfallSc > 0m) flag = "  [color=orange]SHORTFALL PENDING[/color]";
+
+			sb.Append($"  [color=lime]{b.DisplayName}[/color] [{b.MarketCategory}]  —  FED debt {Sc(debt)} SC  ·  collateral {b.CollateralBtc:N8} BTC (≈ {Sc(collateralSc)} SC)  ·  {b.ClientCount} client(s){flag}\n");
+		}
+
+		decimal totalCollateralSc = price is decimal pr && pr > 0m ? Money.Normalize(totalCollateral * pr) : 0m;
+		decimal net = Money.Normalize(totalCollateralSc - totalDebt);
+		string verdict = totalDebt <= 0m ? "no debt drawn yet"
+			: net >= 0m ? "[color=lime]solvent[/color]"
+			: "[color=red]under-collateralized[/color]";
+		sb.Append($"  [color=aqua]System:[/color] collateral {Sc(totalCollateralSc)} SC vs FED debt {Sc(totalDebt)} SC  →  net {Sc(net)} SC  ({verdict})\n");
+
+		// P15.5/P15.6 pointer — the detail lives in the Central Bank scene, this is just the headline.
+		var closures = NetworkRoot.GetClosedCompanies();
+		if (closures.Count > 0)
+		{
+			decimal writtenOff = closures.Sum(c => c.DebtAtClosureSc);
+			int seized = closures.Count(c => c.Reason == NetworkRoot.ClosureReasonFbiSeizure);
+			sb.Append($"  [color=orange]Closed companies:[/color] {closures.Count} ({seized} FBI-seized)  ·  FED written off {Sc(writtenOff)} SC  —  detail + recovery tracker in the Central Bank [DEV] scene\n");
+		}
+	}
+
 	private void Refresh()
 	{
 		if (_ledger == null)
@@ -131,6 +189,8 @@ public partial class WorldEconomy : Control
 			sb.Append("  (no debt — no loan has been drawn)\n");
 		foreach (var kv in _ledger.DebtByBorrower)
 			sb.Append($"  [color=orange]{kv.Key}[/color]  —  {Sc(kv.Value)} SC\n");
+
+		AppendBankingLayer(sb);
 
 		sb.Append($"\n[color=aqua]Mint/burn events[/color] (newest first, last {_ledger.Events.Count} kept):\n");
 		if (_ledger.Events.Count == 0)

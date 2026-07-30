@@ -2190,7 +2190,7 @@ Tiers 1–3 have no entry in any table — that is the **satisfied** state (a bo
 
 **ND.6d — the early probability rush (2026-07-14, calibration fix).** A ~1-in-game-year 2011 playtest confirmed the stall recurred through a different door than ND.6 closed: the player's asymmetric +1-satoshi retakes (§22.8) kept pushing every contested bot's best slot **up** to tier 4/5, where the NORMAL 5%/8% roll left bots declining ~95% of the time — the `casino_bot_bid_trace.csv` tail was pure `roll-declined` at tier 4/5 with spendable ~1000 BTC (affordability was never the constraint) and **zero** donations, so the player won every referral uncontested. The fix is the EARLY-RUSH table above: while a pool is young (<7 tracked slots) the shallow tiers roll 34%/55%/89% instead of 5%/8%/13%, so casino-bots contest young pools hard; once a pool matures to 7 slots (a lot of competition has already happened) it reverts to the calmer NORMAL ladder. Mode is a pure function of the pool's live occupied count — no persisted state, self-correcting as slots fill. The `AuctioningCompanyDetails` pool panel now prints each slot's live re-bid chance (`[re-bid NN%]` / `satisfied`) and the pool's current mode in the section title, sharing the SAME `NetworkRoot.ReBidProbabilityLabel` / `ReBidProbabilityPercentFor` source of truth as the roll.
 
-**Per-slot pipeline.** ⚠️ **Steps 2–4 below were SUPERSEDED by ND.10c on 2026-07-23** (see §22.14 and plan §14.4): the bot draw now restricts to *eligible* bots (D-ND6.1 reversed), and the spread-wide ordering + first-affordable walk + single ladder roll (D-ND6.6/6.8/6.5) collapsed into **parallel per-pool rolls with a uniform tie-break** — every affordable qualifying pool rolls its own probability each slot. Step 1's qualifying rules (satisfied, self-eviction guard) and the ladder tables themselves are unchanged, and both now live in the shared `BuildBotPoolOpportunities`. The description below is retained as the historical record of the ND.6→ND.8d pipeline. Each donation slot (§22.7's weighted 0/1/2 per-block draw, unchanged) picks its bot uniformly at random among not-yet-used-this-block bots (D-ND6.1 — a bot keeps its full selection probability even when its own rules will produce no donation), and the chosen bot then runs:
+**Per-slot pipeline.** ⚠️ **Steps 2–4 below were SUPERSEDED by ND.10c on 2026-07-23** (see §22.14 and plan §14.4): the bot draw now restricts to *eligible* bots (D-ND6.1 reversed), and the spread-wide ordering + first-affordable walk + single ladder roll (D-ND6.6/6.8/6.5) collapsed into **parallel per-pool rolls with a tie-break among the hits** — every affordable qualifying pool rolls its own probability each slot. (That tie-break was **uniform** as shipped and became **weighted** at ND.10l on 2026-07-28, once telemetry showed always-hitting fresh pools crowding out escalated re-bids — see §22.14's "The weighted tie-break".) Step 1's qualifying rules (satisfied, self-eviction guard) and the ladder tables themselves are unchanged, and both now live in the shared `BuildBotPoolOpportunities`. The description below is retained as the historical record of the ND.6→ND.8d pipeline. Each donation slot (§22.7's weighted 0/1/2 per-block draw, unchanged) picks its bot uniformly at random among not-yet-used-this-block bots (D-ND6.1 — a bot keeps its full selection probability even when its own rules will produce no donation), and the chosen bot then runs:
 
 1. **Qualifying pools (D-ND6.2/6.7)** — all currently `InAuction` non-miners, EXCEPT pools where the bot holds a top-3 tracked slot (satisfied — subsumes the old "never outbid yourself" rule, since the leading bid is by construction tier 1) or the smallest slot of a full pool (the **self-eviction guard**: its own new bid, entering a full pool, would evict its own smallest donation and forfeit the settlement refund already secured as the auction stands, §22.9). "Participation" = holds ≥1 CURRENTLY TRACKED donation there — so a bot whose donations get fully evicted from a pool re-engages it as if new, an intended self-balancing recycling.
 2. **Bot-centric preference order (D-ND6.6)** — qualifying pools sorted by ascending count of the bot's OWN tracked slots (0-participation pools first: spread wide before ever re-bidding), ties broken soonest-to-expire.
@@ -2239,6 +2239,30 @@ Fix (`NetworkRoot.ComputeStuckEscalationProbabilityPercent`): a bot holding EXAC
 **Corrected design — an in-memory signal, event-driven, no `_Process`/polling (developer-directed).** A private dictionary `_stuckBidderSignatures: Dictionary<(nonMinerNodeId, botNodeId), (signature, sinceBlockIndex)>` — NOT part of `BlockchainStateSnapshot` (no checkpoint/pre-genesis/delete-list work; like `_lastMinedByNodeId`/`_currentMinerStreak` elsewhere in `NetworkRoot`, this is pure bidding-behavior bookkeeping that harmlessly resets on an app restart). The signature is `"multi"` when the bot holds ≥2 tracked slots, else `"single:{tier}"` — folding BOTH reset triggers (a rank-push AND a multi→single transition from losing another slot) into one comparable value. `ComputeStuckEscalationProbabilityPercent` is called on EVERY participated roll, multi- or single-slot alike, so the multi-slot state is always kept current; whenever the recorded signature differs from now, `sinceBlockIndex` is stamped to the current block index (`Block.Index`) — an edge-triggered update that fires exactly once per this bot's per-block evaluation, inside the SAME block-mined event that already drives the whole bidding cascade (`HandleMinedBlock` → `ScheduleBotTransactionsAfterBlock` → `TryCasinoBotDonation`), never oftener. `blocksElapsed = currentBlockIndex − sinceBlockIndex`; `probability = min(100, base × (blocksElapsed + 1))`. The earlier `chain`/`FindBlockIndexAtOrBeforeTimestamp` plumbing was removed as unnecessary once this signal replaced the snapshot-only derivation.
 
 **Accepted residual imprecision.** If a bot's tracked donation is evicted all the way to ZERO slots in a pool and it later lands a brand-new donation at the exact same numeric tier by coincidence, the stale recorded signature would match and skip the reset it should trigger. Extremely low-probability (requires a full eviction to zero AND an exact tier-number coincidence on rejoining) — accepted rather than adding cleanup bookkeeping for it. Full diagnosis, matrix and decision log: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §12.5.5.
+
+#### 22.10.1 — ND.10i (2026-07-27): the escalation slope collision, and the ceiling on the NST band
+
+**The finding (DeepBit, `non_miner_7`).** Watching the pool's per-slot ladder, the developer saw *the tier-2 label climbing while tier 4 stood still, and both then reading 40%* — wrong for a ladder whose entire vocabulary is "the worse your position, the more desperate you are".
+
+**Cause: two tables calibrated for different questions, meeting at a seam nobody had read side by side.** `StuckEscalationBasePercent` feeds the escalation's slope. Tiers 4-9 take the NORMAL ladder (5, 8, 13, 21, 34, 55); since D-ND10c.3 tiers 2-3 take the *shallow* table's NORMAL/one-bid cell (5, 2). That rule — "the base is the tier's plain NORMAL-mode value" — is internally consistent and lands **tier 2 on exactly tier 4's slope**. The shallow table was calibrated at ND.8d so that *tier 2 out-probabilities tier 3*; the deep table at ND.6 so that *deeper is more desperate*; neither had an opinion about tier 2 versus tier 4, and the composition gave a 2nd-place bot — inside the NST band, one raise from the lead — the same march to certainty as a 4th-place bot, and **2.5× faster than a 3rd-place** one.
+
+Why one *looked* faster: the display is `max(mode floor, escalation)`, and the floors differ far more than the slopes did. In an early-rush pool tier 2's floor is 21 and tier 4's is 34, so a common slope of 5 lifts tier 2 off its floor at block 5 (→25) while tier 4 stays pinned at 34 until block 7 (→35); both then land on 40. In a NORMAL pool it is worse and invisible: floor 5 *and* slope 5 on both, so tiers 2 and 4 are numerically **identical at every block, forever**. Label and roll agreed throughout — ND.10c/d's shared-source discipline held; the ladder itself was the defect.
+
+**D-ND10i.1 — tier 2 gets its own slope, 3.** Slopes now read `2 (t3) < 3 (t2) < 5 (t4) < 8 …`. The ND.8d tier2 > tier3 crossover survives *because it is about a different question*: tier 3 can be **satisfied** at ≥2 own bids and tier 2 never is — a statement about satisfaction, not about desperation, and it must not leak into the slope. The accidental 2/4 collision does not survive. `3` is the only Fibonacci-family value between 2 and 5 (D-ND6.4: every ladder literal is drawn from the sequence, never formula-derived).
+
+**D-ND10i.2 — a ceiling of 34% on the NST band (tiers ≤ `NstTopTierCount`).** The audit raised a second, larger question that the slope fix alone does not answer. Any accepted bid must clear the leader's floor, so **every successful re-bid takes the lead and resets the 20-day rolling window** (D-ND4b.1). Combined with "tier 1 is always satisfied" (D-ND8d.1) and an escalation running to 100%, that is a **leapfrog engine**: the runner-up eventually bids every block, becomes leader and stops, the displaced leader becomes tier 2 and starts escalating, and while two solvent bots contest a pool the countdown never expires. DeepBit's own history shows it — opened ~27 Feb, still live 7 Apr in-game, its window already reset at least once.
+
+Capping the NST band keeps ND.10c's fix (no lone tier-2/3 occupant frozen at a flat 5%/2% forever) without turning the runner-up into a metronome. Below the band the escalation still runs to 100%: a bot outside the stock-minting tiers has nothing to lose by pressing. Resolution of a genuinely contested pool then rests where §22.10 always intended it — **price-out, the economic terminator**. The ceiling bounds the escalation only; callers compose `max(mode rate, escalation)`, so a calibrated mode rate above it would still win (none is today — tier 2 tops out at 21 in early rush).
+
+The rejected third option is worth recording because it is the most *semantically* correct: escalate a lone top-3 occupant only while nobody else has bid recently, since "stuck" should mean stuck and a pool with a fresh leader is working, not stalled. It needs a new recent-activity signal, which is more than this finding justified; if the ceiling proves to be the wrong lever, that is where to go next.
+
+**A note on why equal numbers are normal.** `SweepStuckBidderSignatures` stamps every occupant of a pool at the same block when an incoming bid re-ranks it, so slots legitimately climb in lockstep afterwards and **only the slopes distinguish tiers**. That is what made this collision permanent rather than transient: with equal slopes, one re-rank left tier 2 and tier 4 indistinguishable for the rest of the auction.
+
+**Two habits shipped with the fix, both aimed at the way it hid rather than at the defect itself.**
+
+*The ladder now checks its own ordering at launch.* `AssertEscalationSlopesAreOrdered` — `[Conditional("DEBUG")]`, run once from `EnsureInitialized` — walks the slopes in their expected ascending order `t3 < t2 < t4 … < t9` and prints the offending pair if any step fails. It encodes the single intended exception explicitly, so the deliberate t3/t2 swap can never again be confused with an accidental collision, and it is stripped from release builds (a broken ladder in an exported build is undetectable anyway; the point is to catch it the moment someone edits a table). This is the same reflex as §39.15.1's clamp tripwire, which had proved itself two days earlier: **an invariant that lives only in prose is an invariant nobody checks.** The general form — *when several tables are consumed by one rule, assert the relationship between them where the rule lives, not in a comment* — is what both incidents are really about.
+
+*The per-slot label shows the escalation's composition.* Where the escalation is the binding term, the label now reads `[re-bid 24% (base 3 ×8 blocks stuck)]`, gaining `, capped` once the ceiling binds; where the static mode rate still wins, nothing is appended, because there is no escalation story to tell. A bare `40%` cannot be told apart from another tier's `40%` — which, given that equal readings are *normal* after a re-rank, is precisely how the collision stayed invisible. `EscalatedStuckDetail`/`PeekStuckEscalationDetail` return `(percent, base, multiplier, capped)` and the previous percent-only helpers became one-line wrappers over them, so the roll path is untouched and label/roll parity holds by construction.
 
 ### 22.11 — Donor identity canonicalization (2026-07-14 playtest fix)
 
@@ -2295,6 +2319,8 @@ ND.10b's panel reported layer 3 only — *"given this bot runs its pipeline this
 
 Fix a bot and a pool `k`. Let `r₁ … r_N` be that bot's qualifying, affordable pools' ladder probabilities this block.
 
+> ⚠️ **Step 1's tie-break was replaced at ND.10l (2026-07-28)** — the uniform draw became a **weighted** one, so `q_k` is now a DP over the other hits' total *weight* rather than their *count*. The count form below is kept because it is the clearer statement of the shape, and because the worked example that follows is the historical ND.10c case. See "The weighted tie-break" at the end of this section for the current formula.
+
 **Step 1 — collapse the parallel rolls into a per-pool share (`q_k`).** All `N` pools roll independently; if several hit, one wins uniformly. So `k` wins when it hits *and* survives the tie-break against however many other pools also hit:
 
 ```
@@ -2349,6 +2375,24 @@ Read against the same pool under the old model: BitPaid showed a flat **`0%`** (
 
 **Display convention.** Two decimals, `CultureInfo.InvariantCulture` (Ch. 1 number-format rule): realistic values live in `0.10%–25%`, and integer rounding collapses most of them to `0%` — the very ambiguity this model exists to remove. A `0%` in the panel now means genuinely impossible (satisfied, self-eviction-guarded, or unaffordable), never merely unlikely. The per-slot ladder label on each bids-list row (`[re-bid NN%]`) is **kept as an integer percent and kept per-slot on purpose**: it answers the mechanic's question ("what does this occupant roll when it looks at this pool?"), while the right-hand panel answers the player's ("how likely is this bot to take the lead here before the next block?"). The two numbers differing is expected, and §22.14 is where that difference is defined.
 
+
+**The weighted tie-break (ND.10l, 2026-07-28).** ND.10c's uniform draw fixed an ordering problem and quietly created its mirror image. An **unparticipated pool always hits** (`r = 1.0` is a sentinel meaning "a first bid is deterministic and never rolls", D-ND6.5), so every fresh company arriving on the historical curve took an equal share of the slot from whatever else hit — halving, each time, the real chance of exactly the escalated re-bids ND.10c existed to make reachable. ND.10j's `poolRolls` column is what made it visible: at block 964, `bot_2`'s BitInstant roll **hit and lost the coin-flip** to a 0.03 BTC seed bid on a brand-new pool.
+
+The draw is now weighted by how much each pool actually wants the slot:
+
+```
+q_k = r_k · Σ_W  P(W₋ₖ = W) · w_k / (w_k + W)
+```
+
+where `W₋ₖ` is the **total tie-break weight** of the bot's other pools that hit, and `w_k` is pool `k`'s own weight.
+
+**The weight is not the probability**, and that distinction is the whole subphase. Weighting by the raw `r_k` looks like the obvious reading of "weight by probability" and does the **opposite** of what is wanted: `r = 100` is the largest number in the system, so fresh pools would take *more* of the slot than uniform gave them (a 64% escalated re-bid falling from ½ to 64/164 ≈ 39%). A participated pool weighs its composed ladder probability; an unparticipated pool weighs an explicit `FreshPoolSeedingWeight` (**34**, Fibonacci per D-ND6.4) — a first bid is *certain* but not *urgent*. Against one fresh pool a 64% escalated re-bid now keeps 64/98 ≈ 65% of the tie-break instead of 50%, lifting its true per-block chance from ~30% to ~40%.
+
+It stays a **draw, never a priority**. An absolute rule — "expiring auctions before fresh ones" — would starve seeding completely, and with 40 companies arriving over fifteen in-game years their first bids are how auctions start at all. Under the weighted draw a fresh pool still wins outright on every slot where nothing else hits, which is most of them while few pools are live.
+
+The DP changes shape with it: the count-based Poisson-binomial becomes a 0/1-knapsack convolution over integer weights. Two collapses keep it cheap — a pool with `r ≥ 1` always hits, so it is not a random variable and its weight folds into a constant offset; a pool with `r ≤ 0` never hits and drops out. Only genuinely stochastic pools enter the DP, and a bot holds slots in a handful of pools at most. **The `Σ_k q_k = 1 − ∏_k (1−r_k)` identity is unchanged and still asserted at runtime** — it holds for *any* rule that picks exactly one winner from a non-empty hit set, so the same free self-check now guards the weighted DP too. Verified against brute-force subset enumeration to machine precision, including the degenerate cases (equal weights reproduce the uniform result exactly).
+
+`FreshPoolSeedingWeight` is a **calibration placeholder**, like the ND.10e treasury thresholds: block frequency changes how often pools contest at all, so it should be re-read once the R2 regulator's block pace is verified in play.
 **Four kinds of zero (ND.10d, 2026-07-23).** A `0%` in either column can mean four different things, and the first playtest of the per-block panel found the two columns disagreeing because of it: The Silk Market showed `bot_1` at `0%` in the panel while its bids-list slot advertised `[re-bid 100%]`. Both numbers were individually right — the panel enforces the half-spendable affordability cap (D-ND6.8) and the label did not, while the ND.10c stuck escalation ratcheted that label to its 100% ceiling (a lone tier-6 slot, NORMAL base 13%, clamps after 7 stuck blocks). Reconstructing the pool from the chain confirmed the mechanics were correct throughout: the leader was `bot_2` at 337.42 BTC, so the required raise was ≈371 BTC against caps of 264 (bot_1) and 119 (bot_4) — both **priced out**, exactly the economic terminator §22.10 designs for; `bot_3` could afford it but held the pool's smallest slot in a full pool (**self-eviction guard**); `bot_2` was the **leader**. The fix gives all three surfaces one shared exclusion vocabulary (`BotPoolOpportunity.Exclusion` ∈ `satisfied` / `guard` / `priced out`, `null` = biddable): the per-slot label now returns `priced out` when the raise no longer fits the cap, and a `0.00%` panel row prints its reason (`bot_4  0.00%  (priced out)`, via `NetworkRoot.BotPoolExclusionNote`). A real-but-tiny probability prints `<0.01%` instead of rounding into a bare zero. **The escalation deliberately keeps ratcheting while a bot is priced out** — so it bids the instant its mining income clears the bar, reading as a bot that has been waiting for its chance — but that ratcheting number is no longer displayed while it cannot act.
 
 **Bot treasury sustainability (ND.10e, 2026-07-23).** Being priced out is by design, but the bots were reaching it far faster than their mining income could refill them, so four economy constants changed together: the **opening bid became price-anchored** (worth `$0.10`, capped `1 BTC` — so an auction can no longer open for pocket change in the sub-$0.10 era *or* cost a fortune later; judged at each bid's own block timestamp, keeping the replayed ledger deterministic), the **raise band halved to 5–10%**, every bot gained a **BTC reserve guard** (withdraw from all auctions at ≤ 200 BTC, resume at ≥ 300 — the fourth exclusion, `reserve`, which outranks the per-pool rules), and **dividend auto-claims are batched at 10× the network fee**. That last one came out of the audit the change requested: the bots' auto-claims were working correctly (555 claims across all four bots, SC leg included, every claimable drained), but firing the instant the accrual cleared the fee meant the smallest payments netted `0.00039` BTC against a `0.01` fee — **96% of the dividend burned**, and since the fee is paid out of the dividend, straight off the bots' income. All five thresholds are explicit placeholders; the variable-reserve policy that should replace them (BTC price, SC position, mining income, dividend inflow, per-bot personality) is recorded in `PRIVATE_ROADMAP.md` → *Casino-Bot Treasury Policy*, to be re-tuned only once hardware progression (P5) and maturing dividend inflow change the arithmetic.
@@ -2439,6 +2483,42 @@ ND.8b.1 gave the 40 auction non-miners real historical company identities, but o
 **Two regressions the rename would otherwise have caused, both anticipated and fixed:** `GetNodeStatusLines` now returns `(nodeId, line)` pairs, because BlockExplorer's ⛏ mining-rate decorator used to recover the id by re-parsing the line's own prefix — renaming the prefix would have silently stopped the marker appearing. And BlockExplorer keeps `_selectorNodeIds` parallel to its option items, because the transaction/address/block lookup handlers fed `GetItemText(...)` straight into calls that resolve real nodes by id. **Both are the same mistake in two shapes: recovering data from formatted display text.** When a label's text becomes translatable, prettified, or renamed, every such read breaks silently — carry the id as data.
 
 Full decision log: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.8 (D-ND10g.1…3).
+
+---
+
+### 22.18 — An in-memory signal must not read "absent" as "just now" (Step 14 ND.10j, 2026-07-28)
+
+The stuck-bidder escalation (§22.10.1) is deliberately **not persisted**: `_stuckBidderSignatures` is bidding bookkeeping, not world state, and D-ND10e.3 filed a restart wiping it under "harmless and self-correcting", following `_lastMinedByNodeId`. That judgement was right about the *storage* decision and wrong about the *default*.
+
+Its single writer is a per-block sweep. So an absent key does not mean "this bot just became stuck" — it means **"this process has never looked at this pair"**, which is true of every pair after a restart, and of *every* pair before a session's first mined block. Reading absent as "now" gave every stuck bidder `base × 1`. A live BitInstant audit caught it four in-game days from that auction's close: bot_1, a lone tier-5 occupant stuck since block 957, showed and rolled the flat urgency **13%** instead of its true **64%**. With roughly two blocks left in the window there was no way back, and the auction would have resolved on its leader unopposed — the exact stagnation the escalation exists to prevent. The reset is harmless only where nothing is *counting* the blocks; the escalation counts them, and it is the mechanism of last resort in a closing window.
+
+**The rule this yields:** when a value is derived from "how long has X been true", an absent record is a *question*, not an answer. Either persist it, or **derive it** — never let it silently mean zero.
+
+Here the derivation is free, because the chain already knows. A tracked donation ranked *below* a bot cannot have changed that bot's tier, so the bot has held its tier since **the most recent donation ranked at or above it** — its own slot (the block it took the tier) or a later raise that pushed it down. `TrackedDonation.TimestampMs` is a confirming block's timestamp, so it maps straight back to a block index. A *first sight* seeds from that; a key that is **present** with a changed signature still stamps the current block, because that is an exact edge this process observed and must outrank an estimate. One case stays out of reach — an eviction of the bot's *other* slot, which drops it to single-slot without disturbing anything above it, is invisible once the evicted donation is gone. That is the case that forced the in-memory signal to exist in the first place (ND.10a); it is caught exactly while the process runs, and pre-restart it merely over-estimates a long-standing lone occupant, which is much closer to the truth than resetting it to zero.
+
+**The same cold start, one axis over.** `_botsRestingOnReserve` (ND.10e) is written by the same sweep, so before the first block a resting bot advertised a percentage — the §39.16 rule-6 violation ND.10d closed for "priced out", reappearing through a different door. The hysteresis now lives in one predicate that applies it to the **live balance** rather than reading the set, and the sweep is that predicate's write-back. **Generalising: any in-memory cache a per-block sweep owns has a window at process start where it is empty and lying. If a reader can predict the sweep cheaply, it must.**
+
+**And the declines had to become readable.** ND.6b's premise is that declines are the calibration signal, but `rolledProbabilityPercent` was written only after a pick, so every `roll-declined` row logged a bare `0` — which is why this defect needed a chain replay to find rather than a trace read. The new `poolRolls` column records what *every* biddable pool rolled and which hit, making both the escalation and the tie-break observable. It immediately exposed a second defect: an unparticipated pool always hits (`r = 1.0`), so each newly introduced company halved an escalated re-bid's chance that block. That became **ND.10l**, which replaced the uniform tie-break with a weighted one — see §22.14's "The weighted tie-break". Worth noting how it was found: the telemetry added to explain *one* defect surfaced a second, unrelated one within a single block's rows. **Instrumenting a mechanism tends to be worth more than the bug that prompted it.**
+
+Display-only for the reserve label, behavioral for the escalation; **no persisted field, no `WorldFormatVersion` bump, no wipe** — chosen so a running playtest survives the fix. Full decision log and the deferred tie-break options: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.11 (D-ND10j.1…4).
+
+---
+
+### 22.19 — A rule written for two parties has a same-party case (Step 14 ND.10k, 2026-07-28)
+
+ND.8d.6 stopped a leader from bidding against itself. D-ND4b.11 decided how two bidders racing in the **same block** resolve: they are judged against the same starting leader, never against each other in sequence. Both are correct. Put together they left a hole neither owner would have looked for — because the self-raise test reads the leader *as of the start of the group*, **two bids from the same party in one block are both "not the leader"**, and both count.
+
+That is how one participant came to hold tiers **1 and 2** of BitInstant's pool: a 10 BTC bid sat unconfirmed in the mempool (invisible to the ledger, which is a pure chain replay — Pattern 2), the player sent another believing the first had failed, and one block confirmed both.
+
+It matters because the tracked pool is not just a leaderboard — it is the **stock mint**. Two slots for the same total BTC means two entries in the 5.2%-halving slot-bonus ladder (D-ND8.15) and one fewer NST seat for anybody else, so **splitting a bid strictly beats making it once**. Bots can reach it too: D-ND6.9's affordability cascade deliberately leaves a declining bot un-marked, so one bot can be drawn twice in a block.
+
+**The rule:** within a block, a donor participates with its **highest** bid only; the rest are ignored exactly as a leader self-raise is — no lead, no window reset, no slot, no stock, and (D-ND10k.2) **no refund**. Highest rather than first keeps it consistent with D-ND4b.11's own same-block resolution and means a small accidental send cannot knock out a large deliberate one. The refund was considered and declined: D-ND8d.7 refunds a post-close bid because it never had a chance to participate, whereas an ignored same-block bid is a duplicate of one that *did*.
+
+**Two general lessons.** First: **when two rules each own part of a state machine, the gap is the case neither one names.** ND.8d.6 says "not the leader"; D-ND4b.11 says "same starting leader"; nobody wrote "and the same donor twice". Worth asking, of any pair of interacting rules, what the *conjunction* permits — the answer is rarely in either comment.
+
+Second, the UX half: **the mempool is a state the player cannot see, and the game never said so.** The ledger, every panel and every warning are chain-derived, so an unconfirmed bid exists nowhere on screen — which made re-sending the rational move. The fix is a fourth non-blocking wallet warning that reads `PendingTransactions` **directly** rather than the ledger, precisely because the ledger structurally cannot see it. Generalising: where a system's read model is a replay, any pending-but-uncommitted action needs its own explicit surface, or the player will act as though it never happened.
+
+The ledger holds no persisted state, so the rule applies to history already on chain (consistent with D-ND4b.12 — only a *win* is permanent). Full decision log: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.12 (D-ND10k.1…3).
 
 ---
 
@@ -4035,3 +4115,584 @@ Two implementation notes for whoever migrates one of these:
 **Goal, tracked in `Documentation/PRIVATE_ROADMAP.md` §6:** before Basic Mode v0.1 is considered complete, run a dedicated audit pass over every `_Process` override in the project against the §38.1 test, and migrate what's feasible from the §38.5 backlog to event-driven design. This is explicitly **not** a blocker on other Basic Mode work — it is a scheduled cleanup pass, the same category as the T1–T3 tech-debt tasks in `PRIVATE_ROADMAP.md` §8 — but it must happen before v0.1 is called done, both for the runtime cost (fifteen-plus scenes each doing unconditional rebuild work on a timer compounds as more scenes and more session length accumulate) and because every new system built the polling way from here on adds to the very backlog this chapter exists to eventually clear.
 
 **Standing rule for all new work, effective immediately:** before adding a new `_Process` override anywhere in this project, apply the §38.1 test first. If an equivalent event already exists (§38.4), subscribe to it instead of polling. If the state change is genuinely a new discrete event with no owner yet, add the event to whichever service owns that state rather than reaching for a timer in the consumer.
+
+### 38.7 — The inverse failure: a correct event, fired far too often, driving expensive work (R3, 2026-07-28)
+
+Everything above is about *polling where an event would do*. The swap desk hit the mirror-image fault, and it cost more than any poll in §38.5: **the subscription was correct, the event was correct, and the handler was catastrophically expensive at that event's real frequency.**
+
+`CasinoCoinSwapService` (an **autoload** — always alive, in every scene) subscribed to `CasinoScBalanceService.BalanceChanged` and ran the full `RecomputeAvailability` on it. That handler is a **chain-side** recompute: `AggregateSpendable` walks the casino's entire address book, and `GetCasinoBtcSettlement` re-derives every undistributed pool event against the UTXO set. But since ND.8f made all five clients casino players, `ApplyBetResult` fires `BalanceChanged` **on every settled bet — up to ~20 per frame**. An SC balance movement cannot change one single chain-side figure, so essentially all of that work was pure waste, and it was the dominant term in the simulation's frame time.
+
+**How it hid, and how it surfaced.** It did not present as a performance bug at all: R2-C1's `SimulationThrottle` (Ch. 26 / `btc-pools-hardware-plan.md` §R2) correctly converts an engine that cannot keep up into a *slower clock* rather than a corrupted simulation. So the only symptom was the player reporting that raising the DEV time scale to 9000X "advances time much more slowly than it used to" — a complaint about the **clock**, whose actual cause was a swap-desk subscription. The proof was already being written to disk: `difficulty_trace.csv`'s `simSecOffered`/`simSecConsumed` columns read a flat **1/6** across hundreds of blocks, i.e. the bet engine retained exactly its `MaxBacklogSeconds = 2.0` per frame and dropped the rest, which pins the frame time at `2.0 / (offeredPerFrame / delta)` — ~133 ms.
+
+Three lessons, all of which generalise:
+
+1. **Frequency is part of a subscription's contract.** Before subscribing an always-alive autoload to an event, ask what the event's *real* rate is under load — not what it was when you wired it. `BalanceChanged` was a reasonable, low-rate event when only the player bet; ND.8f multiplied its rate by five and nothing re-examined its subscribers.
+2. **Coalesce at the consumer when the trigger cannot move the value.** The fix keeps `BlockAccepted` / `MarketDayChanged` **immediate** (they genuinely move the chain-side figures, and fire once per block / once per in-game day) and routes `BalanceChanged` through a dirty flag drained at most every `AvailabilityCoalesceSeconds` (0.25 s) in `_Process`. That is §38.3's documented hybrid used deliberately: per-frame cost is one `bool` test, and the real work sits behind the edge.
+3. **A displayed throttle is a *measurement*, not a diagnosis.** R2-C1 did its job perfectly — it made the shortfall honest and visible instead of silently stretching in-game block times. It does not say *why* the engine is short. When `simSecConsumed / simSecOffered` sits below 1, the next question is always "what is eating the frame", never "raise the caps": raising `MaxBacklogSeconds` / `MaxBetsPerFrame` only hands a saturated frame more work, and total throughput does not move.
+
+A second, independent fix shipped alongside it and is worth stating on its own, because it helps every wallet panel and every bot affordability check too: **`NetworkRoot.AggregateSpendable` now makes ONE pass over the UTXO set for the node's whole owned address set**, instead of calling `GetAddressSpendableBalance` once per address — each of which walked the *entire* UTXO set and rebuilt the pending-spent outpoint set. That is `O(addresses × utxos)` collapsed to `O(utxos)`, with an identical result by construction (an outpoint has exactly one address, so no double counting is possible). The casino, whose change rotation gives it the largest address book in the world, was the worst case and also the one the swap desk asked for on every bet.
+
+---
+
+## Chapter 39 — The Central Bank (FED): The Two-Layer Debt Architecture (Step 15 P15.1)
+
+**Status**: Implemented 2026-07-26 (Step 15 phase P15.1, subphases a–e), on branch `bank-companies-sc-provisioning`. Design locked in `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` (`D-15.1`, `D-15.3`, `D-15.5`, `D-15.10`, `D-15.16`, `D-15.17`, `D-15.23`). This chapter documents what P15.1 built; the bank companies that become the FED's other clients arrive at P15.2–P15.4.
+
+### 39.1 — What the FED is, and what it deliberately is not
+
+Before Step 15 the casino borrowed SC from an **abstract, off-screen "bank"**: `CasinoScBalanceService` incremented its own `LoanCount`/`TotalLoaned` counters and appended to its own `LoanHistory`, and mirrored each draw into `ScMonetaryLedgerService` as `"casino"` debt. Nobody was on the other side of the transaction. P15.1 makes that counterparty an explicit in-world entity — `CentralBankService` (autoload #19) — with its own persistence (`user://central_bank_state.json`), its own DEV scene (Main Menu → *Central Bank [DEV]*, D-15.16) and per-client accounts.
+
+**What it deliberately is NOT, in plan15 (D-15.1):** it has **no interest rate** and **no credit limit**. Every `DrawLoan` succeeds, exactly as the casino's auto-loan always has. The fed-funds-rate historical replay and the per-client credit-capacity limits are ND.8e's job, one layer *above* the banks; putting them here would have coupled the entity to the policy. Unlimited zero-rate lending is also period-accurate for the ZIRP 2009–2015 window the game spends most of its time in.
+
+**Its clients:** the casino today; the four CB1 bank companies from P15.2 (keyed `bank:<companyNodeId>` via `CentralBankService.BankClientId`). The casino is the sole entity exempt from dissolution (D-15.17) — its credit line never closes.
+
+### 39.2 — The two layers, and why they were NOT merged (Fork A, D-15.23)
+
+The obvious instinct on seeing "the casino stores its debt AND the monetary ledger stores its debt" is to collapse them into one store. The design deliberately collapses only *half* of that:
+
+| Layer | Owner | Holds | Question it answers |
+|---|---|---|---|
+| **Entity / relationship** | `CentralBankService` | Per-client accounts: `OutstandingDebt`, `TotalDrawn`, `TotalRepaid`, `DrawCount`, `RepayCount`, and a capped per-client `History` of draws + repayments | *Who owes the FED what, and how did they get there?* |
+| **Macro accounting** | `ScMonetaryLedgerService` | The mint/burn event log, the genesis grants, `_debtByBorrower`, and the standing invariant `circulation = grants + debt` | *How much SC exists in the world, and why?* |
+
+**Fork A (adopted):** the FED becomes the authoritative *per-client* store, the casino's private copy is deleted, and the ledger keeps its macro projection — synced **for free**, because the FED's write API calls the ledger's existing hooks. `DrawLoan` → `RegisterLoanDraw` (mint); `Repay` → `RegisterBurn` (burn). This is the identical lockstep that already kept `_debtByBorrower["casino"]` equal to `casino.TotalLoaned`, just moved one layer out.
+
+**Fork B (rejected, deferred as optional cleanup):** retire `_debtByBorrower` entirely and have the ledger derive its debt total from the FED. Genuinely *one* debt store — but it refactors the ledger's checkpoint DTO and its reconciliation path, both of which are audited invariant machinery, for a duplication that Fork A already removes at the level that mattered (the casino's copy). Not scheduled.
+
+The two responsibilities are genuinely different questions, and the FED will grow relationship-shaped features the ledger has no business holding (custodial seized wallets at P15.5c, per-client collateral at P15.2c). Keeping them apart is the point, not a compromise.
+
+### 39.3 — `RegisterBurn` finally has a caller
+
+`ScMonetaryLedgerService.RegisterBurn` shipped at ND.8c **armed and caller-less**, with a comment saying it was waiting for the Central Bank subphase. `CentralBankService.Repay` is that caller. A repayment clamps to what the client actually owes, decrements `OutstandingDebt`, appends a `"repay"` record, and burns the SC out of existence — Option A of the ND.8c fiat-debt ladder (repayment destroys SC; Option B fractional-reserve stays post-Basic-Mode, Option C inflation is rejected forever since the 1:1 USD peg is canon).
+
+Nothing in P15.1 repays: the casino never does, by design (D-15.17). The path exists so the invariant `circulation = grants + debt` is provably intact across a draw→repay pair *before* P15.4 makes bank quarterly repayments the real, high-volume caller. The FED scene surfaces this directly — it prints the invariant and an explicit **FED/ledger debt in sync ✓ / OUT OF SYNC ✗** marker, so drift between the two layers is visible rather than silent.
+
+**One subtlety worth stating**, because it is the first place the two figures can legitimately differ: `TotalDrawn` is cumulative and never decreases; `OutstandingDebt` decreases on repayment. The casino's `TotalLoaned` shim maps to **`TotalDrawn`**, deliberately — `CumulativeProfitSinceLoan = TotalSc − TotalLoaned` means "ahead of every loan ever taken," and mapping it to outstanding debt would silently redefine the casino's P/L metric the moment anyone repays. The ledger's reconcile, by contrast, compares against **`OutstandingDebt`**, because that is what "debt" means in the monetary invariant.
+
+### 39.4 — The casino as a read-through client (P15.1c)
+
+`CasinoScBalanceService` keeps no loan state of its own. `LoanCount`, `TotalLoaned` and `LoanHistory` are now **read-through accessors** over its FED account, and `OutstandingFedDebt` is new. Its three draw sites (the bankruptcy dose recharge in `TryAutoRecharge`, the dev `TriggerManualLoan`, and the provisional company-provisioning path `TryPayCompanyProvisionSc`) all funnel through one private `DrawFedLoan` — preserving ND.8c's "one hook covers every draw site" property, one layer further out.
+
+**A load-order note that matters when adding future clients:** `CentralBankService` registers *after* `CasinoScBalanceService` in `project.godot` (it must sit between `ScMonetaryLedgerService` and `BlockSessionCheckpointService`, so it is in the tree before the checkpoint restore/reset runs — the `PlayerBankAccountService`/`CasinoCoinSwapService` precedent). So the casino **cannot** resolve the FED in `_Ready`; it resolves lazily on first use and null-guards. That is also why the casino's `_Ready` print no longer reports loan figures — they would read 0 at that instant, which would look like data loss and isn't.
+
+### 39.5 — Persistence, checkpoint and the version bump (P15.1d)
+
+The FED answers all three of CLAUDE.md's mandatory questions for a new persisted player-facing service:
+
+1. **Checkpoint restore (post-block):** `CaptureCheckpointState()` / `RestoreFromCheckpoint(state)` on the `BlockSessionCheckpointService` snapshot. **Ordering is load-bearing** — the FED restores *before* the casino (which reads its loan figures through the FED) and *before* the monetary ledger (whose reconcile and legacy live-state init both read the FED's casino account).
+2. **Pre-genesis reset:** `ResetToPreGenesisDefaults()` → no accounts at all. It runs *before* the casino's reset, which no longer clears the loan counters that moved here.
+3. **World-reset delete list:** `central_bank_state.json` was added to `NetworkRoot.ResetWorldIfIncompatible` **with the feature** — the TL.3 maintenance rule.
+
+**`WorldFormatVersion` 3 → 4 (D-15.10).** The casino's loan fields leave both `casino_sc_balance_state.json` and the checkpoint DTO. Rather than write a migration for a DEV-era save, world-defining banking semantics ride the same clean-reset mechanism every previous bump used. **Every later plan15 file simply joins the delete list — no further bump for the rest of the plan.**
+
+**Standing project rule, restated here because it governs every phase of this plan:** persisted-state changes are resolved by **bumping the version and wiping `user://`**, never by writing migration code and never by pausing to ask. The developer does not keep long-running playtests alive across feature work, so an old world has no value to preserve and migration code is pure cost. The only reason to *avoid* a bump is when the affected value is genuinely **derivable** — re-deriving a bank's locked category from the roster (§39.7) is a simplification, not a migration.
+
+### 39.6 — The FED DEV scene (P15.1e)
+
+`Screens/CentralBank/` — one section per client (outstanding debt, total drawn/repaid with counts, and the newest 60 movements colour-coded orange=draw / green=repay), plus system totals and the invariant line from §39.3. Pure display: it never draws, repays or mutates anything.
+
+Two conventions it follows deliberately:
+
+- **Ch. 29 layout**, read before building it: bounded chain `MarginContainer → VBoxContainer → ScrollContainer(size_flags_vertical = 3)`, Back button in a **fixed footer outside the scroll** (§29.10), 50 px bottom margin clearing the off-screen band (§29.11), rows as plain `Label`s (Pattern A — they report honest minimum heights and default to `mouse_filter = IGNORE`, so the wheel reaches the scroll; the one bare `Control` spacer sets `IGNORE` explicitly, since `Control` defaults to `STOP`).
+- **Ch. 38 event discipline**, since this is new work: it subscribes to `CentralBankChanged` + `LedgerChanged` rather than polling. Because a casino recharge streak can fire many draws per second, the events set a **dirty flag** coalesced at 0.5 s instead of rebuilding per event, with a slow 5 s fallback as a safety net. It is deliberately **not** a new entry in the §38.5 migration backlog.
+
+The FED's per-client history is capped at its newest 500 records (totals stay exact independently of the cap — the `ScMonetaryLedgerService.MaxEventHistory` precedent), and both the FED scene and `CasinoGamblingFinances` report any surplus as *"(+N older)"* so a count and its list can never look inconsistent.
+
+### 39.7 — The four bank companies: typed, categorised, locked (P15.2)
+
+P15.2 makes the four CB1 roster banks structurally real without changing where a single SC flows — conversions still go to the casino until P15.3.
+
+**The Official→Black gradient (P15.2a, D-15.20/App. A).** The `market_category` column of three bank rows changed: First Satoshi Savings stays `official`, Digital Reserve Trust → `light_grey`, Ledger & Sons → `dark_grey`, Harbor Coin Bank → `black`. This is not flavour — it is the **distance axis** the §5.1 selection algorithm measures on. A darker bank consequently inherits §12.4.3's higher default dividend rate *and* (from P15.6) higher seizure risk: a shady bank that pays well but can be busted. That is the intended trade, confirmed at design lock.
+
+**Identifying a bank: a closed id set, not a CSV column.** `CompanyRoster.BankCompanyIds` (+ `IsBank`/`Banks`) holds the four ids. plan15 explicitly adds behaviour to existing companies and creates none (D-15.6), so the set is closed by design; an `is_bank` column would have touched all 44 rows to encode four `true`s, and would let a 45th row silently become a bank. Every caller goes through `IsBank`/`Banks`, so promoting it to a column later changes nothing else. The loader warns if the set and the CSV ever disagree.
+
+**Locking the category (P15.2b, D-15.12).** Banks are the **only** companies exempt from the ±1 market-shift vote. A drifting bank would silently re-shape which companies bank where; in exchange banks gain the seized-wallet holding feature (P15.5c). Only the *application* is blocked — the supermajority is still computed, and the governance trace records `shift=±1;shift_refused=bank_locked`, so a refused attempt reads as "the holders asked and were denied" rather than "nobody asked."
+
+**A locked category is a DERIVED value — so it self-heals on restore.** Because a bank's category can never move by vote, it is always exactly its roster default, which means re-deriving it from the roster on every snapshot restore is *always* correct. `ApplyStateFromSnapshot` does exactly that. This is what let P15.2a reassign three categories **without a second `WorldFormatVersion` bump**: a bank that founded under the old roster is corrected on the next load instead of stranding a stale category. The general rule worth carrying forward: *if a persisted field is guaranteed derivable from static data, re-derive it on restore rather than bumping the world format to re-seed it.*
+
+**The layer-1 balance sheet (P15.2c, D-15.4/D-15.5).** `NetworkRoot._bankState` maps a bank's `NonMinerNodeId` → `BankBalanceSheet { CollateralBtc, Clients }`, where each `BankClientAccount` carries `{ BtcBought, ScPaid, ProvisionCount, History }`. It rides `BlockchainStateSnapshot`, so checkpoint coverage, delete-list membership and the pre-genesis path are all inherited (the ND.8g argument) — a bank can only have a balance sheet once founded, i.e. 2012-09 at the earliest, so it needs no path of its own. `CollateralBtc` is the **quarantined** account of §3.2: BTC bought from financed companies, deliberately excluded from the bank's own CB1 auto-convert and sold extra-lazily only on a payment day (P15.4). Two BTC streams, one wallet, two books. Per-client history caps at 200 with exact totals — same shape as the FED's and the ledger's.
+
+### 39.8 — `SelectFinanciers`: building the dormant tiers on purpose (P15.2d, D-15.20)
+
+`SelectFinanciers(companyNodeId, amountSc)` returns an ordered list of `FinancierChoice(BankNodeId, AmountSc, Tier)` summing to the requested amount, with a **null `BankNodeId` meaning the casino fallback**.
+
+| Tier | Rule |
+|---|---|
+| 1 `nearest` | The founded bank nearest the company's *current* category by `\|catCompany − catBank\|`; ties break **toward Official** (A1 — "a business reaches for the cleaner bank first"), then toward the earlier-founded bank so the order is total |
+| 2 `funder` | Nearest bank that can fund the **whole** amount alone |
+| 3 `split` | Spread across banks: nearest-category first, most capacity first within an equal preference |
+| — `casino` | No founded bank at all (every date before 2012-09, or a category with no founded bank) — D-15.20 (c) |
+
+**Tiers 2 and 3 are unreachable today, and that is the decision (B1).** `BankFundingCapacitySc` returns `decimal.MaxValue`, because a bank funds every provision with an unlimited FED auto-loan (D-15.1 defers all credit limits to ND.8e), so tier 1 always wins. They were still built because they are *real, compiled, reviewed* code paths that light up the day limits ship — turning the eventual ND.8e work into a change to **one method** rather than a rewrite of the selection logic. `BankFundingCapacitySc` is deliberately `private`: nothing outside selection should read a capacity that is knowingly fake.
+
+Selection is evaluated **fresh at every conversion**, because a company's category can still shift ±1 by vote while a bank's cannot — which is precisely what keeps the axis stable underneath a moving company.
+
+**Verifying a phase that changes no behaviour.** P15.2 deliberately routes nothing new, which would leave it unverifiable in-game — so the FED scene gained a read-only **Banking layer** block: the founded banks (locked category, FED debt, `CollateralBtc`, client count) and a **financier-selection preview** row per founded company showing which counterparty it *would* route to and at which tier. It probes with a nominal 1 SC, honest only because capacity is currently infinite — a note to revisit when ND.8e makes the amount matter. This is an early slice of P15.7a, pulled forward because a phase you cannot observe is a phase you cannot sign off.
+
+### 39.9 — The credit loop closes: conversions route through banks (P15.3)
+
+`TryConvertCompanyReserves` keeps every calibration floor and its clean-rate pricing (D-ND8.24); what changed is **who is on the other side**. It now asks `SelectFinanciers` and dispatches to one of two paths:
+
+- **`TryConvertViaCasino`** — byte-for-byte the old ND.8b.6 behaviour, surviving *only* as the pre-first-bank fallback (D-15.20 (c)). SC leaves the casino's Main Balance (auto-loan when short, so the draw still lands on the casino's FED account), BTC comes in, memo `CONVERSION`.
+- **`TryConvertViaBank`** — the reform. The bank draws the SC from the FED (`DrawLoan("bank:<id>", …, "provision")`, minting it as that bank's debt), the company's `ScReserve` is credited, and the BTC lands in the bank's wallet as quarantined `CollateralBtc`, memo `COLLATERAL`.
+
+**What the bank pointedly does NOT do is touch its own `ScReserve`.** The borrowed SC passes straight through to the company, leaving the bank holding a FED debt on one side and collateral on the other. That spread — carried until the quarterly repayment (P15.4d) — *is* the economic point of the whole reform (§1): the bank sits long BTC on borrowed money.
+
+**Unwinding.** Both paths put the SC leg first and unwind it if the broadcast fails, mirroring the SW.4 swap-desk pattern. The bank's unwind is the more interesting one: it **repays the loan it just drew**, which burns the SC back out of existence and leaves `circulation = grants + debt` exactly as it was. The client book is written only after *both* legs succeed, so it can never record a half-executed swap.
+
+**A bank finances peers, never itself.** `SelectFinanciers` filters the requesting company out of the candidate list, so a bank converting its own CB1 business inflows routes to another founded bank — or, while it is the only one (2012-09 → 2013-06), to the casino. Its own inflows convert normally; only the collateral stream is special.
+
+**Tier 3 is where the honesty matters.** A split across banks would need the BTC leg split into several sends with their own fees, which is *not* built — it is unreachable while capacity is infinite. Rather than silently executing a half-split, the code detects a multi-financier answer, warns, and funds the whole conversion from the casino. Together with `BankFundingCapacitySc`, that is the complete list of what ND.8e must touch to switch real credit limits on: two places, both flagged in comments.
+
+#### 39.9.1 — The quarantine, and the three places collateral must not leak
+
+`CollateralBtc` and the bank's own money live in **one wallet but two books**, so every computation that means "the company's own money" has to net the collateral out. The split is expressed as one helper pair: `CompanyTreasuryBtc` (raw on-chain spendable) and **`CompanyOwnBtc` = treasury − quarantined collateral** (which returns the plain treasury for every non-bank, since their collateral is 0). `CompanyOwnBtc` replaced `CompanyTreasuryBtc` at all three governance sites:
+
+1. **The reserve-mix conversion base** — otherwise a bank would try to sell the very collateral backing its debt to top up its own SC reserve.
+2. **The quarterly dividend base** — otherwise shareholders would be paid out of the collateral, draining the asset while the FED debt stayed put.
+3. **The >30%-inflow vote baseline** — see below.
+
+The fourth leak is not a treasury read at all: **`AccumulateCompanyInflows`**, which measures new BTC arriving at a company address to trigger the D-ND8.18 special vote. A collateral arrival is not business inflow — it is the asset leg of a loan — and counting it would fire spurious special votes at a bank. Where the player holds NST in that bank, **every one of those pauses the game**. The fix rides the existing display-memo channel: the provisioning send is tagged `COLLATERAL` at broadcast and skipped here. That makes the memo *load-bearing* rather than cosmetic on this one tx type — worth remembering before treating `InputDataText` as purely a display concern.
+
+**Why this landed in P15.3 rather than P15.4a as planned.** Without the quarantine, a bank's own conversion would sell collateral BTC while `_bankState.CollateralBtc` still claimed it existed — a **persisted figure diverging from reality**, which P15.4d would then try to sell. That is a different category of problem from an unfinished feature, so the ~3-line netting shipped with the mechanism that creates the collateral.
+
+**Telemetry.** `user://logs/bank_credit_trace.csv` (one row per provision now; repayments, shortfalls, dissolutions and seizures as those phases land) also shipped early, for the same reason: it is the only observability the credit loop has before the P15.7 readouts, and the P15.8 calibration run reads it. Delete-listed with the feature, per the TL.3 rule.
+
+### 39.10 — Greed: a third governance axis (P15.4b/c)
+
+`BotGovernancePreference` gains **`GreedPreference`** ∈ `not_so_greedy · almost_greedy · greedy · extremely_greedy`, drawn per world as its own shuffled permutation alongside the D-ND8.13/26 currency-band and market-category draws — so with four bots all four stances are always represented exactly once, and which bot holds which changes per world.
+
+It answers one question and one only: **money in shareholders' pockets vs. money kept in the company.** It therefore biases the quarterly payout-rate ballot (all companies, P15.4c) and the P15.4e shortfall split — and pointedly **not** the reserve-band (currency-mix) vote, which is a different axis entirely (D-15.13).
+
+The payout ladder is written as a multiplier on the category's default rate — `0.5 / 1.0 / 1.5 / 2.0` — chosen to span exactly the ballot's existing `[0, 2× default]` clamp. Note that `almost_greedy` sits at `1.0`: the pre-greed behaviour ("bots vote the standard") is now *one of four stances* rather than the only one, which is what makes this change additive rather than a re-tuning of existing balance.
+
+**The field defaults to `""`, not to a stance — deliberately.** Greed arrived after the other two axes, and `EnsureBotGovernancePreferences` early-returns once every bot has a preference record, so a world whose preferences were already drawn would never re-draw and would sit on the neutral stance forever, **silently disabling the whole axis**. An empty default makes "absent" distinguishable from "genuinely drew neutral", which is what lets `BackfillGreedPreferences` fill *only* the missing slots while leaving the already-meaningful band/market choices untouched. Readers normalize empty → `almost_greedy`, so an un-backfilled world behaves exactly as it did before.
+
+To be clear about *why* this is worth doing, since it is **not** about dodging a version bump — this project's standing rule is the opposite (see §39.5: wiping `user://` and re-testing clean is the norm, and a bump is always the cheap answer to a persistence change). The sentinel earns its place because the failure mode here is **silent**: a stance-valued default produces a world that loads fine, plays fine, and quietly has one of its three governance axes pinned flat. A bump fixes that only if someone notices it is needed. **The general shape worth copying: when adding a field to an existing per-entity record whose population code is guarded by a "already populated?" check, default to a sentinel and backfill it — so a stale record announces itself instead of masquerading as a valid one.**
+
+### 39.11 — Extra-lazy repayment and the shortfall vote (P15.4d/e)
+
+**The payment day.** On each quarter end — after the closing quarter's dividends settle, before the new quarterly vote opens — a bank owes `BankQuarterlyRepaymentFraction` (placeholder **10%**, a P15.8 knob) of its *outstanding* FED principal. It sells **just enough** collateral to raise exactly that, repays, and the SC is **burned**. Nothing is sold between payment days: that is the "lazy," and it is precisely what leaves the bank long BTC in the interim (§1).
+
+**The fee comes out of the collateral pool**, not the bank's own money. Coin selection cannot tell the two streams apart, so `CollateralBtc` is decremented by `sold + fee` — the book stays conservative and can never claim BTC the wallet has already spent, which is the same §39.9.1 rule that pulled the quarantine forward into P15.3.
+
+#### 39.11.1 — Whose BTC is being sold, and who buys it
+
+This is worth spelling out because the word "collateral" invites two wrong readings.
+
+**The collateral belongs to the BANK, outright.** When a company sells BTC to a bank (§39.9), that is a **clean spot sale** — D-15.11 — and the transaction is *finished the moment it settles*. The company keeps the SC and owes nothing, ever. The BTC is now the bank's property. It is called "collateral" only because the bank earmarks it against the FED loan it took to fund that purchase; it is not posted to anyone, not held in escrow, and not encumbered by any counterparty.
+
+**The only debt anywhere in this system is bank → FED.** Companies carry none (spot sale). The casino carries its own, separately, from its own borrowing. So when a bank sells collateral to service its debt, no other company's obligations are touched or involved in any way — the companies it once financed are entirely out of the picture.
+
+**Why a buyer has to exist at all.** BTC lives on-chain: it cannot be "sold to the market" in the abstract, because every satoshi must end up at a real address. So the design has to name a counterparty. That counterparty is the **casino**, at the day's clean rate (no desk fee — the D-ND8.24 model the company conversions already use). It is the designated SC liquidity backstop: the only party with an unlimited credit line (D-15.17), and already the SC side of both the swap desk and the pre-first-bank conversion path.
+
+**The side effect worth watching (a P15.8 observation).** This is **not always a net burn**:
+
+- If the casino pays out of SC it already holds, circulation genuinely **falls** by the repayment amount — the intended Option-A behaviour.
+- If the casino must draw a FED auto-loan to afford the purchase, the same SC is minted as *casino* debt and immediately burned as *bank* debt. Total circulation is unchanged; the debt has simply **moved** from the bank to the casino, and the BTC moved with it.
+
+Both are coherent, but they mean "banks repay their debt" can quietly become "the casino absorbs it." Which one dominates over a long run is a calibration question for P15.8, and a candidate input for ND.8e's credit-capacity work.
+
+#### 39.11.2 — The shortfall, and what the two "sources" actually are
+
+If selling everything still can't raise the installment, the gap is parked on `gov.PendingShortfallSc` and a **`shortfall` vote** opens — but not immediately. It waits until no other vote is running, which in practice means *after the quarterly closes*, because the dividend it may cut has to have been finalized first. It takes precedence over the >30%-inflow special vote (an unpaid installment is the more urgent question).
+
+**The ballot is one dial**: what share of the gap comes out of shareholders' dividends vs. the company's own SC reserve. Default 50/50 (no or tied vote); bots ballot the §3.3 greed table (`not_so_greedy` 90% dividends-cut … `extremely_greedy` 10%). A greedy holder protects its own dividend and makes the company pay.
+
+**The two "sources" are not two pots.** A company has exactly **one** pot of SC — `gov.ScReserve`. There is no separate balance labelled "dividends," so the shortfall is paid out of the reserve *either way*. What the vote actually decides is whether **shareholders' claim shrinks alongside it**.
+
+Worked example. A bank owes a **1,000 SC** installment, raises **700** by selling collateral, leaving a **gap of 300**. It holds `ScReserve = 500`, and this quarter's finalized `QuarterDividendSc` is `200`:
+
+| Vote | `ScReserve` after | `QuarterDividendSc` after | Balance sheet afterwards |
+|---|---|---|---|
+| **70% dividends cut** | 500 → **200** | 200 → **0** | 200 SC free and clear — shareholders forfeited their whole claim |
+| **10% dividends cut** | 500 → **200** | 200 → **170** | 200 SC of which **170 is already owed out** — only 30 free |
+
+The same 300 SC leaves the company in both rows. The difference is what it can still operate on afterwards: **200 free vs. 30 free**. That is the real trade a greedy shareholder votes for — protect my payout now, leave the company with nothing to run on.
+
+Two consequences fall out of this shape:
+
+- **A dividends cut larger than the dividend that exists simply spills onto the reserve side.** You cannot cut 210 out of a 200 dividend; the remainder was already taken from the reserve regardless.
+- **Already-dripped SC is never clawed back.** A cut only touches what has not yet been paid — it is forward-looking, never retroactive.
+
+The shortfall vote is also the only kind that takes its own exit in `CloseCompanyVote`: it must not move the reserve mix, the market category or the payout rate as a side effect of asking a completely different question.
+
+**Insolvency.** Whatever neither source can close accumulates on `gov.UnrecoverableShortfallSc`. That flag *is* the dissolution trigger P15.5a reads (D-15.8); until it ships, the flag accumulates visibly in the trace and in the FED scene's banking layer (⚠ pending / ✗ INSOLVENT rows).
+
+#### 39.11.3 — The player's ballot, and why its control shipped early
+
+`CompanyDetails`' Board Vote panel **swaps its whole body** for the single shortfall dial when that vote kind is open, rather than adding a fourth row to the usual form.
+
+The control itself belongs to P15.7c's lending panel, but it was pulled forward into P15.4e for a concrete reason: **this vote pauses the game** for a player NST holder (D-ND8.18), and the pre-existing panel would have presented reserve / market / payout dials that the shortfall resolver *ignores*. The player would have been frozen, asked to vote, and given only controls that do nothing — worse than no control at all. Shipping a half-delivered vote for a whole phase was not worth the tidier phase boundary.
+
+`TryRegisterPlayerVote` also gained `dividendsCutPercent` as an **optional** parameter (default 50). That is a deadlock guard, not a convenience: if any caller ever opens this vote kind without the new control wired, it still registers a legal 50/50 ballot and lifts the pause, instead of leaving the game frozen with no way out.
+
+Nothing else of P15.7c was pulled forward — it still owes the rest of the bank lending panel (FED debt, `CollateralBtc` + live value, the quarter installment due, and the P15.6d FBI-investigation warning).
+
+### 39.12 — Dissolution, the Closed-Companies list and seized-wallet custody (P15.5)
+
+Dissolution applies to **every** company, banks included (D-15.17). The casino alone is exempt: it is the player's house, keeps its unlimited FED credit line, and never disappears.
+
+**The trigger that exists today** is debt default: a bank carrying `gov.UnrecoverableShortfallSc > 0` — meaning P15.4e's vote could close the gap with *neither* a full dividends cut *nor* the company's own reserves — is insolvent and dies. P15.6 adds `fbi_seizure` as the second reason (and, for non-banks, the only one — they carry no debt, D-15.19).
+
+**Dissolution is collected and applied OUTSIDE the governance loop.** `TryDissolveInsolventBanks` gathers the doomed first and kills them after, because dissolving mutates the very dictionary `TickCompanyGovernance` iterates. `TickCompanyGovernance`'s early-out also had to widen from "no live companies" to "no live companies *and* no closed ones" — otherwise the closed-company sweeps would stop running the moment the last company died.
+
+#### 39.12.1 — Liquidation is deletion, not a rule to remember
+
+On closure the company is removed from **both** `_companyFoundings` and `_companyGovernance`, leaving only a `CompanyClosure` record. That is a deliberate choice over "keep the record and mark it dead everywhere":
+
+- Removing the founding removes `Holdings`, which **is** the destruction of every holder's NST/PST. Removing the governance state removes `ClaimableByHolder`, which is the loss of everything unclaimed. D-15.15's "holders lose their tokens and the company's future payments" becomes literal — not a condition that twenty other loops each have to remember to check.
+- Every live loop (`AccumulateCompanyInflows`, the vote/dividend/conversion/repayment ticks, `IsAwaitingPlayerVote`, `HasPlayerClaimableDividends`) skips the dead company **for free**, because the entry simply is not there.
+
+What survives is what should: dividends the holder had **already claimed** are in their own wallet and are untouched. The closure record keeps a copy of what the player held at the moment of death purely so the notice can say what was lost.
+
+**The one place this leaks is display**, and it had to be handled explicitly: the BlockExplorer "Founded" list is driven by the **chain-derived auction ledger**, not by `_companyFoundings`, and a resolved auction stays `Resolved` forever (D-ND4b.12). So a dissolved company keeps appearing there with a null founding — which previously meant "founding hasn't fired yet." It now gets its own terminal row (grey, `✗`, reason + date + what the player lost, **no action button**), and `CompanyDetails` distinguishes the two cases rather than showing "not founded yet?" over a company the player watched die.
+
+**Re-founding is not a risk**, worth stating because it looks like one: `TrySettleResolvedAuctions` fires `FoundCompany` only when a status *flips* `InAuction → Resolved` on that block, diffed against the previous block's recomputed ledger. A long-closed company never flips again, so removing its founding cannot resurrect it.
+
+#### 39.12.2 — Custody: seize the wallet, don't move the coins
+
+The FED is an SC-only entity — `CentralBankService` has no node, no keys and no address. But BTC has to live *somewhere*: every satoshi must sit at a real address. So "the FED seizes the wallet" is implemented as **the coins do not move at all**:
+
+- The dead company's wallet stays on-chain exactly as it was, unspendable by anything (no code path owns a dissolved company), and keeps receiving whatever automatic inflows were already scheduled to it — the network does not know it died.
+- That state *is* D-15.18's "held with the FED, 100% as BTC, custodial, no allocation." It needs no FED address, no synthetic transfer, and no new identity file.
+- Its remaining **SC** reserve is different — SC is a plain number the FED can genuinely be repaid with, so it is applied against the debt on the way out and burned, like any repayment.
+
+**Inheritance (P15.5c, D-15.18 "O18-A").** Each block, every custodied wallet looks for a **solvent** founded bank of its **matching market category** — solvency being the meaningful qualifier: a bank carrying its own shortfall cannot be handed more to manage. When one is found the wallet is assigned to it and, from then on, `SweepClosedCompanyInflows` forwards the accumulated balance and every later arrival to that bank (memo `SEIZED`, dust-floored like every other automated send). If the holder later dies itself, the assignment is **released** and the wallet returns to FED custody, eligible again.
+
+This is why the pre-2012-09 seizures the design anticipated are handled without a special case: with no bank founded, there is simply no heir, and the coins sit exactly where they are until one exists.
+
+**What the heir receives is ordinary business inflow, not collateral.** It is a windfall the bank now owns outright; its own band/level governance decides what to do with it (D-15.12 — never force-converted to SC, never a bespoke per-deposit vote).
+
+#### 39.12.3 — The recovery tracker
+
+`CompanyClosure` carries `DebtAtClosureSc` (what the FED wrote off) against `RecoveredBtc` (everything actually delivered to an absorber since). The FED scene's Closed-Companies block values the recovery at the **live** price — never frozen at a historical day, the `AuctioningCompanyDetails`/`BTCWallet` "always live" precedent — and prints the verdict: *RECOVERED (+profit)* / *underwater* / *no loss to recover*.
+
+Recovery is stored in **BTC** and converted only for display, which is the point of the whole thread: the FED eats an SC loss and is repaid in an appreciating asset, so whether it comes out ahead is a genuine question about *when* the company died, not an accounting identity. Non-bank seizures carry no debt, so they show no tracker line (D-15.19).
+
+**Why it lives in the FED scene rather than WorldEconomy.** The phase map nominally puts the recovery tracker and the Closed-Companies list in WorldEconomy (P15.7b). They went into the FED scene instead, for two reasons: the **FED is the absorber** — these are its written-off losses and its custodied wallets, so the readout belongs beside its client accounts — and the banking-layer block was already there from P15.2. P15.7b is free to mirror or move it; nothing else reads the block.
+
+### 39.13 — The FBI investigation / seizure thread (P15.6)
+
+**The gate (D-15.14).** The FBI does not exist in-game before **14 Jun 2011** — the date Gavin Andresen presented Bitcoin to the CIA via In-Q-Tel. He did *not* meet the FBI; the CIA connection is flavour only and never mechanically involved. The date is used because it is the historically honest moment "law enforcement noticed Bitcoin," and it is routed through `TimelineConfig.Shift` like every other anchor. Note it precedes the first bank founding (2012-09) by over a year, which is exactly why P15.5's custody model had to work with no heir available (§39.12.2).
+
+**The hybrid (D-15.21).** F1's **investigation meter** decides *who is a target* — deterministic and player-legible, so keeping a company's SC lean is a real lever rather than a prayer. A **capped roll** on top decides *which block the raid actually lands*, so there is suspense without pure randomness punishing good play. Neither half alone was acceptable: a pure meter is gamey and a pure roll can nuke a company the player was managing well.
+
+#### 39.13.1 — Charter-relative tolerance (amended R3, 2026-07-28 — supersedes the throughput basis)
+
+Absolute SC ceilings go stale across a 2009–2025 span, so a company's tolerance is **relative** to something the company itself defines: `tolerance = categoryMultiplier × charterSc`, with placeholder multipliers **Official ∞ · Light-Grey 8× · Dark-Grey 3× · Black 1×**. Darker ⇒ lower: a licensed exchange sitting on a float is normal; a black-market stall sitting on the same fortune is a flag. **Official is exempt entirely** — never flagged on SC alone.
+
+`charterSc` is what the company's **own shareholders voted to hold**: `ReserveScPercent × (CompanyOwnBtc × price + ScReserve)`. The valuation basis is deliberately byte-identical to `TryConvertCompanyReserves`' own target, so the figure the FBI judges can never drift from the figure the conversion aims at (§39.16 rule 6). No market price ⇒ the company is exempt for that block rather than judged against a BTC treasury nobody can value (structurally unreachable post-founding — auctions start at Market Birth).
+
+**What this replaced, and why.** P15.6a measured the tolerance off recent SC *throughput*: `T = max(ScInflowLastQuarterSc, ScInflowCurrentQuarterSc)`, with a documented "`T = 0` is a feature — unexplained wealth" reading. That reasoning was wrong in a way that only a long playtest exposes, because **it judged a FLOW against a STOCK the design intends to be HELD**. `TryConvertCompanyReserves` stops converting the instant a company reaches its voted reserve target — that is the whole point of a target — so a perfectly healthy company reports zero inflow two quarters later, the tolerance collapses to `0.00`, `FbiOverageRatio` pins it at the overage cap, and it flags within ~13–25 blocks depending on darkness. **Every non-Official company that ever reached its target was therefore guaranteed a federal file.** A November-2011 playtest hit exactly that: three companies under investigation, all reading *"0.00 SC tolerated"*. The wealth was not unexplained; it was explained by a conversion the two-quarter window had simply forgotten. (The 2011 price crash sharpened it — a falling BTC price shrinks `totalValueSc`, which shrinks the SC target, which removes the deficit, which stops conversions entirely.)
+
+The charter basis fixes the category error rather than widening the window: a company sitting exactly at its target has overage 0 and cools off; one hoarding SC well beyond its charter still heats up; and the player's levers get *sharper*, not weaker — vote the reserve % down, or hold a lighter category, neither of which is a stale accident of when the last conversion happened.
+
+**A `0%` charter is now a REAL zero**, unlike the accidental one it replaced: it means "our charter says hold no SC" while the company holds some, which is exactly what the meter is for — and it is escapable, since dividends drain SC and the reserve % is itself votable.
+
+`ScInflowCurrentQuarterSc` / `ScInflowLastQuarterSc` are **kept and still maintained** (accurate, cheap business-activity metrics and a P15.8 calibration input) — they are simply no longer what the meter reads. Deliberately not deleted: they do not diverge from reality (§39.16 rule 1 is unaffected), and removing a persisted field would force a `WorldFormatVersion` bump and wipe a live playtest for no gain.
+
+#### 39.13.2 — The meter, the priority, and the roll
+
+The meter is sized against **quarters, not seconds**, because a block is ~16h40m of game time (≈1.5 blocks/in-game-day, ≈135 per quarter). At pressure 1 a company flags in ~200 blocks (~1.5 quarters); a badly-over black company flags in well under one. Gain is `0.5 × overage × darkness` per block (darkness = category index + 1, so light-grey 2 … black 4), and the overage ratio is capped at 4 so an absurdly over-tolerance company does not flag instantly. Falling back under tolerance **decays** the score at 1.0/block — that decay is the player's lever, and it is what makes "keep this company lean, or vote it lighter" a real strategy rather than advice.
+
+**Priority (D-15.19) is expressed as a single ordering, not a separate pass:** flagged targets sort **banks last**, everything else by how far over it is. The FBI works the small anomalies first and builds evidence before striking a big fish, so a bank can only be reached in the late game once the board is otherwise clean.
+
+**At most one raid per block**, on the single highest-priority flagged target. That falls out of the same ordering and doubles as a throttle — the thread can never clear the board in a burst.
+
+**The score itself needs a ceiling, not just its gain rate (R3).** `InvestigationOverageCap` bounds how *fast* the meter climbs; nothing bounded how *high*. Gain reaches `0.5 × 4 × 4 = 8`/block for a black company at the overage cap, against a `1.0`/block decay — an **8:1 asymmetry**, so a company held over tolerance for 200 blocks accrued ~1,600 and then needed ~1,600 blocks (over two in-game years) to cool to zero, sitting red on the FED board throughout. The decay is documented as *the player's lever*; unbounded accumulation quietly took the lever away.
+
+`InvestigationScoreCap = 2 × InvestigationFlagThreshold`, and the value is derived rather than picked: the roll is `min(2%, 0.5% × darkness × score/threshold)`, which **saturates at its 2% cap by `score = 2 × threshold` for the lightest non-exempt category** (darkness 2) and earlier for every darker one. Past that point extra score changes nothing about the risk — it is pure dead weight buying an unpayable cooldown. Capping there bounds the worst case cool-off at **200 blocks (~4.5 in-game months)** and leaves time-to-flag completely unchanged. The clamp is applied on the decay branch too, so files inflated under the retired throughput basis (§39.13.1) drop to the ceiling on their first cooling block instead of serving out a sentence for a defect — no one-off amnesty pass needed.
+
+**A raid needs a LIVE case, not just a thick file (R3).** Raid eligibility is now `score ≥ threshold` **AND** `overage > 0`. Because the score decays at only 1.0/block, a company that gets back under its tolerance otherwise stayed seizable for ~100 blocks for a condition that no longer held — the decay said "cooling off" while the roll still said "any block now". Requiring a current overage makes the decay mean what it says, turns the player's lever into an **immediate** effect instead of a 100-block wait, and keeps the file itself intact so a relapse re-arms at once rather than from zero. `GetFbiInvestigationWarning` gained the matching fourth state — *"file open but INACTIVE — back under tolerance, no raid while it stays there"* — because the line must state exactly what the tick will do (§39.16 rule 6).
+
+The roll itself is `min(2%, 0.5% × darkness × score/threshold)` per block. The cap is the "capped" half of the hybrid: even a maximally-suspicious black company gets a 2% ceiling, so a raid is a matter of when-ish, never an instant execution.
+
+#### 39.13.3 — Self-funding, and why the grant is a loan
+
+The FBI carries its own SC budget: an initial federal grant at activation, then whatever it seizes. The grant is booked as a **FED loan on client `"fbi"`** rather than conjured into existence — otherwise it would mint SC outside `circulation = grants + debt` and break the invariant the whole monetary layer rests on. It is simply never repaid, exactly like the casino's (D-15.17).
+
+**Seized SC, by contrast, is a plain transfer** and touches neither side of the invariant: the SC already existed in the company's reserve. This is why `DissolveCompany` branches on the closure reason — an FBI seizure moves the reserve to the FBI, while a debt default **burns** it against the FED loan.
+
+The seized **BTC is not moved at all**: it flows straight into P15.5's existing custody chain (§39.12.2), which is what let P15.6 add a whole second dissolution cause without touching the wallet machinery.
+
+#### 39.13.4 — Player agency (P15.6d)
+
+`GetFbiInvestigationWarning` returns a line for `CompanyDetails` stating the state (*under investigation* / *FLAGGED — a raid can land on any block* / *cooling off*), the progress toward the threshold, the SC reserve against the tolerated figure for that category, and what to do about it. It is shown to **any** viewer, not just holders — the risk is a fact about the company, not about the holding — and it returns `null` when there is genuinely nothing to say (FBI inactive, category exempt, comfortably under tolerance), so the panel never carries a permanent decorative warning.
+
+The FED scene gained a matching DEV board listing every open file **in the same order the roll picks its target**, sharing `FbiToleranceScFor`/`FbiOverageRatio` with the roll itself — §39.16 rule 6, so a displayed number cannot drift from the mechanism.
+
+**The board reports three states, not two (R3).** Its original red/orange split keyed on `score ≥ threshold` alone, which after the raid-eligibility change no longer matched what the tick would do: a row reading *"score 340/100, SC comfortably under tolerance"* rendered red and read as a live threat when it was in fact a file already closing. The colour now tests **both** halves of eligibility — red ⚑ raid-eligible right now · orange · over tolerance with the file still growing · grey · under tolerance and cooling — and the cooling row states **how many blocks remain before it disappears** (`NetworkRoot.FbiBlocksToClear`, sharing `InvestigationDecayPerBlock` with the tick). That estimate exists because *"will this red row ever go away?"* was a question the board could not answer, which is precisely the ambiguity rule 6 exists to prevent: a status colour is a claim about what the mechanism will do next, and it must be computed from the same predicate the mechanism uses.
+
+**Every number above is a P15.8 calibration placeholder**: the four tolerance multipliers, `T`'s window, the meter's gain/decay/cap, the roll's base and cap, and the initial grant.
+
+### 39.14 — Surfacing & telemetry (P15.7)
+
+P15.7 is the phase that mostly **already happened**. Four of its deliverables shipped early, each alongside the mechanism it observes, under §39.16's rule 2 ("a phase you cannot observe is a phase you cannot sign off"): the FED scene's Banking-layer block + financier preview (P15.7a, at P15.2), `bank_credit_trace.csv` (P15.7d, at P15.3), the shortfall ballot control (part of P15.7c, at P15.4e), and the Closed-Companies list + recovery tracker and the Federal-investigations board (P15.7b/c, at P15.5/P15.6).
+
+What P15.7 itself added is the remainder.
+
+**The layer-1 sub-ledger (P15.7a).** Each founded bank in the FED scene now lists the companies it financed — BTC bought, SC paid, provision count. The distinction on that page is worth keeping straight: the **client accounts** at the top are layer 0 (bank ↔ FED), and this strip is layer 1 (bank ↔ company). That is the D-15.5 two-layer model made literally visible on one screen.
+
+**The banking-layer aggregate (P15.7b), and where it deliberately does NOT go.** WorldEconomy is the *macro* monetary scene, so it took the system-wide question — total collateral value vs total FED debt, plus a per-bank strip with an under-collateralized / shortfall / insolvent flag — and a **one-line pointer** to the Central Bank scene for closures. It did **not** take a copy of the Closed-Companies list, the recovery tracker or the FBI board, even though the phase map nominally assigned them here: those belong to the FED's own page (it is the creditor, the absorber and the custodian), and duplicating them would create two places to keep in step. One source per signal — §39.16 rule 6 applied to whole panels rather than single numbers.
+
+Leverage is the honest headline for that block, and it is valued at **today's** price: banks borrow SC and sit on BTC, so "is the banking layer solvent?" is a live price question whose answer legitimately changes every day.
+
+**The bank lending panel (P15.7c).** A bank is not an ordinary company — most of its balance sheet is borrowed, and what kills it is a *date* — so a shareholder needs a picture the other panels never show: Central Bank debt (with drawn/repaid), collateral held and its live value, the **collateral-vs-debt health line** (this is the carry the whole reform exists to create: profitable while BTC rises, dangerous when it falls), the next installment and when it falls due, and the pending-shortfall / insolvent states.
+
+Every figure comes from `NetworkRoot.GetBankLendingSummary`, which computes them from the **same** constants and helpers the repayment itself uses (`BankQuarterlyRepaymentFraction`, the FED account, `BankCollateralBtc`). The installment shown is therefore the installment that will actually be charged — §39.16 rule 6, applied where it matters most: a number the player will make a decision on.
+
+### 39.15 — Bot ballots must be legal ballots: projecting a stance into a company's band (P15.9)
+
+Found by the developer during the P15.8 run, at Papa's Pizzeria's first quarterly vote — and it is the most instructive bug of the plan, because everything about it was *working as written*.
+
+**The symptom.** The Board Vote panel offers the player a reserve dial bounded to the company's currency band. Papa's Pizzeria is **CB1**, so that dial runs `[75, 100]`. Beside it, the cast bot ballots read **0%** and **50%**. The player is held to the charter; the bots are not.
+
+**The cause.** `BuildBotBallot` filled the reserve dial from the bot's *own* band preference — `BandDefaultScPercent(pref.CurrencyBandPreference)`, i.e. its global stance (CB1 100% … CB5 0%) — with no reference at all to the company being voted at. The player's ballot is bounded twice (the SpinBox, and `TryRegisterPlayerVote`'s clamp); the bot path had no bound anywhere.
+
+**Why it mattered far more than the display.** `CloseCompanyVote` clamps only the **final weighted average** to the band. The four casino bots are drawn as a permutation of the five bands (§39.10's draw), so a CB1 company reliably carries two or three sub-75 ballots; the average landed below the floor; the clamp pinned the result to **exactly 75, every quarter, forever**. The vote produced a constant — and the player's ballot, the one input the game *pauses the entire simulation* to collect (D-ND8.18), could not move it, because it was being averaged against values the rules forbid. A governance system that visibly asks for your vote and structurally discards it is worse than one that never asked.
+
+**The fix is a projection, not a clamp — and that distinction is the whole design (D-15.24).** A bot's band preference is a position on a global "SC-ness" axis, not a literal target; the band is the company's *identity* (fixed at founding, never voted on) and the ballot is a tuning dial *inside* it. So the stance is mapped into the company's range rather than cut off at its edge. Clamping would have collapsed the CB5, CB4 and CB3 bots onto exactly 75 in a CB1 company — three identical ballots, and a result still pinned near the floor. It would have fixed the *displayed* value and left the *behaviour* broken. Projection keeps all five stances distinct in every band, which is precisely what gives the player's vote leverage.
+
+`NetworkRoot.ProjectStanceIntoBand` is **default-anchored**: the bot's own band default maps to the company's band default, interpolating linearly on each side. That makes the map the identity when the two bands agree — a CB2 bot at a CB2 company votes CB2's own 75 — which plain `[0,100] → [min,max]` interpolation does *not* give for CB2 and CB4, whose defaults do not sit at the centre of their own ranges. Results round to a whole percent (matching the player's `Step = 1` SpinBox), `.5` away from zero.
+
+| Bot stance | CB1 `[75,100]` | CB2 `[50,100]` | CB3 `[25,75]` | CB4 `[0,50]` | CB5 `[0,25]` |
+|---|---|---|---|---|---|
+| CB5 — 0% | 75 | 50 | 25 | 0 | *0* |
+| CB4 — 25% | 81 | 58 | 38 | *25* | 6 |
+| CB3 — 50% | 88 | 67 | *50* | 33 | 13 |
+| CB2 — 75% | 94 | *75* | 63 | 42 | 19 |
+| CB1 — 100% | *100* | 100 | 75 | 50 | 25 |
+
+**Expected consequence, and it is the point:** reserve outcomes now vary within the band instead of sitting on a bound. All four banks are CB1 (§39.7), so their SC/BTC mix is where this shows first and hardest, against P15.3's conversion volumes.
+
+**Two habits this reinforces.** First — *the clamp hid the bug for an entire plan*, so it now announces itself: `CloseCompanyVote` `GD.PrintErr`s when the raw average actually falls outside the band. Post-P15.9 it should never fire; if it does, some new ballot source is bypassing the projection. A guard that silently absorbs illegal input is indistinguishable from a guard that is never needed — make it say which it is. Second — the DEV stance printout used to read `targets 50% SC`, which after this fix is a number no bot will ever cast; it now prints the global stance *and* what it votes in each of the five bands, computed through `ProjectStanceIntoBand` itself (§39.16 rule 6: the printout exists to be read against observed ballots, so it must not describe a number that does not appear). The `CompanyDetails` ballot list — the readout that surfaced this — now names the band range in its header, so an out-of-band value is obvious on sight instead of requiring the reader to remember the company's charter.
+
+**The sibling case, deferred to P15.10.** A bank's market category is locked (§39.7 / D-15.12): the shift is voted, then refused. Nothing illegal is stored there, but its shareholders are still offered a control that cannot act. Same principle, separate phase.
+
+#### 39.15.1 — The first live verification, and what the tripwire bought (P15.9f)
+
+One quarter after the fix shipped, the reserve at Papa's Pizzeria still read 75% and it looked like the projection had not taken. It had — and the tripwire had already written the explanation to the log: *"cast an OUT-OF-BAND reserve average 37.55%, clamped to 75%"*.
+
+**Ballots are cast when a vote OPENS, not when it closes**, and an open vote's ballots are persisted in the snapshot. The vote that closed had opened *before* the rebuild, so closing it averaged pre-fix raw ballots (`0.4235×0 + 0.4021×50 + 0.1745×100 = 37.55%`) and clamped them back to the floor. The vote opened *after* the rebuild carried `bot_1 → 75` and `bot_3 → 88`, exactly the table. **A rebuild mid-playtest leaves any already-open vote carrying pre-fix ballots** — expected, self-clearing, never a reason to wipe a world.
+
+That is the argument for suggestion 4 in one incident: the guard named the company, the raw average and the band, which turned "the fix looks broken" into a five-minute audit with an arithmetic answer. It is worth generalizing — **when a clamp, a `Math.Max`, or a fallback exists to enforce an invariant that should already hold upstream, make it say so when it fires.** Otherwise a guard doing real work every day is indistinguishable from one that has never been needed, and the upstream defect lives behind it indefinitely. This one had.
+
+**And the readout gap it exposed (P15.9f).** The original bug was spotted in the Last Vote Snapshot's ballot list — which shows a **closed** vote. There was no equivalent for the vote actually in front of the player: bots cast the instant a vote opens, so at the moment the game *pauses* and demands a ballot, every other ballot is already known, persisted, and was being hidden. The Board Vote panel now lists them (each holder's resolver weight, its cast ballot or *not voted yet*) plus a live **"if the vote closed now"** line under the dial. Both that preview and `CloseCompanyVote` resolve through one pure static, `NetworkRoot.ComputeReserveVoteOutcome` — §39.16 rule 6 in its sharpest form: **a preview is a promise about what the resolver will do**, so two implementations of the same weighted average would drift the first time either side changed, and the player would be deciding on the stale one.
+
+### 39.16 — Conventions this plan established (apply these to later phases)
+
+Six rules came out of building P15.1–P15.5. They are recorded together here because each was first reached as a one-off judgement call and each turned out to apply again a phase or two later — they should be treated as defaults for P15.6–P15.8 and beyond, not re-derived each time.
+
+**1. Never let a persisted figure diverge from reality — fix it in the same phase that creates it.** `_bankState.CollateralBtc` would have claimed BTC the bank had already sold if the quarantine had waited for its nominal phase (§39.9.1). A *persisted number that lies* is a different category of problem from an unfinished feature: the feature is visibly absent, the lie is invisible and compounds. When a phase introduces a tracked quantity, the exclusions that keep it truthful ship with it.
+
+**2. A phase you cannot observe is a phase you cannot sign off — pull the readout forward.** This happened four times: the P15.2 banking-layer block (a phase with *no* behaviour change), `bank_credit_trace.csv` at P15.3 (P15.7d's), the shortfall ballot control at P15.4e (P15.7c's), and the recovery tracker at P15.5 (P15.7b's). The pattern is deliberate — build the minimum surface that makes the new mechanism inspectable, note in the plan which later subphase it was borrowed from, and let that subphase polish rather than originate. **Prefer this to shipping a mechanism nobody can see for two more phases.**
+
+**3. Prefer deletion to a flag when "this thing is over".** Removing a dissolved company from `_companyFoundings`/`_companyGovernance` destroys its holdings and claimables *by construction* and makes every live loop skip it for free (§39.12.1). A `IsDead` flag would have required every present and future loop to remember to check it. The cost is that any consumer reading the record from a *different* source (here, the chain-derived auction ledger) needs an explicit closed-aware branch — find those deliberately rather than discovering them.
+
+**4. Version-bump and wipe by default; re-derive only what is genuinely derivable.** The standing rule (§39.5) is bump + clean reset, never a migration and never a pause to ask. The one exception is a value that is *derivable from static data* — a bank's locked category re-derived from the roster on restore (§39.7) is a simplification, not a migration. Do not contort a design to avoid a bump.
+
+**5. New field on an existing per-entity record → sentinel default + backfill.** When the code that populates a record is guarded by an "already populated?" check, a stance-valued default for a new field produces a world that loads fine, plays fine, and has the new axis silently pinned flat (§39.10). A sentinel makes stale records announce themselves. This is about **silent failure modes**, not about avoiding a bump (see rule 4).
+
+**6. A displayed signal must share its source with the action it advertises.** Inherited from ND.10d and reinforced throughout: `HasPlayerClaimableDividends` backs both the row button and the claim panel; `BuildBotPoolOpportunities` backs the roll, the eligibility test and the panel; `NetworkRoot.GetPlayerProjectedStake` reuses `FoundCompany`'s own ranking so the forecast cannot drift from the mint. When adding a readout, ask what performs the corresponding action and call *that*.
+
+One further habit worth naming, from §39.9.1: **an on-chain display memo can become load-bearing.** `InputDataText` is normally cosmetic, but the `COLLATERAL` tag is what keeps a bank's collateral out of its business-inflow measure — and therefore what stops spurious game-pausing special votes. Before treating a memo as purely decorative, check whether anything reads it.
+
+**7. Commit *timing* is not commit *durability* (added 2026-07-29, from INC-001 — see Chapter 40).** "A block is the only commit to disk" tells you *when* to write. It is silent on what a half-written file means, and for two whole steps nobody asked. Any code that persists player-owned state must also answer: is the write atomic, does a corrupt read fail loudly, and can a failed load ever be persisted back over the good copy? Full statement, plus the simulation-scale limitation the same incident exposed, in **Chapter 40**.
+
+### 39.17 — The control that could not change anything, and the shortfall that was not one (P15.10)
+
+*Placed after §39.16 rather than before it, against chronology: the conventions section is referenced 59 times across twelve files, several from code comments, and renumbering it to keep this in date order would be pure churn for no reader's benefit.*
+
+**The phase was deliberately parked until it could be observed.** P15.10's decisions were locked (D-15.25) on 2026-07-27, and then nothing was built for two days, because the panel it changes cannot be opened until a bank has founded *and* the player holds NST in it — §39.16 rule 2 read forwards instead of backwards. It was picked up on 2026-07-29 at its trigger: First Satoshi Savings founded 2012-09-27 and opened its first quarterly vote on 2012-12-28, with the player holding 49% of the NST. Building it with the game paused inside that vote cost no playtest progress at all — the clock is frozen while a ballot is awaited, and the open vote rides `BlockchainStateSnapshot`, committed at the block that opened it, so the rebuild's restart resumed into the identical pause.
+
+#### 39.17.1 — Two live dials and one inert one, all looking identical
+
+A quarterly ballot carries three dials: the reserve target (% held as SC), the market direction, and the quarterly payout rate. At a bank the first and third move real money; the second is counted and then refused, because a bank's market category is **locked** (D-15.12). Before this phase all three rendered as live controls, so the holder whose ballot *pauses the entire simulation* was being asked to choose among three options that were all no-ops, and the Last Vote Snapshot then showed the category unchanged with no explanation of why.
+
+**Nothing was illegal, and that is what makes this a weaker case than P15.9 — it had to not be over-fixed.** No number was stored out of range, no figure lied, and the lock itself is load-bearing: a bank's category is the distance axis `SelectFinanciers` measures on (§39.8), so a drifting bank would silently re-shape which companies bank where, and it would also inherit a darker category's higher dividend rate and higher seizure risk. Banks are compensated with seized-wallet custody (§39.12.2). **The values were all correct; only the presentation was dishonest.** So the phase changed what is shown and deliberately changed no mechanism.
+
+The three decisions, in the order they matter: **disable and explain, never hide** (a silently missing control invites "why does this company have fewer dials?", and the reason is the interesting part worth teaching); **bots' ballots are not changed** (the current behaviour records "a rejected attempt rather than pretending nobody asked", and that a bank's other NST holders want it darker is a real economic fact — erasing it would trade an honest refusal for a silent one); **label the result** (the unexplained non-event in the snapshot was the actual defect).
+
+#### 39.17.2 — Re-deriving a verdict means reproducing the resolver's GUARDS, not just its arithmetic
+
+The spec called for re-deriving the refusal from the persisted ballots rather than storing a flag — the flag would default to `false` on every pre-existing record, reading as "no refusal happened" on exactly the historical votes where one did (§39.16 rule 5's silent-failure shape) for a value derivable all along (rule 4). That reasoning held. But the spec described only the weight test, and **the weight test alone is wrong**: `BuildBotBallot` takes no vote-kind parameter and fills `MarketShift` for *every* kind, while `CloseCompanyVote` evaluates a shift only inside `if (vote.Kind == CompanyVoteKindQuarterly)`. A founding or special record can therefore hold a ≥60% supermajority of `+1` ballots that nothing ever considered — and the ungated test would have printed "market shift refused" on a vote where no shift was ever on the table, replacing an old silence with a new falsehood.
+
+This sharpens §39.16 rule 6 into something more specific and easy to get wrong: **when a readout re-derives a verdict from a persisted record, sharing the arithmetic is not enough — it must reproduce the guards that decided whether the arithmetic ran at all.** Implemented as `NetworkRoot.WasMarketShiftRefused(rec, nodeId)` (kind gate + bank gate + weights), with the supermajority verdict itself extracted into a pure `ResolveMarketShift(darker, lighter)` that `CloseCompanyVote` now calls too — so the note and the resolution are the same verdict by construction, the `ComputeReserveVoteOutcome` pattern from §39.15.1.
+
+#### 39.17.3 — Disabling a control changes the arithmetic of every threshold that control could reach
+
+An unforeseen consequence, worth recording because it was not obvious and was noticed only when planning the verification. Disabling the player's market dial means their ballot always carries shift 0. At First Satoshi Savings the player holds 49% of the NST and the two bot NST holders hold 27.55% and 23.45% — **51% combined, permanently short of the 60% supermajority.** So at the very company whose vote triggered the phase, P15.10b's refusal note can now *never* fire.
+
+That outcome is correct (no supermajority means there is genuinely no refusal to announce), but it makes the second half of the phase unverifiable there, and the verification has to move to a bank where the bots control ≥60% of the NST — reachable for any viewer, since the snapshot renders without a holding. The general lesson: **a vote is a weight in someone else's threshold. Before disabling a control, check what else was counting on that weight** — here, removing the player's ability to *lose* a vote also removed everyone else's ability to *win* one.
+
+#### 39.17.4 — The shortfall that was not one (P15.10d)
+
+Found in the same screenshot taken for the "look at the thing first" step, on the same company, and it would have paused the game within one in-game day. First Satoshi Savings' first quarterly repayment succeeded — `1,721.32` SC repaid, exactly 10% of `17,213.20` — but selling collateral for *just enough* SC left a **sub-cent rounding residue** (8-decimal money divided by a BTC price), and `TryBankQuarterlyRepayment`'s `gap > 0m` test recorded it as a real shortfall. Since `TickCompanyGovernance` opens a shortfall vote on that same `> 0` test, the world was one block away from **pausing the entire simulation** for a board vote deciding who absorbs a quantity every readout in the game renders as `⚠ Shortfall of 0.00 SC`.
+
+**A `> 0` threshold on a money quantity produced by division is a threshold on rounding noise.** The fix is a named `MinMaterialShortfallSc = 0.01m`, and the value is reasoned rather than picked: one cent is exactly where the figure becomes *visible* in the N2 readouts that report it, so the rule is **if the game cannot display it, it cannot be worth a vote over**. Dropping the residue is monetarily safe by construction because `Repay()` burns `raisedSc` and never the installment — the un-repaid dust simply remains outstanding FED debt and is chipped at next quarter, so no figure diverges from reality (§39.16 rule 1). A `shortfall_dust` trace row records the sub-threshold case, because a silently discarded quantity is precisely what hides a badly-set cutoff.
+
+The third part is the one that is easy to forget: **tightening a writer does not fix a reader already holding what the old writer produced.** The residue was already persisted in the snapshot, and the vote trigger reads the persisted field — so without a self-heal the pointless pause would still have fired on the next tick. `TryLoadSnapshot` now clears a below-threshold `PendingShortfallSc` on restore, directly beneath the P15.2b category re-derivation that does the same kind of work (§39.7), idempotent because post-fix worlds never carry a value in that range, and free of a format bump. **When a fix narrows what gets written, ask what is already written.**
+
+---
+
+## Chapter 40 — Persistence Durability & Simulation Scale: The Limits of a Design Sized for Hand-Play
+
+> Written 2026-07-29, immediately after **INC-001** (`Documentation/INCIDENT_LOG.md`) destroyed a P15.8
+> playtest session five in-game days before the first bank company's auction closed. The incident entry is
+> the forensic record — what broke, in what order, with what evidence. **This chapter is the design
+> statement**: what the crash proved about assumptions this project has been carrying since long before
+> Step 15, and which of them are now known to be false.
+>
+> The fix is **P15.11** in `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md`.
+
+### 40.1 — The blind spot inside "a block is the only commit to disk"
+
+The commit rule (Ch. 24 §24.8, CLAUDE.md Important Pattern 2) is one of this project's best decisions. It
+gives a single, legible commit point; it makes an app restart mean something exact ("the world reverts to
+the last mined block"); it kept a dozen services from inventing their own save cadences.
+
+It also answers exactly one question — **when** to write — and we treated it as if it answered the whole
+subject. Three questions it never addressed, all of which INC-001 answered for us:
+
+1. **Is the write atomic?** It was not. `NetworkRoot.PersistStateToDisk` truncates `state.json` and streams
+   9.25 MB into it. A process death mid-write leaves a file that is page-aligned, plausible-looking, and
+   invalid — in the incident, 7 characters short of parseable.
+2. **Does a corrupt read fail loudly?** It did not. `TryLoadSnapshot` had no `try`, so the `JsonException`
+   escaped `EnsureInitialized` before it registered a single node, leaving `_isInitialized = false` and
+   every consumer looking at an empty world **with nothing printed**. The money services, persisting to
+   their own files, restored perfectly — so the failure presented as "some screens are blank", which is
+   about the least diagnosable shape a total world-load failure could take.
+3. **Can a failed load be written back over the good copy?** In this case no, and **only by accident**: the
+   throw happened before any static state was touched, so the closing `PersistStateToDisk()` was never
+   reached and the good file survived. A slightly more forgiving code path — one `catch` that logged and
+   continued with an empty snapshot — would have overwritten a 1,666-block chain with an empty one at the
+   next mined block. The world was recoverable because of where the exception landed, not because anything
+   protected it.
+
+**The general form:** a rule about persistence *timing* needs a companion rule about persistence
+*durability*, and the second does not follow from the first. This is now §39.16 rule 7.
+
+### 40.2 — The scale limitation this world exposed (2010-03-21 → 2012-09-22)
+
+The crashed world is the most demanding one this project has ever produced, and it is worth stating exactly
+what it contained, because the numbers are the argument:
+
+| Measure | Value |
+|---|---|
+| In-game span | **2010-03-21 → 2012-09-22** — ~2.5 in-game years |
+| Blocks mined | **1,666** |
+| World snapshot (`state.json`) | **9.25 MB**, fully rewritten **on every block** |
+| Monthly block chunks (`blocks-*.json`) | ~5 MB more per block — **deleted and rewritten wholesale**, and **read by nothing** |
+| Bet-journal records loaded **at every boot** | **~5,330,000** |
+| Bet records per block | **~3,200** (~half of them duplicates — see §40.4) |
+
+Compare that against the premise the persistence layer was designed under. The canonical loop is
+**1 bet = 1 nonce attempt = 100 in-game seconds**, and `TargetBlockSeconds = 58,500`, so the intended
+arithmetic is **~585 player bets per block** — a person clicking, or a modest autobet, generating a few
+hundred rows between commits. Under that premise, "load the entire bet history at boot and rebuild the
+lifetime stats from it" is not merely acceptable, it is the *simplest correct thing*.
+
+What actually runs now is a **simulator**: `SimulationService` ticking a background autobet plus four bot
+runners across every scene, at `DevTimeScale` up to 9000X, for hours. Even after discounting the
+duplication, the true history sits in the low millions of records for 1,666 blocks — several times the
+design premise. (Part of that multiple is the known block-pace defect recorded at ND.10j: blocks were
+running at ~2.2 in-game days against a 0.68-day target, so each block absorbed roughly three times the
+intended number of bets. The R2 regulator work addresses the pace; it does not change the conclusion below.)
+
+**The conclusion is not "the numbers got big".** It is that **several subsystems encode the hand-play
+premise as an invariant rather than as a tuning parameter**, so they do not degrade as the scale grows —
+they work perfectly until they stop working at all, and they stop in the least visible way available.
+
+### 40.3 — Where the hand-play premise is still baked in
+
+An honest inventory, as of this world. Each of these is correct under the original premise and wrong under
+the simulator:
+
+- **Unbounded lifetime history.** `UserStatsService._Ready()` calls `EnsureAllChunksLoaded()`
+  unconditionally, because lifetime stats are derived by replaying every record ever written. There is no
+  aggregate snapshot, so there is no way to know the totals without holding the whole history in RAM. **No
+  retention policy exists anywhere** — nothing has ever deleted a bet record except a world reset.
+- **Synchronous whole-file rewrites on the main thread.** `RollbackToUtc` re-serializes the entire history;
+  `PersistStateToDisk` re-serializes the entire chain. Both were microseconds at design scale. At this
+  world's scale the first is a multi-second-to-minutes main-thread stall on a 1.1 GB file, which is the
+  proximate reason the app appeared to hang on a scene change.
+- **Snapshot growth is linear in chain length, and it is rewritten per block.** By construction, the cost
+  of committing block *N* is proportional to *N*. At 1,666 blocks that is 9.25 MB per block; there is
+  nothing in the design that stops it at 10,000 blocks.
+- **Write amplification nobody is reading.** `WriteMonthlyChunks` deletes every `blocks-*.json` and rewrites
+  them on each commit. Grep confirms **no code path reads them**. They cost ~5 MB of I/O per block and, in
+  the incident, were the first casualty of the interrupted write.
+- **In-memory record objects, not a compact store.** ~5.3M `BetRecord` objects with per-record `Id` and
+  `GameId` strings — an estimated 1.5–2.5 GB of managed heap, on a laptop with an Intel UHD 620.
+
+None of these is a bug in the sense of a mistake. Each is a reasonable decision whose premise expired
+quietly when the game acquired a background simulator and a 9000X dev scale, and **nothing was re-examined
+at the moment the premise changed** — the same failure mode as §38.7's inverse-poll incident, where an event
+subscription stayed correct while the event's frequency was multiplied by five.
+
+### 40.4 — The specific defect: two writers, one file, different rules
+
+Worth isolating, because it is the most transferable lesson in the incident.
+
+`BetHistoryRepository` has **two** code paths that write the journal:
+
+- `Flush()` — the incremental writer. Appends, counts lines, and **rotates to a new chunk every 10,000
+  lines**. Correct.
+- `RebuildJournalFromCurrentState()` — the "write everything out from current state" path, called by
+  `RollbackToUtc` and `ClearAll` (so: every checkpoint restore, every DiceGame entry). It points the write
+  target back at the **base** file, dumps the entire in-memory history with `FileMode.Create`, applies **no
+  cap and no rotation**, and **does not delete the chunk files it has just duplicated**.
+
+Because `GetJournalChunkPaths(includeLegacyBaseFile: true)` loads the base file *and* the chunks, the next
+boot reads every record twice, and the next rollback writes that doubled set back into the base file. It
+compounds per session — 1.126 GB in the base file against 293 MB of chunks covering the same period.
+
+Two consequences, and the second is worse than the first:
+
+1. The rotation policy — the thing specifically designed to keep file sizes manageable — was **defeated by
+   the project's own code**, silently, for an unknown number of sessions.
+2. `RebuildStatsFromLoadedHistory()` counts whatever was loaded, so **the player's lifetime bet count, total
+   wagered and net profit have been inflated by duplication**, with nothing to compare against and no way to
+   notice. This is §39.16 rule 1 (*a persisted figure that lies is invisible and compounds*) observed in the
+   wild rather than reasoned about.
+
+**The rule:** when two paths write the same file, the invariants belong to the **file**, not to whichever
+function grew them first. A "rebuild from current state" path must satisfy every invariant the incremental
+path does — rotation, capping, and cleanup of what it supersedes — or it must not exist.
+
+### 40.5 — Durability rules going forward
+
+These are now defaults, not one-offs:
+
+1. **Write persisted state atomically.** Write `<file>.tmp`, flush, then rename over the target. A rename is
+   atomic on every platform we target; a truncate-and-stream is not. Applies to anything a player would be
+   upset to lose.
+2. **A loader that can fail must fail loudly, and must never let a failed load reach a writer.** If a
+   snapshot cannot be parsed, say so in the log with the path and the reason, and leave the file untouched.
+   A `Try` prefix is a promise that the function handles its own failure — either honour it or drop the
+   prefix.
+3. **Never delete the old copy before the new one is complete.** `WriteMonthlyChunks`'s delete-all-then-
+   rewrite is the anti-pattern; if a derived artefact must be regenerated wholesale, build it beside the
+   old one and swap.
+4. **Every unbounded, ever-growing store needs a stated retention policy at the moment it is created** —
+   even if the policy is "unbounded, and here is the arithmetic showing that is fine at expected scale".
+   The bet journal had no such statement, so nobody ever noticed the arithmetic had stopped being fine.
+5. **Do not load an unbounded history to compute a bounded summary.** Lifetime totals want a persisted
+   aggregate; full history loads belong behind the screens that actually browse history.
+6. **When a system's operating scale changes, re-audit what was sized for the old scale.** The background
+   simulator and `DevTimeScale` were introduced as *features*; neither was accompanied by a pass over the
+   subsystems whose cost is per-bet or per-block. §38.7 is the same lesson in the event-frequency domain.
+
+### 40.6 — What is deliberately not being fixed (and where it went instead)
+
+Scope discipline, so P15.11 does not become an infrastructure project in the middle of a bank playtest. Everything below — plus the **progressive frame-rate decay** reported in the same run, which P15.11 does not address at all — is collected as **`PRIVATE_ROADMAP.md` §8 T4, "Simulation-Scale Refactor"**: an open technical objective, deliberately unscheduled. Its headline finding is worth repeating here, because it reframes the whole problem: **the bet journal is player-only** — the four bots already use aggregate `ClientBetStats` counters, so **the correct pattern was in the codebase all along and had simply never been applied to the player**. T4 also names the strongest structural suspect for the decay: ~62 per-node `BlockchainService` instances whose UTXO caches are all invalidated every block and rebuilt by full chain replay, so per-block cost grows linearly with chain length.
+
+- **Snapshot growth remains linear in chain length.** At 1,666 blocks and 9.25 MB it is affordable, and
+  making it incremental means a real chain-store redesign. It is recorded as a limit here and in
+  `PRIVATE_ROADMAP.md`, not scheduled.
+- **The stats aggregate is not being built now.** P15.11 stops the boot from loading everything and caps
+  what accumulates; a proper persisted lifetime aggregate is the correct long-term answer and is deferred.
+- **Nothing is being made crash-proof at the bet level.** The commit rule stands: a restart still reverts
+  to the last mined block, and that is the intended contract, not a limitation.
+

@@ -23,6 +23,7 @@ All project files, public documentation, UI text, code names, and backend termin
 - Legacy `Principal Balance` code-facing names should move toward `Main Balance` where reasonable.
 - Bots must matter in Basic Mode, but the bot/non-node wallet and transaction system needs a coherent model before long-session testing.
 - Casino finances are part of the simulation and need their own internal scene, even if the player should not have access to it later.
+- **Persistence was sized for hand-play and is now driven by a simulator** (INC-001, 2026-07-29 — cost a P15.8 playtest session). The commit rule ("a block is the only commit") covers *when* to write and never covered *durability*: writes are not atomic, a corrupt snapshot loaded silently into an empty world, no store has a retention policy, and lifetime stats had been double-counting for an unknown period. Fixed at **P15.11**; the limits deliberately left open (snapshot cost linear in chain length, no persisted lifetime aggregate) are named in `ProjectDesignManual.md` §40.6.
 
 ## 2. Product Direction
 
@@ -325,11 +326,45 @@ Candidate inputs (all already available, none requiring new state):
 - **Dividend inflow** (§22.12/ND.8g) — a bot holding NST/PST in several founded companies has a recurring BTC income the guard should credit it for.
 - **Per-bot personality** — the same per-world draw pattern used for the bots' governance preferences (D-ND8.13/26) would give each bot its own risk appetite, permanently and reproducibly.
 
+**A structural defect the policy must fix, not just a number** (found 2026-07-28, ND.10j's BitInstant audit — plan §14.11.3): **a bot can bid itself into the reserve guard.** The half-spendable cap is evaluated per bid, and the guard only runs on the *next* block sweep — never against the balance a bid would leave behind. `bot_1` sent 86.93 BTC out of 285.30 (legal under the cap) and landed at 198.51, under the 200 stop, in one move. Compounding it, the 200→300 hysteresis band is ~345 blocks wide at dividend-only income, so the "rest" is closer to a retirement: `bot_1` was out of every auction from block 947 to 964 and only re-entered because a process restart re-derived the in-memory set while it sat between the thresholds. **Whatever replaces the flat constants must be a pre-commit check** ("would this bid breach my reserve?"), not a post-hoc sweep, and its recovery band must be expressed in *time to refill* rather than a flat BTC gap.
+
 **Two pressures already scheduled that will change the arithmetic** (re-tune only after they land, not before):
 1. **Hardware progression (P5)** — hardware multiplies every casino-miner's attempts/sec and therefore its BTC income; the whole auction economy is sized against pre-hardware income today.
 2. **Dividend inflow** is only now becoming material as companies are founded — with several mature companies paying quarterly, the bots' BTC income stops being mining-only.
 
+**A third constant now sits in the same category:** `FreshPoolSeedingWeight` (34, ND.10l §14.13) — the tie-break weight an unbid pool carries against a contested one. It trades first-bid seeding against escalated re-bids, and block frequency changes how often the two compete at all, so it belongs to the same post-R2/post-P5 calibration pass.
+
 **Also wanted:** surface the knobs (reserve floor/ceiling or the policy's parameters, the raise band, the opening-bid anchor, the claim batching multiple) as **DEV-configurable** in the same spirit as `CasinoGamblingFinances`/`WorldEconomy`'s existing sliders, so a calibration run doesn't need a rebuild. Design + the audit that produced the stopgap: `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` §14.6.
+
+### Persistence Durability & History Retention (P15.11) — SCHEDULED, blocks the rest of P15.8
+
+**Status: scheduled and blocking (2026-07-29).** Spec: `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` **P15.11**. Forensics: `Documentation/INCIDENT_LOG.md` **INC-001**. Design statement: `ProjectDesignManual.md` **Chapter 40**.
+
+**What ships:** atomic snapshot writes (`.tmp` → rename) with a loader that fails loudly and a writer guarded against ever persisting over a failed load (D-15.26); the journal-rebuild path made to obey the same rotation/cleanup invariants as the incremental writer (D-15.27); a retention cap that bounds the boot load by construction (D-15.28/29); and the removal of the write-only `blocks-*.json` mirror (D-15.30). The crashed world is repaired rather than reset (D-15.31) — the bet history is deleted under explicit authorization, since it is stats-only and was already inflated by duplication.
+
+**Deliberately deferred, recorded so it is a decision and not an oversight:** a **persisted lifetime stats aggregate** (so totals stop meaning "over retained history"), and making the world snapshot **incremental** rather than a full 9.25 MB rewrite whose cost grows linearly with chain length. Both become worth doing when a run goes materially past ~1,666 blocks; revisit alongside P5 (hardware progression), which changes how fast blocks accumulate.
+
+### Bot Seed Phrases & Full UTXO Integration (OQ-8.2) — PROMOTED, schedule right after Step 15
+
+**Status: promoted out of the Post-Basic-Mode checklist (2026-07-28).** Design and implement **at the end of Step 15** if the plan closes cleanly; otherwise as the step immediately after. Original design: `AIHelperFiles/step8-utxo-realism-plan.md` OQ-8.2.
+
+**Why it was deferred, and why that reason is now gone.** At Step 8 the number of mining bots was an open question, and handing a seed phrase + full `DerivedAddressWallet` integration to an unknown (possibly large) population looked like a poor trade. The game has since settled: the casino-miner population is **exactly four** (`bot_1..4`), fixed by the ND.8c genesis-grant set and the D-EB.7 "only casino players may bid" rule. At four, per-bot seeds are cheap and the migration is straightforward — the original objection no longer applies.
+
+**What it fixes, concretely.** Bots are the last single-address participants in the world. In `BuildAndBroadcastUtxoSpend` the change address is `sender.ReceiveWallet?.NextReceiveAddress() ?? sender.WalletAddress` — with no `ReceiveWallet`, **a bot's change returns to the very address it just spent from**, so receipts and change pile up as dozens of UTXOs on one address. Observed on block 1274 (2011-12-11): `bot_1`'s 193.73 BTC auction bid on `non_miner_18` combined **nine inputs, all printing the same address**, while three other transactions in that same block paid *into* it. It is correct UTXO behaviour and correct coin selection (`SelectUtxos`: exact match, else largest-first) — but the address repetition is an artefact of the missing rotation, not of the model.
+
+**A finding that de-risks the migration** (from the block-1274 audit): `NetworkRoot.TryResolveInputKeys` resolves the **base address** (the node's own keypair) and **derived addresses** (`ReceiveWallet.TryFindSpendingContext`) through two independent branches. So a bot's base address does **not** have to be seed-derived — it can keep the registry address it already carries all over the chain, and take a `DerivedAddressWallet` purely for change rotation. **That suggests no `WorldFormatVersion` bump / chain wipe is required**; confirm during design before relying on it (the player/casino/founders all have base == seed-derived, so this combination has never been exercised).
+
+**The enabling change:** `BotWalletRecord` (`Scripts/BlockchainPort/Blockchain/WalletModels.cs`) stores keys but explicitly no seed — *"gm1q… only; no seed words stored"*. It needs a seed field. Note `bot_wallet_registry.json` is an **identity file, deliberately spared** by `NetworkRoot.ResetWorldIfIncompatible`'s delete list, so existing records survive every reset with the field absent — this is exactly §39.16 rule 5 (sentinel default + backfill), and the backfill must not disturb the existing `Address`.
+
+**Scope decision to make during design — how far the migration reaches:**
+1. **`bot_1..4`** (4 nodes) — the ask, and the only participants with real economic agency (bets, bids, dividends, pool payouts).
+2. **Cast miners** (`BotWalletRegistry.CastMiners`, up to ~33 by 2025, spawned one per block) — also single-address. Larger and dynamic, but they only mine and run the sell-flow.
+3. **Non-miner companies** (40) — also single-address; they receive bids, inflows and conversions.
+4. **Ghost miners** — **never.** D-14.11 makes their coins frozen forever by design; they are session-transient with no persisted keys, and giving them wallets would contradict the whole mechanic.
+
+**The scope choice decides a second deliverable:** the two Block Explorer cosmetics `IsSelfChangeTransaction` / `ExternalOutputs` (§29.9) hide change-to-self outputs and exist *solely* because of single-address participants — CLAUDE.md wants them gone before the referral/rank systems ship. They can only be removed once the **last** single-address participant is migrated, i.e. under scope 1+2+3. Under scope 1 alone the cosmetics must stay, and the display stays filtered (block 1274's transaction really has **two** outputs — the 6.05 BTC change back to `bot_1` is hidden, which is what makes its arithmetic look wrong).
+
+**Related, do at the same time if scope allows:** OQ-8.3 (player/casino incoming deposit-address rotation) is the same family — full HD receive behaviour rather than change-on-send only — and is still parked in the Post-Basic-Mode list below.
 
 ### Post-Basic Mode — Divergent Chains / Fork Simulation (revisit AFTER Basic Mode)
 
@@ -348,7 +383,7 @@ Start when: Basic Mode is complete and stable. Until then, leave mining committi
 Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is complete and stable. Each links to its design. (Everything else carried forward — fee activation, casino referral/rank, founder long-term timelines — belongs to **Basic Mode**; see the §6 checklist.)
 
 - [ ] **Patoshi pattern — mining-forensic view (Step 8, Phase 8.5).** An *optional, clearly-labelled cosmetic* Block-Explorer view that highlights Satoshi-mined blocks as a contiguous band (echoing Lerner's ExtraNonce-vs-height plot) with a teaching caption. Our engine can't reproduce the real ExtraNonce/decrementing-nonce/timestamp artifacts (random-nonce search, no ExtraNonce field), so it is an honest stand-in. **This is distinct from address non-reuse** (the many-addresses wallet pattern, already implemented) — the D0 terminology correction already shipped; only this forensic view is deferred. Design: `AIHelperFiles/step8-utxo-realism-plan.md` (Phase 8.5 + OQ-8.5).
-- [ ] **Bots multi-address (Step 8, OQ-8.2).** Give miner/non-miner bots their own seed so they get change-address rotation like the player/casino/founders. Blocked today because bots use random/registry keypairs (no stored seed). Revisit with gradual-miner-spawning. Design: `step8-utxo-realism-plan.md` OQ-8.2.
+- [x] ~~**Bots multi-address (Step 8, OQ-8.2).**~~ **PROMOTED out of this list (2026-07-28)** — the deferral reason (an unknown, possibly large miner-bot population) is gone now that the casino-miner set is fixed at four. Scheduled for the end of Step 15; see **"Bot Seed Phrases & Full UTXO Integration (OQ-8.2)"** in §5 above for the why-now, the scope tiers and the design constraints.
 - [ ] **Player/casino deposit-address rotation (Step 8, OQ-8.3).** Rotate the *incoming* receive address after each external deposit (full HD behavior). v1 delivers UTXO realism via change-on-send only. Design: `step8-utxo-realism-plan.md` OQ-8.3.
 - [ ] **Divergent Chains / Fork Simulation** — see the "Post-Basic Mode — Divergent Chains / Fork Simulation" section above (`IMPLEMENTATION_ROADMAP.md` Step 10).
 
@@ -411,9 +446,9 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 - When exactly should BTC trading unlock in Basic Mode?
 - Should private mempool fees be available in Basic Mode or postponed?
 
-## 8. Tech-Debt & Cleanup Tasks (2026-06-24 — ✅ all implemented)
+## 8. Tech-Debt & Cleanup Tasks
 
-Three concrete tasks identified while fixing the clock/persistence bugs (see `Documentation/ProjectDesignManual.md` §24.8). All three are now done — details per task below.
+T1–T3 (2026-06-24, ✅ all implemented) came out of the clock/persistence bug fixes — see `Documentation/ProjectDesignManual.md` §24.8. **T4 (2026-07-29, OPEN) is a standing technical objective**, not a scheduled task: it is the structural answer to INC-001 and to the progressive frame-rate decay observed in the same run.
 
 ### T1 — Stop transactions/consensus from committing financial state to disk ✅ DONE (2026-06-24)
 
@@ -441,3 +476,57 @@ The mining readout embedded in DiceGame did not track the live (retargeted) diff
 - **Was**: DiceGame's `BuildMiningStatusLine` used `Blockchain.GetExpectedAttemptsForCurrentDifficulty()`, which returns `EffectiveDifficulty(Chain[^1])` — the **last already-mined block's** difficulty, ignoring the live `_activeMiningPower` feed-forward. BlockExplorer instead used `NetworkRoot.GetPlayerNextBlockDifficulty()` (the locked candidate difficulty, else the prospective next-block difficulty at current power), so only it reflected the retarget.
 - **Fix shipped**: extracted a shared `GetNextOrCandidateDifficulty(node)` helper (locked candidate difficulty, else `GetNextBlockDifficulty(_activeMiningPower)`); `GetPlayerNextBlockDifficulty()` now delegates to it, and `BuildMiningStatusLine` uses it too — so both readouts compute the in-progress block's difficulty from the same live source. The DiceGame line was relabelled `Mining difficulty: {x:F2}  (~{x:F0} attempts/block)` to match the Block Explorer format. `GetExpectedAttemptsForCurrentDifficulty()` is left in place (now only a validation helper referenced by `100x-time-scale-migration-plan.md`).
 - **Result**: the DiceGame mining display and BlockExplorer agree on the in-progress block's difficulty and both update live as power/difficulty change.
+
+### T4 — Simulation-Scale Refactor: chain state, stats persistence & a cost budget — 🎯 OPEN technical objective (not scheduled)
+
+**Why this exists.** Two signals from the same 2026-07-29 run: **INC-001** (`Documentation/INCIDENT_LOG.md`) — a 1.13 GB bet journal and a world that failed to load silently — and the developer's report that **fluidity at 9000X decayed progressively over the last days of the playtest ("cada vez más lag")**. P15.11 fixed the *durability* half. This entry is the *scale* half: the reason those numbers were allowed to grow at all. Design context: `ProjectDesignManual.md` **Chapter 40**.
+
+**Not a priority.** Nothing here blocks Basic Mode, and none of it should interrupt the bank testing. It is written down now because the run that exposed it is the largest world this project has produced, and that evidence has a short half-life.
+
+#### T4.0 — What was actually measured (2026-07-29), so the proposals are not guesses
+
+1. **The bet journal is PLAYER-ONLY — the bots cost nothing.** `UserStatsService.OnBetExecutedRegisterBet` has exactly two callers: `DiceGame` (manual bets) and `SimulationService.ExecutePlayerBetOnce`, the latter guarded by `if (_config.IsPlayerActive)`. Bot bets go to `CasinoClientLedgerService.RegisterSettledBet`, which keeps **aggregate `ClientBetStats` counters** (bets/wins/losses/wagered/net) flushed on a 1 s dirty flag. So the four bots — who bet far more than the player — are ~O(1) each, while the player's own bets are the millions of rows. **The correct pattern is already in this codebase; it was simply never applied to the player.** That answers the open question directly: it is the player, not the bots, and not the two together.
+2. **Per-block cost grows with chain length, which is the shape of "increasing lag".** Every node keeps its **own** `BlockchainService` (~62 of them: player + 4 bots + 40 non-miners + 14 cast miners + casino + 3 founders). `NetworkSimulator.BroadcastBlock` calls `TryAcceptMinedBlock` on **every** node, each bumping its own `_chainVersion` — which invalidates **every** node's UTXO cache. `GetUtxoSet()` then rebuilds by **replaying the entire chain**, and `AggregateSpendable(node)` reads `node.Blockchain`, so a balance query on N distinct nodes in one block triggers N full replays. At 1,666 blocks × up to 24 txs that is ~40,000 tx-visits per rebuild, and the bot/company/bank sweeps query dozens of nodes per block. **The per-block cost therefore rises linearly as the chain grows** — a run that starts smooth and degrades, exactly as reported.
+3. **The world snapshot is 9.25 MB rewritten every block**, also linear in chain length.
+4. **Heap pressure:** ~5.3M `BetRecord` objects (est. 1.5–2.5 GB) before the wipe, on an Intel UHD 620 laptop — rising Gen2 GC cost as the list grows.
+
+> **(2) is a strong structural hypothesis, not a profiled fact.** It has the right shape and the right growth curve, but nothing has been timed. See T4.6 — measure before refactoring anything.
+
+#### T4.0b — What the RESUMED run measured (2026-07-30), which partly contradicts T4.0
+
+The P15.8 world was played on to **~Oct 2014 / block 2699** after the P15.11 repair, and `difficulty_trace.csv` now covers 1,472 blocks. Reading it changes two of the assumptions above (full audit: `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` §10, finding F5; decision D-15.37):
+
+1. **The R2 difficulty regulator is confirmed correct** — mean solvetime **62,373 s against the 58,500 s target (+6.6%)**. Block pace is no longer a suspect in anything.
+2. **The retention throttle is chronically ~0.71 and does NOT decay with chain length.** By 200-block bucket: `0.752 · 0.693 · 0.801 · 0.806 · 0.653 · 0.599 · 0.706 · 0.688`. A cost that grows linearly with chain length would show a monotone downward trend across 1,500 blocks and does not. **This does not refute T4.0 (2)** — the run is a window inside an already-large chain, so a linear term could be present and swamped — but it does mean the *dominant* term behaves like **chronic saturation plus periodic per-block spikes**, which matches the developer's description ("processes a second, stalls a second") better than a smooth linear decay. **T4.2's urgency is mildly demoted; T4.6 is confirmed as the correct first move.**
+3. **Two per-block cost sources the original T4.0 did not name**, both new since it was written:
+   - **Dividend-claim transactions: ~8.66 per block** (13,691 `bot_claim` rows over 1,586 blocks). Each is a real on-chain send. Besides the frame cost this saturates the mempool — `pendingTxs` sat at **26–28** against a 24-tx block cap and an ND.4a historical budget of ~5 — so the automated transaction layer has been at `owed = 0` for most of the run. Fixing it is scheduled in **Step 16** (settle bot claims internally, or per company at quarter close, instead of per holder on-chain); it is listed here because it is also a *performance* item.
+   - **Telemetry I/O**: five CSV traces appended per block, `company_governance_trace.csv` alone reaching 2 MB. Small individually, but it is per-block file I/O sitting next to the snapshot write.
+   - Also note **P15.11b's atomic write doubles the snapshot's write volume** (`.tmp` then rename). That was the correct trade, and it belongs in the budget T4.6 measures rather than being reverted.
+
+**Instrument these five together** in T4.6 — UTXO rebuilds, snapshot serialize+rename, governance tick, the bot/company sweeps, and claim-transaction construction — plus managed heap and block index. That set now covers every hypothesis on the table.
+
+#### T4.1 — Incremental UTXO maintenance (highest leverage, lowest risk)
+
+Applying a newly-accepted block's transactions to the cached UTXO set costs **O(txs in that block)**; replaying the chain costs **O(all txs ever)**. `TryAcceptMinedBlock` / `MineBlock` already know exactly which block arrived, so the incremental update is a few lines beside the existing `_chainVersion++`. Keep the full replay for `TryReplaceChain` (a genuine chain swap) and as a DEBUG-only cross-check — *assert the incremental set equals the replayed set* every N blocks, which is the §39.16-rule-1 shape: the cheap path must be provably identical to the truthful one.
+
+#### T4.2 — One canonical chain + one UTXO set, instead of 62 copies
+
+The per-node `BlockchainService` is already acknowledged as vestigial — `NetworkRoot` (~L5209) says *"single-shared-chain design (every node already holds the same canonical chain via BroadcastBlock)"*, and `RunConsensusRound` was deleted at T2 for the same reason. A single shared chain + one shared UTXO index, with `NodeAgent` reduced to identity + owned addresses, removes the 62× invalidation storm at its source and collapses `BroadcastBlock` to a no-op. **Blocked-by-design consideration:** per-node chains are the substrate the deferred **Divergent Chains / Fork Simulation** wants. The honest resolution is to make the shared chain the default and reintroduce per-node chains *deliberately* when forks ship, rather than paying for 62 unused copies for years.
+
+#### T4.3 — Address → outpoint index
+
+`GetSpendableUtxos(addresses)` walks the whole UTXO set. An `address → outpoints` dictionary maintained alongside T4.1's incremental update makes every wallet panel, bot affordability check and company treasury read **O(that node's outpoints)**. This is the natural follow-on to the R3 fix (§38.7) that already collapsed `AggregateSpendable` from `O(addresses × utxos)` to `O(utxos)` — T4.3 takes it to `O(owned)`.
+
+#### T4.4 — Player stats as aggregate counters; the journal as a bounded recent window
+
+Generalize `ClientBetStats` to **all five clients including the player**, so lifetime totals are maintained incrementally and are exact regardless of retention. The per-bet journal then serves only what genuinely needs rows — `BetsHistoryExplorer`, `CalendarsNavigator`, DiceGame's recent list — and can stay retention-capped (P15.11d) without the "General" scope having to apologize for it. This retires the current situation where *lifetime totals are derived by replaying every record ever written*, which is both the memory cost and the reason F4's double-counting was invisible.
+
+#### T4.5 — Bounded / incremental world persistence
+
+The snapshot rewrites the full chain per block. Options, cheapest first: (a) **split the chain out** of `state.json` and append only new blocks (the mutable governance/financial state stays a small whole-file atomic write); (b) write the chain in **immutable sealed segments** (the deleted `blocks-*.json` had the right *idea* and the wrong *lifecycle* — it rewrote all of them every block and nothing ever read them); (c) leave it and accept the cost, which is defensible below a few thousand blocks. Whatever is chosen must keep P15.11b's atomicity and the "a block is the only commit" contract intact.
+
+#### T4.6 — A per-block cost budget (DO THIS FIRST)
+
+Everything above is a hypothesis until the frame is instrumented. Add per-block timings to the existing `difficulty_trace.csv` (which already carries R2's `simSecOffered,simSecConsumed`, the honest retention signal that caught §38.7's inverse-poll defect): **ms spent in UTXO rebuilds, in snapshot serialization, in the governance tick, in the bot/company sweeps, plus managed heap size and block index.** Then the question "why did it get slower over three days?" is answered by reading a column instead of reasoning about it — and each T4 item above can be accepted or dropped on evidence. §38.7's third rule applies throughout: **a displayed throttle is a measurement, not a diagnosis** — a `SimulationThrottle` below 1 means "find what is eating the frame", never "raise the budget".
+
+**Suggested order:** T4.6 → T4.1 → T4.4 → T4.3 → T4.2 → T4.5. The first two are small and independent; T4.2 is the one that needs a real decision about fork simulation.

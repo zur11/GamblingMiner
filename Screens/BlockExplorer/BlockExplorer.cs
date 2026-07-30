@@ -226,6 +226,15 @@ public partial class BlockExplorer : Control
                 NetworkRoot.GetCompaniesAwaitingPlayerVote().Select(c => c.nonMinerNodeId));
             foreach (NonMinerDonationSummary s in ledger.Where(s => s.Status == NonMinerAuctionStatus.Resolved))
             {
+                // Step 15 P15.5d — a DISSOLVED company still shows here (the auction ledger is chain-derived
+                // and stays Resolved forever, D-ND4b.12), but it has no founding, no governance, no holdings
+                // and nothing to act on. Give it its own terminal row rather than an empty "Details →".
+                if (NetworkRoot.IsCompanyClosed(s.NonMinerNodeId))
+                {
+                    _enrollModeRowsVBox.AddChild(BuildClosedCompanyRow(s));
+                    continue;
+                }
+
                 // ND.8b.2 — "founded" replaces the old SC-cashback "referral" wording (D-ND8.14): the
                 // leading bidder now controls the company's founding stock mint, not a one-shot payout.
                 string founder = string.IsNullOrEmpty(s.WinnerAddress)
@@ -280,6 +289,42 @@ public partial class BlockExplorer : Control
             }
         }
     }
+
+    // Step 15 P15.5d (D-15.15) — the terminal row for a dissolved company: WHEN it closed, WHY, and — the
+    // part that matters to the player — what they lost with it. Deliberately has NO action button: the
+    // tokens are destroyed and there is nothing left to vote on or claim (§39.12).
+    private Control BuildClosedCompanyRow(NonMinerDonationSummary s)
+    {
+        CompanyClosure? closure = NetworkRoot.GetCompanyClosure(s.NonMinerNodeId);
+        string when = closure == null
+            ? string.Empty
+            : $" on {DateTimeOffset.FromUnixTimeMilliseconds(closure.ClosedAtUnixMs).LocalDateTime:yyyy-MM-dd}";
+        string why = closure?.Reason == NetworkRoot.ClosureReasonFbiSeizure ? "seized by the FBI" : "closed — debt default";
+
+        string lost = string.Empty;
+        if (closure is { PlayerNstAtClosure: > 0m } or { PlayerPstAtClosure: > 0m })
+        {
+            string kind = closure.PlayerNstAtClosure > 0m ? "NST" : "PST";
+            decimal amount = closure.PlayerNstAtClosure > 0m ? closure.PlayerNstAtClosure : closure.PlayerPstAtClosure;
+            lost = string.Create(CultureInfo.InvariantCulture, $"   |   you lost {amount:N0} {kind}");
+            if (closure.PlayerUnclaimedBtcAtClosure > 0m || closure.PlayerUnclaimedScAtClosure > 0m)
+            {
+                lost += string.Create(CultureInfo.InvariantCulture,
+                    $" + {closure.PlayerUnclaimedBtcAtClosure:N8} BTC / {closure.PlayerUnclaimedScAtClosure:N2} SC unclaimed");
+            }
+        }
+
+        var label = new Label
+        {
+            Text = $"✗ {NetworkRoot.DescribeCompany(s)}  | {why}{when}{lost}",
+            MouseFilter = MouseFilterEnum.Pass
+        };
+        label.AddThemeColorOverride("font_color", ClosedCompanyGrey);
+        // Black border: a dissolved company is a stake you no longer hold (§22.15's vocabulary).
+        return BuildTitlePanel(label, HoldingBlack);
+    }
+
+    private static readonly Color ClosedCompanyGrey = new Color(0.55f, 0.55f, 0.55f);
 
     // ND.10f — the projected-stake → border-colour mapping, shared by the open-auction rows above and (by
     // the same three constants) the founded rows: gold NST, silver PST, black nothing.

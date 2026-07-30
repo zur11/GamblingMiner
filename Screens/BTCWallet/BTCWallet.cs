@@ -325,6 +325,13 @@ public partial class BTCWallet : Control
 		if (_networkRoot.IsPlayerLeadingCompanyBid(recipientAddress))
 			lines.Add("You already hold the leading bid here — if you send anyway it won't count as a bid: it won't participate in the auction, and your current leading bid (with its countdown) is preserved.");
 
+		// ND.10k (D-ND10k.3) — you ALREADY have an unconfirmed bid to this company this block. Both will
+		// confirm into the same bid group, where only your highest participates (D-ND10k.1) — the other is
+		// a plain non-participating send with NO refund (D-ND10k.2). Non-blocking, like every warning here.
+		if (_networkRoot.GetPendingAuctionBidBtc(recipientAddress) is decimal pendingBid)
+			lines.Add(string.Create(CultureInfo.InvariantCulture,
+				$"You already sent {pendingBid:F8} BTC to this company and it is still UNCONFIRMED (waiting for the next block). If both confirm in the same block only your HIGHEST bid participates in the auction — the other is a plain send that earns no slot and no stock, and is NOT refunded."));
+
 		// ND.8d.6 (b) — closing-soon (non-blocking): a bid may not be mined before the window closes.
 		if (_networkRoot.GetAuctionDaysUntilClose(recipientAddress) is double days && days <= NetworkRoot.AuctionClosingSoonWarningDays)
 			lines.Add(string.Create(CultureInfo.InvariantCulture,

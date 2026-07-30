@@ -22,20 +22,8 @@ public partial class CasinoScBalanceService : Node
 	private const string StatePath = "user://casino_sc_balance_state.json";
 	private int _betCount;
 	private CalendarTimeService _calendarTime;
-	private ScMonetaryLedgerService _monetaryLedger;
+	private CentralBankService _centralBank;
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-
-	// One bank-loan draw (auto = the on-demand bankruptcy recharge; manual = dev-requested via CasinoGamblingFinances).
-	// GameDateLocal is game-world time (CalendarTimeService), never wall-clock — displayed and persisted.
-	public sealed class LoanRecord
-	{
-		public decimal  Amount        { get; set; }
-		public string   Reason        { get; set; } = string.Empty; // "auto" | "manual"
-		public DateTime GameDateLocal { get; set; }
-	}
-
-	private readonly List<LoanRecord> _loanHistory = new();
-	public IReadOnlyList<LoanRecord> LoanHistory => _loanHistory;
 
 	// One Bankroll recharge (auto = the on-demand TryAutoRecharge dose; manual = the Main Balance → Bankroll
 	// transfer). Parallel to LoanRecord (CG.3.A). GameDateLocal is game-world time — displayed and persisted.
@@ -56,15 +44,15 @@ public partial class CasinoScBalanceService : Node
 	// pathological dev misconfiguration (a tiny AutoLoanAmount vs. a huge single-win deficit) to avoid a freeze.
 	private const int MaxAutoRechargeIterations = 100_000;
 
+	// P15.1c (D-15.3/D-15.5/D-15.23): LoanCount / TotalLoaned / LoanHistory are NO LONGER stored here — the
+	// casino is now just another Central Bank client and reads them through its FED account. Removing them
+	// from this snapshot is what collapses the old double-storage (casino's private copy + the ledger's).
 	private sealed class Snapshot
 	{
 		public decimal  MainBalance    { get; set; }
 		public decimal  Bankroll       { get; set; }
 		public decimal  BankrollTarget { get; set; }
 		public decimal  AutoLoanAmount { get; set; }
-		public int      LoanCount      { get; set; }
-		public decimal  TotalLoaned    { get; set; }
-		public List<LoanRecord>     LoanHistory     { get; set; } = new();
 		public List<RechargeRecord> RechargeHistory { get; set; } = new();
 		public DateTime UpdatedAtUtc   { get; set; }
 	}
@@ -80,8 +68,17 @@ public partial class CasinoScBalanceService : Node
 	// Dose drawn per on-demand auto-loan (bankruptcy recharge). Dev-configurable (CG.3.C); reverts to this
 	// default on every pre-genesis restart, sticks only once a real block commits it (mirrors BankrollTarget).
 	public decimal AutoLoanAmount { get; private set; } = InitialLoanAmount;
-	public int     LoanCount      { get; private set; } = 0;
-	public decimal TotalLoaned    { get; private set; } = 0m;
+
+	// P15.1c (Fork A, D-15.23): read-through accessors over the casino's Central Bank account — the FED is
+	// now the authoritative store for every loan figure the casino used to keep its own copy of. TotalLoaned
+	// is the CUMULATIVE drawn amount (never decremented), so CumulativeProfitSinceLoan = TotalSc − TotalLoaned
+	// keeps its exact pre-plan15 meaning. OutstandingFedDebt is the new figure the FED makes available: what
+	// the casino still owes (identical to TotalLoaned today — the casino never repays, D-15.17).
+	public int     LoanCount   => Fed?.DrawCount(CentralBankService.ClientCasino) ?? 0;
+	public decimal TotalLoaned => Fed?.TotalDrawn(CentralBankService.ClientCasino) ?? 0m;
+	public decimal OutstandingFedDebt => Fed?.OutstandingDebt(CentralBankService.ClientCasino) ?? 0m;
+	public IReadOnlyList<CentralBankService.FedLoanRecord> LoanHistory =>
+		Fed?.History(CentralBankService.ClientCasino) ?? Array.Empty<CentralBankService.FedLoanRecord>();
 
 	public event Action BalanceChanged;
 
@@ -94,8 +91,15 @@ public partial class CasinoScBalanceService : Node
 	{
 		LoadState();
 		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
-		GD.Print($"[CasinoScBalanceService] Ready — MainBalance={MainBalance:F8} SC  Bankroll={Bankroll:F8} SC  BankrollTarget={BankrollTarget:F8} SC  LoanCount={LoanCount}  TotalLoaned={TotalLoaned:F8} SC");
+		// Loan figures are deliberately NOT printed here: CentralBankService registers AFTER this service, so
+		// the FED account isn't reachable yet during our _Ready (it prints its own totals when it loads).
+		GD.Print($"[CasinoScBalanceService] Ready — MainBalance={MainBalance:F8} SC  Bankroll={Bankroll:F8} SC  BankrollTarget={BankrollTarget:F8} SC");
 	}
+
+	// The Central Bank registers AFTER this service (it must sit between the monetary ledger and the
+	// checkpoint service), so it cannot be resolved in _Ready — resolve lazily on first use and null-guard.
+	private CentralBankService Fed =>
+		_centralBank ??= GetNodeOrNull<CentralBankService>("/root/CentralBankService");
 
 	public override void _Process(double delta)
 	{
@@ -107,25 +111,16 @@ public partial class CasinoScBalanceService : Node
 		SaveState();
 	}
 
-	// Game-world time for a loan record (never wall-clock). Fallback only if the calendar autoload is absent.
-	// ND.8c (D-ND8.35): every bank-loan draw MINTS new SC, so it is mirrored into the world's monetary
-	// ledger as casino debt. Both draw sites (bankruptcy dose recharge, TriggerManualLoan) funnel through
-	// here — one hook covers them both (the third original site, the auction-settlement
-	// PayFromMainWithAutoLoan, retired at ND.8b.2 — D-ND8.14 removed the SC-cashback path it funded).
-	// Lazy resolve: the ledger
-	// autoload registers AFTER this service, so it isn't in the tree yet during our _Ready. The
-	// checkpoint restore path (RestoreCasinoScState) rebuilds the list directly and deliberately does
-	// NOT pass through here — the ledger has its own checkpoint restore.
-	private void AddLoanRecord(decimal amount, string reason)
+	// THE casino's single loan-draw funnel. P15.1c (D-15.3/D-15.23) re-points it at the Central Bank: the
+	// draw is recorded on the casino's FED account (debt + history + game-time stamp, all owned by the FED
+	// now) and the FED in turn mints the SC into the monetary ledger — so ND.8c's "one hook covers every
+	// draw site" property is preserved, one layer further out. Both live draw sites (the bankruptcy dose
+	// recharge and the dev TriggerManualLoan, plus the provisional company-provisioning path) funnel through
+	// here; the checkpoint restore deliberately does NOT — the FED has its own checkpoint restore.
+	// (The third original site, the auction-settlement PayFromMainWithAutoLoan, retired at ND.8b.2 / D-ND8.14.)
+	private void DrawFedLoan(decimal amount, string reason)
 	{
-		_loanHistory.Add(new LoanRecord
-		{
-			Amount        = Money.Normalize(amount),
-			Reason        = reason,
-			GameDateLocal = _calendarTime?.CurrentLocalDateTime ?? DateTime.Now
-		});
-		_monetaryLedger ??= GetNodeOrNull<ScMonetaryLedgerService>("/root/ScMonetaryLedgerService");
-		_monetaryLedger?.RegisterLoanDraw(ScMonetaryLedgerService.PartyCasino, amount, reason);
+		Fed?.DrawLoan(CentralBankService.ClientCasino, amount, reason);
 	}
 
 	// Game-world time for a recharge record; trim to the last MaxRechargeHistory so the history stays bounded.
@@ -144,7 +139,9 @@ public partial class CasinoScBalanceService : Node
 	// Called by BlockSessionCheckpointService.ApplyCheckpointToServices() on restart.
 	// Sets MainBalance and Bankroll directly to checkpoint values — bypasses auto-recharge, does not persist.
 	// Both == 0 means the fields were absent from the JSON (old checkpoint before Phase 11.2) — skip restore.
-	public void RestoreCasinoScState(decimal main, decimal bankroll, decimal bankrollTarget, decimal autoLoanAmount, int loanCount, decimal totalLoaned, IReadOnlyList<LoanRecord> loanHistory, IReadOnlyList<RechargeRecord> rechargeHistory)
+	// P15.1c: the loan parameters are gone — the casino's loan state now restores with the FED's own
+	// checkpoint DTO (CentralBankService.RestoreFromCheckpoint), which runs BEFORE this call.
+	public void RestoreCasinoScState(decimal main, decimal bankroll, decimal bankrollTarget, decimal autoLoanAmount, IReadOnlyList<RechargeRecord> rechargeHistory)
 	{
 		if (main == 0m && bankroll == 0m)
 		{
@@ -153,32 +150,19 @@ public partial class CasinoScBalanceService : Node
 		}
 		MainBalance = Money.Normalize(Math.Max(0m, main));
 		Bankroll    = Money.Normalize(Math.Max(0m, bankroll));
-		// BankrollTarget/LoanCount/TotalLoaned were added to the checkpoint in Phase CG.0.6, LoanHistory in CG.2.
-		// Under extra-lazy funding (CG.1.8), LoanCount==0 / TotalLoaned==0 / empty history are all VALID restorable
-		// values (a block mined during a pure loss streak, before any loan), so we must not skip them. Gate on
-		// BankrollTarget instead — it is always >0 in any CG.0.6+ checkpoint and absent/0 only in a legacy
-		// pre-CG.0.6 one: when present, restore verbatim; when absent, keep what LoadState() loaded (legacy path).
+		// BankrollTarget/AutoLoanAmount were added to the checkpoint in Phase CG.0.6. Under extra-lazy funding
+		// (CG.1.8) an empty recharge history is a VALID restorable value (a block mined during a pure loss
+		// streak, before any recharge), so we must not gate on it. Gate on BankrollTarget instead — it is
+		// always >0 in any CG.0.6+ checkpoint and absent/0 only in a legacy pre-CG.0.6 one: when present,
+		// restore verbatim; when absent, keep what LoadState() loaded (legacy path).
 		if (bankrollTarget > 0m)
 		{
 			BankrollTarget = Money.Normalize(bankrollTarget);
 			AutoLoanAmount = autoLoanAmount > 0m ? Money.Normalize(autoLoanAmount) : InitialLoanAmount;
-			LoanCount      = Math.Max(0, loanCount);
-			TotalLoaned    = Money.Normalize(Math.Max(0m, totalLoaned));
 
-			// Keep both histories in lockstep with LoanCount/TotalLoaned (block = the only commit): otherwise a
-			// loan/recharge that happened after the checkpoint but before a restart would survive as a phantom entry.
-			_loanHistory.Clear();
-			foreach (var r in loanHistory ?? Array.Empty<LoanRecord>())
-			{
-				if (r == null || r.Amount <= 0m) continue;
-				_loanHistory.Add(new LoanRecord
-				{
-					Amount        = Money.Normalize(r.Amount),
-					Reason        = string.IsNullOrEmpty(r.Reason) ? "auto" : r.Reason,
-					GameDateLocal = DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
-				});
-			}
-
+			// Keep the recharge history in lockstep with the balances (block = the only commit): otherwise a
+			// recharge that happened after the checkpoint but before a restart would survive as a phantom entry.
+			// (The loan history is the FED's now and is restored by its own checkpoint DTO, same rule.)
 			_rechargeHistory.Clear();
 			foreach (var r in rechargeHistory ?? Array.Empty<RechargeRecord>())
 			{
@@ -243,11 +227,9 @@ public partial class CasinoScBalanceService : Node
 		{
 			if (MainBalance < BankrollTarget)
 			{
-				MainBalance  = Money.Normalize(MainBalance + loanChunk);
-				LoanCount++;
-				TotalLoaned  = Money.Normalize(TotalLoaned + loanChunk);
-				AddLoanRecord(loanChunk, "auto");
-				GD.Print($"[CasinoScBalanceService] Bank loan #{LoanCount} drawn on demand ({loanChunk:F2} SC) — TotalLoaned={TotalLoaned:F8} SC");
+				MainBalance = Money.Normalize(MainBalance + loanChunk);
+				DrawFedLoan(loanChunk, "auto");
+				GD.Print($"[CasinoScBalanceService] FED loan #{LoanCount} drawn on demand ({loanChunk:F2} SC) — TotalLoaned={TotalLoaned:F8} SC");
 			}
 
 			decimal transfer = Money.Normalize(Math.Min(BankrollTarget, MainBalance));
@@ -266,9 +248,7 @@ public partial class CasinoScBalanceService : Node
 		if (amount <= 0m) amount = InitialLoanAmount;
 
 		MainBalance = Money.Normalize(MainBalance + amount);
-		LoanCount++;
-		TotalLoaned = Money.Normalize(TotalLoaned + amount);
-		AddLoanRecord(amount, "manual");
+		DrawFedLoan(amount, "manual");
 		SaveState();
 		BalanceChanged?.Invoke();
 		return true;
@@ -315,7 +295,8 @@ public partial class CasinoScBalanceService : Node
 	// rate (no swap-desk fee; the casino receives the company's BTC on-chain in exchange, see
 	// NetworkRoot.TryConvertCompanyReserves). If Main can't cover the amount, the bank injects
 	// AutoLoanAmount chunks first (mirroring TryAutoRecharge's bankruptcy-flavor loan) — every draw flows
-	// through AddLoanRecord, so the SC Monetary Ledger accounts it as casino debt (§12.4.6e "inherently
+	// through DrawFedLoan, so the FED books it on the casino's account and the SC Monetary Ledger mints it
+	// as casino debt (§12.4.6e "inherently
 	// covered"). This path retires when the first bank company takes over new credit (D-ND8.34, ND.8e).
 	public bool TryPayCompanyProvisionSc(decimal amount, string reason)
 	{
@@ -327,9 +308,7 @@ public partial class CasinoScBalanceService : Node
 		while (MainBalance < amount && safety++ < MaxAutoRechargeIterations)
 		{
 			MainBalance = Money.Normalize(MainBalance + loanChunk);
-			LoanCount++;
-			TotalLoaned = Money.Normalize(TotalLoaned + loanChunk);
-			AddLoanRecord(loanChunk, reason);
+			DrawFedLoan(loanChunk, reason);
 		}
 
 		if (MainBalance < amount) return false; // amount absurdly beyond the loan safety cap — refuse
@@ -362,9 +341,8 @@ public partial class CasinoScBalanceService : Node
 		Bankroll       = 0m;
 		BankrollTarget = DefaultBankroll;    // 100
 		AutoLoanAmount = InitialLoanAmount;  // 40,000 auto-loan default (CG.3.C)
-		LoanCount      = 0;
-		TotalLoaned    = 0m;
-		_loanHistory.Clear();
+		// Loan counters/history are the FED's since P15.1c — BlockSessionCheckpointService resets its
+		// CentralBankService account (to "no client has borrowed anything") alongside this call.
 		_rechargeHistory.Clear();
 		SaveState();
 		BalanceChanged?.Invoke();
@@ -415,24 +393,6 @@ public partial class CasinoScBalanceService : Node
 			Bankroll       = Money.Normalize(Math.Max(0m, snapshot.Bankroll));
 			BankrollTarget = snapshot.BankrollTarget > 0m ? Money.Normalize(snapshot.BankrollTarget) : DefaultBankroll;
 			AutoLoanAmount = snapshot.AutoLoanAmount > 0m ? Money.Normalize(snapshot.AutoLoanAmount) : InitialLoanAmount;
-			// 0 is now a legitimate pre-genesis value (no loan taken until the first settled bet funds the
-			// casino), so do NOT coerce it up to 1 / InitialLoanAmount as the old funded-from-boot model did.
-			LoanCount      = Math.Max(0, snapshot.LoanCount);
-			TotalLoaned    = Money.Normalize(Math.Max(0m, snapshot.TotalLoaned));
-
-			_loanHistory.Clear();
-			foreach (var r in snapshot.LoanHistory ?? new List<LoanRecord>())
-			{
-				if (r == null || r.Amount <= 0m) continue;
-				_loanHistory.Add(new LoanRecord
-				{
-					Amount        = Money.Normalize(r.Amount),
-					Reason        = string.IsNullOrEmpty(r.Reason) ? "auto" : r.Reason,
-					GameDateLocal = r.GameDateLocal.Kind == DateTimeKind.Unspecified
-						? DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
-						: r.GameDateLocal
-				});
-			}
 
 			_rechargeHistory.Clear();
 			foreach (var r in snapshot.RechargeHistory ?? new List<RechargeRecord>())
@@ -464,10 +424,7 @@ public partial class CasinoScBalanceService : Node
 		Bankroll       = 0m;                 // accumulates player losses; refilled only when a win empties it
 		BankrollTarget = DefaultBankroll;    // 100 — the casino's "dose" (auto-recharge target)
 		AutoLoanAmount = InitialLoanAmount;  // 40,000 — the auto-loan chunk (CG.3.C)
-		LoanCount      = 0;
-		TotalLoaned    = 0m;
-		_loanHistory.Clear();               // no history entry for the (now on-demand) foundational loan — D15
-		_rechargeHistory.Clear();
+		_rechargeHistory.Clear();           // loan history lives on the FED account since P15.1c
 	}
 
 	private void SaveState()
@@ -480,16 +437,6 @@ public partial class CasinoScBalanceService : Node
 				Bankroll       = Bankroll,
 				BankrollTarget = BankrollTarget,
 				AutoLoanAmount = AutoLoanAmount,
-				LoanCount      = LoanCount,
-				TotalLoaned    = TotalLoaned,
-				LoanHistory    = _loanHistory
-					.Select(r => new LoanRecord
-					{
-						Amount        = r.Amount,
-						Reason        = r.Reason,
-						GameDateLocal = DateTime.SpecifyKind(r.GameDateLocal, DateTimeKind.Local)
-					})
-					.ToList(),
 				RechargeHistory = _rechargeHistory
 					.Select(r => new RechargeRecord
 					{

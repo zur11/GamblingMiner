@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Globalization;
+using System.Linq;
 using Scripts.Finance;
 using UI.StatusBar;
 
@@ -188,17 +189,19 @@ public partial class CasinoGamblingFinances : Control
 		_bankrollTargetValueLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll Target:  {_casinoSc.BankrollTarget:N8} SC");
 		_autoLoanValueLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Auto-loan amount:  {_casinoSc.AutoLoanAmount:N8} SC");
 
-		// Loan info line — include the most recent loan's game date+time, and flag any loans drawn before
-		// loan-history logging existed (pre-CG.2 checkpoints) as "(+N pre-log)" so LoanCount and the list can't
-		// look inconsistent.
+		// Loan info line — include the most recent draw's game date+time. Step 15 P15.1c: the figures and the
+		// history now come from the casino's Central Bank (FED) account, not from a copy the casino kept
+		// itself. The FED caps each client's history at its newest 500 records while the counters stay exact,
+		// so any surplus is flagged as "(+N older)" rather than letting the count and the list look inconsistent.
 		var history = _casinoSc.LoanHistory;
+		int loggedDraws = history.Count(r => r.Kind == CentralBankService.KindDraw);
 		string lastLoanDate = history.Count > 0
 			? history[^1].GameDateLocal.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
 			: "n/a";
-		int unloggedCount = _casinoSc.LoanCount - history.Count;
-		string unloggedNote = unloggedCount > 0 ? $" (+{unloggedCount} pre-log)" : "";
+		int untrackedCount = _casinoSc.LoanCount - loggedDraws;
+		string untrackedNote = untrackedCount > 0 ? $" (+{untrackedCount} older)" : "";
 		_loanInfoLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Bank loans taken: {_casinoSc.LoanCount}{unloggedNote}   |   Total loaned: {_casinoSc.TotalLoaned:N8} SC   |   Last: {lastLoanDate}");
+			$"FED loans taken: {_casinoSc.LoanCount}{untrackedNote}   |   Total loaned: {_casinoSc.TotalLoaned:N8} SC   |   Outstanding: {_casinoSc.OutstandingFedDebt:N8} SC   |   Last: {lastLoanDate}");
 
 		// Loan history list, newest first (full game timestamp — CG.3.B). Validity guard (CG.2.15): the list can
 		// be queried by the fallback timer during a scene teardown frame.
@@ -209,7 +212,7 @@ public partial class CasinoGamblingFinances : Control
 			{
 				var r = history[i];
 				_loanHistoryList.AddItem(string.Create(CultureInfo.InvariantCulture,
-					$"{r.GameDateLocal:yyyy-MM-dd HH:mm:ss} | {r.Amount:N8} SC | {r.Reason}"));
+					$"{r.GameDateLocal:yyyy-MM-dd HH:mm:ss} | {r.Kind,-5} | {r.Amount:N8} SC | {r.Reason}"));
 			}
 		}
 

@@ -50,6 +50,25 @@ public partial class FinancialBettingStats : VBoxContainer
 		Refresh();
 	}
 
+	// INC-001 / D-15.29 (§39.16 rule 1 — a displayed figure must not claim more than it is). The bet journal
+	// is now retention-capped (BetHistoryRepository.MaxRetainedJournalChunks), so the "General" scope is no
+	// longer a lifetime total: it covers whatever history is still retained. Said in a tooltip rather than in
+	// the label, because the caption sits in a compact GridContainer that a longer string would reflow
+	// (Ch. 29). MouseFilter must be PASS, not STOP — a STOP label swallows the mouse wheel inside a
+	// ScrollContainer, which is the §29 anti-pattern this panel would otherwise walk straight into.
+	public override void _Ready()
+	{
+		Label generalScope = GetNodeOrNull<Label>("Grid/GeneralScope");
+		if (generalScope != null)
+		{
+			generalScope.MouseFilter = MouseFilterEnum.Pass;
+			generalScope.TooltipText =
+				"Covers the retained bet history, not the whole run — older bets are trimmed once the " +
+				"journal passes its retention cap. The two 'Since…' scopes are exact: they are measured " +
+				"from ledger events, not from the journal.";
+		}
+	}
+
 	private void OnStatsChanged(Scripts.User.UserBettingStats _) => Refresh();
 
 	public override void _Process(double delta)

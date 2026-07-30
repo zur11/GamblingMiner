@@ -37,6 +37,9 @@ public partial class NetworkRoot : Node
     private const int HalvingIntervalBlocks = 2100;
     private const string BlockchainDir = "user://blockchain";
     private const string StatePath = "user://blockchain/state.json";
+    // INC-001 / D-15.26 — the staging file for the atomic snapshot write (write here, close, rename over
+    // StatePath). Never read as world state except as the corrupt-main fallback in TryLoadSnapshot.
+    private const string StateTempPath = "user://blockchain/state.json.tmp";
     // Step 8 (full UTXO model) — bumped when the on-disk chain format changes incompatibly. The old
     // account/balance chain has no input→output (UTXO) linkage, so it cannot be replayed into a UTXO set;
     // on a version change we wipe the chain + clock + financial state and re-bootstrap a fresh world (the
@@ -45,7 +48,12 @@ public partial class NetworkRoot : Node
     // carries flat-0.1 fees from 2009-04-26 that the Market-Birth median/mean policy could never
     // produce, and the bootstrap regenerates differently), so the fee-era switch rides the same
     // clean-reset mechanism even though the serialized shape itself is unchanged.
-    private const int WorldFormatVersion = 3;
+    // v4 (Step 15 P15.1d, D-15.10): the Central Bank (FED) becomes the explicit, persisted owner of all
+    // loan bookkeeping — the casino's LoanCount/TotalLoaned/LoanHistory move OFF casino_sc_balance_state.json
+    // and off the checkpoint DTO onto a FED account (D-15.3/D-15.23 Fork A). Rather than write a migration
+    // for a DEV-era save, world-defining banking semantics ride the same clean-reset mechanism. Every LATER
+    // plan15 file just joins the delete list below — no further bump for the rest of the plan.
+    private const int WorldFormatVersion = 4;
     private const string WorldVersionPath = "user://world_format_version.txt";
     // Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
     // A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
@@ -260,7 +268,8 @@ public partial class NetworkRoot : Node
         // tier 6 with a 264 BTC cap against a ~371 BTC required raise). A bot priced out of a mature
         // auction is the DESIGNED economic terminator (§22.10) — so say so instead of quoting odds.
         // ND.10e — the reserve guard outranks the per-pool rules (same order as BuildBotPoolOpportunities).
-        if (bot != null && _botsRestingOnReserve.Contains(bot.NodeId)) return ExclusionReserve;
+        // ND.10j — through the shared predicate, so the label is right before the first mined block too.
+        if (bot != null && IsBotRestingOnReserve(bot.NodeId)) return ExclusionReserve;
         if (bot != null && !CanAffordNextBid(summary, bot)) return ExclusionPricedOut;
 
         if (IsBidderSatisfied(tier, ownBidCount)) return ExclusionSatisfied;
@@ -270,7 +279,18 @@ public partial class NetworkRoot : Node
         if (ownBidCount == 1 && tier >= 2 && bot != null)
         {
             int currentBlockIndex = GetPlayerLatestBlock().Index;
-            pct = Math.Max(pct, PeekStuckEscalationProbabilityPercent(summary.NonMinerNodeId, bot.NodeId, tier, currentBlockIndex));
+            (int percent, int basePercent, int multiplier, bool capped) escalation =
+                PeekStuckEscalationDetail(summary, bot.NodeId, donorAddress, tier, currentBlockIndex);
+            // ND.10i suggestion 4 — when the ESCALATION is the binding term, show what it is made of. A bare
+            // "40%" cannot be told apart from another tier's "40%" (and after a re-rank stamps every occupant
+            // on the same block, equal readings are normal — only the slopes differ), which is exactly how
+            // the tier-2/tier-4 collision hid. Where the static mode rate still wins, nothing is appended:
+            // there is no escalation story to tell.
+            if (escalation.percent > pct)
+            {
+                return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                    $"{escalation.percent}% (base {escalation.basePercent} ×{escalation.multiplier} blocks stuck{(escalation.capped ? ", capped" : string.Empty)})");
+            }
         }
         return pct > 0 ? pct + "%" : string.Empty; // integer percent — culture-invariant by construction
     }
@@ -327,22 +347,36 @@ public partial class NetworkRoot : Node
     // bot sitting between the two thresholds, which restarts un-rested; harmless and self-correcting.
     private static readonly HashSet<string> _botsRestingOnReserve = [];
 
+    // ND.10j (2026-07-28, §14.11) — THE reserve-guard question, as one pure predicate every consumer
+    // shares: is this bot out of all auctions right now? It applies the hysteresis to the LIVE spendable
+    // balance rather than merely reading the set, so it answers correctly even before the set has ever
+    // been written this process — the cold-start half of the ND.10j defect. `_botsRestingOnReserve` is
+    // in-memory (D-ND10e.3) and its only writer is the per-block sweep below, so between process start
+    // and the first mined block the set is EMPTY: the label and the panel would show a percentage for a
+    // bot the very next block excludes, which is precisely the §39.16 rule-6 violation ND.10d closed for
+    // "priced out". Predicting the next sweep costs one balance read and cannot disagree with it.
+    private static bool IsBotRestingOnReserve(string botNodeId)
+    {
+        bool resting = _botsRestingOnReserve.Contains(botNodeId);
+        if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return resting;
+        decimal spendable = bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress);
+        // Hysteresis, unchanged: resting until rebuilt to Resume; entering only at or below Stop. A bot
+        // sitting BETWEEN the two thresholds keeps whatever state it already had — which on a cold start
+        // is "not resting", the drift D-ND10e.3 documents as harmless and self-correcting.
+        return resting ? spendable < BotBidReserveResumeBtc : spendable <= BotBidReserveStopBtc;
+    }
+
     // ND.10e — the reserve guard's edge-triggered sweep, run once per block beside
     // SweepStuckBidderSignatures (single writer, never from a UI refresh — the ND.10c discipline).
+    // ND.10j — the hysteresis itself moved into IsBotRestingOnReserve so the sweep and every reader
+    // apply literally the same rule; this is now just the write-back of that predicate.
     private static void SweepBotReserveGuard()
     {
         foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
         {
-            if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
-            decimal spendable = bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress);
-            if (_botsRestingOnReserve.Contains(record.NodeId))
-            {
-                if (spendable >= BotBidReserveResumeBtc) _botsRestingOnReserve.Remove(record.NodeId);
-            }
-            else if (spendable <= BotBidReserveStopBtc)
-            {
-                _botsRestingOnReserve.Add(record.NodeId);
-            }
+            if (!SharedNodesById.ContainsKey(record.NodeId)) continue;
+            if (IsBotRestingOnReserve(record.NodeId)) _botsRestingOnReserve.Add(record.NodeId);
+            else _botsRestingOnReserve.Remove(record.NodeId);
         }
     }
 
@@ -357,6 +391,9 @@ public partial class NetworkRoot : Node
         decimal fee, decimal bidBudgetCap, long nowMs, int currentBlockIndex)
     {
         var opportunities = new List<BotPoolOpportunity>();
+        // ND.10j — hoisted out of the pool loop: one live balance read per call instead of one per pool,
+        // and (the point) the guard now answers correctly before the first mined block of a session.
+        bool restingOnReserve = IsBotRestingOnReserve(botNodeId);
         foreach (NonMinerDonationSummary target in pools)
         {
             List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
@@ -379,7 +416,7 @@ public partial class NetworkRoot : Node
             string? exclusion = null;
             // ND.10e (D-ND10e.3) — the reserve guard outranks every per-pool rule: a bot rebuilding its
             // BTC reserve is out of ALL auctions until it clears the resume threshold.
-            if (_botsRestingOnReserve.Contains(botNodeId)) exclusion = ExclusionReserve;
+            if (restingOnReserve) exclusion = ExclusionReserve;
             else if (ownSlotCount > 0 && IsBidderSatisfied(bestTier, ownSlotCount)) exclusion = ExclusionSatisfied;
             else if (slotsByValue.Count >= MaxTrackedDonations && ownTiers.Contains(slotsByValue.Count)) exclusion = ExclusionGuard;
             else if (requiredAmount + fee > bidBudgetCap) exclusion = ExclusionPricedOut;
@@ -399,7 +436,7 @@ public partial class NetworkRoot : Node
                     int mode = SumTwoLowestReBidProbabilities(
                         ownTiers, slotsByValue.Count, IsAuctionInUrgencyWindow(target.WindowCloseUnixMs, nowMs), ownSlotCount);
                     probabilityPercent = ownSlotCount == 1
-                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(target.NonMinerNodeId, botNodeId, bestTier, currentBlockIndex))
+                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(target, botNodeId, botAddress, bestTier, currentBlockIndex))
                         : mode;
                 }
                 if (probabilityPercent <= 0) exclusion = ExclusionSatisfied; // defensive — the rules above already cover every all-0 case
@@ -429,8 +466,10 @@ public partial class NetworkRoot : Node
     //
     //   r_k = the pool's ladder probability for this bot (BuildBotPoolOpportunities — mode-aware,
     //         max(mode, escalation) for a lone slot, 1.0 unparticipated)
-    //   q_k = r_k · Σ_m P(H₋ₖ = m)/(m+1)   — all pools roll in parallel; if several hit, one wins the
-    //         uniform tie-break. H₋ₖ = how many of the bot's OTHER pools hit (Poisson-binomial DP).
+    //   q_k = r_k · Σ_W P(W₋ₖ = W)·w_k/(w_k+W)  — all pools roll in parallel; if several hit, one wins the
+    //         WEIGHTED tie-break (ND.10l, superseding the uniform Σ_m P(H₋ₖ=m)/(m+1) count DP). W₋ₖ = the
+    //         total tie-break weight of the bot's OTHER pools that hit; w_k = this pool's own weight
+    //         (its ladder probability, or FreshPoolSeedingWeight when unparticipated).
     //   p_k = q_k / B                      — B = number of ELIGIBLE bots (D-ND10c.1)
     //   P_k = w1·p + w2·(2p − p²)          — the count draw; slightly below p·E[count] because a bot drawn
     //         for both slots can only take the lead once. Weights read from the live draw constants.
@@ -473,12 +512,15 @@ public partial class NetworkRoot : Node
         foreach ((string botNodeId, List<BotPoolOpportunity> opportunities) in byBot)
         {
             double[] r = opportunities.Select(o => o.ProbabilityPercent / 100.0).ToArray();
+            // ND.10l — the tie-break is weighted now, so the share DP needs each pool's WEIGHT as well as
+            // its hit probability (a fresh pool's r is the deterministic sentinel 1.0, its weight is not).
+            int[] w = opportunities.Select(TieBreakWeight).ToArray();
             double qSum = 0d;
             List<(string, string, double)> perPool = result[botNodeId];
 
             for (int k = 0; k < r.Length; k++)
             {
-                double q = r[k] * ExpectedTieBreakShare(r, k);
+                double q = r[k] * ExpectedWeightedTieBreakShare(r, w, k);
                 qSum += q;
                 double p = q / eligibleBots;                        // roll 1 — the eligible-bot draw
                 double perBlock = weightOne * p + weightTwo * (2 * p - p * p); // the count draw
@@ -500,25 +542,59 @@ public partial class NetworkRoot : Node
         return result;
     }
 
-    // ND.10c (D-ND10c.5) — Σ_m P(H = m)/(m+1) over the OTHER pools' hit probabilities: the share pool
-    // `excludeIndex` keeps after the uniform tie-break when several pools hit in the same slot. Standard
-    // Poisson-binomial DP (independent trials, different probabilities), O(N²) per pool.
-    private static double ExpectedTieBreakShare(double[] probabilities, int excludeIndex)
+    // ND.10c (D-ND10c.5), reworked at ND.10l (D-ND10l.3) — the share pool `excludeIndex` keeps when
+    // several pools hit in the same slot. Under the retired UNIFORM draw this was Σ_m P(H₋ₖ=m)/(m+1),
+    // a plain count DP: only HOW MANY others hit mattered. Under the weighted draw it matters WHICH
+    // others hit, so the DP now runs over their total tie-break WEIGHT:
+    //
+    //     share_k = Σ_W P(other hits weigh W) · w_k / (w_k + W)
+    //
+    // The panel MUST track the roll here — a per-block probability that models a tie-break the pipeline
+    // no longer performs would be exactly the ND.10d class of lie, in the one number the whole scene
+    // exists to show (§39.16 rule 6).
+    //
+    // Two collapses keep it cheap. A pool with r ≥ 1 (every unparticipated pool, and any escalation that
+    // has reached 100%) ALWAYS hits, so it is not a random variable at all — its weight folds into a
+    // constant offset. A pool with r ≤ 0 never hits and drops out. Only genuinely stochastic pools enter
+    // the DP, and a bot holds slots in a handful of pools at most, so the weight axis stays small even
+    // when 40 companies are live. The Σq identity asserted by the caller still holds unchanged: any rule
+    // that picks exactly one winner from a non-empty hit set satisfies Σ_k q_k = 1 − ∏_k (1−r_k), so it
+    // now doubles as a check on this DP too.
+    private static double ExpectedWeightedTieBreakShare(double[] probabilities, int[] weights, int excludeIndex)
     {
-        var dist = new double[Math.Max(1, probabilities.Length)]; // dist[h] = P(exactly h OTHER pools hit)
-        dist[0] = 1d;
-        int size = 1;
+        int ownWeight = Math.Max(1, weights[excludeIndex]);
+
+        int certainWeight = 0;
+        var stochastic = new List<(double p, int w)>();
         for (int j = 0; j < probabilities.Length; j++)
         {
             if (j == excludeIndex) continue;
-            double pj = probabilities[j];
-            for (int h = size; h >= 1; h--) dist[h] = dist[h] * (1 - pj) + dist[h - 1] * pj;
-            dist[0] *= 1 - pj;
-            size++;
+            if (probabilities[j] >= 1d) certainWeight += Math.Max(0, weights[j]); // always hits
+            else if (probabilities[j] > 0d) stochastic.Add((probabilities[j], Math.Max(0, weights[j])));
+            // r ≤ 0 — never hits, contributes nothing
+        }
+
+        int maxWeight = 0;
+        foreach ((double _, int w) in stochastic) maxWeight += w;
+
+        var dist = new double[maxWeight + 1]; // dist[W] = P(the stochastic others' hit weights sum to W)
+        dist[0] = 1d;
+        int filled = 0;
+        foreach ((double p, int w) in stochastic)
+        {
+            // 0/1-knapsack convolution, walked DOWNWARD so dist[t − w] is still the pre-update value.
+            for (int t = filled + w; t >= 0; t--)
+            {
+                dist[t] = dist[t] * (1 - p) + (t >= w ? dist[t - w] * p : 0d);
+            }
+            filled += w;
         }
 
         double share = 0d;
-        for (int h = 0; h < size; h++) share += dist[h] / (h + 1);
+        for (int t = 0; t <= maxWeight; t++)
+        {
+            if (dist[t] > 0d) share += dist[t] * ownWeight / (ownWeight + certainWeight + (double)t);
+        }
         return share;
     }
 
@@ -583,23 +659,85 @@ public partial class NetworkRoot : Node
     // per block stuck, clamped to 100%. Since D-ND10c.4 it has exactly ONE reader,
     // PeekStuckEscalationProbabilityPercent (pure), consumed by both the roll and the UI label; the
     // signature writes belong solely to the per-block SweepStuckBidderSignatures.
-    private static int EscalatedStuckPercent(int bestTier, int blocksElapsed)
+    // ND.10i (D-ND10i.2, 2026-07-27) — the CEILING on a top-3 (NST-band) slot's escalation. An accepted bid
+    // always takes the lead (it must clear the leader's floor), which RESETS the 20-day rolling window
+    // (D-ND4b.1) — so an escalation running to 100% at tier 2 is a leapfrog engine: the runner-up bids every
+    // block, becomes leader (tier 1 ⇒ always satisfied, stops), the displaced leader becomes tier 2 and
+    // starts escalating, and the countdown never expires while two solvent bots contest the pool. Capping
+    // the NST band keeps ND.10c's fix (no lone tier-2/3 occupant frozen at a flat 5%/2% forever) without
+    // turning the runner-up into a metronome; below the band the escalation still runs to 100%, because a
+    // bot outside the stock-minting tiers genuinely has nothing to lose by pressing. Fibonacci per D-ND6.4.
+    // Resolution of such a pool then rests where §22.10 always intended it: price-out, the economic
+    // terminator. The ceiling bounds the ESCALATION only — callers compose max(mode rate, escalation), so a
+    // calibrated mode rate above it (none today: tier 2 tops out at 21 in early rush) would still win.
+    private const int MaxTopTierEscalationPercent = 34;
+
+    // ND.10i suggestion 4 — the escalation's COMPOSITION, not just its result: the tier's slope, how many
+    // blocks it has been compounding, and whether the D-ND10i.2 ceiling is binding. The per-slot label shows
+    // these so a reader can see WHY two slots read what they do — the developer diagnosed the slope collision
+    // by noticing two numbers were equal that shouldn't be, which a visible `base × blocks` would have made
+    // obvious on sight instead of requiring a trace audit.
+    private static (int percent, int basePercent, int multiplier, bool capped) EscalatedStuckDetail(int bestTier, int blocksElapsed)
     {
-        int baseProbability = StuckEscalationBasePercent(bestTier);
-        if (baseProbability <= 0) return 0;
-        decimal scaled = baseProbability * (decimal)(Math.Max(0, blocksElapsed) + 1);
-        return (int)Math.Min(100m, scaled);
+        int basePercent = StuckEscalationBasePercent(bestTier);
+        if (basePercent <= 0) return (0, 0, 0, false);
+        int multiplier = Math.Max(0, blocksElapsed) + 1; // the block it got stuck on counts as block 1
+        decimal scaled = basePercent * (decimal)multiplier;
+        decimal ceiling = bestTier <= NstTopTierCount ? MaxTopTierEscalationPercent : 100m;
+        return ((int)Math.Min(ceiling, scaled), basePercent, multiplier, scaled > ceiling);
     }
 
-    // D-ND10c.3 (2026-07-23) — the escalation's base is ALWAYS the tier's plain NORMAL-mode value. Tiers
-    // 4-9 read the NORMAL ladder table; **tiers 2-3 now escalate too** (ND.10c) and read the shallow
-    // table's NORMAL / one-own-bid cell (tier 2 → 5, tier 3 → 2). Before ND.10c the whole escalation was
-    // gated at `tier > 3`, so a bot parked at tier 2/3 sat at a flat, never-moving 5%/2% forever — the
-    // BitPaid finding (§14.4 of the step14 plan). Tier 1 is always satisfied and never escalates; tier 10
-    // is excluded by the self-eviction guard before any roll.
+    private static int EscalatedStuckPercent(int bestTier, int blocksElapsed)
+        => EscalatedStuckDetail(bestTier, blocksElapsed).percent;
+
+    // ND.10i suggestion 3 — the DEV-only ordering assertion. The escalation slopes must ASCEND with tier
+    // depth (deeper = further from the NST band = more desperate), with EXACTLY ONE deliberate exception:
+    // tier 3 sits below tier 2, because that pair is ordered by SATISFACTION, not desperation (tier 3 can be
+    // satisfied at ≥2 own bids, tier 2 never is — D-ND8d.2/3). So the sequence checked is t3 < t2 < t4 < …
+    // < t9. Stripped from release builds by [Conditional] — a broken ladder in an exported build is
+    // undetectable anyway; the point is to catch it the moment a developer edits a table.
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void AssertEscalationSlopesAreOrdered()
+    {
+        int[] tiersInExpectedOrder = [3, 2, 4, 5, 6, 7, 8, 9];
+        for (int i = 1; i < tiersInExpectedOrder.Length; i++)
+        {
+            int previousTier = tiersInExpectedOrder[i - 1], tier = tiersInExpectedOrder[i];
+            int previous = StuckEscalationBasePercent(previousTier), current = StuckEscalationBasePercent(tier);
+            if (current > previous) continue;
+
+            GD.PrintErr(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "[ND.10i] Escalation slope ordering VIOLATED — tier {0} ({1}%/block) must escalate strictly "
+                + "faster than tier {2} ({3}%/block). Expected ascending order t3 < t2 < t4 … < t9 (the t3/t2 "
+                + "swap is the only intended one, D-ND8d.2/3). A shallower slot will now reach certainty as "
+                + "fast as, or faster than, a deeper one — the ND.10i DeepBit defect. Check "
+                + "StuckEscalationBasePercent / the ladder tables it reads.",
+                tier, current, previousTier, previous));
+        }
+    }
+
+    // D-ND10c.3 (2026-07-23) — the escalation's base is the tier's DESPERATION slope: how fast a lone
+    // occupant stuck at that tier grows toward acting. Tiers 4-9 read the plain NORMAL ladder table; tiers
+    // 2-3 escalate too since ND.10c (before it the whole escalation was gated at `tier > 3`, so a bot
+    // parked at tier 2/3 sat at a flat, never-moving 5%/2% forever — the BitPaid finding, §14.4). Tier 1 is
+    // always satisfied and never escalates; tier 10 is excluded by the self-eviction guard before any roll.
+    //
+    // ND.10i (D-ND10i.1, 2026-07-27) — tier 2 has its OWN base (3), no longer the shallow table's NORMAL
+    // one-bid cell (5). ND.10c's rule "the base is the tier's plain NORMAL-mode value" is internally
+    // consistent but landed tier 2 on exactly tier 4's slope (both 5), because the two tables were
+    // calibrated for different questions and had never been read side by side: a bot in 2nd place — INSIDE
+    // the NST band — escalated to certainty as fast as one in 4th and 2.5× faster than one in 3rd, and in a
+    // NORMAL-mode pool tiers 2 and 4 were numerically identical at every block forever (the DeepBit audit).
+    // The shallow table's tier2 > tier3 crossover is about SATISFACTION (tier 3 can be satisfied at ≥2 own
+    // bids, tier 2 never is) — a different question from desperation, and it must not leak into the slope.
+    // So the slopes now read 2 (t3) < 3 (t2) < 5 (t4) < 8 … : the deliberate 2/3 swap survives, the
+    // accidental 2/4 collision does not. 3 is the only Fibonacci-family value between them (D-ND6.4).
+    private const int Tier2EscalationBasePercent = 3;
+
     private static int StuckEscalationBasePercent(int bestTier)
     {
-        if (bestTier == 2 || bestTier == 3)
+        if (bestTier == 2) return Tier2EscalationBasePercent;
+        if (bestTier == 3)
             return ShallowTierProbabilityPercent(bestTier, earlyRush: false, urgent: false, ownBidCount: 1);
         return ReBidProbabilityPercentByTier.TryGetValue(bestTier, out int p) ? p : 0;
     }
@@ -616,17 +754,94 @@ public partial class NetworkRoot : Node
     // the dictionary from a UI refresh or from a partial pipeline pass.
     //
     // Single-slot occupants only (callers gate on `ownSlotCount == 1`); tier 1 never escalates.
-    private static int PeekStuckEscalationProbabilityPercent(string nonMinerNodeId, string botNodeId, int bestTier, int currentBlockIndex)
+    //
+    // ND.10j (2026-07-28, §14.11) — an ABSENT key no longer means "stuck as of this block". It means
+    // "this process has never observed this pair", which is true of every pair right after a restart and
+    // of EVERY pair before the session's first mined block (the sweep is the only writer and it runs per
+    // block). Defaulting to `currentBlockIndex` there silently reset every stuck bidder's accumulated
+    // pressure to base×1 — diagnosed off BitInstant (non_miner_8) four in-game days from close: bot_1,
+    // a lone tier-5 occupant stuck since block 957, displayed and rolled the flat urgency rate 13%
+    // instead of its true 8×8 = 64%, because the app had been restarted and no block had been mined yet.
+    // In a closing window there are too few blocks left to rebuild the escalation, so the auction
+    // resolves on its leader by default — the exact stagnation ND.8d round 3 introduced the escalation
+    // to prevent. Now an absent key is SEEDED from the chain (SeedStuckSinceBlockIndex); a key that is
+    // present but carries a DIFFERENT signature still stamps `currentBlockIndex`, because that is an
+    // observed, exact edge this process actually saw and must not be overridden by an estimate.
+    private static (int percent, int basePercent, int multiplier, bool capped) PeekStuckEscalationDetail(
+        NonMinerDonationSummary target, string botNodeId, string botAddress, int bestTier, int currentBlockIndex)
     {
-        if (bestTier <= 1) return 0;
-        int sinceBlockIndex = currentBlockIndex;
-        if (_stuckBidderSignatures.TryGetValue((nonMinerNodeId, botNodeId), out (string signature, int sinceBlockIndex) recorded)
-            && recorded.signature == $"single:{bestTier}")
+        if (bestTier <= 1) return (0, 0, 0, false);
+        int sinceBlockIndex;
+        if (_stuckBidderSignatures.TryGetValue((target.NonMinerNodeId, botNodeId), out (string signature, int sinceBlockIndex) recorded))
         {
-            sinceBlockIndex = recorded.sinceBlockIndex;
+            // Known pair: the recorded stamp when the signature still matches, else what the next sweep
+            // will stamp for the change it has not processed yet (label/roll parity, unchanged).
+            sinceBlockIndex = recorded.signature == $"single:{bestTier}" ? recorded.sinceBlockIndex : currentBlockIndex;
         }
-        return EscalatedStuckPercent(bestTier, currentBlockIndex - sinceBlockIndex);
+        else
+        {
+            sinceBlockIndex = SeedStuckSinceBlockIndex(target, botAddress, bestTier, currentBlockIndex);
+        }
+        return EscalatedStuckDetail(bestTier, currentBlockIndex - sinceBlockIndex);
     }
+
+    // ND.10j — the chain-derived answer to "since which block has this bot occupied THIS tier?", used
+    // only to seed a pair the in-memory signal has never seen. Deliberately DERIVED rather than
+    // persisted: the ND.10c/D-ND10e.3 line that `_stuckBidderSignatures` is bidding bookkeeping and not
+    // world state still holds, so this needs no BlockchainStateSnapshot field, no checkpoint work, no
+    // delete-list entry and no WorldFormatVersion bump — the developer keeps their running playtest.
+    //
+    // The derivation: a tracked donation ranked BELOW the bot can never have changed the bot's tier, so
+    // the bot has held its current tier since the most recent donation ranked AT OR ABOVE it — which
+    // includes its own slot (the block it took the tier) and every later raise that pushed it down.
+    //
+    // KNOWN IMPRECISION (the one thing a chain read cannot recover): an EVICTION of this bot's other
+    // slot, which drops it 2 bids → 1 without disturbing anything above it. The evicted donation is gone
+    // from the pool, so a seed cannot see that the bot only became single-slot at that later block, and
+    // will over-estimate how long it has been stuck. The live sweep still detects it exactly (that is
+    // why the in-memory signal exists at all — the ND.10a revision) and this only ever applies to
+    // history from BEFORE the process started. Over-estimating a long-standing lone occupant's pressure
+    // is strictly closer to the truth than the reset it replaces, which under-estimated it to zero.
+    private static int SeedStuckSinceBlockIndex(NonMinerDonationSummary target, string botAddress, int bestTier, int currentBlockIndex)
+    {
+        List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
+        // Both callers derive `bestTier` from this same value-descending order, so the slot at that tier
+        // must belong to this bot. Checking it makes the seed refuse to guess from a stale or mismatched
+        // view (it would otherwise silently date the escalation from another donor's slot).
+        if (bestTier > slotsByValue.Count || slotsByValue[bestTier - 1].DonorAddress != botAddress)
+        {
+            return currentBlockIndex; // no escalation, rather than one built on the wrong slot
+        }
+
+        long sinceMs = 0;
+        for (int i = 0; i < bestTier; i++)
+        {
+            if (slotsByValue[i].TimestampMs > sinceMs) sinceMs = slotsByValue[i].TimestampMs;
+        }
+        if (sinceMs <= 0) return currentBlockIndex;
+
+        int seeded = BlockIndexAtOrBeforeTimestamp(sinceMs, currentBlockIndex);
+        return Math.Clamp(seeded, 0, currentBlockIndex);
+    }
+
+    // ND.10j — a tracked donation carries its CONFIRMING BLOCK's timestamp (ComputeTrackedDonationPool
+    // takes `ts` straight from the bid's block), so this maps one back to a block index: the last block
+    // at or before that instant. A reverse scan rather than a binary search — block timestamps are
+    // non-decreasing today but nothing enforces it, the pool's donations are typically recent so the
+    // loop exits in a handful of steps, and the codebase already scans the chain linearly throughout.
+    private static int BlockIndexAtOrBeforeTimestamp(long timestampMs, int fallbackBlockIndex)
+    {
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)) return fallbackBlockIndex;
+        List<Block> chain = player.Blockchain.Chain;
+        for (int i = chain.Count - 1; i >= 0; i--)
+        {
+            if (chain[i].Timestamp <= timestampMs) return chain[i].Index;
+        }
+        return fallbackBlockIndex;
+    }
+
+    private static int PeekStuckEscalationProbabilityPercent(NonMinerDonationSummary target, string botNodeId, string botAddress, int bestTier, int currentBlockIndex)
+        => PeekStuckEscalationDetail(target, botNodeId, botAddress, bestTier, currentBlockIndex).percent;
 
     // Fix B (ND.10a, 2026-07-22) — the per-block signature sweep. The escalation was previously refreshed
     // ONLY when a bot's pipeline SELECTED a pool, so a bot busy seeding fresh pools never updated the signal
@@ -667,9 +882,20 @@ public partial class NetworkRoot : Node
                 }
 
                 string signature = ownSlotCount >= 2 ? "multi" : $"single:{bestTier}";
-                if (!_stuckBidderSignatures.TryGetValue(key, out (string signature, int sinceBlockIndex) recorded)
-                    || recorded.signature != signature)
+                if (!_stuckBidderSignatures.TryGetValue(key, out (string signature, int sinceBlockIndex) recorded))
                 {
+                    // ND.10j — FIRST SIGHT of this pair (a fresh process, or a pool/bot this session has
+                    // not swept yet). "Never observed" is not "just became stuck": seed from the chain so
+                    // a restart does not zero an escalation that has genuinely been building for blocks.
+                    // A "multi" bot does not escalate, so it costs nothing to stamp it at the current
+                    // block — only the single-slot case needs a real seed.
+                    _stuckBidderSignatures[key] = ownSlotCount >= 2
+                        ? (signature, currentBlockIndex)
+                        : (signature, SeedStuckSinceBlockIndex(target, botAddress, bestTier, currentBlockIndex));
+                }
+                else if (recorded.signature != signature)
+                {
+                    // An OBSERVED change — exact, and never overridden by the estimate above.
                     _stuckBidderSignatures[key] = (signature, currentBlockIndex);
                 }
             }
@@ -703,6 +929,9 @@ public partial class NetworkRoot : Node
     // ND.8b.6 — see _Ready: the provisional casino SC-provisioning path + the player's SC dividend claims.
     private static CasinoScBalanceService? _casinoSc;
     private static PrincipalBalanceService? _principalBalance;
+    // Step 15 P15.3a — the FED a financing bank draws its provisioning SC from (D-15.3). Same plain
+    // autoload-reference pattern; null-guarded, and a null simply keeps the casino fallback in play.
+    private static CentralBankService? _centralBank;
     // ND.8b.1 — non_miner_{i+1} (BotWalletRegistry's fixed creation order) <-> CompanyRoster
     // .Auctionable[i]'s founding record, once (and only once) that company's auction resolves.
     // Keyed by NonMinerNodeId (stable across the whole game, unlike the address — non-miners are
@@ -721,6 +950,19 @@ public partial class NetworkRoot : Node
     // preference + one market-category preference each), re-rolled per world; drawn lazily on the first
     // vote open (always inside block processing, so the draw lands in that block's snapshot write).
     private static readonly Dictionary<string, BotGovernancePreference> _botGovernancePreferences = new();
+    // Step 15 P15.2c (D-15.4/D-15.5) — the four CB1 banks' layer-1 balance sheets (quarantined
+    // CollateralBtc + the per-client provisioning book), keyed by the bank's NonMinerNodeId. Same
+    // BlockchainStateSnapshot inheritance as the two dictionaries above: a bank can only have a balance
+    // sheet once it is FOUNDED (2012-09 at the earliest), so no checkpoint/pre-genesis path of its own.
+    private static readonly Dictionary<string, BankBalanceSheet> _bankState = new();
+    // Step 15 P15.5a — dissolved companies, keyed by NonMinerNodeId. An entry here is the authoritative
+    // "this company is dead": it is removed from _companyFoundings/_companyGovernance at closure, so every
+    // live loop skips it for free, and the record is what the Closed-Companies readouts render.
+    private static readonly Dictionary<string, CompanyClosure> _closedCompanies = new();
+    // Provisions are far more frequent than FED loan draws (one per company conversion), so each bank's
+    // per-client history is capped — oldest trimmed, totals stay exact (the CentralBankService /
+    // ScMonetaryLedgerService precedent).
+    private const int MaxBankClientHistory = 200;
 
     public static void SetNonMinerIntroSchedule(long[] introUnixMs) =>
         _nonMinerIntroScheduleMs = introUnixMs ?? [];
@@ -733,6 +975,7 @@ public partial class NetworkRoot : Node
         // claims land on the Main Balance. Plain autoload references, the _marketData pattern.
         _casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
         _principalBalance = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
+        _centralBank = GetNodeOrNull<CentralBankService>("/root/CentralBankService"); // P15.3a
         EnsureInitialized();
     }
 
@@ -742,6 +985,13 @@ public partial class NetworkRoot : Node
         {
             return;
         }
+
+        // ND.10i suggestion 3 (2026-07-27) — DEV-only ladder self-check, stripped from release builds. The
+        // tier-2/tier-4 slope collision existed because two tables are read by ONE consumer and nobody had
+        // ever printed them side by side; this makes the next such collision announce itself at launch
+        // instead of surviving until someone notices two labels behaving alike in a playtest. Same reflex as
+        // P15.9's clamp tripwire: an invariant that only lives in prose is an invariant nobody checks.
+        AssertEscalationSlopesAreOrdered();
 
         // Step 8 / Step 13 (TL.1) — if the on-disk world predates the UTXO model OR was built under the
         // other timeline (canon vs. the DEV alt-timeline simulacrum), wipe the incompatible chain/clock/
@@ -809,6 +1059,13 @@ public partial class NetworkRoot : Node
         NormalizeGenesisAcrossNodes();
         EnsureSecondBlockBootstrapPendingTx();
         RescanFounderReceiveWallets(); // Step 8.2 — position founders' fresh-coinbase frontier from the chain
+        // The four casino miner-bots' governance identities (band / market category / greed) are drawn HERE,
+        // at world creation, rather than lazily at the first company vote — so the stances are printed and
+        // committed from the world's very first launch (developer request ahead of the P15.8 run) instead of
+        // appearing only once the first company happens to found, years of game time later. The draw still
+        // lands in a snapshot write (the PersistStateToDisk immediately below), which is the property the
+        // original lazy call site was protecting; the vote path keeps calling it as an idempotent safety net.
+        EnsureBotGovernancePreferences();
         PersistStateToDisk();
         _isInitialized = true;
     }
@@ -1842,6 +2099,44 @@ public partial class NetworkRoot : Node
     private const string CompanyVoteKindFounding = "founding";   // D-ND8.18 — fires on auction close
     private const string CompanyVoteKindQuarterly = "quarterly"; // dividend amount + reserve/nature direction
     private const string CompanyVoteKindSpecial = "special";     // >30%-inflow reserve vote
+    // Step 15 P15.4e (D-15.15) — banks only: opened when selling ALL of a bank's collateral still can't
+    // raise its quarterly FED installment. The ballot is a single dial: what share of the gap shareholders
+    // absorb (dividends cut) vs. what the company's own SC reserve absorbs.
+    public const string CompanyVoteKindShortfall = "shortfall";
+
+    // ---- Step 15 P15.4b (D-15.13) — the bot GREED axis --------------------------------------------------
+
+    public const string GreedNotSoGreedy = "not_so_greedy";
+    public const string GreedAlmostGreedy = "almost_greedy";
+    public const string GreedGreedy = "greedy";
+    public const string GreedExtremelyGreedy = "extremely_greedy";
+    private static readonly string[] GreedOrder = [GreedNotSoGreedy, GreedAlmostGreedy, GreedGreedy, GreedExtremelyGreedy];
+
+    // P15.4c — greed as a multiplier on the category's DEFAULT quarterly payout rate. The ballot clamp is
+    // [0, 2× default], so the ladder is written to span exactly that legal range, with `almost_greedy`
+    // sitting at 1.0 — i.e. the pre-greed behaviour ("bots vote the standard") is now one of four stances
+    // rather than the only one. *P15.8 calibration knobs.*
+    private static decimal GreedPayoutMultiplier(string greed) => greed switch
+    {
+        GreedNotSoGreedy => 0.5m,
+        GreedGreedy => 1.5m,
+        GreedExtremelyGreedy => 2.0m,
+        _ => 1.0m, // almost_greedy — the neutral stance
+    };
+
+    // P15.4e (§3.3's table) — what share of a bank's shortfall this bot votes to take out of SHAREHOLDERS'
+    // dividends; the complement comes out of the company's own reserves. A greedy holder protects its own
+    // dividend and makes the company pay. Default split with no/tied vote is 50/50. *P15.8 knobs.*
+    private static decimal GreedDividendsCutPercent(string greed) => greed switch
+    {
+        GreedNotSoGreedy => 90m,
+        GreedAlmostGreedy => 70m,
+        GreedGreedy => 30m,
+        GreedExtremelyGreedy => 10m,
+        _ => DefaultShortfallDividendsCutPercent,
+    };
+
+    public const decimal DefaultShortfallDividendsCutPercent = 50m;
 
     // D-ND8.18 — every vote runs one in-game day; its result applies from the next day (the moment the
     // window elapses — the first block past OpenedAt + 1 day) and holds until the next quarter.
@@ -1892,6 +2187,51 @@ public partial class NetworkRoot : Node
         _ => (0m, 25m), // CB5
     };
 
+    // P15.9a (2026-07-27) — project a BOT's global band stance onto the band of the company it is voting
+    // at. A bot's CurrencyBandPreference is a position on a global "SC-ness" axis (CB1 100% … CB5 0%), NOT
+    // a literal target. Casting it raw put ballots OUTSIDE the company's charter — at a CB1 company
+    // (range [75,100]) a CB5 bot cast a literal 0, while the player's own dial is bounded to [75,100] at
+    // both ends. And because CloseCompanyVote clamps only the FINAL weighted average, two or three
+    // sub-floor ballots (the four bots are drawn as a permutation of the five bands) dragged that average
+    // below the floor every quarter, pinning the result to exactly 75 forever — so the one ballot the game
+    // PAUSES to collect could never move the outcome.
+    //
+    // PROJECT, never clamp (P15.9.1): Math.Clamp would collapse the CB5/CB4/CB3 bots onto the same floor —
+    // three identical ballots and a result still pinned near it. Projection keeps all five stances distinct
+    // inside every band, which is what makes the player's vote matter.
+    //
+    // Option C, "default-anchored" (D-15.24): the bot's OWN band default maps to the COMPANY's band
+    // default, interpolating linearly on each side. That makes this the IDENTITY when the two bands agree
+    // (a CB2 bot at a CB2 company votes CB2's own 75) — which plain [0,100]→[min,max] interpolation does
+    // NOT give for the asymmetric bands CB2/CB4, whose default does not sit at the centre of their range.
+    // Rounded to a whole percent (the player's SpinBox uses Step = 1, so whole percents are the shared
+    // vocabulary), .5 away from zero. The final Clamp is a guard for the day a bound stops being an
+    // integer, not a redundancy.
+    public static decimal ProjectStanceIntoBand(decimal stanceScPercent, string companyBand)
+    {
+        (decimal min, decimal max) = BandScPercentBounds(companyBand);
+        decimal anchor = BandDefaultScPercent(companyBand);
+        decimal stance = Math.Clamp(stanceScPercent, 0m, 100m);
+
+        // The two anchors that sit ON a bound (CB1's 100, CB5's 0) leave one side of the piecewise map
+        // degenerate — the guards route the whole stance range through the side that exists.
+        decimal projected;
+        if (stance <= anchor && anchor > 0m)
+        {
+            projected = min + stance / anchor * (anchor - min);
+        }
+        else if (anchor < 100m)
+        {
+            projected = anchor + (stance - anchor) / (100m - anchor) * (max - anchor);
+        }
+        else
+        {
+            projected = anchor;
+        }
+
+        return Math.Clamp(Math.Round(projected, 0, MidpointRounding.AwayFromZero), min, max);
+    }
+
     // §12.4.3 — light → dark, the axis a quarterly vote may shift by at most ±1 category, clamped within
     // ±1 of the roster DEFAULT (D-ND8.7 — a company never drifts more than one step from its nature).
     private static readonly string[] MarketCategoryOrder = ["official", "light_grey", "dark_grey", "black"];
@@ -1902,40 +2242,383 @@ public partial class NetworkRoot : Node
         return index >= 0 ? index : 0;
     }
 
+    // ---- Step 15 P15.2 — the four CB1 bank companies -----------------------------------------------------
+
+    // Is this founded company one of the four SC-dealer banks (D-15.6)? Resolved through the founding's
+    // roster CompanyId, so it is true only ONCE THE COMPANY IS FOUNDED — which is exactly the gate the
+    // selection framework wants (an unfounded bank can finance nothing).
+    public static bool IsBankCompany(string nonMinerNodeId) =>
+        _companyFoundings.TryGetValue(nonMinerNodeId, out CompanyFounding? founding)
+        && CompanyRoster.IsBank(founding.CompanyId);
+
+    // A founded bank's market category — the §5.1 selection distance axis. LOCKED at its roster default
+    // (D-15.12, enforced in CloseCompanyVote), so live and default always agree for a bank; reading the
+    // LIVE value keeps this honest if that guard is ever loosened. Null for anything that isn't a bank.
+    public static string? BankCompanyCategory(string nonMinerNodeId) =>
+        IsBankCompany(nonMinerNodeId) && _companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov)
+            ? gov.MarketCategory
+            : null;
+
+    // Every founded bank, in founding order. Small (≤ 4) and only walked once per conversion.
+    private static IEnumerable<CompanyGovernanceState> FoundedBanks() =>
+        _companyGovernance.Values
+            .Where(g => IsBankCompany(g.NonMinerNodeId))
+            .OrderBy(g => _companyFoundings[g.NonMinerNodeId].FoundedAtUnixMs);
+
+    // P15.2c — a founded bank's layer-1 balance sheet, created on first touch. Only ever called for a
+    // node that IsBankCompany already accepted, so a sheet can never appear on a non-bank.
+    private static BankBalanceSheet BankSheet(string bankNodeId)
+    {
+        if (!_bankState.TryGetValue(bankNodeId, out BankBalanceSheet? sheet))
+        {
+            sheet = new BankBalanceSheet();
+            _bankState[bankNodeId] = sheet;
+        }
+        return sheet;
+    }
+
+    // Read-only view for the DEV/player readouts (P15.7). Null when the bank has never financed anything.
+    public static BankBalanceSheet? GetBankBalanceSheet(string bankNodeId) =>
+        _bankState.TryGetValue(bankNodeId, out BankBalanceSheet? sheet) ? sheet : null;
+
+    public static decimal BankCollateralBtc(string bankNodeId) =>
+        _bankState.TryGetValue(bankNodeId, out BankBalanceSheet? sheet) ? sheet.CollateralBtc : 0m;
+
+    // P15.2c — record one provisioning event on the bank's own client book. Called by P15.3a's bank
+    // provisioning path AFTER both legs have succeeded, so the book never records a half-executed swap.
+    private static void RecordBankProvision(string bankNodeId, string companyNodeId, decimal btcBought, decimal scPaid, decimal priceUsd, Block block)
+    {
+        BankBalanceSheet sheet = BankSheet(bankNodeId);
+        sheet.CollateralBtc = Scripts.Finance.Money.Normalize(sheet.CollateralBtc + btcBought);
+
+        if (!sheet.Clients.TryGetValue(companyNodeId, out BankClientAccount? account))
+        {
+            account = new BankClientAccount();
+            sheet.Clients[companyNodeId] = account;
+        }
+        account.BtcBought = Scripts.Finance.Money.Normalize(account.BtcBought + btcBought);
+        account.ScPaid = Scripts.Finance.Money.Normalize(account.ScPaid + scPaid);
+        account.ProvisionCount++;
+        account.History.Add(new BankClientEntry
+        {
+            AtUnixMs = block.Timestamp,
+            BlockIndex = block.Index,
+            BtcBought = btcBought,
+            ScPaid = scPaid,
+            PriceUsd = priceUsd
+        });
+        if (account.History.Count > MaxBankClientHistory)
+        {
+            account.History.RemoveRange(0, account.History.Count - MaxBankClientHistory);
+        }
+    }
+
+    // ---- §5.1 bank selection (P15.2d / D-15.20: A1 + B1 + casino fallback) --------------------------------
+
+    // One candidate financier for a company's BTC→SC conversion. A null BankNodeId means THE CASINO — the
+    // pre-first-bank fallback (D-15.20 (c)): before 2012-09, and for any category with no founded bank, the
+    // provisional D-ND8.34 path stays exactly as it is today.
+    public readonly record struct FinancierChoice(string? BankNodeId, decimal AmountSc, string Tier);
+
+    public const string FinancierTierNearest = "nearest";   // tier 1 — the nearest-category founded bank
+    public const string FinancierTierFullFunder = "funder"; // tier 2 — any single bank that can fund it all
+    public const string FinancierTierSplit = "split";       // tier 3 — spread across banks, biggest capacity first
+    public const string FinancierTierCasino = "casino";     // the fallback — no founded bank to route to
+
+    // How much SC a founded bank can put up for one provision. In plan15 this is INFINITE: a bank funds
+    // every provision with a FED auto-loan, and D-15.1 defers all credit-capacity limits to ND.8e. The
+    // method exists so tiers 2/3 below are real, exercised code paths the day limits ship — at which point
+    // this becomes the ONE place that has to change (B1: "the eventual limits are a data change, not a
+    // rewrite"). Kept private: nothing outside selection should read a capacity that is deliberately fake.
+    private static decimal BankFundingCapacitySc(string bankNodeId) => decimal.MaxValue;
+
+    // Returns the ordered financiers for `amountSc`, summing to exactly that amount.
+    //
+    // Tier 1 — the founded bank nearest the company's CURRENT market category on the MarketCategoryOrder
+    //          axis (|catCompany − catBank|), ties broken TOWARD OFFICIAL (D-15.20 A1: a business reaches
+    //          for the cleaner bank first), then toward the earlier-founded bank so the result is total.
+    // Tier 2 — no single nearest bank can cover it: the nearest bank that CAN fund the whole amount.
+    // Tier 3 — nobody can alone: split across banks, nearest-category first then most-capacity.
+    // Fallback — no founded bank at all: the casino (a single choice with a null BankNodeId).
+    //
+    // Selection is evaluated FRESH at each conversion, because a company's category can shift ±1 by vote
+    // (§12.4.3) — a bank's cannot (D-15.12, P15.2b), which is what keeps the axis stable underneath.
+    public static List<FinancierChoice> SelectFinanciers(string companyNodeId, decimal amountSc)
+    {
+        var result = new List<FinancierChoice>();
+        amountSc = Scripts.Finance.Money.Normalize(amountSc);
+        if (amountSc <= 0m)
+        {
+            return result;
+        }
+
+        // A bank never finances itself — its own CB1 inflows convert through the normal path (P15.4a).
+        List<CompanyGovernanceState> banks = FoundedBanks()
+            .Where(b => b.NonMinerNodeId != companyNodeId)
+            .ToList();
+        if (banks.Count == 0)
+        {
+            result.Add(new FinancierChoice(null, amountSc, FinancierTierCasino));
+            return result;
+        }
+
+        int companyIndex = _companyGovernance.TryGetValue(companyNodeId, out CompanyGovernanceState? companyGov)
+            ? MarketCategoryIndex(companyGov.MarketCategory)
+            : 0;
+
+        // Distance first; then A1's tie-break toward Official (lower category index); then founding order.
+        List<CompanyGovernanceState> byPreference = banks
+            .OrderBy(b => Math.Abs(MarketCategoryIndex(b.MarketCategory) - companyIndex))
+            .ThenBy(b => MarketCategoryIndex(b.MarketCategory))
+            .ThenBy(b => _companyFoundings[b.NonMinerNodeId].FoundedAtUnixMs)
+            .ToList();
+
+        // Tier 1 — today's ONLY outcome: capacity is infinite, so the nearest bank always takes it whole.
+        CompanyGovernanceState nearest = byPreference[0];
+        if (BankFundingCapacitySc(nearest.NonMinerNodeId) >= amountSc)
+        {
+            result.Add(new FinancierChoice(nearest.NonMinerNodeId, amountSc, FinancierTierNearest));
+            return result;
+        }
+
+        // Tier 2 — the nearest bank that can still fund the WHOLE amount alone (dormant until limits ship).
+        foreach (CompanyGovernanceState bank in byPreference)
+        {
+            if (BankFundingCapacitySc(bank.NonMinerNodeId) >= amountSc)
+            {
+                result.Add(new FinancierChoice(bank.NonMinerNodeId, amountSc, FinancierTierFullFunder));
+                return result;
+            }
+        }
+
+        // Tier 3 — split. Nearest-category first (the preference order above), and within an equal
+        // preference the most free capacity first, so the fewest banks are involved (dormant until limits).
+        decimal remaining = amountSc;
+        foreach (CompanyGovernanceState bank in byPreference.OrderByDescending(b => BankFundingCapacitySc(b.NonMinerNodeId)))
+        {
+            decimal capacity = BankFundingCapacitySc(bank.NonMinerNodeId);
+            if (capacity <= 0m) continue;
+
+            decimal slice = Scripts.Finance.Money.Normalize(Math.Min(capacity, remaining));
+            if (slice <= 0m) continue;
+
+            result.Add(new FinancierChoice(bank.NonMinerNodeId, slice, FinancierTierSplit));
+            remaining = Scripts.Finance.Money.Normalize(remaining - slice);
+            if (remaining <= 0m) break;
+        }
+
+        // The banking layer couldn't raise all of it — the casino covers the remainder rather than letting
+        // a company's conversion silently under-fill (unreachable while capacity is infinite).
+        if (remaining > 0m)
+        {
+            result.Add(new FinancierChoice(null, remaining, FinancierTierCasino));
+        }
+        return result;
+    }
+
+    // ---- P15.2 DEV readouts (consumed by the CentralBank scene; an early slice of P15.7a) -----------------
+
+    public readonly record struct BankLayerRow(
+        string BankNodeId,
+        string DisplayName,
+        string MarketCategory,
+        decimal CollateralBtc,
+        int ClientCount,
+        long FoundedAtUnixMs,
+        decimal PendingShortfallSc,        // P15.4d — awaiting its shortfall vote
+        decimal UnrecoverableShortfallSc); // P15.4e — insolvent; P15.5a will dissolve on this
+
+    // The founded banks and their layer-1 books, in founding order. Empty before 2012-09.
+    public static List<BankLayerRow> GetFoundedBankRows()
+    {
+        EnsureReady();
+        return FoundedBanks()
+            .Select(b =>
+            {
+                BankBalanceSheet? sheet = GetBankBalanceSheet(b.NonMinerNodeId);
+                return new BankLayerRow(
+                    b.NonMinerNodeId,
+                    DescribeNodeForDev(b.NonMinerNodeId),
+                    b.MarketCategory,
+                    sheet?.CollateralBtc ?? 0m,
+                    sheet?.Clients.Count ?? 0,
+                    _companyFoundings[b.NonMinerNodeId].FoundedAtUnixMs,
+                    b.PendingShortfallSc,
+                    b.UnrecoverableShortfallSc);
+            })
+            .ToList();
+    }
+
+    public readonly record struct FinancierPreviewRow(
+        string CompanyDisplay,
+        string CompanyCategory,
+        string FinancierDisplay,
+        string Tier);
+
+    // What SelectFinanciers WOULD pick right now for each founded non-bank company. A read-only preview
+    // for verifying P15.2d before P15.3 wires the real reroute — it probes with a nominal 1 SC because
+    // capacity is currently infinite (D-15.1), so the amount cannot change the answer. Revisit this probe
+    // when ND.8e lands real credit limits and the amount starts to matter.
+    public static List<FinancierPreviewRow> PreviewCompanyFinanciers()
+    {
+        EnsureReady();
+        var rows = new List<FinancierPreviewRow>();
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values.OrderBy(g => g.NonMinerNodeId, StringComparer.Ordinal))
+        {
+            if (IsBankCompany(gov.NonMinerNodeId)) continue; // a bank converts its own inflows normally (P15.4a)
+
+            List<FinancierChoice> choices = SelectFinanciers(gov.NonMinerNodeId, 1m);
+            if (choices.Count == 0) continue;
+
+            FinancierChoice first = choices[0];
+            string financier = first.BankNodeId == null
+                ? "The Casino (fallback)"
+                : DescribeNodeForDev(first.BankNodeId);
+            if (choices.Count > 1) financier += $" +{choices.Count - 1} more";
+
+            rows.Add(new FinancierPreviewRow(
+                DescribeNodeForDev(gov.NonMinerNodeId),
+                gov.MarketCategory,
+                financier,
+                first.Tier));
+        }
+        return rows;
+    }
+
     // Quarterly dates are calendar-anchored (founding date + 3 in-game months per quarter), not a flat
     // day count — matches how the roster/timeline anchors every other historical date.
     private static long AddMonthsMs(long baseUnixMs, int months) =>
         new DateTimeOffset(DateTimeOffset.FromUnixTimeMilliseconds(baseUnixMs).ToLocalTime().LocalDateTime.AddMonths(months))
             .ToUnixTimeMilliseconds();
 
+    // The company's RAW on-chain spendable BTC. For a bank this includes its quarantined CollateralBtc —
+    // use CompanyOwnBtc below anywhere governance means "the company's own money".
     private static decimal CompanyTreasuryBtc(string nonMinerNodeId) =>
         SharedNodesById.TryGetValue(nonMinerNodeId, out NodeAgent? node) ? AggregateSpendable(node) : 0m;
 
+    // Step 15 P15.3a (D-15.4) — THE QUARANTINE. A bank holds two BTC streams in one wallet: its own CB1
+    // business inflows (ordinary company money) and the CollateralBtc it bought while financing other
+    // companies, which backs its FED debt and is sold only on a payment day (P15.4d). Every governance
+    // computation that treats the treasury as the company's own money must therefore net the collateral
+    // out — the reserve-mix conversion base, the quarterly dividend base (dividends on collateral would
+    // pay away the very asset backing the debt) and the >30%-inflow vote baseline. Returns the plain
+    // treasury for every non-bank, since BankCollateralBtc is 0 for them.
+    private static decimal CompanyOwnBtc(string nonMinerNodeId) => Scripts.Finance.Money.Normalize(
+        Math.Max(0m, CompanyTreasuryBtc(nonMinerNodeId) - BankCollateralBtc(nonMinerNodeId)));
+
     // D-ND8.13/D-ND8.26 — the four casino-miner-bots draw, once per world: a distinct 4-of-5 Currency
-    // Band preference set (one band always unrepresented) and a distinct full permutation of the 4
-    // market categories (all stances represented, one per bot). Drawn lazily on the first vote open —
-    // always inside block processing, so the draw lands in that same block's snapshot write and stays
-    // stable for the rest of the world's life.
+    // Band preference set (one band always unrepresented), a distinct full permutation of the 4 market
+    // categories, and (P15.4b) a distinct permutation of the 4 greed stances — so all four stances of each
+    // axis are always represented exactly once, and which bot holds which changes per world.
+    //
+    // Called at world creation (EnsureInitialized, so the stances exist and are printed from launch #1) and
+    // again on every vote open as an idempotent safety net. Both call sites land inside a snapshot write,
+    // which is what keeps the draw stable for the rest of the world's life.
     private static void EnsureBotGovernancePreferences()
     {
         IReadOnlyList<BotWalletRecord> minerBots = BotWalletRegistry.MinerBots;
-        if (minerBots.Count == 0 || _botGovernancePreferences.Count >= minerBots.Count)
+        if (minerBots.Count == 0)
         {
+            return;
+        }
+
+        if (_botGovernancePreferences.Count >= minerBots.Count)
+        {
+            BackfillGreedPreferences();
             return;
         }
 
         string[] bands = ["CB1", "CB2", "CB3", "CB4", "CB5"];
         string[] markets = (string[])MarketCategoryOrder.Clone();
+        // P15.4b — greed is drawn as a distinct permutation too, so with four bots all four stances are
+        // always represented exactly once: every world has one of each, and which bot holds which changes.
+        string[] greeds = (string[])GreedOrder.Clone();
         ShuffleInPlace(bands);
         ShuffleInPlace(markets);
+        ShuffleInPlace(greeds);
         for (int i = 0; i < minerBots.Count; i++)
         {
             _botGovernancePreferences[minerBots[i].NodeId] = new BotGovernancePreference
             {
                 CurrencyBandPreference = bands[i % bands.Length],
-                MarketCategoryPreference = markets[i % markets.Length]
+                MarketCategoryPreference = markets[i % markets.Length],
+                GreedPreference = greeds[i % greeds.Length]
             };
         }
+
+        PrintBotGovernanceStances("drawn for this world");
+    }
+
+    // DEV observability (2026-07-26, developer request ahead of the P15.8 run) — print the four CASINO
+    // MINER-BOTS' governance stances whenever they are decided or reloaded, so their behaviour over a long
+    // session can be read against who they actually are. Each line carries the DERIVED effect of the greed
+    // stance too (its payout multiplier and its shortfall dividends-cut %), because those are the numbers
+    // that actually show up in the votes you will be watching — reading them off the same helpers the
+    // ballots use, so the printout cannot drift from behaviour (§39.16 rule 6).
+    //
+    // Scope: bot_1..4 only. The Step-14 CAST miners (artforz, foundry_usa, …) have no governance identity —
+    // they never bet, never bid and never hold stock — so there is nothing to print for them.
+    private static void PrintBotGovernanceStances(string reason)
+    {
+        if (_botGovernancePreferences.Count == 0)
+        {
+            return;
+        }
+
+        GD.Print($"[Governance] Casino miner-bot stances ({reason}):");
+        foreach (BotWalletRecord bot in BotWalletRegistry.MinerBots)
+        {
+            if (!_botGovernancePreferences.TryGetValue(bot.NodeId, out BotGovernancePreference? pref))
+            {
+                continue;
+            }
+
+            string greed = string.IsNullOrEmpty(pref.GreedPreference) ? GreedAlmostGreedy : pref.GreedPreference;
+            // P15.9b — the band column is a GLOBAL stance, not a ballot: since P15.9a it is projected into
+            // each company's own band before it is cast, so printing it bare would name a number that never
+            // appears in any vote (§39.16 rule 6 — this printout exists to be read against observed
+            // ballots). The per-band projections are spelled out so a stance can be matched to what it
+            // actually votes, wherever it votes, off the SAME helper the ballot uses.
+            GD.Print(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "  {0,-6} · band {1,-3} (global SC stance {2,3:F0}% → votes CB1 {7:F0} · CB2 {8:F0} · CB3 {9:F0} · CB4 {10:F0} · CB5 {11:F0}) · market {3,-10} · greed {4,-17} (payout ×{5:0.0} of category default, shortfall {6:F0}% from dividends)",
+                bot.NodeId,
+                pref.CurrencyBandPreference,
+                BandDefaultScPercent(pref.CurrencyBandPreference),
+                pref.MarketCategoryPreference,
+                greed,
+                GreedPayoutMultiplier(greed),
+                GreedDividendsCutPercent(greed),
+                ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB1"),
+                ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB2"),
+                ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB3"),
+                ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB4"),
+                ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB5")));
+        }
+    }
+
+    // P15.4b — greed arrived AFTER the band/market axes, so a world whose preferences were already drawn
+    // carries an empty value for it and would otherwise leave every bot on the neutral stance forever
+    // (the Count >= minerBots.Count early-return above never re-draws). Backfilling only the empty slots
+    // keeps the already-meaningful band/market choices untouched. This is why the field's default is ""
+    // rather than "almost_greedy": a real drawn value has to be distinguishable from an absent one.
+    private static void BackfillGreedPreferences()
+    {
+        var missing = _botGovernancePreferences.Values
+            .Where(p => string.IsNullOrEmpty(p.GreedPreference))
+            .ToList();
+        if (missing.Count == 0)
+        {
+            return;
+        }
+
+        string[] greeds = (string[])GreedOrder.Clone();
+        ShuffleInPlace(greeds);
+        for (int i = 0; i < missing.Count; i++)
+        {
+            missing[i].GreedPreference = greeds[i % greeds.Length];
+        }
+
+        PrintBotGovernanceStances($"greed backfilled for {missing.Count} bot(s)");
     }
 
     private static void ShuffleInPlace(string[] values)
@@ -1969,7 +2652,7 @@ public partial class NetworkRoot : Node
             ReserveScPercent = BandDefaultScPercent(band),
             QuarterIndex = 0,
             NextQuarterlyDueMs = AddMonthsMs(founding.FoundedAtUnixMs, QuarterMonths),
-            BaselineReserveBtc = CompanyTreasuryBtc(summary.NonMinerNodeId),
+            BaselineReserveBtc = CompanyOwnBtc(summary.NonMinerNodeId),
             InflowSinceBaselineBtc = 0m
         };
         _companyGovernance[summary.NonMinerNodeId] = gov;
@@ -1979,7 +2662,9 @@ public partial class NetworkRoot : Node
 
     private static void TickCompanyGovernance(Block block)
     {
-        if (_companyGovernance.Count == 0)
+        // P15.5: the closed-company sweeps at the bottom must still run once every company has died, so
+        // the early-out has to consider both books.
+        if (_companyGovernance.Count == 0 && _closedCompanies.Count == 0)
         {
             return;
         }
@@ -2010,9 +2695,27 @@ public partial class NetworkRoot : Node
                     // Quarter end: credit the closing cycle's NST lumps + residual PST drip BEFORE the
                     // new quarter's vote opens (D-ND8.17 — the lump is paid at quarter end).
                     SettleDividendCycleAtQuarterEnd(gov, founding, block);
+                    // P15.6a — roll the SC throughput window. NOTE (R3, 2026-07-28): this is no longer the
+                    // FBI's tolerance basis — that moved to the charter reserve, see FbiToleranceScFor. The
+                    // per-quarter inflow is kept because it is an accurate, cheap business-activity metric
+                    // (and a P15.8 calibration input); it is simply not what the meter reads any more.
+                    gov.ScInflowLastQuarterSc = gov.ScInflowCurrentQuarterSc;
+                    gov.ScInflowCurrentQuarterSc = 0m;
+                    // P15.4d — THE PAYMENT DAY. A bank's whole "extra-lazy" carry ends here: it sells just
+                    // enough collateral to cover this quarter's FED installment. Runs after the dividend
+                    // settlement (the closing quarter's obligations are already met) and before the new
+                    // quarterly vote, which is what a shortfall will later be measured against.
+                    TryBankQuarterlyRepayment(gov, block);
                     gov.QuarterIndex++;
                     gov.NextQuarterlyDueMs = AddMonthsMs(founding.FoundedAtUnixMs, QuarterMonths * (gov.QuarterIndex + 1));
                     OpenCompanyVote(gov, founding, CompanyVoteKindQuarterly, block);
+                }
+                else if (gov.PendingShortfallSc > 0m)
+                {
+                    // P15.4e — takes precedence over the >30% special vote: an unpaid FED installment is
+                    // the more urgent question, and it is opened only once the quarterly has closed, so the
+                    // dividend it may cut has actually been finalized.
+                    OpenCompanyVote(gov, founding, CompanyVoteKindShortfall, block);
                 }
                 else if (gov.BaselineReserveBtc > 0m
                     && gov.InflowSinceBaselineBtc > gov.BaselineReserveBtc * SpecialVoteInflowFraction)
@@ -2027,9 +2730,22 @@ public partial class NetworkRoot : Node
             TryConvertCompanyReserves(gov, block);
             TryAutoClaimBotDividends(gov, block);
         }
+
+        // Step 15 P15.5 — after the live companies have been processed, because dissolving mutates the
+        // dictionary the loop above iterates. Order matters: kill the insolvent first, then (re)assign
+        // custodied wallets — a bank that just died releases whatever it was holding — then forward the
+        // dead companies' accumulated inflows to whoever now holds them.
+        // P15.6 — the FBI runs BEFORE the dissolution sweep so a raid landing this block flows straight
+        // into the same custody/inheritance chain a debt default does.
+        TickFbiInvestigations(block);
+        TryDissolveInsolventBanks(block);
+        TryAssignSeizedWallets(block);
+        SweepClosedCompanyInflows(block);
     }
 
-    // ── ND.8b.6 (D-ND8.24/D-ND8.34) — automatic BTC→SC reserve conversion, provisional casino path ──
+    // ── ND.8b.6 (D-ND8.24/D-ND8.34) — automatic BTC→SC reserve conversion. Since Step 15 P15.3 the
+    //    counterparty is the SELECTED BANK (§5.1), with the casino surviving only as the pre-first-bank
+    //    fallback. ──
 
     // Calibration floors (v1): convert only when the SC-side deficit is ≥ 5% of total reserve value AND
     // the BTC to sell clears a dust/value floor — conversions stay chunky instead of one tiny tx per
@@ -2037,16 +2753,26 @@ public partial class NetworkRoot : Node
     private const decimal ConversionDeficitTriggerFraction = 0.05m;
     private const decimal MinConversionBtc = 0.01m;
 
-    // Moves a founded company's reserves toward its voted ReserveScPercent target: an on-chain
-    // company→casino BTC send (network median fee — the network's cost, never a desk fee) paired with an
+    // On-chain display memos for the two conversion counterparties. The bank leg gets its OWN tag because
+    // it is load-bearing, not cosmetic: AccumulateCompanyInflows reads it to keep collateral out of the
+    // receiving bank's business-inflow measure (D-15.4).
+    private const string CompanyConversionMemo = "CONVERSION";
+    private const string BankCollateralMemo = "COLLATERAL";
+    private const string BankRepaymentMemo = "DEBT SERVICE"; // P15.4d — collateral sold to raise an installment
+    private const string SeizedInflowMemo = "SEIZED";        // P15.5b — a dead company's inflow, forwarded to its absorber
+
+    // Moves a founded company's reserves toward its voted ReserveScPercent target: an on-chain BTC send to
+    // the financing counterparty (network median fee — the network's cost, never a desk fee) paired with an
     // SC credit into the company's ScReserve at the CLEAN market reference rate (the day's price,
-    // D-ND8.24), funded from the casino's Main Balance with auto-loan chunks when short (the provisional
-    // path — banks take this over at ND.8e, D-ND8.34). Gated on the founding-day vote having closed
-    // ("per preferences + the founding vote"); v1 converts BTC→SC only — the reverse direction needs the
-    // casino to SELL BTC for SC, which is the swap desk/bank's job, deferred with the provisional path.
+    // D-ND8.24). Gated on the founding-day vote having closed ("per preferences + the founding vote"); v1
+    // converts BTC→SC only — the reverse direction (a bank BUYING SC back with BTC) arrives with the
+    // deferred SC→BTC rebalancing work.
+    //
+    // P15.3b: WHO pays the SC is now SelectFinanciers' answer — the nearest-category founded bank, funding
+    // itself with a FED auto-loan (D-15.20), or the casino when no bank has founded yet.
     private static void TryConvertCompanyReserves(CompanyGovernanceState gov, Block block)
     {
-        if (gov.VoteHistory.Count == 0 || gov.ReserveScPercent <= 0m || _casinoSc == null)
+        if (gov.VoteHistory.Count == 0 || gov.ReserveScPercent <= 0m)
         {
             return;
         }
@@ -2058,7 +2784,8 @@ public partial class NetworkRoot : Node
             return; // no market yet (structurally unreachable post-founding — auctions start at Market Birth)
         }
 
-        decimal treasuryBtc = CompanyTreasuryBtc(gov.NonMinerNodeId);
+        // P15.3a — a bank's quarantined CollateralBtc is NOT part of its convertible reserves (D-15.4).
+        decimal treasuryBtc = CompanyOwnBtc(gov.NonMinerNodeId);
         decimal totalValueSc = treasuryBtc * price + gov.ScReserve;
         if (totalValueSc <= 0m)
         {
@@ -2084,28 +2811,788 @@ public partial class NetworkRoot : Node
             return;
         }
 
-        if (!SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company)
-            || !SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
+        if (!SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company))
         {
             return;
         }
 
         decimal scAmount = Scripts.Finance.Money.Normalize(btcToSell * price);
-        if (scAmount <= 0m || !_casinoSc.TryPayCompanyProvisionSc(scAmount, "company_conversion"))
+        if (scAmount <= 0m)
         {
             return;
         }
 
-        if (BuildAndBroadcastUtxoSpend(company, casino.WalletAddress, btcToSell, fee, null, "CONVERSION") == null)
+        // §5.1 — evaluated fresh at every conversion (a company's category can shift by vote; a bank's
+        // cannot, P15.2b). Today this always resolves to exactly ONE financier: capacity is infinite under
+        // FED auto-loans (D-15.1), so tier 1 always wins.
+        List<FinancierChoice> financiers = SelectFinanciers(gov.NonMinerNodeId, scAmount);
+        if (financiers.Count == 0)
         {
-            _casinoSc.ReceiveSwapSc(scAmount); // unwind the SC leg on a failed broadcast (the SW.4 pattern)
+            return;
+        }
+
+        // Tier 3 (a SPLIT across banks) would need the BTC leg split into several sends with their own
+        // fees, which is not built — it is unreachable while capacity is infinite. If credit limits ever
+        // make it reachable, fund the whole conversion from the casino rather than executing a half-split,
+        // and build the multi-leg path THEN (the second of the two places ND.8e must touch — the first is
+        // BankFundingCapacitySc).
+        FinancierChoice choice = financiers[0];
+        if (financiers.Count > 1)
+        {
+            GD.PushWarning($"[NetworkRoot] SelectFinanciers split {scAmount:F8} SC across {financiers.Count} financiers for {gov.NonMinerNodeId}; the multi-leg BTC path is unbuilt — falling back to the casino (P15.3b).");
+            choice = new FinancierChoice(null, scAmount, FinancierTierCasino);
+        }
+
+        bool ok = choice.BankNodeId == null
+            ? TryConvertViaCasino(gov, company, btcToSell, scAmount, fee, price, block)
+            : TryConvertViaBank(gov, company, choice.BankNodeId, btcToSell, scAmount, fee, price, block);
+        if (!ok)
+        {
             return;
         }
 
         gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve + scAmount);
+        // P15.6a — this IS the company's SC throughput: every SC it takes in arrives through a conversion.
+        gov.ScInflowCurrentQuarterSc = Scripts.Finance.Money.Normalize(gov.ScInflowCurrentQuarterSc + scAmount);
         AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "conversion", "btc_to_sc",
             string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "btc={0:F8};sc={1:F8};price={2:F2}", btcToSell, scAmount, price));
+                "btc={0:F8};sc={1:F8};price={2:F2};via={3};tier={4}",
+                btcToSell, scAmount, price, choice.BankNodeId ?? CasinoNodeId, choice.Tier));
+    }
+
+    // ── Step 15 P15.4d/e — extra-lazy FED repayment, and the shortfall it can produce ──────────────────
+
+    // D-15.4 (Hybrid, full-quarter fraction): the share of its OUTSTANDING FED principal a bank owes each
+    // quarter. Nothing is sold between payment days — that is the "lazy", and it is exactly what leaves the
+    // bank long BTC in the interim (§1). *P15.8 calibration knob* (0.10 ⇒ a ~7-quarter half-life).
+    private const decimal BankQuarterlyRepaymentFraction = 0.10m;
+
+    // Step 15 P15.10d (2026-07-29) — the smallest gap worth calling a shortfall. Selling collateral for
+    // "just enough" SC lands a rounding residue short of the installment almost every time (8-decimal money
+    // divided by a BTC price), and the naive `gap > 0` test treated a few hundred-millionths of an SC as a
+    // funding crisis: it opened a full board vote — which PAUSES THE WHOLE SIMULATION wherever the player
+    // holds NST — to decide who absorbs a quantity every readout in the game renders as "0.00 SC".
+    //
+    // One cent is not an arbitrary epsilon: it is exactly the point where the figure becomes VISIBLE in the
+    // panels that report it (all N2), so the rule is "if the game cannot display it, it cannot be worth a
+    // vote over". Dropping the residue is monetarily safe because Repay() burns `raisedSc`, never the
+    // installment — the un-repaid dust simply stays outstanding FED debt and is chipped at next quarter, so
+    // no figure diverges from reality (§39.16 rule 1). *P15.8 calibration knob.*
+    private const decimal MinMaterialShortfallSc = 0.01m;
+
+    // The bank sells collateral to the CASINO at the day's clean rate (no desk fee — the D-ND8.24 model the
+    // company conversions already use). The casino is the designated SC liquidity backstop: it is the only
+    // counterparty with an unlimited credit line (D-15.17), and it is already the SC side of the swap desk
+    // and of the pre-first-bank conversion path.
+    //
+    // Worth being explicit about the monetary effect, because it is not always a net burn: if the casino
+    // pays out of SC it already holds, circulation genuinely FALLS by the repayment. If the casino has to
+    // auto-loan to buy, the same SC is minted as casino debt and immediately burned as bank debt — a debt
+    // TRANSFER from the bank to the casino (which also ends up holding the BTC). Both are coherent; which
+    // one dominates is a P15.8 observation, and a candidate input for ND.8e's credit-capacity work.
+    private static void TryBankQuarterlyRepayment(CompanyGovernanceState gov, Block block)
+    {
+        if (_centralBank == null || !IsBankCompany(gov.NonMinerNodeId))
+        {
+            return;
+        }
+
+        string fedClientId = CentralBankService.BankClientId(gov.NonMinerNodeId);
+        decimal outstanding = _centralBank.OutstandingDebt(fedClientId);
+        if (outstanding <= 0m)
+        {
+            return;
+        }
+
+        decimal installmentSc = Scripts.Finance.Money.Normalize(outstanding * BankQuarterlyRepaymentFraction);
+        if (installmentSc <= 0m)
+        {
+            return;
+        }
+
+        decimal? priceUsd = _marketData?.GetEffectivePriceUsd(
+            DateTimeOffset.FromUnixTimeMilliseconds(block.Timestamp).LocalDateTime);
+        if (priceUsd is not decimal price || price <= 0m)
+        {
+            return; // unpriceable day — try again next quarter rather than guess at a rate
+        }
+
+        decimal raisedSc = TrySellCollateralForSc(gov.NonMinerNodeId, installmentSc, price, block);
+        if (raisedSc > 0m)
+        {
+            _centralBank.Repay(fedClientId, raisedSc, "quarterly"); // BURN — SC leaves existence
+            AppendBankCreditTrace(block, "repay", gov.NonMinerNodeId, string.Empty, raisedSc,
+                Scripts.Finance.Money.Normalize(raisedSc / price), price);
+        }
+
+        decimal gap = Scripts.Finance.Money.Normalize(installmentSc - raisedSc);
+        if (gap >= MinMaterialShortfallSc)
+        {
+            // §3.3 — collateral alone couldn't cover it (BTC fell since purchase, or there was never
+            // enough). The shortfall vote opens on a later tick, once the quarterly vote has closed.
+            gov.PendingShortfallSc = gap;
+            AppendBankCreditTrace(block, "shortfall_pending", gov.NonMinerNodeId, string.Empty, gap, 0m, price);
+        }
+        else if (gap > 0m)
+        {
+            // Sub-cent residue: left as outstanding debt, deliberately NOT a shortfall (see
+            // MinMaterialShortfallSc). Traced anyway so P15.8 can see how often it happens and whether the
+            // threshold is set sensibly — a silently discarded quantity is exactly what hides a bad cutoff.
+            AppendBankCreditTrace(block, "shortfall_dust", gov.NonMinerNodeId, string.Empty, gap, 0m, price);
+        }
+    }
+
+    // Sells at most `wantedSc`-worth of the bank's QUARANTINED collateral to the casino, on-chain, at the
+    // clean rate. Returns the SC actually raised (0 if nothing could be sold). The network fee comes out of
+    // the collateral pool too, so the book stays conservative — CollateralBtc never claims BTC the wallet
+    // has already spent (the §39.9.1 rule that put the quarantine in P15.3 in the first place).
+    private static decimal TrySellCollateralForSc(string bankNodeId, decimal wantedSc, decimal price, Block block)
+    {
+        if (_casinoSc == null
+            || !SharedNodesById.TryGetValue(bankNodeId, out NodeAgent? bank)
+            || !SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
+        {
+            return 0m;
+        }
+
+        BankBalanceSheet? sheet = GetBankBalanceSheet(bankNodeId);
+        if (sheet == null || sheet.CollateralBtc <= 0m)
+        {
+            return 0m;
+        }
+
+        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
+        decimal btcWanted = Scripts.Finance.Money.Normalize(wantedSc / price);
+        decimal btcSellable = Scripts.Finance.Money.Normalize(Math.Max(0m, sheet.CollateralBtc - fee));
+        decimal btcToSell = Math.Min(btcWanted, btcSellable);
+
+        // Same dust floor the conversions use: below it the fee would eat most of the sale, so it is
+        // honestly better to raise nothing and let the whole installment become a shortfall.
+        if (btcToSell < Math.Max(MinConversionBtc, fee * 2m))
+        {
+            return 0m;
+        }
+
+        decimal scRaised = Scripts.Finance.Money.Normalize(btcToSell * price);
+        if (scRaised <= 0m || !_casinoSc.TryPayCompanyProvisionSc(scRaised, "bank_repayment"))
+        {
+            return 0m;
+        }
+
+        if (BuildAndBroadcastUtxoSpend(bank, casino.WalletAddress, btcToSell, fee, null, BankRepaymentMemo) == null)
+        {
+            _casinoSc.ReceiveSwapSc(scRaised); // unwind the casino's SC leg (the SW.4 pattern)
+            return 0m;
+        }
+
+        sheet.CollateralBtc = Scripts.Finance.Money.Normalize(Math.Max(0m, sheet.CollateralBtc - btcToSell - fee));
+        return scRaised;
+    }
+
+    // P15.4e (D-15.7/D-15.15) — apply a closed shortfall vote's split and repay what it raised.
+    //
+    // Both cuts draw the SC out of the SAME place — the company's `ScReserve`, which is the only SC the
+    // company actually holds. What the vote decides is WHO BEARS IT: a dividends cut also shrinks this
+    // quarter's finalized SC dividend by the same amount (shareholders forgo it), while a reserves cut
+    // leaves the dividend whole and lets the company's working capital take the hit. Already-dripped SC is
+    // never clawed back — a cut is forward-looking.
+    private static void ApplyShortfallVote(CompanyGovernanceState gov, decimal dividendsCutPercent, Block block)
+    {
+        decimal gap = gov.PendingShortfallSc;
+        if (gap <= 0m || _centralBank == null)
+        {
+            return; // deliberately does NOT clear the pending gap — an unreachable FED must not erase a debt
+        }
+        gov.PendingShortfallSc = 0m;
+
+        decimal dividendsShare = Scripts.Finance.Money.Normalize(gap * Math.Clamp(dividendsCutPercent, 0m, 100m) / 100m);
+
+        // Whatever the reserve can actually cover, capped at the gap.
+        decimal covered = Scripts.Finance.Money.Normalize(Math.Min(gap, Math.Max(0m, gov.ScReserve)));
+        gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve - covered);
+
+        // The dividend is cut by its voted share of what was ACTUALLY raised (a cut can't exceed the
+        // dividend that exists, so any overflow silently falls on the reserve side — which has already
+        // paid it above).
+        decimal dividendCut = Scripts.Finance.Money.Normalize(Math.Min(gov.QuarterDividendSc, Math.Min(dividendsShare, covered)));
+        gov.QuarterDividendSc = Scripts.Finance.Money.Normalize(gov.QuarterDividendSc - dividendCut);
+
+        if (covered > 0m)
+        {
+            _centralBank.Repay(CentralBankService.BankClientId(gov.NonMinerNodeId), covered, "shortfall");
+        }
+
+        decimal unrecoverable = Scripts.Finance.Money.Normalize(gap - covered);
+        if (unrecoverable > 0m)
+        {
+            // Neither a full dividends cut nor the company's reserves could close it: the bank is
+            // insolvent. P15.5a reads this and dissolves it (D-15.8); until that ships the flag simply
+            // accumulates and is visible in the trace + the FED scene.
+            gov.UnrecoverableShortfallSc = Scripts.Finance.Money.Normalize(gov.UnrecoverableShortfallSc + unrecoverable);
+        }
+
+        AppendBankCreditTrace(block, unrecoverable > 0m ? "shortfall_unrecoverable" : "shortfall_closed",
+            gov.NonMinerNodeId, string.Empty, covered, 0m, 0m);
+        AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "shortfall_apply", CompanyVoteKindShortfall,
+            string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "gap={0:F8};dividendsCutPct={1:F2};dividendCut={2:F8};covered={3:F8};unrecoverable={4:F8}",
+                gap, dividendsCutPercent, dividendCut, covered, unrecoverable));
+    }
+
+    // ── Step 15 P15.5 — dissolution, the Closed-Companies list, and seized-wallet custody ──────────────
+
+    public const string ClosureReasonDebtDefault = "debt_default";
+    public const string ClosureReasonFbiSeizure = "fbi_seizure";
+
+    public static bool IsCompanyClosed(string nonMinerNodeId) => _closedCompanies.ContainsKey(nonMinerNodeId);
+
+    public static CompanyClosure? GetCompanyClosure(string nonMinerNodeId) =>
+        _closedCompanies.TryGetValue(nonMinerNodeId, out CompanyClosure? closure) ? closure : null;
+
+    // Newest closure first — the order both the Closed-Companies readouts want.
+    public static List<CompanyClosure> GetClosedCompanies() =>
+        _closedCompanies.Values.OrderByDescending(c => c.ClosedAtUnixMs).ToList();
+
+    // P15.5a (D-15.15/D-15.17) — kill a company. The record it leaves behind is the ONLY thing that
+    // survives: the founding (and with it every holder's stock) and the governance state are both removed,
+    // which is what makes "NST/PST holders lose their tokens and the company's future payments" literal
+    // rather than a rule some later loop has to remember to honour (D-15.15, P15.5d).
+    //
+    // Anything the holders had ALREADY CLAIMED is theirs and untouched — it is in their own wallet. What
+    // dies with the company is unclaimed claimables plus every future dividend.
+    //
+    // The company's BTC is deliberately NOT moved here: see the CompanyClosure doc comment for the custody
+    // model. Its remaining SC reserve, by contrast, is real money the FED can be repaid with, so it is
+    // applied against the debt on the way out (burning it — the same Option-A rule as any repayment).
+    private static void DissolveCompany(CompanyGovernanceState gov, CompanyFounding founding, string reason, Block block)
+    {
+        string nodeId = gov.NonMinerNodeId;
+        bool isBank = IsBankCompany(nodeId);
+        string fedClientId = CentralBankService.BankClientId(nodeId);
+
+        decimal scAtClosure = Math.Max(0m, gov.ScReserve);
+        decimal repaid = 0m;
+        if (reason == ClosureReasonFbiSeizure)
+        {
+            // P15.6c — the FBI takes the SC and self-funds on it. This is a TRANSFER of existing SC, so it
+            // touches neither side of `circulation = grants + debt`; a debt default, by contrast, burns it
+            // against the loan below. The BTC is not moved either way — see the custody model (§39.12.2).
+            _fbiScFunds = Scripts.Finance.Money.Normalize(_fbiScFunds + scAtClosure);
+        }
+        else if (isBank && scAtClosure > 0m && _centralBank != null)
+        {
+            repaid = _centralBank.Repay(fedClientId, scAtClosure, "dissolution");
+        }
+
+        CompanyShareHolding? playerHolding = founding.Holdings.FirstOrDefault(h => h.HolderId == PlayerNodeId);
+        gov.ClaimableByHolder.TryGetValue(PlayerNodeId, out CompanyClaimable? playerClaim);
+
+        var closure = new CompanyClosure
+        {
+            NonMinerNodeId = nodeId,
+            CompanyId = gov.CompanyId,
+            ClosedAtUnixMs = block.Timestamp,
+            Reason = reason,
+            MarketCategory = gov.MarketCategory,
+            WasBank = isBank,
+            DebtAtClosureSc = isBank ? (_centralBank?.OutstandingDebt(fedClientId) ?? 0m) : 0m,
+            ScAtClosure = scAtClosure,
+            BtcAtClosure = CompanyTreasuryBtc(nodeId),
+            PlayerNstAtClosure = playerHolding?.Nst ?? 0m,
+            PlayerPstAtClosure = playerHolding?.Pst ?? 0m,
+            PlayerUnclaimedBtcAtClosure = playerClaim?.Btc ?? 0m,
+            PlayerUnclaimedScAtClosure = playerClaim?.Sc ?? 0m
+        };
+        _closedCompanies[nodeId] = closure;
+
+        _companyGovernance.Remove(nodeId);
+        _companyFoundings.Remove(nodeId);
+
+        AppendBankCreditTrace(block, "dissolution", nodeId, string.Empty, closure.DebtAtClosureSc, closure.BtcAtClosure, 0m);
+        GD.Print($"[NetworkRoot] Company DISSOLVED — {DescribeNodeForDev(nodeId)} ({reason}); FED loss {closure.DebtAtClosureSc:F8} SC (repaid {repaid:F8} from its reserve), {closure.BtcAtClosure:F8} BTC left in custody.");
+    }
+
+    // P15.5a — the debt-default trigger. A bank carrying an unrecoverable shortfall (P15.4e: neither a full
+    // dividends cut nor its own reserves could close the gap) is insolvent and dies. Collected and applied
+    // OUTSIDE the governance loop, since dissolving mutates the very dictionary that loop iterates.
+    private static void TryDissolveInsolventBanks(Block block)
+    {
+        List<CompanyGovernanceState> doomed = _companyGovernance.Values
+            .Where(g => g.UnrecoverableShortfallSc > 0m && IsBankCompany(g.NonMinerNodeId))
+            .ToList();
+
+        foreach (CompanyGovernanceState gov in doomed)
+        {
+            if (_companyFoundings.TryGetValue(gov.NonMinerNodeId, out CompanyFounding? founding))
+            {
+                DissolveCompany(gov, founding, ClosureReasonDebtDefault, block);
+            }
+        }
+    }
+
+    // P15.5c (D-15.18, "O18-A") — the FED assigns each custodied wallet to a SOLVENT bank of the MATCHING
+    // market category, which then processes its inflows through its own band/level and normal governance
+    // votes (D-15.12 — never force-converted, never a bespoke per-deposit vote). Until such a bank exists
+    // — every 2011–2012 seizure predates the first bank founding, and a category may simply have none —
+    // the wallet stays with the FED, held 100% as BTC.
+    //
+    // "Solvent" is the meaningful qualifier: a bank carrying its own shortfall cannot be handed more to
+    // manage, and one that dissolves later releases what it holds back to FED custody (its own closure
+    // clears the assignment below).
+    private static void TryAssignSeizedWallets(Block block)
+    {
+        if (_closedCompanies.Count == 0) return;
+
+        foreach (CompanyClosure closure in _closedCompanies.Values)
+        {
+            // Release an assignment whose holder has since died — back to FED custody, eligible again.
+            if (!string.IsNullOrEmpty(closure.InheritingBankNodeId)
+                && !_companyGovernance.ContainsKey(closure.InheritingBankNodeId))
+            {
+                closure.InheritingBankNodeId = string.Empty;
+                closure.InheritedAtUnixMs = 0;
+            }
+
+            if (!string.IsNullOrEmpty(closure.InheritingBankNodeId)) continue;
+
+            CompanyGovernanceState? heir = FoundedBanks().FirstOrDefault(b =>
+                b.MarketCategory == closure.MarketCategory
+                && b.NonMinerNodeId != closure.NonMinerNodeId
+                && b.PendingShortfallSc <= 0m
+                && b.UnrecoverableShortfallSc <= 0m);
+            if (heir == null) continue; // no matching solvent bank yet — the FED keeps holding it as BTC
+
+            closure.InheritingBankNodeId = heir.NonMinerNodeId;
+            closure.InheritedAtUnixMs = block.Timestamp;
+            AppendBankCreditTrace(block, "wallet_inherited", heir.NonMinerNodeId, closure.NonMinerNodeId, 0m, 0m, 0m);
+            GD.Print($"[NetworkRoot] Seized wallet {DescribeNodeForDev(closure.NonMinerNodeId)} ({closure.MarketCategory}) inherited by {DescribeNodeForDev(heir.NonMinerNodeId)}.");
+        }
+    }
+
+    // P15.5b (D-15.8) — the off-UI income redirection. A dead company's address keeps receiving whatever
+    // automatic inflows were already scheduled to it (the cast sell-flow still picks it, the network does
+    // not know it died). Each block, everything sitting in a closed company's wallet is forwarded to its
+    // absorber — which exists only once P15.5c has assigned a bank. While the FED holds the wallet, the
+    // coins simply accumulate in place, which IS the custody model.
+    //
+    // The forwarded BTC lands as the heir's ordinary business inflow, not as collateral: it is a windfall
+    // it now owns, and its own band/level governance decides what to do with it (D-15.12). Recovery is
+    // tracked in BTC and valued live by the DEV readout — never frozen at a historical price.
+    private static void SweepClosedCompanyInflows(Block block)
+    {
+        if (_closedCompanies.Count == 0) return;
+
+        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
+        foreach (CompanyClosure closure in _closedCompanies.Values)
+        {
+            if (string.IsNullOrEmpty(closure.InheritingBankNodeId)) continue;
+            if (!SharedNodesById.TryGetValue(closure.NonMinerNodeId, out NodeAgent? dead)
+                || !SharedNodesById.TryGetValue(closure.InheritingBankNodeId, out NodeAgent? heir))
+            {
+                continue;
+            }
+
+            decimal balance = AggregateSpendable(dead);
+            decimal amount = Scripts.Finance.Money.Normalize(balance - fee);
+            // Same dust floor as every other automated send: below it the fee eats the transfer, so let it
+            // keep accumulating until it is worth moving.
+            if (amount < Math.Max(MinConversionBtc, fee * 2m)) continue;
+
+            if (BuildAndBroadcastUtxoSpend(dead, heir.WalletAddress, amount, fee, null, SeizedInflowMemo) == null)
+            {
+                continue;
+            }
+
+            closure.RecoveredBtc = Scripts.Finance.Money.Normalize(closure.RecoveredBtc + amount);
+            AppendBankCreditTrace(block, "seized_inflow", closure.InheritingBankNodeId, closure.NonMinerNodeId, 0m, amount, 0m);
+        }
+    }
+
+    // ── Step 15 P15.6 — the FBI investigation / seizure thread (D-15.14/D-15.19/D-15.21) ───────────────
+    //
+    // THE HYBRID (D-15.21): F1's investigation meter decides *who is a target* — deterministic and
+    // player-legible, so keeping a company's SC lean is a real lever — and a capped F2-style roll on top
+    // decides *which block the raid actually lands*, so there is suspense without pure randomness punishing
+    // good play.
+    //
+    // Timeline gate (D-15.14): the FBI does not exist in-game before **14 Jun 2011**, the date Gavin
+    // Andresen presented Bitcoin to the CIA via In-Q-Tel. (He did not meet the FBI; the CIA connection is
+    // flavour only and never mechanically involved — the date is simply when "law enforcement noticed
+    // Bitcoin" becomes historically honest.) Routed through TimelineConfig.Shift like every other anchor.
+    private static readonly DateTime FbiActivationLocal = TimelineConfig.Shift(new DateTime(2011, 6, 14));
+
+    // Per-category tolerated SC balance, as a multiple of the company's own recent SC throughput (D-15.21).
+    // Darker ⇒ lower: a licensed exchange sitting on a float is normal, a black-market stall sitting on the
+    // same fortune is a flag. Official is EXEMPT — never flagged on SC alone. *All P15.8 calibration knobs.*
+    private static decimal FbiToleranceMultiplier(string marketCategory) => marketCategory switch
+    {
+        "light_grey" => 8m,
+        "dark_grey" => 3m,
+        "black" => 1m,
+        _ => -1m, // official — no ceiling
+    };
+
+    // Meter tuning. A block is ~16h40m of game time (≈1.5 blocks/in-game-day, ≈135 per quarter), so these
+    // are sized against quarters, not seconds: at pressure 1 a company flags in ~200 blocks (~1.5 quarters);
+    // a badly-over black company flags in well under one. *P15.8 knobs.*
+    public const decimal InvestigationFlagThreshold = 100m;
+    private const decimal InvestigationGainPerBlock = 0.5m;
+    private const decimal InvestigationDecayPerBlock = 1.0m;
+    private const decimal InvestigationOverageCap = 4m;   // an overage ratio past this adds no more pressure
+    // The raid roll, applied ONLY to the single highest-priority flagged target each block (see below).
+    private const decimal SeizureRollBasePercent = 0.5m;  // × darkness × (score ÷ threshold)
+    private const decimal SeizureRollCapPercent = 2.0m;   // the "capped" half of the hybrid
+
+    // R3 (2026-07-28) — THE SCORE ITSELF NEEDS A CEILING, not just its gain rate. InvestigationOverageCap
+    // bounds how fast the meter climbs; nothing bounded how HIGH it climbed, and gain (up to
+    // 0.5 × 4 overage × 4 darkness = 8/block for a black company) outruns decay (1.0/block) by 8×. So a
+    // company held over tolerance for 200 blocks accrued ~1,600 and then needed ~1,600 blocks — well over
+    // two in-game years — to cool back to zero, staying red on the FED board the whole time. The decay is
+    // documented as "the player's lever"; unbounded accumulation quietly took the lever away.
+    //
+    // The value is not arbitrary: the raid roll is min(2%, 0.5% × darkness × score/threshold), which
+    // SATURATES at its 2% cap by score = 2 × threshold for the LIGHTEST non-exempt category (darkness 2)
+    // and earlier for every darker one. Past 2× threshold, extra score therefore changes nothing about the
+    // risk — it is pure dead weight that only lengthens the cooldown. Capping there bounds the worst-case
+    // cool-off at 200 blocks (~4.5 in-game months) while leaving time-to-flag completely unchanged.
+    //
+    // Applied on every accrual, so it also self-corrects the inflated scores that companies accumulated
+    // under the retired throughput basis (see FbiToleranceScFor) — they clamp to the ceiling on the next
+    // block rather than needing a one-off amnesty pass. *P15.8 knob like the rest of the meter.*
+    private const decimal InvestigationScoreCap = 2m * InvestigationFlagThreshold;
+
+    // The FBI's own budget: an initial FED grant at activation, then self-funding from what it seizes
+    // (D-15.21). The grant is booked as a FED loan on client "fbi" rather than conjured, so
+    // `circulation = grants + debt` still holds — it is simply never repaid, like the casino's (D-15.17).
+    // Seized SC is a TRANSFER of existing SC and touches neither side of the invariant.
+    public const string FbiClientId = "fbi";
+    private const decimal FbiInitialGrantSc = 100_000m; // *P15.8 knob*
+    private static decimal _fbiScFunds;
+    private static bool _fbiActivated;
+
+    public static decimal FbiScFunds => _fbiScFunds;
+    public static bool FbiActivated => _fbiActivated;
+    public static DateTime FbiActivationDateLocal => FbiActivationLocal;
+
+    // A company's tolerated SC balance right now. Negative = exempt (Official, or unpriceable — see below).
+    //
+    // R3 (2026-07-28) — THE BASIS IS THE CHARTER, NOT RECENT THROUGHPUT. The original P15.6a rule measured
+    // the tolerance off `max(ScInflowLastQuarterSc, ScInflowCurrentQuarterSc)`, i.e. a FLOW over ≤2 quarters
+    // judged against a STOCK that is meant to be HELD. The two disagree structurally: TryConvertCompanyReserves
+    // stops converting the moment a company reaches its voted reserve target, so a perfectly healthy company
+    // reports zero throughput two quarters later, `tolerance` collapses to 0.00, FbiOverageRatio pins it at the
+    // overage cap, and it is flagged within ~13–25 blocks depending on darkness. Every non-Official company
+    // that ever reaches its target was therefore guaranteed a federal file — which is what a 2011 playtest hit
+    // (three companies under investigation, all reading "0.00 SC tolerated"). The wealth was not unexplained;
+    // it was explained by a conversion the window had simply forgotten.
+    //
+    // "Explained wealth" is now what the company's OWN shareholders voted to hold: the charter reserve
+    // (`ReserveScPercent` of total company value), times the category's tolerance multiple. A company sitting
+    // exactly at its target has overage 0 and cools off; one hoarding SC well beyond its charter still heats
+    // up. The player's levers stay legible and get sharper — vote the reserve % down, or hold a lighter
+    // category — and neither is a stale accident of when the last conversion happened.
+    //
+    // Valuation basis is deliberately IDENTICAL to TryConvertCompanyReserves' own (CompanyOwnBtc at the
+    // chain-tip day's price + ScReserve), so the figure the FBI judges can never drift from the figure the
+    // conversion targets (§39.16 rule 6). No market price ⇒ exempt this block rather than judged against a
+    // BTC treasury we cannot value; structurally unreachable post-founding (auctions start at Market Birth).
+    //
+    // A 0% charter is a REAL zero, not the accidental one this replaced: it means "our charter says hold no
+    // SC" while the company holds some, which is exactly what the meter is for — and it is escapable, since
+    // dividends drain SC and the reserve % is itself votable. *The multiples remain P15.8 knobs.*
+    public static decimal FbiToleranceScFor(CompanyGovernanceState gov)
+    {
+        decimal multiplier = FbiToleranceMultiplier(gov.MarketCategory);
+        if (multiplier < 0m) return -1m;
+
+        long nowMs = _lastMinedBlock?.Timestamp ?? 0L;
+        decimal? priceUsd = nowMs > 0L
+            ? _marketData?.GetEffectivePriceUsd(DateTimeOffset.FromUnixTimeMilliseconds(nowMs).LocalDateTime)
+            : null;
+        if (priceUsd is not decimal price || price <= 0m) return -1m;
+
+        decimal totalValueSc = CompanyOwnBtc(gov.NonMinerNodeId) * price + gov.ScReserve;
+        decimal charterSc = totalValueSc * gov.ReserveScPercent / 100m;
+        return Scripts.Finance.Money.Normalize(multiplier * charterSc);
+    }
+
+    // How far over the line, as a ratio, capped. A company holding SC with NO throughput to explain it sits
+    // at the cap by construction — which is the intended reading of "unexplained wealth", not an edge case.
+    private static decimal FbiOverageRatio(CompanyGovernanceState gov, decimal tolerance)
+    {
+        if (tolerance < 0m) return 0m; // exempt
+        if (tolerance == 0m) return gov.ScReserve > 0m ? InvestigationOverageCap : 0m;
+        return Math.Max(0m, Math.Min(InvestigationOverageCap, gov.ScReserve / tolerance - 1m));
+    }
+
+    // Darkness weight: light_grey 2 … black 4 (official never reaches here — it is exempt above).
+    private static decimal FbiDarkness(string marketCategory) => MarketCategoryIndex(marketCategory) + 1m;
+
+    // R3 — how many blocks a file still needs to close, at the decay rate, if it stays under tolerance.
+    // Shares InvestigationDecayPerBlock with the tick itself, so the estimate cannot drift from the
+    // mechanism (§39.16 rule 6). Exists because "will this red row ever go away?" was a question the board
+    // could not answer, which is exactly the ambiguity rule 6 exists to prevent.
+    public static int FbiBlocksToClear(decimal score) =>
+        score <= 0m || InvestigationDecayPerBlock <= 0m
+            ? 0
+            : (int)Math.Ceiling(score / InvestigationDecayPerBlock);
+
+    // P15.6a/b/c — one pass per block. Accrues/decays every company's meter, then rolls the raid for the
+    // SINGLE highest-priority flagged target: **non-banks first, ranked by overage; banks LAST** (D-15.19 —
+    // the FBI builds evidence on the small anomalies before striking a big fish). One raid per block at
+    // most, which also keeps the thread from clearing the board in a burst.
+    private static void TickFbiInvestigations(Block block)
+    {
+        if (_companyGovernance.Count == 0) return;
+
+        DateTime nowLocal = DateTimeOffset.FromUnixTimeMilliseconds(block.Timestamp).LocalDateTime;
+        if (nowLocal < FbiActivationLocal) return;
+
+        if (!_fbiActivated)
+        {
+            _fbiActivated = true;
+            _centralBank?.DrawLoan(FbiClientId, FbiInitialGrantSc, "fbi_activation");
+            _fbiScFunds = Scripts.Finance.Money.Normalize(_fbiScFunds + FbiInitialGrantSc);
+            GD.Print($"[NetworkRoot] FBI ACTIVATED ({nowLocal:yyyy-MM-dd}) — initial federal grant {FbiInitialGrantSc:F2} SC (D-15.14).");
+            AppendBankCreditTrace(block, "fbi_activated", FbiClientId, string.Empty, FbiInitialGrantSc, 0m, 0m);
+        }
+
+        var flagged = new List<(CompanyGovernanceState gov, decimal overage, bool isBank)>();
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            decimal tolerance = FbiToleranceScFor(gov);
+            decimal overage = FbiOverageRatio(gov, tolerance);
+
+            if (tolerance >= 0m && overage > 0m)
+            {
+                // Clamped to InvestigationScoreCap: past 2× threshold the roll has saturated, so further
+                // accrual would only buy an unpayable cooldown later (R3 — see the constant).
+                gov.InvestigationScore = Scripts.Finance.Money.Normalize(Math.Min(InvestigationScoreCap,
+                    gov.InvestigationScore + InvestigationGainPerBlock * overage * FbiDarkness(gov.MarketCategory)));
+            }
+            else
+            {
+                // Back under tolerance: the heat comes off. This is the player's lever — a company kept lean
+                // (or voted lighter) genuinely stops being a target. The ceiling is applied on the way DOWN
+                // too, so a file inflated under the retired throughput basis drops to it on its first cooling
+                // block instead of serving out a sentence for a defect.
+                gov.InvestigationScore = Scripts.Finance.Money.Normalize(
+                    Math.Max(0m, Math.Min(InvestigationScoreCap, gov.InvestigationScore) - InvestigationDecayPerBlock));
+            }
+
+            // A raid needs a LIVE case, not just a thick file (R3, 2026-07-28). The score decays at
+            // InvestigationDecayPerBlock, so a company that gets back under its tolerance still carries a
+            // ≥threshold score for ~100 blocks — during which it could be seized for a condition that no
+            // longer holds. Requiring overage > 0 to be raid-eligible makes the decay mean what it says
+            // ("cooling off"), turns the player's lever into an IMMEDIATE effect rather than a 100-block
+            // wait, and keeps the file itself intact so a relapse re-arms at once instead of from zero.
+            if (gov.InvestigationScore >= InvestigationFlagThreshold && overage > 0m)
+            {
+                flagged.Add((gov, overage, IsBankCompany(gov.NonMinerNodeId)));
+            }
+        }
+
+        if (flagged.Count == 0) return;
+
+        // D-15.19's priority, as a single ordering: banks sort last, everything else by how far over it is.
+        (CompanyGovernanceState gov, decimal overage, bool isBank) target = flagged
+            .OrderBy(f => f.isBank)
+            .ThenByDescending(f => f.overage)
+            .First();
+
+        decimal chance = Math.Min(SeizureRollCapPercent,
+            SeizureRollBasePercent * FbiDarkness(target.gov.MarketCategory)
+                * (target.gov.InvestigationScore / InvestigationFlagThreshold));
+
+        if ((decimal)Random.Shared.NextDouble() * 100m >= chance) return;
+
+        if (_companyFoundings.TryGetValue(target.gov.NonMinerNodeId, out CompanyFounding? founding))
+        {
+            GD.Print($"[NetworkRoot] FBI RAID — {DescribeNodeForDev(target.gov.NonMinerNodeId)} seized (score {target.gov.InvestigationScore:F1}, roll chance {chance:F2}%).");
+            DissolveCompany(target.gov, founding, ClosureReasonFbiSeizure, block);
+        }
+    }
+
+    // Step 15 P15.7c (D-15.9) — everything a shareholder needs to judge a BANK they hold stock in. Computed
+    // from the same constants and helpers the mechanisms themselves use (BankQuarterlyRepaymentFraction,
+    // the FED account, BankCollateralBtc), so a displayed installment can never disagree with the one that
+    // will actually be charged — §39.16 rule 6. Collateral is valued LIVE, never at a frozen day.
+    public readonly record struct BankLendingSummary(
+        decimal FedDebtSc,
+        decimal TotalDrawnSc,
+        decimal TotalRepaidSc,
+        decimal CollateralBtc,
+        decimal CollateralValueSc,
+        decimal NextInstallmentSc,
+        long NextPaymentDueMs,
+        int ClientCount,
+        decimal PendingShortfallSc,
+        decimal UnrecoverableShortfallSc);
+
+    // Null for anything that is not a founded bank.
+    public static BankLendingSummary? GetBankLendingSummary(string nonMinerNodeId)
+    {
+        if (!IsBankCompany(nonMinerNodeId)
+            || !_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov))
+        {
+            return null;
+        }
+
+        string fedClientId = CentralBankService.BankClientId(nonMinerNodeId);
+        decimal debt = _centralBank?.OutstandingDebt(fedClientId) ?? 0m;
+        decimal collateral = BankCollateralBtc(nonMinerNodeId);
+
+        // Valued at the chain tip's day — the world's "now" (the ND.8g "always live, never a frozen
+        // historical day" rule). 0 when the market can't price that day, which the caller renders as "n/a"
+        // rather than as a real zero.
+        long nowMs = _lastMinedBlock?.Timestamp ?? 0L;
+        decimal? priceUsd = nowMs > 0L
+            ? _marketData?.GetEffectivePriceUsd(DateTimeOffset.FromUnixTimeMilliseconds(nowMs).LocalDateTime)
+            : null;
+        decimal collateralValue = priceUsd is decimal p && p > 0m
+            ? Scripts.Finance.Money.Normalize(collateral * p)
+            : 0m;
+
+        return new BankLendingSummary(
+            debt,
+            _centralBank?.TotalDrawn(fedClientId) ?? 0m,
+            _centralBank?.TotalRepaid(fedClientId) ?? 0m,
+            collateral,
+            collateralValue,
+            Scripts.Finance.Money.Normalize(debt * BankQuarterlyRepaymentFraction),
+            gov.NextQuarterlyDueMs,
+            GetBankBalanceSheet(nonMinerNodeId)?.Clients.Count ?? 0,
+            gov.PendingShortfallSc,
+            gov.UnrecoverableShortfallSc);
+    }
+
+    public readonly record struct FbiInvestigationFile(
+        string NonMinerNodeId,
+        string DisplayName,
+        string MarketCategory,
+        bool IsBank,
+        decimal Score,
+        decimal ScReserve,
+        decimal ToleranceSc,
+        decimal Overage);
+
+    // P15.6 DEV readout — every company carrying a file, in the SAME order the raid roll picks its target
+    // (non-banks first by overage, banks last). Shares FbiToleranceScFor/FbiOverageRatio with the roll, so
+    // a displayed figure cannot drift from the mechanism.
+    public static List<FbiInvestigationFile> GetFbiInvestigationFiles()
+    {
+        EnsureReady();
+        var files = new List<FbiInvestigationFile>();
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            decimal tolerance = FbiToleranceScFor(gov);
+            if (tolerance < 0m) continue; // Official — exempt
+            decimal overage = FbiOverageRatio(gov, tolerance);
+            if (overage <= 0m && gov.InvestigationScore <= 0m) continue;
+
+            files.Add(new FbiInvestigationFile(
+                gov.NonMinerNodeId,
+                DescribeNodeForDev(gov.NonMinerNodeId),
+                gov.MarketCategory,
+                IsBankCompany(gov.NonMinerNodeId),
+                gov.InvestigationScore,
+                gov.ScReserve,
+                tolerance,
+                overage));
+        }
+
+        return files.OrderBy(f => f.IsBank).ThenByDescending(f => f.Overage).ToList();
+    }
+
+    // P15.6d — the player-facing risk line for a company they hold stock in: how close it is to a raid, and
+    // what to do about it. Returns null when there is nothing to warn about (FBI not active yet, category
+    // exempt, or the company comfortably under its tolerance).
+    public static string? GetFbiInvestigationWarning(string nonMinerNodeId)
+    {
+        if (!_fbiActivated || !_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov))
+        {
+            return null;
+        }
+
+        decimal tolerance = FbiToleranceScFor(gov);
+        if (tolerance < 0m) return null; // Official — never flagged on SC alone
+
+        decimal overage = FbiOverageRatio(gov, tolerance);
+        if (overage <= 0m && gov.InvestigationScore <= 0m) return null;
+
+        decimal progress = Math.Min(100m, gov.InvestigationScore / InvestigationFlagThreshold * 100m);
+        // Rule 6 — this line must state exactly what TickFbiInvestigations will do, and since R3 a raid needs
+        // BOTH a ≥threshold file and a live overage. A thick file with no current overage is "open, not
+        // active": no raid can land while it stays that way, but the file has not been closed either.
+        bool raidEligible = gov.InvestigationScore >= InvestigationFlagThreshold && overage > 0m;
+        string state = raidEligible
+            ? "FLAGGED — a raid can land on any block"
+            : overage > 0m
+                ? "under investigation — the file is growing"
+                : gov.InvestigationScore >= InvestigationFlagThreshold
+                    ? "file open but INACTIVE — back under tolerance, no raid while it stays there"
+                    : "cooling off — back under tolerance";
+
+        // R3: the advice names the ACTUAL lever now that the basis is the charter — the reserve % is voted,
+        // so the board can bring the heat down itself; the old text told the player to "convert less SC",
+        // which was never a control any shareholder held.
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"⚖ Federal investigation: {state} ({progress:F0}% of the threshold). SC reserve {gov.ScReserve:N2} vs a tolerated {tolerance:N2} for a '{gov.MarketCategory}' business holding a {gov.ReserveScPercent:F0}% SC charter. Voting the SC reserve % up to cover what it actually holds — or holding a lighter market category — brings the heat down.");
+    }
+
+    // The pre-first-bank fallback (D-15.20 (c)) — unchanged ND.8b.6 behaviour: SC out of the casino's Main
+    // Balance (auto-loan when short, so the draw still lands on the casino's FED account), BTC in.
+    private static bool TryConvertViaCasino(CompanyGovernanceState gov, NodeAgent company, decimal btcToSell, decimal scAmount, decimal fee, decimal price, Block block)
+    {
+        if (_casinoSc == null || !SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino))
+        {
+            return false;
+        }
+
+        if (!_casinoSc.TryPayCompanyProvisionSc(scAmount, "company_conversion"))
+        {
+            return false;
+        }
+
+        if (BuildAndBroadcastUtxoSpend(company, casino.WalletAddress, btcToSell, fee, null, CompanyConversionMemo) == null)
+        {
+            _casinoSc.ReceiveSwapSc(scAmount); // unwind the SC leg on a failed broadcast (the SW.4 pattern)
+            return false;
+        }
+        return true;
+    }
+
+    // P15.3a — THE BANK PROVISIONING PATH (§3.2). The bank borrows the SC from the FED (minting it as
+    // "bank:<id>" debt), the company receives it, and the BTC the company sells lands in the bank's wallet
+    // as QUARANTINED CollateralBtc. Note what the bank does NOT do: it never touches its own ScReserve —
+    // the borrowed SC passes straight through to the company, leaving the bank with a FED debt on one side
+    // and collateral on the other. That spread, carried until the quarterly repayment (P15.4d), is the
+    // whole economic point of the reform (§1).
+    //
+    // Order mirrors the casino path: SC leg first, then the on-chain send, with the SC leg unwound on a
+    // failed broadcast — here by REPAYING the just-drawn loan, which burns the SC back out of existence
+    // and leaves `circulation = grants + debt` exactly as it was.
+    private static bool TryConvertViaBank(CompanyGovernanceState gov, NodeAgent company, string bankNodeId, decimal btcToSell, decimal scAmount, decimal fee, decimal price, Block block)
+    {
+        if (_centralBank == null || !SharedNodesById.TryGetValue(bankNodeId, out NodeAgent? bank))
+        {
+            return false;
+        }
+
+        string fedClientId = CentralBankService.BankClientId(bankNodeId);
+        _centralBank.DrawLoan(fedClientId, scAmount, "provision");
+
+        if (BuildAndBroadcastUtxoSpend(company, bank.WalletAddress, btcToSell, fee, null, BankCollateralMemo) == null)
+        {
+            _centralBank.Repay(fedClientId, scAmount, "provision_unwind");
+            return false;
+        }
+
+        // Both legs succeeded — only now does the bank's own client book record the provision (so it can
+        // never hold a half-executed swap).
+        RecordBankProvision(bankNodeId, gov.NonMinerNodeId, btcToSell, scAmount, price, block);
+        AppendBankCreditTrace(block, "provision", bankNodeId, gov.NonMinerNodeId, scAmount, btcToSell, price);
+        return true;
     }
 
     // New BTC arriving at a founded company's address this block (its own sends' change excluded) feeds
@@ -2123,6 +3610,16 @@ public partial class NetworkRoot : Node
             foreach (Transaction tx in block.Transactions)
             {
                 if (tx.IsCoinbase || tx.Inputs.Any(i => i.Address == address))
+                {
+                    continue;
+                }
+
+                // P15.3a (D-15.4) — a bank's incoming COLLATERAL is not business inflow: it is the asset
+                // leg of a loan it just took, quarantined from its own reserves. Counting it here would
+                // fire spurious >30%-inflow special votes — and where the player holds NST in that bank,
+                // every one of those PAUSES THE GAME (D-ND8.18). The send is tagged at broadcast
+                // (BankCollateralMemo), the same display-memo channel the swap desk already uses.
+                if (tx.InputDataText == BankCollateralMemo && IsBankCompany(gov.NonMinerNodeId))
                 {
                     continue;
                 }
@@ -2146,7 +3643,9 @@ public partial class NetworkRoot : Node
         {
             Kind = kind,
             OpenedAtMs = block.Timestamp,
-            ClosesAtMs = block.Timestamp + VoteDurationMs
+            ClosesAtMs = block.Timestamp + VoteDurationMs,
+            // P15.4e — the gap the shortfall ballot is deciding how to split (0 for every other kind).
+            ShortfallScTarget = kind == CompanyVoteKindShortfall ? gov.PendingShortfallSc : 0m
         };
 
         // Bots cast immediately and deterministically from their persisted preferences (D-ND8.4 —
@@ -2175,19 +3674,128 @@ public partial class NetworkRoot : Node
     }
 
     // A bot's ballot is a pure function of its persisted preferences + the company's current state:
-    // Currency — its continuous target IS its preference point (a CB3 "balancer" targets 50/50 and damps
-    // swings, D-ND8.19b needs no special-casing); Market — one step toward its preferred category;
-    // Payout — the current category's default rate (bots vote "the standard").
+    // Currency — its band stance PROJECTED into this company's band (P15.9a / D-15.24: the stance is a
+    // position on a global SC-ness axis, and a ballot outside the company's charter is not a legal vote);
+    // Market — one step toward its preferred category;
+    // Payout — the category's default rate scaled by its GREED (P15.4c / D-15.13; the clamp is
+    // [0, 2× default] and the ladder spans exactly that); Shortfall — §3.3's greed table (P15.4e).
     private static CompanyBallot BuildBotBallot(string botNodeId, CompanyGovernanceState gov)
     {
         _botGovernancePreferences.TryGetValue(botNodeId, out BotGovernancePreference? pref);
+        // Empty = drawn before greed existed and not yet backfilled; the pre-greed behaviour is the
+        // neutral stance, so normalizing to it is a no-op rather than a silent bias.
+        string greed = string.IsNullOrEmpty(pref?.GreedPreference) ? GreedAlmostGreedy : pref.GreedPreference;
         return new CompanyBallot
         {
-            ReserveScPercentTarget = BandDefaultScPercent(pref?.CurrencyBandPreference ?? gov.CurrencyBand),
+            ReserveScPercentTarget = ProjectStanceIntoBand(
+                BandDefaultScPercent(pref?.CurrencyBandPreference ?? gov.CurrencyBand), gov.CurrencyBand),
             MarketShift = pref == null
                 ? 0
                 : Math.Sign(MarketCategoryIndex(pref.MarketCategoryPreference) - MarketCategoryIndex(gov.MarketCategory)),
-            PayoutRatePercent = DefaultQuarterlyPayoutRatePercent(gov.MarketCategory)
+            PayoutRatePercent = Scripts.Finance.Money.Normalize(
+                DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * GreedPayoutMultiplier(greed)),
+            DividendsCutPercent = GreedDividendsCutPercent(greed)
+        };
+    }
+
+    // P15.10b (2026-07-29) — the market-shift half of the same rule-6 argument. CloseCompanyVote resolves a
+    // shift from the two directional weights; the Last Vote Snapshot has to re-derive the SAME verdict from
+    // the persisted ballots to say whether a bank's shift was refused. Both go through this one predicate so
+    // the note can never claim a refusal the resolver did not make (D-15.25 chose re-derivation over a
+    // persisted flag: the flag would default to false on every pre-existing record, reading as "no refusal"
+    // on exactly the historical votes where one happened — §39.16 rule 5's silent-failure shape).
+    public static int ResolveMarketShift(decimal darkerWeight, decimal lighterWeight) =>
+        darkerWeight >= MarketShiftSupermajorityFraction ? 1
+        : lighterWeight >= MarketShiftSupermajorityFraction ? -1
+        : 0;
+
+    // True when this closed vote carried a shift the holders actually won and the bank lock then refused.
+    //
+    // The Kind gate is load-bearing, not defensive. BuildBotBallot fills MarketShift for EVERY vote kind
+    // (it has no kind parameter), but CloseCompanyVote only EVALUATES a shift on a quarterly — so a founding
+    // or special record can hold a supermajority of +1 ballots that was never considered by anything. Testing
+    // the weights without this gate would report a refusal for a vote where no shift was ever on the table.
+    public static bool WasMarketShiftRefused(CompanyVoteRecord? rec, string nonMinerNodeId)
+    {
+        if (rec == null || rec.Kind != CompanyVoteKindQuarterly || !IsBankCompany(nonMinerNodeId))
+        {
+            return false;
+        }
+
+        decimal darkerWeight = 0m, lighterWeight = 0m;
+        foreach (VoteBallotRecord b in rec.Ballots)
+        {
+            if (b.MarketShift > 0) darkerWeight += b.Weight;
+            else if (b.MarketShift < 0) lighterWeight += b.Weight;
+        }
+
+        return ResolveMarketShift(darkerWeight, lighterWeight) != 0;
+    }
+
+    // P15.9f (2026-07-27) — the reserve outcome of a set of ballots, extracted so that CompanyDetails'
+    // "if the vote closed now" preview and CloseCompanyVote's REAL resolution cannot diverge (§39.16
+    // rule 6). A preview is a promise about what the resolver will do, which is the sharpest form of the
+    // case that rule exists for: two implementations of the same weighted average would drift the first
+    // time either side changed, and the player would be making a decision on the stale one.
+    //
+    // The math is D-ND8.19b's: weight = holder's NST ÷ total NST (holders with no NST are ignored, and a
+    // ballot from one carries no weight), averaged over the ballots ACTUALLY CAST — so a half-voted ballot
+    // set previews the outcome among those who have voted so far — then clamped to the band.
+    public sealed class ReserveVoteOutcome
+    {
+        public decimal TotalNst { get; init; }
+        public decimal VotedWeight { get; init; }  // 0..1 — the share of all NST that has cast a ballot
+        public decimal RawAverage { get; init; }   // the weighted average before the band clamp
+        public decimal Outcome { get; init; }      // RawAverage clamped into the band (or the fallback)
+        public decimal BandMin { get; init; }
+        public decimal BandMax { get; init; }
+        public bool WasClamped { get; init; }
+        public bool HasVotes => VotedWeight > 0m;
+    }
+
+    public static ReserveVoteOutcome ComputeReserveVoteOutcome(CompanyFounding founding, string band,
+        IReadOnlyDictionary<string, CompanyBallot> ballots, decimal fallbackOutcome)
+    {
+        (decimal min, decimal max) = BandScPercentBounds(band);
+        decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
+        if (totalNst <= 0m || ballots.Count == 0)
+        {
+            return new ReserveVoteOutcome { BandMin = min, BandMax = max, Outcome = fallbackOutcome };
+        }
+
+        Dictionary<string, decimal> nstByHolder = founding.Holdings
+            .Where(h => h.Nst > 0m)
+            .ToDictionary(h => h.HolderId, h => h.Nst);
+
+        decimal votedWeight = 0m, weightedReserve = 0m;
+        foreach ((string holderId, CompanyBallot ballot) in ballots)
+        {
+            if (!nstByHolder.TryGetValue(holderId, out decimal nst) || nst <= 0m)
+            {
+                continue;
+            }
+
+            decimal weight = nst / totalNst;
+            votedWeight += weight;
+            weightedReserve += weight * ballot.ReserveScPercentTarget;
+        }
+
+        if (votedWeight <= 0m)
+        {
+            return new ReserveVoteOutcome { TotalNst = totalNst, BandMin = min, BandMax = max, Outcome = fallbackOutcome };
+        }
+
+        decimal raw = Scripts.Finance.Money.Normalize(weightedReserve / votedWeight);
+        decimal clamped = Math.Clamp(raw, min, max);
+        return new ReserveVoteOutcome
+        {
+            TotalNst = totalNst,
+            VotedWeight = votedWeight,
+            RawAverage = raw,
+            Outcome = clamped,
+            BandMin = min,
+            BandMax = max,
+            WasClamped = raw != clamped
         };
     }
 
@@ -2205,7 +3813,10 @@ public partial class NetworkRoot : Node
         decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
         decimal reserveResult = gov.ReserveScPercent;
         decimal payoutResult = 0m;
-        int shiftResult = 0;
+        int shiftResult = 0;          // what the NST holders voted (traced even when it can't be applied)
+        bool categoryLocked = false;  // P15.2b / D-15.12 — true for a bank: the shift is voted but refused
+        // P15.4e — a shortfall vote's single dial. Stays at the 50/50 default when nobody voted (D-15.7).
+        decimal dividendsCutResult = DefaultShortfallDividendsCutPercent;
 
         if (totalNst > 0m && vote.Ballots.Count > 0)
         {
@@ -2214,6 +3825,7 @@ public partial class NetworkRoot : Node
                 .ToDictionary(h => h.HolderId, h => h.Nst);
 
             decimal votedWeight = 0m, weightedReserve = 0m, weightedPayout = 0m, lighterWeight = 0m, darkerWeight = 0m;
+            decimal weightedDividendsCut = 0m; // P15.4e
             foreach ((string holderId, CompanyBallot ballot) in vote.Ballots)
             {
                 if (!nstByHolder.TryGetValue(holderId, out decimal nst) || nst <= 0m)
@@ -2225,6 +3837,7 @@ public partial class NetworkRoot : Node
                 votedWeight += weight;
                 weightedReserve += weight * ballot.ReserveScPercentTarget;
                 weightedPayout += weight * ballot.PayoutRatePercent;
+                weightedDividendsCut += weight * ballot.DividendsCutPercent;
                 if (ballot.MarketShift > 0) darkerWeight += weight;
                 else if (ballot.MarketShift < 0) lighterWeight += weight;
 
@@ -2239,20 +3852,54 @@ public partial class NetworkRoot : Node
                 });
             }
 
-            if (votedWeight > 0m)
+            if (votedWeight > 0m && vote.Kind == CompanyVoteKindShortfall)
+            {
+                // P15.4e — a shortfall ballot decides ONE thing. It must not move the reserve mix, the
+                // market category or the payout rate as a side effect, so it takes its own exit here.
+                dividendsCutResult = Math.Clamp(
+                    Scripts.Finance.Money.Normalize(weightedDividendsCut / votedWeight), 0m, 100m);
+            }
+            else if (votedWeight > 0m)
             {
                 // D-ND8.19b — reserve %: simple weighted average of the cast targets, clamped to the
-                // band's ±25% range.
-                (decimal min, decimal max) = BandScPercentBounds(gov.CurrencyBand);
-                reserveResult = Math.Clamp(Scripts.Finance.Money.Normalize(weightedReserve / votedWeight), min, max);
+                // band's ±25% range. P15.9f — computed by the SAME helper the CompanyDetails preview calls,
+                // so "if the vote closed now" and what actually happens here can never be two different
+                // numbers (§39.16 rule 6). The local weightedReserve/votedWeight accumulated above still
+                // serve the payout / market / shortfall dials.
+                ReserveVoteOutcome outcome = ComputeReserveVoteOutcome(
+                    founding, gov.CurrencyBand, vote.Ballots, gov.ReserveScPercent);
+                decimal min = outcome.BandMin, max = outcome.BandMax, rawReserve = outcome.RawAverage;
+                reserveResult = outcome.Outcome;
+
+                // P15.9.5 (2026-07-27) — the tripwire. Since P15.9a every ballot is band-legal at the point
+                // it is CAST (bots projected here, the player clamped in TryRegisterPlayerVote), so the
+                // average is in-band by construction and this clamp is a no-op. It stays as the guarantee,
+                // not as a redundancy — and if it ever bites again, some new ballot source is bypassing the
+                // projection and silently pinning the result to a bound, exactly the bug P15.9 fixed. That
+                // failure hid for a whole plan because nothing announced it.
+                if (rawReserve != reserveResult)
+                {
+                    GD.PrintErr(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                        "[Governance] P15.9 tripwire — {0} ({1}) cast an OUT-OF-BAND reserve average {2:F2}%, clamped to {3:F0}% (band {4}: {5:F0}–{6:F0}). A ballot source is bypassing ProjectStanceIntoBand.",
+                        DescribeNodeForDev(gov.NonMinerNodeId), vote.Kind, rawReserve, reserveResult,
+                        gov.CurrencyBand, min, max));
+                }
 
                 if (vote.Kind == CompanyVoteKindQuarterly)
                 {
                     // D-ND8.19b — a market shift is discrete and riskier: it needs ≥60% of TOTAL voting
                     // weight in one direction, and lands clamped within ±1 of the roster default.
-                    if (darkerWeight >= MarketShiftSupermajorityFraction) shiftResult = 1;
-                    else if (lighterWeight >= MarketShiftSupermajorityFraction) shiftResult = -1;
-                    if (shiftResult != 0)
+                    // P15.10b — shared with WasMarketShiftRefused, so the snapshot's refusal note and this
+                    // resolution are the same verdict by construction.
+                    shiftResult = ResolveMarketShift(darkerWeight, lighterWeight);
+                    // Step 15 P15.2b (D-15.12) — BANKS ARE EXEMPT from the ±1 shift. Their four categories
+                    // span the Official→Black gradient the §5.1 selection distance is measured on, so a
+                    // drifting bank would silently re-shape which companies bank where. In exchange banks
+                    // gain the seized-wallet holding feature (P15.5c). Only the APPLICATION is blocked —
+                    // shiftResult keeps what the holders actually voted, so the governance trace still shows
+                    // a rejected attempt rather than pretending nobody asked.
+                    categoryLocked = IsBankCompany(gov.NonMinerNodeId);
+                    if (shiftResult != 0 && !categoryLocked)
                     {
                         int defaultIndex = MarketCategoryIndex(gov.DefaultMarketCategory);
                         int newIndex = Math.Clamp(
@@ -2270,7 +3917,12 @@ public partial class NetworkRoot : Node
             }
         }
 
-        gov.ReserveScPercent = reserveResult;
+        // P15.4e — a shortfall vote changes nothing but the shortfall: the reserve mix is left exactly
+        // where it was, and the split is applied (which is what actually spends the ScReserve below).
+        if (vote.Kind != CompanyVoteKindShortfall)
+        {
+            gov.ReserveScPercent = reserveResult;
+        }
 
         int quarterDays = 0; // ND.9h — quarter length (in-game days), 0 for non-quarterly votes
         if (vote.Kind == CompanyVoteKindQuarterly)
@@ -2278,7 +3930,9 @@ public partial class NetworkRoot : Node
             // D-ND8.17 — FINALIZE the quarter's dividend as two separately-tracked amounts (never live
             // accrual): each currency side is payoutRate% of the corresponding reserve at finalize time.
             // The SC side is structurally 0 until ND.8b.6 lands the BTC→SC conversions.
-            decimal treasuryBtc = CompanyTreasuryBtc(gov.NonMinerNodeId);
+            // P15.3a — the company's OWN BTC: a bank's quarantined collateral is excluded, so a quarterly
+            // dividend can never pay away the asset backing its FED debt (D-15.4).
+            decimal treasuryBtc = CompanyOwnBtc(gov.NonMinerNodeId);
             gov.QuarterPayoutRatePercent = payoutResult;
             gov.QuarterDividendBtc = Scripts.Finance.Money.Normalize(treasuryBtc * payoutResult / 100m);
             gov.QuarterDividendSc = Scripts.Finance.Money.Normalize(gov.ScReserve * payoutResult / 100m);
@@ -2289,9 +3943,16 @@ public partial class NetworkRoot : Node
             quarterDays = Math.Max(1, (int)((gov.QuarterCycleEndMs - gov.QuarterCycleStartMs) / GameDayMs));
         }
 
+        // P15.4e — apply the split and repay what it raised. Runs before the vote record + trace below, so
+        // both observe the post-cut ScReserve and the possibly-reduced quarter dividend.
+        if (vote.Kind == CompanyVoteKindShortfall)
+        {
+            ApplyShortfallVote(gov, dividendsCutResult, block);
+        }
+
         // Reset the >30% special-vote baseline at EVERY vote close — "new inflow" is measured from the
         // last governance event (D-ND8.18).
-        gov.BaselineReserveBtc = CompanyTreasuryBtc(gov.NonMinerNodeId);
+        gov.BaselineReserveBtc = CompanyOwnBtc(gov.NonMinerNodeId);
         gov.InflowSinceBaselineBtc = 0m;
 
         gov.VoteHistory.Add(new CompanyVoteRecord
@@ -2317,7 +3978,8 @@ public partial class NetworkRoot : Node
         }
 
         AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "vote_close", vote.Kind,
-            string.Format(System.Globalization.CultureInfo.InvariantCulture, "shift={0}", shiftResult));
+            string.Format(System.Globalization.CultureInfo.InvariantCulture, "shift={0}{1}",
+                shiftResult, categoryLocked && shiftResult != 0 ? ";shift_refused=bank_locked" : string.Empty));
     }
 
     // D-ND8.17 — the PST daily drip: each elapsed in-game day of the active cycle accrues
@@ -2541,9 +4203,16 @@ public partial class NetworkRoot : Node
     }
 
     // The Board Vote panel's submit path. Clamps every field into its legal range (band ±25%, shift ∈
-    // {-1,0,1}, payout ∈ [0, 2× default]) rather than rejecting — the UI pre-fills legal values anyway.
-    // Registering the ballot lifts the pause; the vote still closes on its own one-day schedule.
-    public static bool TryRegisterPlayerVote(string nonMinerNodeId, decimal reserveScPercentTarget, int marketShift, decimal payoutRatePercent)
+    // {-1,0,1}, payout ∈ [0, 2× default], dividends-cut ∈ [0,100]) rather than rejecting — the UI pre-fills
+    // legal values anyway. Registering the ballot lifts the pause; the vote still closes on its own
+    // one-day schedule.
+    //
+    // P15.4e: `dividendsCutPercent` is read ONLY by a shortfall vote and is optional so the existing panel
+    // keeps compiling and can never deadlock the pause — an un-wired caller simply votes the 50/50 default
+    // (D-15.7). Wiring the real control is P15.7c; use GetOpenVoteKind/GetOpenVoteShortfallTarget to know
+    // when to show it.
+    public static bool TryRegisterPlayerVote(string nonMinerNodeId, decimal reserveScPercentTarget, int marketShift,
+        decimal payoutRatePercent, decimal dividendsCutPercent = DefaultShortfallDividendsCutPercent)
     {
         if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov)
             || gov.OpenVote is not { } vote
@@ -2559,11 +4228,24 @@ public partial class NetworkRoot : Node
             ReserveScPercentTarget = Math.Clamp(Scripts.Finance.Money.Normalize(reserveScPercentTarget), min, max),
             MarketShift = Math.Clamp(marketShift, -1, 1),
             PayoutRatePercent = Math.Clamp(Scripts.Finance.Money.Normalize(payoutRatePercent), 0m,
-                DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * 2m)
+                DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * 2m),
+            DividendsCutPercent = Math.Clamp(Scripts.Finance.Money.Normalize(dividendsCutPercent), 0m, 100m)
         };
         vote.AwaitingPlayerVote = false;
         return true;
     }
+
+    // P15.4e — what kind of vote is open at this company ("" if none), and the SC gap a shortfall ballot
+    // is deciding how to split. The Board Vote panel (P15.7c) uses these to swap in the shortfall control.
+    public static string GetOpenVoteKind(string nonMinerNodeId) =>
+        _companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov) && gov.OpenVote is { } v
+            ? v.Kind
+            : string.Empty;
+
+    public static decimal GetOpenVoteShortfallTarget(string nonMinerNodeId) =>
+        _companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov) && gov.OpenVote is { } v
+            ? v.ShortfallScTarget
+            : 0m;
 
     public CompanyGovernanceState? GetCompanyGovernanceByNodeId(string nonMinerNodeId)
     {
@@ -2679,10 +4361,50 @@ public partial class NetworkRoot : Node
     }
 
     private const string CompanyGovernanceTracePath = "user://logs/company_governance_trace.csv";
+    private const string BankCreditTracePath = "user://logs/bank_credit_trace.csv"; // Step 15
 
     // ND.8b.3 telemetry — one row per governance event (vote_open / vote_close / quarter_settled /
     // bot_claim). Daily drip accruals are deliberately NOT logged (row volume); the quarter_settled and
     // claim rows bracket them for playtest verification.
+    // Step 15 (P15.7d, pulled forward to P15.3a): one row per banking-layer credit event — provisions now,
+    // repayments / shortfalls / dissolutions / seizures as those phases land. This is the ONLY observability
+    // the bank credit loop has until the P15.7 readouts, and the P15.8 calibration run reads it, so it
+    // ships with the mechanism rather than after it. Delete-listed in ResetWorldIfIncompatible (the TL.3
+    // maintenance rule). Join key is the raw nodeId, like every other trace (ND.10g).
+    private static void AppendBankCreditTrace(Block block, string eventType, string bankNodeId, string companyNodeId,
+        decimal sc, decimal btc, decimal priceUsd)
+    {
+        try
+        {
+            if (!DirAccess.DirExistsAbsolute("user://logs"))
+            {
+                DirAccess.MakeDirRecursiveAbsolute("user://logs");
+            }
+
+            bool exists = FileAccess.FileExists(BankCreditTracePath);
+            using FileAccess file = exists
+                ? FileAccess.Open(BankCreditTracePath, FileAccess.ModeFlags.ReadWrite)
+                : FileAccess.Open(BankCreditTracePath, FileAccess.ModeFlags.Write);
+            if (file == null)
+            {
+                return;
+            }
+
+            if (exists) file.SeekEnd();
+            else file.StoreLine("blockTimestampMs,blockIndex,event,bankNodeId,companyNodeId,sc,btc,priceUsd,bankFedDebt,bankCollateralBtc");
+
+            file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0},{1},{2},{3},{4},{5:F8},{6:F8},{7:F2},{8:F8},{9:F8}",
+                block.Timestamp, block.Index, eventType, bankNodeId, companyNodeId, sc, btc, priceUsd,
+                _centralBank?.OutstandingDebt(CentralBankService.BankClientId(bankNodeId)) ?? 0m,
+                BankCollateralBtc(bankNodeId)));
+        }
+        catch (Exception e)
+        {
+            GD.PushWarning($"[BankCreditTrace] failed: {e.Message}");
+        }
+    }
+
     private static void AppendCompanyGovernanceTrace(long timestampMs, int blockIndex, CompanyGovernanceState gov,
         string eventType, string kind, string detail)
     {
@@ -2722,6 +4444,53 @@ public partial class NetworkRoot : Node
     // filter by the `miner` column. realizedPower inverts the equilibrium calibration solvetime = difficulty ×
     // (TargetBlockSeconds / InitialDifficulty) / power, so realizedPower = difficulty × clockSpeed / solveSec.
     private const string DifficultyTracePath = "user://logs/difficulty_trace.csv";
+    private const string DifficultyTraceHeader =
+        "utcMs,miner,index,configuredPower,realizedPower,difficulty,anchor,solveSec,solveRatio,simSecOffered,simSecConsumed";
+    private static bool _difficultyTraceSchemaChecked;
+
+    // R2-T (2026-07-27) — simulated seconds OFFERED to the bet engine vs. those it actually retained,
+    // accumulated by SimulationService since the last block and drained by AppendDifficultyTrace. The
+    // SetActiveMiningPower precedent: SimulationService pushes the fact, NetworkRoot only records it.
+    // Saturation used to be inferable only by comparing configured to realized power AFTER the fact; this
+    // measures it at the source, and is the input signal R2-B will consume.
+    private static double _simSecondsOffered;
+    private static double _simSecondsConsumed;
+
+    public static void AccumulateSimSaturation(double offeredSeconds, double consumedSeconds)
+    {
+        if (offeredSeconds <= 0d) return;
+        _simSecondsOffered += offeredSeconds;
+        _simSecondsConsumed += Math.Clamp(consumedSeconds, 0d, offeredSeconds);
+    }
+
+    // R2-ASSERT (D-R2.4) — the executable-power alarm. The regulator has twice been audited and declared
+    // correct while producing wrong block times, because the fault was upstream: it was handed a power
+    // figure nothing could hash. Gated on THREE CONSECUTIVE blocks because single-block solvetimes are
+    // ≈exponentially distributed — the plan's own protocol says judge by aggregates, so the alarm obeys it.
+    private const double ExecutablePowerAlarmRatio = 2.0;
+    private const int ExecutablePowerAlarmBlocks = 3;
+    private static int _executablePowerBreachStreak;
+
+    private static void CheckExecutablePowerAlarm(int blockIndex, double configuredPower, double realizedPower)
+    {
+        if (configuredPower <= 0d || realizedPower <= 0d
+            || configuredPower <= ExecutablePowerAlarmRatio * realizedPower)
+        {
+            _executablePowerBreachStreak = 0;
+            return;
+        }
+
+        if (++_executablePowerBreachStreak < ExecutablePowerAlarmBlocks) return;
+        _executablePowerBreachStreak = 0; // re-arm, so a long saturation reports periodically, not per block
+
+        GD.PrintErr(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "[R2] Difficulty is pricing UN-EXECUTABLE power — block {0}: configured {1:F1} vs realized "
+            + "{2:F1} ({3:F1}× ) for {4} consecutive blocks. Blocks will run ≈{3:F1}× slow until it clears. "
+            + "Check for a founder/scheduled power spike (founders_trace.csv, network_population_trace.csv) "
+            + "and the simSecOffered/simSecConsumed columns for engine saturation.",
+            blockIndex, configuredPower, realizedPower, configuredPower / realizedPower,
+            ExecutablePowerAlarmBlocks));
+    }
 
     private static void AppendDifficultyTrace(NodeAgent miner, Block block)
     {
@@ -2753,7 +4522,29 @@ public partial class NetworkRoot : Node
                 DirAccess.MakeDirRecursiveAbsolute("user://logs");
             }
 
+            // ND.10j's rule, applied here too (R3, 2026-07-28): R2-T appended simSecOffered/simSecConsumed
+            // without rotating, so every existing world's file carries the 9-column pre-R2 header above
+            // 11-column rows — the saturation columns, the very signal R2-C1 exists to expose, could only be
+            // read by counting commas. Rotate to `.old` on a header mismatch, checked once per process.
             bool exists = FileAccess.FileExists(DifficultyTracePath);
+            if (exists && !_difficultyTraceSchemaChecked)
+            {
+                _difficultyTraceSchemaChecked = true;
+                if (ReadFirstLine(DifficultyTracePath) != DifficultyTraceHeader)
+                {
+                    DirAccess.RemoveAbsolute(DifficultyTracePath + ".old");
+                    if (DirAccess.RenameAbsolute(DifficultyTracePath, DifficultyTracePath + ".old") == Error.Ok)
+                    {
+                        exists = false; // rotated — fall through and write a fresh, correctly-headed file
+                    }
+                    else
+                    {
+                        GD.PushWarning("[DifficultyTrace] stale header and rotation failed — rows appended "
+                            + "to this file will not match its header. Delete difficulty_trace.csv.");
+                    }
+                }
+            }
+
             using FileAccess file = exists
                 ? FileAccess.Open(DifficultyTracePath, FileAccess.ModeFlags.ReadWrite)
                 : FileAccess.Open(DifficultyTracePath, FileAccess.ModeFlags.Write);
@@ -2768,13 +4559,20 @@ public partial class NetworkRoot : Node
             }
             else
             {
-                file.StoreLine("utcMs,miner,index,configuredPower,realizedPower,difficulty,anchor,solveSec,solveRatio");
+                file.StoreLine(DifficultyTraceHeader);
             }
 
+            // R2-T — the saturation figures for the interval that just closed, then reset for the next block.
+            double simOffered = _simSecondsOffered, simConsumed = _simSecondsConsumed;
+            _simSecondsOffered = 0d;
+            _simSecondsConsumed = 0d;
+
             file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "{0},{1},{2},{3:F4},{4:F4},{5:F4},{6:F4},{7:F1},{8:F4}",
+                "{0},{1},{2},{3:F4},{4:F4},{5:F4},{6:F4},{7:F1},{8:F4},{9:F2},{10:F2}",
                 block.Timestamp, miner.NodeId, block.Index, configuredPower, realizedPower,
-                block.Difficulty, anchor, solveSec, solveRatio));
+                block.Difficulty, anchor, solveSec, solveRatio, simOffered, simConsumed));
+
+            CheckExecutablePowerAlarm(block.Index, configuredPower, realizedPower);
         }
         catch (Exception e)
         {
@@ -2974,16 +4772,36 @@ public partial class NetworkRoot : Node
         // normal), summed over the bot's two lowest slots (ND.8d round 2), floored by the stuck escalation
         // for a lone slot (now including tiers 2-3, D-ND10c.3), or a flat 100 when unparticipated.
         var hits = new List<BotPoolOpportunity>();
+        var rollLog = new List<string>(biddable.Count);
         foreach (BotPoolOpportunity opportunity in biddable)
         {
-            if (Random.Shared.Next(100) < opportunity.ProbabilityPercent) hits.Add(opportunity);
+            bool hit = Random.Shared.Next(100) < opportunity.ProbabilityPercent;
+            if (hit) hits.Add(opportunity);
+            // ND.10j — log what each pool rolled BEFORE the tie-break discards all but one (see PoolRolls).
+            // ND.10l — and its tie-break WEIGHT where that differs from the rolled probability (i.e. a
+            // fresh pool's sentinel 100 vs its FreshPoolSeedingWeight), so a row shows not just which
+            // pools hit but why the draw between them resolved as it did.
+            int weight = TieBreakWeight(opportunity);
+            string weightSuffix = weight == opportunity.ProbabilityPercent ? string.Empty : $"w{weight}";
+            rollLog.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{opportunity.Target.NonMinerNodeId}:{opportunity.ProbabilityPercent}{(hit ? "*" : string.Empty)}{weightSuffix}"));
         }
+        trace.PoolRolls = string.Join("|", rollLog);
         trace.HitPools = hits.Count;
         if (hits.Count == 0) return CasinoBotSlotOutcome.RollDeclined;
 
-        // Uniform tie-break among the hits — an unparticipated pool (always hits) therefore no longer
-        // monopolizes the slot by ordering; it simply shares it fairly with whatever else hit.
-        BotPoolOpportunity pick = hits[Random.Shared.Next(hits.Count)];
+        // ND.10l (2026-07-28, §14.13, D-ND10l.1) — PROBABILITY-WEIGHTED tie-break, replacing D-ND10c.2's
+        // uniform draw. The uniform draw fixed an ordering problem and quietly created its mirror image:
+        // an unparticipated pool ALWAYS hits, so every fresh company introduction halved an escalated
+        // re-bid's real chance that block — diluting exactly the re-bids ND.10c set out to make
+        // reachable. `poolRolls` (ND.10j) is what made it visible: at block 964 bot_2's BitInstant roll
+        // HIT and lost the coin-flip to a 0.03 BTC seed bid on a brand-new pool.
+        //
+        // Weighted by how much each pool actually wants the slot, so a 64% escalated re-bid is no longer
+        // a coin flip against a fresh pool — but still a DRAW, never a priority: an absolute rule
+        // ("expiring auctions first") would starve fresh-pool seeding entirely, and with 40 companies
+        // arriving along the address curve their first bids are how auctions start at all.
+        BotPoolOpportunity pick = WeightedPickAmongHits(hits);
         trace.ChosenAmongHits = hits.Count;
 
         NonMinerDonationSummary target = pick.Target;
@@ -3015,6 +4833,42 @@ public partial class NetworkRoot : Node
 
         tx = BuildAndBroadcastUtxoSpend(sender, target.NonMinerAddress, amount, fee, null);
         return tx != null ? CasinoBotSlotOutcome.Donated : CasinoBotSlotOutcome.BroadcastFailed;
+    }
+
+    // ND.10l (D-ND10l.2) — an unparticipated pool's `ProbabilityPercent` is 100, but that 100 is a
+    // SENTINEL ("a first bid is deterministic, it never rolls" — D-ND6.5), not a statement of how much
+    // the bot wants that slot. Using it as a tie-break weight is a category error, and an expensive one:
+    // it is the largest number in the system, so weighting by the raw probability would hand fresh pools
+    // MORE of the slot than the uniform draw did (a 64% escalated re-bid would fall from ½ to 64/164),
+    // making the ND.10j dilution worse rather than better. A fresh pool therefore carries this explicit
+    // seeding weight instead.
+    //
+    // 34 (Fibonacci per D-ND6.4) places a first bid on a par with a fairly pressed tier-8 NORMAL slot:
+    // clearly beaten by a genuinely stuck escalation, clearly ahead of a calm low-tier re-bid, and still
+    // winning outright on every slot where nothing else hits — which is most of them early on, when the
+    // pools are few. A CALIBRATION PLACEHOLDER like the ND.10e treasury thresholds: it should be re-read
+    // once the R2 block pace is verified, since block frequency changes how often pools contest at all.
+    private const int FreshPoolSeedingWeight = 34;
+
+    private static int TieBreakWeight(BotPoolOpportunity opportunity)
+        => opportunity.OwnSlotCount == 0 ? FreshPoolSeedingWeight : opportunity.ProbabilityPercent;
+
+    // ND.10l — the weighted draw itself. Falls back to a uniform pick if every weight is somehow 0 (not
+    // reachable: an excluded pool never enters `hits`, and a biddable one always carries a positive
+    // probability — D-ND10c's `probabilityPercent <= 0` guard turns any all-zero case into an exclusion).
+    private static BotPoolOpportunity WeightedPickAmongHits(List<BotPoolOpportunity> hits)
+    {
+        int total = 0;
+        foreach (BotPoolOpportunity h in hits) total += TieBreakWeight(h);
+        if (total <= 0) return hits[Random.Shared.Next(hits.Count)];
+
+        int roll = Random.Shared.Next(total);
+        foreach (BotPoolOpportunity h in hits)
+        {
+            roll -= TieBreakWeight(h);
+            if (roll < 0) return h;
+        }
+        return hits[^1]; // unreachable — the walk always consumes the roll
     }
 
     // D-ND10c.1 — the eligibility test behind the restricted bot draw: does this bot hold ANY qualifying,
@@ -3064,9 +4918,40 @@ public partial class NetworkRoot : Node
         public int QualifyingPools;
         public int HitPools;
         public int ChosenAmongHits;
+        // ND.10j (2026-07-28, §14.11) — EVERY biddable pool's composed probability this slot, and which
+        // of them hit: "non_miner_8:40*|non_miner_10:100*" (`*` = hit; the chosen one is targetNodeId).
+        // Until now `rolledProbabilityPercent` was written only after a pick, so all 52 roll-declined rows
+        // in the BitInstant audit logged a bare 0 — ND.6b's whole premise is that "the declines ARE the
+        // calibration signal", and they carried none. This is also the only place the uniform tie-break
+        // is observable: a pool can hit and still lose the draw (blk 964: bot_4's BitInstant roll hit and
+        // lost the coin-flip to a fresh 0.03 BTC seed pool), which no other column records.
+        public string PoolRolls = string.Empty;
     }
 
     private const string CasinoBotBidTracePath = "user://logs/casino_bot_bid_trace.csv";
+    // ND.10j — hoisted to a const so the writer can compare it against an existing file's first line and
+    // rotate a stale-schema trace instead of appending misaligned rows to it.
+    private const string CasinoBotBidTraceHeader =
+        "blockTimestampMs,blockIndex,slot,hop,botNodeId,outcome,targetNodeId,ownTiersInTarget,rolledTier,"
+        + "rolledProbabilityPercent,requiredBtc,amountBtc,feeBtc,spendableBtc,bidBudgetCapBtc,"
+        + "qualifyingPools,hitPools,chosenAmongHits,poolRolls";
+
+    // ND.10j — one-shot: the schema/rotation check runs on the first append of the process, not per row.
+    private static bool _bidTraceSchemaChecked;
+
+    // ND.10j — the header-schema check for the trace rotation above. Opens read-only and reads one line.
+    private static string ReadFirstLine(string path)
+    {
+        try
+        {
+            using FileAccess file = FileAccess.Open(path, FileAccess.ModeFlags.Read);
+            return file == null ? string.Empty : file.GetLine();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
 
     // ND.6b (§8.6 of the step14 plan) — probabilistic rules cannot be calibrated from gameplay feel
     // alone: one telemetry row per BOT VISIT within a donation slot (= one row per slot when no cascade
@@ -3082,21 +4967,46 @@ public partial class NetworkRoot : Node
                 DirAccess.MakeDirRecursiveAbsolute("user://logs");
             }
 
+            // ND.10j — a trace whose columns no longer match its header is worse than no trace (§39.16
+            // rule 1: a lying number is invisible). When the schema changes, the old file is rotated to
+            // `.old` rather than appended to or destroyed — the developer keeps the previous session's
+            // rows AND gets a correctly-headed file, with no manual delete step. Checked ONCE per process
+            // (this runs several times per block), since nothing else writes the file while we hold it.
             bool exists = FileAccess.FileExists(CasinoBotBidTracePath);
+            if (exists && !_bidTraceSchemaChecked)
+            {
+                _bidTraceSchemaChecked = true;
+                if (ReadFirstLine(CasinoBotBidTracePath) != CasinoBotBidTraceHeader)
+                {
+                    DirAccess.RemoveAbsolute(CasinoBotBidTracePath + ".old");
+                    if (DirAccess.RenameAbsolute(CasinoBotBidTracePath, CasinoBotBidTracePath + ".old") == Error.Ok)
+                    {
+                        exists = false; // rotated — fall through and write a fresh, correctly-headed file
+                    }
+                    else
+                    {
+                        // Practically unreachable (same directory, `.old` just cleared). Say so rather than
+                        // append rows that silently disagree with the header above them.
+                        GD.PushWarning("[CasinoBotBidTrace] stale header and rotation failed — rows appended "
+                            + "to this file will not match its header. Delete casino_bot_bid_trace.csv.");
+                    }
+                }
+            }
+
             using FileAccess file = exists
                 ? FileAccess.Open(CasinoBotBidTracePath, FileAccess.ModeFlags.ReadWrite)
                 : FileAccess.Open(CasinoBotBidTracePath, FileAccess.ModeFlags.Write);
             if (file == null) return;
 
             if (exists) file.SeekEnd();
-            else file.StoreLine("blockTimestampMs,blockIndex,slot,hop,botNodeId,outcome,targetNodeId,ownTiersInTarget,rolledTier,rolledProbabilityPercent,requiredBtc,amountBtc,feeBtc,spendableBtc,bidBudgetCapBtc,qualifyingPools,hitPools,chosenAmongHits");
+            else file.StoreLine(CasinoBotBidTraceHeader);
 
             file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10:F8},{11:F8},{12:F8},{13:F8},{14:F8},{15},{16},{17}",
+                "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10:F8},{11:F8},{12:F8},{13:F8},{14:F8},{15},{16},{17},{18}",
                 block.Timestamp, block.Index, slot, hop, botNodeId, CasinoBotSlotOutcomeLabel(outcome),
                 trace.TargetNodeId, trace.OwnTiersInTarget, trace.RolledTier, trace.RolledProbabilityPercent,
                 trace.RequiredBtc, trace.AmountBtc, trace.FeeBtc, trace.SpendableBtc, trace.BidBudgetCapBtc,
-                trace.QualifyingPools, trace.HitPools, trace.ChosenAmongHits));
+                trace.QualifyingPools, trace.HitPools, trace.ChosenAmongHits, trace.PoolRolls));
         }
         catch (Exception e)
         {
@@ -3166,6 +5076,39 @@ public partial class NetworkRoot : Node
             .FirstOrDefault(s => s.NonMinerAddress == address);
         if (entry is null || entry.Status != NonMinerAuctionStatus.InAuction || entry.LeadingBidUnixMs == 0) return false;
         return IsPlayerBidderAddress(entry.LeadingDonorAddress);
+    }
+
+    // ND.10k (D-ND10k.3, 2026-07-28) — how much the player has ALREADY sent to this company that is still
+    // sitting UNCONFIRMED in the mempool (null when nothing is pending). This is the warning the BitInstant
+    // incident needed: nothing between blocks is persisted or visible in the ledger (Pattern 2), so a bid
+    // that has not been mined yet is invisible everywhere — the player sent a second one believing the
+    // first had failed, and block 965 confirmed BOTH into the same bid group. Under D-ND10k.1 only the
+    // HIGHEST of a donor's same-block bids participates, so the other becomes a plain non-participating
+    // send with no refund. Warned, never blocked (the D-ND8d.6 convention: the send always proceeds).
+    //
+    // Reads `PendingTransactions` directly rather than the ledger, because the ledger is a pure CHAIN
+    // replay and by construction cannot see the mempool — which is exactly why this was invisible.
+    public decimal? GetPendingAuctionBidBtc(string address)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)) return null;
+
+        NonMinerDonationSummary? entry = ComputeAuctionLedger(GetPlayerLatestBlockTimestampMsStatic())
+            .FirstOrDefault(s => s.NonMinerAddress == address);
+        if (entry is null || entry.Status != NonMinerAuctionStatus.InAuction) return null;
+
+        decimal pending = 0m;
+        foreach (Transaction tx in player.Blockchain.PendingTransactions)
+        {
+            // Same identity rule the ratchet uses (§30.9): an address is a key, not an identity — a bid
+            // whose coin selection spent a change-address UTXO is still the player's.
+            if (!tx.Inputs.Any(i => IsPlayerBidderAddress(i.Address))) continue;
+            foreach (TxOutput o in tx.Outputs)
+            {
+                if (o.Address == address) pending += o.Amount;
+            }
+        }
+        return pending > 0m ? Math.Round(pending, 8) : null;
     }
 
     // ND.8d.6 — in-game days remaining before the recipient company's auction closes (null unless it's an
@@ -3850,12 +5793,17 @@ public partial class NetworkRoot : Node
             // bid after that point can revive or re-win a resolved auction, however large.
             (string donor, decimal amount, long ts, long seq)? leader = null;
             long? resolvedAtMs = null;
-            // ND.8d.6 (D-ND8d.6, 2026-07-20 revision) — LAST-BID PRESERVATION: a further bid from the party
-            // that is ALREADY the current leader does not count as a donation — it never becomes a new
-            // leading bid, never resets the 20-day window, and is excluded from the tracked pool below. (In
-            // practice only the player can trigger this — bot_1..4's tier-1 satisfied rule already keeps
-            // them off their own leader pool; the player's manual wallet send is warned but non-blocking.)
-            var ignoredSelfRaiseSeqs = new HashSet<long>();
+            // The bids this walk decided do NOT participate at all — excluded from the leading-bid ratchet
+            // AND from the tracked pool below (so: no lead, no window reset, no slot, no stock). Two rules
+            // populate it, and neither refunds the coins (D-ND10k.2 — they reach the company as a plain
+            // non-participating transfer):
+            //   • ND.8d.6 (D-ND8d.6, 2026-07-20) — LAST-BID PRESERVATION, cross-block: a further bid from
+            //     the party that is ALREADY the current leader. (In practice only the player triggers this
+            //     — bot_1..4's tier-1 satisfied rule keeps them off their own leader pool.)
+            //   • ND.10k (D-ND10k.1, 2026-07-28) — ONE BID PER DONOR PER BLOCK: within a same-block group,
+            //     every bid a donor made except its highest. See the pass-1 comment in the loop.
+            // Both are warned in the BTC wallet before the send, and both are non-blocking.
+            var ignoredBidSeqs = new HashSet<long>();
             foreach (IGrouping<long, (string donor, decimal amount, long ts, long seq)> group in bids.GroupBy(d => d.ts).OrderBy(g => g.Key))
             {
                 if (resolvedAtMs.HasValue) break;
@@ -3865,16 +5813,64 @@ public partial class NetworkRoot : Node
                     break;
                 }
 
-                (string donor, decimal amount, long ts, long seq)? best = null;
+                // ND.10k (2026-07-28, §14.12, D-ND10k.1) — PASS 1: ONE PARTICIPATING BID PER DONOR PER
+                // BLOCK. ND.8d.6's last-bid preservation is a CROSS-block rule — it compares each bid
+                // against the leader as of the START of this group, and `leader` is only advanced after
+                // the whole group is scanned (D-ND4b.11: same-block bids race the same starting leader,
+                // never each other in sequence). That rule was written for two DIFFERENT bidders racing;
+                // it has no same-donor case, so TWO bids from one party confirmed in the SAME block both
+                // counted and both entered the tracked pool. Found in a live playtest: the player sent
+                // 10 BTC to BitInstant, it sat unconfirmed in the mempool, they sent 10 BTC again, and
+                // block 965 confirmed both — leaving one party holding tiers 1 AND 2 of the same pool.
+                //
+                // That is an EXPLOIT, not a cosmetic issue: splitting one bid in two buys the same total
+                // participation but TWO entries in the 5.2%-halving slot-bonus ladder (D-ND8.15), and it
+                // denies a third party an NST seat. It is reachable by the bots too — D-ND6.9's
+                // affordability cascade deliberately does not mark a declining bot as used, so one bot
+                // can be drawn for two slots in the same block.
+                //
+                // The rule: within a block, a donor participates with its HIGHEST bid only; every other
+                // bid it made in that block is ignored exactly like a leader self-raise — no lead, no
+                // window reset, no tracked slot, no stock. Highest (not first) keeps this consistent with
+                // D-ND4b.11's existing same-block resolution, and means a small accidental send can never
+                // knock out a large deliberate one; exact ties keep the earliest seq, also per D-ND4b.11.
+                // D-ND10k.2: an ignored bid is NOT refunded — the coins reach the company as a plain
+                // non-participating transfer, byte-for-byte the treatment ND.8d.6 already gives a leader
+                // self-raise. The wallet warns before the send (GetPendingAuctionBidBtc).
+                var groupBids = new List<(string donor, decimal amount, long ts, long seq)>();
+                var keptIndexByDonor = new Dictionary<string, int>();
                 foreach ((string donor, decimal amount, long ts, long seq) d in group)
                 {
                     // ND.8d.6 — the current leader re-bidding on itself is ignored (last-bid preservation):
                     // it neither re-leads nor resets the window, and is dropped from the tracked pool.
                     if (leader.HasValue && d.donor == leader.Value.donor)
                     {
-                        ignoredSelfRaiseSeqs.Add(d.seq);
+                        ignoredBidSeqs.Add(d.seq);
                         continue;
                     }
+
+                    if (keptIndexByDonor.TryGetValue(d.donor, out int kept))
+                    {
+                        if (d.amount > groupBids[kept].amount)
+                        {
+                            ignoredBidSeqs.Add(groupBids[kept].seq); // superseded by this larger one
+                            groupBids[kept] = d;
+                        }
+                        else
+                        {
+                            ignoredBidSeqs.Add(d.seq); // lower or tied — the earlier/larger one stands
+                        }
+                        continue;
+                    }
+
+                    keptIndexByDonor[d.donor] = groupBids.Count;
+                    groupBids.Add(d);
+                }
+
+                // PASS 2 — the floor / best-of-group scan, unchanged, over the surviving one-per-donor set.
+                (string donor, decimal amount, long ts, long seq)? best = null;
+                foreach ((string donor, decimal amount, long ts, long seq) d in groupBids)
+                {
                     // ND.4d — the floor a candidate must clear depends on WHO is bidding, not just on
                     // the current leader: the player only needs to clear the leader by one satoshi;
                     // everyone else (the casino-bots) still needs the full RaiseMin jump. Pre-leader,
@@ -3926,7 +5922,7 @@ public partial class NetworkRoot : Node
             // resolved company's late bids (which CancelAndRefundStaleAuctionBids then refunds). Also excludes
             // the ND.8d.6 leader self-raises — an ignored bid "doesn't participate in the auction" at all.
             summary.TrackedDonations = ComputeTrackedDonationPool(
-                bids.Where(bd => bd.ts <= summary.WindowCloseUnixMs && !ignoredSelfRaiseSeqs.Contains(bd.seq)).ToList(), nowMs);
+                bids.Where(bd => bd.ts <= summary.WindowCloseUnixMs && !ignoredBidSeqs.Contains(bd.seq)).ToList(), nowMs);
 
             if (resolvedAtMs.HasValue || nowMs >= summary.WindowCloseUnixMs)
             {
@@ -4248,10 +6244,17 @@ public partial class NetworkRoot : Node
         if (node.ReceiveWallet == null)
             return node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
 
+        // ONE pass over the UTXO set for the whole owned set, not one pass PER address (R3, 2026-07-28):
+        // GetAddressSpendableBalance walks the entire UTXO set and rebuilds the pending-spent outpoint set
+        // on every call, so the per-address loop cost O(addresses × utxos) — and the casino, whose change
+        // rotation gives it the largest address book in the world, is exactly the node the swap desk asked
+        // for on every settled bet. GetSpendableUtxos already accepts the whole set and applies the same
+        // spendable/maturity/pending filters, so the result is identical by construction (an outpoint has
+        // exactly one address, so no double counting is possible).
         var addresses = new HashSet<string>(node.ReceiveWallet.OwnedAddresses) { node.WalletAddress };
         decimal total = 0m;
-        foreach (string address in addresses)
-            total += node.Blockchain.GetAddressSpendableBalance(address);
+        foreach (var utxo in node.Blockchain.GetSpendableUtxos(addresses))
+            total += utxo.amount;
         return total;
     }
 
@@ -4579,6 +6582,18 @@ public partial class NetworkRoot : Node
     // in-memory state; it becomes durable when the next block is mined.
     private static void PersistStateToDisk()
     {
+        // INC-001 / D-15.26 — a session whose snapshot FAILED to load must never write back over the file it
+        // could not read. On 2026-07-29 a truncated state.json made EnsureInitialized throw; the 1,666-block
+        // world survived only because that throw happened to land before any writer ran. This makes the
+        // guarantee explicit instead of accidental: one catch-and-continue in the wrong place would otherwise
+        // replace a real chain with an empty one at the next mined block.
+        if (_snapshotLoadFailed)
+        {
+            GD.PrintErr("[NetworkRoot] Refusing to persist — the world snapshot failed to load this session " +
+                        "(see the error above). The on-disk state is left untouched.");
+            return;
+        }
+
         EnsureDirectory(BlockchainDir);
         NodeAgent player = SharedNodesById[PlayerNodeId];
 
@@ -4604,36 +6619,47 @@ public partial class NetworkRoot : Node
             CompanyFoundings = new Dictionary<string, CompanyFounding>(_companyFoundings),
             CompanyGovernance = new Dictionary<string, CompanyGovernanceState>(_companyGovernance),
             BotGovernancePreferences = new Dictionary<string, BotGovernancePreference>(_botGovernancePreferences),
-            CompanyInflowMultipliers = new Dictionary<string, decimal>(_companyInflowMultipliers)
+            CompanyInflowMultipliers = new Dictionary<string, decimal>(_companyInflowMultipliers),
+            BankState = new Dictionary<string, BankBalanceSheet>(_bankState),
+            ClosedCompanies = new Dictionary<string, CompanyClosure>(_closedCompanies),
+            FbiActivated = _fbiActivated,
+            FbiScFunds = _fbiScFunds
         };
 
-        using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
-        file.StoreString(JsonSerializer.Serialize(snapshot, JsonOptions));
-
-        WriteMonthlyChunks(player.Blockchain.Chain);
-    }
-
-    private static void WriteMonthlyChunks(List<Block> chain)
-    {
-        string absoluteDir = ProjectSettings.GlobalizePath(BlockchainDir);
-        if (System.IO.Directory.Exists(absoluteDir))
+        // INC-001 / D-15.26 — ATOMIC write. This used to truncate StatePath and stream ~9 MB straight into
+        // it, so a process death mid-write left a page-aligned, plausible-looking, INVALID file (the crash
+        // that ended the P15.8 session left it 7 bytes short of parseable). Now: serialize → write a temp
+        // file → CLOSE it → rename over the target. A rename either fully succeeds or leaves the previous
+        // file untouched, so a reader can never observe a half-written world.
+        //
+        // GOTCHA: the `using` must be an explicit BLOCK, not a using-declaration. A declaration lives until
+        // the method returns, which would leave the handle open across the rename below.
+        string serialized = JsonSerializer.Serialize(snapshot, JsonOptions);
+        using (FileAccess file = FileAccess.Open(StateTempPath, FileAccess.ModeFlags.Write))
         {
-            foreach (string staleFile in System.IO.Directory.GetFiles(absoluteDir, "blocks-*.json"))
+            if (file is null)
             {
-                System.IO.File.Delete(staleFile);
+                GD.PrintErr($"[NetworkRoot] Could not open {StateTempPath} for writing " +
+                            $"({FileAccess.GetOpenError()}) — world NOT persisted this block.");
+                return;
             }
+
+            file.StoreString(serialized);
+            file.Flush();
         }
 
-        Dictionary<string, List<Block>> byMonth = chain
-            .Where(b => b.Index > 0)
-            .GroupBy(b => DateTimeOffset.FromUnixTimeMilliseconds(b.Timestamp).UtcDateTime.ToString("yyyy-MM"))
-            .ToDictionary(g => g.Key, g => g.ToList());
-
-        foreach ((string month, List<Block> blocks) in byMonth)
+        try
         {
-            string path = $"{BlockchainDir}/blocks-{month}.json";
-            using FileAccess file = FileAccess.Open(path, FileAccess.ModeFlags.Write);
-            file.StoreString(JsonSerializer.Serialize(blocks, JsonOptions));
+            System.IO.File.Move(ProjectSettings.GlobalizePath(StateTempPath),
+                                ProjectSettings.GlobalizePath(StatePath),
+                                overwrite: true);
+        }
+        catch (Exception e)
+        {
+            // The previous snapshot is intact by construction — the rename is what would have replaced it.
+            // Loud, but not fatal: the next mined block retries the whole write.
+            GD.PrintErr($"[NetworkRoot] Snapshot rename failed — the previous world state is still on disk " +
+                        $"and this block was NOT committed: {e.Message}");
         }
     }
 
@@ -4713,6 +6739,7 @@ public partial class NetworkRoot : Node
                  "): resetting chain + clock + financial state (clean reset).");
 
         DeleteIfExists(StatePath);
+        DeleteIfExists(StateTempPath); // INC-001 — a stale staged write must not survive a world wipe
         DeleteIfExists("user://block_session_checkpoint.json");
         DeleteIfExists("user://calendar_state.json");
         DeleteIfExists("user://bankroll_state.json");
@@ -4730,6 +6757,7 @@ public partial class NetworkRoot : Node
         DeleteIfExists("user://casino_pool_state.json");
         DeleteIfExists("user://casino_coin_swap_state.json");
         DeleteIfExists("user://sc_monetary_ledger.json"); // ND.8c — added WITH the feature (the TL.3 maintenance rule)
+        DeleteIfExists("user://central_bank_state.json"); // Step 15 P15.1d — same rule
 
         // DEV trace telemetry: not player-visible, but rows dated under the other timeline would make the
         // traces unreadable (founders_trace is actively used to verify founder pacing) — start them fresh.
@@ -4740,6 +6768,7 @@ public partial class NetworkRoot : Node
         DeleteIfExists(CompanyFoundingTracePath); // ND.6b — was missing since ND.5 (same reasoning as the others); ND.8b.2 renamed the file
         DeleteIfExists(CompanyGovernanceTracePath); // ND.8b.3 — added WITH the feature (the TL.3/ND.6b rule)
         DeleteIfExists(CasinoBotBidTracePath);
+        DeleteIfExists(BankCreditTracePath); // Step 15 P15.3a — added WITH the feature (the TL.3/ND.6b rule)
 
         // The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
         // and the betting stats rebuild from a pristine world.
@@ -4766,12 +6795,100 @@ public partial class NetworkRoot : Node
             DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(userPath));
     }
 
+    // INC-001 / D-15.26 — set when the world snapshot exists but cannot be read. Guards PersistStateToDisk
+    // so a session that failed to load can never write over the file it failed to read.
+    private static bool _snapshotLoadFailed;
+
+    // The `Try` prefix is a PROMISE that this function handles its own failure — and for two whole steps it
+    // did not: a raw Deserialize threw straight out of EnsureInitialized, which aborted before registering a
+    // single node, leaving _isInitialized false, every consumer looking at an empty world, and NOTHING in the
+    // log. The money services persist to their own files and restored perfectly, so a total world-load
+    // failure presented as "some screens are blank" — about the least diagnosable shape available.
+    //
+    // Now: a corrupt snapshot is reported with its path, size and reason; the atomic writer's temp file is
+    // tried as a fallback (it can only be adopted if it fully parses); and if neither can be read the load
+    // ABORTS LOUDLY rather than handing back an empty-but-plausible world. See Documentation/INCIDENT_LOG.md
+    // INC-001 and ProjectDesignManual.md Ch. 40.
     private static BlockchainStateSnapshot? TryLoadSnapshot()
     {
-        if (!FileAccess.FileExists(StatePath)) return null;
-        using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Read);
-        string json = file.GetAsText();
-        return JsonSerializer.Deserialize<BlockchainStateSnapshot>(json);
+        // A rename replaces its target, so StatePath being absent means it never existed: a genuine first
+        // run or a post-reset world. Any leftover temp file here can only be a partial first write.
+        if (!FileAccess.FileExists(StatePath))
+        {
+            return null;
+        }
+
+        (BlockchainStateSnapshot? snapshot, string? error) = ReadSnapshotFile(StatePath);
+        if (snapshot is not null)
+        {
+            return snapshot;
+        }
+
+        GD.PrintErr($"[NetworkRoot] CORRUPT world snapshot at {StatePath} " +
+                    $"({DescribeFileSize(StatePath)}): {error}");
+
+        if (FileAccess.FileExists(StateTempPath))
+        {
+            (BlockchainStateSnapshot? staged, string? tempError) = ReadSnapshotFile(StateTempPath);
+            if (staged is not null)
+            {
+                GD.PrintErr($"[NetworkRoot] Recovered the world from {StateTempPath} — a previous run died " +
+                            "between the staged write and the rename.");
+                return staged;
+            }
+
+            GD.PrintErr($"[NetworkRoot] The staged fallback {StateTempPath} is unreadable too: {tempError}");
+        }
+
+        _snapshotLoadFailed = true;
+        GD.PrintErr("[NetworkRoot] WORLD LOAD ABORTED. Nothing will be persisted this session, so the " +
+                    "on-disk state is safe to repair or restore from a backup. " +
+                    "See Documentation/INCIDENT_LOG.md (INC-001) for the repair procedure.");
+        throw new InvalidOperationException(
+            $"World snapshot at {StatePath} could not be loaded: {error}");
+    }
+
+    // Returns (snapshot, null) on success, (null, reason) on any failure. Never throws — the caller decides
+    // what a failure means, which is the whole point of the split.
+    private static (BlockchainStateSnapshot? Snapshot, string? Error) ReadSnapshotFile(string path)
+    {
+        try
+        {
+            string json;
+            using (FileAccess file = FileAccess.Open(path, FileAccess.ModeFlags.Read))
+            {
+                if (file is null)
+                {
+                    return (null, $"could not be opened ({FileAccess.GetOpenError()})");
+                }
+
+                json = file.GetAsText();
+            }
+
+            BlockchainStateSnapshot? snapshot = JsonSerializer.Deserialize<BlockchainStateSnapshot>(json);
+            if (snapshot is null)
+            {
+                return (null, "deserialized to null");
+            }
+
+            return (snapshot, null);
+        }
+        catch (Exception e)
+        {
+            return (null, e.Message);
+        }
+    }
+
+    private static string DescribeFileSize(string userPath)
+    {
+        try
+        {
+            return $"{new System.IO.FileInfo(ProjectSettings.GlobalizePath(userPath)).Length:N0} bytes";
+        }
+        catch
+        {
+            return "size unknown";
+        }
     }
 
     private static void ApplyStateFromSnapshot(BlockchainStateSnapshot? snapshot)
@@ -4807,17 +6924,72 @@ public partial class NetworkRoot : Node
             _companyGovernance[nonMinerNodeId] = gov;
         }
 
+        // Step 15 P15.2a/b — a BANK's market category is LOCKED to its roster default (D-15.12), which makes
+        // it a DERIVED value rather than a voted one: re-deriving it from the roster on restore is therefore
+        // always correct, and it keeps the P15.2a gradient reassignment (three banks moved off "official")
+        // from stranding a bank that founded under the old roster with a stale category — no world-format
+        // bump needed for a data change the lock already guarantees. Runs after BOTH dictionaries are
+        // restored, since IsBankCompany resolves through _companyFoundings.
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            if (!IsBankCompany(gov.NonMinerNodeId)) continue;
+
+            string? rosterCategory = CompanyRoster.ByCompanyId(gov.CompanyId)?.MarketCategory;
+            if (string.IsNullOrEmpty(rosterCategory) || gov.MarketCategory == rosterCategory) continue;
+
+            GD.Print($"[NetworkRoot] Bank {gov.NonMinerNodeId} ({gov.CompanyId}) category re-derived from the roster: '{gov.MarketCategory}' → '{rosterCategory}' (P15.2b lock).");
+            gov.DefaultMarketCategory = rosterCategory;
+            gov.MarketCategory = rosterCategory;
+        }
+
+        // Step 15 P15.10d — clear a sub-cent shortfall a PRE-FIX snapshot already recorded. Tightening
+        // TryBankQuarterlyRepayment only stops NEW dust; a world that banked some before the fix would still
+        // open its pointless game-pausing vote on the next tick, because the trigger reads the persisted
+        // field. Same self-healing-on-restore shape as the category re-derivation above (§39.16 rule 5's
+        // backfill, applied to an already-wrong value rather than an absent one) — no format bump, and it is
+        // idempotent: post-fix worlds never carry a value in this range.
+        foreach (CompanyGovernanceState gov in _companyGovernance.Values)
+        {
+            if (gov.PendingShortfallSc <= 0m || gov.PendingShortfallSc >= MinMaterialShortfallSc) continue;
+
+            GD.Print($"[NetworkRoot] {DescribeNodeForDev(gov.NonMinerNodeId)}: dropped an immaterial pending shortfall of {gov.PendingShortfallSc:F8} SC (below {MinMaterialShortfallSc:F2}) — it stays as outstanding FED debt (P15.10d).");
+            gov.PendingShortfallSc = 0m;
+        }
+
         _botGovernancePreferences.Clear();
         foreach ((string botNodeId, BotGovernancePreference pref) in snapshot.BotGovernancePreferences ?? new Dictionary<string, BotGovernancePreference>())
         {
             _botGovernancePreferences[botNodeId] = pref;
         }
+        // DEV: restate the stances on every world load, so a long session's log always carries them near
+        // the top rather than only in the (possibly weeks-old) block where they were first drawn.
+        PrintBotGovernanceStances("restored with the world");
 
         _companyInflowMultipliers.Clear();
         foreach ((string companyId, decimal multiplier) in snapshot.CompanyInflowMultipliers ?? new Dictionary<string, decimal>())
         {
             _companyInflowMultipliers[companyId] = multiplier;
         }
+
+        // Step 15 P15.2c — the banks' layer-1 balance sheets, same additive-field rule (absent/null on a
+        // pre-plan15 snapshot ⇒ empty, which is exactly right: no bank has financed anything yet).
+        _bankState.Clear();
+        foreach ((string bankNodeId, BankBalanceSheet sheet) in snapshot.BankState ?? new Dictionary<string, BankBalanceSheet>())
+        {
+            if (sheet == null) continue;
+            _bankState[bankNodeId] = sheet;
+        }
+
+        // Step 15 P15.5a — same additive-field rule (absent/null ⇒ no company has died yet).
+        _closedCompanies.Clear();
+        foreach ((string nodeId, CompanyClosure closure) in snapshot.ClosedCompanies ?? new Dictionary<string, CompanyClosure>())
+        {
+            if (closure == null) continue;
+            _closedCompanies[nodeId] = closure;
+        }
+
+        _fbiActivated = snapshot.FbiActivated; // Step 15 P15.6
+        _fbiScFunds = Scripts.Finance.Money.Normalize(Math.Max(0m, snapshot.FbiScFunds));
     }
 
     private static void EnsureDirectory(string path)
@@ -4918,6 +7090,14 @@ public partial class NetworkRoot : Node
         public Dictionary<string, CompanyFounding> CompanyFoundings { get; set; } = new();
         // ND.8b.3 — keyed by NonMinerNodeId, mirrors _companyGovernance (same additive-field rule).
         public Dictionary<string, CompanyGovernanceState> CompanyGovernance { get; set; } = new();
+        // Step 15 P15.2c — keyed by the BANK's NonMinerNodeId, mirrors _bankState (same additive-field rule).
+        public Dictionary<string, BankBalanceSheet> BankState { get; set; } = new();
+        // Step 15 P15.5a — keyed by NonMinerNodeId, mirrors _closedCompanies (same additive-field rule).
+        public Dictionary<string, CompanyClosure> ClosedCompanies { get; set; } = new();
+        // Step 15 P15.6 — the FBI's activation latch + self-funding budget (false/0 on an older snapshot,
+        // which is exactly right: the thread simply activates on its date the way it always would).
+        public bool FbiActivated { get; set; }
+        public decimal FbiScFunds { get; set; }
         // ND.8b.3 — keyed by bot NodeId, mirrors _botGovernancePreferences (D-ND8.13/26 world draws).
         public Dictionary<string, BotGovernancePreference> BotGovernancePreferences { get; set; } = new();
         // ND.8b.5 — keyed by companyId, mirrors _companyInflowMultipliers (only non-1.0 entries stored).
@@ -5144,6 +7324,106 @@ public sealed class CompanyGovernanceState
     // (PlayerBankAccountService.BankTransferRecord's 500-cap precedent — a player claiming this many times
     // from ONE company is not expected; the cap is a safety net, not a real constraint).
     public List<CompanyDividendClaimRecord> PlayerClaimHistory { get; set; } = new();
+    // Step 15 P15.4d/e — banks only. PendingShortfallSc is the gap a quarterly repayment could not raise
+    // from collateral; it opens a shortfall vote as soon as no other vote is running (the quarterly must
+    // close first, so the dividend the vote may cut has actually been finalized). UnrecoverableShortfallSc
+    // is what remained after the vote applied BOTH cuts — a bank carrying one is insolvent and is the
+    // dissolution trigger P15.5a reads (D-15.8).
+    public decimal PendingShortfallSc { get; set; }
+    public decimal UnrecoverableShortfallSc { get; set; }
+    // Step 15 P15.6a — SC THROUGHPUT, the base of the FBI's throughput-relative tolerance (D-15.21): every
+    // conversion that credits ScReserve also accrues here, and the quarter close rolls current → last.
+    // Absolute SC ceilings would go stale across the 2009–2025 span; a company's own recent inflow does not.
+    public decimal ScInflowCurrentQuarterSc { get; set; }
+    public decimal ScInflowLastQuarterSc { get; set; }
+    // Step 15 P15.6b — the F1 investigation meter: accrues while ScReserve sits above the company's
+    // tolerance (∝ overage × category darkness), decays back under it. At/above
+    // NetworkRoot.InvestigationFlagThreshold the company is FLAGGED and eligible for the P15.6c raid roll.
+    public decimal InvestigationScore { get; set; }
+}
+
+// Step 15 P15.2c (D-15.4/D-15.5) — a founded BANK's balance sheet: the LAYER-1 half of the two-layer
+// accounting model (layer 0 = the FED's per-client accounts in CentralBankService). Keyed by the bank's
+// NonMinerNodeId in NetworkRoot._bankState, only for the four CompanyRoster.Banks, and persisted in the
+// same BlockchainStateSnapshot as _companyFoundings/_companyGovernance — so checkpoint coverage,
+// world-reset delete-list membership and the pre-genesis path all come for free (the ND.8g inheritance
+// argument).
+//
+// CollateralBtc (D-15.4) is a QUARANTINED account, deliberately separate from the bank's own CB1 business
+// inflows: it is the BTC bought from the companies the bank finances, held to service the FED debt and
+// sold "extra-lazy" — just enough, only on a quarterly payment day (P15.4). The bank's own inflows keep
+// auto-converting to SC exactly like any other CB1 company. Two BTC streams, one wallet, two books.
+public sealed class BankBalanceSheet
+{
+    public decimal CollateralBtc { get; set; }
+    // The bank's own client book: which company it financed, how much BTC it bought and SC it paid.
+    public Dictionary<string, BankClientAccount> Clients { get; set; } = new();
+}
+
+// One company's account at one bank. Totals are exact and cumulative; History is capped (see
+// NetworkRoot.MaxBankClientHistory) exactly like the FED's own per-client history.
+public sealed class BankClientAccount
+{
+    public decimal BtcBought { get; set; }
+    public decimal ScPaid { get; set; }
+    public int ProvisionCount { get; set; }
+    public List<BankClientEntry> History { get; set; } = new();
+}
+
+// One provisioning event: the bank paid ScPaid to the company and received BtcBought in exchange, priced
+// at that day's clean market rate. AtUnixMs is the mining block's timestamp — game time, like every other
+// persisted timestamp in this file.
+public sealed class BankClientEntry
+{
+    public long AtUnixMs { get; set; }
+    public int BlockIndex { get; set; }
+    public decimal BtcBought { get; set; }
+    public decimal ScPaid { get; set; }
+    public decimal PriceUsd { get; set; }
+}
+
+// Step 15 P15.5a (D-15.15/D-15.17) — one DISSOLVED company. Dissolution applies to every company, banks
+// included; only the casino is exempt (D-15.17, it is the player's house and keeps its unlimited FED
+// credit line forever). Two reasons today: `debt_default` (a bank that could not service its FED
+// installment by any means, P15.4e) and `fbi_seizure` (P15.6).
+//
+// CUSTODY MODEL (D-15.18): a closure does NOT move the dead company's coins. Its wallet stays on-chain,
+// unspendable by anything (no code path owns a dissolved company), and keeps receiving whatever automatic
+// inflows were already scheduled to it — that IS what "the FED holds it custodially, 100% as BTC" means
+// in a world where every satoshi must live at a real address and the FED has none. Only when a solvent
+// bank of the matching market category inherits the wallet does the BTC actually move (P15.5c), after
+// which new arrivals are forwarded to that bank per block (P15.5b).
+//
+// Rides BlockchainStateSnapshot like every other company record — checkpoint coverage, delete-list
+// membership and the pre-genesis path all inherited (the ND.8g argument).
+public sealed class CompanyClosure
+{
+    public string NonMinerNodeId { get; set; } = string.Empty;
+    public string CompanyId { get; set; } = string.Empty;
+    public long ClosedAtUnixMs { get; set; }
+    public string Reason { get; set; } = string.Empty;         // "debt_default" | "fbi_seizure"
+    public string MarketCategory { get; set; } = string.Empty; // at closure — the P15.5c inheritance key
+    public bool WasBank { get; set; }
+
+    // The loss the FED actually ate: what the company still owed after its last SC was applied.
+    public decimal DebtAtClosureSc { get; set; }
+    // Balances at the moment of closure, for the recovery tracker's "owed vs recovered" readout.
+    public decimal ScAtClosure { get; set; }
+    public decimal BtcAtClosure { get; set; }
+
+    // P15.5b — cumulative BTC actually delivered to an absorber since closure (the swept opening balance
+    // plus every forwarded inflow). Compared against DebtAtClosureSc at live prices by the DEV tracker.
+    public decimal RecoveredBtc { get; set; }
+    // P15.5c — "" while the FED holds the wallet custodially; the bank's nodeId once inherited.
+    public string InheritingBankNodeId { get; set; } = string.Empty;
+    public long InheritedAtUnixMs { get; set; }
+
+    // P15.5d — what the player held when the company died, kept ONLY so the closure notice can say what
+    // was lost. The live holdings themselves are destroyed at closure (liquidation, D-15.15).
+    public decimal PlayerNstAtClosure { get; set; }
+    public decimal PlayerPstAtClosure { get; set; }
+    public decimal PlayerUnclaimedBtcAtClosure { get; set; }
+    public decimal PlayerUnclaimedScAtClosure { get; set; }
 }
 
 // ND.8g — one successful player dividend claim from one company (BTC/SC amounts actually paid THIS press,
@@ -5164,11 +7444,14 @@ public sealed class CompanyDividendClaimRecord
 // open; the player's arrives via TryRegisterPlayerVote while AwaitingPlayerVote pauses the game.
 public sealed class CompanyVote
 {
-    public string Kind { get; set; } = string.Empty; // "founding" | "quarterly" | "special"
+    public string Kind { get; set; } = string.Empty; // "founding" | "quarterly" | "special" | "shortfall"
     public long OpenedAtMs { get; set; }
     public long ClosesAtMs { get; set; }
     public bool AwaitingPlayerVote { get; set; }
     public Dictionary<string, CompanyBallot> Ballots { get; set; } = new(); // holderId → ballot
+    // P15.4e — SHORTFALL votes only: the SC gap this vote must close (what the bank still owes the FED
+    // after selling every satoshi of collateral it had). 0 for every other kind.
+    public decimal ShortfallScTarget { get; set; }
 }
 
 // One NST holder's ballot (D-ND8.19b): a continuous reserve target (clamped to the band), a discrete
@@ -5179,6 +7462,10 @@ public sealed class CompanyBallot
     public decimal ReserveScPercentTarget { get; set; }
     public int MarketShift { get; set; }
     public decimal PayoutRatePercent { get; set; }
+    // Step 15 P15.4e (D-15.7/D-15.15) — SHORTFALL votes only: the share of the gap taken out of
+    // shareholders' dividends; the complement comes out of the company's own SC reserve. Ignored by every
+    // other vote kind. Defaults to the no/tied-vote 50/50 split.
+    public decimal DividendsCutPercent { get; set; } = NetworkRoot.DefaultShortfallDividendsCutPercent;
 }
 
 // One holder's accrued-but-unclaimed dividends in one company (BTC and SC separately, D-ND8.17).
@@ -5233,4 +7520,16 @@ public sealed class BotGovernancePreference
 {
     public string CurrencyBandPreference { get; set; } = "CB3";
     public string MarketCategoryPreference { get; set; } = "official";
+    // Step 15 P15.4b (D-15.13) — a THIRD, independent governance axis drawn per world: how hard this bot
+    // pushes for money in shareholders' pockets over money kept in the company. It biases every
+    // "dividends vs. company money" vote — the quarterly payout rate (all companies) and the P15.4e bank
+    // shortfall split — but deliberately NOT the reserve-band (currency-mix) vote, which is a different
+    // question entirely.
+    //
+    // Deliberately defaults to EMPTY, not to a stance: greed arrived after the other two axes, so a
+    // snapshot whose preferences were drawn before it must be DISTINGUISHABLE from a bot that genuinely
+    // drew the neutral stance — that is what lets NetworkRoot.BackfillGreedPreferences fill only the
+    // absent ones instead of leaving the whole axis stuck. Readers normalize empty to `almost_greedy`
+    // (exactly what every bot did before greed existed).
+    public string GreedPreference { get; set; } = string.Empty;
 }

@@ -48,6 +48,10 @@ public static class TimelineConfig
 	// timeline. `0` on `main` FOREVER (canonical 2009-03-21 start, HistoricalBootstrapService behavior
 	// unchanged bit-for-bit); a DEV branch may set 2010-2025 to land directly in that year for testing.
 	// Orthogonal to DevAltTimeline — never set both to a non-default value at once.
+	// Restored to 0 on 2026-07-30 when P15.8 was suspended and step15 merged to main (see the step15 plan
+	// §10). While a DEV branch has this non-zero, a StatusBar watermark is shown and the world carries an
+	// `+ENTRY-<year>` timeline tag, so restoring it to 0 wipes that world on the next launch — back up
+	// `user://logs/*.csv` first if the run's telemetry still matters (they are in the reset delete list).
 	public const int DevEntryYear = 0; // `0` on `main` — canonical 2009-03-21 start (set 2010-2025 only on a DEV branch)
 
 	public static readonly DateTime EntryDayLocal = DevEntryYear == 0
