@@ -3956,7 +3956,19 @@ public partial class NetworkRoot : Node
 
             if (holding.HolderId == PlayerNodeId)
             {
-                vote.AwaitingPlayerVote = true;
+                // Step 16 P16.5b (D-16.11/12/13) — the pause is now OPT-IN, per company. With the toggle
+                // off (the default) the standing policy is cast immediately and the game never stops; with
+                // it on, behaviour is exactly as before. Note the SAME rule applies to a shortfall vote:
+                // one toggle per company with a hidden "except shortfall" clause would make the toggle lie.
+                if (gov.PlayerPauseOnVotes)
+                {
+                    vote.AwaitingPlayerVote = true;
+                }
+                else
+                {
+                    vote.Ballots[PlayerNodeId] = BuildPlayerStandingBallot(gov);
+                }
+
                 continue;
             }
 
@@ -3979,6 +3991,75 @@ public partial class NetworkRoot : Node
                 vote.AwaitingPlayerVote ? "awaiting_player" : "bots_only",
                 vote.Ballots.Count,
                 BallotSpread(vote)));
+    }
+
+    // Step 16 P16.5b (D-16.12) — the player's standing ballot, cast on their behalf whenever the pause is
+    // off at this company. Every unconfigured field falls back to the company's CURRENTLY-APPLIED value, so
+    // an untouched policy is a status-quo vote: it participates (which matters — an abstention would change
+    // the other holders' relative weight) without steering anything the player never asked to steer.
+    //
+    // Clamped through exactly the same bounds TryRegisterPlayerVote uses, so a policy stored before a
+    // category or band change can never cast an illegal ballot (the P15.9 failure mode, arriving through a
+    // new door — a stored value outliving the range that made it legal).
+    private static CompanyBallot BuildPlayerStandingBallot(CompanyGovernanceState gov)
+    {
+        (decimal min, decimal max) = BandScPercentBounds(gov.CurrencyBand);
+        decimal reserve = gov.PlayerPolicyReserveScPercent >= 0m ? gov.PlayerPolicyReserveScPercent : gov.ReserveScPercent;
+        decimal payout = gov.PlayerPolicyPayoutRatePercent >= 0m ? gov.PlayerPolicyPayoutRatePercent : gov.QuarterPayoutRatePercent;
+        decimal cut = gov.PlayerPolicyDividendsCutPercent >= 0m
+            ? gov.PlayerPolicyDividendsCutPercent
+            : DefaultShortfallDividendsCutPercent;
+
+        return new CompanyBallot
+        {
+            ReserveScPercentTarget = Math.Clamp(Scripts.Finance.Money.Normalize(reserve), min, max),
+            // MarketShift stays 0: a standing policy must never drift a company's category on its own. That
+            // is a discrete, hard-to-undo decision (and at a bank it is refused outright, D-15.12), so it is
+            // the one control the player has to be present for.
+            MarketShift = 0,
+            PayoutRatePercent = Math.Clamp(Scripts.Finance.Money.Normalize(payout), 0m,
+                DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * 2m),
+            DividendsCutPercent = Math.Clamp(Scripts.Finance.Money.Normalize(cut), 0m, 100m),
+            WasAutoCast = true
+        };
+    }
+
+    // P16.5c — the player's standing policy for this company, resolved exactly as BuildPlayerStandingBallot
+    // resolves it, so the panel's preview and the ballot it previews cannot disagree (§39.16 rule 6). The
+    // `configured` flags let the UI say "status quo (not configured)" rather than showing a number the
+    // player never chose as if they had.
+    public static (bool pauseOnVotes, decimal reserveScPercent, bool reserveConfigured,
+        decimal payoutRatePercent, bool payoutConfigured,
+        decimal dividendsCutPercent, bool cutConfigured) GetPlayerVotePolicy(string nonMinerNodeId)
+    {
+        if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov))
+        {
+            return (false, 0m, false, 0m, false, DefaultShortfallDividendsCutPercent, false);
+        }
+
+        CompanyBallot preview = BuildPlayerStandingBallot(gov);
+        return (gov.PlayerPauseOnVotes,
+            preview.ReserveScPercentTarget, gov.PlayerPolicyReserveScPercent >= 0m,
+            preview.PayoutRatePercent, gov.PlayerPolicyPayoutRatePercent >= 0m,
+            preview.DividendsCutPercent, gov.PlayerPolicyDividendsCutPercent >= 0m);
+    }
+
+    // P16.5c — the panel's write path. A negative value CLEARS that field back to "follow the status quo",
+    // which is how the player un-configures a policy without having to guess the company's current number.
+    public static void SetPlayerVotePolicy(string nonMinerNodeId, bool pauseOnVotes,
+        decimal reserveScPercent, decimal payoutRatePercent, decimal dividendsCutPercent)
+    {
+        if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov))
+        {
+            return;
+        }
+
+        gov.PlayerPauseOnVotes = pauseOnVotes;
+        gov.PlayerPolicyReserveScPercent = reserveScPercent < 0m ? -1m : Scripts.Finance.Money.Normalize(reserveScPercent);
+        gov.PlayerPolicyPayoutRatePercent = payoutRatePercent < 0m ? -1m : Scripts.Finance.Money.Normalize(payoutRatePercent);
+        gov.PlayerPolicyDividendsCutPercent = dividendsCutPercent < 0m ? -1m : Scripts.Finance.Money.Normalize(dividendsCutPercent);
+        // No PersistStateToDisk here: a block is the only commit (Pattern 2). The setting rides the next
+        // block's snapshot like every other governance field.
     }
 
     // P16.4d (D-16.18) — the reserve-ballot spread at this vote, in SC percentage points. Written to the
@@ -4205,7 +4286,8 @@ public partial class NetworkRoot : Node
                     Weight = weight,
                     ReserveScPercentTarget = ballot.ReserveScPercentTarget,
                     MarketShift = ballot.MarketShift,
-                    PayoutRatePercent = ballot.PayoutRatePercent
+                    PayoutRatePercent = ballot.PayoutRatePercent,
+                    WasAutoCast = ballot.WasAutoCast // P16.5b (D-16.13) — carried into the history
                 });
             }
 
@@ -7878,6 +7960,32 @@ public sealed class CompanyGovernanceState
     // tolerance (∝ overage × category darkness), decays back under it. At/above
     // NetworkRoot.InvestigationFlagThreshold the company is FLAGGED and eligible for the P15.6c raid roll.
     public decimal InvestigationScore { get; set; }
+
+    // ── Step 16 P16.5a (D-16.11…14) — the player's per-company vote policy ──────────────────────────────
+    //
+    // The step15 §10 audit (F2) measured the cost of the old behaviour: 93 full-simulation freezes awaiting
+    // the player's ballot, producing ~2 outcome changes — and at a rate that RISES with how successful the
+    // player's holdings are, since the >30%-inflow special vote fires more often at busy companies. The
+    // pause is the game's most expensive interaction and it was being spent on decisions that were usually
+    // no-ops.
+    //
+    // PlayerPauseOnVotes therefore defaults to FALSE (D-16.11): a new holding never freezes the game, and
+    // the player opts in for the companies they actually steer. With it off, the standing policy below is
+    // cast automatically and marked `WasAutoCast` (D-16.13).
+    //
+    // The policy's own default is the STATUS QUO (D-16.12): PlayerPolicyReserveScPercent and
+    // PlayerPolicyPayoutRatePercent start at -1 meaning "not configured", and the auto-cast then votes the
+    // company's currently-applied values. A default that changes nothing is the only safe default for an
+    // automation the player never configured — anything else would silently steer companies on their
+    // behalf, which is precisely the trust this feature spends.
+    //
+    // These are PLAYER PREFERENCES riding world state (D-16.14, the ND.8g inheritance argument): they get
+    // checkpoint coverage, delete-list membership and the pre-genesis path for free, at the accepted cost
+    // that a restart rolls them back to the last block like everything else.
+    public bool PlayerPauseOnVotes { get; set; }
+    public decimal PlayerPolicyReserveScPercent { get; set; } = -1m;
+    public decimal PlayerPolicyPayoutRatePercent { get; set; } = -1m;
+    public decimal PlayerPolicyDividendsCutPercent { get; set; } = -1m;
 }
 
 // Step 15 P15.2c (D-15.4/D-15.5) — a founded BANK's balance sheet: the LAYER-1 half of the two-layer
@@ -8004,6 +8112,11 @@ public sealed class CompanyBallot
     // shareholders' dividends; the complement comes out of the company's own SC reserve. Ignored by every
     // other vote kind. Defaults to the no/tied-vote 50/50 split.
     public decimal DividendsCutPercent { get; set; } = NetworkRoot.DefaultShortfallDividendsCutPercent;
+    // Step 16 P16.5b (D-16.13) — TRUE when the PLAYER's ballot was cast by their standing policy rather
+    // than by their hand. Mechanically inert: the resolver treats an auto ballot exactly like a manual one.
+    // It exists so the history can never imply the player deliberated a decision their policy made for
+    // them — the CasinoClientLedgerService.Method precedent (manual/auto as a FIELD, never a second kind).
+    public bool WasAutoCast { get; set; }
 }
 
 // One holder's accrued-but-unclaimed dividends in one company (BTC and SC separately, D-ND8.17).
@@ -8049,6 +8162,11 @@ public sealed class VoteBallotRecord
     public decimal ReserveScPercentTarget { get; set; }
     public int MarketShift { get; set; }
     public decimal PayoutRatePercent { get; set; }
+    // Step 16 P16.5b (D-16.13) — this ballot was cast by the player's standing policy, not by their hand.
+    // Defaults to false, which reads correctly on every pre-P16.5 record: back then every player ballot
+    // WAS manual, so the default is the truth rather than a silent assumption (contrast §39.16 rule 5's
+    // failure shape, where a default false would have meant "no refusal" on records where one happened).
+    public bool WasAutoCast { get; set; }
 }
 
 // ND.8b.3 (D-ND8.13/D-ND8.26) — one casino-miner-bot's governance identity, re-rolled per world: a

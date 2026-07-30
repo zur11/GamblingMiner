@@ -501,7 +501,36 @@ open. Full design deferred; tracked in `PRIVATE_ROADMAP.md`.
   `company_governance_trace.csv`'s `vote_close` row. The CSV column is the one that matters: it is how a
   long run gets audited afterwards, which is how F1 was found in the first place.
 
-### P16.5 — Pause toggle + standing policy
+### P16.5 — Pause toggle + standing policy — ✅ IMPLEMENTED (2026-07-30, subphases a–c)
+
+> **Build log.** `dotnet build` clean. Four notes:
+>
+> **1. "Not configured" is a sentinel, not a value.** The three policy fields persist as `-1` meaning
+> *follow the company's current value*, so an untouched policy votes the **status quo** (D-16.12) — it
+> participates (which matters: abstaining would change every other holder's relative weight) without
+> steering anything the player never asked to steer. Storing a resolved number instead would have frozen
+> whatever the company happened to hold the day the feature shipped, and presented it as the player's
+> choice.
+>
+> **2. `MarketShift` is never auto-cast.** A category shift is discrete, hard to undo, and at a bank it is
+> refused outright (D-15.12) — it is the one control worth requiring the player's presence for. The
+> standing ballot always submits `0`, and the panel says so.
+>
+> **3. The standing ballot is clamped through the SAME bounds `TryRegisterPlayerVote` uses.** A policy
+> stored before a band or category change would otherwise cast an out-of-charter ballot — the P15.9 failure
+> arriving through a new door, *a stored value outliving the range that made it legal*. Worth watching for
+> wherever a preference is persisted against a mutable range.
+>
+> **4. Two UI details that were nearly bugs.** The action panels are signature-gated (so live refreshes
+> don't fight the player's typing), and the pause flag was not in the signature — so toggling it left the
+> panel explaining the *old* behaviour until the next vote opened. Added. But the numeric fields
+> deliberately stay OUT of the signature, since rebuilding on each keystroke is exactly what the gate
+> exists to prevent — which is also why the panel needs **its own** feedback line: pressing Save with the
+> pause unchanged rebuilds nothing, and a button with no visible effect reads as a broken button.
+>
+> **Shortfall votes take the same rule, with no exception** (§4.4): one toggle per company that quietly
+> excluded a vote kind would make the toggle lie. Note the interaction with P16.4: bots never abstain from
+> a shortfall vote, so that ballot is always fully attended — the player's auto-cast simply joins it.
 
 - **P16.5a — the state.** `CompanyGovernanceState` gains `PlayerPauseOnVotes` (default **false**) and a
   standing policy (reserve %, payout %, shortfall split), riding the snapshot (D-16.14). Defaults are the

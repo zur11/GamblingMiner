@@ -54,6 +54,7 @@ public partial class CompanyDetails : Control
 	private SpinBox? _dividendsCutSpin; // Step 15 P15.4e — shortfall votes only
 	private Label? _reservePreviewLabel; // Step 15 P15.9f — live "if the vote closed now" line
 	private Label? _voteFeedbackLabel;
+	private Label? _policyFeedbackLabel; // Step 16 P16.5c — the Vote Policy panel's own confirmation line
 	private Label? _claimableLabel;
 	private Label? _claimFeedbackLabel;
 
@@ -478,8 +479,12 @@ public partial class CompanyDetails : Control
 		bool hasNst = playerHolding is { Nst: > 0m };
 		bool hasPst = playerHolding is { Pst: > 0m };
 
+		// P16.5c — the pause toggle joins the signature: turning it on/off changes what the panel SAYS the
+		// game will do at the next vote, and that explanation would otherwise sit stale until the next vote
+		// opened. The policy's numeric fields deliberately do NOT join it — they are edited in-place, and
+		// rebuilding on every keystroke would fight the player's own typing (the reason this gate exists).
 		string signature = string.Create(CultureInfo.InvariantCulture,
-			$"{hasNst}|{hasPst}|{gov?.OpenVote?.OpenedAtMs ?? 0}|{gov?.OpenVote?.AwaitingPlayerVote ?? false}|{gov?.OpenVote?.Kind ?? ""}");
+			$"{hasNst}|{hasPst}|{gov?.OpenVote?.OpenedAtMs ?? 0}|{gov?.OpenVote?.AwaitingPlayerVote ?? false}|{gov?.OpenVote?.Kind ?? ""}|{gov?.PlayerPauseOnVotes ?? false}");
 		if (signature != _actionSignature)
 		{
 			_actionSignature = signature;
@@ -512,6 +517,7 @@ public partial class CompanyDetails : Control
 		_dividendsCutSpin = null;
 		_reservePreviewLabel = null;
 		_voteFeedbackLabel = null;
+		_policyFeedbackLabel = null;
 		_claimableLabel = null;
 		_claimFeedbackLabel = null;
 
@@ -534,8 +540,119 @@ public partial class CompanyDetails : Control
 		}
 	}
 
+	// Step 16 P16.5c (D-16.11…13) — the vote policy, shown ABOVE the ballot form because it governs whether
+	// that form will ever be waited for. The step15 §10 audit (F2) measured the old always-pause behaviour
+	// at 93 full-simulation freezes for ~2 outcome changes, at a rate that RISES with how successful the
+	// player's holdings are. So the pause is opt-in per company, and with it off the standing policy votes.
+	private void BuildVotePolicyPanel(CompanyGovernanceState gov)
+	{
+		string nodeId = gov.NonMinerNodeId;
+		(bool pause, decimal reserve, bool reserveConfigured,
+			decimal payout, bool payoutConfigured,
+			decimal cut, bool cutConfigured) = NetworkRoot.GetPlayerVotePolicy(nodeId);
+
+		_actionVBox.AddChild(SectionTitle("Vote Policy"));
+
+		var pauseCheck = new CheckBox
+		{
+			Text = "Pause the game for this company's votes",
+			ButtonPressed = pause
+		};
+		_actionVBox.AddChild(pauseCheck);
+
+		var explain = new Label
+		{
+			Text = pause
+				? "The simulation stops at every vote here until you cast a ballot."
+				: "Votes here are cast automatically by the policy below — the game never stops for them.",
+			AutowrapMode = TextServer.AutowrapMode.Word
+		};
+		explain.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.65f));
+		_actionVBox.AddChild(explain);
+
+		(decimal min, decimal max) = NetworkRoot.BandScPercentBounds(gov.CurrencyBand);
+		decimal defaultRate = NetworkRoot.DefaultQuarterlyPayoutRatePercent(gov.MarketCategory);
+
+		var reserveRow = new HBoxContainer();
+		reserveRow.AddChild(new Label { Text = $"Auto reserve target (% SC, {min:F0}–{max:F0}):  " });
+		var policyReserve = new SpinBox { MinValue = (double)min, MaxValue = (double)max, Step = 1, Value = (double)reserve };
+		reserveRow.AddChild(policyReserve);
+		_actionVBox.AddChild(reserveRow);
+
+		var payoutRow = new HBoxContainer();
+		payoutRow.AddChild(new Label
+		{
+			Text = string.Create(CultureInfo.InvariantCulture, $"Auto payout rate (%/quarter, max {defaultRate * 2m:F0}):  ")
+		});
+		var policyPayout = new SpinBox { MinValue = 0, MaxValue = (double)(defaultRate * 2m), Step = 0.5, Value = (double)payout };
+		payoutRow.AddChild(policyPayout);
+		_actionVBox.AddChild(payoutRow);
+
+		var cutRow = new HBoxContainer();
+		cutRow.AddChild(new Label { Text = "Auto shortfall split (% taken from dividends):  " });
+		var policyCut = new SpinBox { MinValue = 0, MaxValue = 100, Step = 5, Value = (double)cut };
+		cutRow.AddChild(policyCut);
+		_actionVBox.AddChild(cutRow);
+
+		// D-16.12 — an unconfigured policy votes the STATUS QUO, and the panel says so plainly. Showing a
+		// resolved number with no note would read as a choice the player had made, which is exactly the
+		// trust this feature spends: it votes on their behalf.
+		bool anyDefault = !reserveConfigured || !payoutConfigured || !cutConfigured;
+		var statusLabel = new Label
+		{
+			Text = anyDefault
+				? "Fields not yet configured follow the company's current values, so an untouched policy "
+					+ "changes nothing — it votes the status quo. Market direction is never cast "
+					+ "automatically: a category shift is hard to undo, so it needs you."
+				: "Policy fully configured. Market direction is never cast automatically.",
+			AutowrapMode = TextServer.AutowrapMode.Word
+		};
+		statusLabel.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.65f));
+		_actionVBox.AddChild(statusLabel);
+
+		var buttonRow = new HBoxContainer();
+		var saveBtn = new Button { Text = "Save Policy" };
+		saveBtn.Pressed += () =>
+		{
+			NetworkRoot.SetPlayerVotePolicy(nodeId, pauseCheck.ButtonPressed,
+				(decimal)policyReserve.Value, (decimal)policyPayout.Value, (decimal)policyCut.Value);
+			SetPolicyFeedback(pauseCheck.ButtonPressed
+				? "Policy saved. Votes here will pause the game until you cast a ballot."
+				: string.Create(CultureInfo.InvariantCulture,
+					$"Policy saved. Votes here are cast automatically at {(decimal)policyReserve.Value:F0}% SC reserve."));
+		};
+		buttonRow.AddChild(saveBtn);
+
+		// Clearing writes negatives, which SetPlayerVotePolicy stores as "not configured" — the player can
+		// go back to following the company without having to know its current numbers.
+		var clearBtn = new Button { Text = "Follow Status Quo" };
+		clearBtn.Pressed += () =>
+		{
+			NetworkRoot.SetPlayerVotePolicy(nodeId, pauseCheck.ButtonPressed, -1m, -1m, -1m);
+			SetPolicyFeedback("Policy cleared — auto-votes now follow the company's current values.");
+		};
+		buttonRow.AddChild(clearBtn);
+		_actionVBox.AddChild(buttonRow);
+
+		// Its own feedback line, NOT the ballot form's: the policy panel is built before that label exists,
+		// and pressing Save with the pause unchanged leaves the panel signature untouched (so nothing
+		// rebuilds) — a button with no visible effect reads as a broken button.
+		_policyFeedbackLabel = new Label { Text = " ", AutowrapMode = TextServer.AutowrapMode.Word };
+		_actionVBox.AddChild(_policyFeedbackLabel);
+		_actionVBox.AddChild(new HSeparator());
+	}
+
+	private void SetPolicyFeedback(string text)
+	{
+		if (_policyFeedbackLabel != null)
+		{
+			_policyFeedbackLabel.Text = text;
+		}
+	}
+
 	private void BuildBoardVotePanel(CompanyFounding founding, CompanyGovernanceState gov)
 	{
+		BuildVotePolicyPanel(gov);
 		_actionVBox.AddChild(SectionTitle("Board Vote"));
 
 		if (gov.OpenVote is not { } vote)
@@ -556,13 +673,20 @@ public partial class CompanyDetails : Control
 		// the player has voted yet.
 		BuildOpenVoteBallotList(founding, gov, vote);
 
-		bool playerVoted = vote.Ballots.ContainsKey(PlayerNodeId);
+		bool playerVoted = vote.Ballots.TryGetValue(PlayerNodeId, out CompanyBallot? playerBallot);
 		if (playerVoted && !vote.AwaitingPlayerVote)
 		{
+			// P16.5c (D-16.13) — an auto-cast ballot must never read as one the player deliberated. Say
+			// which it was, and what it cast, so a policy that is quietly voting badly is discoverable.
+			string how = playerBallot!.WasAutoCast
+				? string.Create(CultureInfo.InvariantCulture,
+					$"Your standing policy voted for you ({playerBallot.ReserveScPercentTarget:F0}% SC reserve)")
+				: "Ballot registered";
 			_actionVBox.AddChild(new Label
 			{
 				Text = string.Create(CultureInfo.InvariantCulture,
-					$"Ballot registered — the {vote.Kind} vote closes {FormatDate(vote.ClosesAtMs)} and applies from the next day.")
+					$"{how} — the {vote.Kind} vote closes {FormatDate(vote.ClosesAtMs)} and applies from the next day."),
+				AutowrapMode = TextServer.AutowrapMode.Word
 			});
 			return;
 		}
