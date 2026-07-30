@@ -1,6 +1,9 @@
 # Step 16 — Living Governance & Full UTXO Participation
 
-> **Status: ALL BUILD PHASES IMPLEMENTED (2026-07-30) — awaiting P16.6, the developer's verification run.**
+> **▶ PICKING THIS UP COLD? READ §9 FIRST** — it carries the live run's state, what is already verified,
+> the remaining checks in the order they become reachable, and the diagnostics available on request.
+>
+> **Status: ALL BUILD PHASES IMPLEMENTED (2026-07-30) — P16.6 (the verification run) IS IN PROGRESS.**
 > `P16.1` ✅ · `P16.2` ✅ · `P16.3` ✅ · `P16.4` ✅ · `P16.5` ✅ — each with its build log in §7. Rounds 1–2
 > decisions are `D-16.1…18` (§6). Nothing has been run yet: **every phase is build-verified only**, by the
 > developer's call to defer testing until the whole step landed, so P16.6 is the first time any of it
@@ -620,3 +623,107 @@ before merging, and back up `user://logs/*.csv` first if the run is worth keepin
 
 **Exit:** the mempool breathes, every participant is a real UTXO citizen, no two bots vote alike, and the
 game only stops for the companies the player asked it to stop for.
+
+---
+
+## 9. ⏸ SESSION HANDOFF — read this first if you are picking Step 16 up cold (2026-07-30)
+
+> Written at the point the P16.6 verification run was interrupted. Everything below is state, not plan.
+
+### 9.1 Where things stand
+
+| | |
+|---|---|
+| Branch | `living-governance-and-bot-wallets`, pushed to `origin` |
+| Commits | `5b81853` P16.2 · `d6faba8` P16.1 · `4d69c50` P16.4 · `8d62214` P16.5 · `6b20715` P16.3 + P16.6 prep · `994ace8` wordlist cache + entry year |
+| Build | clean, 0 warnings |
+| **`TimelineConfig.DevEntryYear`** | **`2011`** — ⚠ **MUST go back to `0` before merging to `main`** |
+| World | fresh (the developer deleted `user://` entirely), landed **2011-03-21 11:49:32** |
+| Bootstrap | Satoshi 107 · Hal 26 · cast 410 (11 spawned) · ghost 540 · 7 non-miners seeded |
+| Status | **all build phases implemented; P16.6 partially run** |
+
+**This world's bot stances** (re-drawn at the wipe — they ride the world snapshot, unlike the registry):
+
+| bot | band | market | greed | conviction | risk | horizon |
+|---|---|---|---|---|---|---|
+| bot_1 | CB4 | dark_grey | not_so_greedy | measured ×0.60 | cautious ×1.00 | generational **×−1.0 fades** |
+| bot_2 | CB1 | light_grey | extremely_greedy | steadfast ×0.25 | bold ×0.25 | short_term **×+0.5 follows** |
+| bot_3 | CB5 | official | almost_greedy | responsive ×1.00 | fearful ×1.50 | trader **×+1.0 follows** |
+| bot_4 | CB3 | black | greedy | reactive ×1.50 | steady ×0.60 | long_term **×−0.5 fades** |
+
+### 9.2 Verified so far
+
+- **Check 0 ✅** — world reset `format 0 → 5`, identities created fresh. Confirmed on disk:
+  `bot_wallet_registry.json` has `"formatVersion": 2` and **44 records carrying `seedWords`** (4 bots + 40
+  companies; 0 cast at that moment). *Note the version GATE itself is still unexercised* — deleting the
+  folder took the create-from-scratch path. It only fires against a pre-existing v1 registry.
+- **Registry survives a timeline wipe ✅** — the second launch (`ENTRY-2011` re-tag) printed
+  `[BotWalletRegistry] Loaded — 4 miner bots, 40 non-miner bots`, i.e. identities are correctly NOT world
+  state, while the governance stances correctly WERE re-drawn.
+- **Check 6 ✅** — the three wallet screens (developer-confirmed).
+- **Check 13 ✅** — every bot printed its `reacts:` line, all four temperaments distinct, and the momentum
+  axis split 2 following / 2 fading.
+- **`[ENTRY-2011 DEV]` watermark + clock at 2011-03-21 ✅.**
+
+### 9.3 What is left, in the order it becomes reachable
+
+1. **Checks 4 & 5 — do these next, they need no play time.** Block Explorer → open a block containing a
+   bot/company spend. Its change output must land on a **fresh derived address** (not the address it spent
+   from), and no output may be hidden — the two cosmetics are deleted, so a multi-output spend's arithmetic
+   must now add up on screen.
+2. **Play until a company FOUNDS** (Block Explorer → Enroll Mode → a row moves to *Founded*). An auction
+   resolves ~20 in-game days after its first bid. This unlocks the rest.
+3. **Check 7 — the single most valuable one.** `user://logs/company_governance_trace.csv`, `vote_open`
+   rows, column **`spread=N`**: the gap between the highest and lowest reserve target the bots voted.
+   `0.0` is the signature of the defect this whole step exists to fix (it would have read `0.0` for 517
+   consecutive votes before P16.4). **Prediction to falsify:** with this world's CB4/CB1/CB5/CB3 bands, at
+   a CB1 company the four project to **81 / 100 / 75 / 88** *before* drift and jitter — so the first
+   `spread=` should be ≈ **25**, not 0.
+4. **Checks 1, 2, 3 — the dividend batching.** After a company has closed a QUARTER:
+   `network_population_trace.csv` → `pendingTxs` should fall to at/below the `txTargetPerBlock` band (it
+   sat at 26–28 all through P15.8); the governance trace should carry `dividend_settlement` rows and **no**
+   `bot_claim` rows; bot BTC balances should still grow, just at quarter ends.
+5. **Check 9** — the same company's `vote_close` reserve% must VARY across quarters.
+6. **Checks 8, 11, 12** — need the player to hold NST somewhere (win a top-3 tracked tier in an auction).
+   8 = the open-vote ballot list shows different values + occasional *not voted yet*; 11 = with the Vote
+   Policy toggle OFF the game does **not** pause and the panel reports *"Your standing policy voted for
+   you (N% SC reserve)"*; 12 = with it ON the pause behaves exactly as before.
+7. **Checks 10 & 14** — the P15.9 tripwire must never fire, and the monetary invariant must still
+   reconcile in the Central Bank / World Economy scenes.
+8. **Then: `DevEntryYear = 0`, rebuild, merge.**
+
+### 9.4 Diagnostics on offer — just ask
+
+**I can read the live save directory directly** (`%APPDATA%\Godot\app_userdata\GamblingMiner\`); nothing
+needs pasting. Say the word and I will:
+
+- **"revisa el spread"** → parse `company_governance_trace.csv`'s `vote_open` rows, report the `spread=`
+  distribution and whether any vote came back all-identical (check 7/8).
+- **"revisa los dividendos"** → count `dividend_settlement` vs any surviving `bot_claim` rows, cross-read
+  `network_population_trace.csv`'s `pendingTxs` against `txTargetPerBlock` (checks 1–3).
+- **"revisa las votaciones"** → track one company's `vote_close` reserve% and payout% across quarters and
+  say whether they move (check 9), plus any `dividend_settlement_failed` reasons.
+- **"revisa el invariante"** → read `central_bank_state.json` + `sc_monetary_ledger.json` and reconcile
+  `circulation = grants + debt` (check 14).
+- **"revisa el rendimiento"** → `difficulty_trace.csv` solvetime vs the 58,500 s target and the
+  `simSecConsumed/simSecOffered` retention, to see whether P16.1's traffic cut moved the frame budget
+  (this is *evidence for T4*, not a step-16 exit condition).
+
+Paste any log excerpt and I will read it too — the wordlist defect below was found that way.
+
+### 9.5 Found DURING the run (not in review)
+
+- **The wordlist re-parse** (fixed, `994ace8`): every cast-miner spawn re-read and re-parsed
+  `wordlist_256.json` and printed a line, because P16.2a gave `EnsureWordlist()` a hot call site it never
+  had. Eleven times in one bootstrap, and once per spawn thereafter. Now cached per process. **Rule: an
+  `Ensure…` that redoes its work every call is harmless with two callers and a liability the moment it
+  gains a hot one — when adding a call site, check what the helper does on the SECOND call.** It was
+  invisible in code review and obvious in the log.
+
+### 9.6 Standing reminders
+
+- **Never headless-launch the game to test** — it writes to the real `user://` and can destroy the
+  developer's run. `dotnet build` + developer verification, always.
+- The P16.6 run produces **no telemetry worth preserving** (unlike P15.8's) — a wipe costs nothing here.
+- `bot_wallet_registry.json` is an **identity** file and survives world wipes by design; only its own
+  `RegistryFormatVersion` regenerates it.
