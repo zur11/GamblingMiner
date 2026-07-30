@@ -1,11 +1,17 @@
 # Step 16 — Living Governance & Full UTXO Participation
 
-> **Status: DESIGN LOCKED (Rounds 1–2 complete, 2026-07-30) — READY TO IMPLEMENT.** All five Round-2
-> questions are resolved (`D-16.14…18` in §6); `D-16.1…13` carry Round 1. Subphases are broken out in **§7
-> (P16.1a … P16.6)**; suggested build order **P16.2 → P16.1 → P16.4 → P16.5 → P16.3 → P16.6**. One design
-> is recorded as **deliberately open** and constrains this step only by a single discipline: the **ghost
-> typology** (§6.1) — P16.2 must key every decision off *"does this record carry a seed?"*, never off *"is
-> this a ghost?"*.
+> **Status: ALL BUILD PHASES IMPLEMENTED (2026-07-30) — awaiting P16.6, the developer's verification run.**
+> `P16.1` ✅ · `P16.2` ✅ · `P16.3` ✅ · `P16.4` ✅ · `P16.5` ✅ — each with its build log in §7. Rounds 1–2
+> decisions are `D-16.1…18` (§6). Nothing has been run yet: **every phase is build-verified only**, by the
+> developer's call to defer testing until the whole step landed, so P16.6 is the first time any of it
+> executes. One design is recorded as **deliberately open** and constrains this step by a single
+> discipline: the **ghost typology** (§6.1) — P16.2 keys every decision off *"does this record carry a
+> seed?"*, never off *"is this a ghost?"*.
+>
+> **⚠ Two resets are required on the first launch, and they are independent.** `WorldFormatVersion 4 → 5`
+> wipes the world; `RegistryFormatVersion 1 → 2` regenerates `bot_wallet_registry.json`, which the world
+> wipe does **not** touch (it is an identity file, exempt by design — Ch. 35 §35.1). Both announce
+> themselves in the log. If only one fires, see check 0 below.
 > Scope fixed by the developer: **D + E + A + B** from the step15 §10 handoff — the dividend-traffic fix,
 > OQ-8.2 (bot seed phrases / full UTXO integration, promoted in `PRIVATE_ROADMAP.md` §5 to "right after
 > Step 15"), living probabilistic governance, and the end of the pause tax. **Company evolution levels and
@@ -543,7 +549,29 @@ open. Full design deferred; tracked in `PRIVATE_ROADMAP.md`.
   now" preview through `ComputeReserveVoteOutcome` (never a second implementation — §39.16 rule 6). The
   vote history must render an auto-cast ballot **as auto**, so it can never imply the player deliberated.
 
-### P16.3 — Wallet scene split (last of the build work)
+### P16.3 — Wallet scene split — ✅ IMPLEMENTED (2026-07-30, subphases a–c)
+
+> **Build log.** `dotnet build` clean. Three notes:
+>
+> **1. Inheritance, not three copies.** `BotsBtcWallets` becomes the BASE of three sibling screens, each
+> overriding only *which records to list* and *what to call them* — the ~450 lines of wallet / transaction
+> / send / dev-control UI stay in one place because the detail panel already branched on `IsMinerNode` and
+> needed no change at all. Three copies would have been the alternative, and **the third copy is where such
+> things start to drift apart silently.**
+>
+> **2. One `.tscn` shape, sections hidden when empty.** All three scenes keep the proven two-column layout
+> (`HSplitContainer` holding two `ScrollContainer`s — note this is the arrangement Ch. 29 permits: the split
+> *contains* the scrolls, it is not *inside* one). A section with no population is **hidden**, not left as
+> an empty header, which would read as "loading" or "broken" rather than "not here". `MinersSectionLabel`
+> and `HoldersSectionHeader` gained `unique_name_in_owner` so the base can address them.
+>
+> **3. `margin_bottom` raised 30 → 50 on the new scenes** per §29.11's bottom safe area. The Back button
+> here lives in a fixed TOP bar, so it was never at risk, but the detail column's last line was.
+>
+> Main Menu gains **Company Wallets [DEV]** and **Cast Miner Wallets [DEV]**; the original button is
+> relabelled **Casino Bot Wallets [DEV]** so the three read as a set. The cast screen carries an explicit
+> empty state — cast miners spawn-drip as the historical curve grows, so an early world legitimately shows
+> none, and saying why is the difference between an empty list and a broken one.
 
 - **P16.3a — trim `BotsBtcWallets`** to the four casino-miner bots. **Read Ch. 29 before touching the
   `.tscn`** — bounded scroll chain, fixed footer *outside* the scroll, and do not mirror another scene's
@@ -566,20 +594,29 @@ before merging, and back up `user://logs/*.csv` first if the run is worth keepin
 
 ## 8. Verification checklist (P16.6)
 
+> **Order matters.** Checks 0 and 4 are visible within seconds of the first launch; 1–3 need a founded
+> company plus a quarter (~2010-08 onward at `DevEntryYear = 2010`); 7–11 need a company where the player
+> holds NST, which means winning a top-3 tracked tier in an auction. **This is not another multi-hour
+> calibration run** — it is a first-execution pass. Back up `user://logs/*.csv` before switching
+> `DevEntryYear` back to `0`, and remember the traces are in the world-reset delete list (§10.6's lesson).
+
 | # | Check | Correct | Failure signature |
 |---|---|---|---|
+| 0 | **First launch, log** | BOTH resets announce themselves: `[NetworkRoot] World reset triggered (format 4 → 5…)` and `[BotWalletRegistry] Registry format 1 != 2 … Regenerating ALL bot/company/cast identities` | Only the world reset ⇒ the registry kept its old seedless records and **every bot stays single-address while the rest of the step appears to work** — the exact silent failure P16.2b's version gate exists to prevent |
 | 1 | `network_population_trace.csv` → `pendingTxs` | Falls to at/below the historical `txTargetPerBlock` band | Still pinned at 26–28 ⇒ settlement not batched |
 | 2 | `company_governance_trace.csv` | `dividend_settlement` rows replace the flood of `bot_claim` | `bot_claim` still ~8–9/block |
 | 3 | Bot dividends still arrive | Bot BTC balances grow at quarter ends; SC leg still credits | A quarter with no settlement ⇒ the payable test is too strict |
 | 4 | BlockExplorer on a bot spend | Multi-input spend shows change to a **fresh derived** address | Change back to the spending address ⇒ `ReceiveWallet` not wired |
 | 5 | The two cosmetics are gone | Self-change txs render honestly, no hidden outputs | Any node still producing change-to-self |
-| 6 | `CompaniesWallets` / `CastMinerWallets` | Both scroll, both have a footer **outside** the scroll (Ch. 29) | Back button clipped at the bottom band |
-| 7 | `vote_close` reserve% for one company | **Varies** across quarters | Frozen at the founding value ⇒ A did not take |
-| 8 | Ballots at one vote | Four different values; occasionally a *not voted yet* | Four identical ⇒ drift/jitter not applied |
-| 9 | P15.9 tripwire | **Never fires** | Any occurrence ⇒ a drift term bypassed `ProjectStanceIntoBand` |
-| 10 | A vote at a company with the toggle OFF | Game does **not** pause; history shows the ballot marked `auto` | A freeze ⇒ B did not gate |
-| 11 | Toggle ON | Game pauses as before; submitting resumes | — |
-| 12 | Monetary invariant + FED sync | Unchanged from Step 15 | Any drift ⇒ the settlement touched an SC path it should not |
+| 6 | Main Menu → the three wallet screens | **Casino Bot Wallets** lists 4; **Company Wallets** lists the introduced companies + the inactive filter; **Cast Miner Wallets** lists the spawned cast (or its explicit empty state). Each scrolls, each keeps its Back button readable | An empty section header with no rows ⇒ the hide-when-empty branch; a clipped bottom line ⇒ §29.11 margin |
+| 7 | `vote_open` → `spread=` in `company_governance_trace.csv` | **Non-zero and varying** across votes | `spread=0.0` on every row ⇒ P16.4 did not take. This is the column F1 would have failed on |
+| 8 | Ballots at one vote (`CompanyDetails` open-vote list) | Different values; occasionally a *not voted yet* (abstention) | All identical ⇒ drift/jitter not applied. In DEBUG the P16.4 tripwire also fires |
+| 9 | `vote_close` reserve% for one company across quarters | **Varies** | Frozen at the founding value for 5+ quarters ⇒ the drift terms are all inert (check that the market has a price — the momentum term is null before Market Birth **by design**) |
+| 10 | P15.9 tripwire | **Never fires** | Any occurrence ⇒ a drift term bypassed `ProjectStanceIntoBand`, or a stored policy outlived its band |
+| 11 | A vote at a company with the toggle OFF | Game does **not** pause; the panel says *"Your standing policy voted for you (N% SC reserve)"* | A freeze ⇒ P16.5b did not gate |
+| 12 | Toggle ON, then a vote | Game pauses exactly as before; submitting resumes | — |
+| 13 | Launch log → `[Governance]` stances | Each bot prints a second `reacts:` line — conviction / risk / horizon with their multipliers, and **at least one bot `follows` while another `fades`** | No `reacts:` line ⇒ stale build; all four the same direction ⇒ the permutation draw broke |
+| 14 | Monetary invariant + FED sync | Unchanged from Step 15 | Any drift ⇒ the settlement touched an SC path it should not |
 
 **Exit:** the mempool breathes, every participant is a real UTXO citizen, no two bots vote alike, and the
 game only stops for the companies the player asked it to stop for.

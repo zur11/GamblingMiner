@@ -21,6 +21,9 @@ public partial class MainMenu : Control
 		GetNode<Button>("%MartingaleCalcBtn").Pressed       += () => _sceneManager?.Go(SceneManager.SceneId.MartingaleCalculator);
 		GetNode<Button>("%BTCWalletBtn").Pressed            += () => _sceneManager?.Go(SceneManager.SceneId.BTCWallet);
 		GetNode<Button>("%BotsBtcWalletsBtn").Pressed       += () => _sceneManager?.Go(SceneManager.SceneId.BotsBtcWallets);
+		// Step 16 P16.3 (D-16.7) — the two populations split out of the old combined Bot Wallets screen.
+		GetNode<Button>("%CompaniesWalletsBtn").Pressed     += () => _sceneManager?.Go(SceneManager.SceneId.CompaniesWallets);
+		GetNode<Button>("%CastMinerWalletsBtn").Pressed     += () => _sceneManager?.Go(SceneManager.SceneId.CastMinerWallets);
 		GetNode<Button>("%CasinoFinancesBtn").Pressed       += () => _sceneManager?.Go(SceneManager.SceneId.CasinoFinances);
 		GetNode<Button>("%FoundersWalletsBtn").Pressed      += () => _sceneManager?.Go(SceneManager.SceneId.FoundersWallets);
 		GetNode<Button>("%BotPlayHistoryBtn").Pressed       += () => _sceneManager?.Go(SceneManager.SceneId.BotPlayHistory);

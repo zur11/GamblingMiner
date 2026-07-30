@@ -434,6 +434,8 @@ GamblingMiner/
 │   ├── CasinoCoinSwaps/        # Casino swap desk — SC↔BTC (Step 13)
 │   ├── AuctioningCompanyDetails/ # Per-non-miner live tracked-donation pool while InAuction (Step 14 ND.5; forwards to CompanyDetails once founded)
 │   ├── CompanyDetails/         # Founded company: stock summary + Board Vote / dividend panels (Step 14 ND.8b.4)
+│   ├── CompaniesWallets/       # The 40 companies' BTC wallets [DEV] (Step 16 P16.3b — split out of BotsBtcWallets)
+│   ├── CastMinerWallets/       # The Step-14 historical cast's BTC wallets [DEV] (Step 16 P16.3c — previously unlisted)
 │   ├── WorldEconomy/           # SC Monetary Ledger readout + company inflow/expansion knobs [DEV] (Step 14 ND.8c/ND.8b.6)
 │   ├── CentralBank/            # Central Bank (FED) per-client accounts + monetary invariant [DEV] (Step 15 P15.1e)
 │   └── Shared/                 # Reusable UI components

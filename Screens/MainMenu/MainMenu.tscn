@@ -121,7 +121,23 @@ custom_minimum_size = Vector2(420, 0)
 layout_mode = 2
 size_flags_horizontal = 0
 theme_override_font_sizes/font_size = 26
-text = "Bot Wallets [DEV]"
+text = "Casino Bot Wallets [DEV]"
+
+[node name="CompaniesWalletsBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 26
+text = "Company Wallets [DEV]"
+
+[node name="CastMinerWalletsBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 26
+text = "Cast Miner Wallets [DEV]"
 
 [node name="CasinoFinancesBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
 unique_name_in_owner = true
