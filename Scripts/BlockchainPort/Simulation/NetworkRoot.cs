@@ -253,23 +253,36 @@ public partial class NetworkRoot : Node
     // ReBidProbabilityPercentFor alone shows only the static mode rate and never the growing escalation, so
     // the label sat frozen (e.g. bot_1's tier-5 BitInstant slot displayed a fixed 8% while its actual roll
     // climbed 8→16→24). This is an INSTANCE method so it can resolve the occupant bot from the donor address
-    // (bots are single-address, OQ-8.2) and read the current chain tip; it PEEKS `_stuckBidderSignatures`
+    // (through the node's OWNED address set — bots stopped being single-address at P16.2, so the donor of a
+    // change-funded bid is a derived address) and read the current chain tip; it PEEKS `_stuckBidderSignatures`
     // via the pure PeekStuckEscalationProbabilityPercent (no mutation — a 1 s UI refresh must never stamp it).
     public string ReBidProbabilityLabelForSlot(NonMinerDonationSummary summary, string donorAddress, int tier, int occupiedSlots, bool urgent, int ownBidCount)
     {
+        if (tier == 1) return ExclusionSatisfied;
+
+        // Resolving the occupant comes FIRST since Step 16: the self-eviction guard below needs its owned
+        // address set, not just this slot's donor address.
+        NodeAgent? bot = SharedNodesById.Values.FirstOrDefault(n =>
+            n.WalletAddress == donorAddress || (n.ReceiveWallet?.OwnedAddresses.Contains(donorAddress) ?? false));
+
         // ND.10b (2026-07-22) — the self-eviction guard (D-ND6.7b): a donor holding the SMALLEST slot of a
         // FULL pool won't re-bid the pool at all, so ALL of that donor's slots read "guard" (was a bare
         // "0%" only on the tier-10 slot; a guarded donor's tier-3 slot now reads "guard" too, overriding
-        // "satisfied"). Tier 1 (the leader) stays "satisfied" — never relabelled. Pure-address detection
-        // (bots are single-address, OQ-8.2); matches the pipeline's `ownTiers.Contains(slotsByValue.Count)`.
-        if (tier == 1) return ExclusionSatisfied;
+        // "satisfied"). Tier 1 (the leader) stays "satisfied" — never relabelled.
+        //
+        // Step 16 (2026-07-30) — this compared the smallest slot's donor address against THIS slot's, which
+        // silently stopped matching the pipeline once P16.2 gave bots change rotation: one bidder can now
+        // hold two slots under two different derived addresses, so a bot genuinely guarded (the pipeline's
+        // `ownTiers.Contains(slotsByValue.Count)` reads its OWNED SET) would still be quoted odds here. The
+        // owned set is used where the occupant is a known node; the plain address compare stays as the
+        // fallback for a donor we cannot resolve, which is exactly the old behaviour.
+        string smallestDonor = summary.TrackedDonations.Count > 0
+            ? summary.TrackedDonations.OrderByDescending(d => d.AmountBtc).Last().DonorAddress
+            : string.Empty;
         bool guarded = occupiedSlots >= MaxTrackedDonations
             && summary.TrackedDonations.Count > 0
-            && summary.TrackedDonations.OrderByDescending(d => d.AmountBtc).Last().DonorAddress == donorAddress;
+            && (bot != null ? OwnedAddressSet(bot).Contains(smallestDonor) : smallestDonor == donorAddress);
         if (guarded) return ExclusionGuard;
-
-        NodeAgent? bot = SharedNodesById.Values.FirstOrDefault(n =>
-            n.WalletAddress == donorAddress || (n.ReceiveWallet?.OwnedAddresses.Contains(donorAddress) ?? false));
 
         // ND.10d (2026-07-23) — THE affordability check this label never had. The roll has always been
         // gated by the half-spendable cap (D-ND6.8), but the label only ever computed the ladder rate, so
@@ -291,7 +304,7 @@ public partial class NetworkRoot : Node
         {
             int currentBlockIndex = GetPlayerLatestBlock().Index;
             (int percent, int basePercent, int multiplier, bool capped) escalation =
-                PeekStuckEscalationDetail(summary, bot.NodeId, donorAddress, tier, currentBlockIndex);
+                PeekStuckEscalationDetail(summary, bot.NodeId, OwnedAddressSet(bot), tier, currentBlockIndex);
             // ND.10i suggestion 4 — when the ESCALATION is the binding term, show what it is made of. A bare
             // "40%" cannot be told apart from another tier's "40%" (and after a re-rank stamps every occupant
             // on the same block, equal readings are normal — only the slopes differ), which is exactly how
@@ -317,7 +330,7 @@ public partial class NetworkRoot : Node
             ? OpeningBidFloorBtcAt(tipMs)
             : leadingAmount + RaiseMin(leadingAmount, tipMs);
         decimal fee = NetworkFeePolicy.MedianFeeAt(tipMs);
-        decimal cap = Math.Round(bidder.Blockchain.GetAddressSpendableBalance(bidder.WalletAddress) * MaxBidBalanceFraction, 8);
+        decimal cap = Math.Round(AggregateSpendable(bidder) * MaxBidBalanceFraction, 8);
         return requiredAmount + fee <= cap;
     }
 
@@ -370,7 +383,11 @@ public partial class NetworkRoot : Node
     {
         bool resting = _botsRestingOnReserve.Contains(botNodeId);
         if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return resting;
-        decimal spendable = bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress);
+        // Step 16 — WHOLE wallet, not the base address. Reading the base alone made every bid look like it
+        // cost a full ~50 BTC coinbase (the change left the base and landed on a derived address the read
+        // could not see), so three bids drove bot_1's apparent balance 300 → 150 and parked it on the
+        // reserve guard while it actually held 299.9. See OwnedAddressSet.
+        decimal spendable = AggregateSpendable(bot);
         // Hysteresis, unchanged: resting until rebuilt to Resume; entering only at or below Stop. A bot
         // sitting BETWEEN the two thresholds keeps whatever state it already had — which on a cold start
         // is "not resting", the drift D-ND10e.3 documents as harmless and self-correcting.
@@ -397,8 +414,15 @@ public partial class NetworkRoot : Node
     // now a per-pool FILTER rather than a walk terminator, and every surviving pool rolls, instead of only
     // the spread-wide-first one (D-ND6.6, retired: a pool the walk never reached had a structurally
     // unreachable probability — the ND.10b BitInstant/BitPaid finding, step14 plan §14.4).
+    //
+    // Step 16 (2026-07-30) — takes the bot's OWNED ADDRESS SET, not its base address. A bot funding a bid
+    // from a change UTXO signs with that derived address, so the tracked donation records it as the donor
+    // (§30.9: an address is a key, not an identity — the 2026-07-14 player incident, now reachable for bots
+    // because P16.2 gave them change rotation). Matching on the base alone, a bot would stop recognising its
+    // OWN slots: ownSlotCount 0 ⇒ "unparticipated" ⇒ probability 100 ⇒ it bids against its own leading bid,
+    // and both the satisfied rule and the self-eviction guard silently stop applying.
     private static List<BotPoolOpportunity> BuildBotPoolOpportunities(
-        IEnumerable<NonMinerDonationSummary> pools, string botAddress, string botNodeId,
+        IEnumerable<NonMinerDonationSummary> pools, IReadOnlySet<string> botAddresses, string botNodeId,
         decimal fee, decimal bidBudgetCap, long nowMs, int currentBlockIndex)
     {
         var opportunities = new List<BotPoolOpportunity>();
@@ -411,7 +435,7 @@ public partial class NetworkRoot : Node
             var ownTiers = new List<int>();
             for (int i = 0; i < slotsByValue.Count; i++)
             {
-                if (slotsByValue[i].DonorAddress == botAddress) ownTiers.Add(i + 1);
+                if (botAddresses.Contains(slotsByValue[i].DonorAddress)) ownTiers.Add(i + 1);
             }
 
             int ownSlotCount = ownTiers.Count;
@@ -447,7 +471,7 @@ public partial class NetworkRoot : Node
                     int mode = SumTwoLowestReBidProbabilities(
                         ownTiers, slotsByValue.Count, IsAuctionInUrgencyWindow(target.WindowCloseUnixMs, nowMs), ownSlotCount);
                     probabilityPercent = ownSlotCount == 1
-                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(target, botNodeId, botAddress, bestTier, currentBlockIndex))
+                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(target, botNodeId, botAddresses, bestTier, currentBlockIndex))
                         : mode;
                 }
                 if (probabilityPercent <= 0) exclusion = ExclusionSatisfied; // defensive — the rules above already cover every all-0 case
@@ -505,10 +529,10 @@ public partial class NetworkRoot : Node
         {
             result[record.NodeId] = [];
             if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
-            decimal spendable = bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress);
+            decimal spendable = AggregateSpendable(bot);
             decimal cap = Math.Round(spendable * MaxBidBalanceFraction, 8);
             List<BotPoolOpportunity> biddable =
-                BuildBotPoolOpportunities(recruitable, bot.WalletAddress, record.NodeId, fee, cap, tipMs, blockIndex)
+                BuildBotPoolOpportunities(recruitable, OwnedAddressSet(bot), record.NodeId, fee, cap, tipMs, blockIndex)
                     .Where(o => o.Exclusion == null)
                     .ToList();
             if (biddable.Count > 0) byBot[record.NodeId] = biddable;
@@ -779,7 +803,7 @@ public partial class NetworkRoot : Node
     // present but carries a DIFFERENT signature still stamps `currentBlockIndex`, because that is an
     // observed, exact edge this process actually saw and must not be overridden by an estimate.
     private static (int percent, int basePercent, int multiplier, bool capped) PeekStuckEscalationDetail(
-        NonMinerDonationSummary target, string botNodeId, string botAddress, int bestTier, int currentBlockIndex)
+        NonMinerDonationSummary target, string botNodeId, IReadOnlySet<string> botAddresses, int bestTier, int currentBlockIndex)
     {
         if (bestTier <= 1) return (0, 0, 0, false);
         int sinceBlockIndex;
@@ -791,7 +815,7 @@ public partial class NetworkRoot : Node
         }
         else
         {
-            sinceBlockIndex = SeedStuckSinceBlockIndex(target, botAddress, bestTier, currentBlockIndex);
+            sinceBlockIndex = SeedStuckSinceBlockIndex(target, botAddresses, bestTier, currentBlockIndex);
         }
         return EscalatedStuckDetail(bestTier, currentBlockIndex - sinceBlockIndex);
     }
@@ -813,13 +837,13 @@ public partial class NetworkRoot : Node
     // why the in-memory signal exists at all — the ND.10a revision) and this only ever applies to
     // history from BEFORE the process started. Over-estimating a long-standing lone occupant's pressure
     // is strictly closer to the truth than the reset it replaces, which under-estimated it to zero.
-    private static int SeedStuckSinceBlockIndex(NonMinerDonationSummary target, string botAddress, int bestTier, int currentBlockIndex)
+    private static int SeedStuckSinceBlockIndex(NonMinerDonationSummary target, IReadOnlySet<string> botAddresses, int bestTier, int currentBlockIndex)
     {
         List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
         // Both callers derive `bestTier` from this same value-descending order, so the slot at that tier
         // must belong to this bot. Checking it makes the seed refuse to guess from a stale or mismatched
         // view (it would otherwise silently date the escalation from another donor's slot).
-        if (bestTier > slotsByValue.Count || slotsByValue[bestTier - 1].DonorAddress != botAddress)
+        if (bestTier > slotsByValue.Count || !botAddresses.Contains(slotsByValue[bestTier - 1].DonorAddress))
         {
             return currentBlockIndex; // no escalation, rather than one built on the wrong slot
         }
@@ -851,8 +875,8 @@ public partial class NetworkRoot : Node
         return fallbackBlockIndex;
     }
 
-    private static int PeekStuckEscalationProbabilityPercent(NonMinerDonationSummary target, string botNodeId, string botAddress, int bestTier, int currentBlockIndex)
-        => PeekStuckEscalationDetail(target, botNodeId, botAddress, bestTier, currentBlockIndex).percent;
+    private static int PeekStuckEscalationProbabilityPercent(NonMinerDonationSummary target, string botNodeId, IReadOnlySet<string> botAddresses, int bestTier, int currentBlockIndex)
+        => PeekStuckEscalationDetail(target, botNodeId, botAddresses, bestTier, currentBlockIndex).percent;
 
     // Fix B (ND.10a, 2026-07-22) — the per-block signature sweep. The escalation was previously refreshed
     // ONLY when a bot's pipeline SELECTED a pool, so a bot busy seeding fresh pools never updated the signal
@@ -876,11 +900,11 @@ public partial class NetworkRoot : Node
             foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
             {
                 if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
-                string botAddress = bot.WalletAddress;
+                HashSet<string> botAddresses = OwnedAddressSet(bot); // Step 16 — a change-funded bid donates from a derived address
                 int ownSlotCount = 0, bestTier = 0;
                 for (int i = 0; i < slotsByValue.Count; i++)
                 {
-                    if (slotsByValue[i].DonorAddress != botAddress) continue;
+                    if (!botAddresses.Contains(slotsByValue[i].DonorAddress)) continue;
                     ownSlotCount++;
                     if (bestTier == 0) bestTier = i + 1;
                 }
@@ -902,7 +926,7 @@ public partial class NetworkRoot : Node
                     // block — only the single-slot case needs a real seed.
                     _stuckBidderSignatures[key] = ownSlotCount >= 2
                         ? (signature, currentBlockIndex)
-                        : (signature, SeedStuckSinceBlockIndex(target, botAddress, bestTier, currentBlockIndex));
+                        : (signature, SeedStuckSinceBlockIndex(target, botAddresses, bestTier, currentBlockIndex));
                 }
                 else if (recorded.signature != signature)
                 {
@@ -1312,9 +1336,7 @@ public partial class NetworkRoot : Node
     private static Transaction? BuildAndBroadcastUtxoSpend(NodeAgent sender, string recipientAddress, decimal amount, decimal fee, string? deterministicSalt, string? memo = null)
     {
         decimal need = amount + fee;
-        HashSet<string> owned = sender.ReceiveWallet != null
-            ? new HashSet<string>(sender.ReceiveWallet.OwnedAddresses) { sender.WalletAddress }
-            : new HashSet<string> { sender.WalletAddress };
+        HashSet<string> owned = OwnedAddressSet(sender);
 
         IReadOnlyList<(OutPoint outpoint, string address, decimal amount)> available = sender.Blockchain.GetSpendableUtxos(owned);
         List<(OutPoint outpoint, string address, decimal amount)>? chosen = SelectUtxos(available, need);
@@ -3757,8 +3779,16 @@ public partial class NetworkRoot : Node
         return true;
     }
 
-    // New BTC arriving at a founded company's address this block (its own sends' change excluded) feeds
-    // the D-ND8.18 >30% special-vote trigger. Companies are single-address today (OQ-8.2).
+    // New BTC arriving at a founded company's wallet this block (its own sends' change excluded) feeds
+    // the D-ND8.18 >30% special-vote trigger.
+    //
+    // Step 16 (2026-07-30) — was written against "companies are single-address today (OQ-8.2)", which
+    // P16.2 retired: a company that spends now returns change to a DERIVED address. Both halves move to
+    // the owned set, and the order between them is load-bearing. The self-send skip must come first and
+    // must see derived inputs, because once it does, counting receives across the whole owned set can
+    // never double back and count the company's OWN change as inflow. Getting that backwards would
+    // inflate InflowSinceBaselineBtc, fire spurious >30% special votes, and — wherever the player holds
+    // NST — PAUSE THE GAME for a vote about money that never arrived.
     private static void AccumulateCompanyInflows(Block block)
     {
         foreach (CompanyGovernanceState gov in _companyGovernance.Values)
@@ -3768,10 +3798,13 @@ public partial class NetworkRoot : Node
                 continue;
             }
 
-            string address = founding.NonMinerAddress;
+            HashSet<string> ownedAddresses =
+                SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? companyNode)
+                    ? OwnedAddressSet(companyNode)
+                    : [founding.NonMinerAddress];
             foreach (Transaction tx in block.Transactions)
             {
-                if (tx.IsCoinbase || tx.Inputs.Any(i => i.Address == address))
+                if (tx.IsCoinbase || tx.Inputs.Any(i => ownedAddresses.Contains(i.Address)))
                 {
                     continue;
                 }
@@ -3788,7 +3821,7 @@ public partial class NetworkRoot : Node
 
                 foreach (TxOutput output in tx.Outputs)
                 {
-                    if (output.Address == address)
+                    if (ownedAddresses.Contains(output.Address))
                     {
                         gov.InflowSinceBaselineBtc = Scripts.Finance.Money.Normalize(gov.InflowSinceBaselineBtc + output.Amount);
                     }
@@ -5328,13 +5361,13 @@ public partial class NetworkRoot : Node
     private static CasinoBotSlotOutcome TryBuildCasinoBotBid(List<NonMinerDonationSummary> priorityTargets, NodeAgent sender, decimal fee, long nowMs, int currentBlockIndex, out Transaction? tx, out CasinoBotBidTrace trace)
     {
         tx = null;
-        string botAddress = sender.WalletAddress;
-        decimal spendable = sender.Blockchain.GetAddressSpendableBalance(botAddress);
+        HashSet<string> botAddresses = OwnedAddressSet(sender);
+        decimal spendable = AggregateSpendable(sender);
         decimal bidBudgetCap = Math.Round(spendable * MaxBidBalanceFraction, 8);
         trace = new CasinoBotBidTrace { FeeBtc = fee, SpendableBtc = spendable, BidBudgetCapBtc = bidBudgetCap };
 
         List<BotPoolOpportunity> all =
-            BuildBotPoolOpportunities(priorityTargets, botAddress, sender.NodeId, fee, bidBudgetCap, nowMs, currentBlockIndex);
+            BuildBotPoolOpportunities(priorityTargets, botAddresses, sender.NodeId, fee, bidBudgetCap, nowMs, currentBlockIndex);
         List<BotPoolOpportunity> biddable = all.Where(o => o.Exclusion == null).ToList();
         trace.QualifyingPools = biddable.Count;
         if (biddable.Count == 0)
@@ -5456,8 +5489,8 @@ public partial class NetworkRoot : Node
     private static bool HasEligibleBidOpportunity(string botNodeId, List<NonMinerDonationSummary> pools, decimal fee, long nowMs, int currentBlockIndex)
     {
         if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return false;
-        decimal cap = Math.Round(bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress) * MaxBidBalanceFraction, 8);
-        return BuildBotPoolOpportunities(pools, bot.WalletAddress, botNodeId, fee, cap, nowMs, currentBlockIndex)
+        decimal cap = Math.Round(AggregateSpendable(bot) * MaxBidBalanceFraction, 8);
+        return BuildBotPoolOpportunities(pools, OwnedAddressSet(bot), botNodeId, fee, cap, nowMs, currentBlockIndex)
             .Any(o => o.Exclusion == null);
     }
 
@@ -5472,9 +5505,9 @@ public partial class NetworkRoot : Node
         if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return string.Empty;
         Block tip = GetPlayerLatestBlock();
         decimal fee = NetworkFeePolicy.MedianFeeAt(tip.Timestamp);
-        decimal cap = Math.Round(bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress) * MaxBidBalanceFraction, 8);
+        decimal cap = Math.Round(AggregateSpendable(bot) * MaxBidBalanceFraction, 8);
         BotPoolOpportunity? opportunity =
-            BuildBotPoolOpportunities([pool], bot.WalletAddress, botNodeId, fee, cap, tip.Timestamp, tip.Index).FirstOrDefault();
+            BuildBotPoolOpportunities([pool], OwnedAddressSet(bot), botNodeId, fee, cap, tip.Timestamp, tip.Index).FirstOrDefault();
         return opportunity?.Exclusion ?? string.Empty;
     }
 
@@ -5747,7 +5780,7 @@ public partial class NetworkRoot : Node
         if (firstMinedHeight is null) return null; // hasn't mined yet → nothing to circulate
         if (block.Index - firstMinedHeight.Value < CirculationWarmupBlocks) return null;
 
-        decimal spendable = node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
+        decimal spendable = AggregateSpendable(node); // Step 16 — whole wallet: cast miners carry seeds since P16.2
         if (spendable < MinBotSpendableBalanceBtc) return null;
 
         decimal fraction = MinSendFractionDecimal
@@ -5783,7 +5816,7 @@ public partial class NetworkRoot : Node
             BotWalletRecord senderRecord = holders[(offset + i) % holders.Count];
             if (!SharedNodesById.TryGetValue(senderRecord.NodeId, out NodeAgent? sender)) continue;
 
-            decimal spendable = sender.Blockchain.GetAddressSpendableBalance(sender.WalletAddress);
+            decimal spendable = AggregateSpendable(sender); // Step 16 — whole wallet (companies carry seeds since P16.2)
             if (spendable < MinBotSpendableBalanceBtc) continue;
 
             decimal fraction = MinSendFractionDecimal
@@ -6174,22 +6207,20 @@ public partial class NetworkRoot : Node
     // qualifying bidder" but WHICH participant a given donor address belongs to.
     private static (HashSet<string> playerAddresses, Dictionary<string, string> botNodeIdByAddress) BuildAuctionBidderIdentity(NodeAgent? player)
     {
-        var playerAddresses = new HashSet<string>();
-        if (player is not null)
-        {
-            if (player.ReceiveWallet != null)
-            {
-                playerAddresses.UnionWith(player.ReceiveWallet.OwnedAddresses);
-            }
-            playerAddresses.Add(player.WalletAddress);
-        }
+        var playerAddresses = player is not null ? OwnedAddressSet(player) : new HashSet<string>();
 
+        // Step 16 (2026-07-30) — every OWNED address, not just the base. The player half was already written
+        // this way (that is what the 2026-07-14 incident bought); the bot half was not, and P16.2's change
+        // rotation is what turned that asymmetry into a live defect. A bid funded from a change UTXO signs
+        // with a derived address, so a base-only map would fail to attribute it to bot_N — losing the bid's
+        // ownership in the ratchet walk AND misrouting its D-ND5.7 settlement payout.
         var botNodeIdByAddress = new Dictionary<string, string>();
         foreach (BotWalletRecord casinoMinerBot in BotWalletRegistry.MinerBots)
         {
-            if (SharedNodesById.TryGetValue(casinoMinerBot.NodeId, out NodeAgent? botNode))
+            if (!SharedNodesById.TryGetValue(casinoMinerBot.NodeId, out NodeAgent? botNode)) continue;
+            foreach (string owned in OwnedAddressSet(botNode))
             {
-                botNodeIdByAddress[botNode.WalletAddress] = casinoMinerBot.NodeId;
+                botNodeIdByAddress[owned] = casinoMinerBot.NodeId;
             }
         }
 
@@ -6292,8 +6323,9 @@ public partial class NetworkRoot : Node
         // needing new machinery. The Step-14 CAST miners (BotWalletRegistry.CastMiners, ND.2) do NOT
         // qualify — they mine via drained attempts (founder-style, concurrent with the player's time
         // advancement), never place a bet, and so never form a casino relationship; their sell-flow
-        // donations stay economy-only, exactly like the non-miner↔non-miner exchanges. Single-address
-        // bots have no ReceiveWallet (OQ-8.2 — no stored seed), so only WalletAddress applies.
+        // donations stay economy-only, exactly like the non-miner↔non-miner exchanges. Step 16: the bot
+        // half of BuildAuctionBidderIdentity now maps EVERY owned address (P16.2 retired "bots have no
+        // ReceiveWallet"), so a change-funded bid is still attributed to its bot.
         // ND.4d — playerAddresses is split out from qualifyingBidders so the ratchet walk below can tell
         // WHO is bidding: the player's own raises clear at OneSatoshi over the leader, everyone else's
         // (the casino-bots) still need the full RaiseMin/RaiseMax jump. (The identity sets themselves
@@ -6817,6 +6849,22 @@ public partial class NetworkRoot : Node
     // many derived addresses (address non-reuse), so its balance is the sum across the owned set plus the
     // base/identity address (which holds p2p receives like E4). Single-address nodes use the base only. The
     // unspendable genesis 50 is already excluded by GetAddressData (IsSpendable = false).
+    // Step 16 (2026-07-30) — a node's COMPLETE owned address set: every derived address the chain rescan
+    // marked used, plus the base/identity address. Extracted because "used ONE address where the OWNED SET
+    // was meant" has now been the same defect three times: the Step 8 change-output bug (change-held funds
+    // unattributed after a restart, L6426), the 2026-07-14 auction donor incident (§30.9 — an address is a
+    // KEY, not an IDENTITY), and the P16.2 fallout this call fixes. P16.2 is what made it bite at scale:
+    // until then only the player, casino and founders rotated change, so for a bot `WalletAddress` really
+    // WAS the whole wallet and every base-address read was accidentally correct.
+    private static HashSet<string> OwnedAddressSet(NodeAgent node)
+    {
+        var owned = node.ReceiveWallet != null
+            ? new HashSet<string>(node.ReceiveWallet.OwnedAddresses)
+            : new HashSet<string>();
+        owned.Add(node.WalletAddress);
+        return owned;
+    }
+
     private static decimal AggregateSpendable(NodeAgent node)
     {
         if (node.ReceiveWallet == null)
@@ -6829,7 +6877,7 @@ public partial class NetworkRoot : Node
         // for on every settled bet. GetSpendableUtxos already accepts the whole set and applies the same
         // spendable/maturity/pending filters, so the result is identical by construction (an outpoint has
         // exactly one address, so no double counting is possible).
-        var addresses = new HashSet<string>(node.ReceiveWallet.OwnedAddresses) { node.WalletAddress };
+        HashSet<string> addresses = OwnedAddressSet(node);
         decimal total = 0m;
         foreach (var utxo in node.Blockchain.GetSpendableUtxos(addresses))
             total += utxo.amount;
@@ -7037,10 +7085,20 @@ public partial class NetworkRoot : Node
     // comment above it were still describing a founders-only world — which is precisely the kind of stale
     // label that makes a reader believe a widening is needed when the code already does the right thing.
     //
-    // Cost note (P16.2d): BuildUsedAddressSet is ONE chain pass shared by every wallet, so the added cost
-    // is address DERIVATION (~20 SHA256 per node past its frontier), not extra chain scans. If that ever
-    // measures as material at launch it is a T4 finding, never a reason to skip the rescan — an unscanned
-    // frontier reuses change addresses and unattributes change-held funds (the Step 8 bug at L6426).
+    // Cost note (P16.2d, CORRECTED 2026-07-30). BuildUsedAddressSet is ONE chain pass shared by every
+    // wallet, so the added cost is address DERIVATION, not extra chain scans — that part was right. The
+    // ESTIMATE was wrong by five orders of magnitude: "~20 SHA256 per node" ignored that every derivation
+    // is a secp256k1 scalar multiply, which measured **127 ms** against the then-current affine EC
+    // implementation. At ~79 seeded wallets × ~21 derivations (+ Satoshi's ~220 rotated coinbases) that is
+    // ~1,900 derivations ≈ 4 MINUTES of launch, and it duly showed up as a ~6-minute cold start the day
+    // after P16.2 shipped. The prediction that it "would be a T4 finding, never a reason to skip the
+    // rescan" held: the rescan is untouched (an unscanned frontier reuses change addresses and
+    // unattributes change-held funds — the Step 8 bug at L6426); Secp256k1 was moved to Jacobian
+    // coordinates instead (34x, output-identical), which puts this loop at ~8 s. See Secp256k1.cs.
+    //
+    // The general lesson, in the §39.16 register: a cost note is a MEASUREMENT or it is a guess wearing a
+    // measurement's clothes. "~20 SHA256" was never timed — and because it read as quantified, the number
+    // that mattered went unquestioned through the whole of P16.2. Time it, or say plainly that you did not.
     private static void RescanDerivedReceiveWallets()
     {
         if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
