@@ -638,7 +638,7 @@ game only stops for the companies the player asked it to stop for.
 | Commits | `5b81853` P16.2 · `d6faba8` P16.1 · `4d69c50` P16.4 · `8d62214` P16.5 · `6b20715` P16.3 + P16.6 prep · `994ace8` wordlist cache + entry year · `3e1dff3` secp256k1 + bot base-address reads (§9.5) · **this one** reserve-guard seed + wallet-screen totals + these docs |
 | Build | clean, 0 warnings |
 | **`TimelineConfig.DevEntryYear`** | **`2011`** — ⚠ **MUST go back to `0` before merging to `main`** |
-| World | fresh (the developer deleted `user://` entirely), landed **2011-03-21 11:49:32**; run reached **block 1722 / 2012-03-13** (~1 in-game year) |
+| World | fresh (the developer deleted `user://` entirely), landed **2011-03-21 11:49:32**; run reached **block 1753 / 2012-04-10** (~1 in-game year), **3 companies founded**, FBI activated at block 1745 — audit at §9.6 |
 | Bootstrap | Satoshi 107 · Hal 26 · cast 410 (11 spawned) · ghost 540 · 7 non-miners seeded |
 | Status | **all build phases implemented; P16.6 partially run.** Four defects found during the run, all fixed — see §9.5 |
 
@@ -676,14 +676,20 @@ game only stops for the companies the player asked it to stop for.
 
 1. ~~**Checks 4 & 5**~~ — ✅ done 2026-07-31 from the chain, see §9.2. (Still worth one glance in Block
    Explorer at a bot spend, purely to confirm the *rendering* matches the data.)
-2. **Play until a company FOUNDS** (Block Explorer → Enroll Mode → a row moves to *Founded*). An auction
-   resolves ~20 in-game days after its first bid. This unlocks the rest.
+2. ~~**Play until a company FOUNDS**~~ — ✅ done 2026-07-31. **Three** founded by block 1752: Blackmarket
+   Reboot (`non_miner_13`, CB4/black), Papa's Pizzeria (`non_miner_2`, CB1/official), Seals with Clubs
+   (`non_miner_16`, CB4/light_grey). ⚠ **All three closed UNCONTESTED** — `trackedDonationCount=1`,
+   `holderCount=1`, and the same winner in all three: **bot_1**. See §9.6 for why, and read it before
+   interpreting item 3.
 3. **Check 7 — the single most valuable one.** `user://logs/company_governance_trace.csv`, `vote_open`
    rows, column **`spread=N`**: the gap between the highest and lowest reserve target the bots voted.
    `0.0` is the signature of the defect this whole step exists to fix (it would have read `0.0` for 517
    consecutive votes before P16.4). **Prediction to falsify:** with this world's CB4/CB1/CB5/CB3 bands, at
    a CB1 company the four project to **81 / 100 / 75 / 88** *before* drift and jitter — so the first
    `spread=` should be ≈ **25**, not 0.
+   ⚠ **Still open, and the first three foundings did NOT test it**: all three read `spread=0.0`, but with
+   `ballots=1` that is arithmetic, not the defect (§9.6). The check needs a founding with ≥2 NST holders;
+   six such pools are already queued — see §9.6.3.
 4. **Checks 1, 2, 3 — the dividend batching.** After a company has closed a QUARTER:
    `network_population_trace.csv` → `pendingTxs` should fall to at/below the `txTargetPerBlock` band (it
    sat at 26–28 all through P15.8); the governance trace should carry `dividend_settlement` rows and **no**
@@ -782,7 +788,57 @@ Paste any log excerpt and I will read it too — the wordlist defect below was f
     question. Developer decision (2026-07-31): **leave it** — the run is a DEV entry-year world and the
     pool choice is genuinely uniform, so it can be refined later on canonical data.
 
-### 9.6 Standing reminders
+### 9.6 Mid-run audit — 2026-07-31, at the first three foundings (block 1753 / 2012-04-10)
+
+> Read from the live save directory (traces, `blockchain/state.json`, `central_bank_state.json`,
+> `sc_monetary_ledger.json`, `bot_wallet_registry.json`), not by eye. **Nothing is broken** — every check
+> that *can* be exercised passes. The finding is about what the run can and cannot currently test.
+
+**9.6.1 Passing.** Check 0 (registry `formatVersion: 2`, 44 seeded records) · Check 1 — `pendingTxs`
+**26–28 → mean 1.03** against a 0.44 target band, i.e. P16.1's traffic cut took · Check 10 — zero
+`PrintErr` in the whole session · Check 13 — four distinct `reacts:` lines, momentum split 2 following /
+2 fading · Check 14 — exact: grants `200,000` + debt `140,000` (casino 40k, fbi 100k) = circulation
+`340,000`, FED and ledger agreeing. **Performance (evidence for T4, not an exit condition):** mean
+solvetime **60,057 s vs the 58,500 target (+2.7%**, was +6.6% at P15.8), retention **0.816** (was 0.713)
+— the Jacobian fix and the traffic cut both show up in the frame budget.
+
+P15.9a is also confirmed live: bot_1 is CB4 (stance 25) and cast **81** at Papa's Pizzeria (CB1), the exact
+figure §9.3 predicted. `shift=0` on all three is *correct*, not inert — P15.10 established that
+`CloseCompanyVote` evaluates a market shift only on a **quarterly** vote.
+
+**9.6.2 The finding: the auctions are single-bidder, so `spread=0.0` is arithmetic.** All three foundings
+read `trackedDonationCount=1, holderCount=1, totalPst=0`, same winner (bot_1). One holder ⇒ one ballot ⇒
+zero spread by definition. `AssertBotBallotsVary` correctly does not fire (it guards on `Ballots.Count < 3`),
+so the tripwire's silence here is not evidence either way. **Do not read these three rows as a P16.4
+failure.**
+
+The cause is §9.5's side finding, now measured. Blocks mined across the whole chain: **bot_1 = 6,
+bot_4 = 6, bot_2 = 5, bot_3 = 1** (player 6). At 50 BTC/block the resume threshold is *exactly six blocks*,
+and the launch line agrees — `bot_1=biddable  bot_2=RESTING  bot_3=RESTING  bot_4=RESTING`. Casino
+participants hold **5.0 of ~140 total network power (3.6%)**, so a bot earns ~4 blocks per in-game year:
+bot_2 is one block short, bot_3 five. bot_4 crossed 300, spent to ~249 on its six pre-fix bids, and is now
+**stranded below its own resume line with no income but mining**. The guard is behaving exactly as
+specified; the specification is what starves the auction. Calibration input for
+`PRIVATE_ROADMAP.md` → "Casino-Bot Treasury Policy" — **not a defect to fix inside Step 16.**
+
+**9.6.3 It unblocks itself — no intervention needed.** Six pools already carry **two distinct bot donors**
+(`non_miner_1, 9, 14, 15, 17, 18` — bot_4 bid before it went to rest, bot_1 after), so the next founding
+out of that set produces a real `spread=`. The three that closed first were precisely the bot_1-only pools,
+because every re-bid resets the 20-day window and the uncontested ones had none. Separately, bot_1's
+`ownTiersInTarget=2|4` on `non_miner_3` against a 10.50 BTC floor says **the player already leads that
+pool** — the fastest route to checks 8/11/12 is to hold it (the player's floor is +1 satoshi, bot_1's is
+the full 5–10% band), which founds with two holders and puts the player in NST in one move. Earliest
+quarter for checks 2/3 is Blackmarket Reboot at `NextQuarterlyDueMs` ≈ **2012-07-05**.
+
+**9.6.4 Observation, no change made — drift compresses in narrow bands, jitter does not.**
+`ComputeBotReserveBallot` applies drift on the bot's own 0–100 scale, projects into the company band, and
+*then* adds ±`BallotJitterMaxPoints` (3). At a CB1 company (`[75,100]`) the 18-point momentum term arrives
+as ~4.5 points while the jitter stays at 3 — so at CB1/CB5 companies quarter-to-quarter movement will be
+**jitter-dominated**, and jitter is deterministic in `(companyId, quarterIndex, botId)`: varying, but not
+*responsive*. Check 9 should still pass (81 against a founding default of 100 is a 19-point move). Worth
+re-reading once check 9 has real quarterly data; not worth changing mid-run.
+
+### 9.7 Standing reminders
 
 - **Never headless-launch the game to test** — it writes to the real `user://` and can destroy the
   developer's run. `dotnet build` + developer verification, always.
