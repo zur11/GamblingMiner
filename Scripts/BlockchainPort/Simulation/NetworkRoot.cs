@@ -366,9 +366,14 @@ public partial class NetworkRoot : Node
     // ND.10e (D-ND10e.3) — the bots currently RESTING on their reserve guard: entered at ≤ 200 BTC
     // spendable, released only once back at ≥ 300 BTC. In-memory only, exactly like
     // `_stuckBidderSignatures` (and `_lastMinedByNodeId`/`_currentMinerStreak` before it): pure bidding
-    // behavior, not economically meaningful world state, so no checkpoint / pre-genesis / delete-list
-    // work. An app restart re-derives it from the live balances on the next block — the only drift is a
-    // bot sitting between the two thresholds, which restarts un-rested; harmless and self-correcting.
+    // behavior, not economically meaningful world state, so no checkpoint / pre-genesis / delete-list work.
+    //
+    // Step 16 (2026-07-31) — this comment used to end "the only drift is a bot sitting between the two
+    // thresholds, which restarts un-rested; harmless and self-correcting". That was wrong, and bot_4 is
+    // the counter-example: the drift decides who wins companies, and it handed bot_4 six leading bids it
+    // had not earned. The set is now SEEDED FROM THE CHAIN at first read (EnsureReserveGuardSeeded), so a
+    // restart no longer changes any bot's state. Still in-memory, still no persistence — derived, per
+    // ND.10j's precedent.
     private static readonly HashSet<string> _botsRestingOnReserve = [];
 
     // ND.10j (2026-07-28, §14.11) — THE reserve-guard question, as one pure predicate every consumer
@@ -381,6 +386,7 @@ public partial class NetworkRoot : Node
     // "priced out". Predicting the next sweep costs one balance read and cannot disagree with it.
     private static bool IsBotRestingOnReserve(string botNodeId)
     {
+        EnsureReserveGuardSeeded();
         bool resting = _botsRestingOnReserve.Contains(botNodeId);
         if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return resting;
         // Step 16 — WHOLE wallet, not the base address. Reading the base alone made every bid look like it
@@ -392,6 +398,121 @@ public partial class NetworkRoot : Node
         // sitting BETWEEN the two thresholds keeps whatever state it already had — which on a cold start
         // is "not resting", the drift D-ND10e.3 documents as harmless and self-correcting.
         return resting ? spendable < BotBidReserveResumeBtc : spendable <= BotBidReserveStopBtc;
+    }
+
+    // Step 16 (2026-07-31) — has the cold-start seed run yet this process? Once-only, like the world's
+    // other lazy statics; the seed must be the FIRST thing to touch `_botsRestingOnReserve`, because an
+    // absent key is indistinguishable from "swept and found biddable".
+    private static bool _reserveGuardSeeded;
+
+    // Step 16 (2026-07-31) — THE COLD-START SEED for the reserve guard, and the other half of a defect
+    // ND.10j only half-closed.
+    //
+    // ND.10j (D-ND10j.3) found that `_botsRestingOnReserve` is empty at process start and fixed the
+    // SYMPTOM it was chasing — a resting bot advertising a percentage before the first mined block — by
+    // moving the hysteresis into IsBotRestingOnReserve over the LIVE balance. What it could not fix that
+    // way is the hysteresis's own memory: a bot between the two thresholds restarts un-rested, because
+    // "not in the set" reads as "not resting". D-ND10e.3 recorded that as "harmless and self-correcting".
+    //
+    // It is not harmless. Measured 2026-07-31: bot_4 peaked at 250 BTC and NEVER reached the 300 resume
+    // threshold, so under an unbroken run it should have stayed resting from genesis onward — every bot is
+    // born resting, since they all start at 0, which is <= Stop, and release costs a full 300. A rebuild
+    // wiped the set, 249 > 200 passed the un-rested branch, and bot_4 went on to take the leading bid in
+    // SIX auctions — three of them contested by the player. A drift that decides who owns which company is
+    // not bookkeeping drift.
+    //
+    // The fix follows ND.10j's own precedent exactly: DERIVE, don't persist. The hysteresis is a pure
+    // function of the balance sequence, and the balance sequence is on the chain — so replay it. State is
+    // decided by the LAST threshold crossing: reached >= Resume ⇒ biddable, fell to <= Stop ⇒ resting,
+    // neither ⇒ resting (born at 0). No BlockchainStateSnapshot field, no checkpoint work, no delete-list
+    // entry, no WorldFormatVersion bump — the running playtest survives, exactly as at ND.10j.
+    //
+    // One pass over the chain for all four bots at once. It also PRINTS what it derived: this state has
+    // been invisible since ND.10e, which is the only reason a bot could bid for ten blocks against its own
+    // guard without anything saying so (§39.16 rule 2 — a state you cannot observe is one you cannot sign
+    // off), and it is cheap to say out loud once per launch.
+    private static void EnsureReserveGuardSeeded()
+    {
+        if (_reserveGuardSeeded) return;
+        _reserveGuardSeeded = true;
+
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)) return;
+
+        var owned = new Dictionary<string, HashSet<string>>();
+        var held = new Dictionary<string, Dictionary<(string txId, int vout), (decimal amount, bool isCoinbase, int blockIndex)>>();
+        var resting = new Dictionary<string, bool>();
+        foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
+        {
+            if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
+            owned[record.NodeId] = OwnedAddressSet(bot);
+            held[record.NodeId] = [];
+            resting[record.NodeId] = true; // born holding 0 BTC, which is <= Stop
+        }
+        if (owned.Count == 0) return;
+
+        foreach (Block block in player.Blockchain.Chain)
+        {
+            foreach (Transaction tx in block.Transactions)
+            {
+                foreach ((string nodeId, HashSet<string> addresses) in owned)
+                {
+                    var utxos = held[nodeId];
+                    foreach (TxInput input in tx.Inputs)
+                    {
+                        utxos.Remove((input.Source.PrevTxId, input.Source.Vout));
+                    }
+                    if (!tx.IsSpendable) continue; // the genesis coinbase, permanently unspendable
+                    for (int vout = 0; vout < tx.Outputs.Count; vout++)
+                    {
+                        if (addresses.Contains(tx.Outputs[vout].Address))
+                            utxos[(tx.TransactionId, vout)] = (tx.Outputs[vout].Amount, tx.IsCoinbase, block.Index);
+                    }
+                }
+            }
+
+            // Evaluate the guard at every block, exactly as the per-block sweep would have.
+            foreach (string nodeId in owned.Keys)
+            {
+                decimal spendable = 0m;
+                foreach ((decimal amount, bool isCoinbase, int blockIndex) utxo in held[nodeId].Values)
+                {
+                    if (utxo.isCoinbase && block.Index - utxo.blockIndex < BlockchainService.CoinbaseMaturity)
+                        continue; // immature coinbase — matches GetSpendableUtxos
+                    spendable += utxo.amount;
+                }
+                resting[nodeId] = resting[nodeId]
+                    ? spendable < BotBidReserveResumeBtc
+                    : spendable <= BotBidReserveStopBtc;
+            }
+        }
+
+        foreach ((string nodeId, bool isResting) in resting)
+        {
+            if (isResting) _botsRestingOnReserve.Add(nodeId);
+        }
+
+        GD.Print("[ReserveGuard] Cold-start state re-derived from the chain (stop "
+                 + BotBidReserveStopBtc.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)
+                 + " / resume "
+                 + BotBidReserveResumeBtc.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)
+                 + " BTC): "
+                 + string.Join("  ", resting.Select(kv => $"{kv.Key}={(kv.Value ? "RESTING" : "biddable")}")));
+    }
+
+    // Step 16 (2026-07-31) — the tripwire for the SHAPE of the bot_4 defect rather than its cause: a bid
+    // that reaches the broadcast while its bidder is resting. The pipeline already excludes resting bots
+    // (ExclusionReserve), so this can only fire if a future caller reaches the bid builder down some path
+    // that skips BuildBotPoolOpportunities — which is precisely how a guard quietly stops guarding. Same
+    // reflex as AssertEscalationSlopesAreOrdered and P15.9's clamp tripwire: an invariant that lives only
+    // in prose is an invariant nobody checks.
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void AssertBidderIsNotRestingOnReserve(string botNodeId)
+    {
+        if (IsBotRestingOnReserve(botNodeId))
+        {
+            GD.PrintErr($"[ReserveGuard] {botNodeId} reached the bid broadcast while RESTING on its BTC "
+                        + "reserve — the guard was bypassed. See EnsureReserveGuardSeeded.");
+        }
     }
 
     // ND.10e — the reserve guard's edge-triggered sweep, run once per block beside
@@ -5442,6 +5563,7 @@ public partial class NetworkRoot : Node
         decimal amount = Math.Round(targetPrincipal + tail, 8);
         trace.AmountBtc = amount;
 
+        AssertBidderIsNotRestingOnReserve(sender.NodeId);
         tx = BuildAndBroadcastUtxoSpend(sender, target.NonMinerAddress, amount, fee, null);
         return tx != null ? CasinoBotSlotOutcome.Donated : CasinoBotSlotOutcome.BroadcastFailed;
     }
@@ -6705,6 +6827,30 @@ public partial class NetworkRoot : Node
         }
 
         return AggregateSpendable(node);
+    }
+
+    // Step 16 (2026-07-30) — node-level wallet totals across the OWNED ADDRESS SET, for the DEV wallet
+    // screens that were still showing a single base-address figure. P16.2 made that reading drift to zero:
+    // a bot's coinbases land on the base but every spend moves the remainder to a fresh change address, so
+    // after a handful of auction bids bot_1 and bot_4 both displayed 0.00000000 BTC while actually holding
+    // ~299.79 and ~249.44. Deliberately NOT built on GetNodeAddressBook, which runs a full chain scan per
+    // address and is far too heavy for a 40-row list refresh; this is one UTXO pass plus one mempool pass.
+    //
+    // `pendingOutgoing` counts only outputs LEAVING the wallet, so a spend's own change no longer reads as
+    // money in flight — the old per-address form could not tell the difference.
+    public (decimal spendable, decimal pendingOutgoing) GetNodeWalletTotals(string nodeId)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node))
+        {
+            return (0m, 0m);
+        }
+
+        HashSet<string> owned = OwnedAddressSet(node);
+        decimal pendingOutgoing = node.Blockchain.PendingTransactions
+            .Where(t => t.Inputs.Any(i => owned.Contains(i.Address)))
+            .Sum(t => t.Outputs.Where(o => !owned.Contains(o.Address)).Sum(o => o.Amount));
+        return (AggregateSpendable(node), pendingOutgoing);
     }
 
     // Step 8.4 — a node's wallet as the collection of addresses it owns (base + any derived change/receive

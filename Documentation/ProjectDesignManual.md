@@ -2522,6 +2522,33 @@ The ledger holds no persisted state, so the rule applies to history already on c
 
 ---
 
+### 22.20 — A predicate with memory cannot be predicted from today's number (Step 16 P16.6, 2026-07-31)
+
+§22.18 established the rule: *any in-memory cache a per-block sweep owns has a window at process start where it is empty and lying; if a reader can predict the sweep cheaply, it must.* ND.10j then applied it to `_botsRestingOnReserve` by moving the reserve-guard hysteresis into one predicate evaluated against the **live balance** instead of reading the set. That closed the symptom it was chasing — a resting bot advertising a percentage before the first mined block — and left the defect underneath it intact. **This is the second violation of a rule that was already written down**, which is the part worth studying.
+
+**Why predicting the sweep was not enough here.** The guard is not a function of the current balance. It is a hysteresis: enter the rest at `≤ 200 BTC`, leave it only at `≥ 300`. Between the two thresholds the answer depends entirely on **how the bot arrived**. 249 BTC is biddable coming down from 400 and resting coming up from 150, and no amount of looking at 249 can tell you which. Since "not in the set" is indistinguishable from "swept and found biddable", every restart silently resolved that ambiguity as *biddable*. D-ND10e.3 filed this under "harmless and self-correcting".
+
+**It was not harmless.** Measured 2026-07-31 by replaying the chain: `bot_4` peaked at exactly `250.00000000` and **never once reached 300**, so under an unbroken run from genesis it should have been resting from block 1 onward — every bot is born resting, since they all start at 0 BTC, which is `≤ 200`, and release costs a full 300. A rebuild wiped the set, `249 > 200` passed the un-rested branch, and bot_4 went on to take the **leading bid in six auctions**, three of them contested by the player, with money the design says it should have been hoarding. A drift that decides who owns which company is not bookkeeping drift.
+
+**The rule this yields, refining §22.18:**
+
+> **Predicting a sweep from the current value only works for a *memoryless* predicate. A predicate with hysteresis has to be *replayed*.**
+
+The hysteresis is a pure function of the balance sequence, and the balance sequence is on the chain — so `EnsureReserveGuardSeeded` replays it once per process, over all four bots in a single pass, and the state falls out of the last threshold crossing: reached `≥ Resume` ⇒ biddable, fell to `≤ Stop` ⇒ resting, neither ⇒ resting. Derived, not persisted, exactly per §22.18's own precedent: **no `BlockchainStateSnapshot` field, no checkpoint work, no delete-list entry, no `WorldFormatVersion` bump**, so a running playtest survives the fix.
+
+**Two companions, both aimed at how it hid rather than at what it was.**
+
+- **It now says what it derived, at launch.** This state has been invisible since ND.10e — no readout, no trace column, nothing — which is the only reason a bot could bid against its own guard for ten consecutive blocks with nothing complaining. One line per launch naming each bot's state costs nothing and makes the next divergence self-announcing (§39.16 rule 2: a state you cannot observe is one you cannot sign off).
+- **A `[Conditional("DEBUG")]` tripwire at the bid broadcast**, asserting the bidder is not resting. The pipeline already excludes resting bots, so it can only fire if a future caller reaches the bid builder down a path that skips `BuildBotPoolOpportunities` — which is exactly how a guard quietly stops guarding. Same reflex as `AssertEscalationSlopesAreOrdered` and P15.9's clamp tripwire.
+
+**What the fix does *not* do, and why that is correct.** The seed stops bot_4 bidding further; it does not undo the six bids it already placed. The auction ledger is a pure chain replay (Chapter 37) and a confirmed bid is a confirmed bid — consistent with D-ND4b.12, where only a *win* is permanent but history is never rewritten. So bot_4 kept its leading bids and the player had to outbid them normally.
+
+**Audit performed with the fix.** Every in-memory static in `NetworkRoot` was checked for the same shape. Only two carry history: `_stuckBidderSignatures` (seeded at ND.10j) and `_botsRestingOnReserve` (seeded here). `_casinoBotCycleTxIds` is correctly empty at start because the mempool is reverted too; `_poolSettlementDiagPrinted` is print-dedup; everything else rides `BlockchainStateSnapshot`.
+
+**A design consequence surfaced by the same replay, recorded not changed.** Because bots are born at 0 and 0 is below the stop threshold, **the 200 never gates a fresh bot — only the 300 does.** A new bot must mine six blocks before it can place its first bid, which is why the auctions sat inert for ~617 blocks of this run. That is emergent rather than chosen; it is left as-is pending the variable-reserve design (`PRIVATE_ROADMAP.md` → "Casino-Bot Treasury Policy"), where all five thresholds are already flagged as placeholders.
+
+---
+
 ## Chapter 23 — Scheduled Bot Transactions (BTC Recirculation)
 
 **Files**: `NetworkRoot.cs` (`ScheduleBotTransactionsAfterBlock`, `FirstBlockHeightMinedBy`), `BlockchainService.cs` (no-self-send guard)
@@ -3352,6 +3379,26 @@ The engine is **already general** — `BuildAndBroadcastUtxoSpend` works for any
 **The retroactive heal — why this incident earned a section.** Because the auction ledger is a **pure function of the chain** (nothing about it is persisted), shipping the fix healed the developer's existing world instantly: the very next recompute read the *same* blocks and reported the corrected identity. No migration, no save-file surgery, no world reset — the misattributed leading bid simply started reading `player` again on relaunch. This is the chain-derived model's signature advantage in action; Chapter 37 collects the pattern.
 
 **The rule this hardens: an address is a key, not an identity.** Any system that attributes behavior to *participants* (auctions, future rank/referral systems, achievements, leaderboards) must resolve ownership through the participant's full address set — never by comparing `tx.Sender` / `Inputs[0]` to a single base address. This is the **second** incident of the legacy-shim bug class (the first: scanning `Sender`/`Recipient` for address membership missed change outputs at `Outputs[1]` — see CLAUDE.md's balance-model note). When the shims are finally deleted (post-OQ-8.2), both traps go with them.
+
+### 30.10 — The same incident, one class of participant later (Step 16 P16.6, 2026-07-31)
+
+§30.9 ends with "single-address participants (`bot_1..4`, OQ-8.2) need no equivalent." **P16.2 deleted that premise** — every bot, company and cast miner now carries a seed and rotates change — and eleven call sites went on relying on it. The day after P16.2 shipped, the first bot auction bid exposed all of them at once.
+
+**What the reads were doing.** `AggregateSpendable(node)` (whole owned set) already existed beside `GetAddressSpendableBalance(node.WalletAddress)` (base only), and the bot economy used the latter everywhere. Meanwhile the *spend* path, `BuildAndBroadcastUtxoSpend`, correctly unions the owned set. That asymmetry is the whole defect: **a bot could spend its change but could not see it.** Every bid moved ~50 BTC out of the code's view, because the consumed coinbase left the base address and the change landed on a derived one. Three bids drove bot_1's apparent balance `300 → 150`, which tripped the ND.10e reserve guard and parked it, holding 299.9. The trace's own numbers were exact to the satoshi: reported `300.00268330 / 250.00123890 / 200.00061702` against a chain truth of `300.00268330 / 299.96431577 / 299.93358562`, the difference being precisely the three change outputs.
+
+**Three heads, one defect.** It is worth recording that the same mistake had to be fixed at three separate layers, because finding one did not surface the others:
+
+1. **Engine reads** — eight sites (`CanAffordNextBid`, `IsBotRestingOnReserve`, `RealLeadingBidRoll`, `TryBuildCasinoBotBid`, `HasEligibleBidOpportunity`, the exclusion-note helper, `TrySellFlowSend`, the non-miner exchange loop) moved to `AggregateSpendable`.
+2. **Identity matching** — `BuildBotPoolOpportunities` and the escalation helpers took a single `botAddress`; they now take the owned set. `BuildAuctionBidderIdentity`'s *player* half had been written correctly in 2026-07-14 (that is what §30.9 bought) but its **bot** half still mapped only the base address, so a change-funded bid would have lost its ownership in the ratchet walk *and* misrouted its D-ND5.7 settlement payout. Two further sites turned up while fixing: `ReBidProbabilityLabelForSlot`'s self-eviction guard (drifting from the pipeline once one bidder can hold two slots under two addresses) and `AccumulateCompanyInflows`, whose base-only self-send exclusion feeds the >30% special vote — the trigger that **pauses the game** where the player holds NST.
+3. **Display** — `BotsBtcWallets` (and its two P16.3 subclasses, which inherit it) read one address, so it showed `0.00000000 BTC` for bots holding ~300 and ~249 once their base addresses emptied. Fixed with one node-level `GetNodeWalletTotals`, shared by the row list and the detail panel so the two cannot disagree; deliberately **not** built on `GetNodeAddressBook`, which runs a full chain scan per address and is far too heavy for a 40-row refresh.
+
+**The rule, and it is not "use the owned set".** That much §30.9 already said. The new one is about *when the trap arms*:
+
+> **When a capability is extended to a new class of participant, the reads that were correct only because that class lacked it will not announce themselves.** They compile, they run, and they return a plausible number.
+
+The correctness of all eleven sites was load-bearing on a sentence in a comment — "bots are single-address, OQ-8.2" — that P16.2 falsified without touching any of them. Three such comments were still in the tree asserting the retired premise and were corrected with the fix; the practical countermeasure is to grep for the *premise* when retiring one, not only for the code that obviously implements it. Compare `AccumulateCompanyInflows`, where the ordering between the two halves is load-bearing in the other direction: the self-send skip must see derived inputs *first*, because only then can counting receives across the whole owned set never double back and count the company's own change as inflow.
+
+**Chain-derived, so it healed retroactively** — the §30.9 property again, and the reason none of this needed a migration or a `WorldFormatVersion` bump.
 
 ## Chapter 31 — Casino SC Balance Sheet: Pre-Genesis Parity & the Loan Configuration Proposal
 
@@ -4713,4 +4760,24 @@ Scope discipline, so P15.11 does not become an infrastructure project in the mid
   what accumulates; a proper persisted lifetime aggregate is the correct long-term answer and is deferred.
 - **Nothing is being made crash-proof at the bet level.** The commit rule stands: a restart still reverts
   to the last mined block, and that is the intended contract, not a limitation.
+
+### 40.7 — The six-minute launch: a cost note that was never a measurement (Step 16 P16.6, 2026-07-31)
+
+**Symptom.** The day after P16.2 shipped, the app took **~6 minutes to reach the main menu**, on a world that had not been played and with no betting yet. Nothing was corrupt: `blockchain/state.json` was a healthy 1.25 MB and restored correctly. The only forensic marker was a 3 m 35 s gap between process start and the startup `PersistStateToDisk()` write — i.e. the whole of it was inside `EnsureInitialized`.
+
+**Cause.** `Secp256k1.ScalarMul` worked in **affine** coordinates, where both point-add and point-double need a division — a modular inverse, computed by Fermat as a full 256-bit `BigInteger.ModPow(a, p−2, p)`. One address derivation therefore ran **~384 modular exponentiations** and measured **127 ms**. That was survivable while only the player, casino and founders carried a `DerivedAddressWallet` (~6 wallets). P16.2 gave a seed to every bot, company and cast miner, so the launch-time `RescanDerivedReceiveWallets` gap-scan (~21 derivations per wallet × ~79 wallets, plus Satoshi's ~220 rotated coinbases) went to **~1,900 derivations ≈ 4 minutes**.
+
+**Fix.** Jacobian projective coordinates: the Z-denominator absorbs the division the affine formulas performed eagerly, so add and double become inversion-free and the only inverse left is the single `Z⁻¹` converting the final accumulator back to affine — **384 modexps become 1**. Measured **127 ms → 3.3 ms (31×)**; the boot rescan drops from ~196 s to ~6 s, and every other consumer (node registration, change rotation, every new address) gets the same speedup. The curve math is unchanged, so it is **bit-for-bit output-identical**: verified against the previous implementation over 490 vectors (seed-derived keys, the `" #r{i}"` / `"sign:"` seed shapes the wallet code actually produces, the empty seed, and edge scalars 1, 2, 3, 7, 255, 65536, N−3, N−2, N−1) plus the `k = 1` known-answer test returning the standard compressed encoding of G. Addresses do not change ⇒ **no `WorldFormatVersion` bump, no wipe.**
+
+**The lesson, and it is not "profile more".** The rescan carried a cost note added at P16.2d:
+
+> *"the added cost is address DERIVATION (~20 SHA256 per node past its frontier), not extra chain scans. If that ever measures as material at launch it is a T4 finding, never a reason to skip the rescan."*
+
+Both halves of its reasoning were right — the chain pass really is shared, and skipping the rescan really would reintroduce the Step 8 change-attribution bug. Only the **number** was wrong, by five orders of magnitude, because a derivation is a secp256k1 scalar multiply and not a hash. And because it *read* as quantified, it functioned as a completed measurement: it was the one figure nobody re-checked through the whole of P16.2, in the precise phase that multiplied it by thirteen.
+
+> **A cost note is a measurement or it is a guess wearing a measurement's clothes. Time it, or say plainly that you did not.**
+
+Note also what the correct half bought: the prediction *"if that ever measures as material it is a T4 finding, never a reason to skip the rescan"* held exactly. The rescan is untouched; the primitive underneath it got faster. **When a documented cost comes true, re-read the note for the mitigation it already named** — it pointed at the right layer.
+
+This belongs to Chapter 40 rather than Chapter 30 because it is the same shape as §40.2: a component sized correctly for the hand-play premise (a handful of seeded wallets) meeting a phase that changed the premise, with no assertion anywhere to notice.
 

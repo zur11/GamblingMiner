@@ -635,12 +635,12 @@ game only stops for the companies the player asked it to stop for.
 | | |
 |---|---|
 | Branch | `living-governance-and-bot-wallets`, pushed to `origin` |
-| Commits | `5b81853` P16.2 · `d6faba8` P16.1 · `4d69c50` P16.4 · `8d62214` P16.5 · `6b20715` P16.3 + P16.6 prep · `994ace8` wordlist cache + entry year |
+| Commits | `5b81853` P16.2 · `d6faba8` P16.1 · `4d69c50` P16.4 · `8d62214` P16.5 · `6b20715` P16.3 + P16.6 prep · `994ace8` wordlist cache + entry year · `3e1dff3` secp256k1 + bot base-address reads (§9.5) · **this one** reserve-guard seed + wallet-screen totals + these docs |
 | Build | clean, 0 warnings |
 | **`TimelineConfig.DevEntryYear`** | **`2011`** — ⚠ **MUST go back to `0` before merging to `main`** |
-| World | fresh (the developer deleted `user://` entirely), landed **2011-03-21 11:49:32** |
+| World | fresh (the developer deleted `user://` entirely), landed **2011-03-21 11:49:32**; run reached **block 1722 / 2012-03-13** (~1 in-game year) |
 | Bootstrap | Satoshi 107 · Hal 26 · cast 410 (11 spawned) · ghost 540 · 7 non-miners seeded |
-| Status | **all build phases implemented; P16.6 partially run** |
+| Status | **all build phases implemented; P16.6 partially run.** Four defects found during the run, all fixed — see §9.5 |
 
 **This world's bot stances** (re-drawn at the wipe — they ride the world snapshot, unlike the registry):
 
@@ -660,17 +660,22 @@ game only stops for the companies the player asked it to stop for.
 - **Registry survives a timeline wipe ✅** — the second launch (`ENTRY-2011` re-tag) printed
   `[BotWalletRegistry] Loaded — 4 miner bots, 40 non-miner bots`, i.e. identities are correctly NOT world
   state, while the governance stances correctly WERE re-drawn.
-- **Check 6 ✅** — the three wallet screens (developer-confirmed).
+- **Check 6 ✅** — the three wallet screens (developer-confirmed). ⚠ *All three were nonetheless reporting a
+  base-address-only balance until 2026-07-31 (§9.5, §30.10) — the split itself was right, the number was not.*
+- **Checks 4 & 5 ✅ (2026-07-31, verified from the chain rather than by eye).** The first bot→company bid,
+  block **#1703**, tx `c5e870ac88ed`: one input from bot_1's **base** address (a 50.00144440 coinbase),
+  `OUT[0]` 0.03786870 to BitPaid, `OUT[1]` 49.96307687 to a **fresh derived** address, fee 0.00049883 —
+  Σin = Σout + fee exactly. So change rotates for bots (check 4) and a multi-output spend's arithmetic adds
+  up with nothing hidden, the two cosmetics being gone (check 5). Confirmed at scale afterwards: bot_4's
+  sixth bid was itself funded from the change of its third, i.e. derived-address spends round-trip.
 - **Check 13 ✅** — every bot printed its `reacts:` line, all four temperaments distinct, and the momentum
   axis split 2 following / 2 fading.
 - **`[ENTRY-2011 DEV]` watermark + clock at 2011-03-21 ✅.**
 
 ### 9.3 What is left, in the order it becomes reachable
 
-1. **Checks 4 & 5 — do these next, they need no play time.** Block Explorer → open a block containing a
-   bot/company spend. Its change output must land on a **fresh derived address** (not the address it spent
-   from), and no output may be hidden — the two cosmetics are deleted, so a multi-output spend's arithmetic
-   must now add up on screen.
+1. ~~**Checks 4 & 5**~~ — ✅ done 2026-07-31 from the chain, see §9.2. (Still worth one glance in Block
+   Explorer at a bot spend, purely to confirm the *rendering* matches the data.)
 2. **Play until a company FOUNDS** (Block Explorer → Enroll Mode → a row moves to *Founded*). An auction
    resolves ~20 in-game days after its first bid. This unlocks the rest.
 3. **Check 7 — the single most valuable one.** `user://logs/company_governance_trace.csv`, `vote_open`
@@ -719,6 +724,63 @@ Paste any log excerpt and I will read it too — the wordlist defect below was f
   `Ensure…` that redoes its work every call is harmless with two callers and a liability the moment it
   gains a hot one — when adding a call site, check what the helper does on the SECOND call.** It was
   invisible in code review and obvious in the log.
+
+- **The six-minute launch** (fixed, `3e1dff3`; full write-up **ProjectDesignManual §40.7**): the app took
+  ~6 minutes to reach the main menu on an unplayed world. `Secp256k1.ScalarMul` used affine coordinates,
+  where every point-add and point-double needs a modular inverse computed as a full 256-bit `ModPow` — so
+  **one address derivation ran ~384 modexps and measured 127 ms**. Fine at ~6 seeded wallets; P16.2 made it
+  ~79, and the launch rescan's ~1,900 derivations became ~4 minutes. Moved to Jacobian coordinates (one
+  inversion per scalar multiply instead of 384): **127 ms → 3.3 ms, 31×**, verified bit-for-bit identical
+  over 490 vectors + the `k=1` known-answer test, so no version bump. **Rule: a cost note is a measurement
+  or it is a guess wearing a measurement's clothes.** The note at `RescanDerivedReceiveWallets` said
+  "~20 SHA256 per node" — never timed, wrong by five orders of magnitude, and *read* as quantified, which
+  is exactly why nobody re-checked it in the phase that multiplied it by thirteen. Its other half held
+  perfectly ("a T4 finding, never a reason to skip the rescan") — the rescan is untouched.
+
+- **Bots could spend change they could not see** (fixed, `3e1dff3`; full write-up **§30.10**): §30.9 ends
+  "single-address participants (`bot_1..4`, OQ-8.2) need no equivalent", and **P16.2 deleted that premise**
+  while eleven call sites went on relying on it. The spend path unions the owned address set; the
+  affordability reads used `GetAddressSpendableBalance(node.WalletAddress)` — base only. So every bid moved
+  ~50 BTC out of view (the consumed coinbase left the base, the change landed on a derived address), three
+  bids took bot_1 from an apparent 300 to 150, and the ND.10e reserve guard parked it holding 299.9. Found
+  by replaying the chain against `casino_bot_bid_trace.csv`: reported `300.00268330 / 250.00123890 /
+  200.00061702` vs a truth of `300.00268330 / 299.96431577 / 299.93358562`, the gap being exactly the three
+  change outputs. Fixed at **three layers** — 8 engine reads → `AggregateSpendable`; identity matching →
+  the owned set (including `BuildAuctionBidderIdentity`'s **bot** half, whose player half had been correct
+  since 2026-07-14, plus `ReBidProbabilityLabelForSlot`'s self-eviction guard and
+  `AccumulateCompanyInflows`, which feeds the game-pausing >30% vote); and display → `GetNodeWalletTotals`
+  for `BotsBtcWallets` (+ its two P16.3 subclasses), which was showing `0.00000000 BTC` for bots holding
+  ~300. **Rule: when a capability is extended to a new class of participant, the reads that were correct
+  only because that class lacked it will not announce themselves — they compile, run, and return a
+  plausible number.** Grep for the retired *premise*, not just the code implementing it; three comments
+  still asserted "bots are single-address" and were corrected with the fix.
+
+- **A bot bid for ten blocks against its own reserve guard** (fixed here; full write-up **§22.20**):
+  `_botsRestingOnReserve` is in-memory with a per-block sweep as its only writer, and §22.18 already ruled
+  that such a cache "is empty and lying at process start — if a reader can predict the sweep, it must".
+  ND.10j applied that to the *reader* (hysteresis over the live balance) and not to the cache's own
+  *memory* — **so this is the second violation of a rule already written down.** The guard is
+  `≤ 200` to rest, `≥ 300` to resume, so between the thresholds the answer depends on **how the bot
+  arrived**, and 249 BTC cannot say which. Chain replay: `bot_4` peaked at exactly `250.00000000` and never
+  reached 300, so it should have been resting since block 1 — instead a rebuild wiped the set, `249 > 200`
+  passed the un-rested branch, and it took the **leading bid in six auctions**, three contested by the
+  player. Fixed with `EnsureReserveGuardSeeded` (one chain replay per process, derived not persisted, no
+  version bump), a launch line naming each bot's state, and a `[Conditional("DEBUG")]` tripwire at the bid
+  broadcast. **Rule: predicting a sweep from the current value only works for a *memoryless* predicate; a
+  predicate with hysteresis has to be replayed.** Audited every other in-memory static in `NetworkRoot` —
+  only `_stuckBidderSignatures` (seeded at ND.10j) and this one carry history.
+  - *Side finding, recorded not changed:* bots are born at 0 BTC, which is `≤ 200`, so **every bot is born
+    resting and the 200 never gates a fresh one — only the 300 does.** A new bot must mine six blocks
+    before its first bid, which is why the auctions sat inert for ~617 blocks of this run. Emergent rather
+    than designed; left pending the variable-reserve work in `PRIVATE_ROADMAP.md` → "Casino-Bot Treasury
+    Policy", where all five thresholds are already flagged as placeholders.
+  - *Also observed, no change made:* a pool's tie-break weight is `FreshPoolSeedingWeight = 34` for any
+    pool the bot has **not personally bid in** — so a virgin pool needing `0.019` BTC and a three-way
+    contested pool needing `0.119` carry identical weight and an identical 100% roll. bot_4 duly paid
+    **2.6× more than bot_1 for the same six bids**. D-ND10l.2 justified that constant for *seeding new
+    companies*; applying it unchanged to a live bidding war reuses a seeding weight for a different
+    question. Developer decision (2026-07-31): **leave it** — the run is a DEV entry-year world and the
+    pool choice is genuinely uniform, so it can be refined later on canonical data.
 
 ### 9.6 Standing reminders
 

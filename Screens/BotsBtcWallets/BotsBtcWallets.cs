@@ -184,7 +184,10 @@ public partial class BotsBtcWallets : Control
 	private string BuildBotRowText(BotWalletRecord bot)
 	{
 		string addr = TruncateAddress(bot.Address);
-		decimal balance = _networkRoot.GetAddressBalanceDetails(bot.Address).confirmedBalance;
+		// Step 16 — the WHOLE wallet, not the base address. Since P16.2 every participant here rotates
+		// change, so a base-only read decays to 0 as the node spends (bot_1 and bot_4 both showed
+		// 0.00000000 BTC holding ~300 and ~249). Shared with the detail panel below so the two agree.
+		decimal balance = _networkRoot.GetNodeWalletTotals(bot.NodeId).spendable;
 		// ND.10g — DEV form ("Mt. Gox (non_miner_7)"): this is a diagnostic list, read beside the traces.
 		// The column was widened from 14 to 34 to fit a company name + its id without ragged wrapping.
 		return string.Create(CultureInfo.InvariantCulture, $"{NetworkRoot.DescribeNodeForDev(bot.NodeId),-34} {addr}  {balance:F8} BTC");
@@ -377,8 +380,14 @@ public partial class BotsBtcWallets : Control
 			: $"Holder Wallet  ·  {NetworkRoot.DescribeNodeForDev(bot.NodeId)}";
 		_addressLabel.Text = $"Address: {bot.Address}";
 
-		(decimal confirmed, decimal pendingOut) = _networkRoot.GetAddressBalanceDetails(bot.Address);
-		_confirmedBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Confirmed balance:  {confirmed:F8} BTC");
+		// Step 16 — whole-wallet totals (see BuildBotRowText). The header above still shows the BASE address,
+		// which is the node's identity; this figure is the wallet, so it names the address count when the
+		// two differ — otherwise a reader compares a base address against a total and sees a contradiction.
+		(decimal confirmed, decimal pendingOut) = _networkRoot.GetNodeWalletTotals(bot.NodeId);
+		int addressCount = _networkRoot.GetNodeAddressBook(bot.NodeId).Count;
+		_confirmedBalanceLabel.Text = addressCount > 1
+			? string.Create(CultureInfo.InvariantCulture, $"Wallet balance:     {confirmed:F8} BTC  ({addressCount} addresses)")
+			: string.Create(CultureInfo.InvariantCulture, $"Confirmed balance:  {confirmed:F8} BTC");
 		_pendingOutgoingLabel.Visible = pendingOut > 0m;
 		if (pendingOut > 0m)
 			_pendingOutgoingLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Pending outgoing:   {pendingOut:F8} BTC");
