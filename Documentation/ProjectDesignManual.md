@@ -2522,6 +2522,33 @@ The ledger holds no persisted state, so the rule applies to history already on c
 
 ---
 
+### 22.20 — A predicate with memory cannot be predicted from today's number (Step 16 P16.6, 2026-07-31)
+
+§22.18 established the rule: *any in-memory cache a per-block sweep owns has a window at process start where it is empty and lying; if a reader can predict the sweep cheaply, it must.* ND.10j then applied it to `_botsRestingOnReserve` by moving the reserve-guard hysteresis into one predicate evaluated against the **live balance** instead of reading the set. That closed the symptom it was chasing — a resting bot advertising a percentage before the first mined block — and left the defect underneath it intact. **This is the second violation of a rule that was already written down**, which is the part worth studying.
+
+**Why predicting the sweep was not enough here.** The guard is not a function of the current balance. It is a hysteresis: enter the rest at `≤ 200 BTC`, leave it only at `≥ 300`. Between the two thresholds the answer depends entirely on **how the bot arrived**. 249 BTC is biddable coming down from 400 and resting coming up from 150, and no amount of looking at 249 can tell you which. Since "not in the set" is indistinguishable from "swept and found biddable", every restart silently resolved that ambiguity as *biddable*. D-ND10e.3 filed this under "harmless and self-correcting".
+
+**It was not harmless.** Measured 2026-07-31 by replaying the chain: `bot_4` peaked at exactly `250.00000000` and **never once reached 300**, so under an unbroken run from genesis it should have been resting from block 1 onward — every bot is born resting, since they all start at 0 BTC, which is `≤ 200`, and release costs a full 300. A rebuild wiped the set, `249 > 200` passed the un-rested branch, and bot_4 went on to take the **leading bid in six auctions**, three of them contested by the player, with money the design says it should have been hoarding. A drift that decides who owns which company is not bookkeeping drift.
+
+**The rule this yields, refining §22.18:**
+
+> **Predicting a sweep from the current value only works for a *memoryless* predicate. A predicate with hysteresis has to be *replayed*.**
+
+The hysteresis is a pure function of the balance sequence, and the balance sequence is on the chain — so `EnsureReserveGuardSeeded` replays it once per process, over all four bots in a single pass, and the state falls out of the last threshold crossing: reached `≥ Resume` ⇒ biddable, fell to `≤ Stop` ⇒ resting, neither ⇒ resting. Derived, not persisted, exactly per §22.18's own precedent: **no `BlockchainStateSnapshot` field, no checkpoint work, no delete-list entry, no `WorldFormatVersion` bump**, so a running playtest survives the fix.
+
+**Two companions, both aimed at how it hid rather than at what it was.**
+
+- **It now says what it derived, at launch.** This state has been invisible since ND.10e — no readout, no trace column, nothing — which is the only reason a bot could bid against its own guard for ten consecutive blocks with nothing complaining. One line per launch naming each bot's state costs nothing and makes the next divergence self-announcing (§39.16 rule 2: a state you cannot observe is one you cannot sign off).
+- **A `[Conditional("DEBUG")]` tripwire at the bid broadcast**, asserting the bidder is not resting. The pipeline already excludes resting bots, so it can only fire if a future caller reaches the bid builder down a path that skips `BuildBotPoolOpportunities` — which is exactly how a guard quietly stops guarding. Same reflex as `AssertEscalationSlopesAreOrdered` and P15.9's clamp tripwire.
+
+**What the fix does *not* do, and why that is correct.** The seed stops bot_4 bidding further; it does not undo the six bids it already placed. The auction ledger is a pure chain replay (Chapter 37) and a confirmed bid is a confirmed bid — consistent with D-ND4b.12, where only a *win* is permanent but history is never rewritten. So bot_4 kept its leading bids and the player had to outbid them normally.
+
+**Audit performed with the fix.** Every in-memory static in `NetworkRoot` was checked for the same shape. Only two carry history: `_stuckBidderSignatures` (seeded at ND.10j) and `_botsRestingOnReserve` (seeded here). `_casinoBotCycleTxIds` is correctly empty at start because the mempool is reverted too; `_poolSettlementDiagPrinted` is print-dedup; everything else rides `BlockchainStateSnapshot`.
+
+**A design consequence surfaced by the same replay, recorded not changed.** Because bots are born at 0 and 0 is below the stop threshold, **the 200 never gates a fresh bot — only the 300 does.** A new bot must mine six blocks before it can place its first bid, which is why the auctions sat inert for ~617 blocks of this run. That is emergent rather than chosen; it is left as-is pending the variable-reserve design (`PRIVATE_ROADMAP.md` → "Casino-Bot Treasury Policy"), where all five thresholds are already flagged as placeholders.
+
+---
+
 ## Chapter 23 — Scheduled Bot Transactions (BTC Recirculation)
 
 **Files**: `NetworkRoot.cs` (`ScheduleBotTransactionsAfterBlock`, `FirstBlockHeightMinedBy`), `BlockchainService.cs` (no-self-send guard)
@@ -3139,9 +3166,27 @@ Each non-bot wallet (BTCWallet, CasinoFinances, FoundersWallets) has a **"Transa
 - **"Hide mining rewards" `CheckBox` (default checked)** — a mining wallet accrues *hundreds* of coinbase entries that bury the actual transfers, so coinbases are hidden by default with a "… N mining reward(s) hidden — untick to show" note. This is the opposite default polarity from "View empty addresses" (checked = hide), chosen because the noise is the common case for transfers visibility; each label is self-explanatory.
 - Same scroll-preservation + trailing-blank-lines rules as the address book (29.7). FoundersWallets' panel is always-visible in Base mode (with the founder economics/dev panels); BTCWallet/CasinoFinances gate it behind a "Show transactions ▸" expander like the address list.
 
-### 29.9 — Block Explorer display filter for OQ-8.2 bot change-to-self (P10 / cosmetic)
+### 29.9 — Block Explorer display filter for OQ-8.2 bot change-to-self (P10 / cosmetic) — ✅ REMOVED (Step 16 P16.2f, 2026-07-30)
 
-**Context:** Bots are single-address — they have no `ReceiveWallet` (no persistent seed, OQ-8.2). Every bot spend therefore produces a change output addressed back to the bot's own input address. This is valid UTXO behaviour, but it creates visual noise in the Block Explorer: a bot donation to a non-miner shows two outputs, one external and one going straight back to the sender's address.
+> **This section is HISTORY.** Both helpers and all their callers were deleted once every spending
+> participant gained a `DerivedAddressWallet` (Step 16 P16.2, OQ-8.2 resolved). The Block Explorer now shows
+> every transaction and every output exactly as it is on-chain. Kept here because the *reasoning* still
+> matters: a cosmetic filter that hides a real output makes a real spend's arithmetic fail to add up (block
+> 1274's nine-input bot bid appeared to lose 6.05 BTC), and a filter is only ever removable when the **last**
+> participant that can produce the hidden shape is migrated.
+>
+> **What the removal check actually found (P16.2f):** the migration list everyone had been working from —
+> casino-miner bots, cast miners, companies, ghosts-excluded — was **incomplete**. **Passphrase wallets**
+> (`NetworkRoot.RegisterPassphraseWallet`) spend, had no `ReceiveWallet`, and were therefore the last
+> single-address change-producer standing. They were found by asking *"who can still produce a
+> change-to-self output?"* rather than by trusting the list. **General rule: when deleting a workaround,
+> re-derive the set of cases it covered from the code — do not trust the scope list written when it was
+> added.** Two related gotchas recorded with it: a passphrase wallet is created **mid-session**, so it
+> misses the init-time `RescanDerivedReceiveWallets` and needs a single-node rescan at registration or its
+> change-held funds go unowned; and ghosts stay keyless by design (D-14.11) but never spend, so they never
+> blocked this.
+
+**Context (as it was):** Bots were single-address — they have no `ReceiveWallet` (no persistent seed, OQ-8.2). Every bot spend therefore produces a change output addressed back to the bot's own input address. This is valid UTXO behaviour, but it creates visual noise in the Block Explorer: a bot donation to a non-miner shows two outputs, one external and one going straight back to the sender's address.
 
 Two helpers in `BlockExplorer.cs` apply a **display-only cosmetic filter** until OQ-8.2 is resolved (bots get simplified seeds + `DerivedAddressWallet`):
 
@@ -3150,7 +3195,7 @@ Two helpers in `BlockExplorer.cs` apply a **display-only cosmetic filter** until
 
 **What remains visible:** coinbases are never filtered (no inputs → `IsSelfChangeTransaction` is false). A bot donation to a non-miner still appears with `Outputs (1)` showing only the recipient — the change leg is invisible. Casino pool distributions and player/founder sends are unaffected (their change goes to a fresh derived address, so it never matches any input address).
 
-**When to remove:** delete `IsSelfChangeTransaction`, `ExternalOutputs`, and all their callers in `BlockExplorer.cs` once bots have `DerivedAddressWallet` (before the casino referral / rank systems ship). The display will then naturally show all outputs correctly.
+**When to remove:** ✅ **DONE — Step 16 P16.2f (2026-07-30).** `IsSelfChangeTransaction`, `ExternalOutputs` and all their callers are deleted; the display shows all outputs correctly, as predicted.
 
 ### 29.10 — Persistent nav / footer buttons live OUTSIDE the scroll (Step 12 fix)
 
@@ -3334,6 +3379,26 @@ The engine is **already general** — `BuildAndBroadcastUtxoSpend` works for any
 **The retroactive heal — why this incident earned a section.** Because the auction ledger is a **pure function of the chain** (nothing about it is persisted), shipping the fix healed the developer's existing world instantly: the very next recompute read the *same* blocks and reported the corrected identity. No migration, no save-file surgery, no world reset — the misattributed leading bid simply started reading `player` again on relaunch. This is the chain-derived model's signature advantage in action; Chapter 37 collects the pattern.
 
 **The rule this hardens: an address is a key, not an identity.** Any system that attributes behavior to *participants* (auctions, future rank/referral systems, achievements, leaderboards) must resolve ownership through the participant's full address set — never by comparing `tx.Sender` / `Inputs[0]` to a single base address. This is the **second** incident of the legacy-shim bug class (the first: scanning `Sender`/`Recipient` for address membership missed change outputs at `Outputs[1]` — see CLAUDE.md's balance-model note). When the shims are finally deleted (post-OQ-8.2), both traps go with them.
+
+### 30.10 — The same incident, one class of participant later (Step 16 P16.6, 2026-07-31)
+
+§30.9 ends with "single-address participants (`bot_1..4`, OQ-8.2) need no equivalent." **P16.2 deleted that premise** — every bot, company and cast miner now carries a seed and rotates change — and eleven call sites went on relying on it. The day after P16.2 shipped, the first bot auction bid exposed all of them at once.
+
+**What the reads were doing.** `AggregateSpendable(node)` (whole owned set) already existed beside `GetAddressSpendableBalance(node.WalletAddress)` (base only), and the bot economy used the latter everywhere. Meanwhile the *spend* path, `BuildAndBroadcastUtxoSpend`, correctly unions the owned set. That asymmetry is the whole defect: **a bot could spend its change but could not see it.** Every bid moved ~50 BTC out of the code's view, because the consumed coinbase left the base address and the change landed on a derived one. Three bids drove bot_1's apparent balance `300 → 150`, which tripped the ND.10e reserve guard and parked it, holding 299.9. The trace's own numbers were exact to the satoshi: reported `300.00268330 / 250.00123890 / 200.00061702` against a chain truth of `300.00268330 / 299.96431577 / 299.93358562`, the difference being precisely the three change outputs.
+
+**Three heads, one defect.** It is worth recording that the same mistake had to be fixed at three separate layers, because finding one did not surface the others:
+
+1. **Engine reads** — eight sites (`CanAffordNextBid`, `IsBotRestingOnReserve`, `RealLeadingBidRoll`, `TryBuildCasinoBotBid`, `HasEligibleBidOpportunity`, the exclusion-note helper, `TrySellFlowSend`, the non-miner exchange loop) moved to `AggregateSpendable`.
+2. **Identity matching** — `BuildBotPoolOpportunities` and the escalation helpers took a single `botAddress`; they now take the owned set. `BuildAuctionBidderIdentity`'s *player* half had been written correctly in 2026-07-14 (that is what §30.9 bought) but its **bot** half still mapped only the base address, so a change-funded bid would have lost its ownership in the ratchet walk *and* misrouted its D-ND5.7 settlement payout. Two further sites turned up while fixing: `ReBidProbabilityLabelForSlot`'s self-eviction guard (drifting from the pipeline once one bidder can hold two slots under two addresses) and `AccumulateCompanyInflows`, whose base-only self-send exclusion feeds the >30% special vote — the trigger that **pauses the game** where the player holds NST.
+3. **Display** — `BotsBtcWallets` (and its two P16.3 subclasses, which inherit it) read one address, so it showed `0.00000000 BTC` for bots holding ~300 and ~249 once their base addresses emptied. Fixed with one node-level `GetNodeWalletTotals`, shared by the row list and the detail panel so the two cannot disagree; deliberately **not** built on `GetNodeAddressBook`, which runs a full chain scan per address and is far too heavy for a 40-row refresh.
+
+**The rule, and it is not "use the owned set".** That much §30.9 already said. The new one is about *when the trap arms*:
+
+> **When a capability is extended to a new class of participant, the reads that were correct only because that class lacked it will not announce themselves.** They compile, they run, and they return a plausible number.
+
+The correctness of all eleven sites was load-bearing on a sentence in a comment — "bots are single-address, OQ-8.2" — that P16.2 falsified without touching any of them. Three such comments were still in the tree asserting the retired premise and were corrected with the fix; the practical countermeasure is to grep for the *premise* when retiring one, not only for the code that obviously implements it. Compare `AccumulateCompanyInflows`, where the ordering between the two halves is load-bearing in the other direction: the self-send skip must see derived inputs *first*, because only then can counting receives across the whole owned set never double back and count the company's own change as inflow.
+
+**Chain-derived, so it healed retroactively** — the §30.9 property again, and the reason none of this needed a migration or a `WorldFormatVersion` bump.
 
 ## Chapter 31 — Casino SC Balance Sheet: Pre-Genesis Parity & the Loan Configuration Proposal
 
@@ -4696,3 +4761,235 @@ Scope discipline, so P15.11 does not become an infrastructure project in the mid
 - **Nothing is being made crash-proof at the bet level.** The commit rule stands: a restart still reverts
   to the last mined block, and that is the intended contract, not a limitation.
 
+### 40.7 — The six-minute launch: a cost note that was never a measurement (Step 16 P16.6, 2026-07-31)
+
+**Symptom.** The day after P16.2 shipped, the app took **~6 minutes to reach the main menu**, on a world that had not been played and with no betting yet. Nothing was corrupt: `blockchain/state.json` was a healthy 1.25 MB and restored correctly. The only forensic marker was a 3 m 35 s gap between process start and the startup `PersistStateToDisk()` write — i.e. the whole of it was inside `EnsureInitialized`.
+
+**Cause.** `Secp256k1.ScalarMul` worked in **affine** coordinates, where both point-add and point-double need a division — a modular inverse, computed by Fermat as a full 256-bit `BigInteger.ModPow(a, p−2, p)`. One address derivation therefore ran **~384 modular exponentiations** and measured **127 ms**. That was survivable while only the player, casino and founders carried a `DerivedAddressWallet` (~6 wallets). P16.2 gave a seed to every bot, company and cast miner, so the launch-time `RescanDerivedReceiveWallets` gap-scan (~21 derivations per wallet × ~79 wallets, plus Satoshi's ~220 rotated coinbases) went to **~1,900 derivations ≈ 4 minutes**.
+
+**Fix.** Jacobian projective coordinates: the Z-denominator absorbs the division the affine formulas performed eagerly, so add and double become inversion-free and the only inverse left is the single `Z⁻¹` converting the final accumulator back to affine — **384 modexps become 1**. Measured **127 ms → 3.3 ms (31×)**; the boot rescan drops from ~196 s to ~6 s, and every other consumer (node registration, change rotation, every new address) gets the same speedup. The curve math is unchanged, so it is **bit-for-bit output-identical**: verified against the previous implementation over 490 vectors (seed-derived keys, the `" #r{i}"` / `"sign:"` seed shapes the wallet code actually produces, the empty seed, and edge scalars 1, 2, 3, 7, 255, 65536, N−3, N−2, N−1) plus the `k = 1` known-answer test returning the standard compressed encoding of G. Addresses do not change ⇒ **no `WorldFormatVersion` bump, no wipe.**
+
+**The lesson, and it is not "profile more".** The rescan carried a cost note added at P16.2d:
+
+> *"the added cost is address DERIVATION (~20 SHA256 per node past its frontier), not extra chain scans. If that ever measures as material at launch it is a T4 finding, never a reason to skip the rescan."*
+
+Both halves of its reasoning were right — the chain pass really is shared, and skipping the rescan really would reintroduce the Step 8 change-attribution bug. Only the **number** was wrong, by five orders of magnitude, because a derivation is a secp256k1 scalar multiply and not a hash. And because it *read* as quantified, it functioned as a completed measurement: it was the one figure nobody re-checked through the whole of P16.2, in the precise phase that multiplied it by thirteen.
+
+> **A cost note is a measurement or it is a guess wearing a measurement's clothes. Time it, or say plainly that you did not.**
+
+Note also what the correct half bought: the prediction *"if that ever measures as material it is a T4 finding, never a reason to skip the rescan"* held exactly. The rescan is untouched; the primitive underneath it got faster. **When a documented cost comes true, re-read the note for the mitigation it already named** — it pointed at the right layer.
+
+This belongs to Chapter 40 rather than Chapter 30 because it is the same shape as §40.2: a component sized correctly for the hand-play premise (a handful of seeded wallets) meeting a phase that changed the premise, with no assertion anywhere to notice.
+
+
+---
+
+## Chapter 41 — Player Participation in Company Governance: Pause, Policy, Abstention (Step 16 P16.5/P16.8)
+
+Three controls in `CompanyDetails` decide how the player takes part in a company's board votes, and they
+were built in that order across two phases. They are easy to confuse because two of them can leave the
+dials blank and the game running — but they answer **three different questions**, and the difference is
+worth stating precisely, because picking the wrong one quietly changes who steers a company.
+
+### 41.1 — The three questions
+
+| Control | The question it answers | Ballot cast? | Game pauses? |
+|---|---|---|---|
+| **Pause the game for this company's votes** | *Should the simulation stop so I can decide by hand?* | Yes — whatever you dial at the form | **Yes** |
+| **Vote Policy dials** (auto reserve / payout / shortfall split) | *If I'm not deciding by hand, what should be cast for me?* | Yes — automatically, marked `WasAutoCast` | No |
+| **Abstain from every vote at this company** | *Do I want a say here at all?* | **No — nothing is cast** | No |
+
+The abstention **outranks the pause**: pausing the whole simulation to collect a ballot the player has
+already declared they will not cast would spend the most expensive interaction in the game on an answer of
+"nothing". With Abstain ticked, the pause checkbox is disabled and says so.
+
+### 41.2 — `Follow Status Quo` vs `Abstain` — the distinction that keeps being missed
+
+Both leave the dials showing the company's current values. They are opposites.
+
+- **`Follow Status Quo`** clears the *configuration* so the auto-cast falls back to the company's
+  currently-applied numbers. **A ballot is still cast — it just votes for no change.** The player's NST
+  weight is fully present in the resolver's denominator, and it pulls the weighted average **toward the
+  status quo**, which at a company whose other holders want change is an active vote *against* them.
+  It is the D-16.12 default: an automation the player never configured must not steer anything.
+
+- **`Abstain`** casts nothing. The player's weight **leaves the denominator entirely**, so every other
+  holder's relative weight *rises* and they decide the outcome between themselves.
+
+The practical difference: at a two-holder company where the player holds 69% and the other holder wants
+23% against a current 24%, **Follow Status Quo lands the vote near 24% (the player's weight dominates);
+Abstain lands it at exactly 23% (the other holder decides alone).** Same blank dials, opposite results.
+
+> **Rule of thumb: Follow Status Quo is a vote for inertia. Abstain is a decision not to vote.** Choosing
+> "no opinion" when you mean "no change" hands the company to whoever did show up.
+
+An abstention is **never** implemented as a ballot of zeros. That would drag the weighted average toward 0
+and pin the reserve to the band floor — the P15.9 failure arriving through a different door (§39.15).
+
+### 41.3 — Abstain is a toggle, not a button (P16.8b)
+
+It shipped at P16.8 as a second button beside `Submit Ballot`, and that was wrong for a reason worth
+keeping: **a paused game is the most fragile state in the project, and it grew two ways to leave it.**
+Whichever button the player did not press was still sitting there live afterwards, and the panel had a
+worse problem behind it — an abstention and a not-yet-cast ballot have the *same data shape* (no entry in
+`vote.Ballots`), so the form's "does the player still need to vote?" test could no longer tell them apart.
+After abstaining, the panel re-rendered a live ballot form as though nothing had happened, and pressing
+Submit silently replaced the abstention with a real ballot.
+
+The fix is structural, not cosmetic: the ballot form is now shown **only while `AwaitingPlayerVote` is
+true**, which makes the four post-vote states exhaustive and mutually exclusive (*policy voted for you ·
+ballot registered · you abstained · you are abstaining by policy*). Abstain became a **toggle** stating an
+intention — it blanks and locks the dials, and switches the forecast line to the without-me outcome — while
+`Submit Ballot` remains the single axis that unfreezes the simulation, exactly as before the phase.
+
+> **When a new outcome shares its DATA shape with an existing one, every branch that distinguished them by
+> that shape is now ambiguous. Find those branches before adding the outcome, not after.**
+
+### 41.4 — The dials are editable exactly when they steer something (P16.8c → corrected at P16.8f)
+
+**One rule: the three policy dials are enabled whenever neither tick is on.** Editable by default; disabled
+by Pause (the player votes by hand at the form) or by Abstain (nothing is cast at all); Save commits the
+values without changing their editability.
+
+When a tick is on the dials are also **blanked to the company's current values**, which is the honest half:
+a stale `24%` sitting in a greyed box reads as *"24% is what will be sent"*, precisely what will not happen.
+The lock is applied both on build (derived from persisted state, so it survives the signature-gated
+rebuilds) and live on toggle, so ticking a box greys the dials immediately rather than at the next refresh.
+
+P16.8c originally carried a **second** lock — *"configured and saved ⇒ locked; press Follow Status Quo to
+unlock"* — intended to make a standing order legible as committed rather than half-filled. It was reverted
+one round later because `configured` is **persisted**: the dials came back disabled on every subsequent
+visit, and the only route to editing them again was to destroy the policy first.
+
+> **A control that is read-only on arrival must be re-openable without losing work. If the sole escape from
+> a lock is discarding the thing the lock protects, it is not protecting it — it is broken until you delete
+> something.**
+
+`Follow Status Quo` therefore no longer "unlocks" anything; it just resets the values to the company's
+current numbers, which is what its name always claimed.
+
+### 41.4b — Three rules the panel needed before it was coherent (P16.8h)
+
+Found by inspection of two screenshots, and each one was a state the panel could display but the engine
+could not hold.
+
+**The ticks are mutually exclusive, and the exclusion is SYMMETRIC.** `Abstain` outranks `Pause` in
+`OpenCompanyVote`, and this took two attempts to express.
+
+The first cut *disabled* the Pause box while Abstain was on, leaving it visibly **ticked** underneath —
+so Save wrote `pause=true` alongside `abstain=true`: a stored state with no meaning, whose displayed form
+said the game would stop at a vote that would never be cast. *Disabling a stale control hides a
+contradiction; clearing it removes one.*
+
+The second cut cleared Pause but **kept disabling it**, which turned switching into a **one-way door**:
+Abstain could always be pressed, Pause could not, so going back required knowing to untick Abstain first —
+which nothing on screen said. Reported after exactly that: two successful switches (both of which happened
+to pass through unticking) and a third that could not be made at all.
+
+Both boxes now stay clickable, and whichever is ticked clears the other. With true mutual exclusion the
+precedence question dissolves — the two states cannot coexist, so there is nothing left for one to outrank.
+
+> **Modelling precedence between two options by disabling the loser only works when the player is never
+> meant to pick it. If it is a choice, precedence is the wrong tool — make them exclusive instead.**
+
+**The explanatory text is re-derived, not built once.** Both prose lines were composed from the *persisted*
+`pause` / `autoAbstain` read at build time and never updated, so toggling a box left the panel explaining
+the previous state — the screenshot showed *"You vote by hand at the Board Vote form below"* under a ticked
+Abstain. All of it (mutual exclusion, dial locks, both labels, the Clear button) now re-derives in one
+`SyncPolicyControls()` called on build and on every toggle, so no path can update half the panel.
+
+**Only `Save Policy` writes.** Ticks and dials already deferred to Save; `Follow Status Quo` did not — it
+called `SetPlayerVotePolicy` on the press and reported *"Policy cleared"* for something the player had not
+confirmed. It is now a form action: it resets the dials to the company's current values and arms a
+`pendingClear` intent that Save turns into the `-1` "not configured" sentinels. Keeping the sentinel is what
+preserves the real distinction — **a not-configured policy keeps following the company as its numbers move,
+while a policy configured at today's number is pinned to it forever** — so "reset the dials and Save the
+displayed values" would not have been the same thing. Any manual edit cancels the intent.
+
+It is also **disabled while either tick is on**: with the dials steering nothing there is nothing to reset
+them *to*, and the button would otherwise write a policy change with no visible effect.
+
+### 41.4c — The ballot forecast: three corrections to one label (P16.8b/j/k)
+
+The forecast under the reserve dial is the panel's whole argument for why the pause is worth paying, and it
+took three passes to say anything useful. Each failure is a different way for a *correct* readout to
+mislead, which is why all three are kept.
+
+**Pass 1 (P16.8b) — it answered only the dialled branch.** With Abstain ticked it still previewed what the
+dial would do, promising a result Submit was not going to produce. Fixed by noticing that
+`ComputeReserveVoteOutcome` over the ballots *without* the player already **is** the abstention outcome —
+no new maths, just the right call (§39.16 rule 6).
+
+**Pass 2 (P16.8j) — it showed one sample of a range.** At a real vote it read `85.38%` (dialled) against
+`85.79%` (abstaining), and the developer concluded, reasonably, that the choice was irrelevant. Both
+figures were true; the dial simply happened to sit at **84%**, near the other holders' **85.79%** average,
+so the sample landed where the branches barely differ. The same ballot at the band bounds moves the close
+between **83.34%** and **89.01%** — a ~6-point reach on a 22.67% holding.
+
+> **When a preview exists to support a decision, show the range the decision spans. A single evaluated
+> point is indistinguishable from a constant.**
+
+Both bounds are produced by calling the resolver with the player's ballot at each band bound rather than
+averaging locally, so the clamp lands exactly where `CloseCompanyVote` will put it.
+
+**Pass 3 (P16.8k) — the one number that could never move was the one being read as the answer.** Adding the
+span did not fix the report: the line still ended `(Now 83.79%.)`, and *"now"* is the company's currently
+applied target, which by definition cannot change until the vote closes. Sitting at the end of a sentence
+whose subject was an outcome, it read as the outcome — identical in both screenshots, "not varying even in
+the decimals", while the figures that *did* vary sat mid-sentence.
+
+The final layout gives the current value its own line, named as the starting point, and lays the two
+branches out **identically** with `»` marking the selected one:
+
+```
+Reserve target now: 83.79% SC.  Other holders have cast 77 % of the votes, averaging 85.79% SC.
+   » vote 84%  →  closes at 85.38% SC
+     abstain   →  closes at 85.79% SC — the other holders decide
+Your 22.67 % can move the close anywhere between 83.34% and 89.01%.
+```
+
+> **A number that cannot change must never share a line with one that can. Put the constant somewhere the
+> eye reads as context, or it becomes the answer.**
+
+Both branches are shown regardless of the toggle, so toggling changes only the emphasis and never the
+information — **the comparison IS the decision, so hiding half of it defeats the control.**
+
+**A consequence worth recording: the ballot dials are locked but NOT blanked** — the opposite of the policy
+panel (§41.4), using the same widgets. P16.8b blanked them on the policy panel's reasoning (*"a greyed 84%
+reads as a promise to send 84%"*), but that reasoning does not survive a two-branch preview: the `vote N%`
+line is one half of the comparison, so wiping `N` the moment the player considers abstaining destroys the
+number they are weighing it against. The `»` marker states which branch is live, leaving nothing for a
+stale value to imply. **The same control needs opposite treatment in the two panels, because what the
+surrounding readout says about it differs.**
+
+### 41.4a — The policy panel hides while a ballot is being asked for (P16.8g)
+
+While *this* company's vote is holding the game, the Vote Policy panel is not rendered at all. It answers
+*"what should be cast when I'm not here"* — a question nobody is asking at the exact moment the simulation
+stopped to ask the player in person. Showing both put two sets of reserve/payout dials on screen at once,
+the inert greyed pair sitting immediately **above** the live ballot, and the greyed pair is the one the eye
+lands on first. It returns as soon as the ballot is submitted.
+
+### 41.5 — Abstentions have to be visible, or they read as a broken engine (P16.8d)
+
+Only cast ballots were ever recorded, so an abstention left no trace in the scene: after abstaining the
+player could not confirm it had happened, and a *bot's* abstention was equally invisible — even though it is
+the thing that **moved everyone else's weight**, and therefore explains the result more than some of the
+ballots do. The Last Vote Snapshot now lists who sat out and what share of the vote they forfeited, the
+Vote History line carries the player's own participation per vote, and a cast ballot says when it came from
+the standing policy.
+
+This is **derived, not persisted**: holdings are fixed at founding (stock trading is deferred, D-ND8.21),
+so *"held NST and has no ballot in this record"* is exactly the set that abstained — which also means it
+reads correctly on votes closed before the feature shipped, with no `WorldFormatVersion` bump. **If stock
+trading ever lands, this derivation breaks** — the holdings would no longer be the ones the vote saw, and
+the abstention set would have to be persisted at close instead. It is listed here so that phase finds it.
+
+### 41.6 — What the player cannot do, and why
+
+The bots' abstention (`BotAbstainsFromVote`, 15% per bot per vote, independent) has **no cap**, by
+decision: an empty ballot box costs `0.15ⁿ` and is only likely at single-holder companies. A *"at most one
+abstainer"* rule was considered and rejected — measured against the P16.6 run it would have prevented **none**
+of the five observed no-quorum votes, because every one of them was at a company with exactly one bot
+holder. No-quorum is instead handled where it lands: the payout rate falls back to the **category default**
+(P16.7c), never to zero, and the `vote_close` trace row carries `;no_quorum` so the case stays countable.

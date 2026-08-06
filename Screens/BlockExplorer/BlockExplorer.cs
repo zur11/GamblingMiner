@@ -479,11 +479,11 @@ public partial class BlockExplorer : Control
         sb.AppendLine($"MerkleRoot: {block.MerkleRoot}");
         sb.AppendLine($"Nonce: {block.Nonce}");
         sb.AppendLine($"Difficulty: {block.Difficulty:F2}  (~{block.Difficulty:F0} attempts/block)");
-        // OQ-8.2 cosmetic filter: bots are single-address (no ReceiveWallet yet), so their spends
-        // produce change back to the same input address. Hide those transactions from the display
-        // until simplified seeds + address rotation land for bots. Remove this filter when OQ-8.2
-        // is resolved (before referral / rank systems ship).
-        List<Transaction> visible = block.Transactions.Where(t => !IsSelfChangeTransaction(t)).ToList();
+        // Step 16 P16.2f — the OQ-8.2 cosmetic filters are GONE. Every spending participant now carries a
+        // DerivedAddressWallet, so change lands on a fresh address and there is no self-loop left to hide.
+        // The block's transactions are shown exactly as they are on-chain, which is the only reading whose
+        // arithmetic adds up (a hidden change output made a real spend look like it lost coins).
+        List<Transaction> visible = block.Transactions;
         decimal blockFees = visible.Where(t => !t.IsCoinbase).Sum(t => t.Fee);
         sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
             $"Transactions: {visible.Count}  |  Fees collected: {blockFees:F8} BTC"));
@@ -499,9 +499,8 @@ public partial class BlockExplorer : Control
                 foreach (TxInput inp in tx.Inputs)
                     sb.AppendLine($"  {inp.Address}");
             }
-            IReadOnlyList<TxOutput> outs = ExternalOutputs(tx);
-            sb.AppendLine($"Outputs ({outs.Count}):");
-            foreach (TxOutput txOut in outs)
+            sb.AppendLine($"Outputs ({tx.Outputs.Count}):");
+            foreach (TxOutput txOut in tx.Outputs)
                 sb.AppendLine(string.Create(CultureInfo.InvariantCulture, $"  {txOut.Address}  {txOut.Amount:F8} BTC"));
         }
         SetLookupResult(sb.ToString());
@@ -602,30 +601,17 @@ public partial class BlockExplorer : Control
         return days > 0 ? $"{days}d {hours:00}h {mins:00}m" : $"{hours}h {mins:00}m";
     }
 
-    // OQ-8.2 cosmetic filter: hides the entire transaction only when every output goes back to an
-    // input address (no external recipient at all — a pure self-loop). The complementary per-output
-    // filter is ExternalOutputs(), which strips only the change output from transactions that DO have
-    // an external recipient. Remove both methods and all callers once bots have simplified seeds +
-    // DerivedAddressWallet (before referral / rank systems ship).
-    private static bool IsSelfChangeTransaction(Transaction tx)
-    {
-        if (tx.IsCoinbase || tx.Inputs.Count == 0) return false;
-        var inputAddrs = new HashSet<string>(tx.Inputs.Select(i => i.Address));
-        return tx.Outputs.All(o => inputAddrs.Contains(o.Address));
-    }
-
-    // Returns only the outputs that go to an address NOT in the input set, hiding change-to-self
-    // outputs. Coinbase transactions have no inputs so all outputs are returned unchanged.
-    private static IReadOnlyList<TxOutput> ExternalOutputs(Transaction tx)
-    {
-        if (tx.IsCoinbase || tx.Inputs.Count == 0) return tx.Outputs;
-        var inputAddrs = new HashSet<string>(tx.Inputs.Select(i => i.Address));
-        return tx.Outputs.Where(o => !inputAddrs.Contains(o.Address)).ToList();
-    }
+    // Step 16 P16.2f — IsSelfChangeTransaction / ExternalOutputs (the OQ-8.2 cosmetic pair, §29.9) were
+    // DELETED here. They existed only because single-address participants sent change back to the address
+    // they spent from; P16.2c gave every spender a DerivedAddressWallet, so the condition they tested can
+    // no longer occur. Removing them was gated on one check — that no participant still produces a
+    // change-to-self output — which is what surfaced passphrase wallets as the last one (see
+    // NetworkRoot.RegisterPassphraseWallet). If a future participant is ever added WITHOUT a seed, the
+    // honest fix is to give it one, not to reintroduce a filter that makes real spends fail to add up.
 
     private static string BuildLatestTransactionPreview(Block block)
     {
-        List<Transaction> visible = block.Transactions.Where(t => !IsSelfChangeTransaction(t)).ToList();
+        List<Transaction> visible = block.Transactions;
         if (visible.Count == 0) return "Last block tx details: none";
         var sb = new StringBuilder($"Last block txs ({visible.Count}):\n");
         foreach (Transaction tx in visible)
@@ -643,9 +629,8 @@ public partial class BlockExplorer : Control
             {
                 sb.Append($"From: {BlockchainService.CoinbaseSender}\n");
             }
-            IReadOnlyList<TxOutput> outs = ExternalOutputs(tx);
-            sb.Append($"Outputs ({outs.Count}):\n");
-            foreach (TxOutput txOut in outs)
+            sb.Append($"Outputs ({tx.Outputs.Count}):\n");
+            foreach (TxOutput txOut in tx.Outputs)
                 sb.Append(string.Create(CultureInfo.InvariantCulture, $"  {txOut.Address}  {txOut.Amount:F8} BTC\n"));
         }
         return sb.ToString().TrimEnd();

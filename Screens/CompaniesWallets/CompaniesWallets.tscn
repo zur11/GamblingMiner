@@ -1,9 +1,9 @@
 [gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://Screens/BotsBtcWallets/BotsBtcWallets.cs" id="1"]
+[ext_resource type="Script" path="res://Screens/CompaniesWallets/CompaniesWallets.cs" id="1"]
 [ext_resource type="Script" path="res://Scripts/BlockchainPort/Simulation/NetworkRoot.cs" id="2"]
 
-[node name="BotsBtcWallets" type="Control"]
+[node name="CompaniesWallets" type="Control"]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -25,7 +25,7 @@ grow_vertical = 2
 theme_override_constants/margin_left = 40
 theme_override_constants/margin_top = 30
 theme_override_constants/margin_right = 40
-theme_override_constants/margin_bottom = 30
+theme_override_constants/margin_bottom = 50
 
 [node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
 layout_mode = 2

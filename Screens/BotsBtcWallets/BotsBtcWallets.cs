@@ -10,15 +10,41 @@ using UI.StatusBar;
 using UI.NotepadPopup;
 #nullable enable
 
+// Step 16 P16.3a (D-16.7) — this screen used to list TWO populations that share nothing but a registry
+// file: the four casino-miner bots (which bet, bid and mine for the casino) and the 40 non-miner
+// COMPANIES (which are the auction/governance economy). Reading one against the other was noise in both
+// directions, and the Step-14 cast miners had no screen at all.
+//
+// It is now the BASE of three sibling screens, each showing one population:
+//   BotsBtcWallets    — the four casino-miner bots (this class)
+//   CompaniesWallets  — the 40 companies (+ the inactive filter, which only they use)
+//   CastMinerWallets  — the historical cast
+//
+// The detail panel is identical for all three — it already branched on `IsMinerNode` — so it stays here
+// and the subclasses override only WHICH RECORDS to list and what to call them. Three copies of ~450
+// lines of wallet/send/transaction UI would have been the alternative, and the third copy is where such
+// things start to drift apart silently.
 public partial class BotsBtcWallets : Control
 {
 	private SceneManager? _sceneManager;
 	private NetworkRoot _networkRoot = null!;
 
+	// ── The population hooks the three screens differ by ────────────────────────
+	// Listed in the top section (buttons only). Default: the four casino-miner bots.
+	protected virtual IReadOnlyList<BotWalletRecord> MinerPopulation => BotWalletRegistry.MinerBots;
+	// Listed in the bottom section (buttons + an active/inactive dot). Default: none — the companies
+	// screen is the only one that has a holder population, and only they carry the IsActive lifecycle.
+	protected virtual IReadOnlyList<BotWalletRecord> HolderPopulation => [];
+	protected virtual string MinerSectionTitle => "── Casino Miner Bots ──";
+	protected virtual string HolderSectionTitle => "── Holder Wallets ──";
+	protected virtual string NoSelectionPrompt => "Select a wallet from the list.";
+
 	// Bot list
 	private VBoxContainer _minersList = null!;
 	private VBoxContainer _holdersList = null!;
 	private CheckBox _showInactiveCheck = null!;
+	private Label _minersSectionLabel = null!;
+	private HBoxContainer _holdersSectionHeader = null!;
 	private readonly List<(Button btn, BotWalletRecord bot)> _minerButtons = new();
 	private readonly List<(HBoxContainer row, Button btn, Label indicator, BotWalletRecord bot)> _holderRows = new();
 
@@ -90,6 +116,14 @@ public partial class BotsBtcWallets : Control
 		_holdersList = GetNode<VBoxContainer>("%HoldersList");
 		_showInactiveCheck = GetNode<CheckBox>("%ShowInactiveCheck");
 		_showInactiveCheck.Toggled += _ => RefreshHoldersVisibility();
+		// P16.3a — the three screens share one .tscn shape; a section with no population is HIDDEN rather
+		// than left as an empty header, which would read as "loading" or "broken" instead of "not here".
+		_minersSectionLabel = GetNode<Label>("%MinersSectionLabel");
+		_holdersSectionHeader = GetNode<HBoxContainer>("%HoldersSectionHeader");
+		_minersSectionLabel.Text = MinerSectionTitle;
+		GetNode<Label>("%HoldersSectionLabel").Text = HolderSectionTitle;
+		_minersSectionLabel.Visible = MinerPopulation.Count > 0;
+		_holdersSectionHeader.Visible = HolderPopulation.Count > 0;
 
 		_botDetailVBox = GetNode<VBoxContainer>("%BotDetailVBox");
 
@@ -115,7 +149,7 @@ public partial class BotsBtcWallets : Control
 
 	private void BuildBotList()
 	{
-		foreach (BotWalletRecord bot in BotWalletRegistry.MinerBots)
+		foreach (BotWalletRecord bot in MinerPopulation)
 		{
 			var btn = new Button { Text = BuildBotRowText(bot), Alignment = HorizontalAlignment.Left };
 			btn.Pressed += () => SelectBot(bot);
@@ -123,7 +157,7 @@ public partial class BotsBtcWallets : Control
 			_minerButtons.Add((btn, bot));
 		}
 
-		foreach (BotWalletRecord bot in BotWalletRegistry.NonMinerBots)
+		foreach (BotWalletRecord bot in HolderPopulation)
 		{
 			var row = new HBoxContainer();
 			var btn = new Button
@@ -150,7 +184,10 @@ public partial class BotsBtcWallets : Control
 	private string BuildBotRowText(BotWalletRecord bot)
 	{
 		string addr = TruncateAddress(bot.Address);
-		decimal balance = _networkRoot.GetAddressBalanceDetails(bot.Address).confirmedBalance;
+		// Step 16 — the WHOLE wallet, not the base address. Since P16.2 every participant here rotates
+		// change, so a base-only read decays to 0 as the node spends (bot_1 and bot_4 both showed
+		// 0.00000000 BTC holding ~300 and ~249). Shared with the detail panel below so the two agree.
+		decimal balance = _networkRoot.GetNodeWalletTotals(bot.NodeId).spendable;
 		// ND.10g — DEV form ("Mt. Gox (non_miner_7)"): this is a diagnostic list, read beside the traces.
 		// The column was widened from 14 to 34 to fit a company name + its id without ragged wrapping.
 		return string.Create(CultureInfo.InvariantCulture, $"{NetworkRoot.DescribeNodeForDev(bot.NodeId),-34} {addr}  {balance:F8} BTC");
@@ -198,7 +235,7 @@ public partial class BotsBtcWallets : Control
 
 	private void BuildDetailPanel()
 	{
-		_noSelectionLabel = new Label { Text = "Select a bot from the list." };
+		_noSelectionLabel = new Label { Text = NoSelectionPrompt };
 		_botDetailVBox.AddChild(_noSelectionLabel);
 
 		_detailVBox = new VBoxContainer();
@@ -343,8 +380,14 @@ public partial class BotsBtcWallets : Control
 			: $"Holder Wallet  ·  {NetworkRoot.DescribeNodeForDev(bot.NodeId)}";
 		_addressLabel.Text = $"Address: {bot.Address}";
 
-		(decimal confirmed, decimal pendingOut) = _networkRoot.GetAddressBalanceDetails(bot.Address);
-		_confirmedBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Confirmed balance:  {confirmed:F8} BTC");
+		// Step 16 — whole-wallet totals (see BuildBotRowText). The header above still shows the BASE address,
+		// which is the node's identity; this figure is the wallet, so it names the address count when the
+		// two differ — otherwise a reader compares a base address against a total and sees a contradiction.
+		(decimal confirmed, decimal pendingOut) = _networkRoot.GetNodeWalletTotals(bot.NodeId);
+		int addressCount = _networkRoot.GetNodeAddressBook(bot.NodeId).Count;
+		_confirmedBalanceLabel.Text = addressCount > 1
+			? string.Create(CultureInfo.InvariantCulture, $"Wallet balance:     {confirmed:F8} BTC  ({addressCount} addresses)")
+			: string.Create(CultureInfo.InvariantCulture, $"Confirmed balance:  {confirmed:F8} BTC");
 		_pendingOutgoingLabel.Visible = pendingOut > 0m;
 		if (pendingOut > 0m)
 			_pendingOutgoingLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Pending outgoing:   {pendingOut:F8} BTC");

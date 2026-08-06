@@ -14,6 +14,8 @@ public partial class SceneManager : Node
 		MartingaleCalculator,
 		BTCWallet,
 		BotsBtcWallets,
+		CompaniesWallets, // Step 16 P16.3b — split out of BotsBtcWallets
+		CastMinerWallets, // Step 16 P16.3c — the Step-14 cast, previously unlisted anywhere
 		CasinoFinances,
 		FoundersWallets,
 		BotPlayHistory,
@@ -41,6 +43,8 @@ public partial class SceneManager : Node
 		[SceneId.MartingaleCalculator] = "res://Screens/MartingaleCalculatorStandalone/MartingaleCalculatorStandalone.tscn",
 		[SceneId.BTCWallet]            = "res://Screens/BTCWallet/BTCWallet.tscn",
 		[SceneId.BotsBtcWallets]       = "res://Screens/BotsBtcWallets/BotsBtcWallets.tscn",
+		[SceneId.CompaniesWallets]     = "res://Screens/CompaniesWallets/CompaniesWallets.tscn",
+		[SceneId.CastMinerWallets]     = "res://Screens/CastMinerWallets/CastMinerWallets.tscn",
 		[SceneId.CasinoFinances]       = "res://Screens/CasinoFinances/CasinoFinances.tscn",
 		[SceneId.FoundersWallets]      = "res://Screens/FoundersWallets/FoundersWallets.tscn",
 		[SceneId.BotPlayHistory]       = "res://Screens/BotPlayHistory/BotPlayHistory.tscn",

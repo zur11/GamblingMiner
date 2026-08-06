@@ -53,7 +53,14 @@ public partial class NetworkRoot : Node
     // and off the checkpoint DTO onto a FED account (D-15.3/D-15.23 Fork A). Rather than write a migration
     // for a DEV-era save, world-defining banking semantics ride the same clean-reset mechanism. Every LATER
     // plan15 file just joins the delete list below — no further bump for the rest of the plan.
-    private const int WorldFormatVersion = 4;
+    // v5 (Step 16 P16.2e, D-16.3/D-16.4): OQ-8.2 — every bot, company and cast miner gains a seed phrase,
+    // and its base address is now DERIVED from that seed rather than randomly generated. Every one of those
+    // ~74 on-chain identities therefore changes, so an existing chain would reference addresses whose keys
+    // no longer exist anywhere. Note this bump alone is NOT sufficient: bot_wallet_registry.json is an
+    // identity file, deliberately EXEMPT from the delete list below (Ch. 35 §35.1), so it carries its own
+    // RegistryFormatVersion (BotWalletRegistry, P16.2b) — the two must be bumped TOGETHER, and the registry's
+    // is the one that actually regenerates the seeds.
+    private const int WorldFormatVersion = 5;
     private const string WorldVersionPath = "user://world_format_version.txt";
     // Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
     // A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
@@ -111,10 +118,14 @@ public partial class NetworkRoot : Node
     // recorded in `Documentation/PRIVATE_ROADMAP.md`.
     private const decimal BotBidReserveStopBtc = 200m;
     private const decimal BotBidReserveResumeBtc = 300m;
-    // ND.10e (D-ND10e.4) — a bot auto-claims its accrued BTC dividend only once it is worth at least this
-    // multiple of the network fee, so the fee (which is paid OUT OF the dividend) can never eat most of
-    // the payment. See TryAutoClaimBotDividends for the audit that produced the number.
-    private const decimal BotDividendClaimFeeMultiple = 10m;
+    // ND.10e (D-ND10e.4) — RETIRED at Step 16 P16.1a, kept as documentation of a fix that was correct and
+    // insufficient. It batched bot dividend claims by VALUE (send only once the accrual is worth 10× the
+    // fee), which solved the fee waste it was aimed at — 96% of a payment being burned as fee — but never
+    // bounded the claim COUNT, and the count is what the step15 §10 audit then measured at 8.66 tx/block.
+    // SettleCompanyDividendsBtc replaces it with a per-quarter batch, which subsumes both problems: one
+    // transaction, one fee, ~0.2 tx/block. The lesson is the generalizable part — bounding a per-event COST
+    // is not the same as bounding the EVENT RATE, and only the second one protects a shared budget.
+    // private const decimal BotDividendClaimFeeMultiple = 10m;
     // Step 14 ND.5 (D-ND5.3) — a non-miner's tracked donation pool holds the 10 largest qualifying
     // donations (hoisted from ComputeTrackedDonationPool at ND.6a — the self-eviction guard reads it too).
     private const int MaxTrackedDonations = 10;
@@ -242,23 +253,36 @@ public partial class NetworkRoot : Node
     // ReBidProbabilityPercentFor alone shows only the static mode rate and never the growing escalation, so
     // the label sat frozen (e.g. bot_1's tier-5 BitInstant slot displayed a fixed 8% while its actual roll
     // climbed 8→16→24). This is an INSTANCE method so it can resolve the occupant bot from the donor address
-    // (bots are single-address, OQ-8.2) and read the current chain tip; it PEEKS `_stuckBidderSignatures`
+    // (through the node's OWNED address set — bots stopped being single-address at P16.2, so the donor of a
+    // change-funded bid is a derived address) and read the current chain tip; it PEEKS `_stuckBidderSignatures`
     // via the pure PeekStuckEscalationProbabilityPercent (no mutation — a 1 s UI refresh must never stamp it).
     public string ReBidProbabilityLabelForSlot(NonMinerDonationSummary summary, string donorAddress, int tier, int occupiedSlots, bool urgent, int ownBidCount)
     {
+        if (tier == 1) return ExclusionSatisfied;
+
+        // Resolving the occupant comes FIRST since Step 16: the self-eviction guard below needs its owned
+        // address set, not just this slot's donor address.
+        NodeAgent? bot = SharedNodesById.Values.FirstOrDefault(n =>
+            n.WalletAddress == donorAddress || (n.ReceiveWallet?.OwnedAddresses.Contains(donorAddress) ?? false));
+
         // ND.10b (2026-07-22) — the self-eviction guard (D-ND6.7b): a donor holding the SMALLEST slot of a
         // FULL pool won't re-bid the pool at all, so ALL of that donor's slots read "guard" (was a bare
         // "0%" only on the tier-10 slot; a guarded donor's tier-3 slot now reads "guard" too, overriding
-        // "satisfied"). Tier 1 (the leader) stays "satisfied" — never relabelled. Pure-address detection
-        // (bots are single-address, OQ-8.2); matches the pipeline's `ownTiers.Contains(slotsByValue.Count)`.
-        if (tier == 1) return ExclusionSatisfied;
+        // "satisfied"). Tier 1 (the leader) stays "satisfied" — never relabelled.
+        //
+        // Step 16 (2026-07-30) — this compared the smallest slot's donor address against THIS slot's, which
+        // silently stopped matching the pipeline once P16.2 gave bots change rotation: one bidder can now
+        // hold two slots under two different derived addresses, so a bot genuinely guarded (the pipeline's
+        // `ownTiers.Contains(slotsByValue.Count)` reads its OWNED SET) would still be quoted odds here. The
+        // owned set is used where the occupant is a known node; the plain address compare stays as the
+        // fallback for a donor we cannot resolve, which is exactly the old behaviour.
+        string smallestDonor = summary.TrackedDonations.Count > 0
+            ? summary.TrackedDonations.OrderByDescending(d => d.AmountBtc).Last().DonorAddress
+            : string.Empty;
         bool guarded = occupiedSlots >= MaxTrackedDonations
             && summary.TrackedDonations.Count > 0
-            && summary.TrackedDonations.OrderByDescending(d => d.AmountBtc).Last().DonorAddress == donorAddress;
+            && (bot != null ? OwnedAddressSet(bot).Contains(smallestDonor) : smallestDonor == donorAddress);
         if (guarded) return ExclusionGuard;
-
-        NodeAgent? bot = SharedNodesById.Values.FirstOrDefault(n =>
-            n.WalletAddress == donorAddress || (n.ReceiveWallet?.OwnedAddresses.Contains(donorAddress) ?? false));
 
         // ND.10d (2026-07-23) — THE affordability check this label never had. The roll has always been
         // gated by the half-spendable cap (D-ND6.8), but the label only ever computed the ladder rate, so
@@ -280,7 +304,7 @@ public partial class NetworkRoot : Node
         {
             int currentBlockIndex = GetPlayerLatestBlock().Index;
             (int percent, int basePercent, int multiplier, bool capped) escalation =
-                PeekStuckEscalationDetail(summary, bot.NodeId, donorAddress, tier, currentBlockIndex);
+                PeekStuckEscalationDetail(summary, bot.NodeId, OwnedAddressSet(bot), tier, currentBlockIndex);
             // ND.10i suggestion 4 — when the ESCALATION is the binding term, show what it is made of. A bare
             // "40%" cannot be told apart from another tier's "40%" (and after a re-rank stamps every occupant
             // on the same block, equal readings are normal — only the slopes differ), which is exactly how
@@ -306,7 +330,7 @@ public partial class NetworkRoot : Node
             ? OpeningBidFloorBtcAt(tipMs)
             : leadingAmount + RaiseMin(leadingAmount, tipMs);
         decimal fee = NetworkFeePolicy.MedianFeeAt(tipMs);
-        decimal cap = Math.Round(bidder.Blockchain.GetAddressSpendableBalance(bidder.WalletAddress) * MaxBidBalanceFraction, 8);
+        decimal cap = Math.Round(AggregateSpendable(bidder) * MaxBidBalanceFraction, 8);
         return requiredAmount + fee <= cap;
     }
 
@@ -342,9 +366,14 @@ public partial class NetworkRoot : Node
     // ND.10e (D-ND10e.3) — the bots currently RESTING on their reserve guard: entered at ≤ 200 BTC
     // spendable, released only once back at ≥ 300 BTC. In-memory only, exactly like
     // `_stuckBidderSignatures` (and `_lastMinedByNodeId`/`_currentMinerStreak` before it): pure bidding
-    // behavior, not economically meaningful world state, so no checkpoint / pre-genesis / delete-list
-    // work. An app restart re-derives it from the live balances on the next block — the only drift is a
-    // bot sitting between the two thresholds, which restarts un-rested; harmless and self-correcting.
+    // behavior, not economically meaningful world state, so no checkpoint / pre-genesis / delete-list work.
+    //
+    // Step 16 (2026-07-31) — this comment used to end "the only drift is a bot sitting between the two
+    // thresholds, which restarts un-rested; harmless and self-correcting". That was wrong, and bot_4 is
+    // the counter-example: the drift decides who wins companies, and it handed bot_4 six leading bids it
+    // had not earned. The set is now SEEDED FROM THE CHAIN at first read (EnsureReserveGuardSeeded), so a
+    // restart no longer changes any bot's state. Still in-memory, still no persistence — derived, per
+    // ND.10j's precedent.
     private static readonly HashSet<string> _botsRestingOnReserve = [];
 
     // ND.10j (2026-07-28, §14.11) — THE reserve-guard question, as one pure predicate every consumer
@@ -357,13 +386,133 @@ public partial class NetworkRoot : Node
     // "priced out". Predicting the next sweep costs one balance read and cannot disagree with it.
     private static bool IsBotRestingOnReserve(string botNodeId)
     {
+        EnsureReserveGuardSeeded();
         bool resting = _botsRestingOnReserve.Contains(botNodeId);
         if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return resting;
-        decimal spendable = bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress);
+        // Step 16 — WHOLE wallet, not the base address. Reading the base alone made every bid look like it
+        // cost a full ~50 BTC coinbase (the change left the base and landed on a derived address the read
+        // could not see), so three bids drove bot_1's apparent balance 300 → 150 and parked it on the
+        // reserve guard while it actually held 299.9. See OwnedAddressSet.
+        decimal spendable = AggregateSpendable(bot);
         // Hysteresis, unchanged: resting until rebuilt to Resume; entering only at or below Stop. A bot
         // sitting BETWEEN the two thresholds keeps whatever state it already had — which on a cold start
         // is "not resting", the drift D-ND10e.3 documents as harmless and self-correcting.
         return resting ? spendable < BotBidReserveResumeBtc : spendable <= BotBidReserveStopBtc;
+    }
+
+    // Step 16 (2026-07-31) — has the cold-start seed run yet this process? Once-only, like the world's
+    // other lazy statics; the seed must be the FIRST thing to touch `_botsRestingOnReserve`, because an
+    // absent key is indistinguishable from "swept and found biddable".
+    private static bool _reserveGuardSeeded;
+
+    // Step 16 (2026-07-31) — THE COLD-START SEED for the reserve guard, and the other half of a defect
+    // ND.10j only half-closed.
+    //
+    // ND.10j (D-ND10j.3) found that `_botsRestingOnReserve` is empty at process start and fixed the
+    // SYMPTOM it was chasing — a resting bot advertising a percentage before the first mined block — by
+    // moving the hysteresis into IsBotRestingOnReserve over the LIVE balance. What it could not fix that
+    // way is the hysteresis's own memory: a bot between the two thresholds restarts un-rested, because
+    // "not in the set" reads as "not resting". D-ND10e.3 recorded that as "harmless and self-correcting".
+    //
+    // It is not harmless. Measured 2026-07-31: bot_4 peaked at 250 BTC and NEVER reached the 300 resume
+    // threshold, so under an unbroken run it should have stayed resting from genesis onward — every bot is
+    // born resting, since they all start at 0, which is <= Stop, and release costs a full 300. A rebuild
+    // wiped the set, 249 > 200 passed the un-rested branch, and bot_4 went on to take the leading bid in
+    // SIX auctions — three of them contested by the player. A drift that decides who owns which company is
+    // not bookkeeping drift.
+    //
+    // The fix follows ND.10j's own precedent exactly: DERIVE, don't persist. The hysteresis is a pure
+    // function of the balance sequence, and the balance sequence is on the chain — so replay it. State is
+    // decided by the LAST threshold crossing: reached >= Resume ⇒ biddable, fell to <= Stop ⇒ resting,
+    // neither ⇒ resting (born at 0). No BlockchainStateSnapshot field, no checkpoint work, no delete-list
+    // entry, no WorldFormatVersion bump — the running playtest survives, exactly as at ND.10j.
+    //
+    // One pass over the chain for all four bots at once. It also PRINTS what it derived: this state has
+    // been invisible since ND.10e, which is the only reason a bot could bid for ten blocks against its own
+    // guard without anything saying so (§39.16 rule 2 — a state you cannot observe is one you cannot sign
+    // off), and it is cheap to say out loud once per launch.
+    private static void EnsureReserveGuardSeeded()
+    {
+        if (_reserveGuardSeeded) return;
+        _reserveGuardSeeded = true;
+
+        if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player)) return;
+
+        var owned = new Dictionary<string, HashSet<string>>();
+        var held = new Dictionary<string, Dictionary<(string txId, int vout), (decimal amount, bool isCoinbase, int blockIndex)>>();
+        var resting = new Dictionary<string, bool>();
+        foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
+        {
+            if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
+            owned[record.NodeId] = OwnedAddressSet(bot);
+            held[record.NodeId] = [];
+            resting[record.NodeId] = true; // born holding 0 BTC, which is <= Stop
+        }
+        if (owned.Count == 0) return;
+
+        foreach (Block block in player.Blockchain.Chain)
+        {
+            foreach (Transaction tx in block.Transactions)
+            {
+                foreach ((string nodeId, HashSet<string> addresses) in owned)
+                {
+                    var utxos = held[nodeId];
+                    foreach (TxInput input in tx.Inputs)
+                    {
+                        utxos.Remove((input.Source.PrevTxId, input.Source.Vout));
+                    }
+                    if (!tx.IsSpendable) continue; // the genesis coinbase, permanently unspendable
+                    for (int vout = 0; vout < tx.Outputs.Count; vout++)
+                    {
+                        if (addresses.Contains(tx.Outputs[vout].Address))
+                            utxos[(tx.TransactionId, vout)] = (tx.Outputs[vout].Amount, tx.IsCoinbase, block.Index);
+                    }
+                }
+            }
+
+            // Evaluate the guard at every block, exactly as the per-block sweep would have.
+            foreach (string nodeId in owned.Keys)
+            {
+                decimal spendable = 0m;
+                foreach ((decimal amount, bool isCoinbase, int blockIndex) utxo in held[nodeId].Values)
+                {
+                    if (utxo.isCoinbase && block.Index - utxo.blockIndex < BlockchainService.CoinbaseMaturity)
+                        continue; // immature coinbase — matches GetSpendableUtxos
+                    spendable += utxo.amount;
+                }
+                resting[nodeId] = resting[nodeId]
+                    ? spendable < BotBidReserveResumeBtc
+                    : spendable <= BotBidReserveStopBtc;
+            }
+        }
+
+        foreach ((string nodeId, bool isResting) in resting)
+        {
+            if (isResting) _botsRestingOnReserve.Add(nodeId);
+        }
+
+        GD.Print("[ReserveGuard] Cold-start state re-derived from the chain (stop "
+                 + BotBidReserveStopBtc.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)
+                 + " / resume "
+                 + BotBidReserveResumeBtc.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)
+                 + " BTC): "
+                 + string.Join("  ", resting.Select(kv => $"{kv.Key}={(kv.Value ? "RESTING" : "biddable")}")));
+    }
+
+    // Step 16 (2026-07-31) — the tripwire for the SHAPE of the bot_4 defect rather than its cause: a bid
+    // that reaches the broadcast while its bidder is resting. The pipeline already excludes resting bots
+    // (ExclusionReserve), so this can only fire if a future caller reaches the bid builder down some path
+    // that skips BuildBotPoolOpportunities — which is precisely how a guard quietly stops guarding. Same
+    // reflex as AssertEscalationSlopesAreOrdered and P15.9's clamp tripwire: an invariant that lives only
+    // in prose is an invariant nobody checks.
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void AssertBidderIsNotRestingOnReserve(string botNodeId)
+    {
+        if (IsBotRestingOnReserve(botNodeId))
+        {
+            GD.PrintErr($"[ReserveGuard] {botNodeId} reached the bid broadcast while RESTING on its BTC "
+                        + "reserve — the guard was bypassed. See EnsureReserveGuardSeeded.");
+        }
     }
 
     // ND.10e — the reserve guard's edge-triggered sweep, run once per block beside
@@ -386,8 +535,15 @@ public partial class NetworkRoot : Node
     // now a per-pool FILTER rather than a walk terminator, and every surviving pool rolls, instead of only
     // the spread-wide-first one (D-ND6.6, retired: a pool the walk never reached had a structurally
     // unreachable probability — the ND.10b BitInstant/BitPaid finding, step14 plan §14.4).
+    //
+    // Step 16 (2026-07-30) — takes the bot's OWNED ADDRESS SET, not its base address. A bot funding a bid
+    // from a change UTXO signs with that derived address, so the tracked donation records it as the donor
+    // (§30.9: an address is a key, not an identity — the 2026-07-14 player incident, now reachable for bots
+    // because P16.2 gave them change rotation). Matching on the base alone, a bot would stop recognising its
+    // OWN slots: ownSlotCount 0 ⇒ "unparticipated" ⇒ probability 100 ⇒ it bids against its own leading bid,
+    // and both the satisfied rule and the self-eviction guard silently stop applying.
     private static List<BotPoolOpportunity> BuildBotPoolOpportunities(
-        IEnumerable<NonMinerDonationSummary> pools, string botAddress, string botNodeId,
+        IEnumerable<NonMinerDonationSummary> pools, IReadOnlySet<string> botAddresses, string botNodeId,
         decimal fee, decimal bidBudgetCap, long nowMs, int currentBlockIndex)
     {
         var opportunities = new List<BotPoolOpportunity>();
@@ -400,7 +556,7 @@ public partial class NetworkRoot : Node
             var ownTiers = new List<int>();
             for (int i = 0; i < slotsByValue.Count; i++)
             {
-                if (slotsByValue[i].DonorAddress == botAddress) ownTiers.Add(i + 1);
+                if (botAddresses.Contains(slotsByValue[i].DonorAddress)) ownTiers.Add(i + 1);
             }
 
             int ownSlotCount = ownTiers.Count;
@@ -436,7 +592,7 @@ public partial class NetworkRoot : Node
                     int mode = SumTwoLowestReBidProbabilities(
                         ownTiers, slotsByValue.Count, IsAuctionInUrgencyWindow(target.WindowCloseUnixMs, nowMs), ownSlotCount);
                     probabilityPercent = ownSlotCount == 1
-                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(target, botNodeId, botAddress, bestTier, currentBlockIndex))
+                        ? Math.Max(mode, PeekStuckEscalationProbabilityPercent(target, botNodeId, botAddresses, bestTier, currentBlockIndex))
                         : mode;
                 }
                 if (probabilityPercent <= 0) exclusion = ExclusionSatisfied; // defensive — the rules above already cover every all-0 case
@@ -494,10 +650,10 @@ public partial class NetworkRoot : Node
         {
             result[record.NodeId] = [];
             if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
-            decimal spendable = bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress);
+            decimal spendable = AggregateSpendable(bot);
             decimal cap = Math.Round(spendable * MaxBidBalanceFraction, 8);
             List<BotPoolOpportunity> biddable =
-                BuildBotPoolOpportunities(recruitable, bot.WalletAddress, record.NodeId, fee, cap, tipMs, blockIndex)
+                BuildBotPoolOpportunities(recruitable, OwnedAddressSet(bot), record.NodeId, fee, cap, tipMs, blockIndex)
                     .Where(o => o.Exclusion == null)
                     .ToList();
             if (biddable.Count > 0) byBot[record.NodeId] = biddable;
@@ -768,7 +924,7 @@ public partial class NetworkRoot : Node
     // present but carries a DIFFERENT signature still stamps `currentBlockIndex`, because that is an
     // observed, exact edge this process actually saw and must not be overridden by an estimate.
     private static (int percent, int basePercent, int multiplier, bool capped) PeekStuckEscalationDetail(
-        NonMinerDonationSummary target, string botNodeId, string botAddress, int bestTier, int currentBlockIndex)
+        NonMinerDonationSummary target, string botNodeId, IReadOnlySet<string> botAddresses, int bestTier, int currentBlockIndex)
     {
         if (bestTier <= 1) return (0, 0, 0, false);
         int sinceBlockIndex;
@@ -780,7 +936,7 @@ public partial class NetworkRoot : Node
         }
         else
         {
-            sinceBlockIndex = SeedStuckSinceBlockIndex(target, botAddress, bestTier, currentBlockIndex);
+            sinceBlockIndex = SeedStuckSinceBlockIndex(target, botAddresses, bestTier, currentBlockIndex);
         }
         return EscalatedStuckDetail(bestTier, currentBlockIndex - sinceBlockIndex);
     }
@@ -802,13 +958,13 @@ public partial class NetworkRoot : Node
     // why the in-memory signal exists at all — the ND.10a revision) and this only ever applies to
     // history from BEFORE the process started. Over-estimating a long-standing lone occupant's pressure
     // is strictly closer to the truth than the reset it replaces, which under-estimated it to zero.
-    private static int SeedStuckSinceBlockIndex(NonMinerDonationSummary target, string botAddress, int bestTier, int currentBlockIndex)
+    private static int SeedStuckSinceBlockIndex(NonMinerDonationSummary target, IReadOnlySet<string> botAddresses, int bestTier, int currentBlockIndex)
     {
         List<TrackedDonation> slotsByValue = target.TrackedDonations.OrderByDescending(d => d.AmountBtc).ToList();
         // Both callers derive `bestTier` from this same value-descending order, so the slot at that tier
         // must belong to this bot. Checking it makes the seed refuse to guess from a stale or mismatched
         // view (it would otherwise silently date the escalation from another donor's slot).
-        if (bestTier > slotsByValue.Count || slotsByValue[bestTier - 1].DonorAddress != botAddress)
+        if (bestTier > slotsByValue.Count || !botAddresses.Contains(slotsByValue[bestTier - 1].DonorAddress))
         {
             return currentBlockIndex; // no escalation, rather than one built on the wrong slot
         }
@@ -840,8 +996,8 @@ public partial class NetworkRoot : Node
         return fallbackBlockIndex;
     }
 
-    private static int PeekStuckEscalationProbabilityPercent(NonMinerDonationSummary target, string botNodeId, string botAddress, int bestTier, int currentBlockIndex)
-        => PeekStuckEscalationDetail(target, botNodeId, botAddress, bestTier, currentBlockIndex).percent;
+    private static int PeekStuckEscalationProbabilityPercent(NonMinerDonationSummary target, string botNodeId, IReadOnlySet<string> botAddresses, int bestTier, int currentBlockIndex)
+        => PeekStuckEscalationDetail(target, botNodeId, botAddresses, bestTier, currentBlockIndex).percent;
 
     // Fix B (ND.10a, 2026-07-22) — the per-block signature sweep. The escalation was previously refreshed
     // ONLY when a bot's pipeline SELECTED a pool, so a bot busy seeding fresh pools never updated the signal
@@ -865,11 +1021,11 @@ public partial class NetworkRoot : Node
             foreach (BotWalletRecord record in BotWalletRegistry.MinerBots)
             {
                 if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? bot)) continue;
-                string botAddress = bot.WalletAddress;
+                HashSet<string> botAddresses = OwnedAddressSet(bot); // Step 16 — a change-funded bid donates from a derived address
                 int ownSlotCount = 0, bestTier = 0;
                 for (int i = 0; i < slotsByValue.Count; i++)
                 {
-                    if (slotsByValue[i].DonorAddress != botAddress) continue;
+                    if (!botAddresses.Contains(slotsByValue[i].DonorAddress)) continue;
                     ownSlotCount++;
                     if (bestTier == 0) bestTier = i + 1;
                 }
@@ -891,7 +1047,7 @@ public partial class NetworkRoot : Node
                     // block — only the single-slot case needs a real seed.
                     _stuckBidderSignatures[key] = ownSlotCount >= 2
                         ? (signature, currentBlockIndex)
-                        : (signature, SeedStuckSinceBlockIndex(target, botAddress, bestTier, currentBlockIndex));
+                        : (signature, SeedStuckSinceBlockIndex(target, botAddresses, bestTier, currentBlockIndex));
                 }
                 else if (recorded.signature != signature)
                 {
@@ -1058,7 +1214,7 @@ public partial class NetworkRoot : Node
         ApplyStateFromSnapshot(savedState);
         NormalizeGenesisAcrossNodes();
         EnsureSecondBlockBootstrapPendingTx();
-        RescanFounderReceiveWallets(); // Step 8.2 — position founders' fresh-coinbase frontier from the chain
+        RescanDerivedReceiveWallets(); // Step 8.2 — position founders' fresh-coinbase frontier from the chain
         // The four casino miner-bots' governance identities (band / market category / greed) are drawn HERE,
         // at world creation, rather than lazily at the first company vote — so the stances are printed and
         // committed from the world's very first launch (developer request ahead of the P15.8 run) instead of
@@ -1089,7 +1245,7 @@ public partial class NetworkRoot : Node
                 // address, but RotateCoinbaseAddress = false keeps every mined reward on the base address (coinbase
                 // spread is a Satoshi-only trait). The player's wallet becomes multi-address only by spending: each
                 // send's change lands on a fresh derived address. addr(0) == BaseAddress, so existing balances and
-                // the chain rescan (RescanFounderReceiveWallets) are untouched.
+                // the chain rescan (RescanDerivedReceiveWallets) are untouched.
                 node.ReceiveWallet = new DerivedAddressWallet(seedPhrase);
                 node.RotateCoinbaseAddress = false;
             }
@@ -1103,7 +1259,10 @@ public partial class NetworkRoot : Node
             // Bot nodes: registry (authoritative) → saved snapshot (migration fallback) → fresh random wallet.
             BotWalletRecord? botRecord = BotWalletRegistry.GetBot(nodeId);
             if (botRecord?.HasFullWallet == true)
+            {
                 node = new(nodeId, botRecord.Address, botRecord.SigningPublicKeyBase64!, botRecord.SigningPrivateKeyBase64!, botRecord.Secp256k1PublicKeyBase64!);
+                AttachDerivedWalletIfSeeded(node, botRecord);
+            }
             else if (savedState?.NodeWallets?.TryGetValue(nodeId, out NodeWalletSnapshot? wallet) == true && wallet?.IsComplete() == true)
                 node = new(nodeId, wallet.Address, wallet.SigningPublicKeyBase64, wallet.SigningPrivateKeyBase64, wallet.Secp256k1PublicKeyBase64);
             else
@@ -1112,6 +1271,29 @@ public partial class NetworkRoot : Node
 
         SharedNodesById[nodeId] = node;
         return node;
+    }
+
+    // Step 16 P16.2c (OQ-8.2, D-16.3/5) — the single promotion point from "single-address participant" to
+    // "full UTXO citizen". Every caller routes through here, and the test is ALWAYS `record.HasSeed`,
+    // NEVER the node's kind (D-16.6 as amended by D-16.17): a casino-miner bot, a company and a cast miner
+    // are the same case, and a future ghost that gains a seed becomes the same case for free — which is
+    // what keeps §6.1's ghost typology implementable without reopening this decision.
+    //
+    // RotateCoinbaseAddress stays FALSE: coinbase address non-reuse remains a Satoshi-only trait (Step 8,
+    // D0). A seeded node mines to its base address and becomes multi-address only by SPENDING — each
+    // send's change lands on a fresh derived address, exactly as the player/casino/Hal/Hearn already do.
+    //
+    // Because P16.2a derives the record's Address from the same seed, addr(0) == node.WalletAddress here,
+    // matching every other seeded node in the project (the combination this project has actually run).
+    private static void AttachDerivedWalletIfSeeded(NodeAgent node, BotWalletRecord record)
+    {
+        if (!record.HasSeed)
+        {
+            return; // pre-Step-16 identity: behaves exactly as before (§39.16 rule 5's sentinel default)
+        }
+
+        node.ReceiveWallet = new DerivedAddressWallet(record.SeedPhrase);
+        node.RotateCoinbaseAddress = false;
     }
 
     private static void RegisterFounderNode(FounderWalletState? founder)
@@ -1134,7 +1316,7 @@ public partial class NetworkRoot : Node
         // single base address (coinbase spread stays Satoshi-only), and they become multi-address only when
         // they SEND (change → fresh address). Hal mines + receives E4; Mike Hearn makes one outgoing tx (E6b
         // Hearn → Satoshi 32.51, an exact-match send → no change, so rotation is inert today but kept for
-        // consistency/future-proofing). The frontier is positioned from the chain by RescanFounderReceiveWallets().
+        // consistency/future-proofing). The frontier is positioned from the chain by RescanDerivedReceiveWallets().
         node.ReceiveWallet = new DerivedAddressWallet(seed);
         if (founder.FounderId != "satoshi")
         {
@@ -1275,9 +1457,7 @@ public partial class NetworkRoot : Node
     private static Transaction? BuildAndBroadcastUtxoSpend(NodeAgent sender, string recipientAddress, decimal amount, decimal fee, string? deterministicSalt, string? memo = null)
     {
         decimal need = amount + fee;
-        HashSet<string> owned = sender.ReceiveWallet != null
-            ? new HashSet<string>(sender.ReceiveWallet.OwnedAddresses) { sender.WalletAddress }
-            : new HashSet<string> { sender.WalletAddress };
+        HashSet<string> owned = OwnedAddressSet(sender);
 
         IReadOnlyList<(OutPoint outpoint, string address, decimal amount)> available = sender.Blockchain.GetSpendableUtxos(owned);
         List<(OutPoint outpoint, string address, decimal amount)>? chosen = SelectUtxos(available, need);
@@ -2104,6 +2284,75 @@ public partial class NetworkRoot : Node
     // absorb (dividends cut) vs. what the company's own SC reserve absorbs.
     public const string CompanyVoteKindShortfall = "shortfall";
 
+    // ---- Step 16 P16.4a (D-16.8) — the three axes that make a ballot a DRAW instead of a constant -------
+    //
+    // The step15 §10 audit (F1) measured what a purely persona-driven ballot produces: `BuildBotBallot` was
+    // a pure function of (persisted preference, company state), both constant between votes, so 517 votes
+    // produced ~2 outcome changes and the PLAYER was the only source of variance in the whole system.
+    //
+    // These axes do not add opinions — they add REACTION. Each has a distinct mechanical job, chosen so no
+    // two overlap (the existing band/market/greed axes already cover "what do I want" and "how much do I
+    // want paid out"):
+    //
+    //   Conviction   — HOW HARD the bot reacts to everything below (scales the whole drift sum).
+    //   RiskAversion — how much the DEFENSIVE signals weigh (FBI heat, an unpaid installment).
+    //   Horizon      — WHICH WAY it reads a price move: short-horizon bots FOLLOW the momentum, long-horizon
+    //                  bots FADE it. This is what makes two bots disagree about the same market.
+    //
+    // Drawn per world as distinct 4-permutations (the greed precedent), and defaulting to EMPTY so an
+    // already-drawn world is backfilled rather than left stuck (§39.16 rule 5).
+
+    public const string ConvictionSteadfast = "steadfast";   // barely moves off its stance
+    public const string ConvictionMeasured = "measured";
+    public const string ConvictionResponsive = "responsive";
+    public const string ConvictionReactive = "reactive";     // swings hard on any signal
+    private static readonly string[] ConvictionOrder =
+        [ConvictionSteadfast, ConvictionMeasured, ConvictionResponsive, ConvictionReactive];
+
+    public const string RiskBold = "bold";                   // shrugs off heat and shortfalls
+    public const string RiskSteady = "steady";
+    public const string RiskCautious = "cautious";
+    public const string RiskFearful = "fearful";             // dumps SC at the first federal file
+    private static readonly string[] RiskOrder = [RiskBold, RiskSteady, RiskCautious, RiskFearful];
+
+    public const string HorizonTrader = "trader";            // follows the move hardest
+    public const string HorizonShort = "short_term";
+    public const string HorizonLong = "long_term";
+    public const string HorizonGenerational = "generational"; // fades the move hardest
+    private static readonly string[] HorizonOrder = [HorizonTrader, HorizonShort, HorizonLong, HorizonGenerational];
+
+    // Multiplier on the summed drift. Steadfast ≈ the pre-P16.4 behaviour (nearly its bare stance), so the
+    // old constant ballot survives as ONE of four temperaments rather than as the only one — the same shape
+    // P15.4c gave greed. *Calibration knobs.*
+    private static decimal ConvictionDriftMultiplier(string conviction) => conviction switch
+    {
+        ConvictionReactive => 1.5m,
+        ConvictionResponsive => 1.0m,
+        ConvictionMeasured => 0.6m,
+        _ => 0.25m, // steadfast
+    };
+
+    // Weight on the DEFENSIVE drift terms only (FBI heat, pending/unrecoverable shortfall).
+    private static decimal RiskAversionWeight(string risk) => risk switch
+    {
+        RiskFearful => 1.5m,
+        RiskCautious => 1.0m,
+        RiskSteady => 0.6m,
+        _ => 0.25m, // bold
+    };
+
+    // SIGNED weight on the price-momentum term: positive = FOLLOW the move (a rising BTC price argues for
+    // holding less SC), negative = FADE it (a rally is when a long-horizon holder takes profits INTO the
+    // stable asset). The sign is the whole point — it is what makes two bots read one market oppositely,
+    // which no amount of tuning a single-signed term can produce.
+    private static decimal HorizonMomentumWeight(string horizon) => horizon switch
+    {
+        HorizonTrader => 1.0m,
+        HorizonShort => 0.5m,
+        HorizonLong => -0.5m,
+        _ => -1.0m, // generational
+    };
+
     // ---- Step 15 P15.4b (D-15.13) — the bot GREED axis --------------------------------------------------
 
     public const string GreedNotSoGreedy = "not_so_greedy";
@@ -2524,7 +2773,7 @@ public partial class NetworkRoot : Node
 
         if (_botGovernancePreferences.Count >= minerBots.Count)
         {
-            BackfillGreedPreferences();
+            BackfillMissingStances();
             return;
         }
 
@@ -2533,16 +2782,28 @@ public partial class NetworkRoot : Node
         // P15.4b — greed is drawn as a distinct permutation too, so with four bots all four stances are
         // always represented exactly once: every world has one of each, and which bot holds which changes.
         string[] greeds = (string[])GreedOrder.Clone();
+        // P16.4a — the three reaction axes, drawn the same way. With four bots and four stances each, every
+        // world contains one of each temperament, so the SPREAD of behaviour is guaranteed while WHO holds
+        // which is not — the property that makes two worlds feel different without either feeling broken.
+        string[] convictions = (string[])ConvictionOrder.Clone();
+        string[] risks = (string[])RiskOrder.Clone();
+        string[] horizons = (string[])HorizonOrder.Clone();
         ShuffleInPlace(bands);
         ShuffleInPlace(markets);
         ShuffleInPlace(greeds);
+        ShuffleInPlace(convictions);
+        ShuffleInPlace(risks);
+        ShuffleInPlace(horizons);
         for (int i = 0; i < minerBots.Count; i++)
         {
             _botGovernancePreferences[minerBots[i].NodeId] = new BotGovernancePreference
             {
                 CurrencyBandPreference = bands[i % bands.Length],
                 MarketCategoryPreference = markets[i % markets.Length],
-                GreedPreference = greeds[i % greeds.Length]
+                GreedPreference = greeds[i % greeds.Length],
+                ConvictionPreference = convictions[i % convictions.Length],
+                RiskAversionPreference = risks[i % risks.Length],
+                HorizonPreference = horizons[i % horizons.Length]
             };
         }
 
@@ -2574,6 +2835,13 @@ public partial class NetworkRoot : Node
             }
 
             string greed = string.IsNullOrEmpty(pref.GreedPreference) ? GreedAlmostGreedy : pref.GreedPreference;
+            // P16.4a — the three reaction axes, printed with their DERIVED effects for the same reason the
+            // greed line already carries its multipliers: the stance NAMES are flavour, the numbers are what
+            // shows up in the ballots being watched. `momentum ×+1.0` vs `×−1.0` is the line that explains
+            // why two bots move opposite ways in the same quarter.
+            string conviction = string.IsNullOrEmpty(pref.ConvictionPreference) ? ConvictionMeasured : pref.ConvictionPreference;
+            string risk = string.IsNullOrEmpty(pref.RiskAversionPreference) ? RiskSteady : pref.RiskAversionPreference;
+            string horizon = string.IsNullOrEmpty(pref.HorizonPreference) ? HorizonShort : pref.HorizonPreference;
             // P15.9b — the band column is a GLOBAL stance, not a ballot: since P15.9a it is projected into
             // each company's own band before it is cast, so printing it bare would name a number that never
             // appears in any vote (§39.16 rule 6 — this printout exists to be read against observed
@@ -2593,6 +2861,12 @@ public partial class NetworkRoot : Node
                 ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB3"),
                 ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB4"),
                 ProjectStanceIntoBand(BandDefaultScPercent(pref.CurrencyBandPreference), "CB5")));
+            GD.Print(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "         reacts: conviction {0,-11} (drift ×{1:0.00}) · risk {2,-8} (defensive ×{3:0.00}) · horizon {4,-13} (momentum ×{5:+0.0;-0.0} — {6} the move)",
+                conviction, ConvictionDriftMultiplier(conviction),
+                risk, RiskAversionWeight(risk),
+                horizon, HorizonMomentumWeight(horizon),
+                HorizonMomentumWeight(horizon) >= 0m ? "follows" : "fades"));
         }
     }
 
@@ -2601,24 +2875,46 @@ public partial class NetworkRoot : Node
     // (the Count >= minerBots.Count early-return above never re-draws). Backfilling only the empty slots
     // keeps the already-meaningful band/market choices untouched. This is why the field's default is ""
     // rather than "almost_greedy": a real drawn value has to be distinguishable from an absent one.
-    private static void BackfillGreedPreferences()
+    //
+    // P16.4a generalized it: greed was the first axis to need this, the three reaction axes were the second
+    // through fourth, and writing a fourth near-identical method would have been the moment the pattern
+    // should have been named. One table of (name, read, write, order) now covers every axis, so the NEXT
+    // one is a row rather than a method.
+    private static void BackfillMissingStances()
     {
-        var missing = _botGovernancePreferences.Values
-            .Where(p => string.IsNullOrEmpty(p.GreedPreference))
-            .ToList();
-        if (missing.Count == 0)
+        (string axis, Func<BotGovernancePreference, string> read, Action<BotGovernancePreference, string> write, string[] order)[] axes =
+        [
+            ("greed", p => p.GreedPreference, (p, v) => p.GreedPreference = v, GreedOrder),
+            ("conviction", p => p.ConvictionPreference, (p, v) => p.ConvictionPreference = v, ConvictionOrder),
+            ("risk", p => p.RiskAversionPreference, (p, v) => p.RiskAversionPreference = v, RiskOrder),
+            ("horizon", p => p.HorizonPreference, (p, v) => p.HorizonPreference = v, HorizonOrder),
+        ];
+
+        var filled = new List<string>();
+        foreach ((string axis, Func<BotGovernancePreference, string> read, Action<BotGovernancePreference, string> write, string[] order) in axes)
         {
-            return;
+            List<BotGovernancePreference> missing = _botGovernancePreferences.Values
+                .Where(p => string.IsNullOrEmpty(read(p)))
+                .ToList();
+            if (missing.Count == 0)
+            {
+                continue;
+            }
+
+            string[] stances = (string[])order.Clone();
+            ShuffleInPlace(stances);
+            for (int i = 0; i < missing.Count; i++)
+            {
+                write(missing[i], stances[i % stances.Length]);
+            }
+
+            filled.Add($"{axis} ×{missing.Count}");
         }
 
-        string[] greeds = (string[])GreedOrder.Clone();
-        ShuffleInPlace(greeds);
-        for (int i = 0; i < missing.Count; i++)
+        if (filled.Count > 0)
         {
-            missing[i].GreedPreference = greeds[i % greeds.Length];
+            PrintBotGovernanceStances($"backfilled: {string.Join(", ", filled)}");
         }
-
-        PrintBotGovernanceStances($"greed backfilled for {missing.Count} bot(s)");
     }
 
     private static void ShuffleInPlace(string[] values)
@@ -2695,6 +2991,13 @@ public partial class NetworkRoot : Node
                     // Quarter end: credit the closing cycle's NST lumps + residual PST drip BEFORE the
                     // new quarter's vote opens (D-ND8.17 — the lump is paid at quarter end).
                     SettleDividendCycleAtQuarterEnd(gov, founding, block);
+                    // Step 16 P16.1a — and PAY the accrued BTC out in ONE multi-output transaction, here
+                    // rather than per holder per block (D-16.1). It must run AFTER the line above (which is
+                    // what credits the closing quarter's claimables) and BEFORE TryBankQuarterlyRepayment
+                    // below, whose comment's "the closing quarter's obligations are already met" is only
+                    // true once the dividends have actually been sent — previously they trickled out across
+                    // the whole quarter, so nothing enforced that ordering.
+                    SettleCompanyDividendsBtc(gov, block);
                     // P15.6a — roll the SC throughput window. NOTE (R3, 2026-07-28): this is no longer the
                     // FBI's tolerance basis — that moved to the charter reserve, see FbiToleranceScFor. The
                     // per-quarter inflow is kept because it is an accurate, cheap business-activity metric
@@ -2725,10 +3028,12 @@ public partial class NetworkRoot : Node
             }
 
             // 3) Advance the live dividend cycle: PST daily-drip accrual, then the ND.8b.6 reserve
-            //    conversion (fills the SC reserve BEFORE claims draw on it), then bot auto-claims.
+            //    conversion (fills the SC reserve BEFORE claims draw on it), then the bots' SC payout.
+            //    Step 16 P16.1a — only the SC leg is per-block now; the BTC leg is one batched
+            //    transaction at the quarter close (SettleCompanyDividendsBtc, called above).
             AccrueDailyDrip(gov, founding, block);
             TryConvertCompanyReserves(gov, block);
-            TryAutoClaimBotDividends(gov, block);
+            PayBotScDividends(gov, block);
         }
 
         // Step 15 P15.5 — after the live companies have been processed, because dissolving mutates the
@@ -2747,9 +3052,21 @@ public partial class NetworkRoot : Node
     //    counterparty is the SELECTED BANK (§5.1), with the casino surviving only as the pre-first-bank
     //    fallback. ──
 
-    // Calibration floors (v1): convert only when the SC-side deficit is ≥ 5% of total reserve value AND
-    // the BTC to sell clears a dust/value floor — conversions stay chunky instead of one tiny tx per
-    // inflow, and each conversion is an ORGANIC mempool tx that the fullness-parity budget counts.
+    // Calibration floors (v1): convert only when the SC-side deficit is ≥ 5% of the company's own SC
+    // TARGET, AND the BTC to sell clears a dust/value floor — conversions stay chunky instead of one tiny
+    // tx per inflow, and each conversion is an ORGANIC mempool tx that the fullness-parity budget counts.
+    //
+    // Step 16 P16.7 (2026-07-31) — the fraction is measured against `targetSc`, NOT against `totalValueSc`.
+    // It used to be the latter, which silently made 5% a HARD FLOOR ON THE VOTED TARGET ITSELF: both sides
+    // of the test shared the `totalValueSc` denominator, and since the largest deficit that can ever exist
+    // is `totalValueSc × ReserveScPercent/100` (reached at an empty reserve), any company whose board voted
+    // a target below 5% could never clear the gate on any block, forever — permanently pinned at 0 SC, and
+    // therefore at a permanently 0 SC dividend too (QuarterDividendSc is a % of the reserve). Found in the
+    // P16.6 run: Slush Pool voted 1.87% and had ZERO conversion rows across its whole life, while every
+    // company at ≥ 7% converted normally and Coinwash — sitting at exactly 5.00% — fired on its first
+    // block. The chunkiness intent is preserved, and it is the intent that wanted the target as its
+    // reference all along: "5% of what this company is trying to hold", not "5% of everything it owns".
+    // The governance layer and this one no longer disagree about which targets are real.
     private const decimal ConversionDeficitTriggerFraction = 0.05m;
     private const decimal MinConversionBtc = 0.01m;
 
@@ -2794,7 +3111,7 @@ public partial class NetworkRoot : Node
 
         decimal targetSc = totalValueSc * gov.ReserveScPercent / 100m;
         decimal deficitSc = targetSc - gov.ScReserve;
-        if (deficitSc < totalValueSc * ConversionDeficitTriggerFraction)
+        if (deficitSc < targetSc * ConversionDeficitTriggerFraction)
         {
             return;
         }
@@ -3595,8 +3912,16 @@ public partial class NetworkRoot : Node
         return true;
     }
 
-    // New BTC arriving at a founded company's address this block (its own sends' change excluded) feeds
-    // the D-ND8.18 >30% special-vote trigger. Companies are single-address today (OQ-8.2).
+    // New BTC arriving at a founded company's wallet this block (its own sends' change excluded) feeds
+    // the D-ND8.18 >30% special-vote trigger.
+    //
+    // Step 16 (2026-07-30) — was written against "companies are single-address today (OQ-8.2)", which
+    // P16.2 retired: a company that spends now returns change to a DERIVED address. Both halves move to
+    // the owned set, and the order between them is load-bearing. The self-send skip must come first and
+    // must see derived inputs, because once it does, counting receives across the whole owned set can
+    // never double back and count the company's OWN change as inflow. Getting that backwards would
+    // inflate InflowSinceBaselineBtc, fire spurious >30% special votes, and — wherever the player holds
+    // NST — PAUSE THE GAME for a vote about money that never arrived.
     private static void AccumulateCompanyInflows(Block block)
     {
         foreach (CompanyGovernanceState gov in _companyGovernance.Values)
@@ -3606,10 +3931,13 @@ public partial class NetworkRoot : Node
                 continue;
             }
 
-            string address = founding.NonMinerAddress;
+            HashSet<string> ownedAddresses =
+                SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? companyNode)
+                    ? OwnedAddressSet(companyNode)
+                    : [founding.NonMinerAddress];
             foreach (Transaction tx in block.Transactions)
             {
-                if (tx.IsCoinbase || tx.Inputs.Any(i => i.Address == address))
+                if (tx.IsCoinbase || tx.Inputs.Any(i => ownedAddresses.Contains(i.Address)))
                 {
                     continue;
                 }
@@ -3626,13 +3954,146 @@ public partial class NetworkRoot : Node
 
                 foreach (TxOutput output in tx.Outputs)
                 {
-                    if (output.Address == address)
+                    if (ownedAddresses.Contains(output.Address))
                     {
                         gov.InflowSinceBaselineBtc = Scripts.Finance.Money.Normalize(gov.InflowSinceBaselineBtc + output.Amount);
                     }
                 }
             }
         }
+    }
+
+    // ---- Step 16 P16.4b/c (D-16.8/9/10) — the ballot as a draw ------------------------------------------
+
+    // How far each signal can move a bot's stance, in SC percentage POINTS, before Conviction scales it.
+    // Deliberately small next to the 25-point band width: these are meant to shift an outcome, not to
+    // overwhelm the bot's own identity. *Calibration knobs, like every ND/P15 ladder.*
+    private const decimal MomentumMaxDriftPoints = 18m;
+    private const decimal FbiHeatMaxDriftPoints = 25m;   // the loudest signal: a federal file is existential
+    private const decimal ShortfallDriftPoints = 12m;
+    private const decimal BallotJitterMaxPoints = 3m;
+    private const int MomentumLookbackDays = 90;
+    // P16.4c — how often a bot simply does not show up. This is the cheapest source of "this vote matters":
+    // ComputeReserveVoteOutcome already resolves over ballots ACTUALLY CAST, so an abstention changes every
+    // other holder's relative weight — including the player's.
+    private const int BotAbstentionPercent = 15;
+
+    // A process-stable hash. string.GetHashCode() is randomized per process in .NET, so using it here would
+    // make an open vote's ballots change across a restart — exactly what D-16.9 forbids (ballots are cast at
+    // vote OPEN and persisted; a restart before the close must reproduce them). FNV-1a, 32-bit.
+    private static uint StableHash(string value)
+    {
+        unchecked
+        {
+            uint hash = 2166136261u;
+            foreach (char c in value)
+            {
+                hash ^= c;
+                hash *= 16777619u;
+            }
+
+            return hash;
+        }
+    }
+
+    // Deterministic 0..1 draw for one (company, quarter, bot, purpose) tuple — the seed D-16.9 specifies.
+    private static decimal DeterministicUnit(string companyId, int quarterIndex, string botNodeId, string purpose) =>
+        StableHash($"{companyId}|{quarterIndex}|{botNodeId}|{purpose}") / (decimal)uint.MaxValue;
+
+    // D-16.10 — deterministic, and NEVER on a shortfall vote: that ballot decides whether a bank survives
+    // and who eats the gap, which is not a meeting anyone skips. (It also protects CloseCompanyVote's
+    // shortfall path from resolving with no ballots at all.)
+    private static bool BotAbstainsFromVote(string botNodeId, CompanyGovernanceState gov, string kind)
+    {
+        if (kind == CompanyVoteKindShortfall)
+        {
+            return false;
+        }
+
+        return DeterministicUnit(gov.CompanyId, gov.QuarterIndex, botNodeId, "abstain") * 100m < BotAbstentionPercent;
+    }
+
+    // The BTC price move over the last MomentumLookbackDays, as a fraction clamped to ±1. Null when the
+    // market has no price on either end (pre-Market-Birth), which makes the whole term inert rather than
+    // guessing — the ND.7/D-13.x habit of returning null instead of 0 for "no data".
+    private static decimal? PriceMomentum(long blockTimestampMs)
+    {
+        if (_marketData == null)
+        {
+            return null;
+        }
+
+        DateTime nowLocal = DateTimeOffset.FromUnixTimeMilliseconds(blockTimestampMs).LocalDateTime;
+        decimal? now = _marketData.GetEffectivePriceUsd(nowLocal);
+        decimal? then = _marketData.GetEffectivePriceUsd(nowLocal.AddDays(-MomentumLookbackDays));
+        if (now is not > 0m || then is not > 0m)
+        {
+            return null;
+        }
+
+        return Math.Clamp((now.Value - then.Value) / then.Value, -1m, 1m);
+    }
+
+    // The full ballot computation (D-16.8). Reads ONLY facts a bot could plausibly observe: the market, the
+    // company's own books, and its own temperament.
+    //
+    // Every term is expressed in the GLOBAL stance space and summed BEFORE the projection, never after —
+    // adding a term to an already-projected value would be a category error (the projected number lives in
+    // the company's charter band) and would need its own clamp, quietly re-creating the P15.9 bug where a
+    // ballot could land outside the charter.
+    //
+    // NOT implemented, and the reason is worth keeping: a PEER-ANCHORING term (drift a fraction toward last
+    // quarter's applied result) was designed in §4.3 and dropped here. `gov.ReserveScPercent` is a
+    // BAND-space number; pulling a global stance toward it mixes the two spaces, and inverting the
+    // projection to fix that is machinery for no gain — the momentum term already supplies the slow trend
+    // that peer anchoring was there to create, because BTC prices move continuously.
+    private static decimal ComputeBotReserveBallot(
+        string botNodeId, BotGovernancePreference? pref, CompanyGovernanceState gov, Block block)
+    {
+        string band = pref?.CurrencyBandPreference ?? gov.CurrencyBand;
+        decimal stance = BandDefaultScPercent(band);
+
+        string conviction = string.IsNullOrEmpty(pref?.ConvictionPreference) ? ConvictionMeasured : pref.ConvictionPreference;
+        string risk = string.IsNullOrEmpty(pref?.RiskAversionPreference) ? RiskSteady : pref.RiskAversionPreference;
+        string horizon = string.IsNullOrEmpty(pref?.HorizonPreference) ? HorizonShort : pref.HorizonPreference;
+
+        decimal drift = 0m;
+
+        // 1) PRICE MOMENTUM — the only two-sided term. A rising BTC price argues for holding less SC if you
+        //    follow the move, and for taking profits INTO SC if you fade it; HorizonMomentumWeight carries
+        //    the sign. `-` because a POSITIVE return with a POSITIVE (following) weight means LESS SC.
+        decimal? momentum = PriceMomentum(block.Timestamp);
+        if (momentum.HasValue)
+        {
+            drift -= HorizonMomentumWeight(horizon) * momentum.Value * MomentumMaxDriftPoints;
+        }
+
+        // 2) FBI HEAT — the loop that ties three shipped systems together (investigation meter → board vote
+        //    → SC holdings). A company under a federal file is holding SC its charter cannot justify, and
+        //    the board's answer is to hold less of it. Scaled by the meter's progress toward the flag
+        //    threshold, so a cooling file stops arguing.
+        if (gov.InvestigationScore > 0m && InvestigationFlagThreshold > 0m)
+        {
+            decimal heat = Math.Clamp(gov.InvestigationScore / InvestigationFlagThreshold, 0m, 1m);
+            drift -= RiskAversionWeight(risk) * heat * FbiHeatMaxDriftPoints;
+        }
+
+        // 3) COMPANY HEALTH — an unpaid FED installment is paid in SC, so a bank carrying one wants MORE of
+        //    it. Unrecoverable weighs the same as pending: by then it is the company's survival.
+        if (gov.PendingShortfallSc > 0m || gov.UnrecoverableShortfallSc > 0m)
+        {
+            drift += RiskAversionWeight(risk) * ShortfallDriftPoints;
+        }
+
+        drift *= ConvictionDriftMultiplier(conviction);
+
+        // The projection is the last legality step (D-16.8) — then a small deterministic jitter, clamped
+        // back into the band so the jitter itself can never push a ballot out of the charter.
+        decimal projected = ProjectStanceIntoBand(stance + drift, gov.CurrencyBand);
+        decimal jitter = (DeterministicUnit(gov.CompanyId, gov.QuarterIndex, botNodeId, "jitter") * 2m - 1m)
+            * BallotJitterMaxPoints;
+        (decimal min, decimal max) = BandScPercentBounds(gov.CurrencyBand);
+        return Math.Clamp(Math.Round(projected + jitter, 0, MidpointRounding.AwayFromZero), min, max);
     }
 
     private static void OpenCompanyVote(CompanyGovernanceState gov, CompanyFounding founding, string kind, Block block)
@@ -3661,25 +4122,176 @@ public partial class NetworkRoot : Node
 
             if (holding.HolderId == PlayerNodeId)
             {
-                vote.AwaitingPlayerVote = true;
+                // Step 16 P16.8 (D-16.19) — the standing abstention outranks the pause. Pausing the game to
+                // ask for a ballot the player has already declared they do not want to cast would be the
+                // worst of both: the pause tax P16.5 removed, spent on a vote whose answer is "nothing".
+                if (gov.PlayerAutoAbstain)
+                {
+                    continue;
+                }
+
+                // Step 16 P16.5b (D-16.11/12/13) — the pause is now OPT-IN, per company. With the toggle
+                // off (the default) the standing policy is cast immediately and the game never stops; with
+                // it on, behaviour is exactly as before. Note the SAME rule applies to a shortfall vote:
+                // one toggle per company with a hidden "except shortfall" clause would make the toggle lie.
+                if (gov.PlayerPauseOnVotes)
+                {
+                    vote.AwaitingPlayerVote = true;
+                }
+                else
+                {
+                    vote.Ballots[PlayerNodeId] = BuildPlayerStandingBallot(gov);
+                }
+
                 continue;
             }
 
-            vote.Ballots[holding.HolderId] = BuildBotBallot(holding.HolderId, gov);
+            // P16.4c (D-16.10) — a bot that does not show up casts nothing. ComputeReserveVoteOutcome
+            // already resolves over the ballots actually cast, so this needs no resolver change and it is
+            // what makes every other holder's relative weight (the player's included) move between votes.
+            if (BotAbstainsFromVote(holding.HolderId, gov, kind))
+            {
+                continue;
+            }
+
+            vote.Ballots[holding.HolderId] = BuildBotBallot(holding.HolderId, gov, block);
         }
 
         gov.OpenVote = vote;
+        AssertBotBallotsVary(gov, vote);
         AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "vote_open", kind,
-            vote.AwaitingPlayerVote ? "awaiting_player" : "bots_only");
+            string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0} ballots={1} spread={2:F1}",
+                vote.AwaitingPlayerVote ? "awaiting_player" : "bots_only",
+                vote.Ballots.Count,
+                BallotSpread(vote)));
     }
 
-    // A bot's ballot is a pure function of its persisted preferences + the company's current state:
-    // Currency — its band stance PROJECTED into this company's band (P15.9a / D-15.24: the stance is a
-    // position on a global SC-ness axis, and a ballot outside the company's charter is not a legal vote);
+    // Step 16 P16.5b (D-16.12) — the player's standing ballot, cast on their behalf whenever the pause is
+    // off at this company. Every unconfigured field falls back to the company's CURRENTLY-APPLIED value, so
+    // an untouched policy is a status-quo vote: it participates (which matters — an abstention would change
+    // the other holders' relative weight) without steering anything the player never asked to steer.
+    //
+    // Clamped through exactly the same bounds TryRegisterPlayerVote uses, so a policy stored before a
+    // category or band change can never cast an illegal ballot (the P15.9 failure mode, arriving through a
+    // new door — a stored value outliving the range that made it legal).
+    private static CompanyBallot BuildPlayerStandingBallot(CompanyGovernanceState gov)
+    {
+        (decimal min, decimal max) = BandScPercentBounds(gov.CurrencyBand);
+        decimal reserve = gov.PlayerPolicyReserveScPercent >= 0m ? gov.PlayerPolicyReserveScPercent : gov.ReserveScPercent;
+        decimal payout = gov.PlayerPolicyPayoutRatePercent >= 0m ? gov.PlayerPolicyPayoutRatePercent : gov.QuarterPayoutRatePercent;
+        decimal cut = gov.PlayerPolicyDividendsCutPercent >= 0m
+            ? gov.PlayerPolicyDividendsCutPercent
+            : DefaultShortfallDividendsCutPercent;
+
+        return new CompanyBallot
+        {
+            ReserveScPercentTarget = Math.Clamp(Scripts.Finance.Money.Normalize(reserve), min, max),
+            // MarketShift stays 0: a standing policy must never drift a company's category on its own. That
+            // is a discrete, hard-to-undo decision (and at a bank it is refused outright, D-15.12), so it is
+            // the one control the player has to be present for.
+            MarketShift = 0,
+            PayoutRatePercent = Math.Clamp(Scripts.Finance.Money.Normalize(payout), 0m,
+                DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * 2m),
+            DividendsCutPercent = Math.Clamp(Scripts.Finance.Money.Normalize(cut), 0m, 100m),
+            WasAutoCast = true
+        };
+    }
+
+    // P16.5c — the player's standing policy for this company, resolved exactly as BuildPlayerStandingBallot
+    // resolves it, so the panel's preview and the ballot it previews cannot disagree (§39.16 rule 6). The
+    // `configured` flags let the UI say "status quo (not configured)" rather than showing a number the
+    // player never chose as if they had.
+    public static (bool pauseOnVotes, decimal reserveScPercent, bool reserveConfigured,
+        decimal payoutRatePercent, bool payoutConfigured,
+        decimal dividendsCutPercent, bool cutConfigured, bool autoAbstain) GetPlayerVotePolicy(string nonMinerNodeId)
+    {
+        if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov))
+        {
+            return (false, 0m, false, 0m, false, DefaultShortfallDividendsCutPercent, false, false);
+        }
+
+        CompanyBallot preview = BuildPlayerStandingBallot(gov);
+        return (gov.PlayerPauseOnVotes,
+            preview.ReserveScPercentTarget, gov.PlayerPolicyReserveScPercent >= 0m,
+            preview.PayoutRatePercent, gov.PlayerPolicyPayoutRatePercent >= 0m,
+            preview.DividendsCutPercent, gov.PlayerPolicyDividendsCutPercent >= 0m,
+            gov.PlayerAutoAbstain);
+    }
+
+    // P16.5c — the panel's write path. A negative value CLEARS that field back to "follow the status quo",
+    // which is how the player un-configures a policy without having to guess the company's current number.
+    public static void SetPlayerVotePolicy(string nonMinerNodeId, bool pauseOnVotes,
+        decimal reserveScPercent, decimal payoutRatePercent, decimal dividendsCutPercent,
+        bool autoAbstain = false)
+    {
+        if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov))
+        {
+            return;
+        }
+
+        gov.PlayerAutoAbstain = autoAbstain; // P16.8 (D-16.19)
+        gov.PlayerPauseOnVotes = pauseOnVotes;
+        gov.PlayerPolicyReserveScPercent = reserveScPercent < 0m ? -1m : Scripts.Finance.Money.Normalize(reserveScPercent);
+        gov.PlayerPolicyPayoutRatePercent = payoutRatePercent < 0m ? -1m : Scripts.Finance.Money.Normalize(payoutRatePercent);
+        gov.PlayerPolicyDividendsCutPercent = dividendsCutPercent < 0m ? -1m : Scripts.Finance.Money.Normalize(dividendsCutPercent);
+        // No PersistStateToDisk here: a block is the only commit (Pattern 2). The setting rides the next
+        // block's snapshot like every other governance field.
+    }
+
+    // P16.4d (D-16.18) — the reserve-ballot spread at this vote, in SC percentage points. Written to the
+    // trace on EVERY vote (release-safe) because that is how F1 was found in the first place: not by
+    // watching the game, but by reading a column and noticing it never changed. A column that would have
+    // read 0.0 for 517 consecutive votes is the cheapest possible detector for this whole class of defect.
+    private static decimal BallotSpread(CompanyVote vote)
+    {
+        if (vote.Ballots.Count < 2)
+        {
+            return 0m;
+        }
+
+        decimal min = decimal.MaxValue, max = decimal.MinValue;
+        foreach (CompanyBallot ballot in vote.Ballots.Values)
+        {
+            min = Math.Min(min, ballot.ReserveScPercentTarget);
+            max = Math.Max(max, ballot.ReserveScPercentTarget);
+        }
+
+        return max - min;
+    }
+
+    // P16.4d (D-16.18) — the DEBUG half. §39.16 rule 1 says never let a persisted figure diverge from
+    // reality; this is its sibling for BEHAVIOUR: a system built to feel alive must assert that its output
+    // actually VARIES (D-15.34). Identical ballots are not always a bug — two bots CAN legitimately land on
+    // the same value in a narrow band — so this fires only on the signature of the defect it exists for:
+    // three or more bots, all casting the exact same number, which is what a constant function produces.
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void AssertBotBallotsVary(CompanyGovernanceState gov, CompanyVote vote)
+    {
+        if (vote.Ballots.Count < 3 || BallotSpread(vote) > 0m)
+        {
+            return;
+        }
+
+        GD.PrintErr(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "[Governance] P16.4 tripwire — {0} ({1}): all {2} bot ballots cast the identical reserve target "
+            + "{3:F0}% (band {4}). That is the signature of a ballot that has stopped being a draw: check "
+            + "the drift terms and the jitter seed in ComputeBotReserveBallot.",
+            gov.CompanyId, gov.NonMinerNodeId, vote.Ballots.Count,
+            vote.Ballots.Values.First().ReserveScPercentTarget, gov.CurrencyBand));
+    }
+
+    // A bot's ballot, by field:
+    // Currency — Step 16 P16.4b: NO LONGER a pure function of the persisted stance. The stance is the
+    //   starting point; live drift (price momentum read through the bot's Horizon, FBI heat and an unpaid
+    //   installment read through its RiskAversion, all scaled by its Conviction) moves it, the P15.9a
+    //   projection into this company's charter band stays the last legality step, and a deterministic
+    //   jitter breaks ties. See ComputeBotReserveBallot. It is still DETERMINISTIC — same world, same
+    //   quarter, same ballot (D-16.9) — but no longer CONSTANT, which is what F1 measured;
     // Market — one step toward its preferred category;
     // Payout — the category's default rate scaled by its GREED (P15.4c / D-15.13; the clamp is
     // [0, 2× default] and the ladder spans exactly that); Shortfall — §3.3's greed table (P15.4e).
-    private static CompanyBallot BuildBotBallot(string botNodeId, CompanyGovernanceState gov)
+    private static CompanyBallot BuildBotBallot(string botNodeId, CompanyGovernanceState gov, Block block)
     {
         _botGovernancePreferences.TryGetValue(botNodeId, out BotGovernancePreference? pref);
         // Empty = drawn before greed existed and not yet backfilled; the pre-greed behaviour is the
@@ -3687,8 +4299,11 @@ public partial class NetworkRoot : Node
         string greed = string.IsNullOrEmpty(pref?.GreedPreference) ? GreedAlmostGreedy : pref.GreedPreference;
         return new CompanyBallot
         {
-            ReserveScPercentTarget = ProjectStanceIntoBand(
-                BandDefaultScPercent(pref?.CurrencyBandPreference ?? gov.CurrencyBand), gov.CurrencyBand),
+            // P16.4b/c — the stance is no longer the ballot. Drift (what the world looks like right now)
+            // is added to it, the projection into the company's charter band stays the LAST legality step
+            // (D-16.8 — never bypassed, so the P15.9 tripwire remains the guard), and a deterministic
+            // jitter breaks the remaining ties. See ComputeBotReserveBallot.
+            ReserveScPercentTarget = ComputeBotReserveBallot(botNodeId, pref, gov, block),
             MarketShift = pref == null
                 ? 0
                 : Math.Sign(MarketCategoryIndex(pref.MarketCategoryPreference) - MarketCategoryIndex(gov.MarketCategory)),
@@ -3812,7 +4427,24 @@ public partial class NetworkRoot : Node
 
         decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
         decimal reserveResult = gov.ReserveScPercent;
-        decimal payoutResult = 0m;
+        // Step 16 P16.7c (2026-08-01, developer's call — option B of the three in §9.8.3) — NO-QUORUM
+        // DEFAULT. This was a bare `0m`, which meant that when P16.4c's abstention rule let EVERY NST holder
+        // sit a vote out, `votedWeight` stayed 0, the resolver branch was skipped, and the company paid NO
+        // dividend at all — BTC and SC — for the entire quarter, on top of a full and untouched reserve.
+        // Seen 3× in the P16.6 run (Seals with Clubs blk 2145: `ballots=0` → `pay=0.00`, one quarter after
+        // `pay=6.50`, with 5,162 SC sitting idle). Note the other two dials on this screen already defaulted
+        // to something sensible — `reserveResult` to the status quo and `dividendsCutResult` to the 50/50 —
+        // so the payout rate was the ONLY one whose no-quorum answer was "zero", and it read as a broken
+        // dividend engine rather than as a governance outcome.
+        //
+        // The category default is the right fallback rather than the previous quarter's rate: it is the same
+        // figure the company was chartered with and the same one every bot ballot is a multiple of, so an
+        // unattended company drifts toward its category norm instead of freezing whatever the last quorum
+        // happened to pick. A `no_quorum` marker rides the vote_close trace so the case stays countable.
+        //
+        // General rule: a resolver's "nobody answered" value is a DESIGN DECISION, not an initializer.
+        // Zero is almost never it — and here it was silently paying a whole quarter's shareholders nothing.
+        decimal payoutResult = DefaultQuarterlyPayoutRatePercent(gov.MarketCategory);
         int shiftResult = 0;          // what the NST holders voted (traced even when it can't be applied)
         bool categoryLocked = false;  // P15.2b / D-15.12 — true for a bank: the shift is voted but refused
         // P15.4e — a shortfall vote's single dial. Stays at the 50/50 default when nobody voted (D-15.7).
@@ -3848,7 +4480,8 @@ public partial class NetworkRoot : Node
                     Weight = weight,
                     ReserveScPercentTarget = ballot.ReserveScPercentTarget,
                     MarketShift = ballot.MarketShift,
-                    PayoutRatePercent = ballot.PayoutRatePercent
+                    PayoutRatePercent = ballot.PayoutRatePercent,
+                    WasAutoCast = ballot.WasAutoCast // P16.5b (D-16.13) — carried into the history
                 });
             }
 
@@ -3927,9 +4560,24 @@ public partial class NetworkRoot : Node
         int quarterDays = 0; // ND.9h — quarter length (in-game days), 0 for non-quarterly votes
         if (vote.Kind == CompanyVoteKindQuarterly)
         {
+            // Step 16 P16.7 (2026-07-31) — top the SC reserve up to the target THIS VOTE JUST SET, before
+            // the dividend below reads it. The finalize is a snapshot ("payoutRate% of the reserve at
+            // finalize time"), and the reserve was filled by TryConvertCompanyReserves in step 3 of the
+            // same TickCompanyGovernance pass — i.e. AFTER this line ran. So the very vote that first
+            // raised a company's target produced a dividend priced off the pre-raise (usually empty)
+            // reserve: a first quarterly of exactly 0 SC, with the SC arriving one trace line later in the
+            // same block. Seen in the P16.6 run at ArtForz Cluster (block 1955: vote_close 0.00 → 24.08%,
+            // divSc = 0, then a conversion crediting 11,029 SC) and at Laundromat (block 1899). Coinwash
+            // escaped it only by accident — it had already converted at its founding vote.
+            //
+            // Calling the conversion HERE rather than reordering the caller keeps the fix local to the
+            // snapshot that was reading stale state: step 3's call still runs, and simply early-returns on
+            // its own deficit gate now that the reserve is at target. Non-quarterly votes are deliberately
+            // left alone — they do not finalize a dividend, so nothing there reads the reserve.
+            TryConvertCompanyReserves(gov, block);
+
             // D-ND8.17 — FINALIZE the quarter's dividend as two separately-tracked amounts (never live
             // accrual): each currency side is payoutRate% of the corresponding reserve at finalize time.
-            // The SC side is structurally 0 until ND.8b.6 lands the BTC→SC conversions.
             // P15.3a — the company's OWN BTC: a bank's quarantined collateral is excluded, so a quarterly
             // dividend can never pay away the asset backing its FED debt (D-15.4).
             decimal treasuryBtc = CompanyOwnBtc(gov.NonMinerNodeId);
@@ -3978,8 +4626,13 @@ public partial class NetworkRoot : Node
         }
 
         AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "vote_close", vote.Kind,
-            string.Format(System.Globalization.CultureInfo.InvariantCulture, "shift={0}{1}",
-                shiftResult, categoryLocked && shiftResult != 0 ? ";shift_refused=bank_locked" : string.Empty));
+            string.Format(System.Globalization.CultureInfo.InvariantCulture, "shift={0}{1}{2}",
+                shiftResult,
+                categoryLocked && shiftResult != 0 ? ";shift_refused=bank_locked" : string.Empty,
+                // P16.7c — every holder abstained, so the dials took their no-quorum defaults (the payout
+                // rate the category default, the reserve the status quo). Marked so the case stays countable
+                // in the trace instead of looking like a quorum that happened to vote the charter figure.
+                ballotRecords.Count == 0 ? ";no_quorum" : string.Empty));
     }
 
     // D-ND8.17 — the PST daily drip: each elapsed in-game day of the active cycle accrues
@@ -4079,21 +4732,25 @@ public partial class NetworkRoot : Node
         return claim;
     }
 
-    // Bots auto-claim EVERY dividend arrival (developer directive, 2026-07-20 — normal/NST lumps and
-    // preferred/PST drips alike, superseding the initial 2×fee value floor): each accrual is swept with
-    // a real on-chain company→bot send on the same block it lands, the network fee deducted from the
-    // dividend itself (the ND.5 sweep precedent — accepted shortfall). The only remaining gate is the
-    // physical one — the claim must NET something (claimable > fee), since a send cannot pay out less
-    // than its own fee; a sub-fee accrual just waits for the next drip day to push it over. A failed
-    // broadcast (treasury momentarily tied up) retries on a later block — the claimable never disappears.
-    private static void TryAutoClaimBotDividends(CompanyGovernanceState gov, Block block)
+    // Step 16 P16.1a (D-16.1/D-16.15) — the SC HALF of bot dividends, which stays per-block.
+    //
+    // SC is not on-chain: paying it costs no transaction, no fee and no block space, so there is nothing
+    // to batch and real value in bots having their SC promptly (it funds their auction bidding). What
+    // moved to a quarterly batch is the BTC leg — see SettleCompanyDividendsBtc below for why.
+    //
+    // The trace row is AGGREGATED per company per block rather than one row per holder. ND.10e's rule was
+    // that the SC leg must be VISIBLE (it had been folded into a row reporting only `btc=`), not that it
+    // must be one row each — and per-block telemetry I/O is itself one of the per-block costs the step15
+    // §10 audit named (F5).
+    private static void PayBotScDividends(CompanyGovernanceState gov, Block block)
     {
-        if (gov.ClaimableByHolder.Count == 0 || !SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company))
+        if (gov.ClaimableByHolder.Count == 0)
         {
             return;
         }
 
-        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
+        decimal totalPaidSc = 0m;
+        int paidHolders = 0;
         foreach ((string holderId, CompanyClaimable claim) in gov.ClaimableByHolder)
         {
             if (holderId == PlayerNodeId)
@@ -4101,65 +4758,195 @@ public partial class NetworkRoot : Node
                 continue; // the player claims manually (CompanyDetails panel)
             }
 
-            if (!SharedNodesById.TryGetValue(holderId, out NodeAgent? holder))
+            if (claim.Sc <= 0m || gov.ScReserve <= 0m
+                || !SharedNodesById.TryGetValue(holderId, out NodeAgent? holder)
+                || holder.FinancialState is not NodeFinancialState fin)
             {
                 continue;
             }
 
-            // ND.8b.6 — the SC side pays instantly from the company's SC reserve into the bot's own SC
-            // principal (the NodeFinancialState mirror the recharge/settlement paths already use);
-            // partial when the reserve is short, remainder stays accrued. Skipped while the bot has no
-            // financial state yet (it materializes on its first bet — always long before any dividend).
-            decimal paidSc = 0m;
-            if (claim.Sc > 0m && gov.ScReserve > 0m && holder.FinancialState is NodeFinancialState fin)
-            {
-                paidSc = Math.Min(claim.Sc, gov.ScReserve);
-                fin.PrincipalBalance = Scripts.Finance.Money.Normalize(fin.PrincipalBalance + paidSc);
-                gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve - paidSc);
-                claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc - paidSc);
-            }
-
-            // ND.10e (D-ND10e.4, 2026-07-23) — BATCH the BTC leg instead of sweeping it the instant it
-            // clears the fee. The old gate (`claim.Btc <= fee`) meant a PST daily drip was sent every
-            // single block at whatever it had accrued: an audit of a live world found claims netting
-            // 0.00039093 BTC against a 0.01 median fee — **96% of that dividend burned as fee** — with
-            // 555 bot claims having paid ~5.55 BTC of fees in total. Waiting until the accrual is worth
-            // `BotDividendClaimFeeMultiple ×` the fee caps the loss at ~1/N of each payment (10%) and,
-            // since the fee comes out of the dividend itself, hands the difference straight back to the
-            // bots' BTC income — one of the cheapest de-financing fixes available.
-            if (claim.Btc < fee * BotDividendClaimFeeMultiple)
-            {
-                // Not yet worth a transaction — the BTC keeps accruing, nothing is lost. The SC leg is
-                // instant and unaffected by fees, so log it on its own when it paid something (it was
-                // previously invisible in telemetry, folded into a row that only reported `btc=`).
-                if (paidSc > 0m)
-                {
-                    AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim_sc", holderId,
-                        string.Format(System.Globalization.CultureInfo.InvariantCulture, "sc={0:F8}", paidSc));
-                }
-                continue;
-            }
-
-            decimal sendAmount = Scripts.Finance.Money.Normalize(claim.Btc - fee);
-            if (sendAmount <= 0m)
-            {
-                continue;
-            }
-
-            if (BuildAndBroadcastUtxoSpend(company, holder.WalletAddress, sendAmount, fee, null, "DIVIDEND") == null)
-            {
-                // ND.10e — a failed broadcast used to vanish silently (the company treasury being short of
-                // spendable UTXOs looks identical to "no dividend was due"). Logged so the trace can prove
-                // whether every accrued dividend actually reached its holder.
-                AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim_failed", holderId,
-                    string.Format(System.Globalization.CultureInfo.InvariantCulture, "btc={0:F8} fee={1:F8}", sendAmount, fee));
-                continue;
-            }
-
-            claim.Btc = 0m;
-            AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim", holderId,
-                string.Format(System.Globalization.CultureInfo.InvariantCulture, "btc={0:F8} sc={1:F8}", sendAmount, paidSc));
+            // ND.8b.6 — pays from the company's SC reserve into the bot's own SC principal (the
+            // NodeFinancialState mirror the recharge/settlement paths already use); partial when the
+            // reserve is short, remainder stays accrued.
+            decimal paidSc = Math.Min(claim.Sc, gov.ScReserve);
+            fin.PrincipalBalance = Scripts.Finance.Money.Normalize(fin.PrincipalBalance + paidSc);
+            gov.ScReserve = Scripts.Finance.Money.Normalize(gov.ScReserve - paidSc);
+            claim.Sc = Scripts.Finance.Money.Normalize(claim.Sc - paidSc);
+            totalPaidSc += paidSc;
+            paidHolders++;
         }
+
+        if (paidHolders > 0)
+        {
+            AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "bot_claim_sc", "batch",
+                string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "holders={0} sc={1:F8}", paidHolders, totalPaidSc));
+        }
+    }
+
+    // Step 16 P16.1a (D-16.1/D-16.2/D-16.15) — ONE multi-output transaction pays every bot holder's
+    // accrued BTC dividend, once per quarter, at the quarter close.
+    //
+    // WHY. ND.10e already batched these claims by VALUE (wait until the accrual is worth 10× the fee)
+    // and that fixed the fee waste it was aimed at — but nothing ever bounded their COUNT. The step15 §10
+    // audit measured the result in a live world: **8.66 dividend transactions per block**, against an
+    // ND.4a historical budget of ~5 tx/block and 23 usable block slots. `pendingTxs` sat at 26–28, so
+    // `owed = max(0, target − pending)` was structurally 0 and the automated transaction layer had
+    // effectively stopped — including the cast sell-flow that FUNDS these companies. A subsystem's own
+    // plumbing was consuming the shared budget it depends on (D-15.36).
+    //
+    // SHAPE. This is DistributePoolEventAsSingleTx's pattern, which exists for a closely related bug: N
+    // sequential sends have the first spend consume the only confirmed UTXO, leaving sends 2..N with
+    // nothing spendable until the change confirms. One coin selection covering the TOTAL need avoids that
+    // by construction, and ~30 companies × 1 tx/quarter ≈ 0.2 tx/block replaces 8.66.
+    //
+    // FEE (D-16.2). ONE transaction pays ONE fee, split PRO-RATA across the holders — not one fee each.
+    // Pro-rata scales every holder equally, so a holder is only ever dropped by 8-decimal rounding on a
+    // dust claim; the loop below is that dust fixed point (dropping a holder raises the others' share),
+    // and it converges on the first pass in every normal case. Whatever is not paid stays accrued.
+    //
+    // The player is excluded on purpose: their claim is player-initiated and rare, and its immediacy is a
+    // feature (TryClaimPlayerCompanyDividends is untouched).
+    private static void SettleCompanyDividendsBtc(CompanyGovernanceState gov, Block block)
+    {
+        if (gov.ClaimableByHolder.Count == 0 || !SharedNodesById.TryGetValue(gov.NonMinerNodeId, out NodeAgent? company))
+        {
+            return;
+        }
+
+        var payees = new List<(string holderId, string address, decimal gross, CompanyClaimable claim)>();
+        foreach ((string holderId, CompanyClaimable claim) in gov.ClaimableByHolder)
+        {
+            if (holderId == PlayerNodeId || claim.Btc <= 0m
+                || !SharedNodesById.TryGetValue(holderId, out NodeAgent? holder)
+                || string.IsNullOrEmpty(holder.WalletAddress)
+                || holder.WalletAddress == company.WalletAddress)
+            {
+                continue;
+            }
+
+            payees.Add((holderId, holder.WalletAddress, claim.Btc, claim));
+        }
+
+        if (payees.Count == 0)
+        {
+            return;
+        }
+
+        decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp);
+        var netByHolder = new Dictionary<string, decimal>(payees.Count);
+        while (payees.Count > 0)
+        {
+            decimal grossTotal = payees.Sum(p => p.gross);
+            if (grossTotal <= fee)
+            {
+                return; // the whole batch cannot cover a single fee — everything keeps accruing
+            }
+
+            netByHolder.Clear();
+            var kept = new List<(string, string, decimal, CompanyClaimable)>(payees.Count);
+            foreach ((string holderId, string address, decimal gross, CompanyClaimable claim) in payees)
+            {
+                decimal net = Scripts.Finance.Money.Normalize(gross - fee * (gross / grossTotal));
+                if (net <= 0m)
+                {
+                    continue; // dust: below its own share of the fee, stays accrued for a later quarter
+                }
+
+                kept.Add((holderId, address, gross, claim));
+                netByHolder[holderId] = net;
+            }
+
+            if (kept.Count == payees.Count)
+            {
+                break; // stable
+            }
+
+            payees = kept;
+        }
+
+        if (payees.Count == 0)
+        {
+            return;
+        }
+
+        // Coin-select across ALL the company's addresses (base + derived change addresses since P16.2).
+        decimal need = netByHolder.Values.Sum() + fee;
+        HashSet<string> owned = company.ReceiveWallet != null
+            ? new HashSet<string>(company.ReceiveWallet.OwnedAddresses) { company.WalletAddress }
+            : new HashSet<string> { company.WalletAddress };
+
+        IReadOnlyList<(OutPoint outpoint, string address, decimal amount)> available =
+            company.Blockchain.GetSpendableUtxos(owned);
+        List<(OutPoint outpoint, string address, decimal amount)>? chosen = SelectUtxos(available, need);
+        if (chosen is null)
+        {
+            // P16.1b — ND.10e's rule survives the batching: a failed settlement must never vanish. The
+            // treasury being momentarily short of spendable UTXOs looks exactly like "no dividend was
+            // due", and this row is now the difference between the two. Nothing is lost — every
+            // claimable is untouched and the next quarter's settlement pays it.
+            AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "dividend_settlement_failed", "batch",
+                string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "holders={0} btc={1:F8} fee={2:F8} reason=insufficient_utxos", payees.Count, need - fee, fee));
+            return;
+        }
+
+        var inputs = new List<(OutPoint, string, string, string, string)>(chosen.Count);
+        decimal gathered = 0m;
+        foreach ((OutPoint outpoint, string address, decimal value) in chosen)
+        {
+            if (!TryResolveInputKeys(company, address, out (string pub, string priv, string secp) keys))
+            {
+                AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "dividend_settlement_failed", "batch",
+                    $"holders={payees.Count} reason=unresolvable_key address={address}");
+                return;
+            }
+
+            inputs.Add((outpoint, address, keys.pub, keys.priv, keys.secp));
+            gathered += value;
+        }
+
+        var outputs = new List<TxOutput>(payees.Count + 1);
+        foreach ((string holderId, string address, decimal _, CompanyClaimable _) in payees)
+        {
+            outputs.Add(new TxOutput { Address = address, Amount = netByHolder[holderId] });
+        }
+
+        decimal change = gathered - need;
+        bool hasChange = change > 0m;
+        if (hasChange)
+        {
+            string changeAddr = company.ReceiveWallet?.NextReceiveAddress() ?? company.WalletAddress;
+            outputs.Add(new TxOutput { Address = changeAddr, Amount = change });
+        }
+
+        Transaction tx = company.BuildSignedSpend(inputs, outputs, fee, null);
+        tx.InputDataText = "DIVIDEND"; // display-only; excluded from the txid/sighash
+        if (!company.Blockchain.AddTransactionToPendingTransactions(tx))
+        {
+            AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "dividend_settlement_failed", "batch",
+                string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "holders={0} btc={1:F8} reason=rejected_by_mempool", payees.Count, need - fee));
+            return;
+        }
+
+        SharedNetwork.BroadcastTransaction(company.NodeId, tx);
+        if (hasChange)
+        {
+            company.ReceiveWallet?.MarkReceiveConsumed();
+        }
+
+        // Only now are the claimables cleared — a settlement that never broadcast must leave them intact.
+        decimal paidTotal = 0m;
+        foreach ((string holderId, string _, decimal gross, CompanyClaimable claim) in payees)
+        {
+            claim.Btc = Scripts.Finance.Money.Normalize(claim.Btc - gross);
+            paidTotal += netByHolder[holderId];
+        }
+
+        AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "dividend_settlement", "batch",
+            string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "holders={0} btc={1:F8} fee={2:F8}", payees.Count, paidTotal, fee));
     }
 
     // ── ND.8b.3 public surface (the pause gate + the CompanyDetails scene's read/act API) ─────────────
@@ -4231,6 +5018,33 @@ public partial class NetworkRoot : Node
                 DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * 2m),
             DividendsCutPercent = Math.Clamp(Scripts.Finance.Money.Normalize(dividendsCutPercent), 0m, 100m)
         };
+        vote.AwaitingPlayerVote = false;
+        return true;
+    }
+
+    // Step 16 P16.8 (D-16.19) — the Board Vote panel's ABSTAIN path: the player declines to cast at this
+    // vote. The distinction from TryRegisterPlayerVote is the whole point and is deliberately NOT a ballot
+    // of zeros — no entry is written, so the player carries no weight and every OTHER holder's relative
+    // weight rises, which is exactly what a bot's abstention already does (P16.4c). A zero-filled ballot
+    // would instead drag the weighted average toward 0 and pin the reserve to the band floor: the P15.9
+    // failure shape, arriving through a new door.
+    //
+    // Lifting the pause is the other half — an abstention has to END the wait, or declining a vote would
+    // freeze the game forever. That makes this the second writer of AwaitingPlayerVote, and the two are
+    // exhaustive: the player either casts or declines, and both resume the simulation.
+    public static bool TryRegisterPlayerAbstention(string nonMinerNodeId)
+    {
+        if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov)
+            || gov.OpenVote is not { } vote
+            || !_companyFoundings.TryGetValue(nonMinerNodeId, out CompanyFounding? founding)
+            || !founding.Holdings.Any(h => h.HolderId == PlayerNodeId && h.Nst > 0m))
+        {
+            return false;
+        }
+
+        // A ballot already cast at this vote is withdrawn — the panel offers Abstain right beside Submit,
+        // and re-pressing must not leave a stale entry behind (Remove is a no-op when nothing is there).
+        vote.Ballots.Remove(PlayerNodeId);
         vote.AwaitingPlayerVote = false;
         return true;
     }
@@ -4334,7 +5148,7 @@ public partial class NetworkRoot : Node
         }
 
         // ND.8g (§12.5.6) — log this successful claim to the company's PLAYER-ONLY history (bot auto-claims,
-        // via TryAutoClaimBotDividends, never write here). tipMs is already game time (a block's own
+        // via the bots' own dividend paths, never write here). tipMs is already game time (a block's own
         // Timestamp), never wall-clock, per the project's canonical rule.
         gov.PlayerClaimHistory.Add(new CompanyDividendClaimRecord
         {
@@ -4364,8 +5178,13 @@ public partial class NetworkRoot : Node
     private const string BankCreditTracePath = "user://logs/bank_credit_trace.csv"; // Step 15
 
     // ND.8b.3 telemetry — one row per governance event (vote_open / vote_close / quarter_settled /
-    // bot_claim). Daily drip accruals are deliberately NOT logged (row volume); the quarter_settled and
-    // claim rows bracket them for playtest verification.
+    // dividend_settlement). Daily drip accruals are deliberately NOT logged (row volume); the
+    // quarter_settled and settlement rows bracket them for playtest verification.
+    // Step 16 P16.1c — the per-holder `bot_claim` row is gone with the per-holder transaction that
+    // produced it. Its replacements: `dividend_settlement` (one per company per quarter, holders + net BTC
+    // + fee), `dividend_settlement_failed` (ND.10e's rule that a failed payout must never look identical
+    // to "nothing was due" — now carrying a reason), and `bot_claim_sc` (the SC leg, aggregated per
+    // company per block rather than per holder).
     // Step 15 (P15.7d, pulled forward to P15.3a): one row per banking-layer credit event — provisions now,
     // repayments / shortfalls / dissolutions / seizures as those phases land. This is the ONLY observability
     // the bank credit loop has until the P15.7 readouts, and the P15.8 calibration run reads it, so it
@@ -4750,13 +5569,13 @@ public partial class NetworkRoot : Node
     private static CasinoBotSlotOutcome TryBuildCasinoBotBid(List<NonMinerDonationSummary> priorityTargets, NodeAgent sender, decimal fee, long nowMs, int currentBlockIndex, out Transaction? tx, out CasinoBotBidTrace trace)
     {
         tx = null;
-        string botAddress = sender.WalletAddress;
-        decimal spendable = sender.Blockchain.GetAddressSpendableBalance(botAddress);
+        HashSet<string> botAddresses = OwnedAddressSet(sender);
+        decimal spendable = AggregateSpendable(sender);
         decimal bidBudgetCap = Math.Round(spendable * MaxBidBalanceFraction, 8);
         trace = new CasinoBotBidTrace { FeeBtc = fee, SpendableBtc = spendable, BidBudgetCapBtc = bidBudgetCap };
 
         List<BotPoolOpportunity> all =
-            BuildBotPoolOpportunities(priorityTargets, botAddress, sender.NodeId, fee, bidBudgetCap, nowMs, currentBlockIndex);
+            BuildBotPoolOpportunities(priorityTargets, botAddresses, sender.NodeId, fee, bidBudgetCap, nowMs, currentBlockIndex);
         List<BotPoolOpportunity> biddable = all.Where(o => o.Exclusion == null).ToList();
         trace.QualifyingPools = biddable.Count;
         if (biddable.Count == 0)
@@ -4831,6 +5650,7 @@ public partial class NetworkRoot : Node
         decimal amount = Math.Round(targetPrincipal + tail, 8);
         trace.AmountBtc = amount;
 
+        AssertBidderIsNotRestingOnReserve(sender.NodeId);
         tx = BuildAndBroadcastUtxoSpend(sender, target.NonMinerAddress, amount, fee, null);
         return tx != null ? CasinoBotSlotOutcome.Donated : CasinoBotSlotOutcome.BroadcastFailed;
     }
@@ -4878,8 +5698,8 @@ public partial class NetworkRoot : Node
     private static bool HasEligibleBidOpportunity(string botNodeId, List<NonMinerDonationSummary> pools, decimal fee, long nowMs, int currentBlockIndex)
     {
         if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return false;
-        decimal cap = Math.Round(bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress) * MaxBidBalanceFraction, 8);
-        return BuildBotPoolOpportunities(pools, bot.WalletAddress, botNodeId, fee, cap, nowMs, currentBlockIndex)
+        decimal cap = Math.Round(AggregateSpendable(bot) * MaxBidBalanceFraction, 8);
+        return BuildBotPoolOpportunities(pools, OwnedAddressSet(bot), botNodeId, fee, cap, nowMs, currentBlockIndex)
             .Any(o => o.Exclusion == null);
     }
 
@@ -4894,9 +5714,9 @@ public partial class NetworkRoot : Node
         if (!SharedNodesById.TryGetValue(botNodeId, out NodeAgent? bot)) return string.Empty;
         Block tip = GetPlayerLatestBlock();
         decimal fee = NetworkFeePolicy.MedianFeeAt(tip.Timestamp);
-        decimal cap = Math.Round(bot.Blockchain.GetAddressSpendableBalance(bot.WalletAddress) * MaxBidBalanceFraction, 8);
+        decimal cap = Math.Round(AggregateSpendable(bot) * MaxBidBalanceFraction, 8);
         BotPoolOpportunity? opportunity =
-            BuildBotPoolOpportunities([pool], bot.WalletAddress, botNodeId, fee, cap, tip.Timestamp, tip.Index).FirstOrDefault();
+            BuildBotPoolOpportunities([pool], OwnedAddressSet(bot), botNodeId, fee, cap, tip.Timestamp, tip.Index).FirstOrDefault();
         return opportunity?.Exclusion ?? string.Empty;
     }
 
@@ -5169,7 +5989,7 @@ public partial class NetworkRoot : Node
         if (firstMinedHeight is null) return null; // hasn't mined yet → nothing to circulate
         if (block.Index - firstMinedHeight.Value < CirculationWarmupBlocks) return null;
 
-        decimal spendable = node.Blockchain.GetAddressSpendableBalance(node.WalletAddress);
+        decimal spendable = AggregateSpendable(node); // Step 16 — whole wallet: cast miners carry seeds since P16.2
         if (spendable < MinBotSpendableBalanceBtc) return null;
 
         decimal fraction = MinSendFractionDecimal
@@ -5205,7 +6025,7 @@ public partial class NetworkRoot : Node
             BotWalletRecord senderRecord = holders[(offset + i) % holders.Count];
             if (!SharedNodesById.TryGetValue(senderRecord.NodeId, out NodeAgent? sender)) continue;
 
-            decimal spendable = sender.Blockchain.GetAddressSpendableBalance(sender.WalletAddress);
+            decimal spendable = AggregateSpendable(sender); // Step 16 — whole wallet (companies carry seeds since P16.2)
             if (spendable < MinBotSpendableBalanceBtc) continue;
 
             decimal fraction = MinSendFractionDecimal
@@ -5596,22 +6416,20 @@ public partial class NetworkRoot : Node
     // qualifying bidder" but WHICH participant a given donor address belongs to.
     private static (HashSet<string> playerAddresses, Dictionary<string, string> botNodeIdByAddress) BuildAuctionBidderIdentity(NodeAgent? player)
     {
-        var playerAddresses = new HashSet<string>();
-        if (player is not null)
-        {
-            if (player.ReceiveWallet != null)
-            {
-                playerAddresses.UnionWith(player.ReceiveWallet.OwnedAddresses);
-            }
-            playerAddresses.Add(player.WalletAddress);
-        }
+        var playerAddresses = player is not null ? OwnedAddressSet(player) : new HashSet<string>();
 
+        // Step 16 (2026-07-30) — every OWNED address, not just the base. The player half was already written
+        // this way (that is what the 2026-07-14 incident bought); the bot half was not, and P16.2's change
+        // rotation is what turned that asymmetry into a live defect. A bid funded from a change UTXO signs
+        // with a derived address, so a base-only map would fail to attribute it to bot_N — losing the bid's
+        // ownership in the ratchet walk AND misrouting its D-ND5.7 settlement payout.
         var botNodeIdByAddress = new Dictionary<string, string>();
         foreach (BotWalletRecord casinoMinerBot in BotWalletRegistry.MinerBots)
         {
-            if (SharedNodesById.TryGetValue(casinoMinerBot.NodeId, out NodeAgent? botNode))
+            if (!SharedNodesById.TryGetValue(casinoMinerBot.NodeId, out NodeAgent? botNode)) continue;
+            foreach (string owned in OwnedAddressSet(botNode))
             {
-                botNodeIdByAddress[botNode.WalletAddress] = casinoMinerBot.NodeId;
+                botNodeIdByAddress[owned] = casinoMinerBot.NodeId;
             }
         }
 
@@ -5714,8 +6532,9 @@ public partial class NetworkRoot : Node
         // needing new machinery. The Step-14 CAST miners (BotWalletRegistry.CastMiners, ND.2) do NOT
         // qualify — they mine via drained attempts (founder-style, concurrent with the player's time
         // advancement), never place a bet, and so never form a casino relationship; their sell-flow
-        // donations stay economy-only, exactly like the non-miner↔non-miner exchanges. Single-address
-        // bots have no ReceiveWallet (OQ-8.2 — no stored seed), so only WalletAddress applies.
+        // donations stay economy-only, exactly like the non-miner↔non-miner exchanges. Step 16: the bot
+        // half of BuildAuctionBidderIdentity now maps EVERY owned address (P16.2 retired "bots have no
+        // ReceiveWallet"), so a change-funded bid is still attributed to its bot.
         // ND.4d — playerAddresses is split out from qualifyingBidders so the ratchet walk below can tell
         // WHO is bidding: the player's own raises clear at OneSatoshi over the leader, everyone else's
         // (the casino-bots) still need the full RaiseMin/RaiseMax jump. (The identity sets themselves
@@ -6097,6 +6916,30 @@ public partial class NetworkRoot : Node
         return AggregateSpendable(node);
     }
 
+    // Step 16 (2026-07-30) — node-level wallet totals across the OWNED ADDRESS SET, for the DEV wallet
+    // screens that were still showing a single base-address figure. P16.2 made that reading drift to zero:
+    // a bot's coinbases land on the base but every spend moves the remainder to a fresh change address, so
+    // after a handful of auction bids bot_1 and bot_4 both displayed 0.00000000 BTC while actually holding
+    // ~299.79 and ~249.44. Deliberately NOT built on GetNodeAddressBook, which runs a full chain scan per
+    // address and is far too heavy for a 40-row list refresh; this is one UTXO pass plus one mempool pass.
+    //
+    // `pendingOutgoing` counts only outputs LEAVING the wallet, so a spend's own change no longer reads as
+    // money in flight — the old per-address form could not tell the difference.
+    public (decimal spendable, decimal pendingOutgoing) GetNodeWalletTotals(string nodeId)
+    {
+        EnsureInitialized();
+        if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node))
+        {
+            return (0m, 0m);
+        }
+
+        HashSet<string> owned = OwnedAddressSet(node);
+        decimal pendingOutgoing = node.Blockchain.PendingTransactions
+            .Where(t => t.Inputs.Any(i => owned.Contains(i.Address)))
+            .Sum(t => t.Outputs.Where(o => !owned.Contains(o.Address)).Sum(o => o.Amount));
+        return (AggregateSpendable(node), pendingOutgoing);
+    }
+
     // Step 8.4 — a node's wallet as the collection of addresses it owns (base + any derived change/receive
     // addresses), each with its confirmed balance and a flag marking the base/identity address. Lets BTCWallet
     // show that "a wallet = a set of addresses/UTXOs" (OQ-2 educational core). The base is always first; for a
@@ -6239,6 +7082,22 @@ public partial class NetworkRoot : Node
     // many derived addresses (address non-reuse), so its balance is the sum across the owned set plus the
     // base/identity address (which holds p2p receives like E4). Single-address nodes use the base only. The
     // unspendable genesis 50 is already excluded by GetAddressData (IsSpendable = false).
+    // Step 16 (2026-07-30) — a node's COMPLETE owned address set: every derived address the chain rescan
+    // marked used, plus the base/identity address. Extracted because "used ONE address where the OWNED SET
+    // was meant" has now been the same defect three times: the Step 8 change-output bug (change-held funds
+    // unattributed after a restart, L6426), the 2026-07-14 auction donor incident (§30.9 — an address is a
+    // KEY, not an IDENTITY), and the P16.2 fallout this call fixes. P16.2 is what made it bite at scale:
+    // until then only the player, casino and founders rotated change, so for a bot `WalletAddress` really
+    // WAS the whole wallet and every base-address read was accidentally correct.
+    private static HashSet<string> OwnedAddressSet(NodeAgent node)
+    {
+        var owned = node.ReceiveWallet != null
+            ? new HashSet<string>(node.ReceiveWallet.OwnedAddresses)
+            : new HashSet<string>();
+        owned.Add(node.WalletAddress);
+        return owned;
+    }
+
     private static decimal AggregateSpendable(NodeAgent node)
     {
         if (node.ReceiveWallet == null)
@@ -6251,7 +7110,7 @@ public partial class NetworkRoot : Node
         // for on every settled bet. GetSpendableUtxos already accepts the whole set and applies the same
         // spendable/maturity/pending filters, so the result is identical by construction (an outpoint has
         // exactly one address, so no double counting is possible).
-        var addresses = new HashSet<string>(node.ReceiveWallet.OwnedAddresses) { node.WalletAddress };
+        HashSet<string> addresses = OwnedAddressSet(node);
         decimal total = 0m;
         foreach (var utxo in node.Blockchain.GetSpendableUtxos(addresses))
             total += utxo.amount;
@@ -6304,6 +7163,13 @@ public partial class NetworkRoot : Node
     // Derives a NodeAgent for a passphrase wallet on demand and registers it in SharedNetwork
     // for the session so it can sign and broadcast transactions. Syncs the player chain so UTXO
     // checks see existing confirmed balance. Returns the nodeId for CreateAndBroadcastTransactionToAddress.
+    //
+    // Step 16 P16.2f — passphrase wallets were the participant OQ-8.2's own scope list never mentioned, and
+    // they SPEND, which made them the last single-address change-producer standing. Found by asking the
+    // question the phase exists to ask ("who can still make a change-to-self output?") instead of trusting
+    // the list. Without this, removing the two BlockExplorer cosmetics would have started hiding nothing
+    // while a real self-change case still existed. The wiring is exact rather than approximate: the caller
+    // derives `walletAddress` as DeriveGmAddress(seedPhrase), so base == DeriveAddress(0) here too.
     public string RegisterPassphraseWallet(string seedPhrase, string walletAddress)
     {
         EnsureInitialized();
@@ -6312,13 +7178,35 @@ public partial class NetworkRoot : Node
         {
             (string signPub, string signPriv) = CryptoUtils.DeriveSigningKeypair(seedPhrase);
             string secp256k1Pub = CryptoUtils.DeriveSecp256k1CompressedPublicKeyBase64(seedPhrase);
-            var node = new NodeAgent(nodeId, walletAddress, signPub, signPriv, secp256k1Pub);
+            var node = new NodeAgent(nodeId, walletAddress, signPub, signPriv, secp256k1Pub)
+            {
+                ReceiveWallet = new DerivedAddressWallet(seedPhrase),
+                RotateCoinbaseAddress = false // coinbase non-reuse stays Satoshi-only (D-16.5)
+            };
             if (SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
                 node.Blockchain.TryReplaceChain(player.Blockchain.Chain, player.Blockchain.PendingTransactions);
+            // LOAD-BEARING, not a nicety: unlike every other seeded node, a passphrase wallet is created
+            // mid-session and so misses the init-time RescanDerivedReceiveWallets entirely. An unscanned
+            // frontier would leave change-held funds unowned (invisible balance) and reuse DeriveAddress(1)
+            // on every unlock — the exact Step 8 defect documented at BuildUsedAddressSet.
+            RescanReceiveWallet(node);
             SharedNetwork.RegisterNode(node);
             SharedNodesById[nodeId] = node;
         }
         return nodeId;
+    }
+
+    // Positions ONE node's derived-address frontier from the chain — the single-node twin of
+    // RescanDerivedReceiveWallets, for wallets that come into existence after initialization.
+    private void RescanReceiveWallet(NodeAgent node)
+    {
+        if (node.ReceiveWallet == null || !SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
+        {
+            return;
+        }
+
+        HashSet<string> used = BuildUsedAddressSet(player);
+        node.ReceiveWallet.Rescan(used.Contains);
     }
 
     // Step 14 (ND.2) — registers a freshly-spawned cast miner mid-session (its BotWalletRegistry record
@@ -6340,6 +7228,8 @@ public partial class NetworkRoot : Node
         }
 
         var node = new NodeAgent(nodeId, record.Address, record.SigningPublicKeyBase64!, record.SigningPrivateKeyBase64!, record.Secp256k1PublicKeyBase64!);
+        // P16.2c — a cast miner spawned mid-session is no less a UTXO citizen than one registered at boot.
+        AttachDerivedWalletIfSeeded(node, record);
         if (SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
             node.Blockchain.TryReplaceChain(player.Blockchain.Chain, player.Blockchain.PendingTransactions);
         SharedNetwork.RegisterNode(node);
@@ -6393,7 +7283,7 @@ public partial class NetworkRoot : Node
 
     // Single-pass scan of EVERY address appearing on a node's confirmed chain — every output's recipient
     // (incl. change outputs at vout ≥ 1) and every input's owner. Static + no EnsureInitialized so it is safe
-    // to call from inside EnsureInitialized (RescanFounderReceiveWallets) without re-entrancy.
+    // to call from inside EnsureInitialized (RescanDerivedReceiveWallets) without re-entrancy.
     //
     // CRITICAL (Step 8 bug fix): must iterate the full Inputs/Outputs lists, NOT the legacy Sender/Recipient
     // shims (which expose only Inputs[0]/Outputs[0]). A CHANGE output lives at Outputs[1], so the old shim
@@ -6421,7 +7311,28 @@ public partial class NetworkRoot : Node
     // rotating founders (Satoshi's coinbases) and the player (whose frontier advances on change outputs).
     // Called at init after the chain is loaded/normalized; in-session the frontier then advances incrementally
     // via NodeAgent.ReceiveWallet.MarkReceiveConsumed as each rotated receive (coinbase / change) is committed.
-    private static void RescanFounderReceiveWallets()
+    //
+    // Step 16 P16.2d — RENAMED from RescanFounderReceiveWallets. The body needed no widening at all: it has
+    // always walked EVERY registered node and rescanned whichever ones carry a ReceiveWallet, so the ~74
+    // seeded bots/companies/cast miners P16.2c introduces are picked up for free. Only the NAME and the
+    // comment above it were still describing a founders-only world — which is precisely the kind of stale
+    // label that makes a reader believe a widening is needed when the code already does the right thing.
+    //
+    // Cost note (P16.2d, CORRECTED 2026-07-30). BuildUsedAddressSet is ONE chain pass shared by every
+    // wallet, so the added cost is address DERIVATION, not extra chain scans — that part was right. The
+    // ESTIMATE was wrong by five orders of magnitude: "~20 SHA256 per node" ignored that every derivation
+    // is a secp256k1 scalar multiply, which measured **127 ms** against the then-current affine EC
+    // implementation. At ~79 seeded wallets × ~21 derivations (+ Satoshi's ~220 rotated coinbases) that is
+    // ~1,900 derivations ≈ 4 MINUTES of launch, and it duly showed up as a ~6-minute cold start the day
+    // after P16.2 shipped. The prediction that it "would be a T4 finding, never a reason to skip the
+    // rescan" held: the rescan is untouched (an unscanned frontier reuses change addresses and
+    // unattributes change-held funds — the Step 8 bug at L6426); Secp256k1 was moved to Jacobian
+    // coordinates instead (34x, output-identical), which puts this loop at ~8 s. See Secp256k1.cs.
+    //
+    // The general lesson, in the §39.16 register: a cost note is a MEASUREMENT or it is a guess wearing a
+    // measurement's clothes. "~20 SHA256" was never timed — and because it read as quantified, the number
+    // that mattered went unquestioned through the whole of P16.2. Time it, or say plainly that you did not.
+    private static void RescanDerivedReceiveWallets()
     {
         if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
             return;
@@ -7318,7 +8229,7 @@ public sealed class CompanyGovernanceState
     public decimal InflowSinceBaselineBtc { get; set; }
     public List<CompanyVoteRecord> VoteHistory { get; set; } = new();
     // ND.8g (2026-07-21, §12.5.6) — the PLAYER's own dividend claim log for this company (bot claims,
-    // via TryAutoClaimBotDividends, never write here — this is a player-facing history only). Rides this
+    // via the bots' own dividend paths, never write here — this is a player-facing history only). Rides this
     // same BlockchainStateSnapshot for free, no new persisted file/checkpoint/delete-list work (the same
     // inheritance argument ClaimableByHolder/VoteHistory themselves already rely on). Capped defensively
     // (PlayerBankAccountService.BankTransferRecord's 500-cap precedent — a player claiming this many times
@@ -7340,6 +8251,45 @@ public sealed class CompanyGovernanceState
     // tolerance (∝ overage × category darkness), decays back under it. At/above
     // NetworkRoot.InvestigationFlagThreshold the company is FLAGGED and eligible for the P15.6c raid roll.
     public decimal InvestigationScore { get; set; }
+
+    // ── Step 16 P16.5a (D-16.11…14) — the player's per-company vote policy ──────────────────────────────
+    //
+    // The step15 §10 audit (F2) measured the cost of the old behaviour: 93 full-simulation freezes awaiting
+    // the player's ballot, producing ~2 outcome changes — and at a rate that RISES with how successful the
+    // player's holdings are, since the >30%-inflow special vote fires more often at busy companies. The
+    // pause is the game's most expensive interaction and it was being spent on decisions that were usually
+    // no-ops.
+    //
+    // PlayerPauseOnVotes therefore defaults to FALSE (D-16.11): a new holding never freezes the game, and
+    // the player opts in for the companies they actually steer. With it off, the standing policy below is
+    // cast automatically and marked `WasAutoCast` (D-16.13).
+    //
+    // The policy's own default is the STATUS QUO (D-16.12): PlayerPolicyReserveScPercent and
+    // PlayerPolicyPayoutRatePercent start at -1 meaning "not configured", and the auto-cast then votes the
+    // company's currently-applied values. A default that changes nothing is the only safe default for an
+    // automation the player never configured — anything else would silently steer companies on their
+    // behalf, which is precisely the trust this feature spends.
+    //
+    // These are PLAYER PREFERENCES riding world state (D-16.14, the ND.8g inheritance argument): they get
+    // checkpoint coverage, delete-list membership and the pre-genesis path for free, at the accepted cost
+    // that a restart rolls them back to the last block like everything else.
+    public bool PlayerPauseOnVotes { get; set; }
+    public decimal PlayerPolicyReserveScPercent { get; set; } = -1m;
+    public decimal PlayerPolicyPayoutRatePercent { get; set; } = -1m;
+    public decimal PlayerPolicyDividendsCutPercent { get; set; } = -1m;
+
+    // Step 16 P16.8 (2026-08-02, D-16.19) — the player's standing ABSTENTION. Until now the player was the
+    // only holder who could not sit a vote out: OpenCompanyVote's player branch either paused or cast the
+    // standing policy, with no third path, while every bot has rolled its own 15% abstention since P16.4c.
+    // That is a lever the bots held and the player did not, and it is measurable — across 159 votes in the
+    // P16.6 run the observed abstention rate ran well BELOW the per-bot 15% at every holder count, purely
+    // because the player's forced participation diluted it.
+    //
+    // Defaults FALSE for the same reason PlayerPauseOnVotes does (D-16.11): a new holding never silently
+    // changes how the player participates. Note this is a genuinely different axis from the pause — the
+    // pause asks "should the game stop to ask me?", this asks "do I want a say at all?" — so it is a second
+    // field rather than a third state of the first. With it ON, the vote neither pauses nor casts.
+    public bool PlayerAutoAbstain { get; set; }
 }
 
 // Step 15 P15.2c (D-15.4/D-15.5) — a founded BANK's balance sheet: the LAYER-1 half of the two-layer
@@ -7466,6 +8416,11 @@ public sealed class CompanyBallot
     // shareholders' dividends; the complement comes out of the company's own SC reserve. Ignored by every
     // other vote kind. Defaults to the no/tied-vote 50/50 split.
     public decimal DividendsCutPercent { get; set; } = NetworkRoot.DefaultShortfallDividendsCutPercent;
+    // Step 16 P16.5b (D-16.13) — TRUE when the PLAYER's ballot was cast by their standing policy rather
+    // than by their hand. Mechanically inert: the resolver treats an auto ballot exactly like a manual one.
+    // It exists so the history can never imply the player deliberated a decision their policy made for
+    // them — the CasinoClientLedgerService.Method precedent (manual/auto as a FIELD, never a second kind).
+    public bool WasAutoCast { get; set; }
 }
 
 // One holder's accrued-but-unclaimed dividends in one company (BTC and SC separately, D-ND8.17).
@@ -7511,6 +8466,11 @@ public sealed class VoteBallotRecord
     public decimal ReserveScPercentTarget { get; set; }
     public int MarketShift { get; set; }
     public decimal PayoutRatePercent { get; set; }
+    // Step 16 P16.5b (D-16.13) — this ballot was cast by the player's standing policy, not by their hand.
+    // Defaults to false, which reads correctly on every pre-P16.5 record: back then every player ballot
+    // WAS manual, so the default is the truth rather than a silent assumption (contrast §39.16 rule 5's
+    // failure shape, where a default false would have meant "no refusal" on records where one happened).
+    public bool WasAutoCast { get; set; }
 }
 
 // ND.8b.3 (D-ND8.13/D-ND8.26) — one casino-miner-bot's governance identity, re-rolled per world: a
@@ -7532,4 +8492,12 @@ public sealed class BotGovernancePreference
     // absent ones instead of leaving the whole axis stuck. Readers normalize empty to `almost_greedy`
     // (exactly what every bot did before greed existed).
     public string GreedPreference { get; set; } = string.Empty;
+
+    // Step 16 P16.4a (D-16.8) — the three REACTION axes. Same empty-default contract as greed above, and
+    // for exactly the same reason: they arrived after the world-creation draw existed, so an absent value
+    // must stay distinguishable from a drawn one or BackfillMissingStances cannot tell them apart. What
+    // each one does: see the Conviction / RiskAversion / Horizon block above GreedOrder in NetworkRoot.
+    public string ConvictionPreference { get; set; } = string.Empty;
+    public string RiskAversionPreference { get; set; } = string.Empty;
+    public string HorizonPreference { get; set; } = string.Empty;
 }
