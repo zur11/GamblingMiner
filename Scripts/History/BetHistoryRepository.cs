@@ -31,6 +31,13 @@ namespace Scripts.History
 		private readonly string _legacySnapshotPath;
 		private readonly List<BetRecord> _records = new();
 		private readonly List<DepositRecord> _deposits = new();
+		// INC-002 / D-16.20 — the loader's duplicate guard. `BetRecord.Id` is a Guid written on every journal
+		// line and, until now, read by nothing: it costs O(1) per record to make "the same bet appears twice
+		// in _records" structurally impossible, which is the whole class of bug INC-001 produced and that no
+		// READER ever defended against. Kept in lockstep with _records — every site that clears, bulk-loads
+		// or truncates the list must go through the helpers below. See ProjectDesignManual §40.8.
+		private readonly HashSet<string> _recordIds = new(StringComparer.Ordinal);
+		private int _duplicateRecordsSkipped;
 		private readonly List<HistoryJournalEntry> _pendingJournalEntries = new();
 		private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = false };
 		private int _mutationsSinceLastSave;
@@ -123,13 +130,11 @@ namespace Scripts.History
 
 		public void LoadLatestChunkOnly()
 		{
-			_records.Clear();
-			_deposits.Clear();
-			_pendingJournalEntries.Clear();
-			_mutationsSinceLastSave = 0;
+			ResetInMemoryState();
 			_loadedAllChunks = false;
 
 			InitializeJournalPathsAndLoadLatestChunk();
+			ReportDuplicatesSkipped();
 			if (_records.Count > 0 || _deposits.Count > 0)
 			{
 				return;
@@ -150,12 +155,50 @@ namespace Scripts.History
 				return;
 			}
 
+			ResetInMemoryState();
+			InitializeJournalPathsAndLoadAllChunks();
+			ReportDuplicatesSkipped();
+			_loadedAllChunks = true;
+		}
+
+		private void ResetInMemoryState()
+		{
 			_records.Clear();
+			_recordIds.Clear();
+			_duplicateRecordsSkipped = 0;
 			_deposits.Clear();
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
-			InitializeJournalPathsAndLoadAllChunks();
-			_loadedAllChunks = true;
+		}
+
+		// INC-002 — claims `record.Id` for the in-memory list, returning false if that exact record is
+		// already loaded. A record whose journal line carried no "Id" cannot be deduplicated: the property
+		// initializer mints a FRESH Guid per deserialization, so two copies of such a row look distinct.
+		// That only affects pre-journal legacy snapshots; every line the current writer emits carries one.
+		private bool TryClaimRecordId(BetRecord record)
+		{
+			string id = record?.Id;
+			if (string.IsNullOrEmpty(id))
+			{
+				return true;
+			}
+
+			return _recordIds.Add(id);
+		}
+
+		// Loud on purpose. A duplicate reaching the loader means a writer produced one (INC-001's shape) or a
+		// stale segment survived a rebuild — the guard keeps the READINGS honest, it does not fix the file,
+		// and a silent guard would hide exactly the condition it was added to detect.
+		private void ReportDuplicatesSkipped()
+		{
+			if (_duplicateRecordsSkipped <= 0)
+			{
+				return;
+			}
+
+			GD.PushWarning($"[BetHistory] Skipped {_duplicateRecordsSkipped} duplicate bet record(s) while loading " +
+				$"the journal ({_records.Count} unique kept). Duplicated history inflates every streak-shaped " +
+				"statistic — see ProjectDesignManual §40.8 / INCIDENT_LOG INC-002.");
 		}
 
 		private void InitializeJournalPathsAndLoadLatestChunk()
@@ -401,7 +444,17 @@ namespace Scripts.History
 				return;
 			}
 
-			_records.AddRange(snapshot.Records.Where(r => r != null));
+			foreach (BetRecord record in snapshot.Records.Where(r => r != null))
+			{
+				if (!TryClaimRecordId(record))
+				{
+					_duplicateRecordsSkipped++;
+					continue;
+				}
+
+				_records.Add(record);
+			}
+
 			if (snapshot.Deposits != null)
 			{
 				_deposits.AddRange(snapshot.Deposits.Where(d => d != null));
@@ -413,6 +466,15 @@ namespace Scripts.History
 			if (record == null)
 			{
 				throw new ArgumentNullException(nameof(record));
+			}
+
+			if (!TryClaimRecordId(record))
+			{
+				// A live re-registration of an already-stored bet — the double-counting shape, at its source
+				// rather than at the loader. Refuse it and say so; silently accepting is what INC-001 did.
+				GD.PushError($"[BetHistory] Refused a duplicate live bet record (Id {record.Id}). " +
+					"Something registered the same settled bet twice — see INCIDENT_LOG INC-002.");
+				return;
 			}
 
 			_records.Add(record);
@@ -642,14 +704,30 @@ namespace Scripts.History
 
 			_records.RemoveAll(r => r != null && r.TimestampUtc > checkpoint);
 			_deposits.RemoveAll(d => d != null && d.TimestampUtc > checkpoint);
+			RebuildRecordIdIndex();
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
 			RebuildJournalFromCurrentState();
 		}
 
+		// The id index mirrors _records, so a truncation has to release the ids it dropped — otherwise a
+		// legitimate later re-registration of a rolled-back bet would be refused as a duplicate.
+		private void RebuildRecordIdIndex()
+		{
+			_recordIds.Clear();
+			foreach (BetRecord record in _records)
+			{
+				if (record != null && !string.IsNullOrEmpty(record.Id))
+				{
+					_recordIds.Add(record.Id);
+				}
+			}
+		}
+
 		public void ClearAll()
 		{
 			_records.Clear();
+			_recordIds.Clear();
 			_deposits.Clear();
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
@@ -721,6 +799,12 @@ namespace Scripts.History
 		{
 			if (entry.Type == EntryTypeBet && entry.Bet != null)
 			{
+				if (!TryClaimRecordId(entry.Bet))
+				{
+					_duplicateRecordsSkipped++;
+					return;
+				}
+
 				_records.Add(entry.Bet);
 				return;
 			}

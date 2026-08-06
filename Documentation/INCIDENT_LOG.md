@@ -176,3 +176,113 @@ budget) exists precisely so the next such question is answered by reading a colu
 4. **A subsystem sized for hand-play does not survive being handed a simulator.** The full statement of
    this — the scale limitation this world exposed between 2010-03-21 and 2012-09-22 — is
    `Documentation/ProjectDesignManual.md` **Chapter 40**, and it applies to far more than the bet journal.
+
+---
+
+## INC-002 — The martingale level that could not happen (2026-08-06)
+
+**World / context** — Branch `main`, canonical timeline, `WorldFormatVersion 5` (Step 16 complete). Reported
+from the developer's own **long playtest runs**, while repeatedly consulting the *Max Martingale Level
+reached* figure in `BetsHistoryExplorer`. Every session in question was played at **50% win chance**.
+
+**Symptom** — In the developer's words: *"al comienzo teniendo sentido pero no sé desde qué punto ese máximo
+deja de medirse correctamente… sé que un nivel de 30 es muy difícil o quizá hasta imposible de alcanzar, sin
+embargo he llegado a ver máximos de más de 100 y sé por lógica básica que esto no puede suceder."*
+
+That last sentence is the whole incident. The developer diagnosed it from the arithmetic alone, before any
+code was read: at 50% a run of 100 has probability 2⁻¹⁰⁰. **A figure that cannot happen was being displayed
+as a measurement, and had been for an unknown number of sessions.**
+
+**Timeline**
+
+1. The metric had existed, unchanged and unchallenged, since `BetsHistoryExplorer` was written.
+2. INC-001 (2026-07-29) established that the journal had been loading every record 3–4× and that this had
+   silently inflated the lifetime stats. **The write path was fixed at P15.11; no reader was hardened**, and
+   the streak metric — the reader most sensitive to duplication in the entire project — was never revisited.
+3. Over the Step 16 long runs the developer kept reading the figure, watched it drift from plausible to
+   absurd, and raised it.
+
+**Faults**
+
+- **F1 — the amplifier: duplicated records + tied timestamps + a stable sort put the copies side by side.**
+  `BetsHistoryExplorer` builds its working list with `OrderBy(r => r.TimestampUtc)`. LINQ's `OrderBy` is
+  **stable**, and bet timestamps collide *heavily* — the calendar advances once per frame while the
+  simulator settles many bets in that frame, measured at **~3.1 bets per distinct timestamp**. So duplicate
+  copies of a bet do not scatter; they land **adjacent**, and a run of L losses is rendered as k×L for a
+  duplication factor k. This is the mechanism that converts INC-001's F4 ("the lifetime totals are
+  inflated", a proportional error nobody can see) into a **visibly impossible** number.
+- **F2 — root: nothing on the READ side defended against a duplicate.** `BetRecord.Id` is a Guid, written
+  on every journal line since the journal existed, and **read by nothing**. The check that makes the entire
+  bug class impossible was one `HashSet.Add` away and had been available the whole time.
+- **F3 — independent, and would survive a perfectly clean journal: the metric was not measuring what its
+  label claimed.** `AdvanceSummaryTo` counts consecutive `Loss` records over the **entire loaded history**,
+  with no reset on a change of `GameId`, a change of `Chance`, a session boundary, or — most importantly —
+  **a progression reset**. `InsistAfterStop`, the bankroll-limit reset and every auto-recharge put the bet
+  back to base while the loss run kept counting straight through. It also added the closing win to the run
+  on a win but not on a trailing loss, so the same streak reported two different values depending on where
+  the viewed window happened to end.
+- **F4 — no bound was ever asserted.** The figure is one of the few in the project with a *closed-form*
+  plausible maximum (`≈ log(n)/log(1/p)`). Nothing compared it to that, so the only detector this defect
+  ever had was a human being surprised by it.
+
+**Evidence** — measured read-only over the INC-001 archive
+(`%APPDATA%\Godot\GamblingMiner_backup_INC001_2026-07-29\`), 114 chunk files:
+
+| Fact | Value |
+|---|---|
+| Real bets, all at `Chance=50` | **1,081,554** |
+| Wins / losses | 540,898 / 540,656 — **win rate 0.5001** |
+| **True** max consecutive-loss run | **19** (theory for n≈1.08M: `log₂n ≈ 20`) |
+| Timestamp collisions | 10,000 records → **3,180 distinct timestamps** (~3.1 bets each) |
+| Duplication in the base file | every record `Id` in the sampled window appears **exactly 3×** — 30,012 rows, 10,004 distinct ids — plus a 4th copy in its chunk |
+| Same window, chunk alone | max loss run **12** |
+| Same window, merged and stable-sorted **the way the explorer does it** | max loss run **36** |
+
+The dice engine is exonerated by the second and third rows: 0.5001 over a million bets, and a maximum run
+landing exactly on the theoretical expectation.
+
+**Blast radius**
+
+- **No world, session or balance was lost.** This is a pure *reporting* fault: nothing downstream consumes
+  the streak figure.
+- **The figure itself has been untrustworthy for an unknown period** — certainly through every session that
+  ran on a duplicated journal (INC-001's whole span), and by F3 it was never a martingale-level measurement
+  even on clean data.
+- **Not verifiable for the specific runs reported.** The world was reset on 2026-08-05/06 and
+  `bet_history*.jsonl` is in the world-reset delete list (`NetworkRoot.cs`), so the journals that produced
+  the >100 readings no longer exist. The mechanism is proven on the archive; **which** duplication source
+  fed those particular runs is not, and the guard shipped below is what will answer that next time — by
+  name and count, at load.
+
+**Recovery** — none needed; nothing was corrupted on this occasion. The archive was read only.
+
+**Fix** — shipped 2026-08-06, three parts, all in this commit:
+
+1. **`BetHistoryRepository` deduplicates by `BetRecord.Id` at every entry point** — the journal loader, the
+   legacy-snapshot loader and live `Add`. Skips at load are counted and reported with `GD.PushWarning`; a
+   live duplicate `Add` is refused with `GD.PushError`, because at that point the caller is the bug. The id
+   index is rebuilt after `RollbackToUtc` so a legitimately-truncated bet can be re-registered.
+2. **The metric is segmented and honestly named** — the run resets on any change of `(GameId, Chance)`, the
+   closing win is no longer added, and the label reads **"Max consecutive losses: N (at C% chance)"**.
+3. **`AssertLossRunIsPlausible`** (`[Conditional("DEBUG")]`) compares the reported run against
+   `log(n)/log(1/p) + 12` for the segment that produced it — ~2⁻¹² false-positive rate — and prints the
+   expected value, the bound and a pointer to this entry.
+
+**Lesson** — Three, in order of how much they generalize:
+
+1. **Fixing a writer does not fix the readers that trusted it.** INC-001 closed the duplication *source* and
+   explicitly recorded that the lifetime stats had been inflated by it — then stopped. The one reader whose
+   output amplifies duplication instead of merely scaling with it was left untouched for a week, and it was
+   the reader a human could actually catch. **When an incident names a corrupted input, enumerate everything
+   that consumes it; the loudest consumer is the one worth hardening first.**
+2. **A metric with a closed-form bound must assert it.** This is §39.16 rule 1 ("never let a displayed
+   figure diverge from reality") in its easiest possible case: the dice's own probability model tells you,
+   in one line, what the number cannot exceed. Where such a bound exists and is cheap, *not* asserting it
+   means the metric's only detector is a person noticing — which here took an unknown number of sessions,
+   and worked only because the developer knew the domain well enough to be surprised.
+3. **A label is a claim about semantics, and it gets audited far less often than the arithmetic under it.**
+   "Martingale level reached" was wrong independently of the duplication: the progression resets in three
+   documented ways that the counter ignored. The number was inflated *and* mis-named, and the mis-naming is
+   what made the inflation hard to reason about — nobody can sanity-check a figure whose definition they
+   have to reconstruct from the code. **When a displayed name states a domain concept, verify the code
+   computes that concept, not merely something correlated with it.**

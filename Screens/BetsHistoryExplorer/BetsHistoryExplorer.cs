@@ -36,8 +36,17 @@ public partial class BetsHistoryExplorer : Control
 	private int _summaryTotalBets;
 	private decimal _summaryMaxBetAmount;
 	private decimal _summaryMaxLossAmount;
+	// INC-002 / D-16.21 — the streak is measured per (GameId, Chance) SEGMENT, never across the whole
+	// history. A run of consecutive losses only means anything at a fixed win chance: concatenating a
+	// stretch at 2% onto a stretch at 50% produces a number that describes neither. See §40.8.
 	private int _summaryConsecutiveLosses;
-	private int _summaryMartingaleLevel;
+	private int _summaryMaxLossRun;
+	private int _summaryMaxLossRunChance;
+	private string _summarySegmentGameId;
+	private int _summarySegmentChance = -1;
+	private long _summarySegmentBets;
+	private long _summaryMaxLossRunSegmentBets;
+	private bool _summaryImplausibleStreakReported;
 
 	public override void _Ready()
 	{
@@ -167,8 +176,7 @@ public partial class BetsHistoryExplorer : Control
 		_summaryTotalBets = 0;
 		_summaryMaxBetAmount = 0m;
 		_summaryMaxLossAmount = 0m;
-		_summaryConsecutiveLosses = 0;
-		_summaryMartingaleLevel = 0;
+		ResetStreakSummary();
 		RefreshHistoricalViewForCurrentTime(GetCurrentLocal().ToUniversalTime(), forceRebuild: true);
 
 		await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
@@ -195,16 +203,38 @@ public partial class BetsHistoryExplorer : Control
 		_betHistoryContainer.LoadFromHistoricalRecords(preview);
 
 		AdvanceSummaryTo(endExclusive, forceRebuild);
+		string streak = _summaryMaxLossRun > 0
+			? string.Format(CultureInfo.InvariantCulture, "{0} (at {1}% chance)", _summaryMaxLossRun, _summaryMaxLossRunChance)
+			: "0";
 		_summaryLabel.Text = string.Format(
 			CultureInfo.InvariantCulture,
-			"Bets up to selected date: {0} | Max bet amount: {1:F8} SC | Max loss amount: {2:F8} SC | Martingale level reached: {3}",
+			"Bets up to selected date: {0} | Max bet amount: {1:F8} SC | Max loss amount: {2:F8} SC | Max consecutive losses: {3}",
 			_summaryTotalBets,
 			_summaryMaxBetAmount,
 			_summaryMaxLossAmount,
-			_summaryMartingaleLevel
+			streak
 		);
 	}
 
+	private void ResetStreakSummary()
+	{
+		_summaryConsecutiveLosses = 0;
+		_summaryMaxLossRun = 0;
+		_summaryMaxLossRunChance = 0;
+		_summarySegmentGameId = null;
+		_summarySegmentChance = -1;
+		_summarySegmentBets = 0;
+		_summaryMaxLossRunSegmentBets = 0;
+		_summaryImplausibleStreakReported = false;
+	}
+
+	// INC-002 — this reports the longest run of consecutive LOSSES, which is what it always computed; the
+	// old "Martingale level reached" label was a second defect on top of the inflated number, because a
+	// progression resets to base bet on InsistAfterStop, on the bankroll-limit reset and on every
+	// auto-recharge, while the loss run keeps counting straight through all three. It is also no longer
+	// counted across a change of game or win chance, and the closing win is no longer added to the run
+	// (the old code did that on a win but not on a trailing loss, so the same streak reported two values
+	// depending on where the view happened to end).
 	private void AdvanceSummaryTo(int endExclusive, bool forceRebuild)
 	{
 		if (forceRebuild || endExclusive < _summaryCursor)
@@ -213,8 +243,7 @@ public partial class BetsHistoryExplorer : Control
 			_summaryTotalBets = 0;
 			_summaryMaxBetAmount = 0m;
 			_summaryMaxLossAmount = 0m;
-			_summaryConsecutiveLosses = 0;
-			_summaryMartingaleLevel = 0;
+			ResetStreakSummary();
 		}
 
 		for (int i = _summaryCursor; i < endExclusive; i++)
@@ -235,25 +264,71 @@ public partial class BetsHistoryExplorer : Control
 				}
 			}
 
+			// A new segment starts wherever the game or the win chance changes: whatever the player was
+			// doing before is a different experiment, and its losing run does not continue into this one.
+			if (record.Chance != _summarySegmentChance ||
+				!string.Equals(record.GameId, _summarySegmentGameId, StringComparison.Ordinal))
+			{
+				_summarySegmentChance = record.Chance;
+				_summarySegmentGameId = record.GameId;
+				_summarySegmentBets = 0;
+				_summaryConsecutiveLosses = 0;
+			}
+
+			_summarySegmentBets++;
+
 			if (record.Outcome == BetOutcome.Loss)
 			{
 				_summaryConsecutiveLosses++;
-				_summaryMartingaleLevel = Math.Max(_summaryMartingaleLevel, _summaryConsecutiveLosses);
+				if (_summaryConsecutiveLosses > _summaryMaxLossRun)
+				{
+					_summaryMaxLossRun = _summaryConsecutiveLosses;
+					_summaryMaxLossRunChance = _summarySegmentChance;
+					_summaryMaxLossRunSegmentBets = _summarySegmentBets;
+				}
+
 				continue;
 			}
 
-			if (record.Outcome == BetOutcome.Win)
-			{
-				if (_summaryConsecutiveLosses > 0)
-				{
-					_summaryMartingaleLevel = Math.Max(_summaryMartingaleLevel, _summaryConsecutiveLosses + 1);
-				}
-
-				_summaryConsecutiveLosses = 0;
-			}
+			_summaryConsecutiveLosses = 0;
 		}
 
 		_summaryCursor = endExclusive;
+		AssertLossRunIsPlausible();
+	}
+
+	// INC-002 / §39.16 rule 1 — the figure went wrong for an unknown number of sessions precisely because
+	// nothing ever checked it against what the dice can actually produce. For n bets at loss probability p
+	// the longest run is ~log(n)/log(1/p); exceeding that by 12 has probability ~2^-12, so a hit is a data
+	// fault (duplicated records, a mixed-up segment), not a bad night. Cheap and once per rebuild.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void AssertLossRunIsPlausible()
+	{
+		if (_summaryImplausibleStreakReported || _summaryMaxLossRun <= 0 || _summaryMaxLossRunSegmentBets <= 1)
+		{
+			return;
+		}
+
+		if (_summaryMaxLossRunChance <= 0 || _summaryMaxLossRunChance >= 100)
+		{
+			return;
+		}
+
+		double lossProbability = 1d - (_summaryMaxLossRunChance / 100d);
+		double expected = Math.Log(_summaryMaxLossRunSegmentBets) / Math.Log(1d / lossProbability);
+		double bound = expected + 12d;
+		if (_summaryMaxLossRun <= bound)
+		{
+			return;
+		}
+
+		_summaryImplausibleStreakReported = true;
+		GD.PrintErr(string.Format(
+			CultureInfo.InvariantCulture,
+			"[BetsHistory] Implausible loss run: {0} consecutive losses at {1}% chance over {2} bets in that " +
+			"segment (expected ~{3:F1}, alarm above {4:F1}). The bet history is almost certainly carrying " +
+			"duplicated records — see ProjectDesignManual §40.8 / INCIDENT_LOG INC-002.",
+			_summaryMaxLossRun, _summaryMaxLossRunChance, _summaryMaxLossRunSegmentBets, expected, bound));
 	}
 
 	private static int UpperBound(List<BetRecord> records, DateTime targetUtc)

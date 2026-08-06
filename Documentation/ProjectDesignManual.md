@@ -4808,6 +4808,36 @@ Note also what the correct half bought: the prediction *"if that ever measures a
 
 This belongs to Chapter 40 rather than Chapter 30 because it is the same shape as §40.2: a component sized correctly for the hand-play premise (a handful of seeded wallets) meeting a phase that changed the premise, with no assertion anywhere to notice.
 
+### 40.8 — The martingale level that could not happen: duplication has an amplifier (INC-002, 2026-08-06)
+
+**Symptom.** During the Step 16 long runs the developer kept consulting `BetsHistoryExplorer`'s *Max Martingale Level reached*, always playing at **50% win chance**, and watched it drift from plausible to **over 100**. The diagnosis came before any code was read, from the arithmetic alone: at 50% a run of 100 has probability 2⁻¹⁰⁰. **A figure that cannot happen was being displayed as a measurement.**
+
+**The engine was never in question.** Measured read-only over the INC-001 archive — 1,081,554 real bets, all at `Chance=50`: win rate **0.5001**, true longest consecutive-loss run **19**, against a theoretical expectation of `log₂(1.08M) ≈ 20`. The dice are exactly right.
+
+**The amplifier — and this is the part worth carrying forward.** Two properties combine:
+
+1. Bet timestamps **collide heavily**. `CalendarTimeService` advances once per frame while `SimulationService` settles many bets inside that frame, so every bet in a frame reads the same `CurrentUtcDateTime`. Measured: **10,000 records → 3,180 distinct timestamps**, ~3.1 bets each.
+2. The explorer orders its working list with **`OrderBy(r => r.TimestampUtc)`, which LINQ guarantees is stable.**
+
+So duplicate copies of a bet do not scatter through the list — they land **adjacent**. A streak metric therefore does not merely *scale* with the duplication factor the way a sum does; it **multiplies**, and it does so in a way that is immediately visible to anyone who knows the domain. Reproduced on the archive: the same window read from its chunk alone gives a max run of **12**; merged and stable-sorted the way the explorer does it, **36**. Every record `Id` in that window appears exactly 3× in the base file plus once in its chunk.
+
+> **INC-001 fixed the duplication SOURCE and explicitly recorded that the lifetime totals had been inflated by it — then stopped. It never asked which readers consume that input.** A sum over duplicated data is off by a constant factor and nobody can see it; a *streak* over duplicated data produces an impossible number. The loudest consumer is the one worth hardening first, and here it was left untouched for a week.
+
+**Three fixes, shipped together (2026-08-06).**
+
+**(1) Deduplicate on the read side.** `BetRecord.Id` is a Guid, written on every journal line since the journal existed, and **read by nothing**. A `HashSet<string>` in `BetHistoryRepository`, claimed at the journal loader, the legacy-snapshot loader and live `Add`, makes the whole bug class structurally impossible for O(1) per record. Skips at load are counted and reported with `GD.PushWarning` (the guard keeps the *readings* honest; it does not repair the file, and a silent guard would hide the very condition it exists to detect); a live duplicate `Add` is refused with `GD.PushError`, because at that point the caller is the bug. The index is rebuilt after `RollbackToUtc` so a legitimately truncated bet can be re-registered. Note the one gap, stated rather than hidden: a journal line carrying **no** `Id` mints a fresh Guid per deserialization and so cannot be deduplicated — that affects pre-journal legacy snapshots only.
+
+**(2) The metric was also wrong on clean data, independently.** `AdvanceSummaryTo` counted consecutive `Loss` records over the **entire loaded history**, with no reset on a change of `GameId`, a change of `Chance`, a session boundary, or — the substantive one — **a progression reset**. `InsistAfterStop`, the bankroll-limit reset and every auto-recharge (Chapter 25) put the bet back to base while the run counted straight through. It also added the closing win to the run on a win but not on a trailing loss, so the same streak reported two values depending on where the viewed window ended. It is now segmented by `(GameId, Chance)`, the closing win is not added, and it is labelled what it actually is: **"Max consecutive losses: N (at C% chance)"**.
+
+**(3) Assert the bound.** This figure has a *closed-form* plausible maximum — `≈ log(n)/log(1/p)` for n bets at loss probability p — and nothing had ever compared it to one, so the metric's only detector was a person being surprised. `AssertLossRunIsPlausible` (`[Conditional("DEBUG")]`) fires above `expected + 12` (~2⁻¹² false positives) and prints the run, the chance, the segment size, the expected value and the bound.
+
+**Two rules generalize out of this**, both sharpenings of §39.16 rule 1:
+
+> **When an incident names a corrupted input, enumerate what consumes it.** Fixing the writer is half a fix. Rank the consumers by how badly they *distort* the error rather than by how important they look — a sum hides it, a streak broadcasts it, and the broadcaster is the one that turns an invisible fault into a reportable one.
+
+> **Where a displayed figure has a cheap closed-form bound, assert it.** And separately: **a label is a claim about semantics and gets audited far less than the arithmetic beneath it.** "Martingale level" was wrong on its own terms, and the mis-naming is what made the inflation hard to reason about — nobody can sanity-check a number whose definition they must reconstruct from the code.
+
+Full forensic record, including the measured tables: `Documentation/INCIDENT_LOG.md` **INC-002**.
 
 ---
 
