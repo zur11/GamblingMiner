@@ -564,3 +564,38 @@ The snapshot rewrites the full chain per block. Options, cheapest first: (a) **s
 Everything above is a hypothesis until the frame is instrumented. Add per-block timings to the existing `difficulty_trace.csv` (which already carries R2's `simSecOffered,simSecConsumed`, the honest retention signal that caught §38.7's inverse-poll defect): **ms spent in UTXO rebuilds, in snapshot serialization, in the governance tick, in the bot/company sweeps, plus managed heap size and block index.** Then the question "why did it get slower over three days?" is answered by reading a column instead of reasoning about it — and each T4 item above can be accepted or dropped on evidence. §38.7's third rule applies throughout: **a displayed throttle is a measurement, not a diagnosis** — a `SimulationThrottle` below 1 means "find what is eating the frame", never "raise the budget".
 
 **Suggested order:** T4.6 → T4.1 → T4.4 → T4.3 → T4.2 → T4.5. The first two are small and independent; T4.2 is the one that needs a real decision about fork simulation.
+
+### T5 — Dev shell: PowerShell 5.1 → 7 migration — ⏸️ DEFERRED by decision (2026-08-06), not by oversight
+
+**Decision: stay on Windows PowerShell 5.1 until a migration is FORCED.** Reviewed 2026-08-06 and deliberately deferred: the gain is developer comfort, the risk is nonzero, and nothing in the project is blocked. Revisit only on one of the triggers below — not on general preference.
+
+**Current state (measured, not assumed).**
+
+- `powershell.exe` **5.1.26100.8875**, edition `Desktop`, at `C:\WINDOWS\System32\WindowsPowerShell\v1.0\`.
+- **`pwsh` is not installed** — no `C:\Program Files\PowerShell`. `winget` is available.
+- Claude Code **autodetects `pwsh.exe` and falls back to `powershell.exe`**, so this machine is on the fallback path. Installing PowerShell 7 would flip the agent's PowerShell tool to 7.x **automatically, with no setting to change** — which is precisely why the install decision *is* the migration decision, and why it is recorded here rather than treated as an incidental machine tweak.
+- Related and settled the same day: **Python is excluded from this project permanently** (it is not installed; `python`/`python3` on PATH are Microsoft Store execution-alias stubs). See the tool-routing table in `CLAUDE.md` → *Development Best Practices* → *Scripting tools on this machine*. That table is what makes T5 cheap to defer — it routes the work 5.1 is worst at away from PowerShell entirely.
+
+**What 5.1 actually costs us — three recurring frictions, each with evidence in `.claude/settings.local.json`.**
+
+1. **Native exit codes are unreliable under redirection.** In 5.1, redirecting a native executable's stderr (`2>&1`) wraps each line in an `ErrorRecord` (`NativeCommandError`) and sets `$?` to `$false` **even when the exe returned 0**. The allowlist carries ~nine hand-tuned `dotnet build … 2>&1 / 2>$null | Select-String …` variants that exist only to work around this. PS7 passes native stderr through as plain text and `$?` tracks the real exit code.
+2. **Encoding.** `Set-Content`/`Add-Content` default to the system ANSI codepage in 5.1. This project's docs are dense with `—`, `§`, `⚠`, `✅`, so appending to a plan or design file through the natural cmdlet is unsafe; the workarounds on record are (a) scripts that strip non-ASCII and rewrite with an explicit UTF-8 BOM, and (b) routing every `.md` append through `[System.IO.File]::WriteAllLines`/`AppendAllText`. PS7 defaults to UTF-8 across the writing cmdlets and removes the class.
+3. **Syntax.** No `&&` / `||`, no ternary, no `??` / `?.` — constant minor verbosity, no correctness impact.
+
+**Why deferred anyway.** The two headline PS7 wins — `ConvertFrom-Json -AsHashtable` and faster `Import-Csv` — are already neutralized: `CLAUDE.md` routes JSON/state inspection to `node -e` and CSV telemetry aggregation to `awk`, both of which beat PS7 at those jobs. What remains is friction (1)–(3), which is real but bounded and fully worked around today. Against that sits a small but nonzero regression surface: the out-of-repo dataset scripts (`Get-BtcNetworkDaily.ps1`, `Get-MtGoxDailyVwap.ps1`, `Get-BtcFeeMedianDaily.ps1`, `Merge-…`, `Compare-…`) were written and validated against 5.1 and use `[Net.ServicePointManager]::SecurityProtocol`, `-UseBasicParsing` and `[Net.HttpWebRequest]` — all no-ops or compatible under PS7, *probably* fine, none re-verified. They are finished artifacts whose CSVs are built and committed, so the exposure is low; it is not zero, and "low risk for a comfort gain" is not a trade this project takes mid-flight.
+
+**Reactivation triggers — migrate when ANY of these becomes true:**
+
+- A PowerShell script becomes **load-bearing inside the repo** (today they all live out-of-repo and have already produced their output). A script that must run repeatedly, in CI, or as a hook needs trustworthy native exit codes — friction (1) stops being cosmetic.
+- **A new dataset-acquisition round** (the Step-13/Step-14 pattern: bulk download, decompress, join, spot-check). That work is where 5.1's slow `Import-Csv` and encoding defaults bite hardest and where the existing scripts would be edited anyway — migrating *with* that work costs almost nothing extra.
+- **An encoding corruption reaches a committed file.** The moment friction (2) produces a real defect rather than a workaround, the workaround has failed.
+- **Automation gates on a build result** — a hook, a pre-commit check, or any flow whose control path reads `$?` from `dotnet build`.
+- **The harness or tooling drops 5.1**, or a needed cmdlet/parameter is 7-only.
+
+**How to do it when the time comes (the trap is already identified — do not rediscover it).**
+
+- Install to the **standard machine path** `C:\Program Files\PowerShell\7\`: `winget install --id Microsoft.PowerShell --source winget --scope machine`.
+- **Do NOT install from the Microsoft Store.** The known VSCode-extension failure to pick up `pwsh` ([claude-code issue #54335](https://github.com/anthropics/claude-code/issues/54335), closed) had a Store, user-scoped `pwsh` as its root cause — the autodetection did not find it. This is the *same* packaging trap that produced the Python stub: a Store package putting the binary where the detector does not look.
+- Restart the extension so detection re-runs; confirm the tool reports 7.x before trusting anything.
+- **Then:** update the `CLAUDE.md` note that currently reads *"Note PowerShell here is 5.1, not 7"*, and re-run the out-of-repo dataset scripts once to confirm (2) above.
+- **Reversible:** PS7 installs **side-by-side** and never replaces 5.1. Uninstalling `pwsh` returns the agent's tool to `powershell.exe` with no other change.
