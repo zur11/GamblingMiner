@@ -638,9 +638,9 @@ game only stops for the companies the player asked it to stop for.
 | Commits | `5b81853` P16.2 · `d6faba8` P16.1 · `4d69c50` P16.4 · `8d62214` P16.5 · `6b20715` P16.3 + P16.6 prep · `994ace8` wordlist cache + entry year · `3e1dff3` secp256k1 + bot base-address reads (§9.5) · **this one** reserve-guard seed + wallet-screen totals + these docs |
 | Build | clean, 0 warnings |
 | **`TimelineConfig.DevEntryYear`** | **`2011`** — ⚠ **MUST go back to `0` before merging to `main`** |
-| World | fresh (the developer deleted `user://` entirely), landed **2011-03-21 11:49:32**; run reached **block 1753 / 2012-04-10** (~1 in-game year), **3 companies founded**, FBI activated at block 1745 — audit at §9.6 |
+| World | fresh (the developer deleted `user://` entirely), landed **2011-03-21 11:49:32**; run reached **block 2188 / ~2013-02** (2026-08-01), **21 companies founded** (1 of them a bank), FBI activated at block 1745, player holds NST in **10** — audits at §9.6 (block 1753) and §9.8 (block 2126) |
 | Bootstrap | Satoshi 107 · Hal 26 · cast 410 (11 spawned) · ghost 540 · 7 non-miners seeded |
-| Status | **all build phases implemented; P16.6 partially run.** Four defects found during the run, all fixed — see §9.5 |
+| Status | ✅ **STEP 16 COMPLETE (2026-08-05).** All build phases implemented; P16.6 run finished with **all 15 checks verified**; P16.7 (two dividend defects + the no-quorum default) and P16.8 (player abstention, incl. subphases b–k) built after the run and **verified live**. Ten defects found and fixed across the run — §9.5, §9.8, §9.9. **Only remaining action: `DevEntryYear = 0` → rebuild → merge.** One cosmetic left open by choice: the `bots_only` label, §9.3 item 6 |
 
 **This world's bot stances** (re-drawn at the wipe — they ride the world snapshot, unlike the registry):
 
@@ -681,27 +681,42 @@ game only stops for the companies the player asked it to stop for.
    (`non_miner_16`, CB4/light_grey). ⚠ **All three closed UNCONTESTED** — `trackedDonationCount=1`,
    `holderCount=1`, and the same winner in all three: **bot_1**. See §9.6 for why, and read it before
    interpreting item 3.
-3. **Check 7 — the single most valuable one.** `user://logs/company_governance_trace.csv`, `vote_open`
-   rows, column **`spread=N`**: the gap between the highest and lowest reserve target the bots voted.
-   `0.0` is the signature of the defect this whole step exists to fix (it would have read `0.0` for 517
-   consecutive votes before P16.4). **Prediction to falsify:** with this world's CB4/CB1/CB5/CB3 bands, at
-   a CB1 company the four project to **81 / 100 / 75 / 88** *before* drift and jitter — so the first
-   `spread=` should be ≈ **25**, not 0.
-   ⚠ **Still open, and the first three foundings did NOT test it**: all three read `spread=0.0`, but with
-   `ballots=1` that is arithmetic, not the defect (§9.6). The check needs a founding with ≥2 NST holders;
-   six such pools are already queued — see §9.6.3.
-4. **Checks 1, 2, 3 — the dividend batching.** After a company has closed a QUARTER:
-   `network_population_trace.csv` → `pendingTxs` should fall to at/below the `txTargetPerBlock` band (it
-   sat at 26–28 all through P15.8); the governance trace should carry `dividend_settlement` rows and **no**
-   `bot_claim` rows; bot BTC balances should still grow, just at quarter ends.
-5. **Check 9** — the same company's `vote_close` reserve% must VARY across quarters.
-6. **Checks 8, 11, 12** — need the player to hold NST somewhere (win a top-3 tracked tier in an auction).
-   8 = the open-vote ballot list shows different values + occasional *not voted yet*; 11 = with the Vote
-   Policy toggle OFF the game does **not** pause and the panel reports *"Your standing policy voted for
-   you (N% SC reserve)"*; 12 = with it ON the pause behaves exactly as before.
-7. **Checks 10 & 14** — the P15.9 tripwire must never fire, and the monetary invariant must still
-   reconcile in the Central Bank / World Economy scenes.
-8. **Then: `DevEntryYear = 0`, rebuild, merge.**
+3. ~~**Check 7 — the single most valuable one.**~~ — ✅ **RESOLVED 2026-08-01 at block 2188** (§9.8).
+   `spread=` is non-zero and widely varying: **2.0 → 42.0** across the 61 votes that drew ≥2 ballots,
+   including a **25.0** — the exact figure §9.3 predicted for a CB1 company. The `0.0` rows are all
+   `ballots=1` (arithmetic, §9.6.2) or the three unanimous abstentions in §9.8.3. **P16.4 is confirmed:
+   this is the column F1 would have failed on, and it now moves.**
+4. ~~**Checks 1, 2, 3 — the dividend batching.**~~ — ✅ **done 2026-08-01** (§9.8). `pendingTxs` mean
+   **3.39** against a `txTargetPerBlock` of 2.57 over the last 200 blocks — tracking the historical band
+   instead of pinned at P15.8's 26–28 (check 1). **Zero `bot_claim` rows** in the whole trace against 17
+   `dividend_settlement` batches (check 2) — the 599 `bot_claim_sc` rows are the SC leg, which P16.1a
+   deliberately left per-block. Settlements carry real BTC (e.g. `holders=2 btc=176.99345928`), so bot
+   balances still grow, at quarter ends (check 3).
+5. ~~**Check 9**~~ — ✅ **done 2026-08-01**. `vote_close` reserve% moves across quarters at every company
+   with quarterly history: Seals with Clubs 29 → 27 → 26, Laundromat 15 → 9.02 → 8.76, Bitcoin Market
+   39.55 → 41.55, BTC-e 67.95 → 69.32. Not frozen at the founding value.
+6. ~~**Checks 8, 11, 12**~~ — ✅ **done 2026-08-02, developer-confirmed at the DeepBit / BTC Guild vote
+   cluster.** The player holds NST in **10 companies** and foundings reach **6 holders**, so §9.6.2's
+   single-bidder blockage is gone. Toggle ON at DeepBit (3 NST holders) paused the sim and rendered the
+   open-vote ballot list with differing values (8, 12); the three toggle-OFF companies voted through
+   without stopping the game and reported the standing-policy line (11). **The auction system as a whole
+   is confirmed working** — it is what produced the multi-holder foundings all three checks needed.
+   ⚠ Cosmetic, still open: `vote_open` labels a vote `bots_only` even when the player's **standing ballot
+   was cast into it** ([NetworkRoot.cs:4157](../Scripts/BlockchainPort/Simulation/NetworkRoot.cs#L4157)
+   reads `AwaitingPlayerVote`, not "did the player participate"). Harmless, but it made the toggle-OFF path
+   look like the player was absent — worth a third label (`player_policy`) if anyone touches that line.
+7. ~~**Checks 10 & 14**~~ — ✅ **done 2026-08-01**. Zero `PrintErr`/tripwire lines in `godot.log` for the
+   whole session (check 10). The invariant reconciles **exactly** (check 14): grants `200,000` (5 × 40k)
+   + debt `377,668.33563304` = circulation `577,668.33563304`, and the FED's three accounts (casino
+   `200,000`, fbi `100,000`, `bank:non_miner_22` `77,668.33563304`) sum to the ledger's `DebtByBorrower`
+   to the satoshi. Note the first **bank** FED client now carries real drawn debt — P15.3's credit loop is
+   live, not just wired.
+8. ~~**Then: `DevEntryYear = 0`, rebuild, merge.**~~ — ✅ **`DevEntryYear` restored to `0` and compiled
+   clean, 2026-08-05.** The next launch re-tags the timeline and therefore **wipes and rebuilds the world**,
+   landing on the canonical **2009-03-21** start — intended, and cheap (§9.7: this run's telemetry is not
+   worth preserving, unlike P15.8's). `bot_wallet_registry.json` survives the wipe by design (identity, not
+   world state), so the P16.2 seeds carry over. **Remaining: one launch to confirm the canonical start, then
+   commit + merge — both the developer's, per CLAUDE.md's git workflow.**
 
 ### 9.4 Diagnostics on offer — just ask
 
@@ -845,3 +860,241 @@ re-reading once check 9 has real quarterly data; not worth changing mid-run.
 - The P16.6 run produces **no telemetry worth preserving** (unlike P15.8's) — a wipe costs nothing here.
 - `bot_wallet_registry.json` is an **identity** file and survives world wipes by design; only its own
   `RegistryFormatVersion` regenerates it.
+
+### 9.8 P16.7 — the two dividend defects, found by audit at block 2126 (2026-07-31)
+
+> Raised by the developer as two plain questions about the run — *"why do some dividends pay no SC?"* and
+> *"why does Slush Pool hold 0 SC against a 2% target?"* Both had a single-line cause; neither was
+> reachable by reading the P16 diff, because both predate Step 16 and had simply never been *looked at*
+> with a company sitting on a low target. **Both fixed and confirmed live at block 2188.**
+
+**9.8.1 A 5% conversion floor that was secretly a floor on the VOTED TARGET.**
+`TryConvertCompanyReserves` gated on `deficitSc < totalValueSc × ConversionDeficitTriggerFraction`. Both
+sides shared the `totalValueSc` denominator, and the largest deficit that can ever exist is
+`totalValueSc × ReserveScPercent/100` (reached at an empty reserve) — so **any company whose board voted a
+target below 5% could never clear the gate on any block, forever.** Pinned at 0 SC, and therefore at a
+permanently 0 SC dividend too, since `QuarterDividendSc` is a percentage of the reserve.
+
+The run's own data drew the line with no exceptions: Slush Pool at **1.87%** had **zero** `conversion` rows
+across its entire life; Laundromat had zero while it sat at 4.51→4.76% and converted in the very block a
+vote pushed it to 15%; Coinwash, at **exactly 5.00%**, fired on its first block. Fixed by measuring the
+fraction against `targetSc` — *"5% of what this company is trying to hold"*, which is what the chunkiness
+intent wanted as its reference all along. **Confirmed:** Slush Pool's first-ever conversion landed at block
+2129, seven more followed, and its reserve is now `1,520.51 SC`.
+
+**Rule: when a threshold and the quantity it bounds share a denominator, one of them is probably a
+constraint on something you never meant to constrain.** The comment said "5% of total reserve value" and
+was accurate about the arithmetic — it just never stated the consequence, which is where the defect lived.
+
+**9.8.2 The dividend was priced before the reserve it reads was filled.**
+`CloseCompanyVote` finalizes `QuarterDividendSc = ScReserve × payoutRate%` — a snapshot — but
+`TryConvertCompanyReserves` runs in **step 3** of the same `TickCompanyGovernance` pass, i.e. *after*. So
+the very vote that first raised a company's target produced a dividend priced off the pre-raise (usually
+empty) reserve: a first quarterly of exactly **0 SC**, with the SC arriving one trace line later in the
+same block. ArtForz Cluster, block 1955: `vote_close 0.00 → 24.08%, divSc=0`, then `conversion sc=11,029`.
+Laundromat, block 1899, identical. Coinwash escaped only by accident — it had already converted at founding.
+
+Fixed by calling the conversion inside the quarterly branch of `CloseCompanyVote`, before the snapshot.
+Step 3's call still runs and early-returns on its own gate. **Confirmed:** Slush Pool block 2177 now traces
+`conversion` *then* `vote_close` in that order, with `divSc=14.25` — its first non-zero SC dividend ever.
+
+⚠ **Known consequence, accepted:** `QuarterDividendBtc` reads `CompanyOwnBtc` after the top-up has sold
+some BTC, so quarterly BTC dividends now come in slightly lower (Slush Pool 36.03 → 31.69). Previously both
+sides were priced pre-conversion; now both are post-. Consistent either way, and post- is the more honest
+reading of *"the reserve at finalize time"* — but it is a real movement in a figure the run has been
+watching, so do not read it as drift.
+
+Neither fix touches a persisted schema ⇒ **no `WorldFormatVersion` bump**, and the live world carried
+forward. Existing companies self-heal on their next quarterly.
+
+**9.8.3 ✅ RESOLVED 2026-08-02 (option B, developer's call) — unanimous abstention silently zeroed a whole
+quarter's dividend.**
+Found while confirming the fixes; **not** caused by them, and **not** fixed. P16.4c (D-16.10) lets a bot
+abstain, and `ComputeReserveVoteOutcome` correctly resolves over whoever showed up. But when **nobody**
+shows up, `votedWeight` is 0, the resolver's guard is skipped, and `payoutResult` keeps its **initial value
+of 0** — so the company pays *no dividend at all*, BTC and SC, for the entire quarter. The reserve % is
+preserved; the payout rate is not.
+
+Three occurrences so far, all at single-NST-holder companies where that one bot abstained: Blackmarket
+Reboot (blk 1878), Grass Hill Alpacas (blk 1900), Seals with Clubs (blk 2145). The last is the clean
+example — `vote_open ballots=0` → `vote_close pay=0.00 divBtc=0 divSc=0`, against `pay=6.50` the quarter
+before, with a healthy `5,162 SC` reserve sitting untouched.
+
+**The fix (P16.7c).** `payoutResult` was initialized to a bare `0m` and only ever assigned inside the
+`votedWeight > 0` branch. The developer chose **option B — fall back to the category default**
+(`DefaultQuarterlyPayoutRatePercent(gov.MarketCategory)`), over holding the previous quarter's rate,
+because it is the figure the company was chartered with and the one every bot ballot is already a multiple
+of: an unattended company drifts toward its **category norm** rather than freezing whatever the last quorum
+happened to pick. Shipped with a `;no_quorum` marker on the `vote_close` trace row (`ballotRecords.Count
+== 0`) so the case stays countable instead of reading as a quorum that coincidentally voted the charter
+figure. Build clean; no persisted schema change, **no `WorldFormatVersion` bump**.
+
+What made it findable at all is worth keeping: the other two dials on that same screen already defaulted to
+something sensible — `reserveResult` to the status quo, `dividendsCutResult` to the 50/50 (D-15.7, which
+even documents the no-quorum case in its comment). The payout rate was the **only** one whose no-quorum
+answer was zero, and the inconsistency is the tell. **General rule: a resolver's "nobody answered" value is
+a DESIGN DECISION, not an initializer — zero is almost never it.** Here it paid a whole quarter's
+shareholders nothing while the reserve sat full, which is exactly what sent the developer looking for a
+broken dividend engine (§9.8.1/.2 were found in the same sweep).
+
+### 9.9 P16.8 — the player can abstain (2026-08-02, D-16.19)
+
+> An extra phase, built **before** the merge at the developer's request, out of a question asked about
+> §9.8.3's abstention data: *should the player be able to sit a vote out too?*
+
+**9.9.1 The measurement that started it.** Across all 159 `vote_open` rows in the P16.6 run:
+
+| NST holders | votes | ≥1 abstention | no quorum |
+|---|---|---|---|
+| 1 | 80 | 5 (6.3%) | **5** |
+| 2 | 51 | 8 (15.7%) | 0 |
+| 3 | 28 | 10 (35.7%) | 0 |
+
+Two things fall out. **(a) Every no-quorum event is at a single-holder company** — `BotAbstainsFromVote`
+rolls independently per bot at `BotAbstentionPercent = 15`, so an empty ballot box costs `0.15ⁿ` and only
+`n = 1` makes it likely. A *"at most one abstainer"* cap — the developer's first instinct — would therefore
+have prevented **none** of the five, because those companies had exactly one bot to begin with. **(b) Every
+observed rate runs BELOW its theoretical value** (6.3% where 15% is predicted, 15.7% where 27.8% is), and
+the reason is the whole phase: the player's forced participation was diluting it.
+
+**9.9.2 What was built.** `OpenCompanyVote`'s player branch had exactly two paths — pause, or cast the
+standing policy — so the player was the only holder who could not decline. Now:
+
+- **`CompanyGovernanceState.PlayerAutoAbstain`** (defaults FALSE, D-16.11's reasoning) — a standing
+  abstention, checked **before** the pause: pausing the whole simulation to collect a ballot the player has
+  already declared they will not cast would spend the pause tax P16.5 removed on an answer of "nothing".
+  It is a second field rather than a third state of `PlayerPauseOnVotes` because it answers a different
+  question — the pause asks *"should the game stop to ask me?"*, this asks *"do I want a say at all?"*.
+- **`NetworkRoot.TryRegisterPlayerAbstention`** — the manual path, an `Abstain` button beside `Submit` at
+  both ballot forms (quarterly/special and shortfall). **It writes NO ballot, deliberately** — a
+  zero-filled ballot would drag the weighted average toward 0 and pin the reserve to the band floor, which
+  is the P15.9 failure arriving through a new door. Removing the entry is what raises every other holder's
+  relative weight, matching what a bot's abstention has always done.
+- It is the **second writer of `AwaitingPlayerVote`**, and the two are exhaustive: the player either casts
+  or declines, and both resume the simulation. An abstention that did not lift the pause would freeze the
+  game permanently.
+- **Vote Policy panel**: an *"Abstain from every vote at this company"* checkbox that **disables** the
+  pause row while on (a control with no effect must not look live), with the explanation swapped to say
+  what actually happens to the player's weight. `Follow Status Quo` deliberately does **not** clear the
+  abstention — that is a participation choice, not one of the three policy dials.
+
+**9.9.3 The bot rule is UNCHANGED, by decision.** The developer explicitly kept the independent
+probability roll rather than the *"a bot may abstain only if another holder is casting"* rule that had been
+proposed to make no-quorum structurally impossible. Consequence, accepted and worth stating: **no-quorum
+stays reachable and in fact becomes slightly MORE likely**, since the player can now also sit out — which
+is precisely why §9.8.3's category-default landed first. P16.7c is the guarantee this phase leans on.
+
+**9.9.4 One readout had to follow** (§39.16 rule 6). The ballot list rendered *"— not voted yet"* for any
+holder without an entry, which after this phase is wrong twice over: a **bot's** ballots are all cast the
+instant the vote opens, so a missing bot entry has always meant it **abstained** (the old wording merely
+predated the player having the same option), and with the standing abstention on the player is not being
+waited on at all, making *"(this vote is waiting on you)"* a plain untruth. Now four distinct states:
+`— abstained` (bot, or the player manually), `— not voted yet (this vote is waiting on you)` (paused,
+undecided), `— abstaining (your standing policy)`.
+
+`PlayerAutoAbstain` rides `BlockchainStateSnapshot` like every other governance field, so checkpoint
+coverage, delete-list membership and the pre-genesis path come free (D-16.14). Build clean, **no
+`WorldFormatVersion` bump** — a new bool defaulting to `false` reads correctly out of every existing
+snapshot, and `false` is exactly the pre-P16.8 behaviour.
+
+**9.9.5 First live test (2026-08-03) — five findings, all shipped fixed as P16.8b–d.** Run at Slush Pool
+(standing abstention) and ArtForz Cluster (pause). Full write-up: **`Documentation/ProjectDesignManual.md`
+Chapter 41**, which is also the "explain the difference in the manual" the developer asked for.
+
+1. **The defect behind the reported freeze (P16.8b).** An abstention and a not-yet-cast ballot have the
+   **same data shape** — no entry in `vote.Ballots` — and the form's guard (`playerVoted &&
+   !AwaitingPlayerVote`) distinguished them by exactly that. So after abstaining, the panel re-rendered a
+   live Submit/Abstain form as if nothing had happened, and pressing Submit **silently replaced the
+   abstention with a real ballot**. Fixed structurally: the form renders only while `AwaitingPlayerVote`,
+   making the four post-vote states exhaustive and mutually exclusive. **General rule: when a new outcome
+   shares its DATA shape with an existing one, every branch that told them apart by that shape is now
+   ambiguous — find them before adding the outcome, not after.**
+2. **Abstain is now a TOGGLE, `Submit Ballot` the sole resume axis (P16.8b).** Two buttons meant two ways
+   to leave the most fragile state in the project, and the one not pressed stayed live. The toggle states
+   an intention (blanks + locks the dials, switches the forecast), Submit resolves it.
+3. **The forecast answers the toggle's own question (P16.8b), and shows the SPAN not one sample (P16.8j).**
+   `ComputeReserveVoteOutcome` over the ballots *without* the player IS the abstention outcome, so the
+   preview shows it alongside the dialled figure (§39.16 rule 6). At the first real vote that pair read
+   `85.38%` vs `85.79%` and the developer reported, correctly, that the choice looked irrelevant — the dial
+   happened to sit near the other holders' average. Both numbers were true; **one evaluated point cannot
+   answer a question about a range.** The line now also states the reach the holding controls (here
+   `83.34%–89.01%` on 22.67%), or says plainly when it controls nothing. Both bounds go through the
+   resolver, so the band clamp cannot drift from the real one.
+4. **The policy dials lock when they cannot steer anything (P16.8c, corrected at P16.8f).** Tick on ⇒
+   blanked *and* locked (a stale `24%` in a greyed box reads as a promise). The **second** lock shipped in
+   this round — *configured-and-saved ⇒ locked until `Follow Status Quo`* — was **reverted the next round**:
+   `configured` is persisted, so the dials came back disabled on every later visit and the only way to edit
+   them again was to destroy the policy first. Final rule is one line: **editable ⟺ neither tick is on**,
+   applied on build *and* live on toggle. **A control that is read-only on arrival must be re-openable
+   without losing work — if the only escape from a lock is discarding what it protects, it is not
+   protecting anything.**
+5. **Abstentions are now visible (P16.8d).** Only cast ballots were ever recorded, so the developer could
+   not confirm their own Slush Pool abstention had happened — and a *bot's* abstention was equally
+   invisible despite being the thing that MOVED everyone else's weight. Snapshot now lists who sat out and
+   the share they forfeited; Vote History carries the player's participation per vote; auto-cast ballots
+   say so. **Derived from `founding.Holdings` vs the record's ballots — no new field, no bump** — which
+   works only because stock trading is deferred (D-ND8.21); Ch. 41 §41.5 records that dependency so the
+   phase that lands trading finds it.
+
+**9.9.6 Second live pass (2026-08-03) — two reports, neither a defect, one real dead-end.** After a restart
+the developer found ArtForz Cluster green (`Claim →`) instead of mocha, and no ballot form inside it, with
+betting blocked. Read from `state.json`: **both were correct.** ArtForz already held the player's manual
+`reserve=24, autoCast=False` ballot, so no vote was pending there — green is right, and the missing form is
+P16.8b working (before it, that page would have re-offered a live form and let the player overwrite their
+own ballot). The game was held by **BTC Guild**, whose vote had **zero** ballots: the player had not voted
+and bot_2 — its only other NST holder — had abstained on its 15% roll. Its BlockExplorer row was correctly
+red with `⚠ BOARD VOTE PENDING`.
+
+The dead-end was real though: **the game freezes globally, only one company can lift it, and nothing on a
+governance screen said which.** DiceGame's notice names the company, but by the time someone is navigating
+CompanyDetails they have left it behind. **P16.8e** adds a pause locator to `CompanyDetails` in the same red
+as the BlockExplorer row (one signal, two places), computed **before** the not-founded / dissolved early
+returns so it still shows on pages that render nothing else useful, and worded differently on the blocking
+company (confirmation) versus any other (redirection).
+
+**Three polish rounds closed with it (2026-08-03):** **P16.8f**, the dial-lock revert in item 4 above;
+**P16.8g**, hiding the Vote Policy panel entirely while this company's vote is holding the game — it
+answers *"what should be cast when I'm not here"*, which is not the question being asked at the moment the
+simulation stopped to ask in person, and its greyed dials sat immediately above the live ballot where the
+eye lands on them first; and **P16.8h**, three rules the panel needed before it was coherent, each of them
+a state the panel could DISPLAY but the engine could not HOLD (full write-up: Ch. 41 §41.4b):
+
+- **The ticks are mutually exclusive, and (P16.8i) the exclusion is SYMMETRIC.** Two attempts: the first
+  *disabled* the Pause box while leaving it visibly ticked, so Save wrote `pause=true` alongside
+  `abstain=true` — **disabling a stale control hides a contradiction; clearing it removes one**. The second
+  cleared Pause but kept disabling it, which made switching a **one-way door** (Abstain always pressable,
+  Pause not), reported after two switches that worked and a third that could not be made. Both boxes are
+  now always clickable and each clears the other. **Modelling precedence between two options by disabling
+  the loser only works when the player is never meant to pick it; if it is a choice, make them exclusive.**
+- **The prose is re-derived, not built once.** Both explanatory lines were composed from the persisted
+  flags at build time and never updated, so toggling a box left the panel explaining the previous state.
+  Everything the tick state governs now re-derives in one `SyncPolicyControls()`, so no path can update
+  half the panel.
+- **Only `Save Policy` writes.** `Follow Status Quo` was the one control that wrote on its own press,
+  reporting *"Policy cleared"* for something the player had not confirmed. It now resets the dials and arms
+  a `pendingClear` that Save turns into the `-1` sentinels — keeping the sentinel matters, because a
+  not-configured policy keeps FOLLOWING the company as its numbers move while one configured at today's
+  number is pinned to it. It is also disabled while a tick is on (nothing to reset to).
+
+**9.9.7 ✅ P16.8 CLOSED — verified live 2026-08-03/05 (Casascius special vote, 2013-10-08).** Every item
+confirmed by the developer in the running world:
+
+- **Toggle + single resume axis** — Abstain ticks, `Submit Ballot` resolves it, the game resumes, and the
+  panel replaces the form with *"You abstained from this vote"*. **The Vote Policy panel returns after
+  submit** (P16.8g's other half), confirmed explicitly.
+- **Pause locator (P16.8e)** — *"⚠ The game is paused for THIS company's board vote"* shown in the
+  BlockExplorer red, on the blocking company's own page.
+- **Ballot forecast (P16.8b/j/k)** — the three-pass label, final layout accepted.
+- **Policy panel (P16.8f/h/i)** — dials editable on arrival, greyed only while a tick is on, symmetric
+  mutual exclusion with both boxes always clickable, `Follow Status Quo` disabled under a tick, and no
+  write except through `Save Policy`.
+- **Abstention record (P16.8d)** — Casascius' Vote History reads `| you abstained` for the four quarters
+  under the standing policy and `| you voted 75% (policy)` before it, with the switch visible exactly where
+  it was made.
+
+Also observed in passing, both healthy: bot_1 cast **82%** against bot_4's **92%** at the same company (a
+10-point spread — P16.4 doing its job, where pre-P16.4 they would have been identical), and the special
+`>30%-inflow` vote fired ahead of the scheduled quarterly, as D-ND8.18 specifies.
+
+**Nothing in Step 16 is now unverified.** The only remaining action is the merge chore below.
+

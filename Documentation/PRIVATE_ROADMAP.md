@@ -356,6 +356,8 @@ Candidate inputs (all already available, none requiring new state):
 
 **The larger idea it belongs to** is the audit's **D2, "decision inbox"** (`step15-…-plan.md` §10.5 handoff): the game generates far more events than it shows — votes opening, dividends becoming payable, auctions closing, FBI heat on a holding — and they live in five different scenes. A holdings hub with a **badge count in the StatusBar** is the smallest version of that idea and probably the highest engagement-per-line change available. Once Step 16's per-company pause toggle exists (D-16.11), this screen is also the natural place to manage those toggles in bulk.
 
+**Promoted in priority by Step 16's own playtest (2026-08-05).** Two of the three participation settings are now per-company (`PlayerPauseOnVotes`, `PlayerAutoAbstain`, plus three policy dials), and with the player holding NST in ten companies the panel-by-panel management is already the slowest part of the loop — this hub is where a bulk view belongs. The step also produced the exact failure it exists to prevent: with the game frozen by a vote at BTC Guild the developer went to ArtForz Cluster, found a normal page, and had no route onward. P16.8e's pause locator patches that one case; **a holdings hub answers the general question ("where is anything waiting for me?") that the locator only answers for the pause.** Reuse `GetCompaniesAwaitingPlayerVote` as the badge source.
+
 ### Ghost Miner Typology — four kinds instead of one (design open, after Step 16)
 
 **Status: recorded 2026-07-30 from the Step 16 Round-2 discussion.** Full note: `AIHelperFiles/step16-living-governance-and-bot-wallets-plan.md` **§6.1** (D-16.17).
@@ -372,9 +374,11 @@ Today every ghost is **session-transient with no persisted keys**, which is exac
 
 **The framing to build toward** (developer, 2026-07-30): introduce them **gradually, as a lever against stagnation and for company variety** — e.g. admitting one or two cast miners as bidders into a pool that has stalled — rather than promoting the whole cast at once. That makes it a **dial the auction system can reach for**, which is a better shape than a one-time migration. Revisit alongside the §22.10 price-out terminator and the ND.10 escalation ladder, since those are the systems a larger bidder population would perturb.
 
-### Bot Seed Phrases & Full UTXO Integration (OQ-8.2) — PROMOTED, schedule right after Step 15
+### Bot Seed Phrases & Full UTXO Integration (OQ-8.2) — ✅ DONE (Step 16 P16.2, 2026-07-30)
 
-**Status: promoted out of the Post-Basic-Mode checklist (2026-07-28).** Design and implement **at the end of Step 15** if the plan closes cleanly; otherwise as the step immediately after. Original design: `AIHelperFiles/step8-utxo-realism-plan.md` OQ-8.2.
+**Status: SHIPPED.** Delivered as block E of Step 16 — every `bot_1..4`, cast miner, non-miner company and passphrase wallet now carries a 3-word seed + `DerivedAddressWallet`, base addresses derived from the seed (D-16.3), both Block Explorer cosmetics deleted, `WorldFormatVersion` 4 → 5 + `RegistryFormatVersion` 1 → 2. **Read `CLAUDE.md`'s Prototype entry before touching this area**: giving ~74 more participants a seed retired premises that eleven call sites depended on, and the three defects that surfaced the next day (bots spending change they could not see, a six-minute launch from affine secp256k1, and a bot bidding against its own reserve guard) are the lesson, not a footnote. Original design: `AIHelperFiles/step8-utxo-realism-plan.md` OQ-8.2; full record `AIHelperFiles/step16-living-governance-and-bot-wallets-plan.md` P16.2 + `Documentation/ProjectDesignManual.md` §30.10, §22.20, §40.7.
+
+*(Historical note, kept because the reasoning generalizes:)*
 
 **Why it was deferred, and why that reason is now gone.** At Step 8 the number of mining bots was an open question, and handing a seed phrase + full `DerivedAddressWallet` integration to an unknown (possibly large) population looked like a poor trade. The game has since settled: the casino-miner population is **exactly four** (`bot_1..4`), fixed by the ND.8c genesis-grant set and the D-EB.7 "only casino players may bid" rule. At four, per-bot seeds are cheap and the migration is straightforward — the original objection no longer applies.
 

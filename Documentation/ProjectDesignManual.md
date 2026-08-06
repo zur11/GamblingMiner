@@ -4781,3 +4781,215 @@ Note also what the correct half bought: the prediction *"if that ever measures a
 
 This belongs to Chapter 40 rather than Chapter 30 because it is the same shape as §40.2: a component sized correctly for the hand-play premise (a handful of seeded wallets) meeting a phase that changed the premise, with no assertion anywhere to notice.
 
+
+---
+
+## Chapter 41 — Player Participation in Company Governance: Pause, Policy, Abstention (Step 16 P16.5/P16.8)
+
+Three controls in `CompanyDetails` decide how the player takes part in a company's board votes, and they
+were built in that order across two phases. They are easy to confuse because two of them can leave the
+dials blank and the game running — but they answer **three different questions**, and the difference is
+worth stating precisely, because picking the wrong one quietly changes who steers a company.
+
+### 41.1 — The three questions
+
+| Control | The question it answers | Ballot cast? | Game pauses? |
+|---|---|---|---|
+| **Pause the game for this company's votes** | *Should the simulation stop so I can decide by hand?* | Yes — whatever you dial at the form | **Yes** |
+| **Vote Policy dials** (auto reserve / payout / shortfall split) | *If I'm not deciding by hand, what should be cast for me?* | Yes — automatically, marked `WasAutoCast` | No |
+| **Abstain from every vote at this company** | *Do I want a say here at all?* | **No — nothing is cast** | No |
+
+The abstention **outranks the pause**: pausing the whole simulation to collect a ballot the player has
+already declared they will not cast would spend the most expensive interaction in the game on an answer of
+"nothing". With Abstain ticked, the pause checkbox is disabled and says so.
+
+### 41.2 — `Follow Status Quo` vs `Abstain` — the distinction that keeps being missed
+
+Both leave the dials showing the company's current values. They are opposites.
+
+- **`Follow Status Quo`** clears the *configuration* so the auto-cast falls back to the company's
+  currently-applied numbers. **A ballot is still cast — it just votes for no change.** The player's NST
+  weight is fully present in the resolver's denominator, and it pulls the weighted average **toward the
+  status quo**, which at a company whose other holders want change is an active vote *against* them.
+  It is the D-16.12 default: an automation the player never configured must not steer anything.
+
+- **`Abstain`** casts nothing. The player's weight **leaves the denominator entirely**, so every other
+  holder's relative weight *rises* and they decide the outcome between themselves.
+
+The practical difference: at a two-holder company where the player holds 69% and the other holder wants
+23% against a current 24%, **Follow Status Quo lands the vote near 24% (the player's weight dominates);
+Abstain lands it at exactly 23% (the other holder decides alone).** Same blank dials, opposite results.
+
+> **Rule of thumb: Follow Status Quo is a vote for inertia. Abstain is a decision not to vote.** Choosing
+> "no opinion" when you mean "no change" hands the company to whoever did show up.
+
+An abstention is **never** implemented as a ballot of zeros. That would drag the weighted average toward 0
+and pin the reserve to the band floor — the P15.9 failure arriving through a different door (§39.15).
+
+### 41.3 — Abstain is a toggle, not a button (P16.8b)
+
+It shipped at P16.8 as a second button beside `Submit Ballot`, and that was wrong for a reason worth
+keeping: **a paused game is the most fragile state in the project, and it grew two ways to leave it.**
+Whichever button the player did not press was still sitting there live afterwards, and the panel had a
+worse problem behind it — an abstention and a not-yet-cast ballot have the *same data shape* (no entry in
+`vote.Ballots`), so the form's "does the player still need to vote?" test could no longer tell them apart.
+After abstaining, the panel re-rendered a live ballot form as though nothing had happened, and pressing
+Submit silently replaced the abstention with a real ballot.
+
+The fix is structural, not cosmetic: the ballot form is now shown **only while `AwaitingPlayerVote` is
+true**, which makes the four post-vote states exhaustive and mutually exclusive (*policy voted for you ·
+ballot registered · you abstained · you are abstaining by policy*). Abstain became a **toggle** stating an
+intention — it blanks and locks the dials, and switches the forecast line to the without-me outcome — while
+`Submit Ballot` remains the single axis that unfreezes the simulation, exactly as before the phase.
+
+> **When a new outcome shares its DATA shape with an existing one, every branch that distinguished them by
+> that shape is now ambiguous. Find those branches before adding the outcome, not after.**
+
+### 41.4 — The dials are editable exactly when they steer something (P16.8c → corrected at P16.8f)
+
+**One rule: the three policy dials are enabled whenever neither tick is on.** Editable by default; disabled
+by Pause (the player votes by hand at the form) or by Abstain (nothing is cast at all); Save commits the
+values without changing their editability.
+
+When a tick is on the dials are also **blanked to the company's current values**, which is the honest half:
+a stale `24%` sitting in a greyed box reads as *"24% is what will be sent"*, precisely what will not happen.
+The lock is applied both on build (derived from persisted state, so it survives the signature-gated
+rebuilds) and live on toggle, so ticking a box greys the dials immediately rather than at the next refresh.
+
+P16.8c originally carried a **second** lock — *"configured and saved ⇒ locked; press Follow Status Quo to
+unlock"* — intended to make a standing order legible as committed rather than half-filled. It was reverted
+one round later because `configured` is **persisted**: the dials came back disabled on every subsequent
+visit, and the only route to editing them again was to destroy the policy first.
+
+> **A control that is read-only on arrival must be re-openable without losing work. If the sole escape from
+> a lock is discarding the thing the lock protects, it is not protecting it — it is broken until you delete
+> something.**
+
+`Follow Status Quo` therefore no longer "unlocks" anything; it just resets the values to the company's
+current numbers, which is what its name always claimed.
+
+### 41.4b — Three rules the panel needed before it was coherent (P16.8h)
+
+Found by inspection of two screenshots, and each one was a state the panel could display but the engine
+could not hold.
+
+**The ticks are mutually exclusive, and the exclusion is SYMMETRIC.** `Abstain` outranks `Pause` in
+`OpenCompanyVote`, and this took two attempts to express.
+
+The first cut *disabled* the Pause box while Abstain was on, leaving it visibly **ticked** underneath —
+so Save wrote `pause=true` alongside `abstain=true`: a stored state with no meaning, whose displayed form
+said the game would stop at a vote that would never be cast. *Disabling a stale control hides a
+contradiction; clearing it removes one.*
+
+The second cut cleared Pause but **kept disabling it**, which turned switching into a **one-way door**:
+Abstain could always be pressed, Pause could not, so going back required knowing to untick Abstain first —
+which nothing on screen said. Reported after exactly that: two successful switches (both of which happened
+to pass through unticking) and a third that could not be made at all.
+
+Both boxes now stay clickable, and whichever is ticked clears the other. With true mutual exclusion the
+precedence question dissolves — the two states cannot coexist, so there is nothing left for one to outrank.
+
+> **Modelling precedence between two options by disabling the loser only works when the player is never
+> meant to pick it. If it is a choice, precedence is the wrong tool — make them exclusive instead.**
+
+**The explanatory text is re-derived, not built once.** Both prose lines were composed from the *persisted*
+`pause` / `autoAbstain` read at build time and never updated, so toggling a box left the panel explaining
+the previous state — the screenshot showed *"You vote by hand at the Board Vote form below"* under a ticked
+Abstain. All of it (mutual exclusion, dial locks, both labels, the Clear button) now re-derives in one
+`SyncPolicyControls()` called on build and on every toggle, so no path can update half the panel.
+
+**Only `Save Policy` writes.** Ticks and dials already deferred to Save; `Follow Status Quo` did not — it
+called `SetPlayerVotePolicy` on the press and reported *"Policy cleared"* for something the player had not
+confirmed. It is now a form action: it resets the dials to the company's current values and arms a
+`pendingClear` intent that Save turns into the `-1` "not configured" sentinels. Keeping the sentinel is what
+preserves the real distinction — **a not-configured policy keeps following the company as its numbers move,
+while a policy configured at today's number is pinned to it forever** — so "reset the dials and Save the
+displayed values" would not have been the same thing. Any manual edit cancels the intent.
+
+It is also **disabled while either tick is on**: with the dials steering nothing there is nothing to reset
+them *to*, and the button would otherwise write a policy change with no visible effect.
+
+### 41.4c — The ballot forecast: three corrections to one label (P16.8b/j/k)
+
+The forecast under the reserve dial is the panel's whole argument for why the pause is worth paying, and it
+took three passes to say anything useful. Each failure is a different way for a *correct* readout to
+mislead, which is why all three are kept.
+
+**Pass 1 (P16.8b) — it answered only the dialled branch.** With Abstain ticked it still previewed what the
+dial would do, promising a result Submit was not going to produce. Fixed by noticing that
+`ComputeReserveVoteOutcome` over the ballots *without* the player already **is** the abstention outcome —
+no new maths, just the right call (§39.16 rule 6).
+
+**Pass 2 (P16.8j) — it showed one sample of a range.** At a real vote it read `85.38%` (dialled) against
+`85.79%` (abstaining), and the developer concluded, reasonably, that the choice was irrelevant. Both
+figures were true; the dial simply happened to sit at **84%**, near the other holders' **85.79%** average,
+so the sample landed where the branches barely differ. The same ballot at the band bounds moves the close
+between **83.34%** and **89.01%** — a ~6-point reach on a 22.67% holding.
+
+> **When a preview exists to support a decision, show the range the decision spans. A single evaluated
+> point is indistinguishable from a constant.**
+
+Both bounds are produced by calling the resolver with the player's ballot at each band bound rather than
+averaging locally, so the clamp lands exactly where `CloseCompanyVote` will put it.
+
+**Pass 3 (P16.8k) — the one number that could never move was the one being read as the answer.** Adding the
+span did not fix the report: the line still ended `(Now 83.79%.)`, and *"now"* is the company's currently
+applied target, which by definition cannot change until the vote closes. Sitting at the end of a sentence
+whose subject was an outcome, it read as the outcome — identical in both screenshots, "not varying even in
+the decimals", while the figures that *did* vary sat mid-sentence.
+
+The final layout gives the current value its own line, named as the starting point, and lays the two
+branches out **identically** with `»` marking the selected one:
+
+```
+Reserve target now: 83.79% SC.  Other holders have cast 77 % of the votes, averaging 85.79% SC.
+   » vote 84%  →  closes at 85.38% SC
+     abstain   →  closes at 85.79% SC — the other holders decide
+Your 22.67 % can move the close anywhere between 83.34% and 89.01%.
+```
+
+> **A number that cannot change must never share a line with one that can. Put the constant somewhere the
+> eye reads as context, or it becomes the answer.**
+
+Both branches are shown regardless of the toggle, so toggling changes only the emphasis and never the
+information — **the comparison IS the decision, so hiding half of it defeats the control.**
+
+**A consequence worth recording: the ballot dials are locked but NOT blanked** — the opposite of the policy
+panel (§41.4), using the same widgets. P16.8b blanked them on the policy panel's reasoning (*"a greyed 84%
+reads as a promise to send 84%"*), but that reasoning does not survive a two-branch preview: the `vote N%`
+line is one half of the comparison, so wiping `N` the moment the player considers abstaining destroys the
+number they are weighing it against. The `»` marker states which branch is live, leaving nothing for a
+stale value to imply. **The same control needs opposite treatment in the two panels, because what the
+surrounding readout says about it differs.**
+
+### 41.4a — The policy panel hides while a ballot is being asked for (P16.8g)
+
+While *this* company's vote is holding the game, the Vote Policy panel is not rendered at all. It answers
+*"what should be cast when I'm not here"* — a question nobody is asking at the exact moment the simulation
+stopped to ask the player in person. Showing both put two sets of reserve/payout dials on screen at once,
+the inert greyed pair sitting immediately **above** the live ballot, and the greyed pair is the one the eye
+lands on first. It returns as soon as the ballot is submitted.
+
+### 41.5 — Abstentions have to be visible, or they read as a broken engine (P16.8d)
+
+Only cast ballots were ever recorded, so an abstention left no trace in the scene: after abstaining the
+player could not confirm it had happened, and a *bot's* abstention was equally invisible — even though it is
+the thing that **moved everyone else's weight**, and therefore explains the result more than some of the
+ballots do. The Last Vote Snapshot now lists who sat out and what share of the vote they forfeited, the
+Vote History line carries the player's own participation per vote, and a cast ballot says when it came from
+the standing policy.
+
+This is **derived, not persisted**: holdings are fixed at founding (stock trading is deferred, D-ND8.21),
+so *"held NST and has no ballot in this record"* is exactly the set that abstained — which also means it
+reads correctly on votes closed before the feature shipped, with no `WorldFormatVersion` bump. **If stock
+trading ever lands, this derivation breaks** — the holdings would no longer be the ones the vote saw, and
+the abstention set would have to be persisted at close instead. It is listed here so that phase finds it.
+
+### 41.6 — What the player cannot do, and why
+
+The bots' abstention (`BotAbstainsFromVote`, 15% per bot per vote, independent) has **no cap**, by
+decision: an empty ballot box costs `0.15ⁿ` and is only likely at single-holder companies. A *"at most one
+abstainer"* rule was considered and rejected — measured against the P16.6 run it would have prevented **none**
+of the five observed no-quorum votes, because every one of them was at a company with exactly one bot
+holder. No-quorum is instead handled where it lands: the payout rate falls back to the **category default**
+(P16.7c), never to zero, and the `vote_close` trace row carries `;no_quorum` so the case stays countable.

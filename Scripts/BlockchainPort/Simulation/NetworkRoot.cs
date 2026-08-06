@@ -3052,9 +3052,21 @@ public partial class NetworkRoot : Node
     //    counterparty is the SELECTED BANK (§5.1), with the casino surviving only as the pre-first-bank
     //    fallback. ──
 
-    // Calibration floors (v1): convert only when the SC-side deficit is ≥ 5% of total reserve value AND
-    // the BTC to sell clears a dust/value floor — conversions stay chunky instead of one tiny tx per
-    // inflow, and each conversion is an ORGANIC mempool tx that the fullness-parity budget counts.
+    // Calibration floors (v1): convert only when the SC-side deficit is ≥ 5% of the company's own SC
+    // TARGET, AND the BTC to sell clears a dust/value floor — conversions stay chunky instead of one tiny
+    // tx per inflow, and each conversion is an ORGANIC mempool tx that the fullness-parity budget counts.
+    //
+    // Step 16 P16.7 (2026-07-31) — the fraction is measured against `targetSc`, NOT against `totalValueSc`.
+    // It used to be the latter, which silently made 5% a HARD FLOOR ON THE VOTED TARGET ITSELF: both sides
+    // of the test shared the `totalValueSc` denominator, and since the largest deficit that can ever exist
+    // is `totalValueSc × ReserveScPercent/100` (reached at an empty reserve), any company whose board voted
+    // a target below 5% could never clear the gate on any block, forever — permanently pinned at 0 SC, and
+    // therefore at a permanently 0 SC dividend too (QuarterDividendSc is a % of the reserve). Found in the
+    // P16.6 run: Slush Pool voted 1.87% and had ZERO conversion rows across its whole life, while every
+    // company at ≥ 7% converted normally and Coinwash — sitting at exactly 5.00% — fired on its first
+    // block. The chunkiness intent is preserved, and it is the intent that wanted the target as its
+    // reference all along: "5% of what this company is trying to hold", not "5% of everything it owns".
+    // The governance layer and this one no longer disagree about which targets are real.
     private const decimal ConversionDeficitTriggerFraction = 0.05m;
     private const decimal MinConversionBtc = 0.01m;
 
@@ -3099,7 +3111,7 @@ public partial class NetworkRoot : Node
 
         decimal targetSc = totalValueSc * gov.ReserveScPercent / 100m;
         decimal deficitSc = targetSc - gov.ScReserve;
-        if (deficitSc < totalValueSc * ConversionDeficitTriggerFraction)
+        if (deficitSc < targetSc * ConversionDeficitTriggerFraction)
         {
             return;
         }
@@ -4110,6 +4122,14 @@ public partial class NetworkRoot : Node
 
             if (holding.HolderId == PlayerNodeId)
             {
+                // Step 16 P16.8 (D-16.19) — the standing abstention outranks the pause. Pausing the game to
+                // ask for a ballot the player has already declared they do not want to cast would be the
+                // worst of both: the pause tax P16.5 removed, spent on a vote whose answer is "nothing".
+                if (gov.PlayerAutoAbstain)
+                {
+                    continue;
+                }
+
                 // Step 16 P16.5b (D-16.11/12/13) — the pause is now OPT-IN, per company. With the toggle
                 // off (the default) the standing policy is cast immediately and the game never stops; with
                 // it on, behaviour is exactly as before. Note the SAME rule applies to a shortfall vote:
@@ -4184,30 +4204,33 @@ public partial class NetworkRoot : Node
     // player never chose as if they had.
     public static (bool pauseOnVotes, decimal reserveScPercent, bool reserveConfigured,
         decimal payoutRatePercent, bool payoutConfigured,
-        decimal dividendsCutPercent, bool cutConfigured) GetPlayerVotePolicy(string nonMinerNodeId)
+        decimal dividendsCutPercent, bool cutConfigured, bool autoAbstain) GetPlayerVotePolicy(string nonMinerNodeId)
     {
         if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov))
         {
-            return (false, 0m, false, 0m, false, DefaultShortfallDividendsCutPercent, false);
+            return (false, 0m, false, 0m, false, DefaultShortfallDividendsCutPercent, false, false);
         }
 
         CompanyBallot preview = BuildPlayerStandingBallot(gov);
         return (gov.PlayerPauseOnVotes,
             preview.ReserveScPercentTarget, gov.PlayerPolicyReserveScPercent >= 0m,
             preview.PayoutRatePercent, gov.PlayerPolicyPayoutRatePercent >= 0m,
-            preview.DividendsCutPercent, gov.PlayerPolicyDividendsCutPercent >= 0m);
+            preview.DividendsCutPercent, gov.PlayerPolicyDividendsCutPercent >= 0m,
+            gov.PlayerAutoAbstain);
     }
 
     // P16.5c — the panel's write path. A negative value CLEARS that field back to "follow the status quo",
     // which is how the player un-configures a policy without having to guess the company's current number.
     public static void SetPlayerVotePolicy(string nonMinerNodeId, bool pauseOnVotes,
-        decimal reserveScPercent, decimal payoutRatePercent, decimal dividendsCutPercent)
+        decimal reserveScPercent, decimal payoutRatePercent, decimal dividendsCutPercent,
+        bool autoAbstain = false)
     {
         if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov))
         {
             return;
         }
 
+        gov.PlayerAutoAbstain = autoAbstain; // P16.8 (D-16.19)
         gov.PlayerPauseOnVotes = pauseOnVotes;
         gov.PlayerPolicyReserveScPercent = reserveScPercent < 0m ? -1m : Scripts.Finance.Money.Normalize(reserveScPercent);
         gov.PlayerPolicyPayoutRatePercent = payoutRatePercent < 0m ? -1m : Scripts.Finance.Money.Normalize(payoutRatePercent);
@@ -4404,7 +4427,24 @@ public partial class NetworkRoot : Node
 
         decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
         decimal reserveResult = gov.ReserveScPercent;
-        decimal payoutResult = 0m;
+        // Step 16 P16.7c (2026-08-01, developer's call — option B of the three in §9.8.3) — NO-QUORUM
+        // DEFAULT. This was a bare `0m`, which meant that when P16.4c's abstention rule let EVERY NST holder
+        // sit a vote out, `votedWeight` stayed 0, the resolver branch was skipped, and the company paid NO
+        // dividend at all — BTC and SC — for the entire quarter, on top of a full and untouched reserve.
+        // Seen 3× in the P16.6 run (Seals with Clubs blk 2145: `ballots=0` → `pay=0.00`, one quarter after
+        // `pay=6.50`, with 5,162 SC sitting idle). Note the other two dials on this screen already defaulted
+        // to something sensible — `reserveResult` to the status quo and `dividendsCutResult` to the 50/50 —
+        // so the payout rate was the ONLY one whose no-quorum answer was "zero", and it read as a broken
+        // dividend engine rather than as a governance outcome.
+        //
+        // The category default is the right fallback rather than the previous quarter's rate: it is the same
+        // figure the company was chartered with and the same one every bot ballot is a multiple of, so an
+        // unattended company drifts toward its category norm instead of freezing whatever the last quorum
+        // happened to pick. A `no_quorum` marker rides the vote_close trace so the case stays countable.
+        //
+        // General rule: a resolver's "nobody answered" value is a DESIGN DECISION, not an initializer.
+        // Zero is almost never it — and here it was silently paying a whole quarter's shareholders nothing.
+        decimal payoutResult = DefaultQuarterlyPayoutRatePercent(gov.MarketCategory);
         int shiftResult = 0;          // what the NST holders voted (traced even when it can't be applied)
         bool categoryLocked = false;  // P15.2b / D-15.12 — true for a bank: the shift is voted but refused
         // P15.4e — a shortfall vote's single dial. Stays at the 50/50 default when nobody voted (D-15.7).
@@ -4520,9 +4560,24 @@ public partial class NetworkRoot : Node
         int quarterDays = 0; // ND.9h — quarter length (in-game days), 0 for non-quarterly votes
         if (vote.Kind == CompanyVoteKindQuarterly)
         {
+            // Step 16 P16.7 (2026-07-31) — top the SC reserve up to the target THIS VOTE JUST SET, before
+            // the dividend below reads it. The finalize is a snapshot ("payoutRate% of the reserve at
+            // finalize time"), and the reserve was filled by TryConvertCompanyReserves in step 3 of the
+            // same TickCompanyGovernance pass — i.e. AFTER this line ran. So the very vote that first
+            // raised a company's target produced a dividend priced off the pre-raise (usually empty)
+            // reserve: a first quarterly of exactly 0 SC, with the SC arriving one trace line later in the
+            // same block. Seen in the P16.6 run at ArtForz Cluster (block 1955: vote_close 0.00 → 24.08%,
+            // divSc = 0, then a conversion crediting 11,029 SC) and at Laundromat (block 1899). Coinwash
+            // escaped it only by accident — it had already converted at its founding vote.
+            //
+            // Calling the conversion HERE rather than reordering the caller keeps the fix local to the
+            // snapshot that was reading stale state: step 3's call still runs, and simply early-returns on
+            // its own deficit gate now that the reserve is at target. Non-quarterly votes are deliberately
+            // left alone — they do not finalize a dividend, so nothing there reads the reserve.
+            TryConvertCompanyReserves(gov, block);
+
             // D-ND8.17 — FINALIZE the quarter's dividend as two separately-tracked amounts (never live
             // accrual): each currency side is payoutRate% of the corresponding reserve at finalize time.
-            // The SC side is structurally 0 until ND.8b.6 lands the BTC→SC conversions.
             // P15.3a — the company's OWN BTC: a bank's quarantined collateral is excluded, so a quarterly
             // dividend can never pay away the asset backing its FED debt (D-15.4).
             decimal treasuryBtc = CompanyOwnBtc(gov.NonMinerNodeId);
@@ -4571,8 +4626,13 @@ public partial class NetworkRoot : Node
         }
 
         AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "vote_close", vote.Kind,
-            string.Format(System.Globalization.CultureInfo.InvariantCulture, "shift={0}{1}",
-                shiftResult, categoryLocked && shiftResult != 0 ? ";shift_refused=bank_locked" : string.Empty));
+            string.Format(System.Globalization.CultureInfo.InvariantCulture, "shift={0}{1}{2}",
+                shiftResult,
+                categoryLocked && shiftResult != 0 ? ";shift_refused=bank_locked" : string.Empty,
+                // P16.7c — every holder abstained, so the dials took their no-quorum defaults (the payout
+                // rate the category default, the reserve the status quo). Marked so the case stays countable
+                // in the trace instead of looking like a quorum that happened to vote the charter figure.
+                ballotRecords.Count == 0 ? ";no_quorum" : string.Empty));
     }
 
     // D-ND8.17 — the PST daily drip: each elapsed in-game day of the active cycle accrues
@@ -4958,6 +5018,33 @@ public partial class NetworkRoot : Node
                 DefaultQuarterlyPayoutRatePercent(gov.MarketCategory) * 2m),
             DividendsCutPercent = Math.Clamp(Scripts.Finance.Money.Normalize(dividendsCutPercent), 0m, 100m)
         };
+        vote.AwaitingPlayerVote = false;
+        return true;
+    }
+
+    // Step 16 P16.8 (D-16.19) — the Board Vote panel's ABSTAIN path: the player declines to cast at this
+    // vote. The distinction from TryRegisterPlayerVote is the whole point and is deliberately NOT a ballot
+    // of zeros — no entry is written, so the player carries no weight and every OTHER holder's relative
+    // weight rises, which is exactly what a bot's abstention already does (P16.4c). A zero-filled ballot
+    // would instead drag the weighted average toward 0 and pin the reserve to the band floor: the P15.9
+    // failure shape, arriving through a new door.
+    //
+    // Lifting the pause is the other half — an abstention has to END the wait, or declining a vote would
+    // freeze the game forever. That makes this the second writer of AwaitingPlayerVote, and the two are
+    // exhaustive: the player either casts or declines, and both resume the simulation.
+    public static bool TryRegisterPlayerAbstention(string nonMinerNodeId)
+    {
+        if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov)
+            || gov.OpenVote is not { } vote
+            || !_companyFoundings.TryGetValue(nonMinerNodeId, out CompanyFounding? founding)
+            || !founding.Holdings.Any(h => h.HolderId == PlayerNodeId && h.Nst > 0m))
+        {
+            return false;
+        }
+
+        // A ballot already cast at this vote is withdrawn — the panel offers Abstain right beside Submit,
+        // and re-pressing must not leave a stale entry behind (Remove is a no-op when nothing is there).
+        vote.Ballots.Remove(PlayerNodeId);
         vote.AwaitingPlayerVote = false;
         return true;
     }
@@ -8190,6 +8277,19 @@ public sealed class CompanyGovernanceState
     public decimal PlayerPolicyReserveScPercent { get; set; } = -1m;
     public decimal PlayerPolicyPayoutRatePercent { get; set; } = -1m;
     public decimal PlayerPolicyDividendsCutPercent { get; set; } = -1m;
+
+    // Step 16 P16.8 (2026-08-02, D-16.19) — the player's standing ABSTENTION. Until now the player was the
+    // only holder who could not sit a vote out: OpenCompanyVote's player branch either paused or cast the
+    // standing policy, with no third path, while every bot has rolled its own 15% abstention since P16.4c.
+    // That is a lever the bots held and the player did not, and it is measurable — across 159 votes in the
+    // P16.6 run the observed abstention rate ran well BELOW the per-bot 15% at every holder count, purely
+    // because the player's forced participation diluted it.
+    //
+    // Defaults FALSE for the same reason PlayerPauseOnVotes does (D-16.11): a new holding never silently
+    // changes how the player participates. Note this is a genuinely different axis from the pause — the
+    // pause asks "should the game stop to ask me?", this asks "do I want a say at all?" — so it is a second
+    // field rather than a third state of the first. With it ON, the vote neither pauses nor casts.
+    public bool PlayerAutoAbstain { get; set; }
 }
 
 // Step 15 P15.2c (D-15.4/D-15.5) — a founded BANK's balance sheet: the LAYER-1 half of the two-layer

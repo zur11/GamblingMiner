@@ -33,6 +33,11 @@ public partial class CompanyDetails : Control
 
 	private Label _identityLabel = null!;
 	private Label _statusLabel = null!;
+	private Label _pauseBannerLabel = null!; // P16.8e — names the company whose vote is freezing the game
+
+	// P16.8e — same red as BlockExplorer's "board vote pending" row (§22.16), so the locator and the row it
+	// points at are visibly the same signal.
+	private static readonly Color WorkRed = new(1f, 0.3f, 0.3f);
 	private VBoxContainer _infoVBox = null!;
 	private VBoxContainer _actionVBox = null!;
 
@@ -55,6 +60,7 @@ public partial class CompanyDetails : Control
 	private Label? _reservePreviewLabel; // Step 15 P15.9f — live "if the vote closed now" line
 	private Label? _voteFeedbackLabel;
 	private Label? _policyFeedbackLabel; // Step 16 P16.5c — the Vote Policy panel's own confirmation line
+	private CheckBox? _abstainToggle;    // Step 16 P16.8b — intention, resolved by Submit Ballot
 	private Label? _claimableLabel;
 	private Label? _claimFeedbackLabel;
 
@@ -73,6 +79,19 @@ public partial class CompanyDetails : Control
 		_statusLabel = GetNode<Label>("%StatusLabel");
 		_infoVBox = GetNode<VBoxContainer>("%InfoVBox");
 		_actionVBox = GetNode<VBoxContainer>("%ActionVBox");
+
+		// P16.8e — the pause locator, added in code rather than in the .tscn so it sits immediately under
+		// the status line on every state this scene can render (including the not-founded / dissolved early
+		// returns, which never reach the panel builders).
+		_pauseBannerLabel = new Label
+		{
+			AutowrapMode = TextServer.AutowrapMode.Word,
+			Visible = false
+		};
+		_pauseBannerLabel.AddThemeColorOverride("font_color", WorkRed);
+		Node statusParent = _statusLabel.GetParent();
+		statusParent.AddChild(_pauseBannerLabel);
+		statusParent.MoveChild(_pauseBannerLabel, _statusLabel.GetIndex() + 1);
 
 		BuildBorderOverlay();
 
@@ -230,6 +249,11 @@ public partial class CompanyDetails : Control
 		NonMinerDonationSummary? summary = _networkRoot.GetNonMinerAuctionLedger()
 			.FirstOrDefault(s => s.NonMinerAddress == _nonMinerAddress);
 		CompanyFounding? founding = _networkRoot.GetCompanyFounding(_nonMinerAddress);
+
+		// P16.8e — computed BEFORE the not-founded / dissolved early returns below, so a frozen game is
+		// still explained on a page that renders nothing else useful. A banner updated only on the happy
+		// path would go stale exactly where the player is most lost.
+		UpdatePauseBanner(founding?.NonMinerNodeId);
 		if (summary is null || founding is null)
 		{
 			// Step 15 P15.5d (D-15.15) — "no founding" now has TWO meanings: not founded yet, or founded and
@@ -263,8 +287,36 @@ public partial class CompanyDetails : Control
 		_statusLabel.Text = string.Create(CultureInfo.InvariantCulture,
 			$"Founded {FormatDate(founding.FoundedAtUnixMs)}  |  treasury {_networkRoot.GetNodeSpendableBalance(founding.NonMinerNodeId):F8} BTC  |  You hold: {holdingCaption}");
 
+
 		RebuildInfo(founding, gov);
 		RebuildOrUpdateActions(founding, gov);
+	}
+
+	// Step 16 P16.8e — WHERE the pause is, said on the screen the player is actually looking at. The game
+	// freezes globally but only ONE company can lift it, and nothing here used to say which: a player
+	// standing in a company they had already voted at saw a normal page, blocked bets, and no route onward.
+	// DiceGame's notice names the company, but by the time someone is navigating governance screens they
+	// have left it behind. Found the hard way — a paused run where the blocking vote sat at BTC Guild while
+	// the player was looking at ArtForz Cluster, which had correctly gone green because its ballot was in.
+	//
+	// Shown on EVERY company page, including ones the player holds nothing in, and including the blocking
+	// company itself — where it reads as confirmation rather than redirection.
+	private void UpdatePauseBanner(string? thisCompanyNodeId)
+	{
+		var blocking = NetworkRoot.GetCompaniesAwaitingPlayerVote();
+		if (blocking.Count == 0)
+		{
+			_pauseBannerLabel.Visible = false;
+			return;
+		}
+
+		bool isThisOne = thisCompanyNodeId != null
+			&& blocking.Any(b => b.nonMinerNodeId == thisCompanyNodeId);
+		_pauseBannerLabel.Text = isThisOne
+			? "⚠ The game is paused for THIS company's board vote — cast a ballot (or abstain) below to resume play."
+			: $"⚠ The game is paused for a board vote at {string.Join(", ", blocking.Select(b => b.companyDisplayName))} — not here. "
+				+ "Block Explorer → Enroll Mode → the red \"Vote →\" row.";
+		_pauseBannerLabel.Visible = true;
 	}
 
 	// ── The always-visible readout (rebuilt each refresh) ────────────────────────────────────────
@@ -411,10 +463,20 @@ public partial class CompanyDetails : Control
 					? string.Create(CultureInfo.InvariantCulture,
 						$"  |  payout {rec.ResultPayoutRatePercent:F2}% → {rec.FinalizedDividendBtc:F8} BTC + {rec.FinalizedDividendSc:F8} SC")
 					: string.Empty;
+				// P16.8d — the player's own participation, per vote, so a standing abstention leaves a
+				// visible record across quarters rather than only on the newest snapshot below. Same
+				// derivation (no ballot + held NST = abstained); "—" where the player holds no NST at all.
+				bool playerHeldNst = founding.Holdings.Any(h => h.HolderId == PlayerNodeId && h.Nst > 0m);
+				string mine = !playerHeldNst
+					? string.Empty
+					: rec.Ballots.FirstOrDefault(b => b.HolderId == PlayerNodeId) is { } pb
+						? string.Create(CultureInfo.InvariantCulture,
+							$"  |  you voted {pb.ReserveScPercentTarget:F0}%{(pb.WasAutoCast ? " (policy)" : string.Empty)}")
+						: "  |  you abstained";
 				_infoVBox.AddChild(new Label
 				{
 					Text = string.Create(CultureInfo.InvariantCulture,
-						$"{FormatDate(rec.ClosedAtMs)}  {rec.Kind}: reserve {rec.ResultReserveScPercent:F0}% SC, market {rec.ResultMarketCategory}{dividend}")
+						$"{FormatDate(rec.ClosedAtMs)}  {rec.Kind}: reserve {rec.ResultReserveScPercent:F0}% SC, market {rec.ResultMarketCategory}{dividend}{mine}")
 				});
 			}
 		}
@@ -483,8 +545,10 @@ public partial class CompanyDetails : Control
 		// game will do at the next vote, and that explanation would otherwise sit stale until the next vote
 		// opened. The policy's numeric fields deliberately do NOT join it — they are edited in-place, and
 		// rebuilding on every keystroke would fight the player's own typing (the reason this gate exists).
+		// P16.8 — the standing abstention joins it for exactly the same reason, and it changes MORE of the
+		// explanation than the pause does (it also decides whether the pause row is live at all).
 		string signature = string.Create(CultureInfo.InvariantCulture,
-			$"{hasNst}|{hasPst}|{gov?.OpenVote?.OpenedAtMs ?? 0}|{gov?.OpenVote?.AwaitingPlayerVote ?? false}|{gov?.OpenVote?.Kind ?? ""}|{gov?.PlayerPauseOnVotes ?? false}");
+			$"{hasNst}|{hasPst}|{gov?.OpenVote?.OpenedAtMs ?? 0}|{gov?.OpenVote?.AwaitingPlayerVote ?? false}|{gov?.OpenVote?.Kind ?? ""}|{gov?.PlayerPauseOnVotes ?? false}|{gov?.PlayerAutoAbstain ?? false}");
 		if (signature != _actionSignature)
 		{
 			_actionSignature = signature;
@@ -549,7 +613,7 @@ public partial class CompanyDetails : Control
 		string nodeId = gov.NonMinerNodeId;
 		(bool pause, decimal reserve, bool reserveConfigured,
 			decimal payout, bool payoutConfigured,
-			decimal cut, bool cutConfigured) = NetworkRoot.GetPlayerVotePolicy(nodeId);
+			decimal cut, bool cutConfigured, bool autoAbstain) = NetworkRoot.GetPlayerVotePolicy(nodeId);
 
 		_actionVBox.AddChild(SectionTitle("Vote Policy"));
 
@@ -560,13 +624,18 @@ public partial class CompanyDetails : Control
 		};
 		_actionVBox.AddChild(pauseCheck);
 
-		var explain = new Label
+		// Step 16 P16.8 (D-16.19) — the standing abstention. A different question from the pause: that one
+		// asks "should the game stop to ask me?", this one asks "do I want a say here at all?". It outranks
+		// the pause in OpenCompanyVote, so the pause row is disabled while it is on rather than left looking
+		// live — a control that has no effect must not read as one that does (§39.16 rule 6's sibling).
+		var abstainCheck = new CheckBox
 		{
-			Text = pause
-				? "The simulation stops at every vote here until you cast a ballot."
-				: "Votes here are cast automatically by the policy below — the game never stops for them.",
-			AutowrapMode = TextServer.AutowrapMode.Word
+			Text = "Abstain from every vote at this company",
+			ButtonPressed = autoAbstain
 		};
+		_actionVBox.AddChild(abstainCheck);
+
+		var explain = new Label { AutowrapMode = TextServer.AutowrapMode.Word };
 		explain.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.65f));
 		_actionVBox.AddChild(explain);
 
@@ -594,42 +663,150 @@ public partial class CompanyDetails : Control
 		cutRow.AddChild(policyCut);
 		_actionVBox.AddChild(cutRow);
 
+		// Step 16 P16.8f — the dials are editable EXACTLY WHEN THEY STEER SOMETHING, i.e. whenever neither
+		// tick is on. One rule, one direction, no unlock ritual.
+		//
+		// P16.8c had a second lock — "configured and saved ⇒ locked, press Follow Status Quo to unlock" —
+		// meant to make a standing order legible as committed. It backfired: `configured` is PERSISTED, so
+		// the dials came back disabled on every later visit, and the only way to touch them again was to
+		// destroy the policy first. A lock whose sole escape is discarding the thing it protects is not
+		// protecting it. **A control that is read-only on arrival must be re-openable without losing work —
+		// otherwise "locked" just means "broken until you delete something".**
+		//
+		// The blanking stays, and it is the honest half: with a tick on, a stale "24%" sitting in a greyed
+		// box reads as "24% is what gets sent", which is precisely what will not happen.
 		// D-16.12 — an unconfigured policy votes the STATUS QUO, and the panel says so plainly. Showing a
 		// resolved number with no note would read as a choice the player had made, which is exactly the
 		// trust this feature spends: it votes on their behalf.
 		bool anyDefault = !reserveConfigured || !payoutConfigured || !cutConfigured;
-		var statusLabel = new Label
-		{
-			Text = anyDefault
-				? "Fields not yet configured follow the company's current values, so an untouched policy "
-					+ "changes nothing — it votes the status quo. Market direction is never cast "
-					+ "automatically: a category shift is hard to undo, so it needs you."
-				: "Policy fully configured. Market direction is never cast automatically.",
-			AutowrapMode = TextServer.AutowrapMode.Word
-		};
+		var statusLabel = new Label { AutowrapMode = TextServer.AutowrapMode.Word };
 		statusLabel.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.65f));
 		_actionVBox.AddChild(statusLabel);
 
 		var buttonRow = new HBoxContainer();
 		var saveBtn = new Button { Text = "Save Policy" };
+		var clearBtn = new Button { Text = "Follow Status Quo" };
+
+		// P16.8h — "Follow Status Quo" resets the dials to the company's current numbers, but does NOT
+		// write: only Save Policy commits. `pendingClear` carries the intent across to Save, which then
+		// stores the -1 "not configured" sentinels rather than the displayed values — the distinction
+		// matters, because a not-configured policy keeps FOLLOWING the company as its numbers move, while a
+		// policy configured at today's number stays pinned to it forever. Any manual edit cancels the
+		// intent, since the player has just said what they want instead.
+		bool pendingClear = false;
+
+		// One place that re-derives everything the tick state governs — the two checkboxes' mutual
+		// exclusion, the dial locks, the two explanatory lines and the Clear button — so no path can update
+		// half of them. Called on build and on every toggle.
+		void SyncPolicyControls()
+		{
+			bool ticked = pauseCheck.ButtonPressed || abstainCheck.ButtonPressed;
+
+			// P16.8i — DEFENSIVE only: a world saved under P16.8's first cut can hold both flags true, and
+			// Abstain is the one that wins in OpenCompanyVote. The live exclusion is done by the Toggled
+			// handlers below, NOT here — see why disabling was wrong at the handlers.
+			if (abstainCheck.ButtonPressed && pauseCheck.ButtonPressed)
+			{
+				pauseCheck.SetPressedNoSignal(false);
+			}
+
+			if (ticked)
+			{
+				policyReserve.Value = (double)gov.ReserveScPercent;
+				policyPayout.Value = (double)gov.QuarterPayoutRatePercent;
+				policyCut.Value = (double)NetworkRoot.DefaultShortfallDividendsCutPercent;
+			}
+			policyReserve.Editable = !ticked;
+			policyPayout.Editable = !ticked;
+			policyCut.Editable = !ticked;
+
+			// P16.8h — with a tick on, the dials steer nothing, so there is nothing to reset TO the status
+			// quo: the button would write a policy change the player cannot see the effect of. Disabled
+			// rather than hidden, for the §41.4 reason — the reason is the part worth teaching.
+			clearBtn.Disabled = ticked;
+
+			explain.Text = abstainCheck.ButtonPressed
+				? "You cast no ballot here. Your NST still counts toward the company's total, but the other "
+					+ "holders decide — and their relative weight rises because you sat out."
+				: pauseCheck.ButtonPressed
+					? "The simulation stops at every vote here until you cast a ballot."
+					: "Votes here are cast automatically by the policy below — the game never stops for them.";
+
+			statusLabel.Text = abstainCheck.ButtonPressed
+				? "No ballot is cast here, so these dials steer nothing. Untick Abstain to use them again."
+				: pauseCheck.ButtonPressed
+					? "You vote by hand at the Board Vote form below, so these dials steer nothing. Untick "
+						+ "Pause to auto-vote them instead."
+					: anyDefault
+						? "Fields not yet configured follow the company's current values, so an untouched policy "
+							+ "changes nothing — it votes the status quo. Market direction is never cast "
+							+ "automatically: a category shift is hard to undo, so it needs you."
+						: "These values are cast automatically at every vote here. Edit and Save to change "
+							+ "them, or press \"Follow Status Quo\" then Save to go back to following the "
+							+ "company. Market direction is never cast automatically.";
+		}
+
+		// P16.8i — the exclusion is SYMMETRIC: whichever box you tick clears the other, and BOTH stay
+		// clickable at all times. P16.8h disabled Pause while Abstain was on, to express "Abstain outranks
+		// Pause" — but that made switching a ONE-WAY DOOR: Abstain could always be pressed, Pause could not,
+		// so going back required knowing to untick Abstain first, which nothing on screen said. Reported
+		// after exactly that: two successful switches (both of which had passed through unticking) and then
+		// a third that could not be made at all.
+		//
+		// With true mutual exclusion the precedence question disappears — the two states cannot coexist, so
+		// there is nothing left for one to outrank. `SetPressedNoSignal` avoids re-entering the other
+		// handler; `SyncPolicyControls` then re-derives everything from the settled pair.
+		pauseCheck.Toggled += on =>
+		{
+			if (on) abstainCheck.SetPressedNoSignal(false);
+			SyncPolicyControls();
+		};
+		abstainCheck.Toggled += on =>
+		{
+			if (on) pauseCheck.SetPressedNoSignal(false);
+			SyncPolicyControls();
+		};
+		policyReserve.ValueChanged += _ => pendingClear = false;
+		policyPayout.ValueChanged += _ => pendingClear = false;
+		policyCut.ValueChanged += _ => pendingClear = false;
+		SyncPolicyControls();
+		// P16.8h — the ONLY write in this panel. Ticking a box, turning a dial or pressing Follow Status Quo
+		// all change the FORM; nothing reaches the world until here. That was already true of the ticks and
+		// dials, and Follow Status Quo was the one control that broke the rule — it wrote immediately, which
+		// is why it could report "Policy cleared" on a press the player had not confirmed.
 		saveBtn.Pressed += () =>
 		{
+			bool clearing = pendingClear;
 			NetworkRoot.SetPlayerVotePolicy(nodeId, pauseCheck.ButtonPressed,
-				(decimal)policyReserve.Value, (decimal)policyPayout.Value, (decimal)policyCut.Value);
-			SetPolicyFeedback(pauseCheck.ButtonPressed
-				? "Policy saved. Votes here will pause the game until you cast a ballot."
-				: string.Create(CultureInfo.InvariantCulture,
-					$"Policy saved. Votes here are cast automatically at {(decimal)policyReserve.Value:F0}% SC reserve."));
+				clearing ? -1m : (decimal)policyReserve.Value,
+				clearing ? -1m : (decimal)policyPayout.Value,
+				clearing ? -1m : (decimal)policyCut.Value,
+				abstainCheck.ButtonPressed);
+			pendingClear = false;
+			SyncPolicyControls();
+
+			SetPolicyFeedback(abstainCheck.ButtonPressed
+				? "Policy saved. You abstain from every vote here — no ballot, no pause."
+				: pauseCheck.ButtonPressed
+					? "Policy saved. Votes here will pause the game until you cast a ballot."
+					: clearing
+						? "Policy saved — auto-votes now follow the company's current values."
+						: string.Create(CultureInfo.InvariantCulture,
+							$"Policy saved. Every vote here is cast automatically at {(decimal)policyReserve.Value:F0}% SC reserve."));
 		};
 		buttonRow.AddChild(saveBtn);
 
-		// Clearing writes negatives, which SetPlayerVotePolicy stores as "not configured" — the player can
-		// go back to following the company without having to know its current numbers.
-		var clearBtn = new Button { Text = "Follow Status Quo" };
+		// Resets the dials to the company's current numbers and ARMS the "not configured" write — the player
+		// can go back to following the company without having to know its current values. Deliberately does
+		// NOT touch the abstention: that is a participation choice, not one of the three dials, and silently
+		// opting the player back into voting is the surprise this panel exists to avoid.
 		clearBtn.Pressed += () =>
 		{
-			NetworkRoot.SetPlayerVotePolicy(nodeId, pauseCheck.ButtonPressed, -1m, -1m, -1m);
-			SetPolicyFeedback("Policy cleared — auto-votes now follow the company's current values.");
+			policyReserve.Value = (double)gov.ReserveScPercent;
+			policyPayout.Value = (double)gov.QuarterPayoutRatePercent;
+			policyCut.Value = (double)NetworkRoot.DefaultShortfallDividendsCutPercent;
+			pendingClear = true; // set AFTER the assignments — each fires ValueChanged, which clears it
+			SetPolicyFeedback("Dials reset to the company's current values — press \"Save Policy\" to apply.");
 		};
 		buttonRow.AddChild(clearBtn);
 		_actionVBox.AddChild(buttonRow);
@@ -652,7 +829,22 @@ public partial class CompanyDetails : Control
 
 	private void BuildBoardVotePanel(CompanyFounding founding, CompanyGovernanceState gov)
 	{
-		BuildVotePolicyPanel(gov);
+		// P16.8b — drop the previous build's toggle before anything can read it. OnSubmitBallot consults it
+		// to decide between a ballot and an abstention, and that is the path that unfreezes a paused game;
+		// a stale reference to a freed node there is the one place this must not be clever.
+		_abstainToggle = null;
+
+		// P16.8g — while THIS company's vote is holding the game, the Vote Policy panel is hidden entirely.
+		// It answers "what should be cast when I'm not here" — a question that is not being asked right now,
+		// since the game stopped precisely to ask the player in person. Showing both put two sets of reserve
+		// / payout dials on screen at once, one of them inert and greyed, immediately above the live ballot;
+		// the greyed pair is the one the eye lands on first, and it is the wrong one. It returns the moment
+		// the ballot is submitted.
+		bool awaitingHere = gov.OpenVote is { AwaitingPlayerVote: true };
+		if (!awaitingHere)
+		{
+			BuildVotePolicyPanel(gov);
+		}
 		_actionVBox.AddChild(SectionTitle("Board Vote"));
 
 		if (gov.OpenVote is not { } vote)
@@ -673,15 +865,36 @@ public partial class CompanyDetails : Control
 		// the player has voted yet.
 		BuildOpenVoteBallotList(founding, gov, vote);
 
+		// Step 16 P16.8b — the ballot FORM is shown only while this vote is genuinely waiting on the player.
+		// It used to be the fall-through case of "player has no ballot", which was correct while the only two
+		// outcomes were "cast" and "still pausing" — P16.8 added a third, ABSTAINED, whose shape is identical
+		// to not-having-voted-yet (no entry in vote.Ballots) but whose meaning is the opposite. The panel
+		// therefore re-rendered a live Submit/Abstain form after an abstention, reading as though nothing had
+		// happened; pressing Submit then silently REPLACED the abstention with a real ballot. Gating on
+		// AwaitingPlayerVote makes the four states exhaustive and mutually exclusive.
+		//
+		// General rule: when a new outcome shares its DATA shape with an existing one, every branch that
+		// distinguished them by that shape is now ambiguous — find them before adding the outcome, not after.
 		bool playerVoted = vote.Ballots.TryGetValue(PlayerNodeId, out CompanyBallot? playerBallot);
-		if (playerVoted && !vote.AwaitingPlayerVote)
+		if (!vote.AwaitingPlayerVote)
 		{
-			// P16.5c (D-16.13) — an auto-cast ballot must never read as one the player deliberated. Say
-			// which it was, and what it cast, so a policy that is quietly voting badly is discoverable.
-			string how = playerBallot!.WasAutoCast
-				? string.Create(CultureInfo.InvariantCulture,
-					$"Your standing policy voted for you ({playerBallot.ReserveScPercentTarget:F0}% SC reserve)")
-				: "Ballot registered";
+			string how;
+			if (playerVoted)
+			{
+				// P16.5c (D-16.13) — an auto-cast ballot must never read as one the player deliberated. Say
+				// which it was, and what it cast, so a policy that is quietly voting badly is discoverable.
+				how = playerBallot!.WasAutoCast
+					? string.Create(CultureInfo.InvariantCulture,
+						$"Your standing policy voted for you ({playerBallot.ReserveScPercentTarget:F0}% SC reserve)")
+					: "Ballot registered";
+			}
+			else
+			{
+				how = gov.PlayerAutoAbstain
+					? "You are abstaining here — your standing policy casts no ballot"
+					: "You abstained from this vote";
+			}
+
 			_actionVBox.AddChild(new Label
 			{
 				Text = string.Create(CultureInfo.InvariantCulture,
@@ -762,8 +975,42 @@ public partial class CompanyDetails : Control
 			_actionVBox.AddChild(payoutRow);
 		}
 
-		var submitBtn = new Button { Text = "Submit Ballot" };
+		// Step 16 P16.8b — Abstain is a TOGGLE, not a second button. Two buttons that both resolve the vote
+		// meant two ways to resume a paused game, and the paused game is the most fragile state in the
+		// project: whichever one the player did not press was still sitting there live afterwards. As a
+		// toggle it states an INTENTION — the dials clear and lock so the form stops implying it will send
+		// them, and the forecast switches to the without-me outcome — while `Submit Ballot` stays the single
+		// axis that unfreezes the simulation, exactly as it was before this phase.
+		_abstainToggle = new CheckBox
+		{
+			Text = "Abstain — cast no ballot at this vote",
+			TooltipText = "Your NST still counts toward the company's total, but the holders who do vote "
+				+ "carry proportionally more weight. Press Submit Ballot to confirm."
+		};
+		_actionVBox.AddChild(_abstainToggle);
+		_abstainToggle.Toggled += on =>
+		{
+			// P16.8k — the ballot dials are LOCKED but NOT blanked. P16.8b blanked them on the same
+			// reasoning the policy panel uses ("a greyed 24% reads as a promise to send 24%"), but that
+			// reasoning does not survive the two-branch preview below: the "vote N%" line is one half of the
+			// comparison the player is making, so wiping N the instant they consider abstaining destroys the
+			// number they are trying to weigh it against. The "»" marker states which branch is selected, so
+			// there is nothing left for a stale value to imply.
+			//
+			// The policy panel still blanks, correctly — it has no marker and no alternative on screen.
+			// Same widget, opposite call, because the surrounding readout differs.
+			if (_reserveSpin != null) _reserveSpin.Editable = !on;
+			if (_marketOption != null && !NetworkRoot.IsBankCompany(gov.NonMinerNodeId))
+			{
+				_marketOption.Disabled = on;
+			}
+			if (_payoutSpin != null) _payoutSpin.Editable = !on;
+
+			UpdateReservePreview(founding, gov, vote);
+		};
+
 		string nodeId = gov.NonMinerNodeId;
+		var submitBtn = new Button { Text = "Submit Ballot" };
 		submitBtn.Pressed += () => OnSubmitBallot(nodeId, quarterly, shortfall: false, gov.ReserveScPercent);
 		_actionVBox.AddChild(submitBtn);
 
@@ -794,7 +1041,19 @@ public partial class CompanyDetails : Control
 			string cast;
 			if (!vote.Ballots.TryGetValue(h.HolderId, out CompanyBallot? ballot))
 			{
-				cast = h.HolderId == PlayerNodeId ? "— not voted yet (this vote is waiting on you)" : "— not voted yet";
+				// P16.8 — "not voted yet" is only true while a ballot may still ARRIVE, and after this phase
+				// that is exactly one case: the player, paused, undecided. A BOT's ballots are all cast the
+				// instant the vote opens (OpenCompanyVote), so a missing bot entry has always meant it
+				// abstained — the old wording just predated the player having the same option and read as if
+				// the bot were still thinking. And with the standing abstention on, the player is not being
+				// waited on at all, so the parenthetical would be a plain untruth (§39.16 rule 6).
+				cast = h.HolderId != PlayerNodeId
+					? "— abstained"
+					: vote.AwaitingPlayerVote
+						? "— not voted yet (this vote is waiting on you)"
+						: gov.PlayerAutoAbstain
+							? "— abstaining (your standing policy)"
+							: "— abstained";
 			}
 			else if (shortfall)
 			{
@@ -828,20 +1087,71 @@ public partial class CompanyDetails : Control
 		NetworkRoot.ReserveVoteOutcome cast = NetworkRoot.ComputeReserveVoteOutcome(
 			founding, gov.CurrencyBand, vote.Ballots, gov.ReserveScPercent);
 
-		var hypothetical = new Dictionary<string, CompanyBallot>(vote.Ballots)
-		{
-			[PlayerNodeId] = new CompanyBallot { ReserveScPercentTarget = (decimal)(_reserveSpin?.Value ?? 0d) }
-		};
-		NetworkRoot.ReserveVoteOutcome withMine = NetworkRoot.ComputeReserveVoteOutcome(
-			founding, gov.CurrencyBand, hypothetical, gov.ReserveScPercent);
-
 		string others = cast.HasVotes
 			? string.Create(CultureInfo.InvariantCulture,
-				$"Ballots in so far ({cast.VotedWeight:P0} of the votes) average {cast.RawAverage:F2}% SC.")
+				$"Other holders have cast {cast.VotedWeight:P0} of the votes, averaging {cast.RawAverage:F2}% SC.")
 			: "No other ballot has been cast yet.";
 
-		_reservePreviewLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"{others}  With your ballot at {_reserveSpin?.Value ?? 0d:F0}%, the vote would close at {withMine.Outcome:F2}% SC (now {gov.ReserveScPercent:F2}%).");
+		// P16.8j — the SPAN the player's weight controls, not just the sample their dial happens to sit on.
+		// The line used to show "your 84% closes at 85.38, abstaining closes at 85.79" and nothing else,
+		// which reads as "my choice changes nothing" whenever the dial is near the others' average — the
+		// case that prompted this. The two extremes answer the real question ("is my vote worth anything
+		// here?") in one glance: at 84 the delta is 0.4 points, but the same ballot dialled to the band
+		// bounds moves the close across ~6. Both bounds go through the resolver rather than being computed
+		// locally, so the band clamp is applied exactly as CloseCompanyVote will apply it (§39.16 rule 6).
+		(decimal bandMin, decimal bandMax) = NetworkRoot.BandScPercentBounds(gov.CurrencyBand);
+		decimal OutcomeWithPlayerAt(decimal target)
+		{
+			var hypothetical = new Dictionary<string, CompanyBallot>(vote.Ballots)
+			{
+				[PlayerNodeId] = new CompanyBallot { ReserveScPercentTarget = target }
+			};
+			return NetworkRoot.ComputeReserveVoteOutcome(
+				founding, gov.CurrencyBand, hypothetical, gov.ReserveScPercent).Outcome;
+		}
+
+		decimal lowEnd = OutcomeWithPlayerAt(bandMin);
+		decimal highEnd = OutcomeWithPlayerAt(bandMax);
+		string reach = Math.Abs(highEnd - lowEnd) >= 0.01m
+			? string.Create(CultureInfo.InvariantCulture,
+				$"Your {PlayerVoteWeight(founding):P2} can move the close anywhere between {lowEnd:F2}% and {highEnd:F2}%.")
+			: "Your holding is too small to move the close measurably.";
+
+		// P16.8k — BOTH branches are shown, always, as parallel lines, with "»" marking the one the toggle
+		// currently selects. The previous wording put the chosen outcome mid-sentence and closed with
+		// "(Now 83.79%)" — and the current value, which by definition cannot move until the vote closes, got
+		// read as the RESULT. So the panel looked like it was reporting the same unchanging number no matter
+		// what was chosen, which is the exact opposite of what it was built to show.
+		//
+		// Two rules came out of it: the CURRENT value gets its own line, named as the starting point and
+		// never sharing a line with an outcome; and the alternatives are laid out identically so the only
+		// difference the eye has to find is the number. Showing both regardless of the toggle also means
+		// toggling changes only the emphasis, never the information — the comparison IS the decision.
+		bool abstaining = _abstainToggle?.ButtonPressed ?? false;
+		decimal mine = (decimal)(_reserveSpin?.Value ?? 0d);
+
+		string abstainOutcome = cast.HasVotes
+			? string.Create(CultureInfo.InvariantCulture, $"closes at {cast.Outcome:F2}% SC — the other holders decide")
+			: string.Create(CultureInfo.InvariantCulture,
+				$"no quorum (nobody else voted) — holds at {gov.ReserveScPercent:F2}% SC, payout falls back to the category default");
+
+		string header = string.Create(CultureInfo.InvariantCulture,
+			$"Reserve target now: {gov.ReserveScPercent:F2}% SC.  {others}");
+		string voteLine = string.Create(CultureInfo.InvariantCulture,
+			$"   {(abstaining ? "  " : "» ")}vote {mine:F0}%  →  closes at {OutcomeWithPlayerAt(mine):F2}% SC");
+		string abstainLine = string.Create(CultureInfo.InvariantCulture,
+			$"   {(abstaining ? "» " : "  ")}abstain  →  {abstainOutcome}");
+
+		_reservePreviewLabel.Text = string.Join("\n", header, voteLine, abstainLine, reach);
+	}
+
+	// The player's share of this company's voting stock — the resolver's own weight (holder NST ÷ total
+	// NST, D-ND8.19b), which is what bounds how far their ballot can pull the weighted average.
+	private static decimal PlayerVoteWeight(CompanyFounding founding)
+	{
+		decimal totalNst = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
+		if (totalNst <= 0m) return 0m;
+		return (founding.Holdings.FirstOrDefault(h => h.HolderId == PlayerNodeId)?.Nst ?? 0m) / totalNst;
 	}
 
 	// Step 15 P15.4e (D-15.7) — the bank shortfall ballot: one dial deciding WHO absorbs the SC this bank
@@ -874,8 +1184,25 @@ public partial class CompanyDetails : Control
 		cutRow.AddChild(_dividendsCutSpin);
 		_actionVBox.AddChild(cutRow);
 
-		var submitBtn = new Button { Text = "Submit Ballot" };
+		// P16.8b — same toggle-then-Submit shape as the quarterly form; a shortfall vote pauses the game
+		// exactly the same way, so it must not grow a second resume path either.
+		_abstainToggle = new CheckBox
+		{
+			Text = "Abstain — cast no ballot at this vote",
+			TooltipText = "The remaining holders decide the split. Press Submit Ballot to confirm."
+		};
+		_actionVBox.AddChild(_abstainToggle);
+		_abstainToggle.Toggled += on =>
+		{
+			if (_dividendsCutSpin != null)
+			{
+				_dividendsCutSpin.Editable = !on;
+				if (on) _dividendsCutSpin.Value = (double)NetworkRoot.DefaultShortfallDividendsCutPercent;
+			}
+		};
+
 		string nodeId = gov.NonMinerNodeId;
+		var submitBtn = new Button { Text = "Submit Ballot" };
 		submitBtn.Pressed += () => OnSubmitBallot(nodeId, quarterly: false, shortfall: true, gov.ReserveScPercent);
 		_actionVBox.AddChild(submitBtn);
 
@@ -888,19 +1215,29 @@ public partial class CompanyDetails : Control
 	// "leave the mix where it is" rather than a spurious band-minimum.
 	private void OnSubmitBallot(string nonMinerNodeId, bool quarterly, bool shortfall, decimal currentReservePercent)
 	{
-		decimal reserveTarget = (decimal)(_reserveSpin?.Value ?? (double)currentReservePercent);
-		int marketShift = quarterly ? (_marketOption?.Selected ?? 1) - 1 : 0;
-		decimal payoutRate = quarterly ? (decimal)(_payoutSpin?.Value ?? 0d) : 0m;
-		decimal dividendsCut = shortfall
-			? (decimal)(_dividendsCutSpin?.Value ?? (double)NetworkRoot.DefaultShortfallDividendsCutPercent)
-			: NetworkRoot.DefaultShortfallDividendsCutPercent;
+		// Step 16 P16.8b — the single resume axis. With the Abstain toggle set this registers an ABSTENTION
+		// (no entry written at all, so the player's weight leaves the denominator and every other holder's
+		// share rises); otherwise it registers the dialled ballot. Note it never submits a ballot of zeros —
+		// that would drag the weighted average down and pin the reserve to the band floor, which is the
+		// P15.9 failure arriving through a new door.
+		bool abstaining = _abstainToggle?.ButtonPressed ?? false;
+		bool ok = abstaining
+			? NetworkRoot.TryRegisterPlayerAbstention(nonMinerNodeId)
+			: NetworkRoot.TryRegisterPlayerVote(nonMinerNodeId,
+				(decimal)(_reserveSpin?.Value ?? (double)currentReservePercent),
+				quarterly ? (_marketOption?.Selected ?? 1) - 1 : 0,
+				quarterly ? (decimal)(_payoutSpin?.Value ?? 0d) : 0m,
+				shortfall
+					? (decimal)(_dividendsCutSpin?.Value ?? (double)NetworkRoot.DefaultShortfallDividendsCutPercent)
+					: NetworkRoot.DefaultShortfallDividendsCutPercent);
 
-		bool ok = NetworkRoot.TryRegisterPlayerVote(nonMinerNodeId, reserveTarget, marketShift, payoutRate, dividendsCut);
 		if (_voteFeedbackLabel != null)
 		{
 			_voteFeedbackLabel.Text = ok
-				? "Ballot registered — play resumes; the result applies when the vote closes."
-				: "Could not register the ballot (vote may have closed).";
+				? abstaining
+					? "Abstained — play resumes and the remaining holders decide this one."
+					: "Ballot registered — play resumes; the result applies when the vote closes."
+				: "Could not register (the vote may have closed).";
 		}
 		_actionSignature = string.Empty; // force a panel rebuild on the next refresh
 	}
@@ -1157,16 +1494,53 @@ public partial class CompanyDetails : Control
 				string market = rec.Kind == "quarterly"
 					? string.Create(CultureInfo.InvariantCulture, $", market {MarketShiftLabel(b.MarketShift)}, payout {b.PayoutRatePercent:F1}%")
 					: string.Empty;
+				string how = b.WasAutoCast ? " (standing policy)" : string.Empty;
 				_infoVBox.AddChild(new Label
 				{
 					Text = string.Create(CultureInfo.InvariantCulture,
-						$"   {_networkRoot.DescribeAddress(b.HolderId)}  —  weight {b.Weight:P2}  —  voted: reserve {b.ReserveScPercentTarget:F0}%{market}")
+						$"   {_networkRoot.DescribeAddress(b.HolderId)}  —  weight {b.Weight:P2}  —  voted: reserve {b.ReserveScPercentTarget:F0}%{market}{how}")
 				});
 			}
 		}
 		else
 		{
-			_infoVBox.AddChild(new Label { Text = "   No ballots were cast (result held the prior values)." });
+			_infoVBox.AddChild(new Label
+			{
+				Text = "   No quorum — every holder abstained, so the reserve held and the payout rate fell "
+					+ "back to this company's category default.",
+				AutowrapMode = TextServer.AutowrapMode.Word
+			});
+		}
+
+		// Step 16 P16.8d — WHO SAT OUT. Only cast ballots were ever recorded, so an abstention left no trace
+		// anywhere in the scene: after abstaining (by hand or by standing policy) the player could not
+		// confirm it had happened, and a bot's abstention was equally invisible — yet it is the thing that
+		// MOVED everyone else's weight, so it explains the result more than some of the ballots do.
+		//
+		// Derived, not persisted: holdings are fixed at founding (stock trading is deferred, D-ND8.21), so
+		// "held NST and has no ballot in this record" is exactly the set that abstained — and it reads
+		// correctly on votes closed before this shipped. No new field, no WorldFormatVersion bump. If stock
+		// trading ever lands, this derivation is one of the things it breaks: the holdings would no longer
+		// be the ones the vote saw, and the abstention list would need persisting at close.
+		var abstainers = founding.Holdings
+			.Where(h => h.Nst > 0m && !rec.Ballots.Any(b => b.HolderId == h.HolderId))
+			.OrderByDescending(h => h.Nst)
+			.ToList();
+		if (abstainers.Count > 0 && rec.Ballots.Count > 0)
+		{
+			decimal totalNstAtVote = founding.Holdings.Where(h => h.Nst > 0m).Sum(h => h.Nst);
+			foreach (CompanyShareHolding h in abstainers)
+			{
+				decimal forfeited = totalNstAtVote > 0m ? h.Nst / totalNstAtVote : 0m;
+				string who = h.HolderId == PlayerNodeId ? "You" : _networkRoot.DescribeAddress(h.HolderId);
+				var line = new Label
+				{
+					Text = string.Create(CultureInfo.InvariantCulture,
+						$"   {who}  —  abstained (forfeited {forfeited:P2} of the vote)")
+				};
+				line.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.65f));
+				_infoVBox.AddChild(line);
+			}
 		}
 
 		// ND.9h — on a QUARTERLY snapshot, publish each participant's dividend this quarter (PST split to a
