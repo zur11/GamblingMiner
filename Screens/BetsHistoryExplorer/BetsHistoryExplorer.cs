@@ -197,7 +197,7 @@ public partial class BetsHistoryExplorer : Control
 		AdvanceSummaryTo(endExclusive, forceRebuild);
 		_summaryLabel.Text = string.Format(
 			CultureInfo.InvariantCulture,
-			"Bets up to selected date: {0} | Max bet amount: {1:F8} | Max loss amount: {2:F8} | Martingale level reached: {3}",
+			"Bets up to selected date: {0} | Max bet amount: {1:F8} SC | Max loss amount: {2:F8} SC | Martingale level reached: {3}",
 			_summaryTotalBets,
 			_summaryMaxBetAmount,
 			_summaryMaxLossAmount,
@@ -342,7 +342,7 @@ public partial class BetsHistoryExplorer : Control
 		double speed = _calendarTimeService?.SpeedMultiplier ?? GameBaseSpeed;
 		double speedX = speed / GameBaseSpeed;
 		_playPauseButton.Text = running ? "Pause" : "Play";
-		_speedButton.Text = $"Speed {speedX:0.##}x";
+		_speedButton.Text = string.Create(CultureInfo.InvariantCulture, $"Speed {speedX:0.##}x");
 	}
 
 	private DateTime GetCurrentLocal()

@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using Godot;
 using Scripts.Betting;
 using Scripts.Finance;
@@ -246,7 +247,7 @@ namespace Scripts.Sessions
             // If we lost and should increase on loss, next bet should be > previous bet (unless clamped by balance later).
             if (nextBet <= previousBet && nextBet == _config.BaseBet)
             {
-                GD.Print($"[ProgressionDebug] Loss but next bet did not increase. prev={previousBet:F8} next={nextBet:F8} base={_config.BaseBet:F8} inc%={_config.IncreasePercent}");
+                GD.Print(string.Create(CultureInfo.InvariantCulture, $"[ProgressionDebug] Loss but next bet did not increase. prev={previousBet:F8} next={nextBet:F8} base={_config.BaseBet:F8} inc%={_config.IncreasePercent}"));
             }
         }
     }

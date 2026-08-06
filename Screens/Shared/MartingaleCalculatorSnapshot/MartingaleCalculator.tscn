@@ -61,7 +61,7 @@ theme_override_constants/v_separation = 12
 [node name="TotalBankrollText" type="Label" parent="Panel/MarginContainer/VBoxContainer/InputsGrid"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 28
-text = "Total Bankroll"
+text = "Total Bankroll (SC)"
 
 [node name="TotalBankrollInput" type="LineEdit" parent="Panel/MarginContainer/VBoxContainer/InputsGrid"]
 unique_name_in_owner = true
@@ -71,7 +71,7 @@ placeholder_text = "100"
 [node name="InitialBetText" type="Label" parent="Panel/MarginContainer/VBoxContainer/InputsGrid"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 28
-text = "Initial Bet"
+text = "Initial Bet (SC)"
 
 [node name="InitialBetInput" type="LineEdit" parent="Panel/MarginContainer/VBoxContainer/InputsGrid"]
 unique_name_in_owner = true
@@ -127,13 +127,13 @@ text = "Roll"
 layout_mode = 2
 custom_minimum_size = Vector2(230, 0)
 theme_override_font_sizes/font_size = 24
-text = "Bet"
+text = "Bet (SC)"
 
 [node name="HeaderBalance" type="Label" parent="Panel/MarginContainer/VBoxContainer/Headers"]
 layout_mode = 2
 custom_minimum_size = Vector2(230, 0)
 theme_override_font_sizes/font_size = 24
-text = "Balance"
+text = "Balance (SC)"
 
 [node name="ResultsScroll" type="ScrollContainer" parent="Panel/MarginContainer/VBoxContainer"]
 custom_minimum_size = Vector2(0, 500)

@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -85,7 +86,7 @@ public partial class PlayerBankAccountService : Node
 		_calendarTime     = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		_ledger           = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 		_userStats        = GetNodeOrNull<UserStatsService>("/root/UserStatsService");
-		GD.Print($"[PlayerBankAccountService] Ready — BankAccountBalance={BankAccountBalance:F8} SC  AutoDeposit={AutoDepositEnabled}({AutoDepositAmount:F8})  AutoWithdraw={AutoWithdrawEnabled}(floor={AutoWithdrawThreshold:F8}, amt={AutoWithdrawAmount:F8})");
+		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[PlayerBankAccountService] Ready — BankAccountBalance={BankAccountBalance:F8} SC  AutoDeposit={AutoDepositEnabled}({AutoDepositAmount:F8})  AutoWithdraw={AutoWithdrawEnabled}(floor={AutoWithdrawThreshold:F8}, amt={AutoWithdrawAmount:F8})"));
 	}
 
 	private decimal MainBalance => _principalBalance?.CurrentBalance ?? 0m;
@@ -335,7 +336,7 @@ public partial class PlayerBankAccountService : Node
 			_bankTransferHistory.RemoveRange(0, _bankTransferHistory.Count - MaxTransferHistory);
 
 		SaveState();
-		GD.Print($"[PlayerBankAccountService] RESTORED from checkpoint — Bank={BankAccountBalance:F8}  AutoDeposit={AutoDepositEnabled}  AutoWithdraw={AutoWithdrawEnabled}  history={_bankTransferHistory.Count}");
+		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[PlayerBankAccountService] RESTORED from checkpoint — Bank={BankAccountBalance:F8}  AutoDeposit={AutoDepositEnabled}  AutoWithdraw={AutoWithdrawEnabled}  history={_bankTransferHistory.Count}"));
 		BankStateChanged?.Invoke();
 	}
 

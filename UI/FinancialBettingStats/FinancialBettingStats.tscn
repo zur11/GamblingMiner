@@ -36,12 +36,12 @@ text = ""
 [node name="HeaderProfit" type="Label" parent="Grid"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 15
-text = "P/L"
+text = "P/L (SC)"
 
 [node name="HeaderGambled" type="Label" parent="Grid"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 15
-text = "Gambled"
+text = "Gambled (SC)"
 
 [node name="GeneralScope" type="Label" parent="Grid"]
 layout_mode = 2

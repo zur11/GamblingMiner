@@ -104,7 +104,7 @@ public partial class BankrollProgrammer : Control
 		}
 
 		_bankrollProgramService?.SetAutoRechargeAmount(amount);
-		_statusValue.Text = string.Create(CultureInfo.InvariantCulture, $"Auto-recharge dose updated: {amount:N8}");
+		_statusValue.Text = string.Create(CultureInfo.InvariantCulture, $"Auto-recharge dose updated: {amount:N8} SC");
 		RenderAll();
 	}
 
@@ -120,7 +120,7 @@ public partial class BankrollProgrammer : Control
 		if (amount > available)
 		{
 			_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
-				$"Insufficient Main Balance. Available: {available:N8}.");
+				$"Insufficient Main Balance. Available: {available:N8} SC.");
 			return;
 		}
 
@@ -137,7 +137,7 @@ public partial class BankrollProgrammer : Control
 
 			_manualRechargeToBankrollInput.Text = "";
 			_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
-				$"Recharged {amount:N8} to Bankroll. Bankroll now: {_bankrollStateService?.CurrentBalance ?? 0m:N8}.");
+				$"Recharged {amount:N8} SC to Bankroll. Bankroll now: {_bankrollStateService?.CurrentBalance ?? 0m:N8} SC.");
 			RenderAll();
 			return;
 		}
@@ -165,7 +165,7 @@ public partial class BankrollProgrammer : Control
 			_calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow);
 		_manualRechargeToBankrollInput.Text = "";
 		_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Recharged {amount:N8} to Bankroll. Bankroll now: {_bankrollMirrorWallet.Balance:N8}.");
+			$"Recharged {amount:N8} SC to Bankroll. Bankroll now: {_bankrollMirrorWallet.Balance:N8} SC.");
 		RenderAll();
 	}
 
@@ -200,7 +200,7 @@ public partial class BankrollProgrammer : Control
 				? " Bankroll is now empty — the running session will stop on its next bet."
 				: string.Empty;
 			_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
-				$"Transferred {effectiveAmount:N8} to Main Balance. Bankroll remaining: {remaining:N8}.{sessionEmptyHint}");
+				$"Transferred {effectiveAmount:N8} SC to Main Balance. Bankroll remaining: {remaining:N8} SC.{sessionEmptyHint}");
 			RenderAll();
 			return;
 		}
@@ -223,7 +223,7 @@ public partial class BankrollProgrammer : Control
 			? " Bankroll is now empty — time stops until funds are added."
 			: string.Empty;
 		_statusValue.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Transferred {effectiveAmount:N8} to Main Balance. Bankroll remaining: {_bankrollMirrorWallet.Balance:N8}.{emptyHint}");
+			$"Transferred {effectiveAmount:N8} SC to Main Balance. Bankroll remaining: {_bankrollMirrorWallet.Balance:N8} SC.{emptyHint}");
 		RenderAll();
 	}
 
@@ -257,21 +257,22 @@ public partial class BankrollProgrammer : Control
 
 		decimal balance = _principalBalanceService?.CurrentBalance ?? 0m;
 		decimal bankroll = _bankrollStateService?.CurrentBalance ?? 0m;
-		_balanceValue.Text = balance.ToString("F8", CultureInfo.InvariantCulture);
-		_bankrollValue.Text = bankroll.ToString("F8", CultureInfo.InvariantCulture);
-		_autoRechargeDoseValue.Text = (_bankrollProgramService?.AutoRechargeAmount ?? 0m)
-			.ToString("N8", CultureInfo.InvariantCulture);
+		_balanceValue.Text = string.Create(CultureInfo.InvariantCulture, $"{balance:F8} SC");
+		_bankrollValue.Text = string.Create(CultureInfo.InvariantCulture, $"{bankroll:F8} SC");
+		_autoRechargeDoseValue.Text = string.Create(CultureInfo.InvariantCulture,
+			$"{_bankrollProgramService?.AutoRechargeAmount ?? 0m:N8} SC");
 
 		decimal perf = _bankrollProgramService?.GetPerformancePercentVsInitial(balance) ?? 0m;
 		// SF.1.6 / D-SF2.7: this measures MAIN BALANCE alone vs its 40,000 start — NOT net worth (which now
 		// includes the Private Bank Account, computed in ScFinances). Labeled explicitly to avoid confusion.
 		_performanceValue.Text = string.Create(CultureInfo.InvariantCulture,
-			$"{perf:+0.00000000;-0.00000000;0.00000000}% (Main Balance vs 40,000.00000000 start)");
+			$"{perf:+0.00000000;-0.00000000;0.00000000}% (Main Balance vs 40,000.00000000 SC start)");
 
 		DateTime gameUtcNow = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
 		var counts = _bankrollProgramService?.GetAutoRechargeCounts(gameUtcNow) ?? (0, 0, 0);
 		int total = _bankrollProgramService?.AutoRechargeCount ?? 0;
-		_rechargeCountersValue.Text = $"Total: {total} | Dia: {counts.Item1} | Semana: {counts.Item2} | Mes: {counts.Item3}";
+		// English-only per the language policy — this line had survived in Spanish.
+		_rechargeCountersValue.Text = $"Total: {total} | Day: {counts.Item1} | Week: {counts.Item2} | Month: {counts.Item3}";
 
 		_transfersList.Clear();
 		if (_bankrollProgramService == null)
@@ -284,7 +285,7 @@ public partial class BankrollProgrammer : Control
 			string when = rec.UtcTimestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 			string dir = rec.Direction == "balance_to_bankroll" ? "BAL->BR" : "BR->BAL";
 			_transfersList.AddItem(string.Create(CultureInfo.InvariantCulture,
-				$"{when} | {dir} | {rec.Amount:F8} | {rec.Reason}"));
+				$"{when} | {dir} | {rec.Amount:F8} SC | {rec.Reason}"));
 		}
 	}
 

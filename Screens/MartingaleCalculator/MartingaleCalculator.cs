@@ -132,7 +132,7 @@ public partial class MartingaleCalculator : Control
 			.ToString("F8", CultureInfo.InvariantCulture);
 		_winChanceInput.Text = chance.ToString(CultureInfo.InvariantCulture);
 		_progressionStartingBalanceLabel.Text =
-			$"Progression starting balance: {bankroll.ToString("F8", CultureInfo.InvariantCulture)}";
+			string.Create(CultureInfo.InvariantCulture, $"Progression starting balance: {bankroll:F8} SC");
 
 		CalculateFromGameContext();
 	}

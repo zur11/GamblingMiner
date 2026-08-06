@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Globalization;
 using System.Collections.Generic;
 #nullable enable
 
@@ -162,7 +163,7 @@ public partial class FoundersMiningService : Node
 		_satoshi.Power = 0d;
 		_satoshi.Retired = true;
 		_satoshi.RetiredAtLocal = nowLocal;
-		GD.Print($"[FoundersMining] Satoshi retired at {nowLocal:yyyy-MM-dd} with {_lastSatoshiConfirmedBtc:F2} BTC (target {SatoshiTargetBtc}).");
+		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[FoundersMining] Satoshi retired at {nowLocal:yyyy-MM-dd} with {_lastSatoshiConfirmedBtc:F2} BTC (target {SatoshiTargetBtc})."));
 	}
 
 	// ── Phase 7.1c: the lockstep attempt accumulator ───────────────────────────

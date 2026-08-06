@@ -117,7 +117,7 @@ public partial class CentralBank : Control
 			decimal ledgerDebt = _ledger.TotalDebtOutstanding;
 			bool inSync = ledgerDebt == _fed.TotalOutstandingDebt;
 			_invariantLabel.Text = string.Create(CultureInfo.InvariantCulture,
-				$"Circulation {_ledger.TotalCirculation:N8} = grants {_ledger.TotalGenesisGrants:N8} + debt {ledgerDebt:N8} SC   |   FED/ledger debt {(inSync ? "in sync ✓" : "OUT OF SYNC ✗")}");
+				$"Circulation {_ledger.TotalCirculation:N8} SC = grants {_ledger.TotalGenesisGrants:N8} SC + debt {ledgerDebt:N8} SC   |   FED/ledger debt {(inSync ? "in sync ✓" : "OUT OF SYNC ✗")}");
 			_invariantLabel.AddThemeColorOverride("font_color", inSync ? ColorSubtle : new Color(1f, 0.4f, 0.4f));
 		}
 
@@ -303,7 +303,7 @@ public partial class CentralBank : Control
 					$"  ·  under tolerance, cooling — clears in ~{NetworkRoot.FbiBlocksToClear(f.Score)} blocks (no raid meanwhile)");
 
 			AddLabel(string.Create(CultureInfo.InvariantCulture,
-				$"    {(raidEligible ? "⚑" : "·")} {f.DisplayName} [{f.MarketCategory}{(f.IsBank ? ", bank" : "")}]  score {f.Score:N1}/{NetworkRoot.InvestigationFlagThreshold:N0}  ·  SC {f.ScReserve:N2} vs tolerated {f.ToleranceSc:N2}{tail}"),
+				$"    {(raidEligible ? "⚑" : "·")} {f.DisplayName} [{f.MarketCategory}{(f.IsBank ? ", bank" : "")}]  score {f.Score:N1}/{NetworkRoot.InvestigationFlagThreshold:N0}  ·  {f.ScReserve:N2} SC vs tolerated {f.ToleranceSc:N2} SC{tail}"),
 				15, raidEligible ? new Color(1f, 0.4f, 0.4f) : overTolerance ? ColorDraw : ColorSubtle);
 		}
 	}

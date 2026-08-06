@@ -240,11 +240,11 @@ public partial class CasinoCoinSwaps : Control
 		// separately here — the figures would read as additive; the settling detail lives in the red status
 		// label, the full identity in the CasinoFinances DEV line).
 		_panelAAvailLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Casino BTC available: {_swapService.OfferedBtc:N8}  (owned {_swapService.CasinoBtcOwnedTotal:N8}, reserve {_swapService.BtcReserve.ReserveFor(_swapService.CasinoBtcEquity):N8} — set in Casino Finances [DEV])");
+			$"Casino BTC available: {_swapService.OfferedBtc:N8} BTC  (owned {_swapService.CasinoBtcOwnedTotal:N8} BTC, reserve {_swapService.BtcReserve.ReserveFor(_swapService.CasinoBtcEquity):N8} BTC — set in Casino Finances [DEV])");
 
 		// Panel B — offered/reserve readout (SC reserve knob: CasinoGamblingFinances).
 		_panelBAvailLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Casino SC available: {_swapService.OfferedSc:N8}  (Main {_swapService.CasinoScMainBalance:N8} − reserve {_swapService.EffectiveScReserve:N8} — set in Casino Gambling Finances [DEV])");
+			$"Casino SC available: {_swapService.OfferedSc:N8} SC  (Main {_swapService.CasinoScMainBalance:N8} SC − reserve {_swapService.EffectiveScReserve:N8} SC — set in Casino Gambling Finances [DEV])");
 
 		ApplyPanelState(_swapService.IsPanelAEnabled, _swapService.PanelAReason,
 			_panelAInput, _panelAReceiveInput, _panelAReasonLabel, isPanelA: true,

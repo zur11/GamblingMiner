@@ -643,7 +643,7 @@ public partial class CompanyDetails : Control
 		decimal defaultRate = NetworkRoot.DefaultQuarterlyPayoutRatePercent(gov.MarketCategory);
 
 		var reserveRow = new HBoxContainer();
-		reserveRow.AddChild(new Label { Text = $"Auto reserve target (% SC, {min:F0}–{max:F0}):  " });
+		reserveRow.AddChild(new Label { Text = string.Create(CultureInfo.InvariantCulture, $"Auto reserve target (% SC, {min:F0}–{max:F0}):  ") });
 		var policyReserve = new SpinBox { MinValue = (double)min, MaxValue = (double)max, Step = 1, Value = (double)reserve };
 		reserveRow.AddChild(policyReserve);
 		_actionVBox.AddChild(reserveRow);
@@ -918,7 +918,7 @@ public partial class CompanyDetails : Control
 		(decimal min, decimal max) = NetworkRoot.BandScPercentBounds(gov.CurrencyBand);
 
 		var reserveRow = new HBoxContainer();
-		reserveRow.AddChild(new Label { Text = $"Reserve target (% held as SC, band {gov.CurrencyBand}: {min:F0}–{max:F0}):  " });
+		reserveRow.AddChild(new Label { Text = string.Create(CultureInfo.InvariantCulture, $"Reserve target (% held as SC, band {gov.CurrencyBand}: {min:F0}–{max:F0}):  ") });
 		_reserveSpin = new SpinBox { MinValue = (double)min, MaxValue = (double)max, Step = 1, Value = (double)gov.ReserveScPercent };
 		reserveRow.AddChild(_reserveSpin);
 		_actionVBox.AddChild(reserveRow);

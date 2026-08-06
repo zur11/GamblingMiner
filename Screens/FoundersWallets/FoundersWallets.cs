@@ -240,12 +240,12 @@ public partial class FoundersWallets : Control
 			: "[color=lime]ACTIVE[/color]";
 		string halState = _foundersMining.HalPower > 0.0001d ? "[color=lime]MINING[/color]" : "[color=gray]DORMANT[/color]";
 
-		_economicsLabel.Text =
+		_economicsLabel.Text = string.Create(CultureInfo.InvariantCulture,
 			$"[b]Satoshi[/b]  {satoshiBtc:F2} / {_foundersMining.SatoshiTarget:F0} BTC  ·  power {_foundersMining.SatoshiPower:F3}  ·  " +
 			$"share {_foundersMining.SatoshiShare * 100:F1}%  ·  ~{_foundersMining.EstimatedBlocksUntilTarget:F0} blk to target  ·  " +
 			$"retire ≥ {_foundersMining.SatoshiFloorDateLocal:yyyy-MM-dd}  ·  {satoshiState}\n" +
 			$"[b]Hal[/b]  {halBtc:F2} BTC  ·  power {_foundersMining.HalPower:F3}  ·  fading → 0 by 2009-08-09  ·  {halState}\n" +
-			$"[b]Mike Hearn[/b]  {hearnBtc:F2} BTC  ·  never mines  ·  [color=gray]holder[/color]";
+			$"[b]Mike Hearn[/b]  {hearnBtc:F2} BTC  ·  never mines  ·  [color=gray]holder[/color]");
 	}
 
 	// ── Founder selection ──────────────────────────────────────────────────────
@@ -552,7 +552,8 @@ public partial class FoundersWallets : Control
 		sb.AppendLine($"[b]{_currentFounder.FounderId}[/b]  seed-derived address book");
 		sb.AppendLine($"addr(0) == base: {(baseMatches ? "[color=lime]YES[/color]" : "[color=red]NO[/color]")}" +
 		              $"   ·   first {sample} distinct: {(distinct ? "[color=lime]YES[/color]" : "[color=red]NO[/color]")}");
-		sb.AppendLine($"rescan → nextReceiveIndex [b]{wallet.NextReceiveIndex}[/b]  ·  owned [b]{wallet.OwnedAddresses.Count}[/b]  ·  total [b]{total:F2}[/b] BTC");
+		sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+			$"rescan → nextReceiveIndex [b]{wallet.NextReceiveIndex}[/b]  ·  owned [b]{wallet.OwnedAddresses.Count}[/b]  ·  total [b]{total:F2}[/b] BTC"));
 		for (int i = 0; i < sample; i++)
 		{
 			bool owned = wallet.OwnedAddresses.Contains(addrs[i]);

@@ -1,5 +1,6 @@
 using Godot;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using Scripts.Finance;
@@ -117,7 +118,7 @@ public partial class BotPlayHistory : Control
 
 		var sb = new StringBuilder();
 		sb.Append("[table=6]");
-		AppendHeader(sb, "#", "Bet", "Roll", "Mult.", "Result", "Profit");
+		AppendHeader(sb, "#", "Bet (SC)", "Roll", "Mult.", "Result", "Profit (SC)");
 
 		int index = plays.Count; // newest first → highest number at top
 		foreach (SimulationService.BotPlayEntry play in plays)
@@ -126,9 +127,9 @@ public partial class BotPlayHistory : Control
 			string profitColor = play.Profit >= 0m ? "green" : "red";
 			AppendRow(sb,
 				index.ToString(),
-				play.BetAmount.ToString("0.00000000"),
+				play.BetAmount.ToString("0.00000000", CultureInfo.InvariantCulture),
 				play.Roll.ToString(),
-				$"{play.Multiplier.ToString("0.####")}x",
+				string.Create(CultureInfo.InvariantCulture, $"{play.Multiplier:0.####}x"),
 				result,
 				$"[color={profitColor}]{Money.FormatSignedAdaptive(play.Profit)}[/color]");
 			index--;

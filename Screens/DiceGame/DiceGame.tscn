@@ -101,19 +101,19 @@ text = "Time"
 layout_mode = 0
 offset_left = 907.0
 offset_top = 574.0
-offset_right = 948.0
+offset_right = 1020.0
 offset_bottom = 609.0
 theme_override_font_sizes/font_size = 25
-text = "Bet"
+text = "Bet (SC)"
 
 [node name="ProfitAmountText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
 offset_left = 1036.0
 offset_top = 574.0
-offset_right = 1181.0
+offset_right = 1290.0
 offset_bottom = 609.0
 theme_override_font_sizes/font_size = 25
-text = "Profit/Loss"
+text = "Profit/Loss (SC)"
 
 [node name="CurrentAppTimeText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
@@ -150,7 +150,7 @@ offset_top = 56.0
 offset_right = 278.0
 offset_bottom = 125.0
 theme_override_font_sizes/font_size = 40
-text = "0.00000000"
+text = "0.00000000 SC"
 
 [node name="BankrollValue" type="Label" parent="."]
 unique_name_in_owner = true
@@ -160,7 +160,7 @@ offset_left = 7.0
 offset_top = 56.0
 offset_right = 278.0
 offset_bottom = 125.0
-text = "0.00000000"
+text = "0.00000000 SC"
 
 [node name="PrincipalBalanceValue" type="Label" parent="."]
 unique_name_in_owner = true
@@ -170,7 +170,7 @@ offset_top = 162.0
 offset_right = 309.0
 offset_bottom = 208.0
 theme_override_font_sizes/font_size = 32
-text = "40000.00000000"
+text = "40000.00000000 SC"
 
 [node name="ResultValue" type="Label" parent="."]
 unique_name_in_owner = true

@@ -57,7 +57,7 @@ columns = 2
 [node name="TotalBankrollText" type="Label" parent="RootMargin/RootVBox/InputsGrid"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 28
-text = "Total Bankroll"
+text = "Total Bankroll (SC)"
 
 [node name="TotalBankrollInput" type="LineEdit" parent="RootMargin/RootVBox/InputsGrid"]
 unique_name_in_owner = true
@@ -68,7 +68,7 @@ placeholder_text = "100"
 [node name="InitialBetText" type="Label" parent="RootMargin/RootVBox/InputsGrid"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 28
-text = "Initial Bet"
+text = "Initial Bet (SC)"
 
 [node name="InitialBetInput" type="LineEdit" parent="RootMargin/RootVBox/InputsGrid"]
 unique_name_in_owner = true
@@ -130,13 +130,13 @@ text = "Roll"
 custom_minimum_size = Vector2(230, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
-text = "Bet"
+text = "Bet (SC)"
 
 [node name="HeaderBalance" type="Label" parent="RootMargin/RootVBox/Headers"]
 custom_minimum_size = Vector2(230, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
-text = "Balance"
+text = "Balance (SC)"
 
 [node name="HeaderFailProb" type="Label" parent="RootMargin/RootVBox/Headers"]
 custom_minimum_size = Vector2(150, 0)

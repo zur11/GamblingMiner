@@ -158,7 +158,10 @@ public partial class CasinoCoinSwapService : Node
 		NetworkRoot.BlockAccepted += OnBlockAccepted;
 		CallDeferred(nameof(InitializeAvailability));
 
-		GD.Print($"[CasinoCoinSwapService] Ready — Fee={SwapFeePercent:F2}%  BtcReserve={(BtcReserve.UsePercent ? BtcReserve.Percent + "%" : BtcReserve.Amount + " BTC")}  ScReserve={(ScReserve.UsePercent ? ScReserve.Percent + "%" : ScReserve.Amount + " SC")}  ScFloor={(ScFloorEnabled ? $"ON (safety={ScAutoFloorSafetyFactor:F2}, window={ScAutoFloorWindowDays:F1}d)" : "OFF")}  history={_swapHistory.Count}");
+		// Built in pieces: a NESTED interpolated string does not inherit the outer handler's format provider,
+		// and `decimal + "%"` formats with the current culture too — both would print "0,00" on a Spanish locale.
+		GD.Print(string.Create(CultureInfo.InvariantCulture,
+			$"[CasinoCoinSwapService] Ready — Fee={SwapFeePercent:F2}%  BtcReserve={DescribeReserve(BtcReserve, "BTC")}  ScReserve={DescribeReserve(ScReserve, "SC")}  ScFloor={DescribeScFloor()}  history={_swapHistory.Count}"));
 	}
 
 	public override void _ExitTree()
@@ -167,6 +170,14 @@ public partial class CasinoCoinSwapService : Node
 		if (_market != null)   _market.MarketDayChanged -= OnMarketDayChanged;
 		NetworkRoot.BlockAccepted -= OnBlockAccepted; // static event — must not outlive the autoload
 	}
+
+	private static string DescribeReserve(ReserveSetting reserve, string assetLabel) => reserve.UsePercent
+		? string.Create(CultureInfo.InvariantCulture, $"{reserve.Percent}%")
+		: string.Create(CultureInfo.InvariantCulture, $"{reserve.Amount} {assetLabel}");
+
+	private string DescribeScFloor() => ScFloorEnabled
+		? string.Create(CultureInfo.InvariantCulture, $"ON (safety={ScAutoFloorSafetyFactor:F2}, window={ScAutoFloorWindowDays:F1}d)")
+		: "OFF";
 
 	// THE accessor every quote/execution path uses (§3.1). Today it ignores clientId and returns the global
 	// value; the rank system (future step) overrides per client HERE and nowhere else.
@@ -1026,7 +1037,8 @@ public partial class CasinoCoinSwapService : Node
 
 		SaveState();
 		if (_availabilityReady) RecomputeAvailability(notify: false); // boot-time restore precedes the deferred init — skipped there
-		GD.Print($"[CasinoCoinSwapService] RESTORED from checkpoint — Fee={SwapFeePercent:F2}%  ScFloor={(ScFloorEnabled ? $"ON (safety={ScAutoFloorSafetyFactor:F2}, window={ScAutoFloorWindowDays:F1}d)" : "OFF")}  history={_swapHistory.Count}");
+		GD.Print(string.Create(CultureInfo.InvariantCulture,
+			$"[CasinoCoinSwapService] RESTORED from checkpoint — Fee={SwapFeePercent:F2}%  ScFloor={DescribeScFloor()}  history={_swapHistory.Count}"));
 		SwapDeskChanged?.Invoke();
 	}
 

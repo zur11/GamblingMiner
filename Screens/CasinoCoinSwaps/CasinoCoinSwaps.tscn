@@ -247,7 +247,7 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 18
-placeholder_text = "BTC amount (total, incl. 0.1 network fee)"
+placeholder_text = "BTC amount (total, incl. network fee)"
 
 [node name="PanelBMaxBtn" type="Button" parent="RootMargin/RootVBox/ContentScroll/ContentVBox/PanelsRow/PanelB/PanelBMargin/PanelBVBox/PanelBInputRow"]
 unique_name_in_owner = true

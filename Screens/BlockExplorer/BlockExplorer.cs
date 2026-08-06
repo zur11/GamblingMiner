@@ -184,7 +184,7 @@ public partial class BlockExplorer : Control
                 ? "awaiting first bid — no countdown"
                 : string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left");
             string line = string.Create(CultureInfo.InvariantCulture,
-                $"{NetworkRoot.DescribeCompany(s)}  | recv {s.TotalReceived:F8} ({s.DonorCount} donor)  | {leader}  | {clock}");
+                $"{NetworkRoot.DescribeCompany(s)}  | recv {s.TotalReceived:F8} BTC ({s.DonorCount} donor)  | {leader}  | {clock}");
 
             var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
 
@@ -478,7 +478,8 @@ public partial class BlockExplorer : Control
         sb.AppendLine($"PrevHash: {block.PreviousBlockHash}");
         sb.AppendLine($"MerkleRoot: {block.MerkleRoot}");
         sb.AppendLine($"Nonce: {block.Nonce}");
-        sb.AppendLine($"Difficulty: {block.Difficulty:F2}  (~{block.Difficulty:F0} attempts/block)");
+        sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+            $"Difficulty: {block.Difficulty:F2}  (~{block.Difficulty:F0} attempts/block)"));
         // Step 16 P16.2f — the OQ-8.2 cosmetic filters are GONE. Every spending participant now carries a
         // DerivedAddressWallet, so change lands on a fresh address and there is no self-loop left to hide.
         // The block's transactions are shown exactly as they are on-chain, which is the only reading whose
@@ -543,7 +544,7 @@ public partial class BlockExplorer : Control
 
         _chainInfoLabel.Text =
             $"Player chain length: {_networkRoot.GetPlayerChainLength()} | Player pending tx: {_networkRoot.GetPlayerPendingTransactionCount()}"
-            + $" | Mining difficulty (block #{last.Index + 1}): {miningDifficulty:F2} ({trend})"
+            + string.Create(CultureInfo.InvariantCulture, $" | Mining difficulty (block #{last.Index + 1}): {miningDifficulty:F2} ({trend})")
             + $" | Avg block time (last {window}): {avgBlockText} (target {FormatDuration(targetSec)})";
 
         // Preserve the label's own internal scroll position across the 1 s refresh (setting Text resets it to top).
@@ -555,7 +556,7 @@ public partial class BlockExplorer : Control
             $"Index: {last.Index}\n" +
             $"Time: {FormatBlockTime(last.Timestamp)}\n" +
             $"Nonce: {last.Nonce}\n" +
-            $"Difficulty: {last.Difficulty:F2}  (~{last.Difficulty:F0} attempts/block)\n" +
+            string.Create(CultureInfo.InvariantCulture, $"Difficulty: {last.Difficulty:F2}  (~{last.Difficulty:F0} attempts/block)\n") +
             $"Hash: {last.Hash}\n" +
             $"PrevHash: {last.PreviousBlockHash}\n" +
             $"MerkleRoot: {last.MerkleRoot}\n" +
@@ -582,7 +583,7 @@ public partial class BlockExplorer : Control
         foreach ((string nodeId, string line) in _networkRoot.GetNodeStatusLines())
         {
             yield return rates.TryGetValue(nodeId, out double bps)
-                ? $"{line} | ⛏ {bps:0.#}/s"
+                ? string.Create(CultureInfo.InvariantCulture, $"{line} | ⛏ {bps:0.#}/s")
                 : line;
         }
     }

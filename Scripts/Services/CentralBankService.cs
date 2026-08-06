@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -106,7 +107,7 @@ public partial class CentralBankService : Node
 	{
 		LoadState();
 		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
-		GD.Print($"[CentralBankService] Ready — clients={_accounts.Count}  Outstanding={TotalOutstandingDebt:F8} SC  LentAllTime={TotalLentAllTime:F8} SC");
+		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[CentralBankService] Ready — clients={_accounts.Count}  Outstanding={TotalOutstandingDebt:F8} SC  LentAllTime={TotalLentAllTime:F8} SC"));
 	}
 
 	private FedClientAccount Get(string clientId) =>
@@ -218,7 +219,7 @@ public partial class CentralBankService : Node
 		}
 
 		SaveState();
-		GD.Print($"[CentralBank] RESTORED from checkpoint — clients={_accounts.Count}  Outstanding={TotalOutstandingDebt:F8}  LentAllTime={TotalLentAllTime:F8}");
+		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[CentralBank] RESTORED from checkpoint — clients={_accounts.Count}  Outstanding={TotalOutstandingDebt:F8}  LentAllTime={TotalLentAllTime:F8}"));
 		CentralBankChanged?.Invoke();
 	}
 

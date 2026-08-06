@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Linq;
 using System.Collections.Generic;
 using System.Text;
@@ -690,7 +691,7 @@ public partial class NetworkRoot : Node
             foreach (double rk in r) anyHit *= 1 - rk;
             anyHit = 1 - anyHit;
             if (Math.Abs(qSum - anyHit) > 1e-6)
-                GD.PushWarning($"[ND.10c] RealLeadingBidRoll identity broken for {botNodeId}: Σq={qSum:F8} vs 1−∏(1−r)={anyHit:F8}");
+                GD.PushWarning(string.Create(CultureInfo.InvariantCulture, $"[ND.10c] RealLeadingBidRoll identity broken for {botNodeId}: Σq={qSum:F8} vs 1−∏(1−r)={anyHit:F8}"));
 
             perPool.Sort((a, b) => b.Item3.CompareTo(a.Item3));
         }
@@ -1397,6 +1398,16 @@ public partial class NetworkRoot : Node
             ? player.Blockchain.GetLastBlock().Timestamp
             : BlockchainService.GenesisTimestampUnixMs;
 
+    // Static twin of GetNodeSpendableBalance for the player, for consumers that have no NetworkRoot Node in
+    // their scene — the StatusBar is instantiated programmatically in every screen and owns no chain node.
+    // Reads the OWNED ADDRESS SET (P16.2/P16.6), so the bar and BTCWallet cannot disagree.
+    // Cost is one UTXO-set pass: call it behind an edge (BlockAccepted) or a coarse timer, never per frame.
+    public static decimal GetPlayerSpendableBalanceStatic()
+    {
+        EnsureInitialized();
+        return SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player) ? AggregateSpendable(player) : 0m;
+    }
+
     public static bool MineNodeStatic(string nodeId, long minedAtUnixMs)
     {
         if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? miner))
@@ -1951,7 +1962,7 @@ public partial class NetworkRoot : Node
                     string blockInfo = pos >= 0 && pos < chain.Count
                         ? $"blockAtPos(Index={chain[pos].Index}, miner='{chain[pos].MinedByNodeId}', cbFound={chain[pos].Transactions.Any(t => t.IsCoinbase)})"
                         : "position OUT OF CHAIN BOUNDS";
-                    GD.Print($"[SwapDesk][DIAG] pool event #{evt.BlockIndex} has no unspent backing coinbase — tip={tipIndex} chainCount={chain.Count} baseIndex={chain[0].Index} pos={pos} {blockInfo} need={need:F8} → counted as obligation");
+                    GD.Print(string.Create(CultureInfo.InvariantCulture, $"[SwapDesk][DIAG] pool event #{evt.BlockIndex} has no unspent backing coinbase — tip={tipIndex} chainCount={chain.Count} baseIndex={chain[0].Index} pos={pos} {blockInfo} need={need:F8} → counted as obligation"));
                 }
             }
         }
@@ -2113,7 +2124,7 @@ public partial class NetworkRoot : Node
         if (refund <= 0m) return; // the stale amount can't even cover the fee — nothing worth sending back
 
         if (BuildAndBroadcastUtxoSpend(company, bidderAddress, refund, fee, null, "AUCTION REFUND") != null)
-            GD.Print($"[ND.8d] Refunded confirmed-stale bid: {company.NodeId} → {bidderAddress[..Math.Min(10, bidderAddress.Length)]}… {refund:F8} BTC (bid landed after auction close).");
+            GD.Print(string.Create(CultureInfo.InvariantCulture, $"[ND.8d] Refunded confirmed-stale bid: {company.NodeId} → {bidderAddress[..Math.Min(10, bidderAddress.Length)]}… {refund:F8} BTC (bid landed after auction close)."));
     }
 
     // ND.8b.2 (D-ND8.14/D-ND8.15) — supersedes ND.5's "pay every tracked donor back in SC, sweep BTC to
@@ -3156,7 +3167,7 @@ public partial class NetworkRoot : Node
         FinancierChoice choice = financiers[0];
         if (financiers.Count > 1)
         {
-            GD.PushWarning($"[NetworkRoot] SelectFinanciers split {scAmount:F8} SC across {financiers.Count} financiers for {gov.NonMinerNodeId}; the multi-leg BTC path is unbuilt — falling back to the casino (P15.3b).");
+            GD.PushWarning(string.Create(CultureInfo.InvariantCulture, $"[NetworkRoot] SelectFinanciers split {scAmount:F8} SC across {financiers.Count} financiers for {gov.NonMinerNodeId}; the multi-leg BTC path is unbuilt — falling back to the casino (P15.3b)."));
             choice = new FinancierChoice(null, scAmount, FinancierTierCasino);
         }
 
@@ -3426,7 +3437,7 @@ public partial class NetworkRoot : Node
         _companyFoundings.Remove(nodeId);
 
         AppendBankCreditTrace(block, "dissolution", nodeId, string.Empty, closure.DebtAtClosureSc, closure.BtcAtClosure, 0m);
-        GD.Print($"[NetworkRoot] Company DISSOLVED — {DescribeNodeForDev(nodeId)} ({reason}); FED loss {closure.DebtAtClosureSc:F8} SC (repaid {repaid:F8} from its reserve), {closure.BtcAtClosure:F8} BTC left in custody.");
+        GD.Print(string.Create(CultureInfo.InvariantCulture, $"[NetworkRoot] Company DISSOLVED — {DescribeNodeForDev(nodeId)} ({reason}); FED loss {closure.DebtAtClosureSc:F8} SC (repaid {repaid:F8} from its reserve), {closure.BtcAtClosure:F8} BTC left in custody."));
     }
 
     // P15.5a — the debt-default trigger. A bank carrying an unrecoverable shortfall (P15.4e: neither a full
@@ -3670,7 +3681,7 @@ public partial class NetworkRoot : Node
             _fbiActivated = true;
             _centralBank?.DrawLoan(FbiClientId, FbiInitialGrantSc, "fbi_activation");
             _fbiScFunds = Scripts.Finance.Money.Normalize(_fbiScFunds + FbiInitialGrantSc);
-            GD.Print($"[NetworkRoot] FBI ACTIVATED ({nowLocal:yyyy-MM-dd}) — initial federal grant {FbiInitialGrantSc:F2} SC (D-15.14).");
+            GD.Print(string.Create(CultureInfo.InvariantCulture, $"[NetworkRoot] FBI ACTIVATED ({nowLocal:yyyy-MM-dd}) — initial federal grant {FbiInitialGrantSc:F2} SC (D-15.14)."));
             AppendBankCreditTrace(block, "fbi_activated", FbiClientId, string.Empty, FbiInitialGrantSc, 0m, 0m);
         }
 
@@ -3725,7 +3736,7 @@ public partial class NetworkRoot : Node
 
         if (_companyFoundings.TryGetValue(target.gov.NonMinerNodeId, out CompanyFounding? founding))
         {
-            GD.Print($"[NetworkRoot] FBI RAID — {DescribeNodeForDev(target.gov.NonMinerNodeId)} seized (score {target.gov.InvestigationScore:F1}, roll chance {chance:F2}%).");
+            GD.Print(string.Create(CultureInfo.InvariantCulture, $"[NetworkRoot] FBI RAID — {DescribeNodeForDev(target.gov.NonMinerNodeId)} seized (score {target.gov.InvestigationScore:F1}, roll chance {chance:F2}%)."));
             DissolveCompany(target.gov, founding, ClosureReasonFbiSeizure, block);
         }
     }
@@ -6186,7 +6197,10 @@ public partial class NetworkRoot : Node
         Dictionary<string, int> mined = MinedBlockCountsByNode();
         return SharedNetwork.Nodes
             .OrderBy(n => n.NodeId)
-            .Select(n => (n.NodeId, $"{DescribeNodeForDev(n.NodeId)} | mined: {(mined.TryGetValue(n.NodeId, out int c) ? c : 0)} | block: {n.Blockchain.Chain.Count} | pending: {n.Blockchain.PendingTransactions.Count} | balance: {AggregateSpendable(n):F8}"))
+            // InvariantCulture is not optional here: a raw interpolated `:F8` renders "0,00000000" on a
+            // Spanish/European locale, inverting the canonical separators (CLAUDE.md → Number locale).
+            .Select(n => (n.NodeId, string.Create(CultureInfo.InvariantCulture,
+                $"{DescribeNodeForDev(n.NodeId)} | mined: {(mined.TryGetValue(n.NodeId, out int c) ? c : 0)} | block: {n.Blockchain.Chain.Count} | pending: {n.Blockchain.PendingTransactions.Count} | balance: {AggregateSpendable(n):F8} BTC")))
             .ToList();
     }
 
@@ -6876,14 +6890,14 @@ public partial class NetworkRoot : Node
         else                  sb.AppendLine("Status: pending");
         if (!isCoinbase)
         {
-            sb.AppendLine($"Fee: {tx.Fee:F8} BTC");
+            sb.AppendLine(string.Create(CultureInfo.InvariantCulture, $"Fee: {tx.Fee:F8} BTC"));
             sb.AppendLine($"Inputs ({tx.Inputs.Count}):");
             foreach (TxInput inp in tx.Inputs)
                 sb.AppendLine($"  {inp.Address}");
         }
         sb.AppendLine($"Outputs ({tx.Outputs.Count}):");
         foreach (TxOutput txOut in tx.Outputs)
-            sb.AppendLine($"  {txOut.Address}  {txOut.Amount:F8} BTC");
+            sb.AppendLine(string.Create(CultureInfo.InvariantCulture, $"  {txOut.Address}  {txOut.Amount:F8} BTC"));
         return sb.ToString().TrimEnd();
     }
 
@@ -6897,12 +6911,12 @@ public partial class NetworkRoot : Node
 
         AddressData addressData = node.Blockchain.GetAddressData(address);
         decimal spendable = node.Blockchain.GetAddressSpendableBalance(address);
-        return
+        return string.Create(CultureInfo.InvariantCulture,
             $"Node: {node.NodeId}\n" +
             $"Address: {address}\n" +
-            $"Confirmed balance: {addressData.AddressBalance:F8}\n" +
-            $"Spendable balance: {spendable:F8}\n" +
-            $"Confirmed transactions: {addressData.AddressTransactions.Count}";
+            $"Confirmed balance: {addressData.AddressBalance:F8} BTC\n" +
+            $"Spendable balance: {spendable:F8} BTC\n" +
+            $"Confirmed transactions: {addressData.AddressTransactions.Count}");
     }
 
     public decimal GetNodeSpendableBalance(string nodeId)
@@ -7453,7 +7467,7 @@ public partial class NetworkRoot : Node
             ? "Last mined block: none"
             : $"Last mined block: #{_lastMinedBlock.Index} by {_lastMinedByNodeId}";
 
-        return
+        return string.Create(CultureInfo.InvariantCulture,
             $"Miner: {nodeId}\n" +
             $"Next block target: #{nextBlock}\n" +
             $"Current nonce attempt: {nonce}\n" +
@@ -7462,7 +7476,7 @@ public partial class NetworkRoot : Node
             $"Mining difficulty: {difficulty:F2}  (~{difficulty:F0} attempts/block)\n" +
             $"Miner streak current/best: {_currentMinerStreak}/{_bestMinerStreak}\n" +
             $"{lastInfo}\n" +
-            "Attempts per bet: 1";
+            $"Attempts per bet: 1");
     }
 
     public BlockchainMiningAnnouncement GetLatestMiningAnnouncement()
@@ -7794,7 +7808,8 @@ public partial class NetworkRoot : Node
     {
         try
         {
-            return $"{new System.IO.FileInfo(ProjectSettings.GlobalizePath(userPath)).Length:N0} bytes";
+            return string.Create(CultureInfo.InvariantCulture,
+                $"{new System.IO.FileInfo(ProjectSettings.GlobalizePath(userPath)).Length:N0} bytes");
         }
         catch
         {
@@ -7863,7 +7878,7 @@ public partial class NetworkRoot : Node
         {
             if (gov.PendingShortfallSc <= 0m || gov.PendingShortfallSc >= MinMaterialShortfallSc) continue;
 
-            GD.Print($"[NetworkRoot] {DescribeNodeForDev(gov.NonMinerNodeId)}: dropped an immaterial pending shortfall of {gov.PendingShortfallSc:F8} SC (below {MinMaterialShortfallSc:F2}) — it stays as outstanding FED debt (P15.10d).");
+            GD.Print(string.Create(CultureInfo.InvariantCulture, $"[NetworkRoot] {DescribeNodeForDev(gov.NonMinerNodeId)}: dropped an immaterial pending shortfall of {gov.PendingShortfallSc:F8} SC (below {MinMaterialShortfallSc:F2}) — it stays as outstanding FED debt (P15.10d)."));
             gov.PendingShortfallSc = 0m;
         }
 

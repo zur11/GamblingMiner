@@ -1,5 +1,6 @@
 using Godot;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using Scripts.Hardware;
@@ -161,7 +162,7 @@ public partial class BTCPoolsAndHardwareShop : Control
 		AddDetailLabel("Casino Community Pool", 20);
 		AddDetailLabel($"Total casino pool credits: {casinoTotal}");
 		AddDetailLabel($"Individual total credits: {individualTotal}");
-		AddDetailLabel($"Current fee: {feePercent * 100m:0.0}%");
+		AddDetailLabel(string.Create(CultureInfo.InvariantCulture, $"Current fee: {feePercent * 100m:0.0}%"));
 
 		AddDetailLabel("Contributors", 16);
 		List<NodeHardwareState> contributors = HardwareAllocationRepository.AllNodes()
@@ -207,10 +208,10 @@ public partial class BTCPoolsAndHardwareShop : Control
 			decimal netDist = evt.Payouts.Sum(p => p.NetAmount);
 			string status = evt.Distributed ? "[color=green]distributed[/color]" : "[color=yellow]pending[/color]";
 			sb.Append("[cell]").Append(evt.BlockIndex).Append("[/cell]");
-			sb.Append("[cell]").Append(evt.TotalReward.ToString("0.0000")).Append("[/cell]");
-			sb.Append("[cell]").Append((evt.CasinoFeePercent * 100m).ToString("0.0")).Append("[/cell]");
-			sb.Append("[cell]").Append(evt.CasinoFeeAmount.ToString("0.0000")).Append("[/cell]");
-			sb.Append("[cell]").Append(netDist.ToString("0.0000")).Append("[/cell]");
+			sb.Append("[cell]").Append(evt.TotalReward.ToString("0.0000", CultureInfo.InvariantCulture)).Append("[/cell]");
+			sb.Append("[cell]").Append((evt.CasinoFeePercent * 100m).ToString("0.0", CultureInfo.InvariantCulture)).Append("[/cell]");
+			sb.Append("[cell]").Append(evt.CasinoFeeAmount.ToString("0.0000", CultureInfo.InvariantCulture)).Append("[/cell]");
+			sb.Append("[cell]").Append(netDist.ToString("0.0000", CultureInfo.InvariantCulture)).Append("[/cell]");
 			sb.Append("[cell]").Append(status).Append("[/cell]");
 		}
 		sb.Append("[/table]");

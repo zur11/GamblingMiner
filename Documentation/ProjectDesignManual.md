@@ -3249,6 +3249,33 @@ The footer nodes are **siblings of `ContentScroll`, not children of it**, so the
 
 ---
 
+### 29.12 — The number-locale audit: a rule in force for a year, violated in ~40 places (2026-08-06)
+
+**Trigger.** The developer asked for the player's BTC balance in the `StatusBar` and, inspecting the Block Explorer in the same pass, noticed its Network Status panel printing `balance: 0,00000000` — comma decimal, on a Spanish Windows install. The panel was correct in structure and wrong in *one character*, which is exactly why it had survived.
+
+**The rule was not new.** `CLAUDE.md` → Money Handling has said since Step 11 that a raw interpolated `:F8`/`:N2` inverts the separators outside an English locale, and that every display site must pass `CultureInfo.InvariantCulture`. A project-wide sweep found **~40 sites still violating it**, including the panel that started this and eight services' `GD.Print` diagnostics.
+
+**Why a documented rule kept being broken.** The formatting helpers (`Money.FormatSignedAdaptive`, `Money.Normalize`) are correct and are used everywhere they fit — so the violations clustered in the gaps *between* them: a value formatted ad-hoc into a label, a `StringBuilder` line in a wallet panel, a diagnostic print. Each is a one-liner written in the flow of some other feature. And the failure is **invisible to the author**: on an English dev machine `:F8` and `InvariantCulture` render identically, so nothing in the build, the tests or a screenshot distinguishes a correct site from a broken one. **This is the defining property to design around — a locale defect is only observable on a machine that has the wrong locale, so it cannot be caught by review discipline. It has to be caught by a detector.**
+
+**The detector** (both passes are recorded verbatim in `CLAUDE.md`, so they can be re-run without opening this file). Pass 1 flags an interpolated numeric format specifier with no `InvariantCulture` within the preceding 3 lines — the window that spans a multi-line `string.Create(...)` wrapper; continuation lines of an already-wrapped expression come back as false positives and must be read in context. Pass 2 greps `.ToString("F8")`-shaped calls with no culture argument — a form pass 1 cannot see, and the form that hid the last four sites (`BotPlayHistory`, the hardware-shop pool table).
+
+**Four shapes carry the bug**, and the last two are why "wrap the string" is not a sufficient instruction:
+
+1. `$"{v:F8}"` — the plain case.
+2. `v.ToString("F8")` — no culture argument.
+3. **A nested `$"…"` inside an interpolation hole does NOT inherit the outer handler's format provider.** Wrapping the outer string leaves the inner one broken. `CasinoCoinSwapService`'s two startup lines each embedded a conditional carrying its own interpolated string with `:F2`/`:F1`; they had to be restructured into helper methods, not wrapped.
+4. **`decimal + "%"` string concatenation** calls the culture-sensitive `ToString()` with no format at all. Same two lines carried this one too.
+
+**Fix shape.** `string.Create(CultureInfo.InvariantCulture, $"…")` accepts a chain of `+`-concatenated interpolated strings as a **single** handler (C# 10), so a multi-line display block — `NetworkRoot.BuildMiningStatusLine`, `BuildAddressDetailsForNode`, `FoundersWallets`' economics label — needs only the wrapper and a closing paren. One catch: every operand in the chain must be interpolated, so a trailing bare `"literal"` has to become `$"literal"`.
+
+**What was confirmed clean, so nobody re-audits it:** every CSV telemetry writer already used `string.Format(CultureInfo.InvariantCulture, …)`. No trace file was ever affected — which matters, because a comma-decimal in `difficulty_trace.csv` would have broken the `awk` aggregation the project's analysis depends on.
+
+**Residual risk, stated rather than hidden.** A **bare** interpolation hole — `$"{someDecimal}"`, no format specifier — is equally culture-sensitive. There are thousands of holes across the project and no way to identify the decimal-typed ones without type analysis, so these are handled **reactively**: when a comma appears in a panel, that is the likely shape. Accepting a known residual and naming it beats a sweep that would have to guess.
+
+**⚠️ The bulk-regex trap, recorded because it nearly shipped.** Fixing the last ~24 diagnostic lines by hand looked wasteful, so a batch `perl -pi -e` pass was used instead. Its statement matched the target with capture groups, then applied two *further* regexes as guards — and **a later match resets `$1`/`$2`/`$3`**, so every replacement wrote the empty string: `GD.Print(string.Create(CultureInfo.InvariantCulture, $""));`. Twenty-four log lines were silently blanked. It was caught by reading the diff and restored line-for-line from `HEAD`, but note what would **not** have caught it: `$""` is valid C#, so the build stayed green, and the affected lines are diagnostics nobody reads until they matter. **General rule: a mechanical edit across many files is only as safe as the diff you actually read afterwards — and in Perl, capture into lexical variables on the same line as the match that produced them.**
+
+---
+
 ## Chapter 30 — UTXO Realism & Address Non-Reuse (Step 8)
 
 Replaces the **testing-stage account/balance model** with a **real, multi-input/multi-output UTXO model** (Bitcoin's actual transaction model): a transaction spends a set of prior outputs ("coins") as **inputs** and creates new **outputs**; balance = the sum of an address's unspent outputs; the fee = Σinputs − Σoutputs. On top of that, every receive can land on a *fresh* derived address (Satoshi's "one address per block reward" practice) and every spend returns change to a *fresh* address. Built on the candidate engine (Ch. 21) and founder economics (Ch. 28). Full plan + decisions + test log: `AIHelperFiles/step8-utxo-realism-plan.md` (core phases 8.1–8.4 in §3; the full model is Appendix A, **now implemented**).

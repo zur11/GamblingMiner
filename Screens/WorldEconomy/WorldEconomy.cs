@@ -142,7 +142,8 @@ public partial class WorldEconomy : Control
 			if (b.UnrecoverableShortfallSc > 0m) flag = "  [color=red]INSOLVENT[/color]";
 			else if (b.PendingShortfallSc > 0m) flag = "  [color=orange]SHORTFALL PENDING[/color]";
 
-			sb.Append($"  [color=lime]{b.DisplayName}[/color] [{b.MarketCategory}]  —  FED debt {Sc(debt)} SC  ·  collateral {b.CollateralBtc:N8} BTC (≈ {Sc(collateralSc)} SC)  ·  {b.ClientCount} client(s){flag}\n");
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"  [color=lime]{b.DisplayName}[/color] [{b.MarketCategory}]  —  FED debt {Sc(debt)} SC  ·  collateral {b.CollateralBtc:N8} BTC (≈ {Sc(collateralSc)} SC)  ·  {b.ClientCount} client(s){flag}\n"));
 		}
 
 		decimal totalCollateralSc = price is decimal pr && pr > 0m ? Money.Normalize(totalCollateral * pr) : 0m;

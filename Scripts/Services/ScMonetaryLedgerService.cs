@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -85,7 +86,7 @@ public partial class ScMonetaryLedgerService : Node
 	{
 		LoadState();
 		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
-		GD.Print($"[ScMonetaryLedgerService] Ready — Circulation={TotalCirculation:F8} SC  Grants={TotalGenesisGrants:F8}  Debt={TotalDebtOutstanding:F8}  events={_events.Count}");
+		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[ScMonetaryLedgerService] Ready — Circulation={TotalCirculation:F8} SC  Grants={TotalGenesisGrants:F8}  Debt={TotalDebtOutstanding:F8}  events={_events.Count}"));
 	}
 
 	private DateTime GameLocalNow() => _calendarTime?.CurrentLocalDateTime ?? DateTime.Now;
@@ -203,14 +204,14 @@ public partial class ScMonetaryLedgerService : Node
 		decimal fedCasinoDebt = fed?.OutstandingDebt(PartyCasino) ?? 0m;
 		if (fed != null && _debtByBorrower.GetValueOrDefault(PartyCasino) != fedCasinoDebt)
 		{
-			GD.PushWarning($"[ScMonetaryLedger] Checkpoint debt mismatch (ledger={_debtByBorrower.GetValueOrDefault(PartyCasino):F8} vs FED casino account={fedCasinoDebt:F8}) — reconciled to the FED.");
+			GD.PushWarning(string.Create(CultureInfo.InvariantCulture, $"[ScMonetaryLedger] Checkpoint debt mismatch (ledger={_debtByBorrower.GetValueOrDefault(PartyCasino):F8} vs FED casino account={fedCasinoDebt:F8}) — reconciled to the FED."));
 			if (fedCasinoDebt > 0m) _debtByBorrower[PartyCasino] = fedCasinoDebt;
 			else _debtByBorrower.Remove(PartyCasino);
 		}
 
 		EnsureCanonicalGenesisGrants(); // legacy DTOs can't lack these, but keep the invariant unconditional
 		SaveState();
-		GD.Print($"[ScMonetaryLedger] RESTORED from checkpoint — Circulation={TotalCirculation:F8}  Grants={TotalGenesisGrants:F8}  Debt={TotalDebtOutstanding:F8}  events={_events.Count}");
+		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[ScMonetaryLedger] RESTORED from checkpoint — Circulation={TotalCirculation:F8}  Grants={TotalGenesisGrants:F8}  Debt={TotalDebtOutstanding:F8}  events={_events.Count}"));
 		LedgerChanged?.Invoke();
 	}
 
@@ -240,7 +241,7 @@ public partial class ScMonetaryLedgerService : Node
 		if (changed)
 		{
 			SaveState();
-			GD.Print($"[ScMonetaryLedger] Initialized from live state — Circulation={TotalCirculation:F8}  Grants={TotalGenesisGrants:F8}  Debt={TotalDebtOutstanding:F8}");
+			GD.Print(string.Create(CultureInfo.InvariantCulture, $"[ScMonetaryLedger] Initialized from live state — Circulation={TotalCirculation:F8}  Grants={TotalGenesisGrants:F8}  Debt={TotalDebtOutstanding:F8}"));
 			LedgerChanged?.Invoke();
 		}
 	}

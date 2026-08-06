@@ -576,10 +576,10 @@ public partial class CasinoFinances : Control
 		if (!senderNodeId.StartsWith("pass_", StringComparison.Ordinal))
 		{
 			decimal total = _networkRoot.GetNodeSpendableBalance(senderNodeId);
-			return $"Balance: {total:F8} BTC";
+			return string.Create(CultureInfo.InvariantCulture, $"Balance: {total:F8} BTC");
 		}
 		decimal confirmed = _networkRoot.GetAddressBalanceDetails(senderAddress).confirmedBalance;
-		return $"Balance: {confirmed:F8} BTC";
+		return string.Create(CultureInfo.InvariantCulture, $"Balance: {confirmed:F8} BTC");
 	}
 
 	private void OnSendConfirmed()

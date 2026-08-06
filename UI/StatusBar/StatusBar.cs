@@ -1,16 +1,32 @@
 using Godot;
 using System;
 using System.Globalization;
+using GodotBlockchainPort.Blockchain;
+using GodotBlockchainPort.Simulation;
 using Scripts.Finance;
 
 namespace UI.StatusBar
 {
 	public partial class StatusBar : HBoxContainer
 	{
+		// The player's BTC holding is money they OWN; the ticker beside it is a market quote they don't.
+		// Bitcoin orange marks the wallet cell so the two can never be read as the same kind of figure
+		// (the wording — "BTC Wallet:" vs "BTC Price: … SC" — carries the rest).
+		private static readonly Color BtcWalletColor = new(0.97f, 0.58f, 0.10f);
+
+		// One AggregateSpendable pass over the UTXO set — cheap at this cadence, ruinous per frame (§38.7).
+		// BlockAccepted is the real edge; the timer only covers the player's own mid-block sends (a BTCWallet
+		// send or a swap sell reduces spendable the instant it is broadcast, with no block to announce it).
+		private const double BtcBalanceFallbackInterval = 2.0;
+
 		private Label _mainBalanceLabel;
 		private Label _bankrollLabel;
+		private Label _btcBalanceLabel;
 		private Label _clockLabel;
 		private Label _btcTickerLabel;
+
+		private bool _btcBalanceDirty = true;
+		private double _btcBalanceTimer;
 
 		private PrincipalBalanceService _principal;
 		private BankrollStateService _bankroll;
@@ -51,6 +67,8 @@ namespace UI.StatusBar
 
 			_mainBalanceLabel = BuildLabel();
 			_bankrollLabel = BuildLabel();
+			_btcBalanceLabel = BuildLabel();
+			_btcBalanceLabel.AddThemeColorOverride("font_color", BtcWalletColor);
 			_clockLabel = BuildLabel();
 			_btcTickerLabel = BuildLabel();
 
@@ -64,7 +82,10 @@ namespace UI.StatusBar
 				_btcMarketData.MarketDayChanged += OnMarketDayChanged;
 			}
 
+			NetworkRoot.BlockAccepted += OnBlockAccepted;
+
 			Refresh();
+			RefreshBtcBalance();
 			RefreshBtcTicker();
 		}
 
@@ -74,11 +95,26 @@ namespace UI.StatusBar
 			{
 				_btcMarketData.MarketDayChanged -= OnMarketDayChanged;
 			}
+
+			NetworkRoot.BlockAccepted -= OnBlockAccepted; // static event — must not outlive this node
 		}
 
 		public override void _Process(double delta)
 		{
 			Refresh();
+
+			_btcBalanceTimer += delta;
+			if (_btcBalanceTimer >= BtcBalanceFallbackInterval)
+			{
+				_btcBalanceTimer = 0.0;
+				_btcBalanceDirty = true;
+			}
+
+			if (_btcBalanceDirty)
+			{
+				_btcBalanceDirty = false;
+				RefreshBtcBalance();
+			}
 		}
 
 		private Label BuildLabel()
@@ -101,6 +137,22 @@ namespace UI.StatusBar
 			_clockLabel.Text = _calendar?.CurrentLocalDateTime.ToString("MMM d, yyyy  HH:mm:ss", CultureInfo.InvariantCulture) ?? "--";
 		}
 
+		// The player's own BTC holding, in every scene. BlockAccepted fires from inside HandleMinedBlock, so
+		// it only raises a dirty flag here — the UTXO pass runs on the next frame, never inside the block
+		// commit (the AuctioningCompanyDetails precedent).
+		private void OnBlockAccepted(Block block) => _btcBalanceDirty = true;
+
+		private void RefreshBtcBalance()
+		{
+			if (_btcBalanceLabel == null)
+			{
+				return;
+			}
+
+			decimal btc = NetworkRoot.GetPlayerSpendableBalanceStatic();
+			_btcBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"BTC Wallet: {btc:N8}");
+		}
+
 		// Step 13 (MD.2 / D-13.3-b) — a compact, high-visibility BTC price cell. Refreshes only on
 		// MarketDayChanged (the price is a daily step function — zero per-frame cost), not from _Process.
 		private void OnMarketDayChanged(MarketDay day) => RefreshBtcTicker();
@@ -115,22 +167,22 @@ namespace UI.StatusBar
 			DateTime gameTime = _calendar?.CurrentLocalDateTime ?? DateTime.MinValue;
 			if (_btcMarketData == null || !_btcMarketData.IsMarketBorn(gameTime))
 			{
-				_btcTickerLabel.Text = "BTC —";
+				_btcTickerLabel.Text = "BTC Price: —";
 				_btcTickerLabel.RemoveThemeColorOverride("font_color");
 				return;
 			}
 
 			if (_btcMarketData.IsHaltDay(gameTime))
 			{
-				_btcTickerLabel.Text = "BTC HALT";
+				_btcTickerLabel.Text = "BTC Price: HALT";
 				_btcTickerLabel.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.6f));
 				return;
 			}
 
 			_btcTickerLabel.RemoveThemeColorOverride("font_color");
 			_btcTickerLabel.Text = _btcMarketData.GetEffectivePriceUsd(gameTime) is decimal price
-				? string.Create(CultureInfo.InvariantCulture, $"BTC {price:N2}")
-				: "BTC —";
+				? string.Create(CultureInfo.InvariantCulture, $"BTC Price: {price:N2} SC")
+				: "BTC Price: —";
 		}
 	}
 }

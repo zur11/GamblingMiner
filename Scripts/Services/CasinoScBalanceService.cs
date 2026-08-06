@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -93,7 +94,7 @@ public partial class CasinoScBalanceService : Node
 		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		// Loan figures are deliberately NOT printed here: CentralBankService registers AFTER this service, so
 		// the FED account isn't reachable yet during our _Ready (it prints its own totals when it loads).
-		GD.Print($"[CasinoScBalanceService] Ready — MainBalance={MainBalance:F8} SC  Bankroll={Bankroll:F8} SC  BankrollTarget={BankrollTarget:F8} SC");
+		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[CasinoScBalanceService] Ready — MainBalance={MainBalance:F8} SC  Bankroll={Bankroll:F8} SC  BankrollTarget={BankrollTarget:F8} SC"));
 	}
 
 	// The Central Bank registers AFTER this service (it must sit between the monetary ledger and the
@@ -177,7 +178,7 @@ public partial class CasinoScBalanceService : Node
 			if (_rechargeHistory.Count > MaxRechargeHistory)
 				_rechargeHistory.RemoveRange(0, _rechargeHistory.Count - MaxRechargeHistory);
 		}
-		GD.Print($"[CasinoSC] RESTORED from checkpoint — Main={MainBalance:F8}  Bankroll={Bankroll:F8}  Target={BankrollTarget:F8}  LoanCount={LoanCount}  TotalLoaned={TotalLoaned:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}");
+		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[CasinoSC] RESTORED from checkpoint — Main={MainBalance:F8}  Bankroll={Bankroll:F8}  Target={BankrollTarget:F8}  LoanCount={LoanCount}  TotalLoaned={TotalLoaned:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}"));
 		BalanceChanged?.Invoke();
 	}
 
@@ -203,7 +204,7 @@ public partial class CasinoScBalanceService : Node
 
 		_betCount++;
 		if (_betCount % 100 == 0)
-			GD.Print($"[CasinoSC] bet#{_betCount}  delta={casinoDelta:+0.00000000;-0.00000000}  Bankroll={Bankroll:F8}  Main={MainBalance:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}");
+			GD.Print(string.Create(CultureInfo.InvariantCulture, $"[CasinoSC] bet#{_betCount}  delta={casinoDelta:+0.00000000;-0.00000000}  Bankroll={Bankroll:F8}  Main={MainBalance:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}"));
 	}
 
 	// On-demand recharge — fixed-DOSE model (CG.1.8 correction). When a player win empties the Bankroll (≤ 0),
@@ -229,7 +230,7 @@ public partial class CasinoScBalanceService : Node
 			{
 				MainBalance = Money.Normalize(MainBalance + loanChunk);
 				DrawFedLoan(loanChunk, "auto");
-				GD.Print($"[CasinoScBalanceService] FED loan #{LoanCount} drawn on demand ({loanChunk:F2} SC) — TotalLoaned={TotalLoaned:F8} SC");
+				GD.Print(string.Create(CultureInfo.InvariantCulture, $"[CasinoScBalanceService] FED loan #{LoanCount} drawn on demand ({loanChunk:F2} SC) — TotalLoaned={TotalLoaned:F8} SC"));
 			}
 
 			decimal transfer = Money.Normalize(Math.Min(BankrollTarget, MainBalance));

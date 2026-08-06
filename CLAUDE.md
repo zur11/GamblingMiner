@@ -84,6 +84,30 @@ Hard-won rules (a scroll bug once cost a full session — full write-up + diagno
 - Use `Money.FormatSignedAdaptive()` for display strings
 - Never accumulate fractional profit without using `BetService`'s built-in remainder accumulation
 - **Number locale**: canonical format is `1,000,000.00000000` — comma for thousands separator, period for decimal point. This is `CultureInfo.InvariantCulture`. **Never** use a raw C# interpolated string with a decimal format specifier (`:N8`, `:F2`, `:+0.00000000;-0.00000000`, etc.) — it will invert the separators on Spanish/European locales. Always pass `CultureInfo.InvariantCulture` explicitly: use `string.Create(CultureInfo.InvariantCulture, $"… {value:N8} …")` for compound strings, or `.ToString("N8", CultureInfo.InvariantCulture)` for single values. `Money.FormatSignedAdaptive()` already does this internally.
+- **Currency labelling — every monetary amount the PLAYER sees names its currency (✅ swept 2026-08-06, same pass as the locale audit).** A bare `39900.00000000` is ambiguous the moment a BTC figure and an SC figure share a screen, which the StatusBar's BTC wallet cell made permanent. **Two shapes, pick by density:**
+  - **Standalone labels, status lines, result text, confirmation messages** → suffix inline: `39,900.00000000 SC`, `12.50000000 BTC`. Used by StatusBar, DiceGame's balances + WIN/LOSS line, BankrollProgrammer's status messages and transfer log, the swap desk's availability lines, CentralBank's monetary invariant.
+  - **Dense tabular columns** → declare it **once in the column header** (`Bet (SC)`, `Profit/Loss (SC)`, `P/L (SC)`, `Gambled (SC)`, `Balance (SC)`), never on every row — DiceGame's bet history, `FinancialBettingStats`, `BotPlayHistory`, all three Martingale calculators. A row-level suffix in a 50-row list is noise, and the header is the thing a player reads once.
+  - **Scope: UI only.** Do NOT push unit strings into the blockchain/transaction/banking machinery — `Transaction`, `TxOutput`, ledger records, checkpoint DTOs, CSV traces and JSON stay pure numbers. The label belongs to the presentation layer that knows which asset it is rendering.
+  - **Not monetary, correctly bare:** difficulty, mining power, nonce/roll values, bets-per-second, multipliers, percentages, investigation scores, block counts, and **NST/PST share counts** (labelled with their own token name, not a currency).
+  - Where a `.tscn` label is absolutely positioned (`layout_mode = 0` + fixed `offset_right`), widening the text needs the box widened too — DiceGame's two bet-history headers were extended (`Bet` 948→1020, `Profit/Loss` 1181→1290) into empty space. Container-managed labels (`layout_mode = 2`) resize themselves and need no edit.
+- **Locale sweep — ✅ project-wide audit done 2026-08-06 (Step 16 post-merge).** The rule above had been in force for a long time and was still violated in **~40 sites**, found only because the developer noticed `0,00000000` in the Block Explorer's Network Status panel. Every one is fixed and the build is clean; the value of this bullet is the **recipe**, because the next violation will arrive the same way — written by hand, invisible on an English dev machine, spotted by eye on a Spanish one. Full write-up: `Documentation/ProjectDesignManual.md` **§29.12**.
+  - **Detector (run it before believing the project is clean).** From Git Bash at the repo root — flags an interpolated numeric format specifier with no `InvariantCulture` within the preceding 3 lines (the window that catches multi-line `string.Create(...)` wrappers). A handful of continuation lines of an already-wrapped expression come back as false positives; read the surrounding lines before editing:
+    ```bash
+    for f in $(grep -rlE '\$"' --include=*.cs . | grep -v '/\.godot/'); do
+      awk -v F="$f" '{ lines[NR]=$0 }
+      END { for (i=1;i<=NR;i++) { l=lines[i]
+        if (l ~ /\$"/ && l ~ /\{[^{}]*:(F[0-9]|N[0-9]|0\.[#0]|#,#|P[0-9]|\+0)/) {
+          ctx = lines[i-3] lines[i-2] lines[i-1] l
+          if (ctx !~ /InvariantCulture/) printf "%s:%d: %s\n", F, i, l } } }' "$f"
+    done
+    ```
+    Second pass, for the form the first one misses — `.ToString(format)` with no culture argument: `grep -rnE '\.ToString\("(F[0-9]|N[0-9]|0\.[#0]|#,#|P[0-9])[^"]*"\)' --include=*.cs .`
+    **Baseline as of 2026-08-06: pass 1 returns exactly 5 lines, pass 2 returns 0.** The 5 are all continuation lines of an already-wrapped multi-line expression (`FoundersWallets.cs` 247–248, `NetworkRoot.cs` 6918 / 7475–7476) — a 6th hit is a real regression.
+  - **Four shapes carry the bug** — the last two are the ones that keep getting missed: (1) `$"{v:F8}"` unwrapped; (2) `v.ToString("F8")` with no culture; (3) a **nested** `$"…"` inside an interpolation hole — it does **not** inherit the outer handler's provider, so wrapping the outer string fixes nothing (`CasinoCoinSwapService`'s two startup lines had to be restructured into helpers); (4) `decimal + "%"` string concatenation, which calls the culture-sensitive `ToString()`.
+  - **Fix shape:** wrap in `string.Create(CultureInfo.InvariantCulture, $"…")` — it accepts a chain of `+`-concatenated interpolated strings as ONE handler, so a multi-line display block needs only the wrapper plus a closing paren (turn any trailing bare `"literal"` operand into `$"literal"` so the chain stays all-interpolated). Add `using System.Globalization;` — most files still lack it.
+  - **Scope confirmed clean, do not re-audit:** all CSV telemetry writers already use `string.Format(CultureInfo.InvariantCulture, …)`, so no trace file was ever affected. **Known residual risk, deliberately not chased:** a *bare* hole `$"{someDecimal}"` (no format specifier) is also culture-sensitive; there are thousands of holes and no way to tell which are decimals without type analysis, so these are fixed **reactively** — when a comma shows up in a panel, that is the likely shape.
+  - **Where they actually hid:** the `Money.*` helpers were always correct, so the violations clustered where a value is formatted *ad hoc* for display — Block Explorer / wallet panels, `NetworkRoot`'s string builders, and `GD.Print` diagnostics. When adding a readout, reach for `Money.FormatSignedAdaptive()` first; it needs no wrapper.
+  - ⚠️ **Do not "fix" these with a bulk regex.** A batch `perl -pi -e` pass during this audit silently blanked 24 lines: the capture groups `$1/$2/$3` were reset by the *later* condition regexes in the same statement, so the replacement wrote `GD.Print(string.Create(CultureInfo.InvariantCulture, $""));`. It was caught and restored from `HEAD`, but a build alone would not have caught it (`$""` compiles). Edit these by hand, or capture into lexical variables **immediately** after the match and diff every line before building.
 
 ### Time
 
@@ -801,7 +825,16 @@ The example above omits several DEV-only scenes for brevity (e.g. `CasinoFinance
 
 **`UI/StatusBar/StatusBar.cs`** — pure C# `HBoxContainer` (no .tscn needed). Instantiated programmatically in each screen's `_Ready()`.
 
-Shows Main Balance, Bankroll, and game clock — updates every frame via `_Process`.
+Shows Main Balance, Bankroll, **the player's BTC wallet**, the game clock, and the BTC price ticker.
+
+**The two BTC cells are different KINDS of figure and must stay visually distinguishable (2026-08-06).** `BTC Wallet: 12.50000000` is money the player *owns* — coloured **bitcoin orange** (`#F7931A`), placed beside the SC balances it belongs with. `BTC Price: 1,234.56 SC` is a market quote they don't own — default text colour, at the far end, showing `BTC Price: —` before Market Birth (2010-07-18) and `BTC Price: HALT` on the 13 halt days. The SC suffix on the price and the SC suffix on DiceGame's Bankroll / Main Balance labels landed in the same change, for the same reason: once a BTC figure sits in the bar, every unlabelled number becomes ambiguous. **Do not add a third bare number to this bar.**
+
+Refresh cadence differs per cell and this is deliberate:
+- SC balances + clock — `_Process` every frame (cheap field reads; the clock genuinely needs real delta).
+- BTC price — event-only, on `BtcMarketDataService.MarketDayChanged` (daily step function).
+- **BTC wallet — `NetworkRoot.BlockAccepted` (dirty flag drained next frame) + a 2 s fallback tick.** It reads `NetworkRoot.GetPlayerSpendableBalanceStatic()`, which is **one `AggregateSpendable` pass over the whole UTXO set** — cheap at this cadence, ruinous per frame (§38.7's inverse-failure lesson). The block event is the real edge; the fallback exists only because a player's own send (BTCWallet or a swap sell) drops spendable the instant it is broadcast, with no block to announce it. The static event is unsubscribed in `_ExitTree`.
+
+`GetPlayerSpendableBalanceStatic()` is a **static** twin of the instance `GetNodeSpendableBalance` because the StatusBar is instantiated programmatically in every screen and owns no `NetworkRoot` node (the `GetPlayerChainLengthStatic` precedent). It reads the **owned address set**, never `WalletAddress` alone — the P16.6 trap: base-only reads went to zero once change rotation landed.
 
 ```csharp
 // In _Ready() of any screen — insert at top of a VBoxContainer:
@@ -862,7 +895,7 @@ Detailed design documents are in `Documentation/`:
 | `GLOSSARY.md` | Canonical terminology (source of truth for naming) |
 | `PLAYER_GUIDE.md` | What is playable now (updated for each release) |
 | `PRIVATE_ROADMAP.md` | Internal priorities P0–P8, canonical decisions, open questions |
-| `ProjectDesignManual.md` | The long-form design record — one chapter per system, written as the work lands. **Ch. 29** UI/Godot layout (read before any `ScrollContainer` work) · **Ch. 30** UTXO model · **Ch. 35** timeline guard · **Ch. 36** network population · **Ch. 38** event-driven vs. `_Process` · **Ch. 39** the Central Bank + §39.16's six standing conventions · **Ch. 40** persistence durability & simulation scale · **Ch. 41** player participation in company governance (pause / policy / abstention) |
+| `ProjectDesignManual.md` | The long-form design record — one chapter per system, written as the work lands. **Ch. 29** UI/Godot layout (read before any `ScrollContainer` work; **§29.12** the number-locale audit + its detector) · **Ch. 30** UTXO model · **Ch. 35** timeline guard · **Ch. 36** network population · **Ch. 38** event-driven vs. `_Process` · **Ch. 39** the Central Bank + §39.16's six standing conventions · **Ch. 40** persistence durability & simulation scale · **Ch. 41** player participation in company governance (pause / policy / abstention) |
 | `INCIDENT_LOG.md` | **Significant design crashes** — data-loss/corruption events whose cause is a design limitation, not a typo. One entry per incident: symptom, timeline, proximate vs. root fault, evidence, blast radius, recovery, the phase that fixes it, and the generalized lesson. Add an entry whenever a crash costs a world/playtest or reveals a persisted figure that had been silently wrong. Currently: INC-001 (the 1.13 GB bet journal + truncated world snapshot, 2026-07-29) |
 
 ---

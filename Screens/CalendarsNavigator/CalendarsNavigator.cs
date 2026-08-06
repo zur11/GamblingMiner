@@ -208,7 +208,7 @@ public partial class CalendarsNavigator : Control
 
 		if (_calendarTimeService != null)
 		{
-			_timePresenter.Text += $"  |  Speed x{_calendarTimeService.SpeedMultiplier:0.##}";
+			_timePresenter.Text += string.Create(CultureInfo.InvariantCulture, $"  |  Speed x{_calendarTimeService.SpeedMultiplier:0.##}");
 		}
 
 		_weekPresenter.Text = $"ISO Week: {week.WeekOfYear} (Monday to Sunday)";

@@ -1619,7 +1619,7 @@ public partial class DiceGame : Control, IBetEventSource
 		if (Math.Abs(_autoBetLastMeasuredRealPerSec - _lastPrintedMeasuredRealPerSec) >= 5.0d)
 		{
 			_lastPrintedMeasuredRealPerSec = _autoBetLastMeasuredRealPerSec;
-			GD.Print($"[AutoBet] actual_real={_autoBetLastMeasuredRealPerSec:0.#}/s aps={GetAutoBetBaseAps()}");
+			GD.Print(string.Create(CultureInfo.InvariantCulture, $"[AutoBet] actual_real={_autoBetLastMeasuredRealPerSec:0.#}/s aps={GetAutoBetBaseAps()}"));
 		}
 	}
 
@@ -1909,8 +1909,11 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void UpdateBalanceUI()
 	{
-		string bankrollText = _walletController.Balance.ToString("F8", CultureInfo.InvariantCulture);
-		string balanceText = (_principalBalanceService?.CurrentBalance ?? 0m).ToString("F8", CultureInfo.InvariantCulture);
+		// Both figures are SC — named explicitly so the two big numbers at the top of the screen can never be
+		// read as BTC now that the StatusBar carries a BTC wallet cell right above them.
+		string bankrollText = string.Create(CultureInfo.InvariantCulture, $"{_walletController.Balance:F8} SC");
+		decimal mainBalance = _principalBalanceService?.CurrentBalance ?? 0m;
+		string balanceText = string.Create(CultureInfo.InvariantCulture, $"{mainBalance:F8} SC");
 		_balanceValue.Text = bankrollText;
 		_bankrollValue.Text = bankrollText;
 		_principalBalanceValue.Text = balanceText;
@@ -1922,7 +1925,7 @@ public partial class DiceGame : Control, IBetEventSource
 		decimal payout = _engine.GetPayoutMultiplier(chance);
 
 		_chanceToWinValue.Text = $"{chance}%";
-		_multiplierValue.Text = $"x {payout:F4}";
+		_multiplierValue.Text = string.Create(CultureInfo.InvariantCulture, $"x {payout:F4}");
 	}
 
 	private void UpdateWinnerRangeUI()
@@ -1954,11 +1957,11 @@ public partial class DiceGame : Control, IBetEventSource
 		string signedProfit = Money.FormatSignedAdaptive(result.Profit);
 		if (result.IsWin)
 		{
-			_resultValue.Text = $"WIN {signedProfit} - Roll: {result.Roll}{BuildAutoBetResultSuffix()}";
+			_resultValue.Text = $"WIN {signedProfit} SC - Roll: {result.Roll}{BuildAutoBetResultSuffix()}";
 		}
 		else
 		{
-			_resultValue.Text = $"LOSS {signedProfit} - Roll: {result.Roll}{BuildAutoBetResultSuffix()}";
+			_resultValue.Text = $"LOSS {signedProfit} SC - Roll: {result.Roll}{BuildAutoBetResultSuffix()}";
 		}
 	}
 
