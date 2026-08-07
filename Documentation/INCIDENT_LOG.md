@@ -217,7 +217,7 @@ as a measurement, and had been for an unknown number of sessions.**
 - **F3 — independent, and would survive a perfectly clean journal: the metric was not measuring what its
   label claimed.** `AdvanceSummaryTo` counts consecutive `Loss` records over the **entire loaded history**,
   with no reset on a change of `GameId`, a change of `Chance`, a session boundary, or — most importantly —
-  **a progression reset**. `InsistAfterStop`, the bankroll-limit reset and every auto-recharge put the bet
+  **a progression reset**. `InsistAfterStopOnLoss` (then named `InsistAfterStop`), the bankroll-limit reset and every auto-recharge put the bet
   back to base while the loss run kept counting straight through. It also added the closing win to the run
   on a win but not on a trailing loss, so the same streak reported two different values depending on where
   the viewed window happened to end.

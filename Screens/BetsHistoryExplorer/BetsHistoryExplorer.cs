@@ -230,7 +230,7 @@ public partial class BetsHistoryExplorer : Control
 
 	// INC-002 — this reports the longest run of consecutive LOSSES, which is what it always computed; the
 	// old "Martingale level reached" label was a second defect on top of the inflated number, because a
-	// progression resets to base bet on InsistAfterStop, on the bankroll-limit reset and on every
+	// progression resets to base bet on InsistAfterStopOnLoss, on the bankroll-limit reset and on every
 	// auto-recharge, while the loss run keeps counting straight through all three. It is also no longer
 	// counted across a change of game or win chance, and the closing win is no longer added to the run
 	// (the old code did that on a win but not on a trailing loss, so the same streak reported two values

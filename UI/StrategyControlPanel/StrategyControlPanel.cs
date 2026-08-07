@@ -15,7 +15,9 @@ namespace UI.StrategyControlPanel
 		public event Action<string> BetAmountInputChanged;
 		public event Action StrategyConfigChanged;
 		public event Action StopOnBlockMinedDoubleClicked;
-		public event Action ProfitStopModeDoubleClicked;
+		// Raised by a double click on EITHER insist toggle — DiceGame's gate for re-enabling manual betting
+		// after a profit/loss stop, and either stop may have been the one that fired.
+		public event Action ProfitOrLossStopDoubleClicked;
 		public event Action<bool> AutoRechargeToggled;
 
         // --- Validación decimal ---
@@ -34,8 +36,6 @@ namespace UI.StrategyControlPanel
 		[Export]
 		private Button _autoPauseResumeToggle;
 		[Export]
-		private Button _increaseOnLossWinToggle;
-		[Export]
 		private Button _maxBetAmountBtn;
 		[Export]
 		private Button _minBetAmountBtn;
@@ -46,7 +46,9 @@ namespace UI.StrategyControlPanel
 		[Export]
 		private LineEdit _betAmountInput;
 		[Export]
-		private LineEdit _increasePercentageInput;
+		private LineEdit _increaseOnLossPercentInput;
+		[Export]
+		private LineEdit _increaseOnWinPercentInput;
 		[Export]
 		private LineEdit _numberOfBetsInput;
 		[Export]
@@ -56,14 +58,15 @@ namespace UI.StrategyControlPanel
 		[Export]
 		private Button _stopOnBlockMinedToggle;
 		[Export]
-		private Button _profitStopModeToggle;
-		[Export]
 		private Button _autoRechargeToggle;
 		[Export]
-		private Button _insistAfterStopToggle;
+		private Button _insistAfterStopOnProfitToggle;
+		[Export]
+		private Button _insistAfterStopOnLossToggle;
 
 		private double _lastStopOnBlockMinedPressAt;
-		private double _lastProfitStopModePressAt;
+		private double _lastInsistOnProfitPressAt;
+		private double _lastInsistOnLossPressAt;
 		private const double DoubleClickSeconds = 0.35d;
 
         // --- Propiedades API ---
@@ -77,24 +80,24 @@ namespace UI.StrategyControlPanel
             }
         }
 
-        public decimal IncreasePercent
-		{
-			get
-			{
-				string text = _increasePercentageInput.Text.Trim();
-				if (!decimal.TryParse(text, out var value))
-					return 0m;
-				return value;
-			}
-		}
+		// Each outcome carries its own progression percent, armed by its own value: blank, unparseable or
+		// <= 0 all mean "this outcome resets the bet to base" (the same 0-means-off rule the stop amounts use).
+		public decimal IncreaseOnLossPercent => ParsePercent(_increaseOnLossPercentInput?.Text);
+		public decimal IncreaseOnWinPercent => ParsePercent(_increaseOnWinPercentInput?.Text);
 
-
-		public bool IncreasingOnWin
+		private static decimal ParsePercent(string text)
 		{
-			get
+			if (!decimal.TryParse(
+					(text ?? string.Empty).Trim().Replace(',', '.'),
+					NumberStyles.Number,
+					CultureInfo.InvariantCulture,
+					out decimal value) ||
+				value <= 0m)
 			{
-				return _increaseOnLossWinToggle.ButtonPressed;
+				return 0m;
 			}
+
+			return value;
 		}
 
 		public int NumberOfBets
@@ -109,11 +112,15 @@ namespace UI.StrategyControlPanel
 		}
 
 		public bool StopOnBlockMinedEnabled => _stopOnBlockMinedToggle?.ButtonPressed ?? false;
-		public bool UseProgressionAnchorStops => _profitStopModeToggle?.ButtonPressed ?? false;
 		public bool AutoRechargeEnabled => _autoRechargeToggle?.ButtonPressed ?? true;
-		public bool InsistAfterStopEnabled =>
-			_insistAfterStopToggle?.ButtonPressed == true &&
-			(_botStrategyMode || HasProfitOrLossStopAmount());
+		// Each insist switch is gated on ITS OWN stop amount — insisting on a stop that is not armed is
+		// meaningless. In bot strategy mode both are forced ON (see ApplyStrategyModeRestrictions).
+		public bool InsistAfterStopOnProfitEnabled =>
+			_insistAfterStopOnProfitToggle?.ButtonPressed == true &&
+			(_botStrategyMode || HasStopOnProfitAmount());
+		public bool InsistAfterStopOnLossEnabled =>
+			_insistAfterStopOnLossToggle?.ButtonPressed == true &&
+			(_botStrategyMode || HasStopOnLossAmount());
 
 		public void SetBetAmount(decimal amount)
 		{
@@ -146,22 +153,20 @@ namespace UI.StrategyControlPanel
 
 			_internalUpdate = true;
 			_betAmountInput.Text = config.BaseBet.ToString("F8", CultureInfo.InvariantCulture);
-			_increasePercentageInput.Text = config.IncreasePercent.ToString(CultureInfo.InvariantCulture);
-			_increaseOnLossWinToggle.ButtonPressed = config.IncreaseOnWin;
-			_increaseOnLossWinToggle.Text = config.IncreaseOnWin ? "Increase on win" : "Increase on loss";
+			_increaseOnLossPercentInput.Text = FormatOptionalPercent(config.IncreaseOnLossPercent);
+			_increaseOnWinPercentInput.Text = FormatOptionalPercent(config.IncreaseOnWinPercent);
 			_numberOfBetsInput.Text = Math.Max(0, numberOfBets).ToString(CultureInfo.InvariantCulture);
 			_stopOnProfitInput.Text = FormatOptionalDecimal(config.StopOnProfit);
 			_stopOnLossInput.Text = FormatOptionalDecimal(config.StopOnLoss);
 			_stopOnBlockMinedToggle.ButtonPressed = config.StopOnBlockMined;
 			_stopOnBlockMinedToggle.Text = config.StopOnBlockMined ? "Stop Block: ON" : "Stop Block: OFF";
-			_profitStopModeToggle.ButtonPressed = config.UseProgressionAnchorStops;
-			_profitStopModeToggle.Text = config.UseProgressionAnchorStops ? "P/L Mode: Anchor" : "P/L Mode: Session";
 			_autoRechargeToggle.ButtonPressed = autoRechargeEnabled;
 			_autoRechargeToggle.Text = autoRechargeEnabled ? "Auto Recharge: ON" : "Auto Recharge: OFF";
-			_insistAfterStopToggle.ButtonPressed = config.InsistAfterStop;
+			_insistAfterStopOnProfitToggle.ButtonPressed = config.InsistAfterStopOnProfit;
+			_insistAfterStopOnLossToggle.ButtonPressed = config.InsistAfterStopOnLoss;
 			_internalUpdate = false;
 
-			UpdateInsistAfterStopToggleAvailability();
+			UpdateInsistToggleAvailability();
 			ApplyStrategyModeRestrictions();
 			StrategyConfigChanged?.Invoke();
 			BetAmountInputChanged?.Invoke(_betAmountInput.Text);
@@ -172,22 +177,20 @@ namespace UI.StrategyControlPanel
 		{
 			_internalUpdate = true;
 			_betAmountInput.Text = string.Empty;
-			_increasePercentageInput.Text = string.Empty;
-			_increaseOnLossWinToggle.ButtonPressed = false;
-			_increaseOnLossWinToggle.Text = "Increase on loss";
+			_increaseOnLossPercentInput.Text = string.Empty;
+			_increaseOnWinPercentInput.Text = string.Empty;
 			_numberOfBetsInput.Text = string.Empty;
 			_stopOnProfitInput.Text = string.Empty;
 			_stopOnLossInput.Text = string.Empty;
 			_stopOnBlockMinedToggle.ButtonPressed = false;
 			_stopOnBlockMinedToggle.Text = "Stop Block: OFF";
-			_profitStopModeToggle.ButtonPressed = false;
-			_profitStopModeToggle.Text = "P/L Mode: Session";
 			_autoRechargeToggle.ButtonPressed = true;
 			_autoRechargeToggle.Text = "Auto Recharge: ON";
-			_insistAfterStopToggle.ButtonPressed = false;
+			_insistAfterStopOnProfitToggle.ButtonPressed = false;
+			_insistAfterStopOnLossToggle.ButtonPressed = false;
 			_internalUpdate = false;
 
-			UpdateInsistAfterStopToggleAvailability();
+			UpdateInsistToggleAvailability();
 			ApplyStrategyModeRestrictions();
 		}
 
@@ -236,20 +239,20 @@ namespace UI.StrategyControlPanel
 			_autoBetToggle.Pressed += OnAutoTogglePressed;
 			_autoPauseResumeToggle.Pressed += OnAutoPauseResumePressed;
             _betAmountInput.TextChanged += OnBetAmountInputTextChanged;
-            _increaseOnLossWinToggle.Pressed += OnIncreaseOnWinLossTogglePressed;
+			_increaseOnLossPercentInput.TextChanged += _ => OnStrategyInputChanged();
+			_increaseOnWinPercentInput.TextChanged += _ => OnStrategyInputChanged();
 			_maxBetAmountBtn.Pressed += OnMaxBetAmountBtnPressed;
 			_minBetAmountBtn.Pressed += OnMinBetAmountBtnPressed;
 			_x2BetAmountBtn.Pressed += OnX2BetAmountBtnPressed;
 			_divBy2BetAmountBtn.Pressed += OnDivBy2BetAmountBtnPressed;
 			_stopOnProfitInput.TextChanged += _ => OnProfitOrLossStopInputChanged();
-			_increasePercentageInput.TextChanged += _ => OnStrategyInputChanged();
 			_stopOnLossInput.TextChanged += _ => OnProfitOrLossStopInputChanged();
 			_numberOfBetsInput.TextChanged += _ => OnStrategyInputChanged();
 			_stopOnBlockMinedToggle.Pressed += OnStopOnBlockMinedTogglePressed;
-			_profitStopModeToggle.Pressed += OnProfitStopModeTogglePressed;
 			_autoRechargeToggle.Pressed += OnAutoRechargeTogglePressed;
-			_insistAfterStopToggle.Pressed += OnInsistAfterStopTogglePressed;
-			UpdateInsistAfterStopToggleAvailability();
+			_insistAfterStopOnProfitToggle.Pressed += OnInsistAfterStopOnProfitTogglePressed;
+			_insistAfterStopOnLossToggle.Pressed += OnInsistAfterStopOnLossTogglePressed;
+			UpdateInsistToggleAvailability();
 		}
 
 		private void OnBetOncePressed()
@@ -280,13 +283,6 @@ namespace UI.StrategyControlPanel
                 StrategyConfigChanged?.Invoke();
             }
         }
-
-        private void OnIncreaseOnWinLossTogglePressed()
-		{
-			bool increasingOnWin = _increaseOnLossWinToggle.ButtonPressed;
-			_increaseOnLossWinToggle.Text = increasingOnWin ? "Increase on win" : "Increase on loss";
-			StrategyConfigChanged?.Invoke();
-		}
 
 		private void OnMaxBetAmountBtnPressed()
 		{
@@ -327,18 +323,6 @@ namespace UI.StrategyControlPanel
 			CheckDoubleClickAndEmit(
 				ref _lastStopOnBlockMinedPressAt,
 				() => StopOnBlockMinedDoubleClicked?.Invoke()
-			);
-			StrategyConfigChanged?.Invoke();
-		}
-
-		private void OnProfitStopModeTogglePressed()
-		{
-			_profitStopModeToggle.Text = _profitStopModeToggle.ButtonPressed
-				? "P/L Mode: Anchor"
-				: "P/L Mode: Session";
-			CheckDoubleClickAndEmit(
-				ref _lastProfitStopModePressAt,
-				() => ProfitStopModeDoubleClicked?.Invoke()
 			);
 			StrategyConfigChanged?.Invoke();
 		}
@@ -384,7 +368,7 @@ namespace UI.StrategyControlPanel
 				return;
 			}
 
-			UpdateInsistAfterStopToggleAvailability();
+			UpdateInsistToggleAvailability();
 			StrategyConfigChanged?.Invoke();
 		}
 
@@ -398,40 +382,75 @@ namespace UI.StrategyControlPanel
 			StrategyConfigChanged?.Invoke();
 		}
 
-		private void OnInsistAfterStopTogglePressed()
+		// Both insist toggles raise ProfitOrLossStopDoubleClicked — DiceGame's gate for re-enabling manual
+		// betting after a profit/loss stop, and either stop may have been the one that fired. They keep
+		// SEPARATE double-click timers so alternating one click on each is not read as a double click.
+		private void OnInsistAfterStopOnProfitTogglePressed()
 		{
-			if (!_botStrategyMode && !HasProfitOrLossStopAmount())
+			if (!_botStrategyMode && !HasStopOnProfitAmount())
 			{
-				_insistAfterStopToggle.ButtonPressed = false;
+				_insistAfterStopOnProfitToggle.ButtonPressed = false;
 			}
 
-			UpdateInsistAfterStopToggleAvailability();
+			UpdateInsistToggleAvailability();
 			ApplyStrategyModeRestrictions();
+			CheckDoubleClickAndEmit(
+				ref _lastInsistOnProfitPressAt,
+				() => ProfitOrLossStopDoubleClicked?.Invoke()
+			);
 			StrategyConfigChanged?.Invoke();
 		}
 
-		private void UpdateInsistAfterStopToggleAvailability()
+		private void OnInsistAfterStopOnLossTogglePressed()
 		{
-			if (_insistAfterStopToggle == null)
+			if (!_botStrategyMode && !HasStopOnLossAmount())
+			{
+				_insistAfterStopOnLossToggle.ButtonPressed = false;
+			}
+
+			UpdateInsistToggleAvailability();
+			ApplyStrategyModeRestrictions();
+			CheckDoubleClickAndEmit(
+				ref _lastInsistOnLossPressAt,
+				() => ProfitOrLossStopDoubleClicked?.Invoke()
+			);
+			StrategyConfigChanged?.Invoke();
+		}
+
+		// Each insist toggle is enabled only while its own stop amount is armed. In bot strategy mode both are
+		// forced ON and locked: a bot session is restarted only on InsufficientBalance, so a stop that cannot
+		// insist would end that bot's betting for good (see ApplyStrategyModeRestrictions).
+		private void UpdateInsistToggleAvailability()
+		{
+			UpdateInsistToggle(_insistAfterStopOnProfitToggle, HasStopOnProfitAmount(), "Insist On Profit");
+			UpdateInsistToggle(_insistAfterStopOnLossToggle, HasStopOnLossAmount(), "Insist On Loss");
+		}
+
+		// Single writer for a toggle's pressed/disabled/text triple — split across two methods it drifts (the
+		// bot-mode force would leave the label reading OFF on a pressed toggle).
+		private void UpdateInsistToggle(Button toggle, bool hasStopAmount, string label)
+		{
+			if (toggle == null)
 			{
 				return;
 			}
 
-			bool canEnable = HasProfitOrLossStopAmount();
 			if (_botStrategyMode)
 			{
-				canEnable = true;
+				toggle.ButtonPressed = true;
+				toggle.Disabled = true;
 			}
-
-			if (!canEnable)
+			else
 			{
-				_insistAfterStopToggle.ButtonPressed = false;
+				if (!hasStopAmount)
+				{
+					toggle.ButtonPressed = false;
+				}
+
+				toggle.Disabled = !hasStopAmount;
 			}
 
-			_insistAfterStopToggle.Disabled = !canEnable;
-			_insistAfterStopToggle.Text = _insistAfterStopToggle.ButtonPressed
-				? "Insist After Stop: ON"
-				: "Insist After Stop: OFF";
+			toggle.Text = toggle.ButtonPressed ? $"{label}: ON" : $"{label}: OFF";
 		}
 
 		private void ApplyStrategyModeRestrictions()
@@ -456,21 +475,19 @@ namespace UI.StrategyControlPanel
 				_autoRechargeToggle.Disabled = _botStrategyMode;
 			}
 
-			bool profitLossInputsEnabled = !_botStrategyMode || (_insistAfterStopToggle?.ButtonPressed == true);
-			if (_stopOnProfitInput != null)
-			{
-				_stopOnProfitInput.Editable = profitLossInputsEnabled;
-			}
-			if (_stopOnLossInput != null)
-			{
-				_stopOnLossInput.Editable = profitLossInputsEnabled;
-			}
+			// Both stop amount fields stay editable in bot strategy mode: with insisting forced ON (below), a
+			// bot's stop resets its progression instead of ending its run, so neither is terminal any more.
+			UpdateInsistToggleAvailability();
 		}
 
-		private bool HasProfitOrLossStopAmount()
+		private bool HasStopOnProfitAmount()
 		{
-			return HasPositiveDecimal(_stopOnProfitInput?.Text) ||
-				HasPositiveDecimal(_stopOnLossInput?.Text);
+			return HasPositiveDecimal(_stopOnProfitInput?.Text);
+		}
+
+		private bool HasStopOnLossAmount()
+		{
+			return HasPositiveDecimal(_stopOnLossInput?.Text);
 		}
 
 		private bool HasPositiveDecimal(string text)
@@ -493,23 +510,32 @@ namespace UI.StrategyControlPanel
 			return new BettingStrategyConfig
 			{
 				BaseBet = BetAmount,
-				IncreasePercent = IncreasePercent,
-				IncreaseOnLoss = !IncreasingOnWin,
-				IncreaseOnWin = IncreasingOnWin,
-				StopOnProfit = _botStrategyMode && !InsistAfterStopEnabled ? null : ParseDecimal(_stopOnProfitInput.Text),
-				StopOnLoss = _botStrategyMode && !InsistAfterStopEnabled ? null : ParseDecimal(_stopOnLossInput.Text),
+				IncreaseOnLossPercent = IncreaseOnLossPercent,
+				IncreaseOnWinPercent = IncreaseOnWinPercent,
+				StopOnProfit = ParsePositiveDecimal(_stopOnProfitInput.Text),
+				StopOnLoss = ParsePositiveDecimal(_stopOnLossInput.Text),
 				StopOnBlockMined = !_botStrategyMode && StopOnBlockMinedEnabled,
-				UseProgressionAnchorStops = UseProgressionAnchorStops,
-				InsistAfterStop = InsistAfterStopEnabled
+				InsistAfterStopOnProfit = InsistAfterStopOnProfitEnabled,
+				InsistAfterStopOnLoss = InsistAfterStopOnLossEnabled
 			};
 		}
 
-        private decimal? ParseDecimal(string text)
-        {
-            return TryParseDecimal(text, out var value)
-                ? value
-                : null;
-        }
+		// A stop is armed by its AMOUNT alone: blank, unparseable or <= 0 all mean "disabled". This is the
+		// single parse boundary for that rule, so everything downstream can keep using HasValue as the test.
+		private decimal? ParsePositiveDecimal(string text)
+		{
+			return TryParseDecimal(text, out decimal value) && value > 0m
+				? value
+				: null;
+		}
+
+		// 0 renders as an EMPTY field, matching the "blank means off" reading the player types.
+		private static string FormatOptionalPercent(decimal value)
+		{
+			return value > 0m
+				? value.ToString(CultureInfo.InvariantCulture)
+				: string.Empty;
+		}
 
 		private string FormatOptionalDecimal(decimal? value)
 		{

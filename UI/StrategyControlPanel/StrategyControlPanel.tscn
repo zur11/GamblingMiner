@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://UI/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
 
-[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_increaseOnLossWinToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increasePercentageInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_profitStopModeToggle", "_autoRechargeToggle", "_insistAfterStopToggle")]
+[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increaseOnLossPercentInput", "_increaseOnWinPercentInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_autoRechargeToggle", "_insistAfterStopOnProfitToggle", "_insistAfterStopOnLossToggle")]
 layout_mode = 3
 anchor_right = 0.48100004
 anchor_bottom = 0.30600002
@@ -14,20 +14,20 @@ script = ExtResource("1_lmglg")
 _betOnceBtn = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/BetOnceBtn")
 _autoBetToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoBetToggle")
 _autoPauseResumeToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoPauseResumeToggle")
-_increaseOnLossWinToggle = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnLossWinToggle")
+_increaseOnLossPercentInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnLossInput")
+_increaseOnWinPercentInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnWinInput")
 _maxBetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer/MaxBetAmountBtn")
 _minBetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer/MinBetAmountBtn")
 _x2BetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer/X2BetAmountBtn")
 _divBy2BetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer/DivBy2BetAmountBtn")
 _betAmountInput = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/AmountToBetContainer/BetInput")
-_increasePercentageInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/HBoxContainer/IncreaseOnLossInput")
 _numberOfBetsInput = NodePath("VBoxContainer/GridContainer/NumberOfBetsContainer/NumberOfBetsInput")
 _stopOnProfitInput = NodePath("VBoxContainer/GridContainer/StopOnProfitContainer/StopOnProfitInput")
 _stopOnLossInput = NodePath("VBoxContainer/GridContainer/StopOnLossContainer/StopOnLossInput")
 _stopOnBlockMinedToggle = NodePath("VBoxContainer/GridContainer/StopOnBlockMinedContainer/StopOnBlockMinedToggle")
-_profitStopModeToggle = NodePath("VBoxContainer/GridContainer/ProfitStopModeContainer/ProfitStopModeToggle")
 _autoRechargeToggle = NodePath("VBoxContainer/GridContainer/AutoRechargeContainer/AutoRechargeToggle")
-_insistAfterStopToggle = NodePath("VBoxContainer/GridContainer/InsistAfterStopContainer/InsistAfterStopToggle")
+_insistAfterStopOnProfitToggle = NodePath("VBoxContainer/GridContainer/InsistAfterStopOnProfitContainer/InsistAfterStopOnProfitToggle")
+_insistAfterStopOnLossToggle = NodePath("VBoxContainer/GridContainer/InsistAfterStopOnLossContainer/InsistAfterStopOnLossToggle")
 
 [node name="VBoxContainer" type="VBoxContainer" parent="."]
 layout_mode = 0
@@ -89,26 +89,45 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "/2"
 
-[node name="IncreasePercentageContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer"]
+[node name="IncreasePercentageContainer" type="GridContainer" parent="VBoxContainer/HBoxContainer"]
 layout_mode = 2
+theme_override_constants/h_separation = 12
+columns = 3
 
-[node name="IncreaseOnLossWinToggle" type="Button" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
+[node name="IncreaseOnLossText" type="Label" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 35
-toggle_mode = true
+theme_override_font_sizes/font_size = 30
 text = "Increase on loss"
 
-[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
-layout_mode = 2
-
-[node name="IncreaseOnLossInput" type="LineEdit" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer/HBoxContainer"]
+[node name="IncreaseOnLossInput" type="LineEdit" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
+custom_minimum_size = Vector2(130, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 30
 alignment = 1
+placeholder_text = "0"
+max_length = 10
 
-[node name="IncreaseOnLossText2" type="Label" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer/HBoxContainer"]
+[node name="IncreaseOnLossPercentText" type="Label" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 35
+theme_override_font_sizes/font_size = 30
+text = "%"
+
+[node name="IncreaseOnWinText" type="Label" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "Increase on win"
+
+[node name="IncreaseOnWinInput" type="LineEdit" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
+custom_minimum_size = Vector2(130, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+alignment = 1
+placeholder_text = "0"
+max_length = 10
+
+[node name="IncreaseOnWinPercentText" type="Label" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
 text = "%"
 
 [node name="BetBtnsContainer" type="VBoxContainer" parent="VBoxContainer/HBoxContainer"]
@@ -192,19 +211,35 @@ theme_override_font_sizes/font_size = 30
 toggle_mode = true
 text = "Stop Block: OFF"
 
-[node name="ProfitStopModeContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
+[node name="InsistAfterStopOnProfitContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
 layout_mode = 2
 
-[node name="ProfitStopModeText" type="Label" parent="VBoxContainer/GridContainer/ProfitStopModeContainer"]
+[node name="InsistAfterStopOnProfitText" type="Label" parent="VBoxContainer/GridContainer/InsistAfterStopOnProfitContainer"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 35
-text = "Profit/Loss mode"
+text = "Profit stop behavior"
 
-[node name="ProfitStopModeToggle" type="Button" parent="VBoxContainer/GridContainer/ProfitStopModeContainer"]
+[node name="InsistAfterStopOnProfitToggle" type="Button" parent="VBoxContainer/GridContainer/InsistAfterStopOnProfitContainer"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 30
 toggle_mode = true
-text = "P/L Mode: Session"
+disabled = true
+text = "Insist On Profit: OFF"
+
+[node name="InsistAfterStopOnLossContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
+layout_mode = 2
+
+[node name="InsistAfterStopOnLossText" type="Label" parent="VBoxContainer/GridContainer/InsistAfterStopOnLossContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 35
+text = "Loss stop behavior"
+
+[node name="InsistAfterStopOnLossToggle" type="Button" parent="VBoxContainer/GridContainer/InsistAfterStopOnLossContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+toggle_mode = true
+disabled = true
+text = "Insist On Loss: OFF"
 
 [node name="AutoRechargeContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
 layout_mode = 2
@@ -220,18 +255,3 @@ theme_override_font_sizes/font_size = 30
 toggle_mode = true
 button_pressed = true
 text = "Auto Recharge: ON"
-
-[node name="InsistAfterStopContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
-layout_mode = 2
-
-[node name="InsistAfterStopText" type="Label" parent="VBoxContainer/GridContainer/InsistAfterStopContainer"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 35
-text = "Stop behavior"
-
-[node name="InsistAfterStopToggle" type="Button" parent="VBoxContainer/GridContainer/InsistAfterStopContainer"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 30
-toggle_mode = true
-disabled = true
-text = "Insist After Stop: OFF"

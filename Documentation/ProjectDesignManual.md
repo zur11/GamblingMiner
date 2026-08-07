@@ -2753,16 +2753,16 @@ While revising the casino's loan panel (`AIHelperFiles/player-and-casino-bankrol
 
 **The general rule this section adds:** the shared balance services belong to the **player**. Another node's values may occupy them only transiently, inside DiceGame, while the selector holds a bot — and they must never escape through a scene exit, a session write-back, or a checkpoint.
 
-## Chapter 25 — Bankroll Management: Progression Resets, Insist After Stop, and Auto-Recharge
+## Chapter 25 — Bankroll Management: Progression Resets, Insist After Stop On Loss, and Auto-Recharge
 
-**Files**: `Scripts/Sessions/BaseBetSession.cs` (`ApplyStopConditions`, `HandleProfitOrLossStop`, `ResetProgressionToBase`), `Scripts/Betting/ProgressiveBettingStrategy.cs`, `Scripts/Services/SimulationService.cs` (`TryPlayerAutoRechargeAndRestart`, `TryRechargeAndRestartBot`)
-**Status**: Implemented and user-tested.
+**Files**: `Scripts/Sessions/BaseBetSession.cs` (`ApplyStopConditions`, `HandleStopOnLoss`, `ResetProgressionToBase`), `Scripts/Betting/ProgressiveBettingStrategy.cs`, `Scripts/Services/SimulationService.cs` (`TryPlayerAutoRechargeAndRestart`, `TryRechargeAndRestartBot`)
+**Status**: Implemented and user-tested. **The two stops became fully independent at mini-plan 01 (2026-08-06) — see §25.10; this chapter is written in the post-split vocabulary.**
 
 ### The Short Version (for everyone)
 
 A progressive strategy grows the bet on each trigger (e.g. ×2.3 on every loss). Left unchecked it would balloon until the bankroll is gone. Three mechanisms keep it under control, in order of preference:
 
-1. **`StopOnLoss` / `StopOnProfit` + Insist After Stop** — the *primary* bankroll manager. You set a loss (or profit) threshold **below** the bankroll; when the running progression reaches it, the bet **resets to base** and keeps going. This caps how deep any one losing run goes, so the bankroll lasts many cycles **without spending a single recharge**.
+1. **`StopOnLoss` + Insist After Stop On Loss** — the *primary* bankroll manager. You set a loss threshold **below** the bankroll; when the running progression reaches it, the bet **resets to base** and keeps going. This caps how deep any one losing run goes, so the bankroll lasts many cycles **without spending a single recharge**. (`StopOnProfit` is a *goal*, not a bankroll manager: reaching it ends the session.)
 2. **Bankroll-limit reset (safety net)** — if the grown bet ever exceeds the bankroll but the **base** bet still fits, the progression also resets to base (no recharge). This is the fallback for when a threshold was set too high (or, for bots, not set at all).
 3. **Auto-recharge (last resort)** — only when even the **base** bet can't be afforded does the system move money from the Main Balance into the Bankroll and restart from base.
 
@@ -2770,53 +2770,50 @@ So: **reset cheaply as long as you can; only recharge when you absolutely must.*
 
 ### 25.1 — The progression itself
 
-`ProgressiveBettingStrategy.CalculateNextBet` is pure and stateless: on a trigger outcome (`IncreaseOnLoss` and a loss, or `IncreaseOnWin` and a win) it returns `currentBet × (1 + IncreasePercent/100)`; otherwise it returns `BaseBet`. With `IncreasePercent = 130` the multiplier is **×2.3**, so base 10 → 23 → 52.9 → 121.67 → …
+`ProgressiveBettingStrategy.CalculateNextBet` is pure and stateless: the outcome selects **its own** percent (`IncreaseOnWinPercent` on a win, `IncreaseOnLossPercent` on a loss) and it returns `currentBet × (1 + percent/100)`; a percent of `0` returns `BaseBet`. With `IncreaseOnLossPercent = 130` the multiplier is **×2.3**, so base 10 → 23 → 52.9 → 121.67 → … A "trigger outcome" throughout this chapter means *an outcome whose own percent is > 0* — i.e. one that grows the bet rather than resetting it (§25.10).
 
 ### 25.2 — Where the decisions happen: `ApplyStopConditions`
 
 This runs at the **end of every** `ExecuteNext`, *after* `_currentBet` has already been advanced to the **next** bet. In order:
 
-1. **`StopOnProfit`** reached → `HandleProfitOrLossStop(StopOnProfit)`.
-2. **`StopOnLoss`** reached → `HandleProfitOrLossStop(StopOnLoss)`.
+1. **`StopOnProfit`** reached → `Stop(StopOnProfit)`, always. There is no insisting on the profit side.
+2. **`StopOnLoss`** reached → `HandleStopOnLoss()` — insist (reset to base) or stop.
 3. **`_currentBet > balance`** (can't afford the next bet) → either reset to base (insist) or stop (see §25.5).
 4. **`RemainingBets`** countdown → stop on `CounterCountReached`.
 
-The profit/loss metric is `currentBalance − baseline`, where the baseline depends on **Session vs Anchor** mode — see §25.3.
+Each stop computes its **own** metric `currentBalance − baseline` from its **own** mode flag — see §25.3. A stop participates at all only if its amount `HasValue`, which the panel guarantees means **> 0**: blank, unparseable and `0` are all *disabled* (§25.10).
 
-### 25.3 — Session vs Anchor stops: where profit/loss is measured from
+### 25.3 — Where profit/loss is measured from (one baseline per stop)
 
-`StopOnProfit` / `StopOnLoss` always compare `currentBalance − baseline` against your threshold. **Which baseline** is chosen by `UseProgressionAnchorStops` (`BaseBetSession.ApplyStopConditions`):
+`StopOnProfit` / `StopOnLoss` compare `currentBalance − baseline` against your threshold. **There is exactly one baseline rule**, and each stop owns its own copy of it (`BaseBetSession.ApplyStopConditions`):
 
-| | **Session mode** (`UseProgressionAnchorStops = false`) | **Anchor mode** (`UseProgressionAnchorStops = true`) |
+| | `StopOnProfit` | `StopOnLoss` |
 |---|---|---|
-| Baseline | `SessionStartingBalance` — the bankroll when the autobet session started | `ProgressionAnchorBalance` — the bankroll at the start of the **current progression run** (the last base bet that began the run) |
-| Question it answers | "How is the **whole session** doing?" | "How is **this one progression run** doing?" |
-| Effect of a win | Win profit nets against the running total, but the baseline does **not** move | A win ends the run and **re-anchors** the baseline; the next run measures fresh |
-| With Insist After Stop | Re-anchored to the current balance on each reset (each post-reset segment measures fresh) | Already moves per run; also re-anchored on reset |
+| Baseline | `ProfitSessionStartingBalance` | `LossSessionStartingBalance` |
+| Set at | Session start | Session start |
+| Re-anchored to the current balance by | An Insist-After-Stop-**On-Profit** reset | An Insist-After-Stop-**On-Loss** reset, and the §25.5 bankroll-limit reset |
+| Also re-anchored by the OTHER side's reset | Only if `InsistAfterStopOnProfit` is ON | Only if `InsistAfterStopOnLoss` is ON |
 
-**How the anchor moves (anchor mode).** `UpdateProgressionStreak` sets `ProgressionAnchorBalance` to the balance **just before** the first bet of a new streak (the base bet that starts a run). Any non-trigger outcome — e.g. a win when `IncreaseOnLoss` — ends the streak and re-anchors to the current balance, so the next base bet's run measures from zero again.
+That last row is the **segment rule** (§25.13): two insisting stops share one segment, so either threshold ends it; a stop that does not insist keeps its session anchor, because it is a whole-session goal rather than a segment boundary.
 
-**Why Session mode re-anchors on an Insist reset.** A reset adds no money, so if `SessionStartingBalance` stayed put, `balance − baseline` would still be past `−StopOnLoss` right after the reset and would re-trigger **every** bet (stuck at base). Re-anchoring on each reset (`ResetProgressionToBase`) makes each post-reset segment measure fresh. So: **no insist → Session baseline is fixed at session start; with insist → it measures from the last reset.**
+The second baseline mode — measuring from `ProgressionAnchorBalance`, the start of the current progression run — **was removed**; see §25.12 for what it was and why it went. `ProgressionAnchorBalance` itself survives, because it answers a different question (it is what the Martingale calculator projects from, and what `ProgressionTriggerStreak` counts against) — it is simply no longer a stop baseline.
 
-**Illustration** (base 10, ×2.3 on loss, `StopOnLoss = 50`, Insist ON) — sequence *lose, lose, win, lose, lose…*:
+**Why the two baselines are separate fields.** They hold the same value for the whole life of a session that never insists. They diverge the moment one side resets: a reset re-anchors the baseline of the side that fired, and if the two shared a field, a losing run would silently redefine the profit target as "+N from wherever that run bottomed out" rather than "+N for the session" (and, since profit-insist landed, vice versa). **Each stop keeps measuring the intention the player set for it, regardless of what the other one does.**
 
-- **Anchor mode:** the first two losses don't reach −50 for that run; the **win re-anchors**, and the next losing run starts measuring fresh. The reset-to-base fires only when a **single run** drops 50.
-- **Session mode:** the win's profit nets against the total since session start, so the reset-to-base fires when the **net session** is down 50 — wins literally buy more room before the next reset.
+**Why a reset MUST re-anchor its own baseline.** A reset adds no money, so if the baseline stayed put, `balance − baseline` would still be past the threshold on the very next bet and would re-trigger forever (stuck at base bet, resetting every bet). So: **no insist on that side → its baseline is fixed at session start; with insist → it measures from that side's last reset.**
 
-(The §25.4 canonical example uses `StopOnLoss = 33` with **no win** in the run, so Session and Anchor coincide there — both anchor at 100 because it's the very first run.)
+**Illustration** (base 10, ×2.3 on loss, `StopOnLoss = 50`, Insist On Loss ON) — sequence *lose, lose, win, lose, lose…*: the win's profit nets against the total since session start, so the reset-to-base fires when the **net session** is down 50 — wins literally buy more room before the next reset.
 
-**When to use which.**
-- **Anchor** — cap the damage of *any single* losing run; resets the martingale frequently, run-by-run (tight per-run control).
-- **Session** — cap the *net drawdown* of the whole session; tolerate deeper individual runs as long as wins keep the session afloat.
+### 25.4 — `HandleStopOnProfit` / `HandleStopOnLoss` and the two Insist switches
 
-Both modes feed the same downstream logic (Insist resets, the bankroll-limit fallback, and auto-recharge) described in §25.4–§25.6.
+Each stop reads **its own** switch, and both behave identically:
 
-### 25.4 — `HandleProfitOrLossStop` and Insist After Stop
+- **Insist OFF** → `Stop(reason)`. The session ends; the player sees `Auto stopped: StopOnProfit` / `StopOnLoss`.
+- **Insist ON** → `ResetProgressionToBase(...)` instead of stopping: `_currentBet = BaseBet`, session profit zeroed, streak cleared, `ProgressionAnchorBalance` re-anchored — **and the baseline of the side that fired, only** (§25.3). **No recharge.** The run simply continues from base.
 
-- **Insist OFF** → `Stop(reason)`. The session ends; the player sees `Auto stopped: StopOnProfit/StopOnLoss`.
-- **Insist ON** → `ResetProgressionToBase()` instead of stopping: `_currentBet = BaseBet`, profit metric zeroed, streak cleared, and the baselines (`SessionStartingBalance`, `ProgressionAnchorBalance`) re-anchored to the current balance. **No recharge.** The run simply continues from base.
+**Insist On Profit exists for the same reason as Insist On Loss.** A profit stop is not only a "take the money and leave" button: with a growing progression it is also the *upper* reset — without it, a win-side progression (or a long lucky run on a two-sided one) grows the bet with nothing to bring it back to base except the loss stop, i.e. only after giving the profit back. Insisting turns the profit threshold into "bank this run, start again from base".
 
-> **Insist After Stop applies only to `StopOnProfit` / `StopOnLoss`.** `StopOnBlockMined` is handled outside the session (by `SimulationService` / DiceGame) and is **never** insisted — a mined block always stops the run if that toggle is on.
+> `StopOnBlockMined` is handled outside the session (by `SimulationService` / DiceGame) and is **never** insisted — a mined block always stops the run if that toggle is on.
 
 **Worked example (the canonical bankroll-management setup):** base 10, ×2.3 on loss, **`StopOnLoss = 33`**, Insist ON, start 100 SC.
 
@@ -2835,7 +2832,7 @@ After the threshold checks, if the next bet still can't be afforded:
 ```csharp
 if (_currentBet > _wallet.Balance)
 {
-    if (_config.InsistAfterStop && _config.BaseBet <= _wallet.Balance)
+    if (_config.InsistAfterStopOnLoss && _config.BaseBet <= _wallet.Balance)
         ResetProgressionToBase();          // grown bet too big, but base fits → reset, NO recharge
     else
     {
@@ -2847,6 +2844,8 @@ if (_currentBet > _wallet.Balance)
 
 This is the safety net (item 2 of the Short Version): with Insist ON, a too-deep progression that outruns the bankroll still falls back to base **for free**, as long as the base bet fits. Only when the **base** bet itself is unaffordable does the session stop with `InsufficientBalance`.
 
+This branch reads the **loss** toggle deliberately: "the grown bet no longer fits the bankroll" is a loss-side condition, so it belongs to the same switch that governs how a losing run is handled. A player who wants a profit target but no insisting still gets the plain `InsufficientBalance` stop here, exactly as before.
+
 ### 25.6 — Auto-recharge: the last resort, *after* the stop
 
 `ApplyStopConditions` never recharges — it only ever stops with `InsufficientBalance`. The recharge is decided one level up, **after** the session has stopped (see Chapter 24.5 for why this placement is mandatory):
@@ -2854,11 +2853,11 @@ This is the safety net (item 2 of the Short Version): with Insist ON, a too-deep
 - **Player** — `SimulationService._Process`: on `!IsRunning` with reason `InsufficientBalance` and auto-recharge enabled, `TryPlayerAutoRechargeAndRestart()` transfers `AutoRechargeAmount` from Main Balance to Bankroll, syncs `BankrollStateService`, and **restarts the progression from base**.
 - **Bots** — `SimulationService.TickBots`: the mirror, `TryRechargeAndRestartBot()`, tops up the bot's own `NodeFinancialState.PrincipalBalance` (repeatedly if one top-up can't cover the base bet) and restarts from base.
 
-Because the restart reuses the same `BettingStrategyConfig`, **Insist After Stop stays active after a recharge** — the run keeps resetting cheaply to base until, once again, even the base bet can't be afforded and another recharge is strictly necessary.
+Because the restart reuses the same `BettingStrategyConfig`, **Insist After Stop On Loss stays active after a recharge** — the run keeps resetting cheaply to base until, once again, even the base bet can't be afforded and another recharge is strictly necessary.
 
 ### 25.7 — Precedence, in one sentence
 
-On every settled bet: **profit/loss threshold reset (insist)** → else **bankroll-limit reset to base (insist, if base fits)** → else **stop `InsufficientBalance`** → then, post-stop, **auto-recharge + restart from base** (if enabled). Resets are free; recharges are the last resort. This logic lives in the shared `BaseBetSession`, so **player and bot sessions behave identically**.
+On every settled bet: **profit threshold reset (insist) or stop** → else **loss threshold reset (insist) or stop** → else **bankroll-limit reset to base (insist on loss, if base fits)** → else **stop `InsufficientBalance`** → then, post-stop, **auto-recharge + restart from base** (if enabled). Resets are free; recharges are the last resort. This logic lives in the shared `BaseBetSession`, so **player and bot sessions behave identically** — the one asymmetry is at configuration time, not in the session: a bot's two Insist switches are forced ON (§25.12).
 
 ### 25.8 — The auto-recharge ENABLE toggle: one flag, two access points (Step 12, SF.2.8)
 
@@ -2876,6 +2875,72 @@ Step 12 (D-SF.4) gave `BankrollProgramService` a real, persisted **`AutoRecharge
 ### 25.9 — Standalone Martingale Calculator: progression parity with the game's strategy semantics (Step 14 ND.8a, 2026-07-15)
 
 The MainMenu-reachable `MartingaleCalculatorStandalone` consumed its "Multiply On Loss" input as a **bare multiplier** (`nextBet *= input`), while the DiceGame-integrated popup — always driven by `UpdateFromGameSettings` — converts the strategy's `IncreasePercent` into `1 + pct/100` before filling the same field. A player thinking in the game's vocabulary (entering `1` for a +100% increase) therefore got a **flat** sequence from the standalone instead of a doubling one. Fix (ND.8a): the field is relabeled **"Increase On Loss %"** (placeholder `100` = classic doubling martingale; `0` = flat betting, matching `IncreasePercent`'s domain), `BuildRows` computes `multiplier = 1 + increaseOnLossPercent / 100` — every losing step keeps the previous bet and adds the configured increase, exactly like `ProgressiveBettingStrategy` (§25.1) and the integrated popup — and a `maxRows = 500` safety cap (mirroring the popup's) prevents a flat/slow progression from instantiating an unbounded row list. The integrated popup was untouched (its game-context path already had the correct formula). Full write-up: step14 plan §12.3 (ND.8a).
+
+### 25.10 — The two stops become independent (mini-plan 01, 2026-08-06)
+
+> **Partly superseded the same day by §25.12**: point 2 below (the per-stop Session/Anchor mode) was **deleted**, and the "bots never receive a `StopOnProfit`" rule was **reversed** once profit-insist made a bot profit stop non-terminal. Points 1, 3 and 4 stand. Kept in full because the reasoning is what §25.12 builds on.
+
+`StopOnProfit` and `StopOnLoss` each had their own amount field from the start, but they **shared** the two controls that give an amount its meaning: one `Profit/Loss mode` toggle picked the baseline for both, and one `Insist After Stop` toggle decided what happened when either fired. So the panel offered two thresholds that could not actually express two different intentions — the common one being "take my profit and stop, but keep grinding through losing runs", which needs opposite behaviors on the two sides. Four changes, all in `BettingStrategyConfig` + `BaseBetSession` + `StrategyControlPanel`:
+
+1. **A stop is armed by its own amount alone.** Blank, unparseable and **`0`** all mean *disabled*, normalized once at the parse boundary (`StrategyControlPanel.ParsePositiveDecimal`) so `decimal?`/`HasValue` remains the armed test for `BaseBetSession` and `MartingaleCalculator` alike — no downstream gating changed. This also closed a latent defect: `ParseDecimal("0")` used to return `0m`, which **armed** the profit stop, and since the metric is tested `>= 0` it then fired on the very first bet. A field that reads as "off" must not be a live threshold.
+2. **One mode flag per stop** — `StopOnProfitUseAnchor` / `StopOnLossUseAnchor`, two toggles in the panel (`Profit: Session|Anchor`, `Loss: Session|Anchor`), each behaving exactly as §25.3 describes.
+3. **`InsistAfterStop` → `InsistAfterStopOnLoss`**, loss side only (§25.4). The rename is the point: the old name invited the reading that a profit stop could insist too, which is meaningless. Its UI toggle is now gated on the **loss** amount alone, and the §25.5 bankroll-limit branch keeps reading it.
+4. **Separate SESSION baselines** (`ProfitSessionStartingBalance` / `LossSessionStartingBalance`) — the consequence of (3) that is easy to miss. With insisting narrowed to one side, a single shared `SessionStartingBalance` would let a *loss* reset silently re-anchor the *profit* target. **When a shared control is split in two, look for the shared STATE underneath it** — the flags are what the reviewer sees; the baseline is what actually carries the semantics.
+
+**Bots never receive a `StopOnProfit`** (D-M1.4). `SimulationService` restarts a bot session **only** on `InsufficientBalance`, so a stop that cannot insist is *terminal* for that bot — under the old shared toggle a profit stop was survivable because insisting covered both sides, and narrowing insisting to the loss side would have made it a permanent halt. `DiceGame.BuildBotStrategyConfig` therefore forces `StopOnProfit = null` and keeps `StopOnLoss` only while `InsistAfterStopOnLoss` is on; the panel locks the profit field and its mode toggle in bot strategy mode so the lock is visible rather than silent. A bot's discipline is expressed as bankroll movement — a loss cap that resets — never as a profit goal. *The general shape: narrowing a flag's scope can strand a consumer that depended on the wider scope, and the stranding is silent when the consumer's recovery path keys on a different condition entirely.*
+
+**No migration** (D-M1.5): saved strategies live in a *personal* `user://` file, not world state, so old entries simply deserialize the removed properties as absent — both modes default to Session, insisting to OFF. No `WorldFormatVersion` bump; nothing in the chain, checkpoint or reset lists is touched. Plan: `AIHelperFiles/mini01-split-stop-conditions-plan.md`.
+
+### 25.11 — The same treatment for the progression percents (mini-plan 01 round 2, 2026-08-06)
+
+The stop split was verified in play, and the identical shape was still present one control up: a **single** `IncreasePercent` plus a toggle choosing **which** outcome it applied to (`IncreaseOnLoss` / `IncreaseOnWin`). Two changes, mirroring §25.10:
+
+1. **One percent per outcome** — `IncreaseOnLossPercent` / `IncreaseOnWinPercent`, two labelled fields in the panel, each armed by its own value (`0`/blank ⇒ *that outcome resets the bet to base*, via the same `ParsePercent` boundary rule the stop amounts use). `ProgressiveBettingStrategy.CalculateNextBet` picks the percent by outcome and keeps its old shape otherwise; `BaseBetSession.UpdateProgressionStreak`'s "trigger outcome" test becomes *this outcome's percent > 0*. The one-toggle model could express only *loss-side* or *win-side*; the pair also expresses **both at once** (grow on every bet) and **neither** (flat betting) — and a two-sided progression is what makes Anchor mode collapse into Session mode, as §25.3 now notes.
+2. **A mode toggle is disabled while its own stop amount is empty** — `UpdateStopModeTogglesAvailability`, the same gate the Insist toggle already had. **The chosen mode is preserved, not reset, when it greys out**: clearing an amount to retype it would otherwise silently discard the Session/Anchor choice, and the flag is inert while the stop is disarmed (`ApplyStopConditions` never reads a mode without a `HasValue` amount). *Disabling a control and clearing it are different promises — grey means "not in play right now", not "forgotten".*
+
+> Point 2 (the mode toggles' availability gate) is **moot since §25.12** — the toggles no longer exist. The rule it established, *disabling a control and clearing it are different promises*, survives and now applies to the Insist toggles.
+
+**The migration cost is bigger here and was accepted, not hidden.** A pre-split saved strategy loses `IncreasePercent` outright, so it loads as **flat betting** (both percents 0) rather than merely losing a mode flag — a saved martingale silently stops being one. It is still not worth migration code (D-M1.5's reasoning is unchanged: personal file, one re-save fixes it), but the failure is *visible in the panel* — two empty percent fields — rather than silent at runtime, which is what makes it acceptable. The `MartingaleCalculator` popup, which projects a losing ladder, simply reads the loss-side percent and drops its old `!IncreaseOnLoss` guard; `MartingaleCalculatorStandalone` owns its inputs and was untouched.
+
+### 25.12 — Anchor mode deleted, Insist On Profit added (mini-plan 01 round 3, 2026-08-06)
+
+Round 2 surfaced a fact about Anchor mode that had been true in principle all along and became unavoidable once both progression percents could be set at once: **Anchor mode is only distinguishable from Session mode while some outcome breaks the progression streak.** `ProgressionAnchorBalance` moves when `UpdateProgressionStreak` sees a *non-trigger* outcome; with a two-sided progression every outcome is a trigger, so the anchor stops moving and the two modes become the same measurement. Rather than keep a control that silently means nothing under a configuration the panel now invites, the mode was **removed entirely** — `StopOnProfitUseAnchor` / `StopOnLossUseAnchor`, both toggles, and the `FormatStopModeText` plumbing. **All stops measure from session start.** `ProgressionAnchorBalance` and `ProgressionTriggerStreak` are untouched: they answer "where did the current progression run begin", which is what the Martingale calculator projects from — *the same number can be load-bearing for one consumer and dead weight for another; delete the USE, not the value.*
+
+**And the reason the second half of this round exists at all:** removing Anchor removed the last mechanism that bounded a progression *per run*. What remains is exactly two resets — the two Insist switches — so `InsistAfterStopOnProfit` is no longer optional polish. Without it, a strategy that grows on wins (or on both) has **no upper reset**: the bet climbs through a lucky run and only comes back to base after the loss stop fires, i.e. after handing the winnings back. `HandleStopOnProfit` mirrors `HandleStopOnLoss` exactly, and `ResetProgressionToBase(reanchorProfit, reanchorLoss)` gains its two flags so **a reset re-anchors only the side that fired** (§25.3) — the round-1 asymmetry generalized rather than special-cased.
+
+**Bots get a profit stop back, and D-M1.4 is formally reversed.** Its reasoning was never "a bot must not have a profit target" but "a bot must not have a *terminal* stop" — `SimulationService` restarts a bot session only on `InsufficientBalance`. Profit-insist removes the terminality, so the stop becomes safe, and it is the *only* thing that caps a bot's bet growth from above. Both switches are therefore forced ON and locked in bot strategy mode, **and forced again in `DiceGame.BuildBotStrategyConfig`** rather than mirrored from the panel — a stored per-node snapshot captured before this change would otherwise carry `false` and re-create exactly the terminal stop the rule exists to prevent. *When an invariant protects a runtime the UI cannot see, assert it where the runtime config is built, not only where the user sets it.*
+
+Two smaller consequences worth knowing: the panel's double-click gate that re-enables manual betting after a P/L stop **moved from the deleted mode toggles onto the two Insist toggles** (`ProfitOrLossStopDoubleClicked`, renamed from `ProfitStopModeDoubleClicked`) — same per-control double-click timers, same DiceGame handler; and both stop-amount fields are now **always editable in bot strategy mode**, since neither is terminal any more. No `WorldFormatVersion` bump (saved strategies are a personal file, D-M1.5); a pre-round-3 saved strategy loads with both Insist switches OFF.
+
+### 25.13 — A stop that insists is a SEGMENT boundary (mini-plan 01 round 4, 2026-08-06)
+
+Found by auditing a real 684-bet run against an exact replay of the engine (BigInt satoshis, `MidpointRounding.ToZero`, `BetService`'s fractional-remainder carry): every bet amount and every credited profit reproduced to the satoshi, and the machinery was correct — yet the bet still climbed to **66× base** (`66.26` on a bankroll that peaked near 135) with `StopOnLoss` armed and insisting the whole way. The loss stop fired 5–12 times depending on threshold and **changed nothing**, at any threshold.
+
+**Why, structurally:** the profit stop can only fire on a **winning** bet (a loss lowers the balance, so it cannot newly cross an upward threshold; and each hit re-anchors, so no backlog builds), and the loss stop can only fire on a **losing** bet. Therefore:
+
+> With `IncreaseOnWinPercent = 0` the bet is *already* base when the profit stop fires, and with `IncreaseOnLossPercent = 0` it is *already* base when the loss stop fires. **The reset-to-base is a no-op by construction, not by accident** — each stop's reset could only ever bite the progression driven by its own outcome.
+
+The lever is the *other* thing an insisting stop does: it re-anchors a baseline, ending one stretch of play and starting the next. Round 1 (D-M1.3) made each stop re-anchor **only its own** baseline, which was right when insisting was loss-only and the profit stop was a pure session goal. Once both sides insist, both are segment-scoped, and keeping their baselines independent is what stranded the profit target high above a drawdown while the win-side progression ran away underneath it.
+
+**The rule:** an insisting stop re-anchors **its own** baseline always, and the **other** side's baseline **only if that side also insists**.
+
+| Configuration | Behavior |
+|---|---|
+| Both insist | One shared segment — either threshold closes it. Each stop is meaningful regardless of which progression percent is set. |
+| Mixed | The insisting side segments; the non-insisting side keeps its session anchor, so "stop when I am up 100 **overall**" cannot quietly become "up 100 since the last drawdown". D-M1.3 survives for exactly the case it was written for. |
+| Neither insists | No reset ever happens — byte-identical to before. |
+
+Measured on that run's own outcome sequence (same luck, different bet sizes), with both insisting:
+
+| `StopOnLoss` | max bet, independent baselines | max bet, shared segment |
+|---|---|---|
+| 0.1 / 0.5 / 1 | `66.26407466` (all three) | **`1.21`** |
+| 2 | `66.26407466` | `3.80` |
+| 5 | `66.26407466` | `10.83` |
+
+The left column not varying *at all* with the threshold is the signature of an inert control — worth remembering as a diagnostic: **when a knob's value provably cannot change any observable, the defect is not in the knob's arithmetic but in what the mechanism is wired to do.**
+
+Two audit habits this run is worth keeping: the fractional-remainder accumulator's reset (a fresh `BetService` per `StartPlayerAutobet`) turned out to be an **independent second signal for a session restart**, agreeing exactly with the bet-amount reset — cross-validating a boundary that nothing persists; and reproducing the engine's *exact* arithmetic (truncation, remainder carry) rather than approximating it is what let a 1-satoshi difference be read as evidence rather than noise.
 
 ## Chapter 26 — Network Difficulty (continuous, persisted, validated)
 
@@ -4827,7 +4892,7 @@ So duplicate copies of a bet do not scatter through the list — they land **adj
 
 **(1) Deduplicate on the read side.** `BetRecord.Id` is a Guid, written on every journal line since the journal existed, and **read by nothing**. A `HashSet<string>` in `BetHistoryRepository`, claimed at the journal loader, the legacy-snapshot loader and live `Add`, makes the whole bug class structurally impossible for O(1) per record. Skips at load are counted and reported with `GD.PushWarning` (the guard keeps the *readings* honest; it does not repair the file, and a silent guard would hide the very condition it exists to detect); a live duplicate `Add` is refused with `GD.PushError`, because at that point the caller is the bug. The index is rebuilt after `RollbackToUtc` so a legitimately truncated bet can be re-registered. Note the one gap, stated rather than hidden: a journal line carrying **no** `Id` mints a fresh Guid per deserialization and so cannot be deduplicated — that affects pre-journal legacy snapshots only.
 
-**(2) The metric was also wrong on clean data, independently.** `AdvanceSummaryTo` counted consecutive `Loss` records over the **entire loaded history**, with no reset on a change of `GameId`, a change of `Chance`, a session boundary, or — the substantive one — **a progression reset**. `InsistAfterStop`, the bankroll-limit reset and every auto-recharge (Chapter 25) put the bet back to base while the run counted straight through. It also added the closing win to the run on a win but not on a trailing loss, so the same streak reported two values depending on where the viewed window ended. It is now segmented by `(GameId, Chance)`, the closing win is not added, and it is labelled what it actually is: **"Max consecutive losses: N (at C% chance)"**.
+**(2) The metric was also wrong on clean data, independently.** `AdvanceSummaryTo` counted consecutive `Loss` records over the **entire loaded history**, with no reset on a change of `GameId`, a change of `Chance`, a session boundary, or — the substantive one — **a progression reset**. `InsistAfterStopOnLoss` (then still named `InsistAfterStop`), the bankroll-limit reset and every auto-recharge (Chapter 25) put the bet back to base while the run counted straight through. It also added the closing win to the run on a win but not on a trailing loss, so the same streak reported two values depending on where the viewed window ended. It is now segmented by `(GameId, Chance)`, the closing win is not added, and it is labelled what it actually is: **"Max consecutive losses: N (at C% chance)"**.
 
 **(3) Assert the bound.** This figure has a *closed-form* plausible maximum — `≈ log(n)/log(1/p)` for n bets at loss probability p — and nothing had ever compared it to one, so the metric's only detector was a person being surprised. `AssertLossRunIsPlausible` (`[Conditional("DEBUG")]`) fires above `expected + 12` (~2⁻¹² false positives) and prints the run, the chance, the segment size, the expected value and the bound.
 
