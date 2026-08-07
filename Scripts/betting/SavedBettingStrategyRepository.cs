@@ -147,14 +147,20 @@ namespace Scripts.Betting
 				Config = new BettingStrategyConfig
 				{
 					BaseBet = strategy.Config?.BaseBet ?? 0m,
-					IncreasePercent = strategy.Config?.IncreasePercent ?? 0m,
-					IncreaseOnLoss = strategy.Config?.IncreaseOnLoss ?? true,
-					IncreaseOnWin = strategy.Config?.IncreaseOnWin ?? false,
+					// Strategies saved before the progression percents were split carry the retired
+					// IncreasePercent/IncreaseOnLoss/IncreaseOnWin trio, which deserializes as absent ⇒ both
+					// percents 0 ⇒ flat betting. Re-save such a strategy to restore its progression (mini-plan
+					// 01, D-M1.5: no migration — this is a personal file, not world state).
+					IncreaseOnLossPercent = strategy.Config?.IncreaseOnLossPercent ?? 0m,
+					IncreaseOnWinPercent = strategy.Config?.IncreaseOnWinPercent ?? 0m,
 					StopOnProfit = strategy.Config?.StopOnProfit,
 					StopOnLoss = strategy.Config?.StopOnLoss,
 					StopOnBlockMined = strategy.Config?.StopOnBlockMined ?? false,
-					UseProgressionAnchorStops = strategy.Config?.UseProgressionAnchorStops ?? false,
-					InsistAfterStop = strategy.Config?.InsistAfterStop ?? false
+					// Strategies saved before the stops were split carry neither flag, so they load with both
+					// Insist switches OFF. No migration by design (mini-plan 01, D-M1.5): this is a personal
+					// file, not world state.
+					InsistAfterStopOnProfit = strategy.Config?.InsistAfterStopOnProfit ?? false,
+					InsistAfterStopOnLoss = strategy.Config?.InsistAfterStopOnLoss ?? false
 				},
 				NumberOfBets = Math.Max(0, strategy.NumberOfBets),
 				AutoRechargeEnabled = strategy.AutoRechargeEnabled,

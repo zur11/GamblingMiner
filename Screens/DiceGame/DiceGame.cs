@@ -265,7 +265,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
 		_strategyPanel.StrategyConfigChanged += OnStrategyConfigChanged;
 		_strategyPanel.StopOnBlockMinedDoubleClicked += OnStopOnBlockMinedDoubleClicked;
-		_strategyPanel.ProfitStopModeDoubleClicked += OnProfitStopModeDoubleClicked;
+		_strategyPanel.ProfitOrLossStopDoubleClicked += OnProfitOrLossStopDoubleClicked;
 		_strategyPanel.AutoRechargeToggled += OnAutoRechargeToggledFromPanel;
 		InitializeApsSelector();
 		RefreshHardwareDrivenSpeed();
@@ -883,14 +883,13 @@ public partial class DiceGame : Control, IBetEventSource
 		return new BettingStrategyConfig
 		{
 			BaseBet = config.BaseBet,
-			IncreasePercent = config.IncreasePercent,
-			IncreaseOnLoss = config.IncreaseOnLoss,
-			IncreaseOnWin = config.IncreaseOnWin,
+			IncreaseOnLossPercent = config.IncreaseOnLossPercent,
+			IncreaseOnWinPercent = config.IncreaseOnWinPercent,
 			StopOnProfit = config.StopOnProfit,
 			StopOnLoss = config.StopOnLoss,
 			StopOnBlockMined = config.StopOnBlockMined,
-			UseProgressionAnchorStops = config.UseProgressionAnchorStops,
-			InsistAfterStop = config.InsistAfterStop
+			InsistAfterStopOnProfit = config.InsistAfterStopOnProfit,
+			InsistAfterStopOnLoss = config.InsistAfterStopOnLoss
 		};
 	}
 
@@ -901,18 +900,20 @@ public partial class DiceGame : Control, IBetEventSource
 			return null;
 		}
 
-		bool allowProfitLossStops = config.InsistAfterStop;
+		// A bot session is only ever restarted on InsufficientBalance (SimulationService), so a stop that
+		// STOPS is terminal for that bot. Both insist switches are therefore forced ON here — not merely
+		// mirrored from the panel — so the invariant holds no matter what a stored per-node snapshot carries:
+		// a bot's stop always resets the progression to base and keeps betting.
 		return new BettingStrategyConfig
 		{
 			BaseBet = config.BaseBet,
-			IncreasePercent = config.IncreasePercent,
-			IncreaseOnLoss = config.IncreaseOnLoss,
-			IncreaseOnWin = config.IncreaseOnWin,
-			StopOnProfit = allowProfitLossStops ? config.StopOnProfit : null,
-			StopOnLoss = allowProfitLossStops ? config.StopOnLoss : null,
+			IncreaseOnLossPercent = config.IncreaseOnLossPercent,
+			IncreaseOnWinPercent = config.IncreaseOnWinPercent,
+			StopOnProfit = config.StopOnProfit,
+			StopOnLoss = config.StopOnLoss,
 			StopOnBlockMined = false,
-			UseProgressionAnchorStops = config.UseProgressionAnchorStops,
-			InsistAfterStop = config.InsistAfterStop
+			InsistAfterStopOnProfit = true,
+			InsistAfterStopOnLoss = true
 		};
 	}
 
@@ -1714,14 +1715,13 @@ public partial class DiceGame : Control, IBetEventSource
 		var config = new BettingStrategyConfig
 		{
 			BaseBet = baseBet,
-			IncreasePercent = uiConfig.IncreasePercent,
-			IncreaseOnLoss = uiConfig.IncreaseOnLoss,
-			IncreaseOnWin = uiConfig.IncreaseOnWin,
+			IncreaseOnLossPercent = uiConfig.IncreaseOnLossPercent,
+			IncreaseOnWinPercent = uiConfig.IncreaseOnWinPercent,
 			StopOnProfit = uiConfig.StopOnProfit,
 			StopOnLoss = uiConfig.StopOnLoss,
 			StopOnBlockMined = uiConfig.StopOnBlockMined,
-			UseProgressionAnchorStops = uiConfig.UseProgressionAnchorStops,
-			InsistAfterStop = uiConfig.InsistAfterStop
+			InsistAfterStopOnProfit = uiConfig.InsistAfterStopOnProfit,
+			InsistAfterStopOnLoss = uiConfig.InsistAfterStopOnLoss
 		};
 		int chance = (int)_chanceSlider.Value;
 
@@ -1863,7 +1863,8 @@ public partial class DiceGame : Control, IBetEventSource
 		_resultValue.Text = "Manual re-enabled after Stop on Block.";
 	}
 
-	private void OnProfitStopModeDoubleClicked()
+	// Double-clicking either Insist toggle clears the manual-bet gate left by a profit/loss stop.
+	private void OnProfitOrLossStopDoubleClicked()
 	{
 		if (_manualStopGate != ManualStopGate.ProfitOrLoss)
 		{

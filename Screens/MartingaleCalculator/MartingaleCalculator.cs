@@ -128,7 +128,8 @@ public partial class MartingaleCalculator : Control
 
 		_totalBankrollInput.Text = bankroll.ToString("F8", CultureInfo.InvariantCulture);
 		_initialBetInput.Text = config.BaseBet.ToString("F8", CultureInfo.InvariantCulture);
-		_multiplyOnLossInput.Text = (1m + (config.IncreasePercent / 100m))
+		// The calculator projects a LOSING ladder, so it reads the loss-side percent only.
+		_multiplyOnLossInput.Text = (1m + (config.IncreaseOnLossPercent / 100m))
 			.ToString("F8", CultureInfo.InvariantCulture);
 		_winChanceInput.Text = chance.ToString(CultureInfo.InvariantCulture);
 		_progressionStartingBalanceLabel.Text =
@@ -150,7 +151,7 @@ public partial class MartingaleCalculator : Control
 
 		decimal nextBet = _ctxConfig.BaseBet;
 		decimal cumulativeLoss = 0m;
-		decimal multiplier = 1m + (_ctxConfig.IncreasePercent / 100m);
+		decimal multiplier = 1m + (_ctxConfig.IncreaseOnLossPercent / 100m);
 		decimal payoutMultiplier = (100m * 0.9902m) / Math.Max(1, _ctxChance);
 		int roll = 1;
 		int maxRows = 500;
@@ -269,7 +270,7 @@ public partial class MartingaleCalculator : Control
 
 	private decimal GetNextLossBet(decimal currentBet, decimal multiplier)
 	{
-		if (_ctxConfig.IncreasePercent <= 0m || !_ctxConfig.IncreaseOnLoss)
+		if (_ctxConfig.IncreaseOnLossPercent <= 0m)
 			return _ctxConfig.BaseBet;
 
 		return decimal.Multiply(currentBet, multiplier);
@@ -290,7 +291,7 @@ public partial class MartingaleCalculator : Control
 			return Math.Clamp(_ctxExecutedBetsCount + 1, 1, maxRows);
 		if (AreClose(_ctxCurrentBet, _ctxConfig.BaseBet))
 			return 1;
-		if (_ctxConfig.IncreasePercent <= 0m || !_ctxConfig.IncreaseOnLoss)
+		if (_ctxConfig.IncreaseOnLossPercent <= 0m)
 			return 1;
 
 		decimal probe = _ctxConfig.BaseBet;
