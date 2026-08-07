@@ -3,8 +3,8 @@
 **Series note:** first entry of a new *mini-plan* series (`miniNN-…-plan.md`) for small, self-contained
 changes that do not warrant a numbered Step plan. Independent numbering from the `stepNN-` series.
 
-**Status:** rounds 1–3 ✅ implemented + **playtested OK** 2026-08-06 (round 3 audited over 684 bets, §9) ·
-round 4 (§9) ✅ implemented, build clean, pending playtest ·
+**Status:** ✅ **COMPLETE (2026-08-07)** — rounds 1–4 all implemented, build clean and **playtested OK**
+(round 3 additionally audited over 684 bets against an exact engine replay, §9) ·
 **Branch:** `split-stop-conditions` · **World format bump:** none ·
 **Design record:** `Documentation/ProjectDesignManual.md` §25.10 (r1) + §25.11 (r2) + §25.12 (r3) + §25.13 (r4)
 

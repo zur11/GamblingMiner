@@ -2753,16 +2753,16 @@ While revising the casino's loan panel (`AIHelperFiles/player-and-casino-bankrol
 
 **The general rule this section adds:** the shared balance services belong to the **player**. Another node's values may occupy them only transiently, inside DiceGame, while the selector holds a bot — and they must never escape through a scene exit, a session write-back, or a checkpoint.
 
-## Chapter 25 — Bankroll Management: Progression Resets, Insist After Stop On Loss, and Auto-Recharge
+## Chapter 25 — Bankroll Management: Progression Resets, the two Insist switches, and Auto-Recharge
 
 **Files**: `Scripts/Sessions/BaseBetSession.cs` (`ApplyStopConditions`, `HandleStopOnLoss`, `ResetProgressionToBase`), `Scripts/Betting/ProgressiveBettingStrategy.cs`, `Scripts/Services/SimulationService.cs` (`TryPlayerAutoRechargeAndRestart`, `TryRechargeAndRestartBot`)
-**Status**: Implemented and user-tested. **The two stops became fully independent at mini-plan 01 (2026-08-06) — see §25.10; this chapter is written in the post-split vocabulary.**
+**Status**: Implemented and user-tested. **The two stops became fully independent at mini-plan 01 (2026-08-06), rounds 1–4 all implemented and playtested — see §25.10–§25.13; this chapter is written in the post-split vocabulary.**
 
 ### The Short Version (for everyone)
 
 A progressive strategy grows the bet on each trigger (e.g. ×2.3 on every loss). Left unchecked it would balloon until the bankroll is gone. Three mechanisms keep it under control, in order of preference:
 
-1. **`StopOnLoss` + Insist After Stop On Loss** — the *primary* bankroll manager. You set a loss threshold **below** the bankroll; when the running progression reaches it, the bet **resets to base** and keeps going. This caps how deep any one losing run goes, so the bankroll lasts many cycles **without spending a single recharge**. (`StopOnProfit` is a *goal*, not a bankroll manager: reaching it ends the session.)
+1. **`StopOnLoss` + Insist After Stop On Loss** — the *primary* bankroll manager. You set a loss threshold **below** the bankroll; when the running progression reaches it, the bet **resets to base** and keeps going. This caps how deep any one losing run goes, so the bankroll lasts many cycles **without spending a single recharge**. (`StopOnProfit` + Insist After Stop On Profit is its mirror on the way up — the *upper* reset that banks a run and starts the next one from base, §25.12. Without insisting, a profit stop is a pure session goal: reaching it ends the session.)
 2. **Bankroll-limit reset (safety net)** — if the grown bet ever exceeds the bankroll but the **base** bet still fits, the progression also resets to base (no recharge). This is the fallback for when a threshold was set too high (or, for bots, not set at all).
 3. **Auto-recharge (last resort)** — only when even the **base** bet can't be afforded does the system move money from the Main Balance into the Bankroll and restart from base.
 
@@ -2776,12 +2776,12 @@ So: **reset cheaply as long as you can; only recharge when you absolutely must.*
 
 This runs at the **end of every** `ExecuteNext`, *after* `_currentBet` has already been advanced to the **next** bet. In order:
 
-1. **`StopOnProfit`** reached → `Stop(StopOnProfit)`, always. There is no insisting on the profit side.
+1. **`StopOnProfit`** reached → `HandleStopOnProfit()` — insist (reset to base) or stop.
 2. **`StopOnLoss`** reached → `HandleStopOnLoss()` — insist (reset to base) or stop.
 3. **`_currentBet > balance`** (can't afford the next bet) → either reset to base (insist) or stop (see §25.5).
 4. **`RemainingBets`** countdown → stop on `CounterCountReached`.
 
-Each stop computes its **own** metric `currentBalance − baseline` from its **own** mode flag — see §25.3. A stop participates at all only if its amount `HasValue`, which the panel guarantees means **> 0**: blank, unparseable and `0` are all *disabled* (§25.10).
+Each stop computes its **own** metric `currentBalance − baseline` against its **own** baseline — see §25.3. A stop participates at all only if its amount `HasValue`, which the panel guarantees means **> 0**: blank, unparseable and `0` are all *disabled* (§25.10).
 
 ### 25.3 — Where profit/loss is measured from (one baseline per stop)
 
@@ -2833,7 +2833,11 @@ After the threshold checks, if the next bet still can't be afforded:
 if (_currentBet > _wallet.Balance)
 {
     if (_config.InsistAfterStopOnLoss && _config.BaseBet <= _wallet.Balance)
-        ResetProgressionToBase();          // grown bet too big, but base fits → reset, NO recharge
+        // grown bet too big, but base fits → reset, NO recharge. A loss-side condition, so it closes
+        // the segment on the same terms as a StopOnLoss hit (§25.13).
+        ResetProgressionToBase(
+            reanchorProfit: _config.InsistAfterStopOnProfit,
+            reanchorLoss: true);
     else
     {
         LastStopReason = InsufficientBalance;
@@ -2853,7 +2857,7 @@ This branch reads the **loss** toggle deliberately: "the grown bet no longer fit
 - **Player** — `SimulationService._Process`: on `!IsRunning` with reason `InsufficientBalance` and auto-recharge enabled, `TryPlayerAutoRechargeAndRestart()` transfers `AutoRechargeAmount` from Main Balance to Bankroll, syncs `BankrollStateService`, and **restarts the progression from base**.
 - **Bots** — `SimulationService.TickBots`: the mirror, `TryRechargeAndRestartBot()`, tops up the bot's own `NodeFinancialState.PrincipalBalance` (repeatedly if one top-up can't cover the base bet) and restarts from base.
 
-Because the restart reuses the same `BettingStrategyConfig`, **Insist After Stop On Loss stays active after a recharge** — the run keeps resetting cheaply to base until, once again, even the base bet can't be afforded and another recharge is strictly necessary.
+Because the restart reuses the same `BettingStrategyConfig`, **both Insist switches stay active after a recharge** — the run keeps resetting cheaply to base until, once again, even the base bet can't be afforded and another recharge is strictly necessary.
 
 ### 25.7 — Precedence, in one sentence
 
