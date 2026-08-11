@@ -3,9 +3,12 @@
 **Series note:** second entry of the *mini-plan* series (`miniNN-…-plan.md`), following
 `mini01-split-stop-conditions-plan.md`.
 
-**Status:** 📋 **DRAFT — Part A decided, Parts B/C awaiting review.** No branch created, no code
-touched. The run archive (§B.0) is **done**. ·
-**Proposed branch:** `panel-state-and-100k-audit` · **World format bump:** none expected ·
+**Status:** 🔨 **IN PROGRESS.** Scope is **Part A + Part C**, plus finishing Part B's check 5 as
+analysis. **Part D is DEFERRED to its own plan** (developer's call, 2026-08-07) — it is written up
+in full below so nothing is re-derived when it is picked up. Part A reviewed in play and decided
+(§A.3.1–§A.3.4). Part B: archive **done**, **checks 1/2/3/6/8/9 measured, all clean** (§B.6) — the
+reported max streak of 18 is confirmed real. ·
+**Branch:** `strategy-panel-state-and-100k-audit` · **World format bump:** none ·
 **Design record (proposed):** `Documentation/ProjectDesignManual.md` new §24.11 (Part A) and a new
 §38.8 (Part C — it is another instance of §38.7's inverse failure); Part B's findings land in this
 plan's §B.6, and in `Documentation/INCIDENT_LOG.md` **only** if it turns up a real corruption.
@@ -60,9 +63,12 @@ empty — the report matches the code.
 3. **`BuildBotConfigs()` (line 1364) reads the same dictionary** and skips any node without a valid
    entry — after a re-entry it returns an **empty list**, so bot runners started from that point
    have nothing configured.
-4. **`RefreshNodeSelectorReadyDots()` (line 375) reads it** — every node reads as not-ready.
+4. **`RefreshNodeSelectorReadyDots()` (line 375) reads it** — every node reads as not-ready, *even
+   while it is actively betting*, and the selector is locked during a run so the dots are the only
+   readout left. Confirmed in play; see §A.3.2.
 5. **`_activeNodeId` (line 72) is re-initialised to `player`** on entry regardless of which node was
-   selected, so the selector silently jumps back too.
+   selected. Reviewed and **accepted as correct** (§A.3.4) — listed here only so it is not
+   re-reported later as a defect.
 
 **The rule this is an instance of:** *a scene is a view; state that outlives the view must not live
 in it.* The codebase already knows this — `_checkpointRestoreSpentThisSession` (2085) and
@@ -70,39 +76,104 @@ in it.* The codebase already knows this — `_checkpointRestoreSpentThisSession`
 DiceGame being freed and rebuilt on each scene change"*. `_nodeStrategies` is the same kind of
 state and did not get the same treatment.
 
-## A.3 The general review (the actual deliverable of Part A)
+## A.3 The general review — ✅ CONFIRMED IN PLAY (developer, 2026-08-07)
 
-Before fixing anything, enumerate **every** piece of DiceGame + panel UI state and classify it —
-this is the part that was asked for, and the fix falls out of it. The table below is the skeleton
-to fill in during implementation, with the expected verdict from the code read above; each row must
-be confirmed in play, because the masking paths make guessing unreliable.
+Every row below was verified by the developer, with three refinements that changed the picture.
+**UI** = what the panel shows; **behaviour** = what the run actually does. Separating the two
+columns is the whole value of this table — they do not agree, and that disagreement is a second
+defect (§A.3.1).
 
-| State | Owner | Expected on re-entry | Verdict |
+| State | Owner | UI on re-entry | Behaviour on re-entry |
 |---|---|---|---|
-| Amount to bet | panel | restored *by accident* while an autobet runs; blank when idle | |
-| Increase on loss % | panel | **lost** | |
-| Increase on win % | panel | **lost** | |
-| Number of bets | panel | restored *by accident* while an autobet runs; blank when idle | |
-| Stop on profit | panel | **lost** | |
-| Stop on loss | panel | **lost** | |
-| Stop Block toggle | panel | **lost** (resets OFF) | |
-| Insist On Profit | panel | **lost** (resets OFF) | |
-| Insist On Loss | panel | **lost** (resets OFF) | |
-| Auto Recharge toggle | `BankrollProgramService` | **survives by design** (§25.8 proxy) | |
-| Winning chance slider | DiceGame | restored only while an autobet runs | |
-| HIGH / LOW | DiceGame | restored only while an autobet runs | |
-| APS / hardware rate | `HardwareAllocationRepository` | survives (read fresh) — confirm | |
-| Active node selection | DiceGame | **lost** (resets to `player`) | |
-| Per-bot strategy snapshots | DiceGame | **lost** (whole dictionary) | |
-| Saved named strategies | `user://` repository | survives (personal file) | |
+| Amount to bet | panel | restored *by accident* while an autobet runs; blank when idle | intact (session-owned) |
+| Increase on loss % | panel | **lost** | intact (session-owned) |
+| Increase on win % | panel | **lost** | intact (session-owned) |
+| Number of bets | panel | restored *by accident* while an autobet runs; blank when idle | intact (session-owned) |
+| Stop on profit | panel | **lost** | ⚠️ **also lost** — see §A.3.1 |
+| Stop on loss | panel | **lost** | ⚠️ **also lost** — see §A.3.1 |
+| Stop Block toggle | panel | **lost** (resets OFF) | ✅ **intact** — see §A.3.1 |
+| Insist On Profit | panel | **lost** (resets OFF) | intact (session-owned) |
+| Insist On Loss | panel | **lost** (resets OFF) | intact (session-owned) |
+| Auto Recharge toggle | `BankrollProgramService` | survives by design (§25.8 proxy) | intact |
+| Winning chance slider | DiceGame | restored only while an autobet runs | intact |
+| HIGH / LOW | DiceGame | restored only while an autobet runs | intact |
+| APS / hardware rate | `HardwareAllocationRepository` | survives (read fresh each use) | intact |
+| Active node selection | DiceGame | resets to `player` — **accepted, not a defect** | n/a |
+| Node ready dots | DiceGame | ⚠️ **all red**, including active nodes — see §A.3.2 | n/a |
+| Per-bot strategy snapshots | DiceGame | not directly observable — see §A.3.3 | believed intact |
+| Saved named strategies | `user://` repository | survives (personal file) | intact |
 
-Anything found that is genuinely lost and *matters* gets fixed in the same phase; anything lost and
-harmless gets recorded as deliberate, not silently left ambiguous.
+### A.3.1 — Why Stop-on-Block survives and the two stops do not
+
+This asymmetry is the most useful thing the review turned up, because it is not about the panel at
+all. The three flags live in **different places** at run time:
+
+- **`StopOnBlockMined` is a top-level field on `SimulationService.PlayerAutobetConfig`** (line 32),
+  captured once when the run starts (`DiceGame.cs:1061`) and read from `_config` at
+  `SimulationService.cs:596` and `:945`. Nothing re-pushes it, so blanking the toggle cannot reach
+  the running session — UI lies, behaviour is correct.
+- **`StopOnProfit` / `StopOnLoss` live inside `_config.Strategy`**, which the session captures at
+  construction (`SimulationService.cs:667`) — so on the same reasoning they *should* also be
+  immune, and the developer reports they are **not**. Something is reaching the live session's
+  strategy after a scene round-trip, and until that path is named this is an unexplained
+  observation, not a diagnosis.
+
+**Trace this before writing any fix.** Candidate paths, in order of suspicion:
+
+1. `OnStrategyConfigChanged` (`DiceGame.cs:665`) stops a running **local** `_session` on any panel
+   change — check whether it can fire during or just after `_Ready` despite the
+   `_loadingNodeStrategy` guard (`ClearStrategySettings` does *not* raise the event today, but
+   `ApplyStrategySettings` does, and the guard is only held inside `LoadActiveNodeStrategySnapshot`).
+2. **DiceGame's LOCAL session reads `StopOnBlockMined` live off the panel** — `DiceGame.cs:1489` and
+   `:1846` both call `_strategyPanel.StopOnBlockMinedEnabled` — while the delegated session reads it
+   from `_config`. **The same flag has two different sources depending on which session owns the
+   run**, and they disagree exactly when the panel is blank. Whichever way the stops turn out, this
+   is a defect on its own: a run's parameters must come from one place.
+3. An auto-recharge restart (`TryPlayerAutoRechargeAndRestart`) rebuilding the session — it reuses
+   `_config.Strategy`, so it should be safe, but confirm rather than assume.
+
+**D-M2.8 — a running session's parameters come from the session, never from the panel.** The panel
+is an *editor* for the next run, not a live control surface for the current one. Every read of
+`_strategyPanel.*` inside a running-session code path is a bug candidate under this rule.
+
+### A.3.2 — The ready dots lie, and they are the only readout left
+
+`RefreshNodeSelectorReadyDots` (`DiceGame.cs:375-388`) colours a node green iff `_nodeStrategies`
+holds a valid entry for it — so with the dictionary emptied by the scene change, **every node goes
+red, including nodes that are actively betting**. This matters more than a normal cosmetic slip:
+the node selector is **disabled while an autobet session is running** (`SetActiveNodeSelectorLocked`),
+so during a run the dots are the *only* per-node readout on screen, and they are wrong.
+
+**D-M2.9 — a node that is ACTIVELY RUNNING shows green, unconditionally, player included.**
+"Ready" (has a valid stored strategy) and "running" (is actually betting right now) are two
+different questions and the dot currently answers neither correctly. The predicate becomes
+*running-or-ready*, with the running half sourced from `SimulationService` — the same source that
+decides whether the node is really betting. This is §39.16 rule 6 (*a displayed signal must share
+its source with the action it advertises*) and the same principle as D-M2.2: **where a live session
+exists, it is the truth.**
+
+### A.3.3 — Per-bot snapshots: not observable, so state the acceptance criterion instead
+
+The per-bot snapshots cannot be inspected during a run at all, because the selector is locked. The
+developer's read is that bot behaviour is preserved (bots keep betting across the scene change),
+which is consistent with the code: `SimulationService` holds its own `BotConfig` list from
+`StartBots`, independent of `_nodeStrategies`.
+
+So the requirement is not "verify during the run" but: **when the session stops and the selector
+unlocks, selecting a bot must show that bot's configured strategy, not a blank panel.** That is
+what D-M2.1 delivers, and A.5 tests it that way. The `BuildBotConfigs()` hazard from §A.2 point 3
+is unchanged and still real — it bites on the *next* `StartBots`, not the current run.
+
+### A.3.4 — Accepted as correct
+
+`_activeNodeId` resetting to `player` on scene entry is **deliberate and stays** (developer's call).
+Only the dots beside the selector were wrong, not the selection itself.
 
 ## A.4 The fix — decided (2026-08-07)
 
-- **D-M2.1 — `_nodeStrategies` and `_activeNodeId` become `static`** (process-lifetime, not
-  scene-lifetime). In-memory, survives scene changes, dies with the process. Exactly the existing
+- **D-M2.1 — `_nodeStrategies` becomes `static`** (process-lifetime, not scene-lifetime).
+  `_activeNodeId` stays as it is — resetting the *selection* to `player` on entry is accepted
+  behaviour (§A.3.4); only the dots beside it were wrong. In-memory, survives scene changes, dies with the process. Exactly the existing
   idiom in this same file (`_checkpointRestoreSpentThisSession` / `_bootstrapAppliedThisSession`,
   both static *for this reason*; `NetworkRoot` holding the whole world in statics; "between-block
   navigation saves are in-memory only", Pattern 2). It does **not** survive an app restart — which
@@ -132,11 +203,18 @@ outcomes, and it is what happens today.
   leave to BlockExplorer, come back **while idle** ⇒ every field is exactly as left.
 - Same, but leave and return **with a background autobet running** ⇒ same, and `Amount to bet`
   tracks the live session's current bet as it does today.
-- Configure a bot node, switch to the player, leave the scene, return ⇒ the bot's snapshot survives,
-  its ready dot is still lit, and starting the runners actually starts that bot.
+- **Stop Block toggle shows ON after the round-trip** when the run was started with it on — the UI
+  now agrees with the behaviour that was already correct (§A.3.1).
+- **Both stops still fire after a round-trip**, at their configured thresholds — the behaviour half
+  of §A.3.1, and the one that was actually broken. Test with a threshold small enough to hit quickly.
+- **Ready dots**: with a run in progress, leave and return ⇒ every actively-betting node is **green,
+  the player included**, with the selector still locked (D-M2.9). Stop the run ⇒ dots fall back to
+  "has a valid strategy" and the selector unlocks.
+- Configure a bot, switch to the player, leave, return, **stop the session**, select that bot ⇒ its
+  strategy is shown in full, not a blank panel (§A.3.3's acceptance criterion). Then start the
+  runners ⇒ that bot actually starts.
 - Return to DiceGame and immediately press AUTO without touching anything ⇒ the run uses the
   configured progression, not flat betting.
-- The active node selector is still on the node it was left on.
 - Auto Recharge still mirrors `BankrollProgramService` (the §25.8 proxy must not regress).
 
 ---
@@ -237,26 +315,156 @@ parameter changes to the strategy system, the regulator or the retention policy 
 decision**, on D-15.33's precedent (don't price a placeholder before the mechanism has been seen
 firing).
 
-## B.5 Questions for the developer
+## B.5 Run conditions — answered by the developer, 2026-08-07
 
-Blocking for check 5 only — everything else can proceed without answers.
+1. **Progression: `Increase on loss` only**, "a bit over 100%", exact value not remembered and never
+   changed during the run; `Increase on win` unused. ⇒ **derived from the data instead** (§B.6.2).
+2. **One continuous autobet.** The app was never closed and the session never stopped; DiceGame may
+   have been left and re-entered. ⇒ the journal covers the whole run with no pre-genesis rollback,
+   **and a Part A scene round-trip plausibly happened mid-run** — §B.6.5 tests what that did.
+3. *(Question withdrawn — it was asking where the "18" was read from, which no longer matters: the
+   figure was recomputed independently from the archive, §B.6.3.)*
+4. **No bots bet** — none were configured to. Every record is the player's.
+5. **All 5 hardware credits on the player node for the whole run**, private pool.
 
-1. **The exact strategy parameters that produced the run**: base bet, `Increase on loss %`,
-   `Increase on win %`, `Stop on profit`, `Stop on loss`, both Insist toggles, winning chance,
-   HIGH/LOW, number of bets. (Un-inferable ⇒ worth one question, per the mini01 round-4 lesson.)
-2. Was it **one continuous autobet**, or restarted / re-entered along the way? Any manual bets mixed
-   in? (Part A means a scene round-trip could itself have silently changed the config — so this
-   answer may also be a Part A data point.)
-3. The **18** — read from `BetsHistoryExplorer`, and over what scope: the whole loaded history, or a
-   date/game filter?
-4. Did any **bot** bet during the run? (The journal is player-only; bot stats live in
-   `CasinoClientLedgerService.ClientBetStats`.)
-5. Were all **5 hardware credits on the player node** for the whole run, or moved around?
+Remaining un-inferable: the **stop thresholds and Insist toggles**. §B.6.5 shows no stop ever fired,
+which is consistent with either "unarmed" or "armed but never reached" — the data cannot separate
+them, and it does not need to for any conclusion below.
 
-## B.6 Output
+## B.6 Findings — measured 2026-08-07 against the archive
 
-A findings section appended to this plan — one entry per check, each stating the measurement, not
-just a verdict. Explicitly including the checks that came back clean.
+Read-only over `%APPDATA%\Godot\GamblingMiner_100k_run_2026-08-07\`, using `awk` per CLAUDE.md.
+
+### B.6.1 Integrity (check 1) — ✅ clean
+
+| | |
+|---|---|
+| Files | 11 chunks of 10,000 records + a final 5,050 |
+| Total lines | **105,050** — 105,049 bets + 1 `deposit` record (the opening 100.00 SC bankroll funding, `2009-03-21T17:38:45.84Z`) |
+| **Duplicate `BetRecord.Id`** | **0** — 105,050 lines, 105,050 distinct Ids |
+| Chunk ordering | contiguous by timestamp; `bet_history.jsonl` is the OLDEST chunk, `…_000010` the newest |
+| Span | `2009-03-21 17:39:07` → `2009-04-15 06:48:58` game time (~24.5 in-game days) |
+
+**Zero duplicates is the direct verification of the `99582bb` fix** on data produced after it —
+INC-002's root cause is gone at the source, not merely filtered at the reader.
+
+*Note for whoever writes the next pass: a naive `grep`/`awk` over these files must filter
+`"Type":"bet"`. The one deposit record has `"Bet":null`, and an unfiltered numeric extraction silently
+reads it as a bet with `Chance:0`, `BetAmount:0` and `Outcome:0` — i.e. a phantom win that also
+splits whatever loss run it lands in.*
+
+### B.6.2 Strategy parameters, derived (check 5 prerequisite)
+
+| Parameter | Derived value | How |
+|---|---|---|
+| Base bet | **`0.00000100` SC** | minimum bet, and the value every post-win bet returns to |
+| `IncreaseOnLossPercent` | **127%** (×2.27) | modal next/prev ratio after a loss = `2.270000` (26,241×). The lower variants (`2.268722`, `2.269903`, …) are `Money.Normalize` **truncation** at 8 decimals on tiny bets, and converge to exactly 2.27 as the ladder grows — truncation-below, never above, which is itself a consistency check on the engine |
+| `IncreaseOnWinPercent` | **0** | 0 bets grew after a win, out of 52,695 |
+| Chance / direction | **50%**, LOW (`IsHigh:false`), multiplier `1.9804` | constant across all 105,049 bets |
+
+So the run is a clean two-parameter martingale: **base `0.000001`, ×2.27 on loss, reset on win.**
+
+### B.6.3 The streak (check 2) — ✅ 18 confirmed, and the distribution is textbook
+
+Recomputed from the archive in settle order: **max consecutive losses = 18**, independently
+reproducing the reported figure. Bound `log₂(105,049) = 16.68`, so 18 is ~1.3 above the expected
+maximum — ordinary for the max of ~26k geometric runs.
+
+The **whole distribution** matters more than the max (a single number can be right by luck).
+Observed 26,217 maximal loss runs vs. `n·p·q = 26,262` expected, and per length against
+`R × 0.5^k`:
+
+| len | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| observed | 13322 | 6423 | 3166 | 1600 | 865 | 404 | 211 | 114 | 51 | 26 | 14 | 11 | 5 | 2 | 0 | 1 | 1 | 1 |
+| expected | 13108 | 6554 | 3277 | 1639 | 819 | 410 | 205 | 102 | 51 | 26 | 13 | 6 | 3 | 1.6 | 0.8 | 0.4 | 0.2 | 0.1 |
+
+Win rate **0.501633** (52,696 / 105,049) = **+1.06σ**. The engine is behaving.
+
+### B.6.4 The frequency hypothesis (check 3) — ✅ answered, with a caveat worth keeping
+
+**Collision density: 9.41 bets per distinct timestamp** (105,049 bets over 11,158 distinct
+`TimestampUtc` values) — **3× denser than the ~3.1 that INC-002 measured**, exactly the stress the
+5-credit run was meant to apply.
+
+Streak under three orderings:
+
+| Ordering | max loss run |
+|---|---|
+| settle order (= file order = stable `OrderBy` order) — **the truthful one** | **18** |
+| shuffled within each timestamp group, seed 1 / 2 / 3 | 15 / 17 / 14 |
+
+**Conclusion: the amplification mechanism is dead.** INC-002 *multiplied* the streak (12 → 36) because
+duplicate records landed adjacent; here reordering moves it by ±2–4 in **both directions and never
+upward**, which is the ordinary sampling noise of a max statistic, not an artifact.
+
+**The caveat, stated rather than buried:** the metric is **not order-independent among same-timestamp
+bets**, and at 9.41 bets per timestamp that is a real ±2–4 sensitivity. It is honest today because
+the stable sort preserves settle order — *the correctness depends on `OrderBy`'s stability*, which
+nothing asserts. Worth a line in §40.8 rather than a code change.
+
+### B.6.5 Strategy behaviour at scale (check 6) — and what it does NOT tell us
+
+| Transition | Count |
+|---|---|
+| after a **loss**, bet **grew** | 52,353 |
+| after a **loss**, bet **reset to base** | **0** |
+| after a **win**, bet **reset to base** | 52,695 |
+| after a **win**, bet **grew** | 0 |
+
+Every loss grew the bet and every win reset it, without a single exception in 105,049 bets. So over
+the whole run: **no `StopOnLoss` fired, no `StopOnProfit` fired, no §25.5 bankroll-limit reset, and
+no auto-recharge restart.** Max bet `2.55877137` = base × 2.27¹⁸, reached at bet #61,232 — the ladder
+ran its full 18-loss depth uninterrupted, which is *why* the max bet and the max streak agree.
+
+⚠️ **Therefore this run is NOT evidence about §A.3.1.** The tempting inference — "the developer
+re-entered DiceGame mid-run (§B.5.2), and no stop ever fired, so the stops were silently disarmed by
+the round-trip" — **does not hold**: with a base bet of `0.000001` a whole 18-deep ladder costs
+~4.6 SC on a 100 SC bankroll, so any plausible threshold was simply never reached. Unarmed and
+armed-but-unreachable leave an identical trace. §A.3.1 still needs its own targeted test.
+
+Totals: wagered **9.80150397 SC**, net **+1.10424103 SC**, balance `100.00 → 101.10` (range
+`98.456 … 101.104`).
+
+### B.6.6 Block pace, R2 and sim retention (check 8) — ✅ regulator on target; one telemetry gap
+
+`logs/difficulty_trace.csv`, 35 rows, blocks **113 … 147 contiguous**:
+
+| Metric | Value | Read |
+|---|---|---|
+| mean solvetime | **60,539 s** vs the 58,500 s target | **1.03× — the R2 regulator is on target.** P15.8's +6.6% is now +3.5% |
+| blocks over 2× target | 7 / 35 (20%) | normal — solvetimes are ≈exponential, `P(>2×mean) = e⁻² ≈ 13.5%` |
+| **sim retention** (`simSecConsumed/simSecOffered`) | **0.6304** | the engine retained 63% of offered sim-time — below 1.0, so the frame is partly saturated even in ordinary play (P15.8 measured 0.713) |
+| `configuredPower > 2× realizedPower` | 7 / 35 rows, never 3 consecutive | consistent with the R2-ASSERT tripwire not firing (§B.6.7) |
+
+**This is the baseline Part C needs.** Normal-play retention is **0.63**; if `BetsHistoryExplorer`
+really collapses 9000X to ~100X, retention there must be ≈0.011 — a **~57× drop**, which is an
+unmistakable signal rather than a judgement call. C.4 step 1 now has a number to compare against.
+
+⚠️ **Telemetry gap worth fixing separately:** the trace starts at block **113**, but the run's chain
+reached 147 and the developer never closed the app. Blocks 0–112 are simply absent, with **no
+`.csv.old`** beside it — so the file was truncated or recreated at some point and said nothing about
+it. The ND.10j stale-schema rotation exists precisely to avoid this shape; whatever path recreated
+this file bypassed it. *A trace that silently starts partway through looks exactly like a trace of a
+shorter run.*
+
+### B.6.7 The engine log (check 9) — ✅ clean, and that is the result
+
+`logs/godot.log`, 1,199 lines. The **only** warning in the entire run is Godot's own
+`Your video card drivers are known to have low quality OpenGL 3.3 support, switching to ANGLE.`
+
+Zero `GD.PrintErr`, zero exceptions, zero tripwires across 105,049 bets and 147 blocks —
+specifically including `AssertLossRunIsPlausible` (INC-002's guard, which would have fired above
+~32 at this n), the R2 `configuredPower > 2× realizedPower` 3-block assert, P15.9's out-of-band
+ballot clamp warning, and P15.10's `shortfall_dust`. Per D-15.34, a silent log is a measurement:
+**nothing in the engine noticed anything wrong during this run.**
+
+### B.6.8 Still open
+
+- **Check 5** — the exact-arithmetic replay. Unblocked and now **parameter-confirmed by the
+  developer** (§B.6.2 is correct), not yet run.
+- **Check 7** — the journal's *load* cost. Superseded by **Part D**, which turns it from an audit
+  check into a design change.
 
 ---
 
@@ -342,6 +550,18 @@ history is big, and it scales with the DEV time scale.
    `BetsHistoryExplorer` should approach what DiceGame shows at the same `DevTimeScale`.
 4. D-M2.7's cleanup regardless of the outcome.
 
+## C.4b ⚠️ The live `user://` world IS the reproduction case — do not wipe it
+
+The slowdown exists *because* the loaded history is large (§C.2's first suspect re-sorts 100k+
+records per event). On a freshly reset world with near-zero bets it would very likely disappear on its
+own — so a wipe before C.4's measurement would produce a green re-measurement that means nothing,
+and there would be no way to tell a real fix from an absent workload.
+
+Keep the live world until C.4 step 3 is signed off. Nothing on this branch forces a reset (Part A is
+in-memory statics, Part C is refresh cadence — no `WorldFormatVersion` bump). The §B.0 archive lives
+**outside** `app_userdata` and is unaffected either way; if a wipe ever becomes necessary
+mid-branch, copying the archive back into `app_userdata` restores the repro.
+
 ## C.5 Scope note
 
 `BetsHistoryExplorer` is already named on **Chapter 38's poll-migration backlog**. This is not that
@@ -353,18 +573,112 @@ take it; do not widen to the other ~18 scenes on that list.
 
 ---
 
+# Part D — a summary layer over the bet journal (developer proposal, 2026-08-07)
+
+> 🚫 **DEFERRED to its own plan — not built on this branch** (developer's call, 2026-08-07). It
+> touches persistence, the checkpoint contract and two UI scenes, which is materially larger than
+> Parts A/C, and unlike them it fixes an *optimisation* rather than an active annoyance. Kept here in
+> full so the next plan starts from a written design rather than memory; when it is picked up, move
+> this whole part across.
+>
+> **Note for whoever picks it up:** D-M2.13 overlaps Part C. If C's fix lands first (a local refresh
+> throttle), D later makes part of it unnecessary — that is fine and was decided knowingly.
+
+## D.1 The problem
+
+Every general figure the player sees about their betting life — total bets, net P/L, max bet, max
+consecutive losses — is computed by **scanning the whole journal**, which is why the journal must be
+fully loaded at boot. That is INC-001's root cause restated: at 105,049 bets it is 30 MB across 11
+chunks; the retention that shipped bounds what is **written**, not what is **read**.
+
+## D.2 The proposal
+
+1. **A persisted rollup**, O(1) in size, updated **incrementally as each bet settles** — the general
+   figures live in it directly instead of being re-derived.
+2. **The detail stays chunked and is loaded on demand**, the way blockchain data already is. The
+   chunks exist (`bet_history_NNNNNN.jsonl`); what is missing is an **index** so a consumer can load
+   only the chunk it needs.
+
+## D.3 Design notes
+
+**D-M2.10 — "max martingale level" is a BETTER metric than "max consecutive losses", and it is free.**
+This is the part of the proposal worth the most. INC-002 renamed the displayed figure precisely
+because it was **not** a ladder depth: insist resets, the §25.5 bankroll-limit reset and every
+auto-recharge put the bet back to base while the loss run kept counting. The metric the developer is
+asking for is the one originally intended — and it needs **no derivation at all**:
+`BaseBetSession.ProgressionTriggerStreak` already *is* the current ladder depth, maintained live.
+Recording its running maximum is exact, costs one comparison per bet, and is **immune to the
+tie-order sensitivity §B.6.4 measured**, because it is captured at settle time in true order rather
+than reconstructed from a sort. *Here the rollup is not a cache of a derived value — it is more
+correct than the derivation.*
+
+**D-M2.11 — v1 is GLOBAL: one rollup over the player's entire betting life** (developer's call,
+2026-08-07). No per-strategy epochs, no fingerprint, no segmentation — `BetsHistoryExplorer` shows
+lifetime totals and that is the whole v1 surface. The per-strategy breakdown becomes a **future
+scene** (§D.6), and the epoch key is designed *then*, against a real screen, rather than guessed now.
+*The one exception that must survive:* **max consecutive losses stays segmented by
+`(GameId, Chance)`** — that is INC-002/§40.8's correctness rule, not a presentation choice; a run at
+2% chance concatenated onto one at 50% describes neither. Max martingale level, max bet, totals and
+net P/L are all genuinely global figures and need no such guard.
+
+**D-M2.12 — a rollup is a persisted figure that can diverge from reality** (§39.16 rule 1 — the rule
+this project keeps re-learning). Two guards ship *with* it, not after: (a) the rollup must be exactly
+**recomputable** from the detail chunks, with a `[Conditional("DEBUG")]` pass that recomputes and
+compares; (b) it is **checkpoint-covered** like every other player-facing persisted value — rolled
+back to the last mined block on restart, or a crash leaves the summary ahead of the journal it
+summarises. *A summary that can silently disagree with its source is worse than the scan it replaced,
+because the scan could not lie.*
+
+**D-M2.13 — the chunk index is what actually fixes INC-001, and it also fixes Part C.** Per chunk:
+first/last `TimestampUtc` and record count. With it, `BetsHistoryExplorer` binary-searches to the
+chunk covering a date and loads that one — which removes `EnsureFullHistoryLoaded()` from the boot
+path **and** removes the 100k-record re-sort that §C.2 fingers as a frame-eater. Parts C and D
+converge here: if D lands first, part of C's fix comes free; if C lands first, it is a local
+throttle that D later makes unnecessary. Worth deciding the order deliberately.
+
+## D.4 Open questions
+
+- Does the rollup live in `UserStatsService` (which already owns lifetime stats and self-persists per
+  bet) or in a new file beside the journal? The former is less surface; the latter separates "stats I
+  display" from "index over storage".
+- Retention: do old chunks eventually get pruned, or kept forever? The proposal implies "kept, loaded
+  on demand" — that bounds the *read*, not the disk.
+
+## D.5 What this does NOT change
+
+The bet journal keeps recording **every** bet. The rollup is an accelerator, never a replacement:
+the moment a summary is the only copy of a fact, no audit like §B.6 is possible again.
+
+## D.6 Planned, not built — the per-strategy statistics scene
+
+A future scene where the player picks a **strategy** and sees that strategy's own figures (max
+martingale level, max bet, bets, net P/L, streaks). This is where the epoch key of D-M2.11 gets
+designed, because that is the first screen that actually needs one.
+
+Two things to carry forward when it is built: the fingerprint must cover everything that changes what
+a *level means* (base bet, both progression percents, both stop amounts, both Insist switches), and
+whether it is stored **per record** or only per summary decides whether the history can ever be
+re-segmented after the fact. Both decisions are cheaper to make with the screen in front of you.
+
+---
+
 ## Order of work
 
 1. ~~**B.0 — archive the run.**~~ ✅ done 2026-08-07, before the branch exists.
-2. **A.3 — the general review**, in play, filling the table's Verdict column.
-3. **A.4** — implement D-M2.1 + D-M2.2 (+ the guard rail).
-4. **C.4 step 1** — instrument the throttle *before* touching `BetsHistoryExplorer` (D-M2.4).
-5. **C.4 steps 2–4** — fix what the measurement indicts, re-measure, then D-M2.7's cleanup.
-6. `dotnet build` clean; developer runs A.5 and C.4's re-measurement.
-7. **B.1–B.3** — the audit, against the archive. Last, because it needs no build and its §B.5
-   answers may arrive at any point.
-8. Docs in the same branch: ProjectDesignManual §24.11 (Part A) + §38.8 (Part C), B.6/C.6 findings
+2. ~~**A.3 — the general review**~~ ✅ done in play 2026-08-07; three refinements folded in
+   (§A.3.1–§A.3.4).
+3. **Trace §A.3.1** — name the path that reaches a running session's stops, *before* writing any
+   fix. It is the one confirmed observation with no verified mechanism behind it.
+4. **A.4** — implement D-M2.1 + D-M2.2 + D-M2.8 + D-M2.9 (+ the guard rail).
+5. **C.4 step 1** — instrument the throttle *before* touching `BetsHistoryExplorer` (D-M2.4).
+6. **C.4 steps 2–4** — fix what the measurement indicts, re-measure, then D-M2.7's cleanup.
+7. `dotnet build` clean; developer runs A.5 and C.4's re-measurement.
+8. **Part B check 5** — the exact-arithmetic replay against the archive. Pure analysis, no build,
+   no developer input; everything else in Part B is already measured (§B.6).
+9. Docs in the same branch: ProjectDesignManual §24.11 (Part A) + §38.8 (Part C), B.6/C.6 findings
    here, CLAUDE.md only where an architectural rule actually changes.
+
+**Not on this branch:** Part D (see its banner) and the §D.6 per-strategy statistics scene.
 
 ## Out of scope
 
