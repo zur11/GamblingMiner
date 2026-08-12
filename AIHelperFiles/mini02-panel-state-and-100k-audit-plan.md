@@ -3,8 +3,9 @@
 **Series note:** second entry of the *mini-plan* series (`miniNN-…-plan.md`), following
 `mini01-split-stop-conditions-plan.md`.
 
-**Status:** 🔨 **IN PROGRESS.** Scope is **Part A + Part C**, plus finishing Part B's check 5 as
-analysis. **Part D is DEFERRED to its own plan** (developer's call, 2026-08-07) — it is written up
+**Status:** ✅ **Parts A, B and C COMPLETE** (2026-08-07) — A and C implemented, verified in play and
+committed; B fully measured, every check clean, the engine reproduced bet-for-bet. Scope was
+**Part A + Part C** plus Part B as analysis. **Part D is DEFERRED to its own plan** (developer's call, 2026-08-07) — it is written up
 in full below so nothing is re-derived when it is picked up. Part A reviewed in play and decided
 (§A.3.1–§A.3.4). Part B: archive **done**, **checks 1/2/3/6/8/9 measured, all clean** (§B.6) — the
 reported max streak of 18 is confirmed real. ·
@@ -543,10 +544,52 @@ specifically including `AssertLossRunIsPlausible` (INC-002's guard, which would 
 ballot clamp warning, and P15.10's `shortfall_dust`. Per D-15.34, a silent log is a measurement:
 **nothing in the engine noticed anything wrong during this run.**
 
-### B.6.8 Still open
+### B.6.8 Engine arithmetic replay (check 5) — ✅ EXACT, 105,049/105,049
 
-- **Check 5** — the exact-arithmetic replay. Unblocked and now **parameter-confirmed by the
-  developer** (§B.6.2 is correct), not yet run.
+Replayed with a throwaway `dotnet run` console project against the archive (the prescribed tool: C#
+`decimal` is the only faithful model — `Money.Normalize` = `Math.Round(v, 8, MidpointRounding.ToZero)`,
+`CalculateMultiplier` = `Round(100×RTP/chance, 4)`, and `BetService`'s `_pendingFractionalProfit`
+carry). Parameters: base bet `0.000001`, `IncreaseOnLossPercent = 127`, no win-side percent — derived
+from the data and **confirmed correct by the developer**.
+
+| Check | Result |
+|---|---|
+| Multiplier | **105,049 / 105,049** exact |
+| Credited profit (incl. remainder carry) | **105,049 / 105,049** exact, to the satoshi |
+| Bet ladder | **105,049 / 105,049** exact |
+| Balance continuity | **105,048 / 105,048** exact |
+
+Two facts fall out of *how* it reproduced, neither of which is recorded anywhere else:
+
+- **A SINGLE continuous remainder carry reproduced all 105,049 bets.** `BetService` is constructed
+  once per `StartPlayerAutobet`, so an unbroken carry proves the session was **never restarted** —
+  independently confirming the developer's "one continuous autobet" answer, from a quantity nothing
+  persists. (The same cross-validation trick as mini-plan 01 round 3, used here to confirm rather than
+  to locate.)
+- **Ladder resets to base following a LOSS: 0.** The ladder reset *only* on wins, across the whole
+  run — so no stop fired, no insist reset ran, and no auto-recharge occurred, **ever**. This is the
+  rigorous version of §B.6.5's claim, and it is what makes the §A.3.1a reconciliation solid rather
+  than merely plausible: the stops were unreachable, not disarmed.
+
+Consistency: max ladder depth **18** (= the reported max streak, matching §B.6.2's independent
+recount), max bet **2.55877137 SC** — exactly `0.000001 × 2.27¹⁸`.
+
+#### B.6.8a — The first run failed, and the bug was in the AUDIT
+
+The replay initially reported ~63k ladder mismatches and ~93k balance breaks. The cause was
+`List<T>.Sort` — **introsort, which is not stable** — applied to records of which ~3 share every
+timestamp. It shuffled colliding bets into an arbitrary order and destroyed the very sequence under
+test. **This is INC-002's mechanism met from the other side**: there a stable sort concentrated
+duplicates and inflated a streak; here an unstable sort scrambled clean data into apparent
+corruption.
+
+The journal's **file order is the settle order** and is chronologically non-decreasing (now asserted
+by the replay rather than assumed). Two things follow: *verify an ordering, never impose one* — and,
+usefully, this independently validates the Part C assumption that new records append in chronological
+order, which is what makes `TryAppendNewRecords` safe.
+
+### B.6.9 Closed / superseded
+
 - **Check 7** — the journal's *load* cost. Superseded by **Part D**, which turns it from an audit
   check into a design change.
 
