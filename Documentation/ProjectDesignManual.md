@@ -2789,10 +2789,30 @@ Locked: bet amount (and its MAX/MIN/X2/÷2 helpers), both progression percents, 
 
 **And auto-recharge left the saved-strategy format entirely** (developer's call, 2026-08-07 — completing an intent the code had already half-expressed). `SavedBettingStrategy` stored an `AutoRechargeEnabled`, but `OnLoadStrategyPressed` immediately overwrote it with `SyncPlayerAutoRechargeToggleFromService()` — a stored value that was deliberately never honoured. It is **not a property of a betting strategy**: it decides what happens to the player's money when a run runs out, which is the same answer whichever strategy is loaded. The field is removed from the model, the save call and the repository clone; a load now carries the current value through unchanged. **Everything else is still saved, `StopOnBlockMined` included**, and a shared strategy stays safe on a bot because the mandatory overrides (both Insists forced ON, `StopOnBlockMined` forced off) are applied at `BuildBotStrategyConfig`, not stored. Old files carrying the removed property ignore it on load — personal file, no migration (D-M1.5's precedent). The setting now changes through exactly two direct player actions: the **Bankroll Programmer** (always available — that scene's toggle is never disabled) and the **DiceGame panel toggle** (only while no session is running). *A value that is stored but always overridden is not a feature with a safeguard — it is a field pretending to matter.*
 
+#### 24.13c — The PAUSE button had been dead for seven weeks (2026-08-07)
+
+Reported by the developer while confirming §24.13b, and it is the sharpest instance of this chapter's theme: **the other controls lied about a value; this one lied about an action.**
+
+**Dated by archaeology, not by memory.** `git log -S` puts the break at **`0b0009d` (2026-06-22)**, "background-simulation-plan phase 1 micro-step 1c" — the change that made the player autobet *always* delegate to `SimulationService`. The pause handler itself was last edited `f11b35b` (2026-05-04). **Nothing touched it; the ground moved under it.** That is the signature of this whole family of defects, and it is why a "did anything change here?" review would never have found it.
+
+**Three layers, each independently fatal:**
+
+1. **The guard tested the wrong session.** `OnAutoPauseToggled` opened with `if (_session == null || !_session.IsRunning) return;` — `_session` is DiceGame's **local** session, which serves manual bets and which `OnAutoBetToggled` explicitly stops when delegating. During any background run it is not running, so the handler exited on its first line. The button was visible (`SetAutoRunning` shows it) and completely inert. **This alone explains "it does nothing".**
+2. **Past the guard there was nothing to pause.** The body stopped `_calendarTimeService.IsRunning` and `_autoBetTimer`, both belonging to the retired local path. While delegated, `SimulationService` is the sole owner of the calendar's run state and re-asserts it every frame — a DiceGame-side clock stop is undone on the next tick. The board-vote freeze's own comment already said exactly this.
+3. **Every consumer of `_isAutoPaused` was unreachable**, sitting inside `TickAutoBet`, which returns at its own wrong-session guard.
+
+**And `SimulationService` had no pause concept at all** — its only freeze was `_pausedForBoardVote`, private to the board-vote mechanism.
+
+**The fix — one gate, two reasons.** `SimulationService` gains a public `IsPaused` / `SetPaused(bool)`, and the per-frame freeze test becomes `NetworkRoot.IsAwaitingPlayerVote || IsPaused`. The board-vote flag was renamed `_calendarFrozenBySim` and now means "**this service** froze the clock", for either reason. That composition is the load-bearing part: with two independent booleans each restoring `IsRunning` on their own edge, **resuming a player pause during an open board vote would have thawed a clock the vote was still holding.** One flag, an OR'd gate, and the clock thaws only when *every* reason has cleared. A paused run stays `IsRunning` — it still owns the clock and its session and config are intact — it simply performs no work: no bets, no bots, no founder or scheduled mining, calendar pinned.
+
+`IsPaused` is deliberately **not persisted**, and is cleared by both `StartPlayerAutobet` and `ClearRunningState`, so a pause can never survive into a different run or outlive the service's own stop. DiceGame's handler now targets `_simulationService`, and `BindToRunningBackgroundAutobet` reads the pause state **back from the service** on scene entry — the same D-M2.2 rule as the strategy fields, since `SetAutoRunning` resets the button caption to "PAUSE" and would otherwise show a paused run as running.
+
+**The rule this adds to the three below:** *when a responsibility moves to a new owner, the controls that drove the old one do not fail loudly — they keep compiling, keep rendering, and quietly stop meaning anything.* Delegation moved the run; the pause button was left pointing at the empty seat.
+
 **Three rules this section adds:**
 1. **A scene is a view; state that outlives the view must not live in it.** The `static` fields already in the file were the precedent — the question to ask of any scene field is "what happens to this on the next navigation?"
 2. **A partially-masked failure reads as a specific one.** Two paths repainting four of eleven fields turned "the panel is wiped" into "the percents disappear", and the first diagnosis followed the symptom instead of the mechanism.
-3. **"Enabled" is a claim — verify a control still does something before leaving it live.** The lock and the half-live auto-recharge fix are the same question asked in both directions.
+3. **"Enabled" is a claim — verify a control still does something before leaving it live.** The lock, the half-live auto-recharge fix and the dead PAUSE button are the same question asked three ways. Every one of them was a control that rendered, accepted clicks, and reached nothing.
 
 ## Chapter 25 — Bankroll Management: Progression Resets, the two Insist switches, and Auto-Recharge
 

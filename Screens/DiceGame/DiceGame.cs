@@ -1119,30 +1119,25 @@ public partial class DiceGame : Control, IBetEventSource
 		RefreshCalculatorFromGameSettings();
 	}
 
+	// The PAUSE button. This used to guard on `_session` — DiceGame's LOCAL session, which serves manual
+	// bets and is inert while the autobet is delegated — so the handler returned on its first line for
+	// every background run and the button did nothing at all (dead since delegation landed 2026-06-22;
+	// see ProjectDesignManual §24.13c). It now targets the run that actually exists.
+	//
+	// The freeze itself belongs to SimulationService, not here: while delegated that service is the sole
+	// owner of CalendarTimeService.IsRunning and re-asserts it every frame, so a DiceGame-side clock stop
+	// would be undone on the next tick. `_isAutoPaused` is still maintained for the local autobet path.
 	private void OnAutoPauseToggled(bool paused)
 	{
-		if (_session == null || !_session.IsRunning)
+		if (_simulationService == null || !_simulationService.IsRunning)
 			return;
 
 		_isAutoPaused = paused;
+		_simulationService.SetPaused(paused);
 		_strategyPanel.SetAutoPaused(paused);
-
-		if (paused)
-		{
-			if (_calendarTimeService != null)
-			{
-				_calendarTimeService.IsRunning = false;
-			}
-			_autoBetTimer.Stop();
-			_resultValue.Text = $"Auto paused | {GetAutoBetApsText()}";
-			return;
-		}
-
-		if (_calendarTimeService != null)
-		{
-			_calendarTimeService.IsRunning = true;
-		}
-		_resultValue.Text = $"Auto resumed | {GetAutoBetApsText()}";
+		_resultValue.Text = paused
+			? $"Auto paused | {GetAutoBetApsText()}"
+			: $"Auto resumed | {GetAutoBetApsText()}";
 	}
 
 	// ── Background autobet (SimulationService) integration ──────────────────────
@@ -1271,7 +1266,12 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 		_strategyPanel.SetManualEnabled(false);
 		_strategyPanel.SetAutoRunning(true);
-		_strategyPanel.SetAutoPaused(false);
+		// Re-entering while the background run is PAUSED must show it paused — SetAutoRunning resets the
+		// button to "PAUSE", so the real state has to be read back from the service (the same D-M2.2 rule
+		// as the strategy fields: while a session exists, the session is the truth).
+		bool paused = _simulationService?.IsPaused == true;
+		_isAutoPaused = paused;
+		_strategyPanel.SetAutoPaused(paused);
 		// The scene was rebuilt on entry with every control back at its enabled default, so the run lock
 		// has to be re-asserted here — this is exactly where it was missing.
 		ApplyRunLock(true);
