@@ -9,7 +9,7 @@ in full below so nothing is re-derived when it is picked up. Part A reviewed in 
 (§A.3.1–§A.3.4). Part B: archive **done**, **checks 1/2/3/6/8/9 measured, all clean** (§B.6) — the
 reported max streak of 18 is confirmed real. ·
 **Branch:** `strategy-panel-state-and-100k-audit` · **World format bump:** none ·
-**Design record (proposed):** `Documentation/ProjectDesignManual.md` new §24.11 (Part A) and a new
+**Design record (proposed):** `Documentation/ProjectDesignManual.md` new §24.13 (Part A — §24.11 was already taken by the timestamp-collision entry) and a new
 §38.8 (Part C — it is another instance of §38.7's inverse failure); Part B's findings land in this
 plan's §B.6, and in `Documentation/INCIDENT_LOG.md` **only** if it turns up a real corruption.
 
@@ -118,23 +118,45 @@ all. The three flags live in **different places** at run time:
   strategy after a scene round-trip, and until that path is named this is an unexplained
   observation, not a diagnosis.
 
-**Trace this before writing any fix.** Candidate paths, in order of suspicion:
+### A.3.1a — Trace result (2026-08-07): the stops CANNOT lose their behaviour mid-run
 
-1. `OnStrategyConfigChanged` (`DiceGame.cs:665`) stops a running **local** `_session` on any panel
-   change — check whether it can fire during or just after `_Ready` despite the
-   `_loadingNodeStrategy` guard (`ClearStrategySettings` does *not* raise the event today, but
-   `ApplyStrategySettings` does, and the guard is only held inside `LoadActiveNodeStrategySnapshot`).
-2. **DiceGame's LOCAL session reads `StopOnBlockMined` live off the panel** — `DiceGame.cs:1489` and
-   `:1846` both call `_strategyPanel.StopOnBlockMinedEnabled` — while the delegated session reads it
-   from `_config`. **The same flag has two different sources depending on which session owns the
-   run**, and they disagree exactly when the panel is blank. Whichever way the stops turn out, this
-   is a defect on its own: a run's parameters must come from one place.
-3. An auto-recharge restart (`TryPlayerAutoRechargeAndRestart`) rebuilding the session — it reuses
-   `_config.Strategy`, so it should be safe, but confirm rather than assume.
+Traced before writing any fix, per the work order. **The reported behaviour loss is not reproducible
+from the code, and the most likely explanation is a misattribution — an honest one.**
+
+- **The player autobet is ALWAYS delegated.** `OnAutoBetToggled` calls
+  `_simulationService.StartPlayerAutobet(...)` (`DiceGame.cs:1053`) unconditionally; DiceGame's local
+  `_session` serves **manual** bets only and is inert while delegated.
+- `SimulationService` captures `_config.Strategy` once at start and constructs the session from it
+  (`:667`). **Nothing re-pushes it** — not `OnSimBetSettled`, not `BindToRunningBackgroundAutobet`,
+  not the auto-recharge restart (which reuses the same `_config.Strategy`). So a blanked panel cannot
+  reach a running session's `StopOnProfit`/`StopOnLoss` any more than it can reach its
+  `StopOnBlockMined`.
+- Candidate 1 (`OnStrategyConfigChanged` firing through the `_loadingNodeStrategy` guard) does not
+  apply either: `ClearStrategySettings` deliberately does **not** raise `StrategyConfigChanged`, and
+  the one path that does is held under the guard.
+
+**The reconciliation — and §B.6.5 supplies it.** In 105,049 bets of the audited run, **no stop ever
+fired**: every loss grew the bet, every win reset it, without exception. With base bet `0.000001` a
+full 18-deep ladder costs ~4.6 SC against a 100 SC bankroll, so any plausible threshold was simply
+never reachable. The stops were therefore *never observed firing* — before or after a scene change —
+and a blank panel makes "they stopped working" the natural reading. **Unarmed, unreachable, and
+silently-disarmed all look identical from the outside.**
+
+**What was genuinely broken here, and is now fixed:** the **manual** bet path read
+`StopOnBlockMined` live off the panel (`DiceGame.cs:1489`, `:1846`) while the delegated path read it
+from `_config` — **the same flag with two sources**, disagreeing exactly when a round-trip had
+blanked the panel. That is a real defect, independent of how the stops question resolves.
 
 **D-M2.8 — a running session's parameters come from the session, never from the panel.** The panel
-is an *editor* for the next run, not a live control surface for the current one. Every read of
-`_strategyPanel.*` inside a running-session code path is a bug candidate under this rule.
+is an *editor* for the next run, not a live control surface for the current one. Applied to both
+sites above via the new `BaseBetSession.SessionConfig`. After this change **no panel field can reach
+a running session at all**, so if the reported stop behaviour was real, its last possible mechanism
+is closed too.
+
+*To settle it definitively rather than by elimination:* set `StopOnLoss` to a value the ladder
+actually reaches (with base `0.000001`, something under ~1 SC), start an autobet, confirm it fires,
+leave to BlockExplorer and return, and confirm it still fires. That is the one test the 100k run
+could not perform.
 
 ### A.3.2 — The ready dots lie, and they are the only readout left
 
@@ -216,6 +238,68 @@ outcomes, and it is what happens today.
 - Return to DiceGame and immediately press AUTO without touching anything ⇒ the run uses the
   configured progression, not flat betting.
 - Auto Recharge still mirrors `BankrollProgramService` (the §25.8 proxy must not regress).
+
+## A.6 The run lock — D-M2.14 (2026-08-07, developer-reported during A.5)
+
+Reported as "the Insist On Profit toggle is not disabled while an autobet session is active, and it
+seems to happen after leaving DiceGame and re-entering". The review it prompted found the problem is
+**general, and is the direct consequence of D-M2.8**: once no panel field can reach a running
+session, every configuration control left enabled during a run is a **lie** — clickable, and inert.
+
+The panel had **no concept of a run in progress at all**. The only run-aware disabling anywhere was
+`SetManualEnabled` / `SetBettingControlsEnabled` (the two bet buttons) and the node selector. The
+Insist toggles merely *looked* correct before, because a blanked panel has no stop amount and
+`UpdateInsistToggleAvailability` greys a toggle whose amount is empty — so D-M2.2's hydration, by
+restoring the amounts, revealed a gap that had been masked by a different bug.
+
+**D-M2.14 — while a player session runs, every control whose value the session CAPTURED is locked;
+controls the session RE-READS stay live.** The split is the whole point — a blanket lock would be as
+untruthful as no lock, in the other direction.
+
+| Locked during a run | Left enabled |
+|---|---|
+| Bet amount + MAX / MIN / X2 / ÷2 | **Hardware / APS** — `SimulationService.HardwareRate` reads the allocation fresh each use |
+| Increase on loss %, Increase on win % | AUTO/STOP, PAUSE — they control the run, not its configuration |
+| Number of bets (becomes a live readout) | Save strategy — records what is on screen, which during a run *is* what is running |
+| Stop on profit, Stop on loss | |
+| Stop Block, Insist On Profit, Insist On Loss | |
+| Winning chance, HIGH/LOW | |
+| **Load** strategy — would rewrite the panel without touching the session | |
+| **Auto Recharge** — see below | |
+
+**Auto Recharge is locked too** (developer's call after verifying A.5). It was initially left enabled
+as the one genuinely live control, but it is only a **proxy** to
+`BankrollProgramService.AutoRechargeEnabled`, whose canonical home is the Bankroll Programmer (§25.8)
+— so locking it removes a mid-run *edit point*, not the capability. The result is a panel with one
+consistent meaning during a run: **it describes the run**, and account-level flags are changed from
+the account's own screen.
+
+This is also what turns A.6a from a tidy-up into a **load-bearing** fix: with the DiceGame proxy
+locked, a mid-run change necessarily arrives from the Bankroll Programmer, so the live service flag
+must be the *only* gate — the captured `_config.AutoRecharge` that used to sit in front of it would
+now silently ignore that screen entirely. *Removing an edit point raises the requirement on the
+remaining one.*
+
+Implementation: one writer per side — `StrategyControlPanel.SetRunLocked` for the panel's own
+controls, `DiceGame.ApplyRunLock` for the DiceGame-owned ones — called at **all four** transitions
+(start, manual stop, self-stop, and **re-binding on scene entry**, which is the one that was
+missing). The flag is **composed inside** `UpdateInsistToggle` / `ApplyStrategyModeRestrictions`
+rather than assigned alongside them, because those are already the single writers of their controls'
+`Disabled` state and a second writer would drift them apart.
+
+### A.6a — The half-live toggle found by asking "does this control still work?"
+
+Auditing which controls genuinely survive into a run turned up a real defect in the one being kept
+enabled. `TryPlayerAutoRechargeAndRestart` gated on **both** the captured `_config.AutoRecharge`
+**and** the live `BankrollProgramService.AutoRechargeEnabled`, so mid-run the toggle worked in one
+direction only: switching it **OFF** took effect, switching it back **ON** did not. §25.8 makes the
+service flag the single source of truth and CLAUDE.md already states "the service flag wins" — the
+captured copy contradicted both. The captured gate is removed; `_config.AutoRecharge` still records
+how the run was started but no longer decides anything. Bots are untouched
+(`TryRechargeAndRestartBot` keeps its own per-node flag).
+
+*The general rule: **before leaving a control enabled during a run, verify it still does something —
+"enabled" is a claim.** The lock and this fix are the same question asked in both directions.*
 
 ---
 
@@ -675,7 +759,7 @@ re-segmented after the fact. Both decisions are cheaper to make with the screen 
 7. `dotnet build` clean; developer runs A.5 and C.4's re-measurement.
 8. **Part B check 5** — the exact-arithmetic replay against the archive. Pure analysis, no build,
    no developer input; everything else in Part B is already measured (§B.6).
-9. Docs in the same branch: ProjectDesignManual §24.11 (Part A) + §38.8 (Part C), B.6/C.6 findings
+9. Docs in the same branch: ProjectDesignManual §24.13 (Part A — §24.11 was already taken by the timestamp-collision entry) + §38.8 (Part C), B.6/C.6 findings
    here, CLAUDE.md only where an architectural rule actually changes.
 
 **Not on this branch:** Part D (see its banner) and the §D.6 per-strategy statistics scene.

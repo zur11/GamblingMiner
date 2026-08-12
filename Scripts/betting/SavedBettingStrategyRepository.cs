@@ -163,7 +163,6 @@ namespace Scripts.Betting
 					InsistAfterStopOnLoss = strategy.Config?.InsistAfterStopOnLoss ?? false
 				},
 				NumberOfBets = Math.Max(0, strategy.NumberOfBets),
-				AutoRechargeEnabled = strategy.AutoRechargeEnabled,
 				WinningChance = Math.Clamp(strategy.WinningChance, 1, 95),
 				BetHigh = strategy.BetHigh,
 				BetsPerSecond = Math.Max(1, strategy.BetsPerSecond)

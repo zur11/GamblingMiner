@@ -633,11 +633,19 @@ public partial class SimulationService : Node
 	private bool TryPlayerAutoRechargeAndRestart()
 	{
 		if (_session == null || _config == null || _wallet == null || _betService == null) return false;
-		if (!_config.AutoRecharge) return false;
 		if (_session.LastStopReason != IBettingStrategy.StopReason.InsufficientBalance) return false;
 		if (_bankrollProgram == null || _principal == null) return false;
-		// SF.1.2 (D-SF.4): the service-level off-switch. When OFF, no auto top-up — the session stops and waits
-		// for a manual Bankroll recharge (today's InsufficientBalance path, now player-chosen).
+		// SF.1.2 (D-SF.4): the service-level off-switch, and since mini-plan 02 the ONLY gate. When OFF, no
+		// auto top-up — the session stops and waits for a manual Bankroll recharge.
+		//
+		// The captured `_config.AutoRecharge` used to be ANDed in front of this, which made the toggle
+		// half-live: turning it OFF mid-run worked (this check), turning it back ON did not (the captured
+		// false still blocked). §25.8 makes BankrollProgramService.AutoRechargeEnabled the single source of
+		// truth and CLAUDE.md already documented "the service flag wins" — the captured copy contradicted
+		// both. It is the one panel control deliberately left ENABLED during a run, so it has to actually
+		// work in both directions. (`_config.AutoRecharge` is still set by DiceGame and still describes how
+		// the run was started; it is simply no longer a gate. Bots are unaffected — TryRechargeAndRestartBot
+		// keeps its own per-node cfg.AutoRechargeEnabled.)
 		if (!_bankrollProgram.AutoRechargeEnabled) return false;
 
 		decimal amount = _bankrollProgram.AutoRechargeAmount > 0m

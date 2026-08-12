@@ -27,6 +27,11 @@ namespace UI.StrategyControlPanel
         // --- Flags ---
         private bool _internalUpdate = false;
 		private bool _botStrategyMode = false;
+		// True while a player autobet session is running. Every control whose value the session CAPTURED
+		// at start is locked for the duration: after D-M2.8 the panel cannot reach a running session, so
+		// an editable field would silently do nothing — the panel is an editor for the NEXT run.
+		// Controls the session re-reads LIVE (auto-recharge, hardware/APS) deliberately stay enabled.
+		private bool _runLocked = false;
 
 		// --- Nodos UI ---
 		[Export]
@@ -198,6 +203,57 @@ namespace UI.StrategyControlPanel
 		{
 			_botStrategyMode = enabled;
 			ApplyStrategyModeRestrictions();
+		}
+
+		// Locks/unlocks every control whose value is CAPTURED when a session starts (mini-plan 02, the
+		// companion to D-M2.8). Idempotent and safe to call on scene entry, on start, on stop and on
+		// re-binding to a background run.
+		//
+		// Deliberately NOT locked, because the running session re-reads them live:
+		//   • Auto Recharge — SimulationService.TryPlayerAutoRechargeAndRestart reads
+		//     BankrollProgramService.AutoRechargeEnabled on every recharge decision (§25.8).
+		//   • Hardware / APS — SimulationService.HardwareRate reads the allocation fresh each use, so
+		//     buying or moving hardware mid-run takes effect at once (that selector lives in DiceGame).
+		// Also unlocked: AUTO/STOP and PAUSE (they control the run rather than configure it).
+		public void SetRunLocked(bool locked)
+		{
+			_runLocked = locked;
+
+			SetEditable(_betAmountInput, !locked);
+			SetEditable(_increaseOnLossPercentInput, !locked);
+			SetEditable(_increaseOnWinPercentInput, !locked);
+			SetEditable(_numberOfBetsInput, !locked);
+			SetEditable(_stopOnProfitInput, !locked);
+			SetEditable(_stopOnLossInput, !locked);
+
+			// The bet-amount helpers write straight into the locked field, so they lock with it.
+			SetDisabled(_maxBetAmountBtn, locked);
+			SetDisabled(_minBetAmountBtn, locked);
+			SetDisabled(_x2BetAmountBtn, locked);
+			SetDisabled(_divBy2BetAmountBtn, locked);
+
+			// The toggles compose this flag with their own rules — single writer each.
+			ApplyStrategyModeRestrictions();
+		}
+
+		private static void SetEditable(LineEdit input, bool editable)
+		{
+			if (input == null)
+			{
+				return;
+			}
+
+			input.Editable = editable;
+			// An uneditable LineEdit still takes focus and looks live; dimming it says "not now".
+			input.Modulate = editable ? Colors.White : new Color(1f, 1f, 1f, 0.5f);
+		}
+
+		private static void SetDisabled(Button button, bool disabled)
+		{
+			if (button != null)
+			{
+				button.Disabled = disabled;
+			}
 		}
 
 		public void SetManualEnabled(bool enabled)
@@ -447,7 +503,9 @@ namespace UI.StrategyControlPanel
 					toggle.ButtonPressed = false;
 				}
 
-				toggle.Disabled = !hasStopAmount;
+				// _runLocked is composed here rather than assigned elsewhere: this method is the single
+				// writer of the toggle's pressed/disabled/text triple, and a second writer would drift.
+				toggle.Disabled = _runLocked || !hasStopAmount;
 			}
 
 			toggle.Text = toggle.ButtonPressed ? $"{label}: ON" : $"{label}: OFF";
@@ -462,7 +520,7 @@ namespace UI.StrategyControlPanel
 					_stopOnBlockMinedToggle.ButtonPressed = false;
 					_stopOnBlockMinedToggle.Text = "Stop Block: OFF";
 				}
-				_stopOnBlockMinedToggle.Disabled = _botStrategyMode;
+				_stopOnBlockMinedToggle.Disabled = _runLocked || _botStrategyMode;
 			}
 
 			if (_autoRechargeToggle != null)
@@ -472,7 +530,17 @@ namespace UI.StrategyControlPanel
 					_autoRechargeToggle.ButtonPressed = true;
 					_autoRechargeToggle.Text = "Auto Recharge: ON";
 				}
-				_autoRechargeToggle.Disabled = _botStrategyMode;
+				// Locked during a run too (developer's call, 2026-08-07). This toggle is only a PROXY to
+				// BankrollProgramService.AutoRechargeEnabled (§25.8), whose canonical home is the Bankroll
+				// Programmer — so locking it here removes a mid-run edit point, not the capability itself.
+				// That makes it consistent with every other control in this panel: during a run the panel
+				// describes the run, and the account-level flag is changed from the account's own screen.
+				//
+				// This is what makes A.6a load-bearing rather than tidy: with the DiceGame proxy locked, a
+				// mid-run change necessarily arrives from the Bankroll Programmer, so the live service flag
+				// MUST be the only gate in TryPlayerAutoRechargeAndRestart — the captured _config copy that
+				// used to sit in front of it would now silently ignore that screen entirely.
+				_autoRechargeToggle.Disabled = _runLocked || _botStrategyMode;
 			}
 
 			// Both stop amount fields stay editable in bot strategy mode: with insisting forced ON (below), a
