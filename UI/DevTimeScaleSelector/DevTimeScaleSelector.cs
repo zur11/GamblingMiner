@@ -36,6 +36,12 @@ namespace UI.DevTimeScaleSelector
 			_selector.Select(current < 0 ? 0 : current);
 			_selector.ItemSelected += OnScaleSelected;
 			AddChild(_selector);
+
+			// The retention readout belongs beside the control that causes the saturation: this selector is
+			// what asks for 90× the work, and Sim% is what says whether the engine is actually delivering it.
+			// It is also the only way the reading reaches DICEGAME, which renders its own balance labels and
+			// has no StatusBar to host it.
+			AddChild(new UI.SimRetentionReadout.SimRetentionReadout(18));
 		}
 
 		private void OnScaleSelected(long index)

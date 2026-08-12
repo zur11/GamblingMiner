@@ -4354,6 +4354,35 @@ Three lessons, all of which generalise:
 
 A second, independent fix shipped alongside it and is worth stating on its own, because it helps every wallet panel and every bot affordability check too: **`NetworkRoot.AggregateSpendable` now makes ONE pass over the UTXO set for the node's whole owned address set**, instead of calling `GetAddressSpendableBalance` once per address — each of which walked the *entire* UTXO set and rebuilt the pending-spent outpoint set. That is `O(addresses × utxos)` collapsed to `O(utxos)`, with an identical result by construction (an outpoint has exactly one address, so no double counting is possible). The casino, whose change rotation gives it the largest address book in the world, was the worst case and also the one the swap desk asked for on every bet.
 
+### 38.8 — The third failure: a cost paid for EXISTING, which no cadence work can reach (mini-plan 02, 2026-08-07)
+
+§38.1–38.6 are about polling where an event would do. §38.7 is its mirror — a correct event at a rate nobody re-checked. This is the **third** shape, and it is the one both of those instincts walk straight past: **work that is not triggered by anything at all.**
+
+**The report.** With the DEV time scale at 9000X, entering `BetsHistoryExplorer` collapsed the apparent game speed, recovering on leaving. The obvious suspect was that the scene writes `CalendarTimeService.SpeedMultiplier` — it does, in three places, and `SimulationService` is supposed to own that while delegated. The numbers cleared it: `_speedSteps[0]` is **100**, byte-identical to the base the sim itself sets, so the write is a no-op, and the `_Ready` write sits behind an `if (!_liveMode)` that a running autobet never satisfies. **Nothing was lowering the requested rate; the game had stopped keeping up with it** — §38.7's third lesson, arriving as a *symptom* this time rather than a diagnosis.
+
+**The instrument came before the fix.** `SimulationThrottle` existed but was observable only through `difficulty_trace.csv`, at one row per mined block — far too coarse to attribute a slowdown to the screen you are standing on. A small `SimRetentionReadout` (`Sim: NN%`, hidden unless a sim is running, amber below 90%) now renders in **`StatusBar`** and in **`DevTimeScaleSelector`** — the latter because **DiceGame has no StatusBar at all**, it draws its own balance labels, so the reading was invisible in the single scene that mattered most. Hosting it beside the time-scale dropdown also puts the *demand* and the *delivery* side by side.
+
+**Measured, and it kept redirecting the work:**
+
+| Configuration | Retention at 9000X |
+|---|---|
+| BetsHistoryExplorer, before | **15–18%** |
+| + incremental append instead of re-sorting the whole history per event | 40–80%, peaks 98%, dips 20% |
+| + 1 s real-time refresh, skip-unchanged-window guard | 50–70%, dips 18% |
+| + entry count 260 → 50 (experiment) | **~100%** |
+| **entry count 260 → 100 (shipped), both scenes** | **>80% in DiceGame *and* BetsHistoryExplorer** |
+
+Two real defects were fixed on the way, both squarely in this chapter's existing vocabulary: `OnLiveStatsChanged` re-sorted and re-materialised the **entire** ~105k-record history on every `StatsChanged` — four times a second, §38.7 verbatim — and the view rebuild was cadenced **in game seconds**, a quantity the DEV time scale multiplies by 90, so at 9000X it repopulated two containers *every frame*. **A refresh cadence must be denominated in real time; game time is a quantity the player can accelerate.**
+
+**But neither was the whole cost, and the leftover is the point of this section.** After both fixes the scene still sat at 50–70%, with the *shape* of the residual giving it away: 98% between rebuilds and 20% on them said the steady cost was gone and a spike remained — yet DiceGame, which never bulk-rebuilds (its list grows one entry at a time through a ring buffer), independently measured **70–80%**. The common factor was simply **~520 pooled entry nodes on screen**. Godot lays out and draws them whether or not a single value changed. **No event migration, no coalescing, no dirty flag can reach that cost — only showing fewer rows can.** Confirmed by single-variable experiment (50 entries ⇒ ~100%) before anything was changed permanently, which is also what killed the tempting wrong fix: an in-place-update refactor of the two shared containers would have been a large change aimed at the half of the cost that had already stopped mattering.
+
+**Two consequences worth carrying:**
+
+1. **A retention figure measured while a heavy screen is open is a property of that screen, not of the engine.** The mini-plan-02 audit's "ordinary play retains **0.63**" came from a 105k-bet run spent largely in DiceGame with a full history list displayed; a substantial part of that gap is entry draw cost. It is restated in that plan and **must not be quoted as an engine baseline**. P15.8's 0.713 predates the instrument and is open to the same doubt.
+2. **§38.5's backlog is about update cadence. This is not on it and would not be fixed by it.** Keep the two ideas separate: *migrating a poll cannot fix a cost that is paid by existing.*
+
+**Where it landed.** `BetHistoryContainer.MaxRecentEntries` and `PreviousWinnerNumbersGrid.MaxRecentEntries` are **100** (the constants size the pools as well as the display cap, so the nodes genuinely disappear rather than merely hiding), matched by `BetsHistoryExplorer.MaxPreviewEntries`. The two containers are always rendered together and must be sized together, or the cheaper one's saving is invisible. The remaining <20% is accepted: the difference is imperceptible in play, and 9000X is a DEV-only setting.
+
 ---
 
 ## Chapter 39 — The Central Bank (FED): The Two-Layer Debt Architecture (Step 15 P15.1)

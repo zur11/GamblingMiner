@@ -65,6 +65,11 @@ namespace UI.StatusBar
 			}
 #pragma warning restore CS0162
 
+			// LEFTMOST, beside the DEV watermarks: a diagnostic rather than a player figure, and appending it
+			// on the right left it off-screen in the scenes whose bar already overflows. It hides itself
+			// unless a sim is running, so it costs nothing visually in normal play.
+			AddChild(new UI.SimRetentionReadout.SimRetentionReadout());
+
 			_mainBalanceLabel = BuildLabel();
 			_bankrollLabel = BuildLabel();
 			_btcBalanceLabel = BuildLabel();

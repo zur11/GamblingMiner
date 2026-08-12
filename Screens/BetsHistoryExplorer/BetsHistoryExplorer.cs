@@ -9,7 +9,11 @@ using UI.StatusBar;
 
 public partial class BetsHistoryExplorer : Control
 {
-	private const int MaxPreviewEntries = 260;
+	// 260 → 100 (mini-plan 02 §C.6a). The experiment at 50 confirmed the residual frame cost is the DRAW
+	// cost of the visible entry nodes (retention 50–70% at 260, ~100% at 50); 100 is the developer's
+	// chosen point on that trade, matched to BetHistoryContainer.MaxRecentEntries so this scene never
+	// asks for more rows than the containers can show.
+	private const int MaxPreviewEntries = 100;
 
 	private Label _selectedTimeLabel;
 	private Label _summaryLabel;
@@ -32,6 +36,18 @@ public partial class BetsHistoryExplorer : Control
 	private readonly double[] _speedSteps = { 100d, 200d, 400d, 1000d };
 	private List<BetRecord> _sortedRecords = new();
 	private long _lastRenderedSecond = long.MinValue;
+	// Real-time floor between historical-view rebuilds — see the note in _Process.
+	//
+	// A rebuild is a SPIKE, not steady load: it repopulates two pooled UI containers with up to
+	// MaxPreviewEntries rows each (~520 entry updates plus a like number of allocations). At 0.25 s the
+	// measured retention swung between 20% on rebuild frames and 98% between them — the average is set by
+	// how OFTEN the spike lands, so frequency is the direct lever. 1 Hz is still far more than the eye
+	// needs from a history browser, and is independent of the DEV time scale by construction.
+	private const double ViewRefreshIntervalSeconds = 1.0;
+	private double _viewRefreshTimer;
+	// The index of the last record rendered into the preview. When the visible window has not moved there
+	// is nothing to rebuild — cheap, and it makes an idle/paused/time-travel view cost nothing at all.
+	private int _lastRenderedEndExclusive = -1;
 	private int _summaryCursor;
 	private int _summaryTotalBets;
 	private decimal _summaryMaxBetAmount;
@@ -107,13 +123,69 @@ public partial class BetsHistoryExplorer : Control
 			_userStatsService.StatsChanged -= OnLiveStatsChanged;
 	}
 
+	// StatsChanged fires at its own 250 ms throttle — a cadence sized for a cheap UI refresh. This handler
+	// used to re-sort and re-materialise the ENTIRE loaded history on every one of them: at the ~105k
+	// records of a long run that is an O(n log n) sort plus a fresh 105k-element list, four times a second,
+	// on the main thread. Measured cost: sim retention fell from 100% to 15–18% purely by standing in this
+	// scene (mini-plan 02 §C.6) — the §38.7 inverse failure, a correct event whose real rate nobody
+	// re-checked against the work behind it.
+	//
+	// New bets are appended in chronological order (game time is non-decreasing, and every bet is
+	// registered through OnBetExecutedRegisterBet), so the sorted view can be extended with just the tail
+	// instead of rebuilt: O(new bets) per event rather than O(all bets). The full rebuild survives as the
+	// fallback for the cases where that premise does not hold — a shorter list (checkpoint rollback), a
+	// changed head (history reload), or an out-of-order tail — so a wrong assumption costs a rebuild, never
+	// a wrong view.
 	private void OnLiveStatsChanged(UserBettingStats _)
 	{
 		if (_userStatsService?.BetHistory == null) return;
-		_sortedRecords = _userStatsService.BetHistory.Records
-			.OrderBy(r => r.TimestampUtc)
-			.ToList();
+
+		System.Collections.Generic.IReadOnlyList<BetRecord> source = _userStatsService.BetHistory.Records;
+		if (!TryAppendNewRecords(source))
+		{
+			_sortedRecords = source.OrderBy(r => r.TimestampUtc).ToList();
+			// The list was REPLACED, so an index that happens to match the last one no longer describes
+			// the same window — invalidate the skip-guard rather than trust the number.
+			_lastRenderedEndExclusive = -1;
+		}
+
 		_lastRenderedSecond = long.MinValue;
+	}
+
+	// Returns false when the incremental path cannot be trusted and the caller must rebuild.
+	private bool TryAppendNewRecords(System.Collections.Generic.IReadOnlyList<BetRecord> source)
+	{
+		int known = _sortedRecords.Count;
+		if (known == 0 || source.Count < known)
+		{
+			return false;
+		}
+
+		// Cheap identity check that the list we grew from is still the same one (a reload replaces it).
+		if (!ReferenceEquals(source[0], _sortedRecords[0]))
+		{
+			return false;
+		}
+
+		if (source.Count == known)
+		{
+			return true;
+		}
+
+		DateTime last = _sortedRecords[known - 1].TimestampUtc;
+		for (int i = known; i < source.Count; i++)
+		{
+			BetRecord record = source[i];
+			if (record.TimestampUtc < last)
+			{
+				return false; // not append-ordered after all — fall back rather than render a wrong order
+			}
+
+			last = record.TimestampUtc;
+			_sortedRecords.Add(record);
+		}
+
+		return true;
 	}
 
 	public override void _Process(double delta)
@@ -138,12 +210,26 @@ public partial class BetsHistoryExplorer : Control
 			return;
 		}
 
+		// The rebuild below repopulates TWO UI containers with up to MaxPreviewEntries rows each and
+		// re-walks the summary cursor. Its cadence used to be "whenever the GAME second changes", which is
+		// a cadence the DEV time scale multiplies: at 9000X the game second changes every frame, so this
+		// ran ~520 entry updates per frame. A refresh cadence must be denominated in REAL time — game time
+		// is a quantity the player can accelerate by 90×, and any per-game-second budget accelerates with
+		// it. Both guards are kept: the timer bounds how often, the second-changed test avoids redundant
+		// identical rebuilds when the clock is slow or stopped.
+		_viewRefreshTimer += delta;
+		if (_viewRefreshTimer < ViewRefreshIntervalSeconds)
+		{
+			return;
+		}
+
 		long currentSecond = new DateTimeOffset(current).ToUnixTimeSeconds();
 		if (currentSecond == _lastRenderedSecond)
 		{
 			return;
 		}
 
+		_viewRefreshTimer = 0d;
 		_lastRenderedSecond = currentSecond;
 		RefreshHistoricalViewForCurrentTime(current.ToUniversalTime());
 	}
@@ -197,10 +283,17 @@ public partial class BetsHistoryExplorer : Control
 		}
 
 		int endExclusive = UpperBound(_sortedRecords, currentUtc);
-		int start = Math.Max(0, endExclusive - MaxPreviewEntries);
-		List<BetRecord> preview = _sortedRecords.GetRange(start, endExclusive - start);
-		_previousWinnerNumbersGrid.LoadFromHistoricalRecords(preview);
-		_betHistoryContainer.LoadFromHistoricalRecords(preview);
+
+		// The summary still advances (its cursor is incremental and cheap), but repopulating the two
+		// containers with the identical window is pure waste — and it is the expensive half.
+		if (forceRebuild || endExclusive != _lastRenderedEndExclusive)
+		{
+			_lastRenderedEndExclusive = endExclusive;
+			int start = Math.Max(0, endExclusive - MaxPreviewEntries);
+			List<BetRecord> preview = _sortedRecords.GetRange(start, endExclusive - start);
+			_previousWinnerNumbersGrid.LoadFromHistoricalRecords(preview);
+			_betHistoryContainer.LoadFromHistoricalRecords(preview);
+		}
 
 		AdvanceSummaryTo(endExclusive, forceRebuild);
 		string streak = _summaryMaxLossRun > 0

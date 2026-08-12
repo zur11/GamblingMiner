@@ -6,7 +6,12 @@ using System.Linq;
 
 public partial class BetHistoryContainer : VBoxContainer
 {
-	public const int MaxRecentEntries = 260;
+	// 260 → 100 (mini-plan 02 §C.6a, 2026-08-07). This is the POOL size as well as the display cap, so it
+	// sets how many entry nodes Godot lays out and draws every frame — measured at ~20–30% of the whole
+	// simulation's frame budget at 260, in DiceGame and BetsHistoryExplorer alike. It is a cost paid for
+	// EXISTING, not for updating: no refresh-cadence work can reach it, only showing fewer rows can.
+	// The trade is scrollback depth in the live bet history.
+	public const int MaxRecentEntries = 100;
 	private DiceGame _game;
 	private BetHistoryItem[] _pool;
 	private int _poolIndex;

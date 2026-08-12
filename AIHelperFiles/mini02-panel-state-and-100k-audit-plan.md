@@ -627,8 +627,24 @@ history is big, and it scales with the DEV time scale.
 
 ## C.4 Work
 
-1. Instrument: read `SimulationThrottle` in both scenes and the trace's retention ratio. Record the
-   numbers in §C.6 whether or not they confirm the hypothesis.
+1. ✅ **Instrumented (2026-08-07).** `StatusBar` gained a **`Sim: NN%`** cell showing
+   `CalendarTimeService.SimulationThrottle` — the fraction of last frame's simulated time the bet
+   engine actually retained. It renders **only while a sim is running** (the value is a meaningless
+   `1.0` otherwise) and turns **amber below 90%**. The StatusBar was the right host precisely because
+   it is instantiated in *every* scene: the question is a **comparison between scenes**, and until now
+   the throttle was visible only in `difficulty_trace.csv` at one row per mined block — far too coarse
+   to attribute a slowdown to the screen you happen to be standing on.
+
+   **Measurement procedure** (developer): start an autobet, set the DEV time scale to **9000X**, and
+   read `Sim:` in DiceGame; then open **BetsHistoryExplorer**, wait a few seconds for it to finish
+   loading, and read it again. Reference points: **§B.6.6 measured 0.63 (63%) in ordinary play**, and
+   a genuine 9000X → 100X collapse means retention ≈ **0.011 (1%)**.
+
+   | Reading in BetsHistoryExplorer | Verdict |
+   |---|---|
+   | ~1–2% | hypothesis confirmed — §C.2's suspects are the frame-eaters |
+   | ~60%+ (unchanged from DiceGame) | **hypothesis wrong** — the cause is elsewhere, start over (D-M2.4) |
+   | in between | partial: something else contributes too; measure before attributing |
 2. Fix whichever of the two eaters the measurement indicts (likely both).
 3. Re-measure. The success criterion is the **throttle**, not the eye: retention in
    `BetsHistoryExplorer` should approach what DiceGame shows at the same `DevTimeScale`.
@@ -653,7 +669,138 @@ migration — it is the §38.7 *inverse* failure, and it is being fixed now beca
 distorting playtest pacing. If the fix happens to make the Ch. 38 migration trivial for this scene,
 take it; do not widen to the other ~18 scenes on that list.
 
-## C.6 Measurements (to fill in)
+## C.6 Measurements
+
+**Before (2026-08-07, developer, DEV time scale 9000X, ~105k-record history):**
+
+| Scene | Sim retention |
+|---|---|
+| Main Menu | **100%** |
+| BetsHistoryExplorer | **15–18%**, varying in that range |
+
+Same running simulation, same frame, two scenes — **a ~6× collapse attributable to the scene alone.**
+§C.2's diagnosis is confirmed: nothing lowers the requested rate, the game simply stops keeping up
+with it, exactly as R2-C1's throttle is designed to report. (DiceGame's own reading was not available:
+the StatusBar overflows its width there, so the appended sixth cell was off-screen — the readout was
+moved leftmost beside the DEV watermarks.)
+
+**Note on the reported "100X".** 15–18% retention at 9000X is ≈1,400X, not 100X, so the original
+report understated the remaining speed. That does not weaken the finding — the collapse is real,
+large and scene-attributable — it just means the perceived figure was an impression rather than a
+measurement, which is the entire reason D-M2.4 required a number before a fix.
+
+**The two fixes (both §C.2 suspects indicted):**
+
+1. **`OnLiveStatsChanged` no longer re-sorts the whole history.** New bets are appended in
+   chronological order, so the sorted view is extended with just the tail — **O(new bets) instead of
+   O(all bets)**, replacing an `OrderBy(...).ToList()` over ~105k records that ran **four times a
+   second**. The full rebuild survives as a guarded fallback (shorter list ⇒ checkpoint rollback,
+   changed head ⇒ history reload, out-of-order tail), so a wrong assumption costs a rebuild rather
+   than a wrong view.
+2. **The view refresh is denominated in REAL time** (D-M2.5), 0.25 s, instead of "whenever the game
+   second changes" — a cadence the DEV time scale *multiplies*, so at 9000X it was rebuilding two UI
+   containers (~520 entry updates) **every frame**. Both guards are kept: the timer bounds how often,
+   the second-changed test still suppresses redundant identical rebuilds.
+
+**After, measured in two rounds (developer, same 9000X setup):**
+
+| Build | BetsHistoryExplorer retention |
+|---|---|
+| Before any fix | 15–18% |
+| + incremental append, 0.25 s real-time refresh | 40–80%, peaks to 98%, dips to 20% |
+| + 1 s refresh, skip-unchanged-window guard | **50–70% typical**, max 80%, dips to 18% and **less frequent** |
+
+**~3.5× improvement, and the shape of the residual is now readable.** The middle round's
+98%-between-dips proved the *steady* cost was already gone at that point and what remained was a
+periodic **spike**; the final round traded spike frequency for a lower ceiling (max 98% → 80%), which
+says the residual has **two distinct components**:
+
+- **A steady ~20–30%**, unrelated to refresh cadence. Between rebuilds `_Process` now does almost
+  nothing (a date format and a timer increment), so this is very likely the cost of **rendering** the
+  ~520 pooled entry nodes the two containers keep on screen — a cost of the screen *existing*, which
+  no refresh throttling can reach.
+- **1 Hz spikes** to ~18%, the rebuild itself.
+
+**The experiment ran, and the hypothesis was right.** `MaxPreviewEntries` 260 → **50** (validated
+first: `ClearEntries` hides unused pooled entries, so this really does cut drawn nodes ~520 → ~100)
+⇒ retention **~100%, practically sustained, identical to every other scene**. The residual was
+**render cost of the visible entry nodes** — the cost of the screen *existing*, not of updating it.
+
+| `MaxPreviewEntries` | Retention |
+|---|---|
+| 260 | 50–70% |
+| **50** | **~100% sustained** |
+
+So the remaining question was never an optimisation — it is a **design** one: how much history this
+screen should show. The in-place-update refactor of the two shared containers is now explicitly **not
+needed**; it would have been a large change aimed at the wrong half of the cost.
+
+### C.6a — The finding is NOT confined to this scene
+
+`BetHistoryContainer` and `PreviousWinnerNumbersGrid` are **shared with DiceGame**, which fills the
+same 260-entry pool during any long run. Nothing about this cost is specific to BetsHistoryExplorer —
+that scene was merely where it was noticed, because the re-sort defect stacked on top of it and pushed
+the total somewhere impossible to ignore.
+
+**Measured, and confirmed** (developer, same 9000X setup; the readout had to be extracted into a
+shared `SimRetentionReadout` control first — DiceGame has **no StatusBar at all**, it renders its own
+balance labels, so it now hosts the reading inside `DevTimeScaleSelector`, beside the control that
+asks for 90× the work):
+
+| Scene | Retention at 9000X |
+|---|---|
+| Main Menu (no history containers) | **100%** |
+| **DiceGame** (260-entry list, incremental) | **70–80%** |
+| BetsHistoryExplorer, `MaxPreviewEntries = 260` | 50–70% |
+| BetsHistoryExplorer, `MaxPreviewEntries = 50` | **~100%** |
+
+The ordering is exactly what the two-component model predicts. DiceGame pays the **steady render
+cost** of the same ~520 nodes (~20–30%) but not the rebuild spikes — its list grows one entry at a
+time through a ring buffer rather than clear-and-refill. BetsHistoryExplorer paid both. Main Menu
+hosts neither container and pays nothing.
+
+Two consequences:
+
+1. **§B.6.6's "ordinary play retains 0.63" was measuring a SCREEN, not the simulation.** That figure
+   came from `difficulty_trace.csv` during a 105k-bet run spent largely in DiceGame with a full
+   history list on display. A substantial part of it — plausibly most of the gap from 1.0 — is the
+   draw cost of 260 history entries. **The baseline is restated accordingly: it is not a property of
+   the engine, and it should not be quoted as one.** (P15.8's 0.713 predates this instrument and is
+   open to the same doubt.)
+2. **Ch. 38's poll-migration backlog is about update cadence, and this is not that.** An event-driven
+   refresh would not have helped here at all: the nodes cost their draw whether or not anything
+   updates them. Worth stating in that chapter so the two are never conflated — *migrating a poll
+   cannot fix a cost that is paid by existing.*
+
+### C.6b — Shipped: 100 entries, both scenes (developer's call, 2026-08-07)
+
+`BetHistoryContainer.MaxRecentEntries` and `PreviousWinnerNumbersGrid.MaxRecentEntries` → **100**
+(these size the **pools**, so the nodes genuinely disappear rather than merely hiding), matched by
+`BetsHistoryExplorer.MaxPreviewEntries` → 100. DiceGame's history seeding derives from the container
+constant and followed automatically. The two containers are always rendered together and were sized
+together — cutting one alone hides the other's saving.
+
+**Final measurement: >80% in DiceGame *and* BetsHistoryExplorer**, and moving between scenes is now
+practically imperceptible.
+
+**The remaining <20% is accepted, deliberately.** 9000X is a DEV-only setting, the difference is not
+felt in play, and the cost is now *known and measured* rather than accidental — which is the
+difference that matters. Anyone wanting it back knows the exact lever and its exact price.
+
+## C.7 Part C — CLOSED
+
+| | |
+|---|---|
+| Reported | entering BetsHistoryExplorer collapsed the game speed at 9000X |
+| Diagnosis | not a speed setting — frame starvation, reported honestly by R2-C1's throttle |
+| Fixed | full-history re-sort per `StatsChanged`; game-time-denominated refresh cadence; entry draw cost |
+| Result | **15–18% → >80%**, and the same fix lifted DiceGame from 70–80% |
+| Left behind | `SimRetentionReadout` — the throttle is now visible in every scene instead of one CSV row per block |
+| Design record | `Documentation/ProjectDesignManual.md` **§38.8** |
+
+**Judgement:** the reported defect (a scene silently collapsing the simulation rate) is fixed well
+past the point of being a playtest hazard. What remains is ordinary "this screen is heavy", and Ch. 38
+already lists this scene as a poll-migration candidate — the natural home for any further work.
 
 ---
 
