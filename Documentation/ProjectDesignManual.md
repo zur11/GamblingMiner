@@ -2809,10 +2809,21 @@ Reported by the developer while confirming §24.13b, and it is the sharpest inst
 
 **The rule this adds to the three below:** *when a responsibility moves to a new owner, the controls that drove the old one do not fail loudly — they keep compiling, keep rendering, and quietly stop meaning anything.* Delegation moved the run; the pause button was left pointing at the empty seat.
 
+#### 24.13d — The field that was an input and a readout at once (2026-08-13)
+
+Reported from a screenshot: a session had stopped on a mined block after a **winning** bet, with `Increase on win = 0` — so the next bet must be base — yet `Amount to bet` read `0.02110000`. The bet history was flawless and proved it: `0.01 L → 0.0211 W`, `0.01 L → 0.0211 L → 0.044521 W`, every rung exactly `×2.11`. The engine had computed the next bet correctly; the **panel** was showing something else, and `0.0211` was a mid-ladder rung.
+
+**Cause: `_betAmountInput` does two jobs.** It is the base-bet **input** that `BuildConfig()` reads, and `OnSimBetSettled` also writes the **live progression bet** into it each settled bet as a readout (likewise `Number of bets`, which becomes the remaining count). Those coexist harmlessly until something reads the field as an input — and `SaveActiveNodeStrategySnapshot` did, via `_strategyPanel.BuildConfig()`. It is called from **`_ExitTree`**, so navigating away mid-run stored the current rung as the strategy's **base bet**; re-entry restored it. `OnBetsPerSecondChanged` is a second route in, since the APS selector is deliberately left live during a run (§24.13b).
+
+**This is D-M2.8 catching its own case.** That rule — *a running session's parameters come from the session, never from the panel; every `_strategyPanel.*` read inside a running-session code path is a bug candidate* — was written one subsection earlier, and this call site was not audited against it. The fix applies the rule: while a player session is running, the snapshot takes its config, bet count, chance and HIGH/LOW from `SimulationService.CurrentConfig` instead of the panel. Bots are unaffected, since only the player's autobet is delegated.
+
+**And Part A made it visible by making it persist.** Before D-M2.1 the snapshot dictionary was wiped on every navigation, so a corrupted entry died immediately and the panel merely went blank; making it `static` let the corruption survive, turning "everything blank" into "wrong base bet, silently". The bad value was always being written — it simply never lived long enough to be seen. **A fix that extends a value's lifetime promotes every latent corruption of that value into a visible defect**, which is a reason to expect follow-on reports after such a change, not a reason to avoid it.
+
 **Three rules this section adds:**
 1. **A scene is a view; state that outlives the view must not live in it.** The `static` fields already in the file were the precedent — the question to ask of any scene field is "what happens to this on the next navigation?"
 2. **A partially-masked failure reads as a specific one.** Two paths repainting four of eleven fields turned "the panel is wiped" into "the percents disappear", and the first diagnosis followed the symptom instead of the mechanism.
 3. **"Enabled" is a claim — verify a control still does something before leaving it live.** The lock, the half-live auto-recharge fix and the dead PAUSE button are the same question asked three ways. Every one of them was a control that rendered, accepted clicks, and reached nothing.
+4. **A widget that is both an input and a readout will eventually be read as the wrong one** (§24.13d). Where a field serves both roles, the *writer* of the config must take it from the authority, not from the widget — the widget is a display surface the moment anything else writes to it.
 
 ## Chapter 25 — Bankroll Management: Progression Resets, the two Insist switches, and Auto-Recharge
 
@@ -5052,6 +5063,22 @@ So duplicate copies of a bet do not scatter through the list — they land **adj
 > **Where a displayed figure has a cheap closed-form bound, assert it.** And separately: **a label is a claim about semantics and gets audited far less than the arithmetic beneath it.** "Martingale level" was wrong on its own terms, and the mis-naming is what made the inflation hard to reason about — nobody can sanity-check a number whose definition they must reconstruct from the code.
 
 Full forensic record, including the measured tables: `Documentation/INCIDENT_LOG.md` **INC-002**.
+
+### 40.9 — The chance-to-win selector: §40.8's correctness rule becomes a control (mini-plan 02, 2026-08-13)
+
+§40.8 forced the loss-run metric to be measured per **`(GameId, Chance)` segment**, because a run of losses only means anything at a fixed win chance — a stretch at 2% concatenated onto one at 50% describes neither. That segmentation was correct but **invisible**: the player saw one number with a parenthetical qualifier (`18 (at 50% chance)`) and no way to ask the question the qualifier implies.
+
+`BetsHistoryExplorer` now carries a **`Chance to win:`** selector. `All Bets` (the default) is the previous behaviour exactly; below it sits one entry per chance actually present in the history. Selecting one restricts the bet list, the winner-numbers grid **and every summary figure** — total bets, max bet, max loss, max consecutive losses — to that chance, and the summary line leads with its scope (`Chance 50% — up to selected date: …`). Filtered, the loss-run figure **drops its qualifier**, because §40.8's caveat is satisfied by construction rather than by a footnote. *A correctness rule the code had to obey internally is usually also a question the player wants to ask; exposing it costs less than explaining it.*
+
+**Three design decisions carry the weight:**
+
+**(1) The option list is TIME-AWARE, like everything else in this scene.** A chance is offered only from the instant its first bet was placed (`_chanceFirstSeenUtc`). Rewind the timeline two days and a chance first played yesterday **disappears** from the list; replay forward past that instant and it reappears. Offering it earlier would present a filter that can only produce an empty view, and would leak the future into a view of the past — in a scene whose entire purpose is replaying history, the selector must obey the selected date or it is lying about the same thing the rest of the screen is careful about. Rewinding past the *currently selected* chance falls back to `All Bets` rather than leaving the view filtered by something no longer offered.
+
+**(2) Filtering never runs in the refresh path.** `_allRecords` holds the full history; `_sortedRecords` is the **view** everything else reads. The filter is one `O(n)` pass, executed only on a selection change or a full history rebuild — and when no filter is active the view **is** `_allRecords`, the same instance, so the default path allocates nothing and behaves byte-for-byte as before. The live-append path (§38.8's incremental tail) appends to both lists in step rather than re-filtering per settled bet, and only the newly-arrived tail is scanned for unseen chances. This is deliberate: filtering ~100k records per refresh would rebuild precisely the frame-cost problem §38.8 had just removed. **A new filter over a large collection is a performance decision before it is a UI one.**
+
+**(3) The visibility check is one integer per refresh.** `CountVisibleChances` walks a dictionary that cannot exceed 95 entries (a dice chance is 1–95) and compares the count against what the selector currently offers; the rebuild runs only on the crossing itself.
+
+**Related, and deliberately kept separate:** this filters by *chance*, one axis of a strategy. The full per-strategy breakdown — max martingale level, streaks and P/L for a chosen strategy — is the **Betting Statistics scene** in `PRIVATE_ROADMAP.md`, targeted at Basic Mode, and this selector's time-aware option list is the pattern it should copy.
 
 ---
 

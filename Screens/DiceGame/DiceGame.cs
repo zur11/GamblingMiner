@@ -809,18 +809,42 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		if (!_strategyPanel.TryGetValidBet(out decimal baseBet) || baseBet <= 0m)
+		// D-M2.8, the case that proves the rule: while a player session runs, the panel's "Amount to bet"
+		// and "Number of bets" are LIVE READOUTS of the progression, not inputs — OnSimBetSettled writes
+		// the current bet and the remaining count into them on every settled bet. Snapshotting the panel
+		// here therefore stored a mid-ladder rung as the BASE BET (observed: base 0.01 saved as 0.02110000
+		// after two losses at +111%), and re-entering the scene restored that corrupted value as the
+		// strategy. Reached from _ExitTree on every navigation away mid-run, and from the APS selector,
+		// which is deliberately left enabled during a run.
+		//
+		// So take the executing config from the SESSION, which is what actually governs the run. Only the
+		// player's autobet is delegated; a bot snapshot still comes from the panel that configured it.
+		SimulationService.PlayerAutobetConfig liveConfig =
+			IsPlayerActive() && _simulationService?.IsRunning == true ? _simulationService.CurrentConfig : null;
+
+		BettingStrategyConfig config;
+		int numberOfBets;
+		if (liveConfig?.Strategy != null)
 		{
-			return;
+			config = liveConfig.Strategy;
+			numberOfBets = liveConfig.NumberOfBets;
+		}
+		else
+		{
+			if (!_strategyPanel.TryGetValidBet(out decimal baseBet) || baseBet <= 0m)
+			{
+				return;
+			}
+
+			config = _strategyPanel.BuildConfig();
+			numberOfBets = _strategyPanel.NumberOfBets;
+			if (!IsPlayerActive())
+			{
+				config = BuildBotStrategyConfig(config);
+			}
 		}
 
-		BettingStrategyConfig config = _strategyPanel.BuildConfig();
-		if (!IsPlayerActive())
-		{
-			config = BuildBotStrategyConfig(config);
-		}
-
-		if (config.BaseBet <= 0m)
+		if (config == null || config.BaseBet <= 0m)
 		{
 			return;
 		}
@@ -828,10 +852,12 @@ public partial class DiceGame : Control, IBetEventSource
 		_nodeStrategies[_activeNodeId] = new NodeStrategyState
 		{
 			Config = CloneConfig(config),
-			NumberOfBets = _strategyPanel.NumberOfBets,
+			NumberOfBets = numberOfBets,
 			AutoRechargeEnabled = !IsPlayerActive() || _strategyPanel.AutoRechargeEnabled,
-			WinningChance = (int)_chanceSlider.Value,
-			BetHigh = _highLowToggleBtn.ButtonPressed,
+			// Chance and HIGH/LOW are locked during a run, so the widgets still hold what the session
+			// captured — but read them from the session when it exists, for the same reason as above.
+			WinningChance = liveConfig?.Chance ?? (int)_chanceSlider.Value,
+			BetHigh = liveConfig?.BetHigh ?? _highLowToggleBtn.ButtonPressed,
 			BetsPerSecond = GetAutoBetBaseAps()
 		};
 

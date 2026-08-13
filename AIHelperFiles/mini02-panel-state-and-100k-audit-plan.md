@@ -1074,8 +1074,13 @@ throttle that D later makes unnecessary. Worth deciding the order deliberately.
 - Does the rollup live in `UserStatsService` (which already owns lifetime stats and self-persists per
   bet) or in a new file beside the journal? The former is less surface; the latter separates "stats I
   display" from "index over storage".
-- Retention: do old chunks eventually get pruned, or kept forever? The proposal implies "kept, loaded
-  on demand" — that bounds the *read*, not the disk.
+- ~~Retention: do old chunks eventually get pruned, or kept forever?~~ **ANSWERED by the audit
+  (§B.0/§B.7):** they are **pruned**. `BetHistoryRepository.MaxRetainedJournalChunks = 20` at
+  `MaxJournalEntriesPerChunkFile = 10000` ⇒ the newest **200,000 bets** survive and older chunks are
+  deleted (INC-001 / D-15.28). Observed live: the 2026-08-07 archive holds `bet_history.jsonl` +
+  chunks `000001–000010`, and by 08-12 the live world had pruned to `000004–000024`. **Consequence
+  for the rollup: it must be a genuine running total, never recomputable from what remains on disk** —
+  a "recompute from the chunks" verification (D-M2.12a) can only ever validate the retained window.
 
 ## D.5 What this does NOT change
 
@@ -1083,6 +1088,7 @@ The bet journal keeps recording **every** bet. The rollup is an accelerator, nev
 the moment a summary is the only copy of a fact, no audit like §B.6 is possible again.
 
 ## D.6 Planned, not built — the per-strategy statistics scene
+### ➜ MOVED 2026-08-13 to `Documentation/PRIVATE_ROADMAP.md` → "Betting Statistics scene", targeted at **Basic Mode** (developer's call). Kept here for the reasoning; the roadmap entry is the live one.
 
 A future scene where the player picks a **strategy** and sees that strategy's own figures (max
 martingale level, max bet, bets, net P/L, streaks). This is where the epoch key of D-M2.11 gets
