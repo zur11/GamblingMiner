@@ -4424,6 +4424,12 @@ The claim above originally read *"the residual is the draw cost of the visible n
 
 Likely mechanism, stated as hypothesis rather than finding: **.NET tiered JIT** — hot paths begin at tier 0 and re-compile once call counts justify it, which produces exactly this shape — with Godot shader compilation and GC heap settling contributing to the earliest part.
 
+**Replicated on a fresh world, with an accidental control (2026-08-12).** The crossover was repeated on a newly reset world at the same 5 credits: A1 `0.5657` (30 blocks) · **B `0.6014`** (32) · A2 `0.5686` (22); second halves A1 `0.6314` / A2 `0.6332`. **B lands *above* both DiceGame legs on aggregate and ~0.03 below them on second halves** — signals pointing opposite ways, i.e. no effect, all of it inside the per-block noise band (0.37–0.78). Decisively, **A2 did not recover above B**, which is what a real scene cost would have produced. *The BetsHistoryExplorer fix generalises.*
+
+The accidental control is worth more than the replication. This run showed **almost no warm-up ramp** (A1 quarters `0.587 → 0.468 → 0.579 → 0.641`) where the restored-world run had shown a steep one — because an aborted first attempt had already simulated for ~5 minutes before the real A1 began. **The process was warm; only the world was fresh.** Same build, same protocol, same world-freshness, ramp absent exactly when the process was pre-warmed: that isolates the ramp to **process state**, not world state or history size, and is the strongest available support for the tiered-JIT reading.
+
+**One qualification this forces:** absolute retention is **world-dependent** — ≈0.63 on the fresh world versus ≈0.76 on the restored one, at identical credits and build. A retention figure must therefore be qualified by *which world* as well as warm-vs-cold. **Cross-world comparisons of the absolute number are not meaningful; only within-run crossovers are.**
+
 **The rule this adds:** **measure warm, and prove it by returning.** A performance figure taken in the first minutes of a process is a measurement of start-up. The crossover's return leg is what separated "the scene did it" from "time did it" — and every reading in this investigation that lacked one turned out to be reading time.
 
 **One consequence still stands:** **§38.5's backlog is about update cadence, and neither of these costs is on it.** *Migrating a poll cannot fix a cost paid by rebuilding, nor one paid by existing.*

@@ -954,6 +954,33 @@ DiceGame) on evidence that is now sound.
 **The rule: measure warm, and prove it by returning.** The crossover's return leg is what separated
 "the scene did it" from "time did it"; every reading here that lacked one was reading time.
 
+### C.6e — Replicated on a fresh world, with an accidental control (2026-08-12)
+
+Repeated on a newly reset world, 5 credits, 9000X, one continuous autobet:
+
+| Phase | Retention | Blocks |
+|---|---|---|
+| A1 DiceGame (cold) | 0.5657 | 30 |
+| **B BetsHistoryExplorer** | **0.6014** | 32 |
+| A2 DiceGame (warm) | 0.5686 | 22 |
+| A1 / A2 second halves | 0.6314 / 0.6332 | — |
+
+**B is *above* both DiceGame legs on aggregate and ~0.03 below on second halves** — opposite-pointing
+signals, i.e. no effect, all inside the per-block noise (0.37–0.78). **A2 did not recover above B**,
+which a real scene cost would have produced. **Part C's fix generalises to a fresh world.**
+
+**The accidental control is the more valuable half.** This run showed almost **no** warm-up ramp
+(A1 quarters `0.587 → 0.468 → 0.579 → 0.641`) where §C.6d's run showed a steep one — because the
+aborted first attempt (the 1-credit false start) had already simulated ~5 minutes before the real A1.
+**The process was warm; only the world was fresh.** Ramp absent exactly when the process was
+pre-warmed ⇒ the ramp is **process state**, not world state or history size — the strongest support
+yet for the tiered-JIT reading. *The mistake that nearly cost the run ended up controlling the
+variable.*
+
+**Qualification this forces:** absolute retention is **world-dependent** — ≈0.63 fresh vs ≈0.76
+restored, identical credits and build. Quote a retention figure with its world AND its warm state;
+**cross-world comparisons of the absolute number mean nothing, only within-run crossovers do.**
+
 ## C.7 Part C — CLOSED
 
 | | |
