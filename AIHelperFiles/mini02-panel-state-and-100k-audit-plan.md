@@ -922,6 +922,38 @@ less. *An instantaneous readout is a debugging aid, not a measurement.*
 tested where it predicts a second outcome.* DiceGame was that test, was available throughout, and was
 consulted only after the fix had shipped and been documented.
 
+### C.6d — The A–B–A crossover: Part C confirmed, and the confounder identified (2026-08-12)
+
+Prompted by the developer: *the earlier tests never ran a long autobet, so we never saw the number
+after several minutes.* One continuous autobet, restored world, 5 credits, 9000X, ~5 min per leg,
+boundaries marked by **trace row count** rather than by reading the label.
+
+| Phase | Retention | Blocks |
+|---|---|---|
+| A1 — DiceGame, **cold start** | 0.5649 | 26 |
+| A1 warm tail (last 6) | **0.7838** | — |
+| **B — BetsHistoryExplorer** | **0.7722** | 36 |
+| A2 — DiceGame, **warm** | **0.7624** | 30 |
+
+**1. Part C is CONFIRMED.** B sits between A1's warm tail and A2 — no scene effect remains. Pre-fix:
+15–18% against DiceGame's ~63%, a ~4× gap. Now: parity. Sustained and trace-measured, which is what
+every earlier BetsHistoryExplorer number lacked.
+
+**2. Warm-up was the dominant term all along.** A1 climbed `0.402 → 0.774` within its own quarters,
+A2 `0.568 → 0.900`. **That ~0.2–0.35 swing exceeds every scene effect chased in this part.** It
+explains the entire contradictory record: "70–80%" was warm, "50–60%" was cold, the fresh run's
+`0.614 → 0.894` was the ramp, and **the 0.63 baseline came from a 35-block trace sitting almost
+entirely inside it.**
+
+**Corrected figure: warm steady state ≈ 0.76 for this world at 5 credits.** 0.63 is a *cold* number.
+
+**§C.6c's arithmetic is superseded** — its 0.757 vs 0.624 was **warm vs cold**. Warm-to-warm it is
+`0.757 → 0.7624`, i.e. no change, so its *conclusions* stand (the entry reduction did not help
+DiceGame) on evidence that is now sound.
+
+**The rule: measure warm, and prove it by returning.** The crossover's return leg is what separated
+"the scene did it" from "time did it"; every reading here that lacked one was reading time.
+
 ## C.7 Part C — CLOSED
 
 | | |
@@ -929,7 +961,7 @@ consulted only after the fix had shipped and been documented.
 | Reported | entering BetsHistoryExplorer collapsed the game speed at 9000X |
 | Diagnosis | not a speed setting — frame starvation, reported honestly by R2-C1's throttle |
 | Fixed | full-history re-sort per `StatsChanged`; game-time-denominated refresh cadence; rebuild cost ∝ entry count |
-| Result | **15–18% → >80%** in BetsHistoryExplorer. **No measurable change in DiceGame** (§C.6c) |
+| Result | **15–18% → parity with DiceGame**, confirmed by A–B–A crossover (§C.6d). No change in DiceGame |
 | Left behind | `SimRetentionReadout` — the throttle is now visible in every scene instead of one CSV row per block |
 | Design record | `Documentation/ProjectDesignManual.md` **§38.8** |
 

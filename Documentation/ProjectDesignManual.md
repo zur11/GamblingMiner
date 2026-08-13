@@ -4401,6 +4401,31 @@ The claim above originally read *"the residual is the draw cost of the visible n
 
 **The methodological lesson, which is the durable part:** *an explanation that fits one scene is a hypothesis, not a finding, until it is tested where it predicts a second outcome.* The draw-cost story explained BetsHistoryExplorer perfectly and was believed for that reason alone. DiceGame was the case that could have falsified it, was available the whole time, and was only consulted after the fix had shipped and been documented.
 
+#### 38.8b — The crossover, and the confounder that had been driving every reading (2026-08-12)
+
+§38.8a's own table has a flaw, found by the developer asking the right question: *the earlier tests never ran a LONG autobet, so we never saw what the number does after several minutes.* An **A–B–A crossover** was run on the restored world — one continuous autobet, 5 credits, 9000X, ~5 minutes per leg, boundaries marked by trace row count rather than by reading the label.
+
+| Phase | Retention | Blocks |
+|---|---|---|
+| A1 — DiceGame, **cold start** | 0.5649 | 26 |
+| A1 warm tail (last 6 blocks) | **0.7838** | — |
+| **B — BetsHistoryExplorer** | **0.7722** | 36 |
+| A2 — DiceGame, **warm** | **0.7624** | 30 |
+
+**Two results, and the second one reframes the whole chapter's investigation.**
+
+**1. The BetsHistoryExplorer fix is confirmed.** B sits *between* A1's warm tail and A2 — no scene effect survives. Pre-fix the scene read 15–18% against DiceGame's ~63%; it is now at parity. This is the sustained, trace-based confirmation the earlier eyeball readings could not give.
+
+**2. Retention has a large warm-up ramp, and it was the dominant term all along.** A1 climbed `0.402 → 0.774` across its own quarters; A2 climbed `0.568 → 0.900`. **A ~0.2–0.35 swing from warm-up alone — larger than every scene effect chased in §38.8/§38.8a.** It explains each contradictory reading in the record: the "DiceGame is 70–80%" impression was warm, the "50–60%" that contradicted it was cold, the fresh run's `0.614 → 0.894` climb was the ramp itself, and **the 0.63 baseline came from a 35-block trace sitting almost entirely inside it.**
+
+**The corrected figure: warm steady-state retention for this world at 5 credits is ≈0.76, not 0.63.** The 0.63 is a *cold* measurement and should be quoted as one.
+
+**This also invalidates §38.8a's A/B arithmetic.** It compared 0.757 pre-fix against 0.624 post-fix and read a regression; those were **warm vs cold** — the pre-fix window was the tail of a long session, the post-fix one was minutes after a world restore. Warm-to-warm the comparison is **0.757 → 0.7624: no change**, which still supports the draw-cost refutation (the entry reduction genuinely did not help DiceGame) but now rests on a sound comparison rather than an artifact. *§38.8a's conclusions survive; one of its numbers did not.*
+
+Likely mechanism, stated as hypothesis rather than finding: **.NET tiered JIT** — hot paths begin at tier 0 and re-compile once call counts justify it, which produces exactly this shape — with Godot shader compilation and GC heap settling contributing to the earliest part.
+
+**The rule this adds:** **measure warm, and prove it by returning.** A performance figure taken in the first minutes of a process is a measurement of start-up. The crossover's return leg is what separated "the scene did it" from "time did it" — and every reading in this investigation that lacked one turned out to be reading time.
+
 **One consequence still stands:** **§38.5's backlog is about update cadence, and neither of these costs is on it.** *Migrating a poll cannot fix a cost paid by rebuilding, nor one paid by existing.*
 
 **Where it landed.** `BetHistoryContainer.MaxRecentEntries` and `PreviousWinnerNumbersGrid.MaxRecentEntries` are **100** (the constants size the pools as well as the display cap, so the nodes genuinely disappear rather than merely hiding), matched by `BetsHistoryExplorer.MaxPreviewEntries`. The two containers are always rendered together and must be sized together, or the cheaper one's saving is invisible. The remaining <20% is accepted: the difference is imperceptible in play, and 9000X is a DEV-only setting.
