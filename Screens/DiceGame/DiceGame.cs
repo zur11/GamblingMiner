@@ -84,8 +84,18 @@ public partial class DiceGame : Control, IBetEventSource
 	private SavedBettingStrategyRepository _savedStrategyRepository;
 	private int _lastAnnouncedMinedBlockIndex;
 	private ManualStopGate _manualStopGate = ManualStopGate.None;
-	private readonly Dictionary<string, NodeStrategyState> _nodeStrategies = new();
+	// STATIC so it survives DiceGame being freed and rebuilt on each scene change (mini-plan 02,
+	// D-M2.1 — same reason as _checkpointRestoreSpentThisSession / _bootstrapAppliedThisSession
+	// below). As an instance field this emptied on every navigation, so LoadActiveNodeStrategySnapshot
+	// took its ClearStrategySettings() branch and blanked the whole panel — after which BuildConfig()
+	// silently produced flat betting with both stops disarmed, BuildBotConfigs() returned an empty
+	// list, and every node's ready dot went red. Process-lifetime, not persisted: an app restart
+	// reverts the world to the last mined block, so a config outliving that would describe a run that
+	// no longer exists.
+	private static readonly Dictionary<string, NodeStrategyState> _nodeStrategies = new();
 	private bool _loadingNodeStrategy;
+	// Mirrors StrategyControlPanel._runLocked for the DiceGame-owned controls — see ApplyRunLock.
+	private bool _runLocked;
 	private SceneManager _sceneManager;
 	private PlayerBankAccountService _playerBankAccountService;
 	private CasinoClientLedgerService _casinoClientLedger; // SF.4B: feeds FinancialBettingStats' since-X baselines
@@ -371,7 +381,13 @@ public partial class DiceGame : Control, IBetEventSource
 		RefreshNodeSelectorReadyDots();
 	}
 
-	// Shows a green dot next to a node that has a valid, ready-to-play strategy, red otherwise.
+	// Green = this node is RUNNING right now, or has a valid ready-to-play strategy; red otherwise
+	// (mini-plan 02, D-M2.9). "Running" and "ready" are two different questions and the dot used to
+	// answer only the second one, from _nodeStrategies alone — so a scene change turned every node
+	// red INCLUDING nodes that were actively betting. That matters more than a normal cosmetic slip:
+	// the selector is disabled while an autobet runs, so during a run these dots are the only
+	// per-node readout on screen. The running half is sourced from SimulationService — the same place
+	// that decides whether the node is really betting (§39.16 rule 6).
 	private void RefreshNodeSelectorReadyDots()
 	{
 		if (_activeNodeSelector == null)
@@ -379,11 +395,18 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
+		bool playerRunning = _simulationService?.IsRunning == true;
+		IReadOnlyList<string> activeBots =
+			_simulationService?.GetActiveBotNodeIds() ?? Array.Empty<string>();
+
 		for (int index = 0; index < _activeNodeSelector.ItemCount; index++)
 		{
 			string nodeId = _activeNodeSelector.GetItemText(index);
+			bool running = string.Equals(nodeId, PlayerNodeId, StringComparison.Ordinal)
+				? playerRunning
+				: activeBots.Contains(nodeId);
 			bool ready = _nodeStrategies.TryGetValue(nodeId, out NodeStrategyState state) && state.IsValid;
-			_activeNodeSelector.SetItemIcon(index, GetReadyDotTexture(ready));
+			_activeNodeSelector.SetItemIcon(index, GetReadyDotTexture(running || ready));
 		}
 	}
 
@@ -699,7 +722,7 @@ public partial class DiceGame : Control, IBetEventSource
 			GameId = GameId,
 			Config = config,
 			NumberOfBets = _strategyPanel.NumberOfBets,
-			AutoRechargeEnabled = _strategyPanel.AutoRechargeEnabled,
+			// Auto-recharge is an ACCOUNT setting, not part of a strategy — see SavedBettingStrategy.
 			WinningChance = (int)_chanceSlider.Value,
 			BetHigh = _highLowToggleBtn.ButtonPressed,
 			BetsPerSecond = GetAutoBetBaseAps()
@@ -731,7 +754,12 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_strategyNameInput.Text = saved.Name;
 		_loadingNodeStrategy = true;
-		_strategyPanel.ApplyStrategySettings(saved.Config, saved.NumberOfBets, saved.AutoRechargeEnabled);
+		// Carry the CURRENT auto-recharge value through unchanged: a saved strategy no longer stores one,
+		// because it is an account setting rather than a strategy property (see SavedBettingStrategy).
+		_strategyPanel.ApplyStrategySettings(
+			saved.Config,
+			saved.NumberOfBets,
+			_strategyPanel.AutoRechargeEnabled);
 		_chanceSlider.Value = Math.Clamp(saved.WinningChance, 1, 95);
 		_highLowToggleBtn.ButtonPressed = saved.BetHigh;
 		_highLowToggleBtn.Text = saved.BetHigh ? "HIGH" : "LOW";
@@ -759,7 +787,12 @@ public partial class DiceGame : Control, IBetEventSource
 		bool hasName = !string.IsNullOrWhiteSpace(_strategyNameInput.Text);
 		bool hasValidBaseBet = _strategyPanel.TryGetValidBet(out decimal baseBet) && baseBet > 0m;
 		_saveStrategyBtn.Disabled = !hasName || !hasValidBaseBet;
-		_loadStrategyBtn.Disabled = _savedStrategyRepository == null || !_savedStrategyRepository.HasAnyForGame(GameId);
+		// Loading a strategy mid-run would rewrite the panel without touching the session that is
+		// actually executing — the same lie the run lock exists to remove. SAVING stays available: it
+		// records what is on screen, which during a run is what is running.
+		_loadStrategyBtn.Disabled = _runLocked
+			|| _savedStrategyRepository == null
+			|| !_savedStrategyRepository.HasAnyForGame(GameId);
 	}
 
 	private void ApplyAutoBetSpeedSettings(int betsPerSecond)
@@ -776,18 +809,42 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		if (!_strategyPanel.TryGetValidBet(out decimal baseBet) || baseBet <= 0m)
+		// D-M2.8, the case that proves the rule: while a player session runs, the panel's "Amount to bet"
+		// and "Number of bets" are LIVE READOUTS of the progression, not inputs — OnSimBetSettled writes
+		// the current bet and the remaining count into them on every settled bet. Snapshotting the panel
+		// here therefore stored a mid-ladder rung as the BASE BET (observed: base 0.01 saved as 0.02110000
+		// after two losses at +111%), and re-entering the scene restored that corrupted value as the
+		// strategy. Reached from _ExitTree on every navigation away mid-run, and from the APS selector,
+		// which is deliberately left enabled during a run.
+		//
+		// So take the executing config from the SESSION, which is what actually governs the run. Only the
+		// player's autobet is delegated; a bot snapshot still comes from the panel that configured it.
+		SimulationService.PlayerAutobetConfig liveConfig =
+			IsPlayerActive() && _simulationService?.IsRunning == true ? _simulationService.CurrentConfig : null;
+
+		BettingStrategyConfig config;
+		int numberOfBets;
+		if (liveConfig?.Strategy != null)
 		{
-			return;
+			config = liveConfig.Strategy;
+			numberOfBets = liveConfig.NumberOfBets;
+		}
+		else
+		{
+			if (!_strategyPanel.TryGetValidBet(out decimal baseBet) || baseBet <= 0m)
+			{
+				return;
+			}
+
+			config = _strategyPanel.BuildConfig();
+			numberOfBets = _strategyPanel.NumberOfBets;
+			if (!IsPlayerActive())
+			{
+				config = BuildBotStrategyConfig(config);
+			}
 		}
 
-		BettingStrategyConfig config = _strategyPanel.BuildConfig();
-		if (!IsPlayerActive())
-		{
-			config = BuildBotStrategyConfig(config);
-		}
-
-		if (config.BaseBet <= 0m)
+		if (config == null || config.BaseBet <= 0m)
 		{
 			return;
 		}
@@ -795,10 +852,12 @@ public partial class DiceGame : Control, IBetEventSource
 		_nodeStrategies[_activeNodeId] = new NodeStrategyState
 		{
 			Config = CloneConfig(config),
-			NumberOfBets = _strategyPanel.NumberOfBets,
+			NumberOfBets = numberOfBets,
 			AutoRechargeEnabled = !IsPlayerActive() || _strategyPanel.AutoRechargeEnabled,
-			WinningChance = (int)_chanceSlider.Value,
-			BetHigh = _highLowToggleBtn.ButtonPressed,
+			// Chance and HIGH/LOW are locked during a run, so the widgets still hold what the session
+			// captured — but read them from the session when it exists, for the same reason as above.
+			WinningChance = liveConfig?.Chance ?? (int)_chanceSlider.Value,
+			BetHigh = liveConfig?.BetHigh ?? _highLowToggleBtn.ButtonPressed,
 			BetsPerSecond = GetAutoBetBaseAps()
 		};
 
@@ -1036,6 +1095,8 @@ public partial class DiceGame : Control, IBetEventSource
 			StopAllBotRunners();
 			_session.Stop(IBettingStrategy.StopReason.ManualStop);
 			SetActiveNodeSelectorLocked(false);
+			ApplyRunLock(false);
+			RefreshNodeSelectorReadyDots(); // D-M2.9
 			ReseedWalletFromBankrollSource();
 			RefreshCalculatorFromGameSettings();
 			return;
@@ -1065,7 +1126,9 @@ public partial class DiceGame : Control, IBetEventSource
 		});
 		_autobetDelegated = true;
 		SetActiveNodeSelectorLocked(true);
+		ApplyRunLock(true);
 		StartBotRunners();
+		RefreshNodeSelectorReadyDots(); // D-M2.9: "running" just changed — the dots must follow it.
 
 		_autoBetAccumulatorGameSeconds = 0d;
 		_autoBetLastRateSampleMsec = 0;
@@ -1082,30 +1145,25 @@ public partial class DiceGame : Control, IBetEventSource
 		RefreshCalculatorFromGameSettings();
 	}
 
+	// The PAUSE button. This used to guard on `_session` — DiceGame's LOCAL session, which serves manual
+	// bets and is inert while the autobet is delegated — so the handler returned on its first line for
+	// every background run and the button did nothing at all (dead since delegation landed 2026-06-22;
+	// see ProjectDesignManual §24.13c). It now targets the run that actually exists.
+	//
+	// The freeze itself belongs to SimulationService, not here: while delegated that service is the sole
+	// owner of CalendarTimeService.IsRunning and re-asserts it every frame, so a DiceGame-side clock stop
+	// would be undone on the next tick. `_isAutoPaused` is still maintained for the local autobet path.
 	private void OnAutoPauseToggled(bool paused)
 	{
-		if (_session == null || !_session.IsRunning)
+		if (_simulationService == null || !_simulationService.IsRunning)
 			return;
 
 		_isAutoPaused = paused;
+		_simulationService.SetPaused(paused);
 		_strategyPanel.SetAutoPaused(paused);
-
-		if (paused)
-		{
-			if (_calendarTimeService != null)
-			{
-				_calendarTimeService.IsRunning = false;
-			}
-			_autoBetTimer.Stop();
-			_resultValue.Text = $"Auto paused | {GetAutoBetApsText()}";
-			return;
-		}
-
-		if (_calendarTimeService != null)
-		{
-			_calendarTimeService.IsRunning = true;
-		}
-		_resultValue.Text = $"Auto resumed | {GetAutoBetApsText()}";
+		_resultValue.Text = paused
+			? $"Auto paused | {GetAutoBetApsText()}"
+			: $"Auto resumed | {GetAutoBetApsText()}";
 	}
 
 	// ── Background autobet (SimulationService) integration ──────────────────────
@@ -1118,6 +1176,30 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			_activeNodeSelector.Disabled = locked;
 		}
+	}
+
+	// Single writer for "a player session is running, so its captured settings are read-only".
+	// Covers the DiceGame-owned controls (chance, HIGH/LOW, Load strategy) and delegates the panel's
+	// own controls to StrategyControlPanel.SetRunLocked. Called at every transition that changes
+	// whether a run is in progress — start, stop, self-stop, and re-binding on scene entry — because
+	// re-entering DiceGame rebuilds the scene with every control back at its default enabled state.
+	private void ApplyRunLock(bool locked)
+	{
+		_runLocked = locked;
+		_strategyPanel?.SetRunLocked(locked);
+
+		if (_chanceSlider != null)
+		{
+			_chanceSlider.Editable = !locked;
+			_chanceSlider.Modulate = locked ? new Color(1f, 1f, 1f, 0.5f) : Colors.White;
+		}
+
+		if (_highLowToggleBtn != null)
+		{
+			_highLowToggleBtn.Disabled = locked;
+		}
+
+		UpdateStrategySaveLoadButtons();
 	}
 
 	private void ReseedWalletFromBankrollSource()
@@ -1153,6 +1235,8 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		_autobetDelegated = false;
 		SetActiveNodeSelectorLocked(false);
+		ApplyRunLock(false);
+		RefreshNodeSelectorReadyDots(); // D-M2.9: the run ended — dots fall back to "has a strategy".
 		ReseedWalletFromBankrollSource();
 		_strategyPanel.SetAutoPaused(false);
 		_strategyPanel.SetAutoRunning(false);
@@ -1182,10 +1266,42 @@ public partial class DiceGame : Control, IBetEventSource
 			_chanceSlider.Value = cfg.Chance;
 			_highLowToggleBtn.ButtonPressed = cfg.BetHigh;
 			_highLowToggleBtn.Text = cfg.BetHigh ? "HIGH" : "LOW";
+
+			// D-M2.2: while a session runs, the SESSION is the truthful source — the per-node snapshot
+			// is what was CONFIGURED, this is what is EXECUTING, and the two can already disagree.
+			// Refill the panel from it so the displayed strategy is the one actually running, rather
+			// than merely non-blank. Guarded because ApplyStrategySettings raises StrategyConfigChanged
+			// (which would stop the local session and re-save the snapshot mid-bind) and
+			// AutoRechargeToggled.
+			if (cfg.Strategy != null)
+			{
+				_loadingNodeStrategy = true;
+				try
+				{
+					_strategyPanel.ApplyStrategySettings(cfg.Strategy, cfg.NumberOfBets, cfg.AutoRecharge);
+				}
+				finally
+				{
+					_loadingNodeStrategy = false;
+				}
+
+				// Keep the per-node snapshot in step with what is executing, so stopping the run and
+				// re-reading the panel cannot show a third, older configuration.
+				SaveActiveNodeStrategySnapshot();
+			}
 		}
 		_strategyPanel.SetManualEnabled(false);
 		_strategyPanel.SetAutoRunning(true);
-		_strategyPanel.SetAutoPaused(false);
+		// Re-entering while the background run is PAUSED must show it paused — SetAutoRunning resets the
+		// button to "PAUSE", so the real state has to be read back from the service (the same D-M2.2 rule
+		// as the strategy fields: while a session exists, the session is the truth).
+		bool paused = _simulationService?.IsPaused == true;
+		_isAutoPaused = paused;
+		_strategyPanel.SetAutoPaused(paused);
+		// The scene was rebuilt on entry with every control back at its enabled default, so the run lock
+		// has to be re-asserted here — this is exactly where it was missing.
+		ApplyRunLock(true);
+		RefreshNodeSelectorReadyDots();
 		ReseedWalletFromBankrollSource();
 		_resultValue.Text = "Auto running (background).";
 	}
@@ -1486,7 +1602,14 @@ public partial class DiceGame : Control, IBetEventSource
 			// _autobetDelegated and manual betting is disabled).
 			_casinoSc?.ApplyBetResult(-betEvent.CreditedProfit);
 			SaveActiveNodeFinancialState(false);
-			ProcessBlockchainAttemptForBet(_activeNodeId, _strategyPanel.StopOnBlockMinedEnabled, _session);
+			// D-M2.8: read the flag from the SESSION, not the panel. The delegated autobet already does
+			// this (SimulationService._config.StopOnBlockMined, captured at start), so the same flag had
+			// two different sources depending on which session owned the run — and they disagreed
+			// exactly when a scene round-trip had blanked the panel.
+			ProcessBlockchainAttemptForBet(
+				_activeNodeId,
+				_session?.SessionConfig?.StopOnBlockMined ?? false,
+				_session);
 			if (!suppressClockAdvance)
 				AdvanceClockForBet();
 
@@ -1839,11 +1962,12 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void StopPlayerSessionOnExternalBlockMined(BaseBetSession sessionThatMined)
 	{
+		// D-M2.8: the running session's own flag, not the panel's current text.
 		if (_session == null ||
 			!_session.IsRunning ||
 			ReferenceEquals(_session, sessionThatMined) ||
 			!IsPlayerActive() ||
-			!_strategyPanel.StopOnBlockMinedEnabled)
+			_session.SessionConfig?.StopOnBlockMined != true)
 		{
 			return;
 		}

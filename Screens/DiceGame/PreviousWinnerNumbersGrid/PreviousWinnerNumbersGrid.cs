@@ -7,7 +7,9 @@ using System.Linq;
 
 public partial class PreviousWinnerNumbersGrid : GridContainer
 {
-	private const int MaxRecentEntries = 260;
+	// 260 → 100, in step with BetHistoryContainer — see the note there. The two containers are always
+	// rendered together, so they must be sized together or the cheaper one's saving is invisible.
+	private const int MaxRecentEntries = 100;
 	private DiceGame _game;
 	private WinnerNumberPresenter[] _pool;
 	private int _poolIndex;

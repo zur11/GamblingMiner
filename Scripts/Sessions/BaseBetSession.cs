@@ -21,6 +21,12 @@ namespace Scripts.Sessions
         public decimal CurrentBet => _currentBet;
         public int ProgressionTriggerStreak { get; private set; }
         public decimal SessionBaseBet => _config?.BaseBet ?? 0m;
+
+        // D-M2.8 (mini-plan 02): a running session's parameters come from the SESSION, never from the
+        // panel. The panel is an editor for the NEXT run — reading it mid-run means the run silently
+        // changes whenever the panel does, including when a scene round-trip blanks it. Safe to expose
+        // directly: BettingStrategyConfig is init-only, so a caller cannot mutate a live session.
+        public BettingStrategyConfig SessionConfig => _config;
         // Stop baselines: the bankroll the session started from. The two stops keep SEPARATE baselines because
         // each insists on its own — a reset re-anchors ONLY the side that fired (see ResetProgressionToBase),
         // so one stop's reset can never redefine what the other one is measuring.

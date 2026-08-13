@@ -2753,6 +2753,78 @@ While revising the casino's loan panel (`AIHelperFiles/player-and-casino-bankrol
 
 **The general rule this section adds:** the shared balance services belong to the **player**. Another node's values may occupy them only transiently, inside DiceGame, while the selector holds a bot — and they must never escape through a scene exit, a session write-back, or a checkpoint.
 
+### 24.13 — The strategy panel across a scene round-trip: scene-lifetime state, and who owns a running session's parameters (mini-plan 02, 2026-08-07)
+
+**Reported symptom.** Leaving DiceGame and coming back blanked the `Increase on loss` field. The general review it prompted found the blanking was total, that two unrelated code paths were *masking* most of it, and that the interesting problem was underneath: **nobody had decided whether the panel describes the next run or the current one.**
+
+**Root cause — one word.** `DiceGame._nodeStrategies`, the per-node strategy snapshot dictionary, was an **instance** field on a scene Godot frees on every navigation. On re-entry it was empty, `LoadActiveNodeStrategySnapshot` took its `ClearStrategySettings()` branch, and every field in the panel went blank. The file already knew better in two places — `_checkpointRestoreSpentThisSession` and `_bootstrapAppliedThisSession` are `static` with the comment *"Static so it survives DiceGame being freed and rebuilt on each scene change"* — and this dictionary is the same kind of state. It is now `static` too (**D-M2.1**): process-lifetime, deliberately **not** persisted, because an app restart reverts the world to the last mined block and a config outliving that would describe a run that no longer exists.
+
+**Why only some fields looked lost — and why that mattered.** Two paths accidentally repainted part of the panel: `OnSimBetSettled` rewrites `Amount to bet` and `Number of bets` from the live session on every settled bet, and `BindToRunningBackgroundAutobet` restores chance and HIGH/LOW. Nothing restored the two percents, the two stop amounts or the four toggles — precisely the fields reported. **A partial mask is worse than none: it makes a total failure look like a specific one**, and it sent the first diagnosis after a single field.
+
+**The blast radius was never cosmetic.** `BuildConfig()` reads the live fields, so pressing AUTO after a round-trip built **flat betting with both stops disarmed**; `SaveActiveNodeStrategySnapshot()` (called from ten handlers) then wrote that blank config back over the stored one; `BuildBotConfigs()` returned an **empty list**, so a later `StartBots` had nothing to start; and `RefreshNodeSelectorReadyDots()` turned every node red **including nodes that were actively betting** — while the node selector is *disabled* during a run, making those dots the only per-node readout on screen. Fixing the dots (**D-M2.9**) meant separating two questions the single predicate had conflated: **"is this node running right now?"** (asked of `SimulationService`, the thing that actually decides it) versus **"does it have a valid strategy?"**. Green now means *running-or-ready*, player included.
+
+#### 24.13a — Where a run's parameters live (D-M2.8)
+
+Chasing a reported behaviour change produced the more durable finding. The three stop flags lived in **different places at run time**:
+
+- `StopOnBlockMined` is a top-level field on `SimulationService.PlayerAutobetConfig`, captured once at start — so blanking its toggle could not reach a running session, and the flag kept working while its UI lied.
+- `StopOnProfit`/`StopOnLoss` live inside `_config.Strategy`, likewise captured at construction — so by the same reasoning they were immune too, and the trace found no path that could reach them (the player autobet is *always* delegated; the local `_session` serves manual bets only).
+- But the **manual** path read `StopOnBlockMined` **live off the panel**, while the delegated path read `_config`. **The same flag, two sources, disagreeing exactly when a round-trip had blanked the panel.**
+
+> **D-M2.8 — a running session's parameters come from the session, never from the panel.** The panel is an *editor for the next run*, not a live control surface for the current one. Both live reads now go through the new `BaseBetSession.SessionConfig` (safe to expose: `BettingStrategyConfig` is init-only, so a caller cannot mutate a live session).
+
+Its companion, **D-M2.2**: where a stored snapshot and a live session both exist, **the executing config wins**. `BindToRunningBackgroundAutobet` refills the panel from `CurrentConfig.Strategy`, so a re-entered scene shows what is *running* rather than what was last *configured* — two things that could already disagree.
+
+#### 24.13b — The run lock, and the control that was only half alive (D-M2.14)
+
+D-M2.8 has a consequence that only became visible once the panel was no longer blank: **if no panel field can reach a running session, every configuration control left enabled during a run is a lie** — clickable and inert. The panel had no concept of a run in progress at all; the Insist toggles merely *looked* correct before, because a blank panel has no stop amount and an armed-amount gate already greyed them. Restoring the amounts removed the accidental cover.
+
+> **D-M2.14 — while a player session runs, every control whose value the session CAPTURED is locked; controls the session RE-READS stay live.** A blanket lock would be untruthful in the other direction.
+
+Locked: bet amount (and its MAX/MIN/X2/÷2 helpers), both progression percents, number of bets (now a live readout), both stop amounts, Stop Block, both Insist toggles, winning chance, HIGH/LOW, and **Load** strategy. Left live: hardware/APS (`SimulationService.HardwareRate` re-reads the allocation each use, so buying hardware mid-run takes effect at once), AUTO/STOP and PAUSE, and **Save** strategy (it records what is on screen, which during a run *is* what is running). One writer per side — `StrategyControlPanel.SetRunLocked` and `DiceGame.ApplyRunLock` — invoked at **all four** transitions: start, manual stop, self-stop, and **re-binding on scene entry**, the one that was missing. The flag is *composed inside* `UpdateInsistToggle` / `ApplyStrategyModeRestrictions` rather than assigned beside them, because those are already the single writers of their controls' `Disabled` state and a second writer drifts.
+
+**The half-live control.** Auditing *which* controls genuinely survive into a run turned up a real defect in the one being kept enabled. `TryPlayerAutoRechargeAndRestart` gated on **both** the captured `_config.AutoRecharge` **and** the live `BankrollProgramService.AutoRechargeEnabled` — so mid-run the toggle worked in one direction only: **OFF took effect, ON did not**. §25.8 makes the service flag the single source of truth and CLAUDE.md already said "the service flag wins"; the captured copy contradicted both. The captured gate is removed (`_config.AutoRecharge` still records how the run was started, but decides nothing). Bots are untouched — `TryRechargeAndRestartBot` keeps its own per-node flag.
+
+**Then the toggle was locked as well** (developer's call, after verifying the rest). It is only a *proxy* to the account-level flag whose canonical home is the Bankroll Programmer, so locking it removes a mid-run **edit point**, not the capability — and it gives the panel one consistent meaning during a run: *it describes the run*, while account-level flags are changed from the account's own screen. That decision is what turns the paragraph above from tidy-up into load-bearing: with the proxy locked, a mid-run change **necessarily** arrives from the Bankroll Programmer, so the live flag must be the only gate. **Removing an edit point raises the requirement on the remaining one.**
+
+**And auto-recharge left the saved-strategy format entirely** (developer's call, 2026-08-07 — completing an intent the code had already half-expressed). `SavedBettingStrategy` stored an `AutoRechargeEnabled`, but `OnLoadStrategyPressed` immediately overwrote it with `SyncPlayerAutoRechargeToggleFromService()` — a stored value that was deliberately never honoured. It is **not a property of a betting strategy**: it decides what happens to the player's money when a run runs out, which is the same answer whichever strategy is loaded. The field is removed from the model, the save call and the repository clone; a load now carries the current value through unchanged. **Everything else is still saved, `StopOnBlockMined` included**, and a shared strategy stays safe on a bot because the mandatory overrides (both Insists forced ON, `StopOnBlockMined` forced off) are applied at `BuildBotStrategyConfig`, not stored. Old files carrying the removed property ignore it on load — personal file, no migration (D-M1.5's precedent). The setting now changes through exactly two direct player actions: the **Bankroll Programmer** (always available — that scene's toggle is never disabled) and the **DiceGame panel toggle** (only while no session is running). *A value that is stored but always overridden is not a feature with a safeguard — it is a field pretending to matter.*
+
+#### 24.13c — The PAUSE button had been dead for seven weeks (2026-08-07)
+
+Reported by the developer while confirming §24.13b, and it is the sharpest instance of this chapter's theme: **the other controls lied about a value; this one lied about an action.**
+
+**Dated by archaeology, not by memory.** `git log -S` puts the break at **`0b0009d` (2026-06-22)**, "background-simulation-plan phase 1 micro-step 1c" — the change that made the player autobet *always* delegate to `SimulationService`. The pause handler itself was last edited `f11b35b` (2026-05-04). **Nothing touched it; the ground moved under it.** That is the signature of this whole family of defects, and it is why a "did anything change here?" review would never have found it.
+
+**Three layers, each independently fatal:**
+
+1. **The guard tested the wrong session.** `OnAutoPauseToggled` opened with `if (_session == null || !_session.IsRunning) return;` — `_session` is DiceGame's **local** session, which serves manual bets and which `OnAutoBetToggled` explicitly stops when delegating. During any background run it is not running, so the handler exited on its first line. The button was visible (`SetAutoRunning` shows it) and completely inert. **This alone explains "it does nothing".**
+2. **Past the guard there was nothing to pause.** The body stopped `_calendarTimeService.IsRunning` and `_autoBetTimer`, both belonging to the retired local path. While delegated, `SimulationService` is the sole owner of the calendar's run state and re-asserts it every frame — a DiceGame-side clock stop is undone on the next tick. The board-vote freeze's own comment already said exactly this.
+3. **Every consumer of `_isAutoPaused` was unreachable**, sitting inside `TickAutoBet`, which returns at its own wrong-session guard.
+
+**And `SimulationService` had no pause concept at all** — its only freeze was `_pausedForBoardVote`, private to the board-vote mechanism.
+
+**The fix — one gate, two reasons.** `SimulationService` gains a public `IsPaused` / `SetPaused(bool)`, and the per-frame freeze test becomes `NetworkRoot.IsAwaitingPlayerVote || IsPaused`. The board-vote flag was renamed `_calendarFrozenBySim` and now means "**this service** froze the clock", for either reason. That composition is the load-bearing part: with two independent booleans each restoring `IsRunning` on their own edge, **resuming a player pause during an open board vote would have thawed a clock the vote was still holding.** One flag, an OR'd gate, and the clock thaws only when *every* reason has cleared. A paused run stays `IsRunning` — it still owns the clock and its session and config are intact — it simply performs no work: no bets, no bots, no founder or scheduled mining, calendar pinned.
+
+`IsPaused` is deliberately **not persisted**, and is cleared by both `StartPlayerAutobet` and `ClearRunningState`, so a pause can never survive into a different run or outlive the service's own stop. DiceGame's handler now targets `_simulationService`, and `BindToRunningBackgroundAutobet` reads the pause state **back from the service** on scene entry — the same D-M2.2 rule as the strategy fields, since `SetAutoRunning` resets the button caption to "PAUSE" and would otherwise show a paused run as running.
+
+**The rule this adds to the three below:** *when a responsibility moves to a new owner, the controls that drove the old one do not fail loudly — they keep compiling, keep rendering, and quietly stop meaning anything.* Delegation moved the run; the pause button was left pointing at the empty seat.
+
+#### 24.13d — The field that was an input and a readout at once (2026-08-13)
+
+Reported from a screenshot: a session had stopped on a mined block after a **winning** bet, with `Increase on win = 0` — so the next bet must be base — yet `Amount to bet` read `0.02110000`. The bet history was flawless and proved it: `0.01 L → 0.0211 W`, `0.01 L → 0.0211 L → 0.044521 W`, every rung exactly `×2.11`. The engine had computed the next bet correctly; the **panel** was showing something else, and `0.0211` was a mid-ladder rung.
+
+**Cause: `_betAmountInput` does two jobs.** It is the base-bet **input** that `BuildConfig()` reads, and `OnSimBetSettled` also writes the **live progression bet** into it each settled bet as a readout (likewise `Number of bets`, which becomes the remaining count). Those coexist harmlessly until something reads the field as an input — and `SaveActiveNodeStrategySnapshot` did, via `_strategyPanel.BuildConfig()`. It is called from **`_ExitTree`**, so navigating away mid-run stored the current rung as the strategy's **base bet**; re-entry restored it. `OnBetsPerSecondChanged` is a second route in, since the APS selector is deliberately left live during a run (§24.13b).
+
+**This is D-M2.8 catching its own case.** That rule — *a running session's parameters come from the session, never from the panel; every `_strategyPanel.*` read inside a running-session code path is a bug candidate* — was written one subsection earlier, and this call site was not audited against it. The fix applies the rule: while a player session is running, the snapshot takes its config, bet count, chance and HIGH/LOW from `SimulationService.CurrentConfig` instead of the panel. Bots are unaffected, since only the player's autobet is delegated.
+
+**And Part A made it visible by making it persist.** Before D-M2.1 the snapshot dictionary was wiped on every navigation, so a corrupted entry died immediately and the panel merely went blank; making it `static` let the corruption survive, turning "everything blank" into "wrong base bet, silently". The bad value was always being written — it simply never lived long enough to be seen. **A fix that extends a value's lifetime promotes every latent corruption of that value into a visible defect**, which is a reason to expect follow-on reports after such a change, not a reason to avoid it.
+
+**Three rules this section adds:**
+1. **A scene is a view; state that outlives the view must not live in it.** The `static` fields already in the file were the precedent — the question to ask of any scene field is "what happens to this on the next navigation?"
+2. **A partially-masked failure reads as a specific one.** Two paths repainting four of eleven fields turned "the panel is wiped" into "the percents disappear", and the first diagnosis followed the symptom instead of the mechanism.
+3. **"Enabled" is a claim — verify a control still does something before leaving it live.** The lock, the half-live auto-recharge fix and the dead PAUSE button are the same question asked three ways. Every one of them was a control that rendered, accepted clicks, and reached nothing.
+4. **A widget that is both an input and a readout will eventually be read as the wrong one** (§24.13d). Where a field serves both roles, the *writer* of the config must take it from the authority, not from the widget — the widget is a display surface the moment anything else writes to it.
+
 ## Chapter 25 — Bankroll Management: Progression Resets, the two Insist switches, and Auto-Recharge
 
 **Files**: `Scripts/Sessions/BaseBetSession.cs` (`ApplyStopConditions`, `HandleStopOnLoss`, `ResetProgressionToBase`), `Scripts/Betting/ProgressiveBettingStrategy.cs`, `Scripts/Services/SimulationService.cs` (`TryPlayerAutoRechargeAndRestart`, `TryRechargeAndRestartBot`)
@@ -4293,6 +4365,90 @@ Three lessons, all of which generalise:
 
 A second, independent fix shipped alongside it and is worth stating on its own, because it helps every wallet panel and every bot affordability check too: **`NetworkRoot.AggregateSpendable` now makes ONE pass over the UTXO set for the node's whole owned address set**, instead of calling `GetAddressSpendableBalance` once per address — each of which walked the *entire* UTXO set and rebuilt the pending-spent outpoint set. That is `O(addresses × utxos)` collapsed to `O(utxos)`, with an identical result by construction (an outpoint has exactly one address, so no double counting is possible). The casino, whose change rotation gives it the largest address book in the world, was the worst case and also the one the swap desk asked for on every bet.
 
+### 38.8 — The third failure: a cost paid for EXISTING, which no cadence work can reach (mini-plan 02, 2026-08-07)
+
+§38.1–38.6 are about polling where an event would do. §38.7 is its mirror — a correct event at a rate nobody re-checked. This is the **third** shape, and it is the one both of those instincts walk straight past: **work that is not triggered by anything at all.**
+
+**The report.** With the DEV time scale at 9000X, entering `BetsHistoryExplorer` collapsed the apparent game speed, recovering on leaving. The obvious suspect was that the scene writes `CalendarTimeService.SpeedMultiplier` — it does, in three places, and `SimulationService` is supposed to own that while delegated. The numbers cleared it: `_speedSteps[0]` is **100**, byte-identical to the base the sim itself sets, so the write is a no-op, and the `_Ready` write sits behind an `if (!_liveMode)` that a running autobet never satisfies. **Nothing was lowering the requested rate; the game had stopped keeping up with it** — §38.7's third lesson, arriving as a *symptom* this time rather than a diagnosis.
+
+**The instrument came before the fix.** `SimulationThrottle` existed but was observable only through `difficulty_trace.csv`, at one row per mined block — far too coarse to attribute a slowdown to the screen you are standing on. A small `SimRetentionReadout` (`Sim: NN%`, hidden unless a sim is running, amber below 90%) now renders in **`StatusBar`** and in **`DevTimeScaleSelector`** — the latter because **DiceGame has no StatusBar at all**, it draws its own balance labels, so the reading was invisible in the single scene that mattered most. Hosting it beside the time-scale dropdown also puts the *demand* and the *delivery* side by side.
+
+**Measured, and it kept redirecting the work:**
+
+| Configuration | Retention at 9000X |
+|---|---|
+| BetsHistoryExplorer, before | **15–18%** |
+| + incremental append instead of re-sorting the whole history per event | 40–80%, peaks 98%, dips 20% |
+| + 1 s real-time refresh, skip-unchanged-window guard | 50–70%, dips 18% |
+| + entry count 260 → 50 (experiment) | **~100%** |
+| **entry count 260 → 100 (shipped), both scenes** | **>80% in DiceGame *and* BetsHistoryExplorer** |
+
+Two real defects were fixed on the way, both squarely in this chapter's existing vocabulary: `OnLiveStatsChanged` re-sorted and re-materialised the **entire** ~105k-record history on every `StatsChanged` — four times a second, §38.7 verbatim — and the view rebuild was cadenced **in game seconds**, a quantity the DEV time scale multiplies by 90, so at 9000X it repopulated two containers *every frame*. **A refresh cadence must be denominated in real time; game time is a quantity the player can accelerate.**
+
+**The residual scales with the number of entries — but through the REBUILD, not the draw.** Cutting the entry count 260 → 50 took the scene to ~100%, and 260 → 100 (shipped) to >80%. The tempting reading — "~520 pooled nodes cost their draw every frame, and only showing fewer rows can reach that" — was written here first and is **WRONG**; see §38.8a. What scales with the count is the **clear-and-refill**: `LoadFromHistoricalRecords` hides every pooled entry and repopulates N of them, so a rebuild costs `O(N)` and 100 rows is a spike 2.6× cheaper than 260.
+
+The single-variable experiment (50 entries ⇒ ~100%) was run before anything was changed permanently, and it earned its keep twice over: it sized the effect, and it killed the tempting wrong fix — an in-place-update refactor of the two shared containers, aimed at the half of the cost that had already stopped mattering.
+
+#### 38.8a — The A/B that refuted the draw-cost explanation (2026-08-12)
+
+The claim above originally read *"the residual is the draw cost of the visible nodes"*, and it carried a corollary: that the mini-plan-02 audit's **0.63** retention baseline had been "measuring a screen, not the engine". Both were retracted after a controlled A/B, and the retraction is worth more than the claim was.
+
+**The test.** The pre-fix world was archived intact — same chain, same 105k-record journal, same **5 hardware credits** — so restoring it under the shipped build isolates the code as the only variable. (A fresh world had been made first and was *useless* for this: a world reset wipes `hardware_allocation.json`, so it ran at **1 credit**, roughly a fifth of the engine work per frame. **Before prescribing a wipe, check that the conditions being reproduced survive it.**)
+
+| Sample — same world, 5 credits, 9000X | Retention |
+|---|---|
+| blocks 113–147, pre-everything | 0.630 |
+| all 95 archived blocks, mixed builds | 0.694 |
+| blocks 168–207, immediately pre-restore | **0.757** |
+| blocks 208–247, shipped build | **0.624** |
+
+**Post-fix measured *lower* than the adjacent pre-fix window, and per-block retention inside a single session ranged 0.377–0.831.** The block-to-block variance is larger than the effect being chased, so a 40-block window cannot resolve it — and an eyeballed on-screen label, which is what produced the earlier "DiceGame is 70–80%" reading, resolves it far less.
+
+**What survives, what does not:**
+
+- **Survives:** the BetsHistoryExplorer fix. 15–18% → >80% is far outside this noise band, and its two real defects (a full-history re-sort per `StatsChanged`, a refresh cadence denominated in game seconds) are defects on their own terms.
+- **Refuted:** the draw-cost attribution. Had it been right, cutting 260 → 100 would have helped DiceGame too — it renders the same containers. It did not, because DiceGame *appends* one entry at a time through a ring buffer and has no bulk rebuild to make cheaper. **The cost scaled with entry count in one scene and not the other, which is exactly what distinguishes a rebuild cost from a draw cost.**
+- **Un-retracted:** the 0.63 baseline. Every sample of this world at 5 credits lands in 0.62–0.76 on *every* build. That is simply what this load retains; it was never a screen artifact. **What DiceGame spends its frame on at 9000X remains an open question** — candidates include the per-block commit (a ~280 KB `state.json` write plus checkpoint capture and governance tick), journal I/O, and the bet engine itself at 5 credits. Out of scope for mini-plan 02, which set out to fix a scene-specific collapse and did.
+
+**The methodological lesson, which is the durable part:** *an explanation that fits one scene is a hypothesis, not a finding, until it is tested where it predicts a second outcome.* The draw-cost story explained BetsHistoryExplorer perfectly and was believed for that reason alone. DiceGame was the case that could have falsified it, was available the whole time, and was only consulted after the fix had shipped and been documented.
+
+#### 38.8b — The crossover, and the confounder that had been driving every reading (2026-08-12)
+
+§38.8a's own table has a flaw, found by the developer asking the right question: *the earlier tests never ran a LONG autobet, so we never saw what the number does after several minutes.* An **A–B–A crossover** was run on the restored world — one continuous autobet, 5 credits, 9000X, ~5 minutes per leg, boundaries marked by trace row count rather than by reading the label.
+
+| Phase | Retention | Blocks |
+|---|---|---|
+| A1 — DiceGame, **cold start** | 0.5649 | 26 |
+| A1 warm tail (last 6 blocks) | **0.7838** | — |
+| **B — BetsHistoryExplorer** | **0.7722** | 36 |
+| A2 — DiceGame, **warm** | **0.7624** | 30 |
+
+**Two results, and the second one reframes the whole chapter's investigation.**
+
+**1. The BetsHistoryExplorer fix is confirmed.** B sits *between* A1's warm tail and A2 — no scene effect survives. Pre-fix the scene read 15–18% against DiceGame's ~63%; it is now at parity. This is the sustained, trace-based confirmation the earlier eyeball readings could not give.
+
+**2. Retention has a large warm-up ramp, and it was the dominant term all along.** A1 climbed `0.402 → 0.774` across its own quarters; A2 climbed `0.568 → 0.900`. **A ~0.2–0.35 swing from warm-up alone — larger than every scene effect chased in §38.8/§38.8a.** It explains each contradictory reading in the record: the "DiceGame is 70–80%" impression was warm, the "50–60%" that contradicted it was cold, the fresh run's `0.614 → 0.894` climb was the ramp itself, and **the 0.63 baseline came from a 35-block trace sitting almost entirely inside it.**
+
+**The corrected figure: warm steady-state retention for this world at 5 credits is ≈0.76, not 0.63.** The 0.63 is a *cold* measurement and should be quoted as one.
+
+**This also invalidates §38.8a's A/B arithmetic.** It compared 0.757 pre-fix against 0.624 post-fix and read a regression; those were **warm vs cold** — the pre-fix window was the tail of a long session, the post-fix one was minutes after a world restore. Warm-to-warm the comparison is **0.757 → 0.7624: no change**, which still supports the draw-cost refutation (the entry reduction genuinely did not help DiceGame) but now rests on a sound comparison rather than an artifact. *§38.8a's conclusions survive; one of its numbers did not.*
+
+Mechanism **unknown**. .NET tiered JIT fits the shape (hot paths start at tier 0 and re-compile once call counts justify it), as do Godot shader compilation and GC heap settling — but see the replication below, where a second cold-process run produced **no ramp at all**, which none of these explain on their own. Treat the ramp as an observed behaviour to measure around, not as a diagnosed one.
+
+**Replicated on a fresh world, with an accidental control (2026-08-12).** The crossover was repeated on a newly reset world at the same 5 credits: A1 `0.5657` (30 blocks) · **B `0.6014`** (32) · A2 `0.5686` (22); second halves A1 `0.6314` / A2 `0.6332`. **B lands *above* both DiceGame legs on aggregate and ~0.03 below them on second halves** — signals pointing opposite ways, i.e. no effect, all of it inside the per-block noise band (0.37–0.78). Decisively, **A2 did not recover above B**, which is what a real scene cost would have produced. *The BetsHistoryExplorer fix generalises.*
+
+**The ramp did NOT appear in this run, and why is unresolved.** A1's quarters ran `0.587 → 0.468 → 0.579 → 0.641` where the restored-world run had climbed `0.402 → 0.774`. An "accidental control" was briefly claimed here — that an aborted first attempt had pre-warmed the process — and it was **wrong**: the developer read the credit-count warning before placing any bets, so both runs began on an equally cold process. *The claim was built on an assumption about what the developer had done, which was never checked with them; it took one sentence from them to demolish it.*
+
+So the tiered-JIT reading loses its only direct support and returns to being a bare hypothesis. Both runs started cold processes; one ramped steeply and one did not. The clearest remaining difference is the **world**: the restored world boots with ~200k journal records across 21 chunks and a long chain, the fresh one with nothing — which makes a world-size-linked settling effect (GC pressure and file-cache warming after a large load) at least as plausible as JIT tiering. **Unresolved, and deliberately left that way rather than re-explained.**
+
+**One qualification this forces:** absolute retention is **world-dependent** — ≈0.63 on the fresh world versus ≈0.76 on the restored one, at identical credits and build. A retention figure must therefore be qualified by *which world* as well as warm-vs-cold. **Cross-world comparisons of the absolute number are not meaningful; only within-run crossovers are.**
+
+**The rule this adds:** **measure warm, and prove it by returning.** A performance figure taken in the first minutes of a process is a measurement of start-up. The crossover's return leg is what separated "the scene did it" from "time did it" — and every reading in this investigation that lacked one turned out to be reading time.
+
+**One consequence still stands:** **§38.5's backlog is about update cadence, and neither of these costs is on it.** *Migrating a poll cannot fix a cost paid by rebuilding, nor one paid by existing.*
+
+**Where it landed.** `BetHistoryContainer.MaxRecentEntries` and `PreviousWinnerNumbersGrid.MaxRecentEntries` are **100** (the constants size the pools as well as the display cap, so the nodes genuinely disappear rather than merely hiding), matched by `BetsHistoryExplorer.MaxPreviewEntries`. The two containers are always rendered together and must be sized together, or the cheaper one's saving is invisible. The remaining <20% is accepted: the difference is imperceptible in play, and 9000X is a DEV-only setting.
+
 ---
 
 ## Chapter 39 — The Central Bank (FED): The Two-Layer Debt Architecture (Step 15 P15.1)
@@ -4907,6 +5063,22 @@ So duplicate copies of a bet do not scatter through the list — they land **adj
 > **Where a displayed figure has a cheap closed-form bound, assert it.** And separately: **a label is a claim about semantics and gets audited far less than the arithmetic beneath it.** "Martingale level" was wrong on its own terms, and the mis-naming is what made the inflation hard to reason about — nobody can sanity-check a number whose definition they must reconstruct from the code.
 
 Full forensic record, including the measured tables: `Documentation/INCIDENT_LOG.md` **INC-002**.
+
+### 40.9 — The chance-to-win selector: §40.8's correctness rule becomes a control (mini-plan 02, 2026-08-13)
+
+§40.8 forced the loss-run metric to be measured per **`(GameId, Chance)` segment**, because a run of losses only means anything at a fixed win chance — a stretch at 2% concatenated onto one at 50% describes neither. That segmentation was correct but **invisible**: the player saw one number with a parenthetical qualifier (`18 (at 50% chance)`) and no way to ask the question the qualifier implies.
+
+`BetsHistoryExplorer` now carries a **`Chance to win:`** selector. `All Bets` (the default) is the previous behaviour exactly; below it sits one entry per chance actually present in the history. Selecting one restricts the bet list, the winner-numbers grid **and every summary figure** — total bets, max bet, max loss, max consecutive losses — to that chance, and the summary line leads with its scope (`Chance 50% — up to selected date: …`). Filtered, the loss-run figure **drops its qualifier**, because §40.8's caveat is satisfied by construction rather than by a footnote. *A correctness rule the code had to obey internally is usually also a question the player wants to ask; exposing it costs less than explaining it.*
+
+**Three design decisions carry the weight:**
+
+**(1) The option list is TIME-AWARE, like everything else in this scene.** A chance is offered only from the instant its first bet was placed (`_chanceFirstSeenUtc`). Rewind the timeline two days and a chance first played yesterday **disappears** from the list; replay forward past that instant and it reappears. Offering it earlier would present a filter that can only produce an empty view, and would leak the future into a view of the past — in a scene whose entire purpose is replaying history, the selector must obey the selected date or it is lying about the same thing the rest of the screen is careful about. Rewinding past the *currently selected* chance falls back to `All Bets` rather than leaving the view filtered by something no longer offered.
+
+**(2) Filtering never runs in the refresh path.** `_allRecords` holds the full history; `_sortedRecords` is the **view** everything else reads. The filter is one `O(n)` pass, executed only on a selection change or a full history rebuild — and when no filter is active the view **is** `_allRecords`, the same instance, so the default path allocates nothing and behaves byte-for-byte as before. The live-append path (§38.8's incremental tail) appends to both lists in step rather than re-filtering per settled bet, and only the newly-arrived tail is scanned for unseen chances. This is deliberate: filtering ~100k records per refresh would rebuild precisely the frame-cost problem §38.8 had just removed. **A new filter over a large collection is a performance decision before it is a UI one.**
+
+**(3) The visibility check is one integer per refresh.** `CountVisibleChances` walks a dictionary that cannot exceed 95 entries (a dice chance is 1–95) and compares the count against what the selector currently offers; the rebuild runs only on the crossing itself.
+
+**Related, and deliberately kept separate:** this filters by *chance*, one axis of a strategy. The full per-strategy breakdown — max martingale level, streaks and P/L for a chosen strategy — is the **Betting Statistics scene** in `PRIVATE_ROADMAP.md`, targeted at Basic Mode, and this selector's time-aware option list is the pattern it should copy.
 
 ---
 

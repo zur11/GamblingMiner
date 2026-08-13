@@ -358,6 +358,16 @@ Candidate inputs (all already available, none requiring new state):
 
 **Promoted in priority by Step 16's own playtest (2026-08-05).** Two of the three participation settings are now per-company (`PlayerPauseOnVotes`, `PlayerAutoAbstain`, plus three policy dials), and with the player holding NST in ten companies the panel-by-panel management is already the slowest part of the loop — this hub is where a bulk view belongs. The step also produced the exact failure it exists to prevent: with the game frozen by a vote at BTC Guild the developer went to ArtForz Cluster, found a normal page, and had no route onward. P16.8e's pause locator patches that one case; **a holdings hub answers the general question ("where is anything waiting for me?") that the locator only answers for the pause.** Reuse `GetCompaniesAwaitingPlayerVote` as the badge source.
 
+### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
+
+**Status: deferred 2026-08-13 (developer's call), targeted at Basic Mode.** Split out of mini-plan 02's Part D so the storage work there can proceed without waiting on a new screen. Full write-up: `AIHelperFiles/mini02-panel-state-and-100k-audit-plan.md` §D.6.
+
+**What it is:** a player-facing screen that picks a **strategy** and shows that strategy's own figures — max martingale level, max bet, bets, net P/L, streaks — instead of the lifetime totals `BetsHistoryExplorer` shows.
+
+**Why it is the right place to design the epoch key.** Mini-plan 02's rollup (D-M2.11) is deliberately **global** in v1; segmenting it needed a boundary definition, and the honest answer was "design that against the screen that needs it rather than guess now". This is that screen. When it is built, two decisions land with it: (a) the fingerprint must cover everything that changes what a *level means* — base bet, both progression percents, both stop amounts, both Insist switches; and (b) storing that fingerprint **per record** versus only per summary decides whether history can ever be re-segmented after the fact. Cheaper to decide with the screen in front of you than in the abstract.
+
+**Already available to build on:** `BetsHistoryExplorer`'s chance-to-win selector (mini-plan 02) is the same idea one axis smaller — filter the history by a strategy dimension, drive the summary figures from the filtered view, and offer an option only from the moment its first bet exists. Its time-aware option list is the pattern to copy. And **max martingale level** is free at settle time from `BaseBetSession.ProgressionTriggerStreak` (D-M2.10) — it is not the same quantity as INC-002's "max consecutive losses" and must not be conflated with it.
+
 ### Ghost Miner Typology — four kinds instead of one (design open, after Step 16)
 
 **Status: recorded 2026-07-30 from the Step 16 Round-2 discussion.** Full note: `AIHelperFiles/step16-living-governance-and-bot-wallets-plan.md` **§6.1** (D-16.17).

@@ -132,11 +132,12 @@ public partial class SimulationService : Node
 	private PlayerAutobetConfig? _config;
 	private double _accumulatorSeconds;
 
-	// Step 14 (ND.8b.3, D-ND8.18): true while this service froze the calendar because an open board vote
-	// is waiting for the player's ballot (NetworkRoot.IsAwaitingPlayerVote). Bets are what advance time,
-	// but the calendar also ticks on its own while delegated — the pause must pin the clock where the
-	// vote-opening block left it, and must restore IsRunning only if WE were the ones who stopped it.
-	private bool _pausedForBoardVote;
+	// True while THIS service froze the calendar — for a board vote (Step 14 ND.8b.3, D-ND8.18) or a
+	// player pause. Bets are what advance time, but the calendar also ticks on its own while delegated,
+	// so a freeze must pin the clock, and IsRunning must be restored only if WE were the ones who
+	// stopped it. One flag for both reasons on purpose: the gate in _Process ORs the reasons, so the
+	// clock thaws only when EVERY reason has cleared.
+	private bool _calendarFrozenBySim;
 
 	// Bot runners (Phase 2): continuous background betting for casino bot nodes while the player autobet
 	// is active. Single owner of bot state lives here, not in DiceGame.
@@ -151,6 +152,23 @@ public partial class SimulationService : Node
 	private const string PlayerNodeId = "player";
 
 	public bool IsRunning { get; private set; }
+
+	// The DiceGame PAUSE button (mini-plan 02). A paused run stays RUNNING — it is still the owner of
+	// the clock and its session/config are intact — it simply performs no work per frame. Deliberately
+	// NOT persisted and reset by StartPlayerAutobet/ClearRunningState: a pause is a live-run state, and
+	// an app restart reverts the world to the last mined block anyway.
+	//
+	// Before this existed, PAUSE was wired only to DiceGame's LOCAL session, which is inert while the
+	// autobet is delegated — so the button had been visible and doing nothing since delegation landed
+	// (2026-06-22). See ProjectDesignManual §24.13c.
+	public bool IsPaused { get; private set; }
+
+	public void SetPaused(bool paused)
+	{
+		// Only meaningful while a run exists; a stray call cannot leave a stopped service "paused".
+		IsPaused = paused && IsRunning;
+	}
+
 	public PlayerAutobetConfig? CurrentConfig => _config;
 
 	// Last settled player bet, so DiceGame can feed its bet-history container while autobet is delegated.
@@ -196,6 +214,7 @@ public partial class SimulationService : Node
 	// seeded from the current bankroll (the single source of truth).
 	public void StartPlayerAutobet(PlayerAutobetConfig config)
 	{
+		IsPaused = false; // a fresh run always starts unpaused
 		_config = config;
 		_engine ??= new DiceEngine();
 		decimal bankroll = _bankroll?.CurrentBalance ?? 0m;
@@ -235,6 +254,7 @@ public partial class SimulationService : Node
 	{
 		StopBots();
 		IsRunning = false;
+		IsPaused = false; // a pause belongs to a live run; never carry it into the next one
 		_session = null;
 		_betService = null;
 		_wallet = null;
@@ -293,15 +313,21 @@ public partial class SimulationService : Node
 			return;
 		}
 
-		// Step 14 (ND.8b.3, D-ND8.18): an open board vote in a company where the player holds NST pauses
-		// the game until the player registers a ballot (CompanyDetails' Board Vote panel). Skip the whole
-		// tick (no bets, no bots, no founder/scheduled mining) and freeze the calendar in place; restore
-		// it the frame after the ballot lands. DiceGame gates manual bets on the same flag.
-		if (NetworkRoot.IsAwaitingPlayerVote)
+		// TWO independent reasons freeze the simulation, and they compose through one gate so that
+		// clearing either one cannot thaw a clock the other is still holding:
+		//
+		//  • Board vote (Step 14 ND.8b.3, D-ND8.18) — an open vote in a company where the player holds
+		//    NST pauses the game until a ballot is registered (CompanyDetails' Board Vote panel).
+		//    DiceGame gates manual bets on the same flag.
+		//  • Player pause (mini-plan 02, 2026-08-07) — the PAUSE button in DiceGame's strategy panel.
+		//
+		// Either one skips the whole tick: no bets, no bots, no founder/scheduled mining, calendar
+		// pinned. Re-checked EVERY frame rather than only on the edge, because DiceGame re-asserts
+		// IsRunning on scene re-entry (BindToRunningBackgroundAutobet) and that must not thaw a frozen
+		// clock.
+		if (NetworkRoot.IsAwaitingPlayerVote || IsPaused)
 		{
-			_pausedForBoardVote = true;
-			// Re-checked every frame (not only on the pause edge): DiceGame re-asserts IsRunning on
-			// scene re-entry (BindToRunningBackgroundAutobet), which must not thaw a vote-paused clock.
+			_calendarFrozenBySim = true;
 			if (_calendar is { IsRunning: true })
 			{
 				_calendar.IsRunning = false;
@@ -309,9 +335,9 @@ public partial class SimulationService : Node
 			}
 			return;
 		}
-		if (_pausedForBoardVote)
+		if (_calendarFrozenBySim)
 		{
-			_pausedForBoardVote = false;
+			_calendarFrozenBySim = false;
 			if (_calendar != null)
 			{
 				_calendar.IsRunning = true;
@@ -633,11 +659,19 @@ public partial class SimulationService : Node
 	private bool TryPlayerAutoRechargeAndRestart()
 	{
 		if (_session == null || _config == null || _wallet == null || _betService == null) return false;
-		if (!_config.AutoRecharge) return false;
 		if (_session.LastStopReason != IBettingStrategy.StopReason.InsufficientBalance) return false;
 		if (_bankrollProgram == null || _principal == null) return false;
-		// SF.1.2 (D-SF.4): the service-level off-switch. When OFF, no auto top-up — the session stops and waits
-		// for a manual Bankroll recharge (today's InsufficientBalance path, now player-chosen).
+		// SF.1.2 (D-SF.4): the service-level off-switch, and since mini-plan 02 the ONLY gate. When OFF, no
+		// auto top-up — the session stops and waits for a manual Bankroll recharge.
+		//
+		// The captured `_config.AutoRecharge` used to be ANDed in front of this, which made the toggle
+		// half-live: turning it OFF mid-run worked (this check), turning it back ON did not (the captured
+		// false still blocked). §25.8 makes BankrollProgramService.AutoRechargeEnabled the single source of
+		// truth and CLAUDE.md already documented "the service flag wins" — the captured copy contradicted
+		// both. It is the one panel control deliberately left ENABLED during a run, so it has to actually
+		// work in both directions. (`_config.AutoRecharge` is still set by DiceGame and still describes how
+		// the run was started; it is simply no longer a gate. Bots are unaffected — TryRechargeAndRestartBot
+		// keeps its own per-node cfg.AutoRechargeEnabled.)
 		if (!_bankrollProgram.AutoRechargeEnabled) return false;
 
 		decimal amount = _bankrollProgram.AutoRechargeAmount > 0m

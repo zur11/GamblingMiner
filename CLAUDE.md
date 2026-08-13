@@ -377,6 +377,8 @@ Two hybrid layers make up the historical network (P-14.A):
 - `AutoBetSession` — extends `BaseBetSession`; adds session ID tracking
 - `ManualBetSession` — single-bet handler
 
+**A running session's parameters come from the SESSION, never from the panel** (mini-plan 02, D-M2.8, 2026-08-07). A session captures its `BettingStrategyConfig` at `Start()` and nothing re-pushes it, so `StrategyControlPanel` is an **editor for the next run**, not a live control surface for the current one. Read a live run's settings through **`BaseBetSession.SessionConfig`** (safe to expose — the config is init-only); every `_strategyPanel.*` read inside a running-session code path is a bug candidate. Two corollaries: (a) **`DiceGame.ApplyRunLock` / `StrategyControlPanel.SetRunLocked` disable every captured-value control while a player session runs** (D-M2.14) — an enabled-but-inert control is a lie; the exceptions are what the session genuinely re-reads (hardware/APS via `HardwareRate`) plus the run controls themselves; (b) **where a stored per-node snapshot and a live session disagree, the executing config wins** (D-M2.2) — re-entering DiceGame refills the panel from `SimulationService.CurrentConfig.Strategy`. `DiceGame._nodeStrategies` is **`static`** so it survives the scene being freed on navigation (D-M2.1 — as an instance field it emptied on every round-trip and silently produced flat betting with both stops disarmed). Full write-up: `Documentation/ProjectDesignManual.md` **§24.13**.
+
 ### Bet Execution Pipeline
 
 ```
