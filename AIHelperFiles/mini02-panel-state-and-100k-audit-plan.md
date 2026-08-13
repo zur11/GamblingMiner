@@ -969,13 +969,21 @@ Repeated on a newly reset world, 5 credits, 9000X, one continuous autobet:
 signals, i.e. no effect, all inside the per-block noise (0.37–0.78). **A2 did not recover above B**,
 which a real scene cost would have produced. **Part C's fix generalises to a fresh world.**
 
-**The accidental control is the more valuable half.** This run showed almost **no** warm-up ramp
-(A1 quarters `0.587 → 0.468 → 0.579 → 0.641`) where §C.6d's run showed a steep one — because the
-aborted first attempt (the 1-credit false start) had already simulated ~5 minutes before the real A1.
-**The process was warm; only the world was fresh.** Ramp absent exactly when the process was
-pre-warmed ⇒ the ramp is **process state**, not world state or history size — the strongest support
-yet for the tiered-JIT reading. *The mistake that nearly cost the run ended up controlling the
-variable.*
+**The ramp did not appear here, and why is UNRESOLVED.** A1's quarters ran
+`0.587 → 0.468 → 0.579 → 0.641` against §C.6d's steep `0.402 → 0.774`.
+
+⚠️ **A retracted claim, kept as a warning.** This section first asserted an "accidental control" —
+that the 1-credit false start had pre-warmed the process, isolating the ramp to process state and
+supporting the tiered-JIT reading. **It was wrong**: the developer read the credit warning *before
+placing any bets*, so both runs began on an equally cold process. The claim was built on an
+unchecked assumption about what the developer had done, and it was a tidy story, which is exactly
+why it should have been checked before being written down. *A neat explanation that arrives with a
+narrative attached deserves more scrutiny than a messy one, not less.*
+
+So: two cold-process runs, one ramped steeply, one did not. The clearest remaining difference is the
+**world** — the restored world boots ~200k journal records across 21 chunks plus a long chain, the
+fresh one boots nothing — making a world-size-linked settling effect (GC pressure, file-cache
+warming) at least as plausible as JIT tiering. **Left unresolved rather than re-explained.**
 
 **Qualification this forces:** absolute retention is **world-dependent** — ≈0.63 fresh vs ≈0.76
 restored, identical credits and build. Quote a retention figure with its world AND its warm state;
