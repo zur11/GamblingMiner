@@ -4,7 +4,9 @@
 `mini02-panel-state-and-100k-audit-plan.md` (whose **Part D** this is, promoted to its own plan
 exactly as that plan said it should be).
 
-**Status:** 📋 **DRAFT — awaiting developer review.** Branch created, no code touched. ·
+**Status:** 📋 **DRAFT — decisions taken (§6), ready to implement.** Branch created, no code touched.
+⚠️ **§6.2 is the headline: lifetime statistics are already silently wrong in any world past 200,000
+bets, including the developer's.** ·
 **Branch:** `bet-journal-index-and-rollup` · **World format bump:** likely **yes** — see §5 ·
 **Design record (proposed):** `Documentation/ProjectDesignManual.md` new §40.10; INC-001's entry in
 `Documentation/INCIDENT_LOG.md` gains a "closed by" pointer.
@@ -33,10 +35,11 @@ INC-001's root cause still standing after INC-001's fix.
 binary-searches to the chunk covering a date and loads only that one.
 
 **D2 — the persisted rollup.** Lifetime figures kept as **running totals updated as each bet
-settles**, instead of derived by scanning: total bets, wins/losses, wagered, net P/L, max bet,
-**max martingale level**, and max consecutive losses.
+settles**, instead of derived by scanning — the exact list is §6.4.
 
-They are separable and D1 is the one that closes INC-001. If only one ships, ship D1.
+They are separable, but **the priority inverted once §6.2 was found**: D1 closes INC-001's *cost*,
+D2 closes a *correctness* defect that is already producing wrong lifetime numbers. **If only one
+ships, ship D2.**
 
 ## 3. Decisions carried over from mini-plan 02 (still binding)
 
@@ -84,17 +87,108 @@ a wipe costs nothing but the wiped world itself.
 comparison across the bump must re-establish credits first — mini-plan 02 lost a 100k run to exactly
 this (§B.7a). Hardware is free to re-add (no BTC cost; P5 is unbuilt).
 
-## 6. Open questions for the developer
+## 6. Decisions (developer, 2026-08-13)
 
-1. **Where does the rollup live** — inside `UserStatsService` (already owns lifetime stats and
-   self-persists per bet, less surface) or a new file beside the journal (separates "stats I display"
-   from "index over storage")?
-2. **Does the index get persisted, or rebuilt at boot from chunk headers?** Rebuilding means reading
-   the first and last line of each of ≤21 files — likely fast enough to need no persistence at all,
-   which would remove the bump. **Worth measuring before designing around it** (§40.7: time it, or
-   say plainly that you did not).
-3. **Is `EnsureFullHistoryLoaded` allowed to disappear**, or must some screen still be able to demand
-   the whole retained window?
+### 6.1 — The rollup lives inside `UserStatsService`
+
+It already owns `Stats`, already self-persists per bet, and is already the single service every
+consumer asks. Less surface than a parallel file, and it keeps "the stats" in one place.
+
+### 6.2 — ⚠️ Lifetime stats are ALREADY wrong, and this is what fixes it
+
+**`Stats` is not persisted at all.** `UserStatsService._Ready()` calls `EnsureAllChunksLoaded()` and
+then `RebuildStatsFromLoadedHistory()` — so every boot recomputes "lifetime" figures **from the
+retained window only**. The instant the first chunk is pruned, every pruned bet disappears from the
+totals, permanently, on the next restart.
+
+**This is live, not hypothetical.** The developer's world reached 21 chunks (~210k bets) and had
+already pruned `bet_history.jsonl` + `000001–000003` by 2026-08-12. Its lifetime P/L, total wagered
+and bet count are understated today by whatever those four chunks held.
+
+**So the rebuild-vs-persist boundary is a CORRECTNESS boundary, not a performance one — and the
+system chooses it, not us.** It sits exactly at *"has anything been pruned yet?"*, which with current
+settings is **200,000 bets** (`MaxRetainedJournalChunks 20 × MaxJournalEntriesPerChunkFile 10000`),
+not at a number we pick. The developer's instinct ("below X rebuild, above X persist") is right; only
+X is not free to choose:
+
+| Mode | Condition | Behaviour |
+|---|---|---|
+| **A — rebuild** | nothing pruned yet (disk holds the whole history) | boot rebuilds `Stats` by scanning, exactly as today. Correct *because* the disk is complete |
+| **B — persist** | the first chunk has been pruned | the persisted rollup is **authoritative**; boot no longer derives lifetime figures from disk |
+
+Detecting the switch is exact and cheap: **the oldest retained chunk's index > 0** means pruning has
+happened. No heuristic, no counter to keep in sync.
+
+*(1,000,000 could only be the boundary if retention were raised to ~100 chunks, which at ~2.8 MB per
+chunk is ~280 MB of journal. Not proposed.)*
+
+**Mode B must be entered before the boundary is crossed, not after.** A rollup that starts counting
+only once pruning begins has already lost the pruned bets. So the rollup is maintained **from the
+moment this ships**, and its starting values are seeded from whatever the retained window can still
+prove — with the shortfall recorded honestly rather than silently absorbed (§6.5).
+
+### 6.3 — Vocabulary: "max martingale level" is dropped
+
+**Retired from the design and from the UI vocabulary.** In its place, two symmetric outcome metrics:
+
+- **Max consecutive losses** (already exists, already correct)
+- **Max consecutive wins** (new, its mirror)
+
+Both are pure outcome runs, both need INC-002/§40.8's `(GameId, Chance)` segmentation for the same
+reason — a run only means something at a fixed win chance — and neither needs the progression to be
+reasoned about. *This supersedes D-M2.10*: `ProgressionTriggerStreak` is no longer harvested for
+statistics, and the ladder-depth metric it would have provided is not built.
+
+**Why this is the better call**, recorded because D-M2.10 argued the opposite: ladder depth and
+outcome run are *different quantities* that coincide only when nothing resets the progression — and
+insist resets, the §25.5 bankroll-limit reset and every auto-recharge break exactly that. INC-002's
+whole lesson was that a label which requires reconstructing its definition from the code cannot be
+sanity-checked by anyone. Two symmetric, self-describing metrics beat one clever one.
+
+### 6.4 — The persisted figures (v1)
+
+| Figure | Segmented? | Note |
+|---|---|---|
+| Total bets, wins, losses | no | |
+| Total wagered, net P/L | no | |
+| Max bet amount | no | |
+| Max loss amount | no | largest single loss |
+| **Max won amount** | no | **new** — the mirror of max loss, currently not tracked anywhere |
+| Max consecutive losses | **per `(GameId, Chance)`** | §40.8's rule |
+| **Max consecutive wins** | **per `(GameId, Chance)`** | **new**, same rule |
+
+### 6.5 — Where `EnsureFullHistoryLoaded` is actually used (answer to Q3)
+
+The full-load call has **one** external consumer, but `BetHistory.EnsureAllChunksLoaded()` has five,
+and they are what really has to be replaced:
+
+| Call site | Why it loads everything | Replaced by |
+|---|---|---|
+| `UserStatsService._Ready()` | rebuild lifetime `Stats` | **the rollup** (§6.2) — this is the boot cost INC-001 named |
+| `RollbackHistoryToUtc` | trim history to the checkpoint | **the index** (locate the boundary chunk) + a rollup adjustment |
+| `ClearAllHistory` | — | **nothing**: it loads every chunk and then clears them. Free win, delete the load |
+| `EnsureFullHistoryLoaded` → `BetsHistoryExplorer` | replay window | **the index** |
+| `GetRecentBets(max)` → DiceGame's list seed | newest N records | **the index** — only the newest chunk(s) are ever needed |
+
+**The replacement system** is therefore: the rollup answers every *aggregate* question, and the index
+answers every *window* question. Once both exist, no caller needs the whole journal in memory, and
+`EnsureFullHistoryLoaded` can go — which is the state Mode B requires anyway.
+
+### 6.6 — The replay window in in-game time, with an automatic clamp (new requirement)
+
+The retained window is currently invisible: the player can pick any calendar date and silently get an
+empty or truncated replay, with nothing saying why.
+
+- **Express the window as in-game dates.** The oldest retained bet's `TimestampUtc` is the window's
+  floor; surface it as a game-local date so "how far back can I go?" has a visible answer. The index
+  supplies this for free — it is the first chunk's first timestamp.
+- **Clamp out-of-window picks.** Choosing an earlier date snaps to the oldest stored bet's date rather
+  than opening an empty replay, and says so.
+- Consumers: `CalendarsNavigator` (the picker) and `BetsHistoryExplorer` (`ExplorerSelectedLocalDateTime`).
+
+*Rationale worth keeping: retention is a storage decision the player never made and cannot see, and
+its only user-visible consequence is history that isn't there. A limit that shapes what the player
+can do must be shown in the units the player thinks in — in-game dates, not chunk counts.*
 
 ## 7. Verification
 
