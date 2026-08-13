@@ -4374,12 +4374,34 @@ A second, independent fix shipped alongside it and is worth stating on its own, 
 
 Two real defects were fixed on the way, both squarely in this chapter's existing vocabulary: `OnLiveStatsChanged` re-sorted and re-materialised the **entire** ~105k-record history on every `StatsChanged` — four times a second, §38.7 verbatim — and the view rebuild was cadenced **in game seconds**, a quantity the DEV time scale multiplies by 90, so at 9000X it repopulated two containers *every frame*. **A refresh cadence must be denominated in real time; game time is a quantity the player can accelerate.**
 
-**But neither was the whole cost, and the leftover is the point of this section.** After both fixes the scene still sat at 50–70%, with the *shape* of the residual giving it away: 98% between rebuilds and 20% on them said the steady cost was gone and a spike remained — yet DiceGame, which never bulk-rebuilds (its list grows one entry at a time through a ring buffer), independently measured **70–80%**. The common factor was simply **~520 pooled entry nodes on screen**. Godot lays out and draws them whether or not a single value changed. **No event migration, no coalescing, no dirty flag can reach that cost — only showing fewer rows can.** Confirmed by single-variable experiment (50 entries ⇒ ~100%) before anything was changed permanently, which is also what killed the tempting wrong fix: an in-place-update refactor of the two shared containers would have been a large change aimed at the half of the cost that had already stopped mattering.
+**The residual scales with the number of entries — but through the REBUILD, not the draw.** Cutting the entry count 260 → 50 took the scene to ~100%, and 260 → 100 (shipped) to >80%. The tempting reading — "~520 pooled nodes cost their draw every frame, and only showing fewer rows can reach that" — was written here first and is **WRONG**; see §38.8a. What scales with the count is the **clear-and-refill**: `LoadFromHistoricalRecords` hides every pooled entry and repopulates N of them, so a rebuild costs `O(N)` and 100 rows is a spike 2.6× cheaper than 260.
 
-**Two consequences worth carrying:**
+The single-variable experiment (50 entries ⇒ ~100%) was run before anything was changed permanently, and it earned its keep twice over: it sized the effect, and it killed the tempting wrong fix — an in-place-update refactor of the two shared containers, aimed at the half of the cost that had already stopped mattering.
 
-1. **A retention figure measured while a heavy screen is open is a property of that screen, not of the engine.** The mini-plan-02 audit's "ordinary play retains **0.63**" came from a 105k-bet run spent largely in DiceGame with a full history list displayed; a substantial part of that gap is entry draw cost. It is restated in that plan and **must not be quoted as an engine baseline**. P15.8's 0.713 predates the instrument and is open to the same doubt.
-2. **§38.5's backlog is about update cadence. This is not on it and would not be fixed by it.** Keep the two ideas separate: *migrating a poll cannot fix a cost that is paid by existing.*
+#### 38.8a — The A/B that refuted the draw-cost explanation (2026-08-12)
+
+The claim above originally read *"the residual is the draw cost of the visible nodes"*, and it carried a corollary: that the mini-plan-02 audit's **0.63** retention baseline had been "measuring a screen, not the engine". Both were retracted after a controlled A/B, and the retraction is worth more than the claim was.
+
+**The test.** The pre-fix world was archived intact — same chain, same 105k-record journal, same **5 hardware credits** — so restoring it under the shipped build isolates the code as the only variable. (A fresh world had been made first and was *useless* for this: a world reset wipes `hardware_allocation.json`, so it ran at **1 credit**, roughly a fifth of the engine work per frame. **Before prescribing a wipe, check that the conditions being reproduced survive it.**)
+
+| Sample — same world, 5 credits, 9000X | Retention |
+|---|---|
+| blocks 113–147, pre-everything | 0.630 |
+| all 95 archived blocks, mixed builds | 0.694 |
+| blocks 168–207, immediately pre-restore | **0.757** |
+| blocks 208–247, shipped build | **0.624** |
+
+**Post-fix measured *lower* than the adjacent pre-fix window, and per-block retention inside a single session ranged 0.377–0.831.** The block-to-block variance is larger than the effect being chased, so a 40-block window cannot resolve it — and an eyeballed on-screen label, which is what produced the earlier "DiceGame is 70–80%" reading, resolves it far less.
+
+**What survives, what does not:**
+
+- **Survives:** the BetsHistoryExplorer fix. 15–18% → >80% is far outside this noise band, and its two real defects (a full-history re-sort per `StatsChanged`, a refresh cadence denominated in game seconds) are defects on their own terms.
+- **Refuted:** the draw-cost attribution. Had it been right, cutting 260 → 100 would have helped DiceGame too — it renders the same containers. It did not, because DiceGame *appends* one entry at a time through a ring buffer and has no bulk rebuild to make cheaper. **The cost scaled with entry count in one scene and not the other, which is exactly what distinguishes a rebuild cost from a draw cost.**
+- **Un-retracted:** the 0.63 baseline. Every sample of this world at 5 credits lands in 0.62–0.76 on *every* build. That is simply what this load retains; it was never a screen artifact. **What DiceGame spends its frame on at 9000X remains an open question** — candidates include the per-block commit (a ~280 KB `state.json` write plus checkpoint capture and governance tick), journal I/O, and the bet engine itself at 5 credits. Out of scope for mini-plan 02, which set out to fix a scene-specific collapse and did.
+
+**The methodological lesson, which is the durable part:** *an explanation that fits one scene is a hypothesis, not a finding, until it is tested where it predicts a second outcome.* The draw-cost story explained BetsHistoryExplorer perfectly and was believed for that reason alone. DiceGame was the case that could have falsified it, was available the whole time, and was only consulted after the fix had shipped and been documented.
+
+**One consequence still stands:** **§38.5's backlog is about update cadence, and neither of these costs is on it.** *Migrating a poll cannot fix a cost paid by rebuilding, nor one paid by existing.*
 
 **Where it landed.** `BetHistoryContainer.MaxRecentEntries` and `PreviousWinnerNumbersGrid.MaxRecentEntries` are **100** (the constants size the pools as well as the display cap, so the nodes genuinely disappear rather than merely hiding), matched by `BetsHistoryExplorer.MaxPreviewEntries`. The two containers are always rendered together and must be sized together, or the cheaper one's saving is invisible. The remaining <20% is accepted: the difference is imperceptible in play, and 9000X is a DEV-only setting.
 

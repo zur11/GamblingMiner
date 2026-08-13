@@ -526,12 +526,13 @@ Totals: wagered **9.80150397 SC**, net **+1.10424103 SC**, balance `100.00 → 1
 really collapses 9000X to ~100X, retention there must be ≈0.011 — a **~57× drop**, which is an
 unmistakable signal rather than a judgement call. C.4 step 1 now has a number to compare against.
 
-⚠️ **Telemetry gap worth fixing separately:** the trace starts at block **113**, but the run's chain
-reached 147 and the developer never closed the app. Blocks 0–112 are simply absent, with **no
-`.csv.old`** beside it — so the file was truncated or recreated at some point and said nothing about
-it. The ND.10j stale-schema rotation exists precisely to avoid this shape; whatever path recreated
-this file bypassed it. *A trace that silently starts partway through looks exactly like a trace of a
-shorter run.*
+~~⚠️ **Telemetry gap worth fixing separately:** the trace starts at block 113…~~ — **RETRACTED
+2026-08-12, this was a misreading.** `AppendDifficultyTrace` is called for **live blocks only**
+(`NetworkRoot.cs:2015`, and the comment says so); the historical bootstrap's blocks are deliberately
+untraced. So a trace beginning at ~113 is the *first player-era block*, not a truncation. Confirmed
+by the second run, whose bootstrap ended one block later and whose trace duly starts at **117**.
+*Two runs agreeing on an "anomaly" is the cheapest possible test that it is a feature — worth
+reaching for before filing a defect against telemetry.*
 
 ### B.6.7 The engine log (check 9) — ✅ clean, and that is the result
 
@@ -804,16 +805,12 @@ hosts neither container and pays nothing.
 
 Two consequences:
 
-1. **§B.6.6's "ordinary play retains 0.63" was measuring a SCREEN, not the simulation.** That figure
-   came from `difficulty_trace.csv` during a 105k-bet run spent largely in DiceGame with a full
-   history list on display. A substantial part of it — plausibly most of the gap from 1.0 — is the
-   draw cost of 260 history entries. **The baseline is restated accordingly: it is not a property of
-   the engine, and it should not be quoted as one.** (P15.8's 0.713 predates this instrument and is
-   open to the same doubt.)
-2. **Ch. 38's poll-migration backlog is about update cadence, and this is not that.** An event-driven
-   refresh would not have helped here at all: the nodes cost their draw whether or not anything
-   updates them. Worth stating in that chapter so the two are never conflated — *migrating a poll
-   cannot fix a cost that is paid by existing.*
+1. ~~**§B.6.6's "ordinary play retains 0.63" was measuring a SCREEN, not the simulation.**~~
+   **RETRACTED 2026-08-12 — see §C.6c. The A/B refuted both this and the draw-cost explanation it
+   rested on. The 0.63 baseline is UN-retracted: it is real for this world at 5 credits.**
+2. **Ch. 38's poll-migration backlog is about update cadence, and neither cost here is on it.** An
+   event-driven refresh would not have helped: a rebuild costs what it costs whenever it runs.
+   *Migrating a poll cannot fix a cost paid by rebuilding.*
 
 ### C.6b — Shipped: 100 entries, both scenes (developer's call, 2026-08-07)
 
@@ -830,14 +827,109 @@ practically imperceptible.
 felt in play, and the cost is now *known and measured* rather than accidental — which is the
 difference that matters. Anyone wanting it back knows the exact lever and its exact price.
 
+## B.7 The post-fix run (2026-08-12) — clean, but it does NOT replace the retracted baseline
+
+A second 100k run was made on the current build after a deliberate world reset (delete
+`world_format_version.txt` ⇒ `storedVersion 0 ≠ 5` ⇒ the guard's own clean wipe). Archived as
+`GamblingMiner_postfix_100k_2026-08-12`. **Everything load-independent came back clean:**
+
+| Check | Result |
+|---|---|
+| Records / duplicate `BetRecord.Id` | 100,146 / **0 duplicates** |
+| Multiplier | 100,146 / 100,146 exact |
+| Balance continuity | 100,145 / 100,145 exact |
+| Engine replay (ladder + credited profit + carry) | exact, **except a session boundary — see below** |
+| Win rate | 0.5033 (**+2.1σ**, unremarkable) |
+| Max consecutive losses | **13** vs an expected ≈16.6 |
+| Stops / insist resets / auto-recharges | **0** — the ladder reset only on wins, as before |
+| `godot.log` | one line: the world-reset notice. **Zero errors, zero tripwires** |
+
+**The replay found the session boundary by itself.** All four credited-profit divergences and the one
+ladder divergence sit at index **≥ 100,000** — the configured bet count. At exactly 100,000 the
+session ended and a second one began, which resets both the ladder *and* `BetService`'s remainder
+carry. Neither is persisted; the replay located the boundary purely from arithmetic. **This is the
+mini-plan-01 round-3 signal used as a positive control** — it is now twice-demonstrated that an
+unbroken carry proves an unbroken session, and a broken one dates the restart to the bet.
+
+### B.7a — Why it cannot replace the 0.63 baseline (and why that is my error)
+
+| | Old run | New run |
+|---|---|---|
+| Player hardware credits | **5** | **1** |
+| `configuredPower` | ~7.7 | ~4.0 |
+| Bets per block | ~3,000 | ~600 |
+| Retention (whole run) | 0.63 | 0.742 |
+
+At 1 credit the engine does ~5× less work per frame, so the retention figures are **not comparable**
+and 0.742 cannot stand in for the retracted 0.63. **The instruction that caused this was wrong:** it
+said "re-buy the 5 hardware pieces before starting", but a freshly reset world begins with **0 BTC**,
+and hardware is bought with mined BTC — so the requested precondition was not reachable at the moment
+it was requested. *Before prescribing a wipe, check that the conditions being reproduced survive it.*
+
+The run is not wasted — every check above is load-independent — but the one measurement it was made
+for is invalid.
+
+**Also visible, and interesting on its own:** retention **rises** across the run — by fifths,
+`0.614 → 0.722 → 0.741 → 0.785 → 0.894`. Cost that grew with history would do the opposite. The
+early fifth (0.614) is startup, the world rebuild and scene navigation; and it lands almost exactly
+on the **old** run's whole-run 0.63 — whose trace covered only its first 35 live blocks, i.e. *the
+same warm-up window*. So **0.63 was largely a measurement of start-up**, a second reason it was never
+a baseline. A steady-state figure needs the tail of a run, not its head.
+
+### B.7b — The measurement that WOULD settle it
+
+No new world is needed, and one should not have been made for this: **the build is the variable, not
+the world.** `GamblingMiner_prefix_run_2026-08-12` (archived before the wipe) holds the original
+world *with its 5 credits*, stamped `world_format_version = 5`, which the current build also reports
+— so restoring it triggers no reset. Running an autobet in it under the current build and reading
+`Sim:` gives a true A/B: same world, same hardware, same strategy, **only the code differs**.
+
+### C.6c — The A/B: what Part C did and did not do (2026-08-12)
+
+The pre-fix world was restored intact (same chain, same 105k-record journal, same **5 credits**) and
+run under the shipped build, isolating the code as the only variable. *(The fresh world made first
+was useless for this: a reset wipes `hardware_allocation.json`, so it ran at **1 credit** — see
+§B.7a.)*
+
+| Sample — same world, 5 credits, 9000X | Retention |
+|---|---|
+| blocks 113–147, pre-everything | 0.630 |
+| all 95 archived blocks, mixed builds | 0.694 |
+| blocks 168–207, immediately pre-restore | **0.757** |
+| blocks 208–247, shipped build | **0.624** |
+
+**Post-fix measured LOWER than the adjacent pre-fix window**, and per-block retention within one
+session ranged **0.377–0.831**. The variance exceeds the effect, so 40 blocks cannot resolve it —
+and the on-screen label, which produced the earlier "DiceGame is 70–80%" impression, resolves it far
+less. *An instantaneous readout is a debugging aid, not a measurement.*
+
+**Verdict:**
+
+- **Part C's BetsHistoryExplorer fix stands.** 15–18% → >80% is far outside this noise band, and its
+  two defects (a full-history re-sort per `StatsChanged`; a refresh cadence denominated in game
+  seconds) are wrong on their own terms regardless of what they cost.
+- **The draw-cost explanation is refuted.** If the residual were the nodes' draw cost, cutting
+  260 → 100 would have helped DiceGame too — same containers. It did not, because DiceGame *appends*
+  through a ring buffer and has no bulk rebuild to make cheaper. The count scaled the **rebuild**,
+  not the draw. **DiceGame gained nothing measurable from the entry reduction.**
+- **The 0.63 baseline is un-retracted.** Every sample of this world at 5 credits lands in 0.62–0.76
+  on every build. It is what this load retains.
+- **Open, and out of scope here:** what DiceGame actually spends its frame on at 9000X — the
+  per-block commit (~280 KB `state.json` write + checkpoint + governance tick), journal I/O, or the
+  engine itself at 5 credits. Belongs with the Ch. 38 / PRIVATE_ROADMAP §8 T4 performance work.
+
+**The lesson:** *an explanation that fits one scene is a hypothesis, not a finding, until it is
+tested where it predicts a second outcome.* DiceGame was that test, was available throughout, and was
+consulted only after the fix had shipped and been documented.
+
 ## C.7 Part C — CLOSED
 
 | | |
 |---|---|
 | Reported | entering BetsHistoryExplorer collapsed the game speed at 9000X |
 | Diagnosis | not a speed setting — frame starvation, reported honestly by R2-C1's throttle |
-| Fixed | full-history re-sort per `StatsChanged`; game-time-denominated refresh cadence; entry draw cost |
-| Result | **15–18% → >80%**, and the same fix lifted DiceGame from 70–80% |
+| Fixed | full-history re-sort per `StatsChanged`; game-time-denominated refresh cadence; rebuild cost ∝ entry count |
+| Result | **15–18% → >80%** in BetsHistoryExplorer. **No measurable change in DiceGame** (§C.6c) |
 | Left behind | `SimRetentionReadout` — the throttle is now visible in every scene instead of one CSV row per block |
 | Design record | `Documentation/ProjectDesignManual.md` **§38.8** |
 
