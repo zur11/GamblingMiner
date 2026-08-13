@@ -6,6 +6,7 @@ using Scripts.Game;
 using Scripts.History;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 
 public partial class UserStatsService : Node
 {
@@ -19,6 +20,23 @@ public partial class UserStatsService : Node
     private DateTime _lastStatsEmitUtc = DateTime.MinValue;
     private bool _hasPendingStatsChange;
 
+    // ── Lifetime rollup (mini-plan 03) ──────────────────────────────────────────
+    // Stats is rebuilt by scanning the journal, and the journal retains only its newest 200,000 bets —
+    // so scanning stops being a LIFETIME measurement the moment the first chunk is pruned. The rollup is
+    // the running total that survives its own source being deleted. See §6.2 of the plan.
+    private const string RollupPath = "user://bet_stats_rollup.json";
+    private static readonly JsonSerializerOptions RollupJsonOptions = new() { WriteIndented = true };
+    // Bets settle faster than any disk can keep up with; the rollup follows the journal's own dirty-flag
+    // discipline and is flushed with it (FlushHistory) and at every block commit.
+    private bool _rollupDirty;
+
+    public BetStatsRollup Rollup { get; private set; } = new();
+
+    // While the journal still holds EVERY bet, a full scan is authoritative and the rollup is re-seeded
+    // from it — self-healing, and it keeps the two from drifting apart unnoticed. Once anything has been
+    // pruned the scan can no longer see the whole history, and the rollup becomes the only truth.
+    public bool RollupIsAuthoritative { get; private set; }
+
     public override void _Ready()
     {
         Stats = new UserBettingStats();
@@ -26,6 +44,27 @@ public partial class UserStatsService : Node
         {
             BetHistory = new BetHistoryRepository(BetHistoryRepository.ResolveDefaultPath());
             BetHistory.EnsureAllChunksLoaded();
+
+            bool hadRollupFile = FileAccess.FileExists(RollupPath);
+            LoadRollup();
+            bool pruned = BetHistory.HasPrunedHistory();
+
+            // FIRST RUN with this feature: there is no rollup yet, so it must be seeded by scanning —
+            // even in a world that has already pruned, where the scan cannot see the whole history. That
+            // world's totals then start from the retained window rather than from zero, which is the best
+            // available answer; it is marked incomplete so nothing downstream calls it a lifetime figure.
+            // Only AFTER a rollup exists does pruning make it authoritative and forbid re-seeding.
+            RollupIsAuthoritative = pruned && hadRollupFile;
+            if (!hadRollupFile && pruned)
+            {
+                Rollup.IsComplete = false;
+                Rollup.SeededAtUtc = DateTime.UtcNow;
+                GD.PrintErr(
+                    "[UserStatsService] Seeding the lifetime rollup from an ALREADY-PRUNED journal: bets in " +
+                    "deleted chunks cannot be recovered and are not counted. Totals are marked incomplete " +
+                    "and are accurate from now on.");
+            }
+
             RebuildStatsFromLoadedHistory();
         }
         else
@@ -54,6 +93,11 @@ public partial class UserStatsService : Node
 
             BetHistory.Add(record);
         }
+
+        // Maintained on EVERY settled bet, in every mode — a rollup that only starts counting once
+        // pruning begins has already lost the pruned bets (§6.2).
+        Rollup.RegisterBet(gameId, bet.Chance, bet.IsWin, bet.BetAmount, bet.CreditedProfit);
+        _rollupDirty = true;
 
         Stats.RegisterBet(gameId, bet);
         EmitStatsChangedIfNeeded();
@@ -86,8 +130,66 @@ public partial class UserStatsService : Node
         if (EnableHistoryPersistence)
         {
             BetHistory?.Flush();
+            SaveRollupIfDirty();
         }
     }
+
+    // ── Rollup persistence ──────────────────────────────────────────────────────
+
+    private void LoadRollup()
+    {
+        if (!FileAccess.FileExists(RollupPath))
+        {
+            return;
+        }
+
+        try
+        {
+            using FileAccess file = FileAccess.Open(RollupPath, FileAccess.ModeFlags.Read);
+            BetStatsRollup loaded = JsonSerializer.Deserialize<BetStatsRollup>(file.GetAsText(), RollupJsonOptions);
+            if (loaded != null)
+            {
+                loaded.Segments ??= new Dictionary<string, BetStatsRollup.SegmentRuns>();
+                Rollup = loaded;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Loud, never silent: past the pruning boundary this file is the ONLY record of the pruned
+            // bets, so losing it loses history permanently (§40.5's durability standard, INC-001).
+            GD.PrintErr($"[UserStatsService] Could not read {RollupPath} — lifetime totals may be incomplete: {ex.Message}");
+        }
+    }
+
+    public void SaveRollupIfDirty()
+    {
+        if (!EnableHistoryPersistence || !_rollupDirty)
+        {
+            return;
+        }
+
+        _rollupDirty = false;
+        try
+        {
+            using FileAccess file = FileAccess.Open(RollupPath, FileAccess.ModeFlags.Write);
+            file?.StoreString(JsonSerializer.Serialize(Rollup, RollupJsonOptions));
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[UserStatsService] Could not write {RollupPath}: {ex.Message}");
+        }
+    }
+
+    // Replaces the rollup wholesale — the checkpoint restore path (a block is the only commit, so the
+    // rollup rolls back with everything else) and the pre-genesis reset.
+    public void ApplyRollupSnapshot(BetStatsRollup snapshot)
+    {
+        Rollup = snapshot?.Clone() ?? new BetStatsRollup();
+        _rollupDirty = true;
+        SaveRollupIfDirty();
+    }
+
+    public BetStatsRollup CaptureRollupSnapshot() => Rollup.Clone();
 
     public void RollbackHistoryToUtc(DateTime checkpointUtc)
     {
@@ -272,6 +374,15 @@ public partial class UserStatsService : Node
             return;
         }
 
+        // Re-seed the rollup from the same scan WHILE the scan can still see everything. Past the pruning
+        // boundary this must not happen — a rebuild there would overwrite the lifetime totals with a
+        // "last 200,000 bets" figure, which is the very defect the rollup exists to fix.
+        bool reseedRollup = !RollupIsAuthoritative;
+        if (reseedRollup)
+        {
+            Rollup.Reset();
+        }
+
         var timeline = new List<(DateTime TimestampUtc, bool IsDeposit, DepositRecord Deposit, BetRecord Bet)>();
         foreach (DepositRecord d in BetHistory.Deposits)
         {
@@ -303,6 +414,17 @@ public partial class UserStatsService : Node
                 IsHigh: b.IsHigh,
                 Timestamp: DateTime.SpecifyKind(b.TimestampUtc, DateTimeKind.Utc));
             Stats.RegisterBet(b.GameId, evt);
+
+            if (reseedRollup)
+            {
+                Rollup.RegisterRecord(b);
+            }
+        }
+
+        if (reseedRollup)
+        {
+            _rollupDirty = true;
+            SaveRollupIfDirty();
         }
     }
 }

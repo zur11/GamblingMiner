@@ -308,6 +308,37 @@ namespace Scripts.History
 			return result;
 		}
 
+		// True once EnforceRetentionCap has deleted at least one segment — i.e. the journal on disk is no
+		// longer the whole history. This is the exact boundary at which any figure derived by SCANNING the
+		// journal stops being a lifetime figure and silently becomes a "last 200,000 bets" figure
+		// (mini-plan 03 §6.2). Detected structurally rather than by counting: the legacy base file is the
+		// oldest segment and chunk indices only ever increase, so "no base file AND the lowest surviving
+		// chunk index is not the first one written" means something in front of it was removed.
+		//
+		// Cost: one directory listing. Callers should ask at boot, not per bet.
+		public bool HasPrunedHistory()
+		{
+			if (File.Exists(_filePath))
+			{
+				return false; // the original base file is still there, so nothing has been trimmed from the front
+			}
+
+			List<string> chunks = GetJournalChunkPaths(includeLegacyBaseFile: false);
+			if (chunks.Count == 0)
+			{
+				return false; // nothing written yet
+			}
+
+			string firstName = Path.GetFileNameWithoutExtension(chunks[0]);
+			string baseName = Path.GetFileNameWithoutExtension(_filePath);
+			if (firstName == null || baseName == null || firstName.Length <= baseName.Length + 1)
+			{
+				return false;
+			}
+
+			return !int.TryParse(firstName.Substring(baseName.Length + 1), out int firstIndex) || firstIndex > 1;
+		}
+
 		private string BuildChunkPath(int index)
 		{
 			string folder = Path.GetDirectoryName(_filePath) ?? string.Empty;
