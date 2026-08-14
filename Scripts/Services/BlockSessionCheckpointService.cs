@@ -45,6 +45,11 @@ public partial class BlockSessionCheckpointService : Node
 		// counters/history, which moved OFF the casino snapshot fields above (P15.1c, no double-storage).
 		// Null only in a pre-plan15 checkpoint, which the WorldFormatVersion 3 → 4 bump already wipes.
 		public CentralBankService.CheckpointState CentralBankState { get; set; }
+		// Mini-plan 03 (D-M2.12): the lifetime rollup is player-facing persisted state, so it obeys the same
+		// rule as everything else here — a block is the only commit, and a restart reverts to the last one.
+		// It matters MORE than most: it is a running total, so a rollup left ahead of the journal after a
+		// crash could never be corrected by any later scan. Null in a pre-mini03 checkpoint → keep loaded.
+		public Scripts.User.BetStatsRollup BetStatsRollup { get; set; }
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -161,6 +166,16 @@ public partial class BlockSessionCheckpointService : Node
 			// (must run AFTER the CentralBankService restore above — the live-state init and the reconcile
 			//  both read the FED's casino account, P15.1c)
 
+		// Restored BEFORE the bet-history rollback, which DiceGame performs on scene entry: with nothing
+		// pruned that rollback re-seeds the rollup from the rolled-back journal and reaches the same value,
+		// and once pruning has begun it deliberately does not touch it — so this snapshot is the only
+		// source. Either way the rollup ends up describing exactly the world the checkpoint describes.
+		if (CurrentSnapshot.BetStatsRollup != null)
+		{
+			GetNodeOrNull<UserStatsService>("/root/UserStatsService")
+				?.ApplyRollupSnapshot(CurrentSnapshot.BetStatsRollup);
+		}
+
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
 		{
 			CalendarTimeService calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
@@ -220,6 +235,7 @@ public partial class BlockSessionCheckpointService : Node
 			CasinoCoinSwapState = GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")?.CaptureCheckpointState(),
 			ScMonetaryLedgerState = GetNodeOrNull<ScMonetaryLedgerService>("/root/ScMonetaryLedgerService")?.CaptureCheckpointState(),
 			CentralBankState = GetNodeOrNull<CentralBankService>("/root/CentralBankService")?.CaptureCheckpointState(),
+			BetStatsRollup = GetNodeOrNull<UserStatsService>("/root/UserStatsService")?.CaptureRollupSnapshot(),
 			CapturedAtUtc = DateTime.UtcNow
 		};
 

@@ -219,6 +219,16 @@ public partial class UserStatsService : Node
 
         BetHistory.EnsureAllChunksLoaded();
         BetHistory.ClearAll();
+
+        // The rollup is zeroed EXPLICITLY rather than left to the rebuild below: past the pruning boundary
+        // the rebuild deliberately does not touch it, so a pre-genesis reset would otherwise leave lifetime
+        // totals from a world that no longer exists. Clearing everything also un-prunes by definition —
+        // there is nothing left to have pruned — so the rollup goes back to being complete and re-seedable.
+        Rollup.Reset();
+        RollupIsAuthoritative = false;
+        _rollupDirty = true;
+        SaveRollupIfDirty();
+
         RebuildStatsFromLoadedHistory();
         EmitStatsChangedImmediate();
     }

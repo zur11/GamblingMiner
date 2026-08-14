@@ -76,16 +76,38 @@ Consequences, and they shape the whole design:
    INC-001's own standard: atomic write (`.tmp` → flush → rename), a loud failure on a corrupt read,
    and never persisting a failed load back over the good copy (§40.5).
 
-## 5. World format bump — expect yes
+## 5. World format bump — **NOT needed** (settled 2026-08-13)
 
-A new persisted file (or new fields in `user://` state) that the checkpoint restores. Per project
-policy — **bump and wipe, never migrate** — `WorldFormatVersion` 5 → 6 and the new file joins
-`NetworkRoot.ResetWorldIfIncompatible`'s delete list. Cheap here: the rollup is derived from play, so
-a wipe costs nothing but the wiped world itself.
+Expected "yes" while drafting; the implementation showed otherwise, and it is worth being precise
+about why, because the reflex here is to bump.
 
-⚠️ **A bump wipes `hardware_allocation.json`**, which resets the player to 1 credit. Any performance
-comparison across the bump must re-establish credits first — mini-plan 02 lost a 100k run to exactly
-this (§B.7a). Hardware is free to re-add (no BTC cost; P5 is unbuilt).
+- **The rollup is a NEW file** (`user://bet_stats_rollup.json`). Absent ⇒ it is seeded on first run.
+  Nothing existing changes shape.
+- **The checkpoint DTO gained one NULLABLE field.** A pre-mini03 checkpoint deserialises it as `null`,
+  which means "keep loaded state" — the same legacy pattern `CentralBankState`, `PlayerBankState`,
+  `CasinoCoinSwapState` and `ScMonetaryLedgerState` already use.
+- It **is** in `ResetWorldIfIncompatible`'s delete list, so any *future* bump takes it with the world.
+
+**A bump is for data whose MEANING changed, not for data that appeared.** Nothing here reinterprets
+an existing byte.
+
+⚠️ Recorded for whoever does bump next: **a bump wipes `hardware_allocation.json`** and resets the
+player to 1 credit. Any performance comparison across a bump must re-establish credits first —
+mini-plan 02 lost a 100k run to exactly this (§B.7a). Hardware is free to re-add (P5 is unbuilt).
+
+### 5.1 — Restore ordering is load-bearing (and already correct)
+
+`UserStatsService` is autoload **#2**; `BlockSessionCheckpointService` is **#15**. So the rollup file
+is loaded and the Mode A/B decision made *first*, and the checkpoint's block-committed snapshot
+overwrites it *after* — which is the required direction, since a block is the only commit. The
+reverse order would let a stale file silently win over the committed value. No change was needed, but
+**it is an ordering dependency, not a coincidence**, and belongs with the `CentralBankService` note in
+`ApplyCheckpointToServices`.
+
+The bet-history rollback runs later still (DiceGame, on scene entry). With nothing pruned it re-seeds
+the rollup from the rolled-back journal and reaches the same value; once pruning has begun it
+deliberately leaves it alone, so the checkpoint remains the only source. Both paths end at a rollup
+describing exactly the world the checkpoint describes.
 
 ## 6. Decisions (developer, 2026-08-13)
 
