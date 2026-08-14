@@ -253,6 +253,22 @@ public partial class UserStatsService : Node
         return records.Skip(records.Count - max).ToList();
     }
 
+    // The floor of the REPLAY WINDOW: the oldest bet still on disk (mini-plan 03 §6.6). Retention is a
+    // storage decision the player never made and cannot see, and its only visible consequence is history
+    // that isn't there — so the limit has to be expressed in the units the player thinks in (a game date),
+    // and picking a date below it has to snap rather than silently open an empty replay.
+    // Null when no bet has been recorded yet. Records are kept in chronological order, so this is [0].
+    public DateTime? GetOldestRetainedBetUtc()
+    {
+        if (!EnableHistoryPersistence || BetHistory == null)
+        {
+            return null;
+        }
+
+        IReadOnlyList<BetRecord> records = BetHistory.Records;
+        return records.Count > 0 ? records[0].TimestampUtc : null;
+    }
+
     public decimal GetLatestKnownBalance(decimal fallbackBalance)
     {
         if (!EnableHistoryPersistence || BetHistory == null)

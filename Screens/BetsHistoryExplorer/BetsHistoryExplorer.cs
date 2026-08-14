@@ -60,6 +60,12 @@ public partial class BetsHistoryExplorer : Control
 	// a chance's first bet?" is one integer comparison rather than a rebuild.
 	private int _selectorVisibleChanceCount = -1;
 
+	// Floor of the replay window in GAME-LOCAL time — the oldest bet still on disk (§6.6). Selecting a
+	// date below it snaps here instead of opening an empty replay, and the header states the floor so the
+	// limit is visible before the player hits it rather than after.
+	private DateTime? _windowFloorLocal;
+	private bool _selectionWasClamped;
+
 	private List<BetRecord> _sortedRecords = new();
 	private long _lastRenderedSecond = long.MinValue;
 	// Real-time floor between historical-view rebuilds — see the note in _Process.
@@ -254,7 +260,7 @@ public partial class BetsHistoryExplorer : Control
 		}
 
 		DateTime current = GetCurrentLocal();
-		_selectedTimeLabel.Text = $"Selected timeline: {current:yyyy-MM-dd HH:mm:ss}";
+		_selectedTimeLabel.Text = $"Selected timeline: {current:yyyy-MM-dd HH:mm:ss}{BuildWindowSuffix()}";
 
 		if (_sortedRecords.Count <= 0)
 		{
@@ -309,6 +315,7 @@ public partial class BetsHistoryExplorer : Control
 		await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 		_loaderLabel.Text = "Computing full summaries...";
 		_loaderProgress.Value = 70;
+		ApplyReplayWindowFloor();
 		_chanceFirstSeenUtc.Clear();
 		RegisterChances(_allRecords);
 		ApplyChanceFilter();   // resets the summary + render caches; defaults to All Bets
@@ -378,6 +385,51 @@ public partial class BetsHistoryExplorer : Control
 			_summaryMaxLossAmount,
 			streak
 		);
+	}
+
+	// ── Replay window ───────────────────────────────────────────────────────────
+
+	// Establishes the window floor from the loaded history and snaps the selection up to it if the player
+	// asked for an earlier date. Runs once per load, before the first render, so the very first frame is
+	// already inside the window — a clamp applied later would flash an empty replay first.
+	private void ApplyReplayWindowFloor()
+	{
+		_windowFloorLocal = null;
+		_selectionWasClamped = false;
+
+		if (_allRecords.Count <= 0)
+		{
+			return;
+		}
+
+		DateTime floorLocal = _allRecords[0].TimestampUtc.ToLocalTime();
+		_windowFloorLocal = floorLocal;
+
+		if (_selectedLocal >= floorLocal)
+		{
+			return;
+		}
+
+		// Below the floor: snap to the oldest bet we still hold. The calendar is moved with it, so the
+		// clock, this scene and whatever the player picks next all agree — leaving them disagreeing is how
+		// a "date I chose" quietly stops matching the history being shown.
+		_selectedLocal = floorLocal;
+		_selectionWasClamped = true;
+		_calendarTimeService?.SetLocalDateTime(floorLocal);
+		_calendarTimeService?.SetExplorerSelectedLocalDateTime(floorLocal);
+	}
+
+	private string BuildWindowSuffix()
+	{
+		if (_windowFloorLocal == null)
+		{
+			return string.Empty;
+		}
+
+		string floor = _windowFloorLocal.Value.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+		return _selectionWasClamped
+			? $"   |   ⟵ snapped to the oldest stored bet ({floor})"
+			: $"   |   History stored from: {floor}";
 	}
 
 	// ── Chance-to-win filter ────────────────────────────────────────────────────

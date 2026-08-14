@@ -166,6 +166,22 @@ public partial class CalendarsNavigator : Control
 	private void OnOpenHistoryExplorerPressed()
 	{
 		DateTime selected = GetCurrentLocalDateTime();
+
+		// Mini-plan 03 §6.6 — the bet journal retains only its newest chunks, so history earlier than the
+		// oldest stored bet does not exist to replay. Snap here as well as in the explorer: clamping only
+		// on arrival means the player watches the date they chose change under them, whereas clamping at
+		// the point of departure is the same correction delivered before it looks like a malfunction.
+		// The world CLOCK is deliberately not bounded by this — only the history being replayed is.
+		DateTime? floorUtc = GetNodeOrNull<UserStatsService>("/root/UserStatsService")?.GetOldestRetainedBetUtc();
+		if (floorUtc.HasValue)
+		{
+			DateTime floorLocal = floorUtc.Value.ToLocalTime();
+			if (selected < floorLocal)
+			{
+				selected = floorLocal;
+			}
+		}
+
 		_calendarTimeService?.SetExplorerSelectedLocalDateTime(selected);
 		_calendarTimeService?.SetLocalDateTime(selected);
 		_sceneManager?.Go(SceneManager.SceneId.BetsHistoryExplorer);
