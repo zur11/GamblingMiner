@@ -90,6 +90,12 @@ public partial class BetsHistoryExplorer : Control
 	private int _summaryConsecutiveLosses;
 	private int _summaryMaxLossRun;
 	private int _summaryMaxLossRunChance;
+	// The win-side mirrors (mini-plan 03 §6.3/§6.7). Same segmentation rule for the same reason: a winning
+	// run at 2% chance and one at 50% are not the same event, so they may not be concatenated either.
+	private decimal _summaryMaxWonAmount;
+	private int _summaryConsecutiveWins;
+	private int _summaryMaxWinRun;
+	private int _summaryMaxWinRunChance;
 	private string _summarySegmentGameId;
 	private int _summarySegmentChance = -1;
 	private long _summarySegmentBets;
@@ -368,22 +374,25 @@ public partial class BetsHistoryExplorer : Control
 		// With a chance filter active every record shares that chance, so the "(at N% chance)" qualifier the
 		// unfiltered figure needs (§40.8: a loss run only means something at a fixed chance) is redundant —
 		// the scope line already says it once, at the front.
-		string streak = _summaryMaxLossRun > 0
-			? (_chanceFilter == AllChances
-				? string.Format(CultureInfo.InvariantCulture, "{0} (at {1}% chance)", _summaryMaxLossRun, _summaryMaxLossRunChance)
-				: _summaryMaxLossRun.ToString(CultureInfo.InvariantCulture))
-			: "0";
+		string lossStreak = FormatRun(_summaryMaxLossRun, _summaryMaxLossRunChance);
+		string winStreak = FormatRun(_summaryMaxWinRun, _summaryMaxWinRunChance);
 		string scope = _chanceFilter == AllChances
 			? "All bets"
 			: string.Format(CultureInfo.InvariantCulture, "Chance {0}%", _chanceFilter);
+		// Losses and wins are stated as PAIRS. The loss figures stood alone for a long time and read as a
+		// verdict on the engine; beside their mirrors they read as what they are — the two tails of the
+		// same distribution (§40.9).
 		_summaryLabel.Text = string.Format(
 			CultureInfo.InvariantCulture,
-			"{0} — up to selected date: {1} | Max bet amount: {2:F8} SC | Max loss amount: {3:F8} SC | Max consecutive losses: {4}",
+			"{0} — up to selected date: {1} | Max bet: {2:F8} SC | Max loss / won: {3:F8} / {4:F8} SC | " +
+			"Max consecutive losses / wins: {5} / {6}",
 			scope,
 			_summaryTotalBets,
 			_summaryMaxBetAmount,
 			_summaryMaxLossAmount,
-			streak
+			_summaryMaxWonAmount,
+			lossStreak,
+			winStreak
 		);
 	}
 
@@ -556,11 +565,28 @@ public partial class BetsHistoryExplorer : Control
 		RefreshHistoricalViewForCurrentTime(GetCurrentLocal().ToUniversalTime(), forceRebuild: true);
 	}
 
+	// With a chance filter active every record shares that chance, so the "(at N%)" qualifier the
+	// unfiltered figure needs (§40.8) is redundant — the scope already says it once, at the front.
+	private string FormatRun(int run, int chance)
+	{
+		if (run <= 0)
+		{
+			return "0";
+		}
+
+		return _chanceFilter == AllChances
+			? string.Format(CultureInfo.InvariantCulture, "{0} (at {1}%)", run, chance)
+			: run.ToString(CultureInfo.InvariantCulture);
+	}
+
 	private void ResetStreakSummary()
 	{
 		_summaryConsecutiveLosses = 0;
 		_summaryMaxLossRun = 0;
 		_summaryMaxLossRunChance = 0;
+		_summaryConsecutiveWins = 0;
+		_summaryMaxWinRun = 0;
+		_summaryMaxWinRunChance = 0;
 		_summarySegmentGameId = null;
 		_summarySegmentChance = -1;
 		_summarySegmentBets = 0;
@@ -583,6 +609,7 @@ public partial class BetsHistoryExplorer : Control
 			_summaryTotalBets = 0;
 			_summaryMaxBetAmount = 0m;
 			_summaryMaxLossAmount = 0m;
+			_summaryMaxWonAmount = 0m;
 			ResetStreakSummary();
 		}
 
@@ -603,9 +630,13 @@ public partial class BetsHistoryExplorer : Control
 					_summaryMaxLossAmount = absLoss;
 				}
 			}
+			else if (record.NetAmount > _summaryMaxWonAmount)
+			{
+				_summaryMaxWonAmount = record.NetAmount;
+			}
 
 			// A new segment starts wherever the game or the win chance changes: whatever the player was
-			// doing before is a different experiment, and its losing run does not continue into this one.
+			// doing before is a different experiment, and neither of its runs continues into this one.
 			if (record.Chance != _summarySegmentChance ||
 				!string.Equals(record.GameId, _summarySegmentGameId, StringComparison.Ordinal))
 			{
@@ -613,12 +644,14 @@ public partial class BetsHistoryExplorer : Control
 				_summarySegmentGameId = record.GameId;
 				_summarySegmentBets = 0;
 				_summaryConsecutiveLosses = 0;
+				_summaryConsecutiveWins = 0;
 			}
 
 			_summarySegmentBets++;
 
 			if (record.Outcome == BetOutcome.Loss)
 			{
+				_summaryConsecutiveWins = 0;
 				_summaryConsecutiveLosses++;
 				if (_summaryConsecutiveLosses > _summaryMaxLossRun)
 				{
@@ -631,6 +664,12 @@ public partial class BetsHistoryExplorer : Control
 			}
 
 			_summaryConsecutiveLosses = 0;
+			_summaryConsecutiveWins++;
+			if (_summaryConsecutiveWins > _summaryMaxWinRun)
+			{
+				_summaryMaxWinRun = _summaryConsecutiveWins;
+				_summaryMaxWinRunChance = _summarySegmentChance;
+			}
 		}
 
 		_summaryCursor = endExclusive;

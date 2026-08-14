@@ -157,6 +157,24 @@ sanity-checked by anyone. Two symmetric, self-describing metrics beat one clever
 | Max consecutive losses | **per `(GameId, Chance)`** | §40.8's rule |
 | **Max consecutive wins** | **per `(GameId, Chance)`** | **new**, same rule |
 
+### 6.4a — Surfacing them (added 2026-08-13, developer spotted the gap)
+
+§6.4 said which figures to **persist** and never said which to **display** — and the two are not the
+same list. The `BetsHistoryExplorer` summary was still showing only the loss side, so a figure the
+plan had decided to track had no way to be seen. *A metric that is stored but never rendered is
+indistinguishable from one that was never built.*
+
+Now stated: the summary line shows **losses and wins as PAIRS** —
+`Max loss / won` and `Max consecutive losses / wins`. Beside their mirrors the loss numbers read as
+what they are, the two tails of one distribution; alone they read as a verdict on the engine. Both
+runs keep the `(at N%)` qualifier when unfiltered and drop it when the chance selector is active
+(§40.9), and both obey the same `(GameId, Chance)` segmentation for the same reason.
+
+**Note the two are different quantities and must not be confused:** the summary line is scan-based
+and scoped to *"up to the selected date"*; the **rollup** is the lifetime running total. Surfacing
+the rollup's own lifetime figures is a *separate* item — the natural home is the **Betting Statistics
+scene** (roadmap), not this line, which would otherwise state two different numbers under one label.
+
 ### 6.5 — Where `EnsureFullHistoryLoaded` is actually used (answer to Q3)
 
 The full-load call has **one** external consumer, but `BetHistory.EnsureAllChunksLoaded()` has five,
