@@ -47,22 +47,34 @@ public partial class UserStatsService : Node
 
             bool hadRollupFile = FileAccess.FileExists(RollupPath);
             LoadRollup();
-            bool pruned = BetHistory.HasPrunedHistory();
 
-            // FIRST RUN with this feature: there is no rollup yet, so it must be seeded by scanning —
-            // even in a world that has already pruned, where the scan cannot see the whole history. That
-            // world's totals then start from the retained window rather than from zero, which is the best
-            // available answer; it is marked incomplete so nothing downstream calls it a lifetime figure.
-            // Only AFTER a rollup exists does pruning make it authoritative and forbid re-seeding.
-            RollupIsAuthoritative = pruned && hadRollupFile;
-            if (!hadRollupFile && pruned)
+            // ONCE SEEDED, THE ROLLUP IS NEVER RE-SEEDED. This replaces an earlier "self-healing" design
+            // that re-derived it from the journal whenever nothing appeared to be pruned, and the reason
+            // it had to go is worth keeping: **the journal cannot report its own completeness.**
+            // RollbackToUtc REWRITES the journal from scratch, recreating the base file and renumbering
+            // chunks from 1 — so after any rollback a journal that has lost 10,000 pruned bets is
+            // indistinguishable from one that never lost any. Every structural test for "has this been
+            // pruned?" fails on that, which meant the self-heal would eventually re-derive a SHORT total
+            // over a correct one and destroy exactly the history the rollup exists to preserve.
+            //
+            // A running total is only ever adjusted by the thing that owns the world's timeline: the
+            // checkpoint (a block is the only commit). Nothing else may touch it.
+            RollupIsAuthoritative = hadRollupFile;
+
+            if (!hadRollupFile)
             {
-                Rollup.IsComplete = false;
+                // First run with the feature. Scanning is the only source available, and it can only see
+                // what retention still holds — so unless this world has never recorded a bet, the seed is
+                // a floor rather than a lifetime figure, and says so.
                 Rollup.SeededAtUtc = DateTime.UtcNow;
-                GD.PrintErr(
-                    "[UserStatsService] Seeding the lifetime rollup from an ALREADY-PRUNED journal: bets in " +
-                    "deleted chunks cannot be recovered and are not counted. Totals are marked incomplete " +
-                    "and are accurate from now on.");
+                Rollup.IsComplete = BetHistory.Records.Count == 0;
+                if (!Rollup.IsComplete)
+                {
+                    GD.PrintErr(
+                        "[UserStatsService] Seeding the lifetime rollup by scanning an EXISTING journal. " +
+                        "Anything retention already deleted cannot be counted, so these totals are a floor, " +
+                        "not a lifetime figure. They are exact from this point forward.");
+                }
             }
 
             RebuildStatsFromLoadedHistory();
@@ -235,7 +247,9 @@ public partial class UserStatsService : Node
         // totals from a world that no longer exists. Clearing everything also un-prunes by definition —
         // there is nothing left to have pruned — so the rollup goes back to being complete and re-seedable.
         Rollup.Reset();
-        RollupIsAuthoritative = false;
+        Rollup.IsComplete = true;   // nothing exists to have been lost
+        Rollup.SeededAtUtc = null;
+        RollupIsAuthoritative = true; // it is correct and owns itself; never re-derive from the journal
         _rollupDirty = true;
         SaveRollupIfDirty();
 
@@ -410,9 +424,10 @@ public partial class UserStatsService : Node
             return;
         }
 
-        // Re-seed the rollup from the same scan WHILE the scan can still see everything. Past the pruning
-        // boundary this must not happen — a rebuild there would overwrite the lifetime totals with a
-        // "last 200,000 bets" figure, which is the very defect the rollup exists to fix.
+        // Seeds the rollup ONLY on its very first creation (RollupIsAuthoritative is false exactly then).
+        // Every later call — a checkpoint rollback, a pre-genesis clear — leaves it alone, because the
+        // journal cannot report its own completeness and a re-derivation would silently replace a correct
+        // running total with whatever retention happens to still hold. See the note in _Ready.
         bool reseedRollup = !RollupIsAuthoritative;
         if (reseedRollup)
         {

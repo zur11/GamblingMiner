@@ -308,14 +308,18 @@ namespace Scripts.History
 			return result;
 		}
 
-		// True once EnforceRetentionCap has deleted at least one segment — i.e. the journal on disk is no
-		// longer the whole history. This is the exact boundary at which any figure derived by SCANNING the
-		// journal stops being a lifetime figure and silently becomes a "last 200,000 bets" figure
-		// (mini-plan 03 §6.2). Detected structurally rather than by counting: the legacy base file is the
-		// oldest segment and chunk indices only ever increase, so "no base file AND the lowest surviving
-		// chunk index is not the first one written" means something in front of it was removed.
+		// ⚠️ DELETED FROM USE — kept only as a warning, and callers must not come back to it.
 		//
-		// Cost: one directory listing. Callers should ask at boot, not per bet.
+		// It tried to answer "has retention deleted anything?" from the surviving chunk indices, and it
+		// CANNOT: RollbackToUtc rewrites the journal from scratch, recreating the base file and renumbering
+		// chunks from 1, so after any rollback a journal missing 10,000 pruned bets is byte-for-byte
+		// indistinguishable from one that never lost a record. Every structural variant of this test has the
+		// same hole, because the evidence it needs was destroyed by the rewrite.
+		//
+		// The lesson generalises: **a store cannot report its own completeness once anything is allowed to
+		// rewrite it.** Completeness has to be tracked by whoever owns the history — here the rollup, which
+		// is seeded once and thereafter adjusted only by the checkpoint (mini-plan 03 §6.10).
+		[Obsolete("Cannot detect pruning after a rollback rewrite — see the note above. Do not use.")]
 		public bool HasPrunedHistory()
 		{
 			if (File.Exists(_filePath))

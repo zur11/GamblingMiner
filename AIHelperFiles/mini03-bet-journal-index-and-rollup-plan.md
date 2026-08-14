@@ -299,3 +299,38 @@ right; the standalone file simply lagged, and the checkpoint restore corrected i
 Nothing broke, but two persisted copies where one is routinely wrong is the §39.16 rule-1 trap. It is
 now flushed inside `CaptureRollupSnapshot`, i.e. at every block — which is the right moment on the
 project's own terms, since a block is the only commit.
+
+### 6.10 — A store cannot report its own completeness (2026-08-14)
+
+§6.2's Mode A/B rested on `HasPrunedHistory()` — "has retention deleted anything?", answered from the
+surviving chunk indices. **It cannot be answered that way, and no variant of it can.**
+
+`BetHistoryRepository.RollbackToUtc` **rewrites the journal from scratch**: it recreates the base file
+and renumbers chunks from 1. After any rollback, a journal that has lost 10,000 pruned bets is
+byte-for-byte indistinguishable from one that never lost a record. The evidence the test needs was
+destroyed by the rewrite, so every structural variant has the same hole.
+
+Measured on the developer's world: the rollup reported `IsComplete: true` while the union of the live
+journal and an archive (deduped by `BetRecord.Id`) proved **215,550** canonical bets against a rollup
+claiming **205,562** — understating by **9,988**. Records *older than the live window floor* cannot
+have been rolled back, since a rollback removes the newest, so they are canonical by construction and
+the shortfall is certain rather than inferred.
+
+**The fix is to stop asking the question.** The rollup is **seeded once, on creation, and thereafter
+adjusted only by the checkpoint** — the thing that actually owns the world's timeline (a block is the
+only commit). Nothing re-derives it, ever. Mode A/B is gone; `HasPrunedHistory` survives only as an
+`[Obsolete]` marker carrying this reasoning, so it is not re-invented.
+
+**The general rule, which is the durable part:**
+
+> **A store that anything is allowed to REWRITE cannot report its own completeness.** Completeness
+> must be tracked by whoever owns the history, not inferred from what the storage happens to hold.
+
+A corollary worth stating separately, because it is what made the earlier design *feel* safe: a
+"self-healing" re-derivation is only self-healing while its source is authoritative. The moment the
+source can be shorter than the truth, the same code silently *destroys* the truth instead — and it
+does so quietly, at boot, with no failure for anyone to notice.
+
+**On the seed's honesty:** a rollup created against a journal that already contains bets is a FLOOR,
+not a lifetime figure, and is marked `IsComplete = false` with a `SeededAtUtc`. Only a rollup created
+in a world with zero recorded bets can honestly claim completeness.
