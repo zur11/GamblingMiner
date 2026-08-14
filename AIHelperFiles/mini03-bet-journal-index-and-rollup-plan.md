@@ -382,9 +382,17 @@ a date" — was then examined against its remaining consumers and **has none tha
 
 #### 6.12a — Stage 1 broke the window floor, and one line of index fixed it
 
-Found immediately on test: the calendar reported **"no bets recorded yet"** for a world holding 215,550 of them.  read  — and since stage 1, boot loads nothing, so that list is empty. *Removing a load breaks every reader that was silently relying on it having happened.*
+Found immediately on test: the calendar reported **"no bets recorded yet"** for a world holding 215,550
+of them. `UserStatsService.GetOldestRetainedBetUtc` read `BetHistory.Records[0]` — and since stage 1
+boot loads nothing, so that list is empty. *Removing a load breaks every reader that was silently
+relying on it having happened, and those readers do not announce themselves: they return a plausible
+wrong answer.*
 
-The fix is the one piece of the index that has a real consumer:  opens the oldest segment, takes its first line, and closes — one short read of one file, no format, no persistence. It prefers memory when the journal does happen to be loaded, since that copy is already trimmed by any rollback.
+The fix is the one piece of the index that has a real consumer:
+`BetHistoryRepository.TryGetOldestRecordTimestampUtc` opens the oldest segment, takes its first line,
+and closes — one short read of one file, no format and no persistence. It prefers memory when the
+journal does happen to be loaded, since that copy is already trimmed by any rollback while the file's
+first line is only as current as the last rewrite.
 
 **Note what this does NOT justify.** Seeking to an arbitrary date still has no beneficiary; only the FIRST record did. The distinction is the whole point of §6.12 — build the piece with a consumer, not the machinery that piece belongs to.
 
