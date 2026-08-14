@@ -66,6 +66,35 @@ public partial class BetsHistoryExplorer : Control
 	private DateTime? _windowFloorLocal;
 	private bool _selectionWasClamped;
 
+	// ── The pruned prefix (mini-plan 03 §6.8) ───────────────────────────────────
+	// Retention deletes the OLDEST chunks, so a scan of what remains under-reports every lifetime figure —
+	// this world is already 10,000 bets short that way. Deletion must be invisible in the NUMBERS; the only
+	// thing the player should notice is that the replay cannot go back past the window floor.
+	//
+	// The correction is exact rather than an estimate, and it rests on two facts holding together: every
+	// pruned bet is older than the floor, and the selection is CLAMPED to the floor. So for any date the
+	// player can actually select, the entire pruned contribution belongs in the total — there is no partial
+	// case to get wrong. Displayed = pruned prefix + scan up to the selected date.
+	//
+	// prefix = rollup lifetime − the retained window's own totals, computed once per load while both are in
+	// hand. Held per segment so the chance filter stays truthful too: a filtered view needs THAT chance's
+	// pruned share, which no grand total can supply.
+	private sealed class PrefixTotals
+	{
+		public int Bets;
+		public int Wins;
+		public decimal Wagered;
+		public decimal NetProfit;
+		public decimal MaxBetAmount;
+		public decimal MaxLossAmount;
+		public decimal MaxWonAmount;
+		public int MaxConsecutiveLosses;
+		public int MaxConsecutiveWins;
+	}
+
+	private readonly Dictionary<int, PrefixTotals> _prunedPrefixByChance = new();
+	private PrefixTotals _prunedPrefixAll = new();
+
 	private List<BetRecord> _sortedRecords = new();
 	private long _lastRenderedSecond = long.MinValue;
 	// Real-time floor between historical-view rebuilds — see the note in _Process.
@@ -322,6 +351,7 @@ public partial class BetsHistoryExplorer : Control
 		_loaderLabel.Text = "Computing full summaries...";
 		_loaderProgress.Value = 70;
 		ApplyReplayWindowFloor();
+		ComputePrunedPrefix();
 		_chanceFirstSeenUtc.Clear();
 		RegisterChances(_allRecords);
 		ApplyChanceFilter();   // resets the summary + render caches; defaults to All Bets
@@ -374,8 +404,20 @@ public partial class BetsHistoryExplorer : Control
 		// With a chance filter active every record shares that chance, so the "(at N% chance)" qualifier the
 		// unfiltered figure needs (§40.8: a loss run only means something at a fixed chance) is redundant —
 		// the scope line already says it once, at the front.
-		string lossStreak = FormatRun(_summaryMaxLossRun, _summaryMaxLossRunChance);
-		string winStreak = FormatRun(_summaryMaxWinRun, _summaryMaxWinRunChance);
+		// Fold in what the deleted chunks held. Every pruned bet predates the window floor and the selection
+		// is clamped to that floor, so the whole prefix belongs in every total the player can ask for.
+		PrefixTotals prefix = ActivePrefix();
+		int shownBets = prefix.Bets + _summaryTotalBets;
+		decimal shownMaxBet = Math.Max(prefix.MaxBetAmount, _summaryMaxBetAmount);
+		decimal shownMaxLoss = Math.Max(prefix.MaxLossAmount, _summaryMaxLossAmount);
+		decimal shownMaxWon = Math.Max(prefix.MaxWonAmount, _summaryMaxWonAmount);
+
+		string lossStreak = FormatRun(
+			Math.Max(prefix.MaxConsecutiveLosses, _summaryMaxLossRun),
+			prefix.MaxConsecutiveLosses > _summaryMaxLossRun ? _chanceFilter : _summaryMaxLossRunChance);
+		string winStreak = FormatRun(
+			Math.Max(prefix.MaxConsecutiveWins, _summaryMaxWinRun),
+			prefix.MaxConsecutiveWins > _summaryMaxWinRun ? _chanceFilter : _summaryMaxWinRunChance);
 		string scope = _chanceFilter == AllChances
 			? "All bets"
 			: string.Format(CultureInfo.InvariantCulture, "Chance {0}%", _chanceFilter);
@@ -387,14 +429,134 @@ public partial class BetsHistoryExplorer : Control
 			"{0} — up to selected date: {1} | Max bet: {2:F8} SC | Max loss / won: {3:F8} / {4:F8} SC | " +
 			"Max consecutive losses / wins: {5} / {6}",
 			scope,
-			_summaryTotalBets,
-			_summaryMaxBetAmount,
-			_summaryMaxLossAmount,
-			_summaryMaxWonAmount,
+			shownBets,
+			shownMaxBet,
+			shownMaxLoss,
+			shownMaxWon,
 			lossStreak,
 			winStreak
 		);
 	}
+
+	// Walks the retained window once and subtracts it from the rollup's lifetime figures. What is left is
+	// what the deleted chunks held. Runs per load, alongside the sort that is already O(n).
+	private void ComputePrunedPrefix()
+	{
+		_prunedPrefixByChance.Clear();
+		_prunedPrefixAll = new PrefixTotals();
+
+		BetStatsRollup rollup = _userStatsService?.Rollup;
+		if (rollup == null || _allRecords.Count == 0)
+		{
+			return;
+		}
+
+		// Retained window, per segment — the same walk the summary does, but over the WHOLE window rather
+		// than up to a date, because the prefix is a property of the window and not of the selection.
+		var retained = new Dictionary<int, PrefixTotals>();
+		var runState = new Dictionary<int, (int Loss, int Win)>();
+		int lastChance = int.MinValue;
+		foreach (BetRecord r in _allRecords)
+		{
+			if (!retained.TryGetValue(r.Chance, out PrefixTotals t))
+			{
+				t = new PrefixTotals();
+				retained[r.Chance] = t;
+			}
+
+			bool isWin = r.Outcome == BetOutcome.Win;
+			t.Bets++;
+			t.Wagered += r.BetAmount;
+			t.NetProfit += r.NetAmount;
+			if (r.BetAmount > t.MaxBetAmount) t.MaxBetAmount = r.BetAmount;
+			if (isWin)
+			{
+				t.Wins++;
+				if (r.NetAmount > t.MaxWonAmount) t.MaxWonAmount = r.NetAmount;
+			}
+			else
+			{
+				decimal loss = Math.Abs(r.NetAmount);
+				if (loss > t.MaxLossAmount) t.MaxLossAmount = loss;
+			}
+
+			runState.TryGetValue(r.Chance, out (int Loss, int Win) run);
+			if (r.Chance != lastChance)
+			{
+				run = (0, 0); // a change of chance ends both runs (§40.8)
+				lastChance = r.Chance;
+			}
+
+			run = isWin ? (0, run.Win + 1) : (run.Loss + 1, 0);
+			runState[r.Chance] = run;
+			if (run.Loss > t.MaxConsecutiveLosses) t.MaxConsecutiveLosses = run.Loss;
+			if (run.Win > t.MaxConsecutiveWins) t.MaxConsecutiveWins = run.Win;
+		}
+
+		// The ALL-BETS prefix comes from the rollup's TOP-LEVEL totals, never from summing the segments.
+		// Per-segment aggregates were added after the rollup shipped, so a file written by the earlier
+		// version carries runs but zeroed counts — summing those would silently report a prefix of zero and
+		// put the grand total right back where the pruning left it. The top-level figures have been
+		// maintained since the first version, so this path is correct for every file that can exist.
+		var heldAll = new PrefixTotals();
+		foreach (PrefixTotals t in retained.Values)
+		{
+			heldAll.Bets += t.Bets;
+			heldAll.Wins += t.Wins;
+			heldAll.Wagered += t.Wagered;
+			heldAll.NetProfit += t.NetProfit;
+			if (t.MaxBetAmount > heldAll.MaxBetAmount) heldAll.MaxBetAmount = t.MaxBetAmount;
+			if (t.MaxLossAmount > heldAll.MaxLossAmount) heldAll.MaxLossAmount = t.MaxLossAmount;
+			if (t.MaxWonAmount > heldAll.MaxWonAmount) heldAll.MaxWonAmount = t.MaxWonAmount;
+			if (t.MaxConsecutiveLosses > heldAll.MaxConsecutiveLosses) heldAll.MaxConsecutiveLosses = t.MaxConsecutiveLosses;
+			if (t.MaxConsecutiveWins > heldAll.MaxConsecutiveWins) heldAll.MaxConsecutiveWins = t.MaxConsecutiveWins;
+		}
+
+		_prunedPrefixAll = new PrefixTotals
+		{
+			Bets = Math.Max(0, rollup.TotalBets - heldAll.Bets),
+			Wins = Math.Max(0, rollup.TotalWins - heldAll.Wins),
+			Wagered = Math.Max(0m, rollup.TotalWagered - heldAll.Wagered),
+			NetProfit = rollup.TotalNetProfit - heldAll.NetProfit,
+			MaxBetAmount = rollup.MaxBetAmount > heldAll.MaxBetAmount ? rollup.MaxBetAmount : 0m,
+			MaxLossAmount = rollup.MaxLossAmount > heldAll.MaxLossAmount ? rollup.MaxLossAmount : 0m,
+			MaxWonAmount = rollup.MaxWonAmount > heldAll.MaxWonAmount ? rollup.MaxWonAmount : 0m,
+			MaxConsecutiveLosses = rollup.MaxConsecutiveLossesOverall().Run > heldAll.MaxConsecutiveLosses
+				? rollup.MaxConsecutiveLossesOverall().Run : 0,
+			MaxConsecutiveWins = rollup.MaxConsecutiveWinsOverall().Run > heldAll.MaxConsecutiveWins
+				? rollup.MaxConsecutiveWinsOverall().Run : 0
+		};
+
+		foreach (BetStatsRollup.SegmentRuns seg in rollup.Segments.Values)
+		{
+			retained.TryGetValue(seg.Chance, out PrefixTotals held);
+			held ??= new PrefixTotals();
+
+			var prefix = new PrefixTotals
+			{
+				Bets = Math.Max(0, seg.Bets - held.Bets),
+				Wins = Math.Max(0, seg.Wins - held.Wins),
+				Wagered = Math.Max(0m, seg.Wagered - held.Wagered),
+				NetProfit = seg.NetProfit - held.NetProfit, // may legitimately be negative
+				// A lifetime maximum LARGER than anything still on disk can only have come from a pruned
+				// bet, so it is carried. When they are equal the record is still retained and the scan will
+				// find it — carrying it anyway would double nothing, but claiming it as pruned would let a
+				// rewound view show a peak that had not happened yet.
+				MaxBetAmount = seg.MaxBetAmount > held.MaxBetAmount ? seg.MaxBetAmount : 0m,
+				MaxLossAmount = seg.MaxLossAmount > held.MaxLossAmount ? seg.MaxLossAmount : 0m,
+				MaxWonAmount = seg.MaxWonAmount > held.MaxWonAmount ? seg.MaxWonAmount : 0m,
+				MaxConsecutiveLosses = seg.MaxConsecutiveLosses > held.MaxConsecutiveLosses ? seg.MaxConsecutiveLosses : 0,
+				MaxConsecutiveWins = seg.MaxConsecutiveWins > held.MaxConsecutiveWins ? seg.MaxConsecutiveWins : 0
+			};
+
+			_prunedPrefixByChance[seg.Chance] = prefix;
+		}
+	}
+
+	private PrefixTotals ActivePrefix() =>
+		_chanceFilter == AllChances
+			? _prunedPrefixAll
+			: (_prunedPrefixByChance.TryGetValue(_chanceFilter, out PrefixTotals p) ? p : new PrefixTotals());
 
 	// ── Replay window ───────────────────────────────────────────────────────────
 

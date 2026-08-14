@@ -189,7 +189,17 @@ public partial class UserStatsService : Node
         SaveRollupIfDirty();
     }
 
-    public BetStatsRollup CaptureRollupSnapshot() => Rollup.Clone();
+    // Called by BlockSessionCheckpointService at each block. Flushing here too keeps the standalone file
+    // and the checkpoint in agreement: previously the file was only written from FlushHistory, which the
+    // DELEGATED autobet never calls, so it sat at whatever boot had last computed while the in-memory
+    // total ran ahead. The checkpoint restore corrected it on the next launch, so nothing broke — but two
+    // persisted copies where one is routinely wrong is the §39.16 rule-1 trap, and a block is exactly the
+    // right moment to write, since a block is the only commit.
+    public BetStatsRollup CaptureRollupSnapshot()
+    {
+        SaveRollupIfDirty();
+        return Rollup.Clone();
+    }
 
     public void RollbackHistoryToUtc(DateTime checkpointUtc)
     {

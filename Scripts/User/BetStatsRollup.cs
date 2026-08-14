@@ -50,12 +50,23 @@ namespace Scripts.User
 		public int CurrentLossRun { get; set; }
 		public int CurrentWinRun { get; set; }
 
+		// Per-segment AGGREGATES, not just run maxima. The extra fields exist so a filtered view (the
+		// chance-to-win selector) can still report true totals: a reader showing "chance 50%" needs that
+		// segment's pruned contribution, and a lifetime grand total cannot supply it.
 		public sealed class SegmentRuns
 		{
 			public string GameId { get; set; } = string.Empty;
 			public int Chance { get; set; }
 			public int MaxConsecutiveLosses { get; set; }
 			public int MaxConsecutiveWins { get; set; }
+
+			public int Bets { get; set; }
+			public int Wins { get; set; }
+			public decimal Wagered { get; set; }
+			public decimal NetProfit { get; set; }
+			public decimal MaxBetAmount { get; set; }
+			public decimal MaxLossAmount { get; set; }
+			public decimal MaxWonAmount { get; set; }
 		}
 
 		public static string SegmentKey(string gameId, int chance) => $"{gameId}|{chance}";
@@ -120,6 +131,31 @@ namespace Scripts.User
 			{
 				runs = new SegmentRuns { GameId = gameId, Chance = chance };
 				Segments[key] = runs;
+			}
+
+			runs.Bets++;
+			runs.Wagered = Money.Normalize(runs.Wagered + betAmount);
+			runs.NetProfit = Money.Normalize(runs.NetProfit + netAmount);
+			if (betAmount > runs.MaxBetAmount)
+			{
+				runs.MaxBetAmount = betAmount;
+			}
+
+			if (isWin)
+			{
+				runs.Wins++;
+				if (netAmount > runs.MaxWonAmount)
+				{
+					runs.MaxWonAmount = netAmount;
+				}
+			}
+			else
+			{
+				decimal segLoss = Math.Abs(netAmount);
+				if (segLoss > runs.MaxLossAmount)
+				{
+					runs.MaxLossAmount = segLoss;
+				}
 			}
 
 			if (isWin)
@@ -216,7 +252,14 @@ namespace Scripts.User
 					GameId = entry.Value.GameId,
 					Chance = entry.Value.Chance,
 					MaxConsecutiveLosses = entry.Value.MaxConsecutiveLosses,
-					MaxConsecutiveWins = entry.Value.MaxConsecutiveWins
+					MaxConsecutiveWins = entry.Value.MaxConsecutiveWins,
+					Bets = entry.Value.Bets,
+					Wins = entry.Value.Wins,
+					Wagered = entry.Value.Wagered,
+					NetProfit = entry.Value.NetProfit,
+					MaxBetAmount = entry.Value.MaxBetAmount,
+					MaxLossAmount = entry.Value.MaxLossAmount,
+					MaxWonAmount = entry.Value.MaxWonAmount
 				};
 			}
 

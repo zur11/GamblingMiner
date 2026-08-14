@@ -250,3 +250,52 @@ can do must be shown in the units the player thinks in — in-game dates, not ch
 - Retuning `MaxRetainedJournalChunks` / `MaxJournalEntriesPerChunkFile` — this plan makes the read
   cheap; whether 200k is the right retention is a separate question.
 - What DiceGame spends its frame on at 9000X (mini02 §C.6c, open — belongs with roadmap §8 T4).
+
+### 6.8 — Pruning must be invisible in the NUMBERS (developer, 2026-08-14)
+
+Demonstrated rather than argued: after the first chunk was trimmed, `BetsHistoryExplorer` showed
+**195,562** bets where the true lifetime figure was **205,562**, and the developer read the smaller
+number as the total — exactly the confusion §6.4a predicted.
+
+**The rule:** deletion is a storage detail and must not be visible in any statistic. The *only* thing
+the player should notice is that the replay cannot go back past the window floor (§6.6), stated in
+the calendar as "history stored from ⟨date⟩".
+
+**The correction is exact, not an estimate**, and it rests on two facts holding together:
+
+1. every pruned bet is older than the window floor, and
+2. the selection is **clamped** to that floor.
+
+So for any date the player can actually select, the *entire* pruned contribution belongs in the
+total — there is no partial case to get wrong. **Displayed = pruned prefix + scan up to the selected
+date**, which also preserves the replay: figures still grow as the timeline is scrubbed forward, and
+land on the true lifetime value at the present.
+
+`prefix = rollup lifetime − the retained window's own totals`, computed once per load while both are
+in hand.
+
+**Two subtleties worth keeping:**
+
+- **The ALL-BETS prefix is taken from the rollup's TOP-LEVEL totals, never by summing segments.**
+  Per-segment aggregates were added after the rollup shipped, so a file written by the first version
+  carries run maxima with zeroed counts; summing those would report a prefix of zero and put the grand
+  total straight back where the pruning left it. The top-level figures have existed since the first
+  version, so that path is correct for every file that can exist. *When a record gains fields, the
+  reader must still be correct for the records written before them.*
+- **A maximum is carried only when the lifetime value EXCEEDS anything still on disk.** That can only
+  have come from a pruned bet. When they are equal the record is still retained and the scan will find
+  it at the right point in the timeline — claiming it as pruned would let a rewound view display a
+  peak that had not happened yet.
+
+Per-chance prefixes come from the per-segment aggregates, so the chance filter is truthful too. A
+legacy rollup (no segment counts) degrades to a zero prefix *for filtered views only* — the default
+All Bets view stays correct.
+
+### 6.9 — The rollup file is flushed at the block, not on an arbitrary event
+
+`SaveRollupIfDirty` ran only from `FlushHistory()`, which the **delegated** autobet never calls — the
+same shape as mini-plan 02's dead PAUSE button. The in-memory rollup and the checkpoint were always
+right; the standalone file simply lagged, and the checkpoint restore corrected it on the next launch.
+Nothing broke, but two persisted copies where one is routinely wrong is the §39.16 rule-1 trap. It is
+now flushed inside `CaptureRollupSnapshot`, i.e. at every block — which is the right moment on the
+project's own terms, since a block is the only commit.
