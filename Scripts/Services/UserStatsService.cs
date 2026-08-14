@@ -43,10 +43,23 @@ public partial class UserStatsService : Node
         if (EnableHistoryPersistence)
         {
             BetHistory = new BetHistoryRepository(BetHistoryRepository.ResolveDefaultPath());
-            BetHistory.EnsureAllChunksLoaded();
 
             bool hadRollupFile = FileAccess.FileExists(RollupPath);
             LoadRollup();
+
+            // STAGE 1 (mini-plan 03 D1): with a rollup on disk, boot reads NOTHING from the journal.
+            // Every figure Stats holds is a running value the rollup already maintains with identical
+            // arithmetic, so it is reconstructed instead of replayed — which is what removes INC-001's
+            // remaining cost. Retention bounded what was WRITTEN; this is what finally bounds what is READ.
+            // Only the first-run seeding path below still needs the records.
+            if (hadRollupFile)
+            {
+                RollupIsAuthoritative = true;
+                Stats = UserBettingStats.FromRollup(Rollup);
+                return;
+            }
+
+            BetHistory.EnsureAllChunksLoaded();
 
             // ONCE SEEDED, THE ROLLUP IS NEVER RE-SEEDED. This replaces an earlier "self-healing" design
             // that re-derived it from the journal whenever nothing appeared to be pruned, and the reason
@@ -59,25 +72,23 @@ public partial class UserStatsService : Node
             //
             // A running total is only ever adjusted by the thing that owns the world's timeline: the
             // checkpoint (a block is the only commit). Nothing else may touch it.
-            RollupIsAuthoritative = hadRollupFile;
-
-            if (!hadRollupFile)
+            //
+            // Reaching here means there was no rollup file, so this is the one and only seeding. Scanning
+            // is the only source available and it can see only what retention still holds — so unless this
+            // world has never recorded a bet, the seed is a FLOOR rather than a lifetime figure, and says
+            // so rather than quietly presenting itself as one.
+            Rollup.SeededAtUtc = DateTime.UtcNow;
+            Rollup.IsComplete = BetHistory.Records.Count == 0;
+            if (!Rollup.IsComplete)
             {
-                // First run with the feature. Scanning is the only source available, and it can only see
-                // what retention still holds — so unless this world has never recorded a bet, the seed is
-                // a floor rather than a lifetime figure, and says so.
-                Rollup.SeededAtUtc = DateTime.UtcNow;
-                Rollup.IsComplete = BetHistory.Records.Count == 0;
-                if (!Rollup.IsComplete)
-                {
-                    GD.PrintErr(
-                        "[UserStatsService] Seeding the lifetime rollup by scanning an EXISTING journal. " +
-                        "Anything retention already deleted cannot be counted, so these totals are a floor, " +
-                        "not a lifetime figure. They are exact from this point forward.");
-                }
+                GD.PrintErr(
+                    "[UserStatsService] Seeding the lifetime rollup by scanning an EXISTING journal. " +
+                    "Anything retention already deleted cannot be counted, so these totals are a floor, " +
+                    "not a lifetime figure. They are exact from this point forward.");
             }
 
             RebuildStatsFromLoadedHistory();
+            RollupIsAuthoritative = true; // seeded — from here on nothing may re-derive it
         }
         else
         {
@@ -127,6 +138,9 @@ public partial class UserStatsService : Node
             };
             BetHistory.AddDeposit(depositRecord);
         }
+
+        Rollup.RegisterDeposit();   // zeroes the since-deposit window, exactly as Stats does
+        _rollupDirty = true;
 
         Stats.RegisterDeposit();
         EmitStatsChangedImmediate();
@@ -220,6 +234,11 @@ public partial class UserStatsService : Node
             return;
         }
 
+        // This one MUST load everything, and the reason is worth stating so nobody "optimises" it later:
+        // RollbackToUtc trims in memory and then REBUILDS THE JOURNAL FROM WHAT IS IN MEMORY. Loading only
+        // the tail chunks would rewrite the journal from that tail alone and delete every older chunk —
+        // turning a rollback of a few bets into the loss of the entire retained history.
+        // Once per process (DiceGame's checkpoint restore is guarded), and only when a checkpoint exists.
         BetHistory.EnsureAllChunksLoaded();
         BetHistory.RollbackToUtc(checkpointUtc);
         RebuildStatsFromLoadedHistory();
@@ -239,7 +258,9 @@ public partial class UserStatsService : Node
             return;
         }
 
-        BetHistory.EnsureAllChunksLoaded();
+        // No load first: ClearAll empties the in-memory state and rewrites the journal from it, so reading
+        // ~200,000 records in order to discard them was pure cost. (It also rewrites from whatever IS in
+        // memory — which is exactly why the rollback path below must still load everything.)
         BetHistory.ClearAll();
 
         // The rollup is zeroed EXPLICITLY rather than left to the rebuild below: past the pruning boundary
@@ -277,7 +298,18 @@ public partial class UserStatsService : Node
             return Array.Empty<BetRecord>();
         }
 
-        BetHistory.EnsureAllChunksLoaded();
+        // Only the NEWEST records are ever wanted here (DiceGame seeds its on-screen list with ~100), and a
+        // chunk holds 10,000 — so the newest chunk alone always satisfies it. Loading every chunk to take
+        // the tail was the second half of INC-001's read cost.
+        //
+        // Guarded because LoadLatestChunkOnly RESETS in-memory state: if a consumer has already loaded the
+        // full history (the explorer does), throwing it away here would force that consumer to re-read
+        // everything on its next refresh — turning a saving into a cost.
+        if (BetHistory.Records.Count < max)
+        {
+            BetHistory.LoadLatestChunkOnly();
+        }
+
         IReadOnlyList<BetRecord> records = BetHistory.Records;
         if (records.Count <= max)
         {

@@ -42,6 +42,18 @@ namespace Scripts.User
 		public decimal MaxLossAmount { get; set; }   // largest single loss, as a positive magnitude
 		public decimal MaxWonAmount { get; set; }    // largest single win — the mirror, new in mini-plan 03
 
+		// Everything else UserBettingStats keeps, so it can be reconstructed without scanning the journal.
+		// These are running values exactly like the totals above — the since-deposit trio is zeroed by a
+		// deposit, the drawdown pair tracks the peak — so the rollup is their natural home. Without them
+		// the boot scan could not be removed at all: dropping it would silently reset a player's
+		// since-deposit figures and lose their worst drawdown on every restart.
+		public int SinceDepositBets { get; set; }
+		public decimal SinceDepositWagered { get; set; }
+		public decimal SinceDepositProfit { get; set; }
+		public decimal PeakProfit { get; set; }
+		public decimal CurrentDrawdown { get; set; }
+		public decimal MaxDrawdown { get; set; }
+
 		// Key: SegmentKey(gameId, chance). Value: that segment's run maxima.
 		public Dictionary<string, SegmentRuns> Segments { get; set; } = new();
 
@@ -81,6 +93,12 @@ namespace Scripts.User
 			MaxBetAmount = 0m;
 			MaxLossAmount = 0m;
 			MaxWonAmount = 0m;
+			SinceDepositBets = 0;
+			SinceDepositWagered = 0m;
+			SinceDepositProfit = 0m;
+			PeakProfit = 0m;
+			CurrentDrawdown = 0m;
+			MaxDrawdown = 0m;
 			Segments = new Dictionary<string, SegmentRuns>();
 			CurrentSegmentKey = string.Empty;
 			CurrentLossRun = 0;
@@ -93,6 +111,23 @@ namespace Scripts.User
 			TotalBets++;
 			TotalWagered = Money.Normalize(TotalWagered + betAmount);
 			TotalNetProfit = Money.Normalize(TotalNetProfit + netAmount);
+
+			SinceDepositBets++;
+			SinceDepositWagered = Money.Normalize(SinceDepositWagered + betAmount);
+			SinceDepositProfit = Money.Normalize(SinceDepositProfit + netAmount);
+
+			// Same shape as UserBettingStats.ApplyBet, so the reconstructed object is identical to one
+			// built by replaying every bet.
+			if (TotalNetProfit > PeakProfit)
+			{
+				PeakProfit = TotalNetProfit;
+			}
+
+			CurrentDrawdown = TotalNetProfit - PeakProfit;
+			if (CurrentDrawdown < MaxDrawdown)
+			{
+				MaxDrawdown = CurrentDrawdown;
+			}
 
 			if (betAmount > MaxBetAmount)
 			{
@@ -178,6 +213,15 @@ namespace Scripts.User
 			}
 		}
 
+		// A deposit resets the "since deposit" window and nothing else — the lifetime figures and the
+		// drawdown peak are unaffected, exactly as UserBettingStats.ResetSessionMetrics does.
+		public void RegisterDeposit()
+		{
+			SinceDepositBets = 0;
+			SinceDepositWagered = 0m;
+			SinceDepositProfit = 0m;
+		}
+
 		public void RegisterRecord(BetRecord record)
 		{
 			RegisterBet(
@@ -239,6 +283,12 @@ namespace Scripts.User
 				MaxBetAmount = MaxBetAmount,
 				MaxLossAmount = MaxLossAmount,
 				MaxWonAmount = MaxWonAmount,
+				SinceDepositBets = SinceDepositBets,
+				SinceDepositWagered = SinceDepositWagered,
+				SinceDepositProfit = SinceDepositProfit,
+				PeakProfit = PeakProfit,
+				CurrentDrawdown = CurrentDrawdown,
+				MaxDrawdown = MaxDrawdown,
 				CurrentSegmentKey = CurrentSegmentKey,
 				CurrentLossRun = CurrentLossRun,
 				CurrentWinRun = CurrentWinRun,
