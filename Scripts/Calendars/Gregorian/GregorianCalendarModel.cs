@@ -44,7 +44,12 @@ public class GregorianCalendarModel : CalendarModel
 			days.Add(BuildDay(current));
 		}
 
-		string monthName = CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(source.Month);
+		// InvariantCulture, never CurrentCulture: UI text is English by project policy, and on a Spanish
+		// machine this rendered "Month: mayo (31 days)" — half a sentence in each language. It is the same
+		// class of bug as the §29.12 number-locale sweep (a value formatted with the machine's culture,
+		// invisible to an English-locale developer), on the text side rather than the numeric one, and it
+		// was the ONLY CurrentCulture use left in the project.
+		string monthName = CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(source.Month);
 		return new CalendarMonth(Id, source.Year, source.Month, monthName, days);
 	}
 
