@@ -19,6 +19,14 @@ namespace UI.StatusBar
 		// send or a swap sell reduces spendable the instant it is broadcast, with no block to announce it).
 		private const double BtcBalanceFallbackInterval = 2.0;
 
+		// The clock turns violet whenever it is NOT showing the present — i.e. while the calendar or the
+		// history explorer has wound it back for a replay. A date is the one figure on this bar a player has
+		// no way to sanity-check by eye: 2009-05-12 looks exactly as plausible as 2009-05-24, so a rewound
+		// clock reads as the real one and every balance beside it silently becomes a historical figure.
+		// Deliberately driven by the STATE (current != present), not by which scene is open — leaving those
+		// scenes restores the present, so the colour clears itself with no per-scene bookkeeping.
+		private static readonly Color ReplayClockColor = new(0.72f, 0.45f, 0.95f);
+
 		private Label _mainBalanceLabel;
 		private Label _bankrollLabel;
 		private Label _btcBalanceLabel;
@@ -27,6 +35,9 @@ namespace UI.StatusBar
 
 		private bool _btcBalanceDirty = true;
 		private double _btcBalanceTimer;
+		// Repaint the clock's colour only on the edge — Refresh runs every frame.
+		private bool _clockShowsReplay;
+		private bool _clockColorApplied;
 
 		private PrincipalBalanceService _principal;
 		private BankrollStateService _bankroll;
@@ -140,6 +151,15 @@ namespace UI.StatusBar
 			_mainBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Main Balance: {mainBalance:F2} SC");
 			_bankrollLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll: {bankroll:F2} SC");
 			_clockLabel.Text = _calendar?.CurrentLocalDateTime.ToString("MMM d, yyyy  HH:mm:ss", CultureInfo.InvariantCulture) ?? "--";
+
+			// One DateTime comparison per frame; the theme override is written only when the state flips.
+			bool replay = _calendar != null && _calendar.CurrentLocalDateTime < _calendar.GamePresentLocalDateTime;
+			if (replay != _clockShowsReplay || !_clockColorApplied)
+			{
+				_clockShowsReplay = replay;
+				_clockColorApplied = true;
+				_clockLabel.AddThemeColorOverride("font_color", replay ? ReplayClockColor : Colors.White);
+			}
 		}
 
 		// The player's own BTC holding, in every scene. BlockAccepted fires from inside HandleMinedBlock, so
