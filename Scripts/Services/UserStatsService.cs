@@ -331,8 +331,11 @@ public partial class UserStatsService : Node
             return null;
         }
 
-        IReadOnlyList<BetRecord> records = BetHistory.Records;
-        return records.Count > 0 ? records[0].TimestampUtc : null;
+        // Must NOT depend on the journal being loaded: since stage 1, boot reads nothing, so the calendar
+        // asked this of an empty in-memory list and reported "no bets recorded yet" for a world holding
+        // 215,550 of them. The repository answers it from the oldest segment's first line instead — one
+        // short read, and it prefers memory when the journal does happen to be loaded.
+        return BetHistory.TryGetOldestRecordTimestampUtc(out DateTime oldest) ? oldest : null;
     }
 
     public decimal GetLatestKnownBalance(decimal fallbackBalance)

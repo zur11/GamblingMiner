@@ -380,7 +380,15 @@ a date" — was then examined against its remaining consumers and **has none tha
   saves nothing; only **per-chunk aggregates** (stage 3, which needs run-merging across chunk
   boundaries) would, and the developer measured the explorer as *notably faster* after stage 1.
 
-**So the index is deferred with its trigger named:** build it if and only if opening the explorer
+#### 6.12a — Stage 1 broke the window floor, and one line of index fixed it
+
+Found immediately on test: the calendar reported **"no bets recorded yet"** for a world holding 215,550 of them.  read  — and since stage 1, boot loads nothing, so that list is empty. *Removing a load breaks every reader that was silently relying on it having happened.*
+
+The fix is the one piece of the index that has a real consumer:  opens the oldest segment, takes its first line, and closes — one short read of one file, no format, no persistence. It prefers memory when the journal does happen to be loaded, since that copy is already trimmed by any rollback.
+
+**Note what this does NOT justify.** Seeking to an arbitrary date still has no beneficiary; only the FIRST record did. The distinction is the whole point of §6.12 — build the piece with a consumer, not the machinery that piece belongs to.
+
+**So the rest of the index is deferred with its trigger named:** build it if and only if opening the explorer
 becomes slow again, and build it as stage 3 (aggregates) rather than stage 2 (seek), because seeking
 alone cannot help the one consumer that remains. *Machinery whose beneficiaries have all been fixed
 by something simpler is not "groundwork" — it is inventory.*
