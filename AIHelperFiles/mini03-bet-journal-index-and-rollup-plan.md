@@ -334,3 +334,53 @@ does so quietly, at boot, with no failure for anyone to notice.
 **On the seed's honesty:** a rollup created against a journal that already contains bets is a FLOOR,
 not a lifetime figure, and is marked `IsComplete = false` with a `SeededAtUtc`. Only a rollup created
 in a world with zero recorded bets can honestly claim completeness.
+
+### 6.11 — Replay Mode: the window becomes a control, not just a limit (2026-08-14)
+
+The window floor was surfaced in the *explorer* but not in the **calendar**, which is where the date
+is actually chosen — so the clamp arrived as a surprise on the next screen. It is now stated and
+configurable at the point of choice.
+
+**`Replay Mode` (CheckButton, default ON)** in `CalendarsNavigator`, with a label that always names
+the replay floor and what the current mode does with it:
+
+| Mode | Calendar floor | Meaning |
+|---|---|---|
+| **ON** (default) | oldest stored bet | every date the calendar accepts is one the explorer can actually replay |
+| **OFF** | `TimelineConfig.PlayerStartDayLocal` | the player has said they are travelling for some reason other than bet history; the world still has nothing before its own start, so it clamps there — instantly |
+
+Flipping the toggle re-applies the floor immediately, so it can never leave the calendar sitting on
+a date the new mode forbids.
+
+**The explorer keeps clamping to the replay floor regardless of the toggle** — it cannot show bets
+that are not on disk. So with Replay Mode OFF a player may legitimately land on an earlier date and
+watch the explorer snap forward. *That is the mode working, and the label says so in advance* rather
+than letting it read as a malfunction.
+
+**A second hardcoded genesis date died here.** The calendar clamped at a literal
+`new DateTime(2009, 1, 3, 18, 15, 6)` — genesis, months before the player's world exists, so the
+clock could be set into the founders' era. It is replaced by `TimelineConfig.PlayerStartDayLocal`,
+which is the canonical anchor **and** timeline-shiftable, as every historical date in this project is
+required to be. *A duplicated constant is not merely redundant: it is the copy that will not move
+when the original does.*
+
+### 6.12 — Stage 2 of D1 was NOT built, and why
+
+Stage 1 removed the boot scan. Stage 2 — "index the chunks so a consumer loads only the one covering
+a date" — was then examined against its remaining consumers and **has none that benefit**:
+
+- `UserStatsService._Ready` no longer reads the journal at all (stage 1).
+- `GetRecentBets` needs only the newest chunk, which it now loads directly — no index required.
+- `ClearAllHistory`'s load was removed outright.
+- The **checkpoint rollback** must load everything, permanently: `RollbackToUtc` trims in memory and
+  then **rebuilds the journal from memory**, so loading only the tail would rewrite the journal from
+  that tail and delete every older chunk. This is now stated in the code so it is not "optimised".
+- **`BetsHistoryExplorer`** is the only caller left, and its summary counts bets *up to the selected
+  date* — at the present that is the whole retained window, so it must read it. Seeking to one chunk
+  saves nothing; only **per-chunk aggregates** (stage 3, which needs run-merging across chunk
+  boundaries) would, and the developer measured the explorer as *notably faster* after stage 1.
+
+**So the index is deferred with its trigger named:** build it if and only if opening the explorer
+becomes slow again, and build it as stage 3 (aggregates) rather than stage 2 (seek), because seeking
+alone cannot help the one consumer that remains. *Machinery whose beneficiaries have all been fixed
+by something simpler is not "groundwork" — it is inventory.*

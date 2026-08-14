@@ -76,6 +76,17 @@ layout_mode = 2
 button_pressed = true
 text = "Use 24-hour format"
 
+[node name="ReplayModeToggle" type="CheckButton" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+button_pressed = true
+text = "Replay Mode (limit to stored bet history)"
+
+[node name="ReplayWindowLabel" type="Label" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Bet replays available from: -"
+
 [node name="TimeSpeedRow" type="HBoxContainer" parent="RootMargin/RootVBox/ControlsPanel/ControlsVBox"]
 layout_mode = 2
 
