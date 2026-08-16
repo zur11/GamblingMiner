@@ -4,12 +4,25 @@
 `mini02-panel-state-and-100k-audit-plan.md` (whose **Part D** this is, promoted to its own plan
 exactly as that plan said it should be).
 
-**Status:** 📋 **DRAFT — decisions taken (§6), ready to implement.** Branch created, no code touched.
-⚠️ **§6.2 is the headline: lifetime statistics are already silently wrong in any world past 200,000
-bets, including the developer's.** ·
-**Branch:** `bet-journal-index-and-rollup` · **World format bump:** likely **yes** — see §5 ·
-**Design record (proposed):** `Documentation/ProjectDesignManual.md` new §40.10; INC-001's entry in
-`Documentation/INCIDENT_LOG.md` gains a "closed by" pointer.
+**Status:** 🔨 **IN PROGRESS — §9 (Phase 2) is the remaining work, and it lands on THIS branch before
+the merge** (developer's call, 2026-08-14 — "option A": the plan lands whole, and the §6.13 autobet
+lock never reaches `main`, since Phase 2 deletes it).
+
+| Piece | State |
+|---|---|
+| **D2 — the rollup** (§6.1–6.4, §6.9, §6.10) | ✅ built, checkpoint-covered, **verified in play** |
+| Pruning invisible in the statistics (§6.8) | ✅ built and verified — the developer's world repaired to 215,550 |
+| Replay window + clamp + Replay Mode (§6.6, §6.11) | ✅ built and verified |
+| **D1 stage 1** — boot reads nothing (§6.12) | ✅ built |
+| D1 stage 2/3 — the chunk index | 🚫 **not built, trigger recorded** (§6.12): only the explorer could benefit, and only from per-chunk *aggregates*, not from seeking |
+| §6.13 autobet lock | ⚠️ **stopgap** — deleted by §9 |
+| **§9 — the replay cursor + the Live button** | ⏭️ **NEXT** |
+
+⚠️ **§6.2 remains the headline of the whole plan:** lifetime statistics were already silently wrong
+in any world past 200,000 bets, including the developer's, and that is what D2 fixes.
+
+**Branch:** `bet-journal-index-and-rollup` · **World format bump:** **none** — settled in §5 ·
+**Design record:** `Documentation/ProjectDesignManual.md` **§40.10 / 40.10a / 40.10b** (written).
 
 ---
 

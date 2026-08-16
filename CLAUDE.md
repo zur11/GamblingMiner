@@ -921,5 +921,10 @@ Detailed design documents are in `Documentation/`:
 
 - **`main` is the stable trunk.** It is anchored at known-good points (e.g. a completed roadmap step). Keep it buildable.
 - **One branch per category of modifications** (e.g. `scheduled-bot-transactions`, `candidate-block-model`, `historical-founders`). Do feature work on its branch; merge back to `main` when stable.
-- **Staging and commits are done manually by the developer.** Claude does **not** run `git add`/`commit`/`push`/branch operations unless explicitly asked — only assists with git when requested. A clean working tree usually means the developer already committed; verify via recent commit history, don't assume there's work to commit.
+- **STAGE → ASK IN CHAT → COMMIT (2026-08-14).** When a unit of work is finished, Claude **stages** it (`git add -A`) and **posts the full commit message in the chat**, then stops and waits. The developer authorises in the chat; **Claude then runs `git commit`.** Never commit before that authorisation, and never leave an authorised change uncommitted.
+  - **Why:** once committed, the change is folded into history and the developer loses the easy "what exactly did you just do?" view. Staging first keeps the diff reviewable while the reasoning is still fresh, which is the moment review is worth anything.
+  - **The message goes in the CHAT, not into `.git/COMMIT_EDITMSG`.** That file was tried first and does **not** surface in the VS Code Source Control input, so the developer never saw it — a prepared message nobody can read is the same as no message.
+  - Claude still **writes** the message to the usual standard (what changed, why, and the rule it establishes). Only the go-ahead is the developer's.
+  - `push`, `merge`, `checkout -b` and branch operations remain **explicit-request only**, unchanged.
+  - A clean working tree usually means the developer already committed; verify via recent commit history, don't assume there's work to commit.
 - **Keep docs current on the branch where the work happens — including CLAUDE.md.** When a change alters the architecture, update CLAUDE.md (and the other docs) in the same branch/commits as the change, not deferred to merge. CLAUDE.md stays tracked — do not untrack it (its history matters and Claude Code reads it every session).
