@@ -453,3 +453,96 @@ they need a small self-contained ticker; `GetCurrentLocal()` becomes the cursor;
 points that pre-set `ExplorerSelectedLocalDateTime` keep working unchanged. Moderate, contained, and
 it deletes more coupling than it adds. **Not attempted here** — it wants its own pass rather than the
 tail of a plan already carrying the rollup, the window and the prefix correction.
+
+---
+
+## 9. Phase 2 — the replay cursor (planned, not built)
+
+Implements the fix §6.13 identified, and lifts the autobet block that section shipped as a stopgap.
+
+**Goal:** browsing history never touches the world clock. Once that holds, replaying while an autobet
+runs stops conflicting with it, and the calendar lock is deleted rather than refined.
+
+### 9.1 — The ownership rule this establishes
+
+> **Only the owner of the timeline may move it.** `CalendarTimeService` is advanced by the simulation
+> and corrected by the checkpoint restore. Nothing else writes to it — a *viewer* of history gets a
+> cursor of its own.
+
+Same rule §40.10a reached for the rollup (the journal may not re-derive what the checkpoint owns), one
+layer up. Half of it already exists: `BetsHistoryExplorer` has `_selectedLocal`, and a `_liveMode`
+that already refuses to move the clock while a run is active. **The work is making the *browsing*
+mode equally hands-off, not inventing a mechanism.**
+
+### 9.2 — Steps
+
+1. **`_cursorLocal` becomes the single source of what the explorer displays.** `GetCurrentLocal()`
+   returns the cursor instead of `CalendarTimeService.CurrentLocalDateTime`. Everything downstream —
+   `UpperBound`, the preview window, the summary, the chance selector's time-awareness — already reads
+   through that one method, so they follow for free.
+2. **The explorer gets its own ticker.** Play/Pause/Speed advance `_cursorLocal` by
+   `delta × speedMultiplier` in `_Process`, clamped to `[replay floor, present]`. Today those three
+   controls write `CalendarTimeService.IsRunning` / `.SpeedMultiplier`; after this they write nothing
+   outside the scene.
+3. **Delete every clock write in `BetsHistoryExplorer`** — the three `SpeedMultiplier` assignments
+   (§C.2 of mini-plan 02 already flagged them as no-ops that only *looked* harmless), `SetLocalDateTime`,
+   `IsRunning`, and the `SetNow()` on the way out.
+4. **`CalendarsNavigator` seeds the cursor, not the clock.** Apply sets
+   `ExplorerSelectedLocalDateTime` only. `SetLocalDateTime` goes. The scene stops being a time machine
+   for the world and becomes what its buttons already claim — a way to choose which slice of history
+   to look at.
+5. **Remove the §6.13 autobet lock** (the six spinboxes, Apply, Now, the speed selector, the Replay
+   Mode toggle, the handler early-returns and the explanatory label). It exists only because of the
+   conflict this phase removes; keeping it afterwards would be a guard against an impossible state.
+6. **Move the violet tint from the StatusBar clock to the explorer's own "Selected timeline" label.**
+   The clock will then always be the true present, so tinting it could never fire — but *keep the
+   StatusBar tint in place as a tripwire*, because after this phase a non-present world clock is by
+   definition a bug, and that is exactly what §40.10b built it to announce.
+
+### 9.3 — The Live button becomes a real control
+
+Today `"Live"` is only a caption `RefreshControlLabels` puts on the Play/Pause button while an autobet
+is running, and pressing it does nothing (`OnPlayPausePressed` early-returns on `_liveMode`). It
+becomes an action:
+
+| | Behaviour |
+|---|---|
+| **Enabled** | only while a player autobet is running (`IsAutobetActive`) |
+| **Disabled** | otherwise — with no run the present does not advance, so "follow the present" and "sit still" are the same thing and the button would be a no-op wearing a label |
+| **On press** | cursor jumps to the newest bet / the present · the view switches to **live-follow** · the timeline label returns from violet to normal · replay speed resets to **1X** |
+| **While live-following** | the cursor tracks the present each frame, so new bets appear as they settle |
+| **Leaving live-follow** | any Play/Pause/Speed action, or applying a date in the calendar, returns to browsing |
+
+*The point of the disabled state is honesty, not protection:* §24.13b's rule — an enabled-but-inert
+control is a lie — and this button has been exactly that since it was labelled.
+
+### 9.4 — What must NOT change
+
+- **The checkpoint restore still rewinds the world clock** (§24.8). That is the timeline's owner
+  correcting itself, not a browser borrowing it.
+- **DiceGame keeps asserting the clock** on entry while a delegated autobet runs — it speaks for the
+  simulation, which is the owner.
+- **`ExplorerSelectedLocalDateTime` keeps its meaning** as "where the explorer should open", now
+  read as a cursor seed. Its other writers (DiceGame, `BlockSessionCheckpointService`) are unaffected.
+
+### 9.5 — Verification
+
+- With an autobet running: open the calendar, apply an old date, return to DiceGame. **The world clock
+  is untouched and still at the present**; bets keep settling with present-dated timestamps. This is
+  the §6.13 corruption, and it must be gone.
+- The explorer, opened at an old date while a run continues, shows history while the run advances
+  normally behind it.
+- **Live** jumps to the newest bet, follows it, resets speed to 1X and clears the tint.
+- **Live** is disabled with no autobet running.
+- The StatusBar clock is never violet in ordinary play — if it is, the tripwire has caught a real
+  regression.
+- The calendar's date controls are editable during a run (the lock is gone) and the world is unharmed.
+
+### 9.6 — Risks worth naming before starting
+
+- **The journal's chronological-append assumption is what makes this urgent** (§6.13): the phase is
+  worth doing for correctness, not tidiness.
+- **`_liveMode` is currently decided once in `_Ready`.** It becomes a mode the player can enter and
+  leave, so every branch that reads it needs re-checking rather than a rename.
+- **The explorer's own `_Process` clamp** ("stop when the clock reaches the present") becomes a cursor
+  clamp; it must not silently keep stopping a clock it no longer owns.
