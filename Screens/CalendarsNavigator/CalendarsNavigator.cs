@@ -16,6 +16,7 @@ public partial class CalendarsNavigator : Control
 	private CheckButton _replayModeToggle;
 	private Label _replayWindowLabel;
 	private UserStatsService _userStatsService;
+	private bool _autobetLockApplied;
 	private OptionButton _timeSpeedSelector;
 	private SpinBox _yearInput;
 	private SpinBox _monthInput;
@@ -66,6 +67,7 @@ public partial class CalendarsNavigator : Control
 		_hourFormatToggle.Toggled += _ => UpdatePresenters();
 		_replayModeToggle.Toggled += OnReplayModeToggled;
 		RefreshReplayWindowLabel();
+		ApplyAutobetLock();
 		_timeSpeedSelector.ItemSelected += OnTimeSpeedSelected;
 		_applyDateTimeButton.Pressed += OnApplyDateTimePressed;
 		_setNowButton.Pressed += OnSetNowPressed;
@@ -88,6 +90,16 @@ public partial class CalendarsNavigator : Control
 	public override void _Process(double delta)
 	{
 		if (!Visible) return;
+
+		// The lock is re-applied per frame, not only on entry: an autobet can stop while this scene is
+		// open (a stop condition, a mined block, an exhausted bankroll), and the controls must unlock
+		// the moment it does rather than on the next visit.
+		if (_autobetLockApplied != IsAutobetRunning())
+		{
+			ApplyAutobetLock();
+			RefreshReplayWindowLabel();
+		}
+
 		if (_calendarTimeService?.IsRunning == true && !(_calendarTimeService?.IsAutobetActive ?? false))
 		{
 			DateTime present = _calendarTimeService.GamePresentLocalDateTime;
@@ -135,6 +147,8 @@ public partial class CalendarsNavigator : Control
 
 	private void OnApplyDateTimePressed()
 	{
+		if (IsAutobetRunning()) return; // see ApplyAutobetLock — the clock is not ours to move mid-run
+
 		ValidateDayInput();
 
 		DateTime selected = new(
@@ -164,6 +178,8 @@ public partial class CalendarsNavigator : Control
 
 	private void OnSetNowPressed()
 	{
+		if (IsAutobetRunning()) return;
+
 		_calendarTimeService?.SetNow();
 		SyncInputsFromClock();
 		UpdatePresenters();
@@ -180,6 +196,49 @@ public partial class CalendarsNavigator : Control
 	private void OnGoToDiceGamePressed()
 	{
 		_sceneManager?.Go(SceneManager.SceneId.DiceGame);
+	}
+
+	// ⛔ The world clock may NOT be moved while the simulation owns it (mini-plan 03 §6.13).
+	//
+	// This scene rewinds the REAL clock to browse history — there is only one clock, and the running
+	// autobet is advancing it forward at the same time. Moving it mid-run does not merely look odd: the
+	// sim keeps ticking from wherever it was dropped, so settled bets are journaled with timestamps in
+	// the PAST. Chronological append order is an assumption the bet journal, the rollup's run counters and
+	// the explorer's incremental load all depend on, and INC-002 is the standing proof of what disordered
+	// records do to a derived figure. This is data corruption, not a display glitch.
+	//
+	// Blocked crudely and completely for now: while an autobet runs, the date controls are disabled and
+	// say why. The proper fix is to stop sharing the clock at all — see §6.13.
+	private bool IsAutobetRunning() => _calendarTimeService?.IsAutobetActive == true;
+
+	private void ApplyAutobetLock()
+	{
+		bool locked = IsAutobetRunning();
+		_autobetLockApplied = locked;
+
+		foreach (SpinBox input in new[] { _yearInput, _monthInput, _dayInput, _hourInput, _minuteInput, _secondInput })
+		{
+			if (input != null)
+			{
+				input.Editable = !locked;
+				input.Modulate = locked ? new Color(1f, 1f, 1f, 0.5f) : Colors.White;
+			}
+		}
+
+		if (_applyDateTimeButton != null) _applyDateTimeButton.Disabled = locked;
+		if (_setNowButton != null) _setNowButton.Disabled = locked;
+		if (_timeSpeedSelector != null) _timeSpeedSelector.Disabled = locked;
+		// The Replay Mode floor only governs date selection, which is what is being locked.
+		if (_replayModeToggle != null) _replayModeToggle.Disabled = locked;
+
+		// Reaching the explorer stays allowed on purpose: it detects a live autobet and follows the
+		// present instead of rewinding, so it is the one history view that is already safe mid-run.
+		if (locked && _replayWindowLabel != null)
+		{
+			_replayWindowLabel.Text =
+				"Autobet is running — the date is locked. Stop it in DiceGame to travel through history. " +
+				"(Bets Explorer still works: it follows the live clock while a run is active.)";
+		}
 	}
 
 	// The oldest bet still on disk, or null when the journal is empty. This is the earliest instant a

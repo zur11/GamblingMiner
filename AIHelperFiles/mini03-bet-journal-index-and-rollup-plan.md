@@ -400,3 +400,56 @@ first line is only as current as the last rewrite.
 becomes slow again, and build it as stage 3 (aggregates) rather than stage 2 (seek), because seeking
 alone cannot help the one consumer that remains. *Machinery whose beneficiaries have all been fixed
 by something simpler is not "groundwork" — it is inventory.*
+
+### 6.13 — Two jobs, one clock (2026-08-14)
+
+**The failure.** With an autobet running, applying a date in `CalendarsNavigator` rewinds the world
+clock — and the simulation keeps ticking from wherever it was dropped. Returning to DiceGame the
+violet tint cleared (something re-baselines the present frontier to the rewound instant) while the
+clock kept advancing through the past.
+
+**This is data corruption, not a display glitch.** Bets settled after the rewind are journaled with
+timestamps *in the past*. Chronological append order is an assumption held by the bet journal, by the
+rollup's run counters, by the explorer's incremental tail-append, and by every `UpperBound` seek over
+the records. INC-002 is the standing proof of what disordered records do to a derived figure — and
+there the records were merely duplicated, not mis-ordered.
+
+**The immediate block (shipped).** While `IsAutobetActive`, the calendar's six date spinboxes, Apply,
+Now, the speed selector and the Replay Mode toggle are disabled and the label says why. Re-evaluated
+per frame so the controls unlock the instant a run ends on its own. The handlers also early-return, so
+a future shortcut or programmatic call cannot slip past a merely-greyed button. **Bets Explorer stays
+reachable on purpose** — it already detects a live run and follows the present instead of rewinding,
+which is precisely the shape the real fix generalises.
+
+#### The real fix: the replay cursor must stop being the world clock
+
+The root cause is not the calendar. It is that **one clock serves two jobs that cannot share it** —
+the simulation advances it forward as the authoritative present, and the history browser rewinds it
+to replay. Every symptom here (the tint, the frontier re-baselining, this block) is a patch over that
+one conflict.
+
+The fix is to give the replay its **own cursor** and never touch `CalendarTimeService` for browsing:
+
+- `BetsHistoryExplorer` already has `_selectedLocal`, and already has a `_liveMode` that refuses to
+  move the clock while a run is active. **Half the design exists.** Making the browsing mode equally
+  hands-off is the change: the cursor advances itself for Play/Pause/Speed instead of driving the
+  world clock.
+- `CalendarsNavigator` then sets the **explorer's cursor**, not the clock. It stops being a time
+  machine for the world and becomes what its buttons already say it is — a way to choose which slice
+  of history to look at.
+- The StatusBar clock then always shows the true present, so the violet tint (§40.10b) becomes
+  unnecessary — worth keeping anyway as a tripwire, since a clock that is *ever* not the present is
+  by then a bug.
+- The autobet block above can be lifted: browsing history during a run stops conflicting with it, and
+  the answer to the developer's question "is it worth allowing history while autobet runs?" becomes
+  yes, for free.
+
+**What must NOT change:** the checkpoint restore legitimately rewinds the world clock (§24.8) — that
+is the timeline's owner correcting itself, not a browser borrowing it. The rule is *only the owner of
+the timeline may move it*, which is the same rule §40.10a arrived at for the rollup, one layer up.
+
+**Sizing, honestly:** the explorer's Play/Pause/Speed currently delegate to the calendar service, so
+they need a small self-contained ticker; `GetCurrentLocal()` becomes the cursor; and the two entry
+points that pre-set `ExplorerSelectedLocalDateTime` keep working unchanged. Moderate, contained, and
+it deletes more coupling than it adds. **Not attempted here** — it wants its own pass rather than the
+tail of a plan already carrying the rollup, the window and the prefix correction.
