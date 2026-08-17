@@ -7674,6 +7674,10 @@ public partial class NetworkRoot : Node
         DeleteIfExists("user://player_bank_account_state.json");
         DeleteIfExists("user://casino_client_ledger.json");
         DeleteIfExists("user://bet_history.jsonl");
+        // Mini-plan 03: the lifetime rollup summarises the journal, so it must die with it — a surviving
+        // rollup would describe a world that no longer exists, and being a running total it could never be
+        // corrected by any later scan. Added WITH the feature (the TL.3/ND.6b maintenance rule).
+        DeleteIfExists("user://bet_stats_rollup.json");
 
         // TL.3 gap fix (2026-07-07): hardware/pool/swap world state — found leaking across the timeline
         // wipe during the canon-relaunch verification (alt-bought hardware, bot pool shares, and a casino

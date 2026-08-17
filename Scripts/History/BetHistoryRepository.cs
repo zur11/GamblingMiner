@@ -308,6 +308,93 @@ namespace Scripts.History
 			return result;
 		}
 
+		// The timestamp of the OLDEST bet still on disk, read WITHOUT loading the journal: open the oldest
+		// segment, take its first line, close. One short read of one file.
+		//
+		// This is the whole of the "chunk index" that turned out to have a real consumer (mini-plan 03
+		// §6.12): once boot stopped loading the journal, the replay-window floor had no in-memory records
+		// to read, so the calendar reported "no bets recorded yet" for a world holding 215,550 of them.
+		// Seeking to an arbitrary date still has no beneficiary — but the FIRST record does, and it costs
+		// a single line rather than a file format.
+		public bool TryGetOldestRecordTimestampUtc(out DateTime timestampUtc)
+		{
+			timestampUtc = default;
+
+			// Prefer memory when the journal happens to be loaded: it is already trimmed by any rollback,
+			// whereas the file's first line is only as current as the last rewrite.
+			if (_records.Count > 0)
+			{
+				timestampUtc = _records[0].TimestampUtc;
+				return true;
+			}
+
+			foreach (string path in GetJournalChunkPaths(includeLegacyBaseFile: true))
+			{
+				try
+				{
+					using var reader = new StreamReader(path);
+					string line;
+					while ((line = reader.ReadLine()) != null)
+					{
+						if (string.IsNullOrWhiteSpace(line))
+						{
+							continue;
+						}
+
+						HistoryJournalEntry entry = JsonSerializer.Deserialize<HistoryJournalEntry>(line, _jsonOptions);
+						if (entry?.Bet == null)
+						{
+							continue; // a deposit-only line: keep looking for the first BET
+						}
+
+						timestampUtc = DateTime.SpecifyKind(entry.Bet.TimestampUtc, DateTimeKind.Utc);
+						return true;
+					}
+				}
+				catch
+				{
+					// Unreadable segment: try the next one rather than claiming there is no history.
+				}
+			}
+
+			return false;
+		}
+
+		// ⚠️ DELETED FROM USE — kept only as a warning, and callers must not come back to it.
+		//
+		// It tried to answer "has retention deleted anything?" from the surviving chunk indices, and it
+		// CANNOT: RollbackToUtc rewrites the journal from scratch, recreating the base file and renumbering
+		// chunks from 1, so after any rollback a journal missing 10,000 pruned bets is byte-for-byte
+		// indistinguishable from one that never lost a record. Every structural variant of this test has the
+		// same hole, because the evidence it needs was destroyed by the rewrite.
+		//
+		// The lesson generalises: **a store cannot report its own completeness once anything is allowed to
+		// rewrite it.** Completeness has to be tracked by whoever owns the history — here the rollup, which
+		// is seeded once and thereafter adjusted only by the checkpoint (mini-plan 03 §6.10).
+		[Obsolete("Cannot detect pruning after a rollback rewrite — see the note above. Do not use.")]
+		public bool HasPrunedHistory()
+		{
+			if (File.Exists(_filePath))
+			{
+				return false; // the original base file is still there, so nothing has been trimmed from the front
+			}
+
+			List<string> chunks = GetJournalChunkPaths(includeLegacyBaseFile: false);
+			if (chunks.Count == 0)
+			{
+				return false; // nothing written yet
+			}
+
+			string firstName = Path.GetFileNameWithoutExtension(chunks[0]);
+			string baseName = Path.GetFileNameWithoutExtension(_filePath);
+			if (firstName == null || baseName == null || firstName.Length <= baseName.Length + 1)
+			{
+				return false;
+			}
+
+			return !int.TryParse(firstName.Substring(baseName.Length + 1), out int firstIndex) || firstIndex > 1;
+		}
+
 		private string BuildChunkPath(int index)
 		{
 			string folder = Path.GetDirectoryName(_filePath) ?? string.Empty;

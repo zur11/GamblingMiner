@@ -24,6 +24,11 @@ public partial class BetsHistoryExplorer : Control
 	private ProgressBar _loaderProgress;
 	private Button _playPauseButton;
 	private Button _speedButton;
+	private Button _goLiveButton;
+	private bool _goLiveVisible;
+	private bool _goLiveVisibilityApplied;
+	private bool _transportInert;
+	private bool _transportStateApplied;
 	private Button _backToCalendarButton;
 	private Button _backToDiceButton;
 	private BetHistoryContainer _betHistoryContainer;
@@ -34,7 +39,23 @@ public partial class BetsHistoryExplorer : Control
 	private CalendarTimeService _calendarTimeService;
 	private UserStatsService _userStatsService;
 	private SceneManager _sceneManager;
-	private DateTime _selectedLocal;
+	// ── The replay cursor (mini-plan 03 §9) ─────────────────────────────────────
+	// This scene used to REWIND THE WORLD CLOCK to browse history. There is only one clock and the
+	// simulation advances it as the authoritative present, so borrowing it meant bets settled after a
+	// rewind were journaled with timestamps in the PAST — corrupting the chronological order the journal,
+	// the rollup's run counters and every UpperBound seek all depend on (§6.13).
+	//
+	// The cursor is this scene's own. Nothing here writes to CalendarTimeService any more: only the owner
+	// of the timeline may move it (the simulation, and the checkpoint restore correcting it).
+	// Same violet the StatusBar clock used, now marking the CURSOR rather than the world clock.
+	private static readonly Color ReplayCursorColor = new(0.72f, 0.45f, 0.95f);
+	private bool _labelShowsReplay;
+	private bool _labelColorApplied;
+
+	private DateTime _selectedLocal;   // THE CURSOR: the instant being replayed
+	private bool _cursorRunning;       // Play/Pause, driving the cursor rather than the clock
+	private double _cursorSpeed = 100d; // game-seconds per real second, the old _speedSteps scale
+	// Live-follow: the cursor tracks the present each frame instead of advancing on its own.
 	private bool _liveMode;
 	private readonly double[] _speedSteps = { 100d, 200d, 400d, 1000d };
 
@@ -60,6 +81,41 @@ public partial class BetsHistoryExplorer : Control
 	// a chance's first bet?" is one integer comparison rather than a rebuild.
 	private int _selectorVisibleChanceCount = -1;
 
+	// Floor of the replay window in GAME-LOCAL time — the oldest bet still on disk (§6.6). Selecting a
+	// date below it snaps here instead of opening an empty replay, and the header states the floor so the
+	// limit is visible before the player hits it rather than after.
+	private DateTime? _windowFloorLocal;
+	private bool _selectionWasClamped;
+
+	// ── The pruned prefix (mini-plan 03 §6.8) ───────────────────────────────────
+	// Retention deletes the OLDEST chunks, so a scan of what remains under-reports every lifetime figure —
+	// this world is already 10,000 bets short that way. Deletion must be invisible in the NUMBERS; the only
+	// thing the player should notice is that the replay cannot go back past the window floor.
+	//
+	// The correction is exact rather than an estimate, and it rests on two facts holding together: every
+	// pruned bet is older than the floor, and the selection is CLAMPED to the floor. So for any date the
+	// player can actually select, the entire pruned contribution belongs in the total — there is no partial
+	// case to get wrong. Displayed = pruned prefix + scan up to the selected date.
+	//
+	// prefix = rollup lifetime − the retained window's own totals, computed once per load while both are in
+	// hand. Held per segment so the chance filter stays truthful too: a filtered view needs THAT chance's
+	// pruned share, which no grand total can supply.
+	private sealed class PrefixTotals
+	{
+		public int Bets;
+		public int Wins;
+		public decimal Wagered;
+		public decimal NetProfit;
+		public decimal MaxBetAmount;
+		public decimal MaxLossAmount;
+		public decimal MaxWonAmount;
+		public int MaxConsecutiveLosses;
+		public int MaxConsecutiveWins;
+	}
+
+	private readonly Dictionary<int, PrefixTotals> _prunedPrefixByChance = new();
+	private PrefixTotals _prunedPrefixAll = new();
+
 	private List<BetRecord> _sortedRecords = new();
 	private long _lastRenderedSecond = long.MinValue;
 	// Real-time floor between historical-view rebuilds — see the note in _Process.
@@ -84,6 +140,12 @@ public partial class BetsHistoryExplorer : Control
 	private int _summaryConsecutiveLosses;
 	private int _summaryMaxLossRun;
 	private int _summaryMaxLossRunChance;
+	// The win-side mirrors (mini-plan 03 §6.3/§6.7). Same segmentation rule for the same reason: a winning
+	// run at 2% chance and one at 50% are not the same event, so they may not be concatenated either.
+	private decimal _summaryMaxWonAmount;
+	private int _summaryConsecutiveWins;
+	private int _summaryMaxWinRun;
+	private int _summaryMaxWinRunChance;
 	private string _summarySegmentGameId;
 	private int _summarySegmentChance = -1;
 	private long _summarySegmentBets;
@@ -98,6 +160,7 @@ public partial class BetsHistoryExplorer : Control
 		_loaderProgress = GetNode<ProgressBar>("%LoaderProgress");
 		_playPauseButton = GetNode<Button>("%PlayPauseButton");
 		_speedButton = GetNode<Button>("%SpeedButton");
+		_goLiveButton = GetNode<Button>("%GoLiveButton");
 		_backToCalendarButton = GetNode<Button>("%BackToCalendarButton");
 		_backToDiceButton = GetNode<Button>("%BackToDiceButton");
 		_betHistoryContainer = GetNode<BetHistoryContainer>("%BetHistoryContainer");
@@ -115,28 +178,24 @@ public partial class BetsHistoryExplorer : Control
 		rootVBox.AddChild(statusBar);
 		rootVBox.MoveChild(statusBar, 0);
 
-		_liveMode = _calendarTimeService?.IsAutobetActive ?? false;
-		if (!_liveMode)
-		{
-			_selectedLocal = _calendarTimeService?.ExplorerSelectedLocalDateTime ?? DateTime.Now;
-			_calendarTimeService?.SetLocalDateTime(_selectedLocal);
-			if (_calendarTimeService != null)
-			{
-				bool isPast = _selectedLocal < _calendarTimeService.GamePresentLocalDateTime;
-				_calendarTimeService.IsRunning = isPast;
-				if (isPast)
-					_calendarTimeService.SpeedMultiplier = _speedSteps[0];
-			}
-		}
-		else
-		{
-			_selectedLocal = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
-			if (_userStatsService != null)
-				_userStatsService.StatsChanged += OnLiveStatsChanged;
-		}
+		// The cursor opens where the calendar (or DiceGame, or the checkpoint) last pointed it. Entering
+		// live-follow is now the player's explicit choice via the Live button, not an automatic
+		// consequence of an autobet running — browsing history during a run is exactly what §9 makes safe.
+		_selectedLocal = _calendarTimeService?.ExplorerSelectedLocalDateTime ?? DateTime.Now;
+		_liveMode = false;
+		_cursorSpeed = _speedSteps[0];
+		// Auto-play only when there is past to replay; sitting at the present, there is nothing to advance
+		// through and a running cursor would just butt against the clamp.
+		_cursorRunning = _selectedLocal < PresentLocal();
+
+		// Subscribed unconditionally now: the player may enter live-follow at any time, so the handler that
+		// keeps the record list current must already be attached when they do.
+		if (_userStatsService != null)
+			_userStatsService.StatsChanged += OnLiveStatsChanged;
 
 		_playPauseButton.Pressed += OnPlayPausePressed;
 		_speedButton.Pressed += OnSpeedButtonPressed;
+		_goLiveButton.Pressed += OnGoLivePressed;
 		_chanceFilterSelector.ItemSelected += OnChanceFilterSelected;
 		_backToCalendarButton.Pressed += OnBackToCalendarPressed;
 		_backToDiceButton.Pressed += OnBackToDicePressed;
@@ -242,19 +301,23 @@ public partial class BetsHistoryExplorer : Control
 	public override void _Process(double delta)
 	{
 		if (!Visible) return;
-		if (_calendarTimeService?.IsRunning == true && !_liveMode)
-		{
-			DateTime present = _calendarTimeService.GamePresentLocalDateTime;
-			if (_calendarTimeService.CurrentLocalDateTime >= present)
-			{
-				_calendarTimeService.SetLocalDateTime(present);
-				_calendarTimeService.IsRunning = false;
-				RefreshControlLabels();
-			}
-		}
+
+		AdvanceCursor(delta);
+		RefreshGoLiveVisibility();
 
 		DateTime current = GetCurrentLocal();
-		_selectedTimeLabel.Text = $"Selected timeline: {current:yyyy-MM-dd HH:mm:ss}";
+		_selectedTimeLabel.Text = $"Selected timeline: {current:yyyy-MM-dd HH:mm:ss}{BuildWindowSuffix()}";
+
+		// §9.2 step 6 — the violet moves HERE, to the cursor that is actually in the past. The StatusBar
+		// clock keeps its own tint as a TRIPWIRE: after this phase the world clock is never rewound, so if
+		// that one ever turns violet it has caught a real regression rather than reported a mode.
+		bool replaying = current < PresentLocal();
+		if (replaying != _labelShowsReplay || !_labelColorApplied)
+		{
+			_labelShowsReplay = replaying;
+			_labelColorApplied = true;
+			_selectedTimeLabel.AddThemeColorOverride("font_color", replaying ? ReplayCursorColor : Colors.White);
+		}
 
 		if (_sortedRecords.Count <= 0)
 		{
@@ -309,6 +372,8 @@ public partial class BetsHistoryExplorer : Control
 		await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 		_loaderLabel.Text = "Computing full summaries...";
 		_loaderProgress.Value = 70;
+		ApplyReplayWindowFloor();
+		ComputePrunedPrefix();
 		_chanceFirstSeenUtc.Clear();
 		RegisterChances(_allRecords);
 		ApplyChanceFilter();   // resets the summary + render caches; defaults to All Bets
@@ -361,23 +426,259 @@ public partial class BetsHistoryExplorer : Control
 		// With a chance filter active every record shares that chance, so the "(at N% chance)" qualifier the
 		// unfiltered figure needs (§40.8: a loss run only means something at a fixed chance) is redundant —
 		// the scope line already says it once, at the front.
-		string streak = _summaryMaxLossRun > 0
-			? (_chanceFilter == AllChances
-				? string.Format(CultureInfo.InvariantCulture, "{0} (at {1}% chance)", _summaryMaxLossRun, _summaryMaxLossRunChance)
-				: _summaryMaxLossRun.ToString(CultureInfo.InvariantCulture))
-			: "0";
+		// Fold in what the deleted chunks held. Every pruned bet predates the window floor and the selection
+		// is clamped to that floor, so the whole prefix belongs in every total the player can ask for.
+		PrefixTotals prefix = ActivePrefix();
+		int shownBets = prefix.Bets + _summaryTotalBets;
+		decimal shownMaxBet = Math.Max(prefix.MaxBetAmount, _summaryMaxBetAmount);
+		decimal shownMaxLoss = Math.Max(prefix.MaxLossAmount, _summaryMaxLossAmount);
+		decimal shownMaxWon = Math.Max(prefix.MaxWonAmount, _summaryMaxWonAmount);
+
+		string lossStreak = FormatRun(
+			Math.Max(prefix.MaxConsecutiveLosses, _summaryMaxLossRun),
+			prefix.MaxConsecutiveLosses > _summaryMaxLossRun ? _chanceFilter : _summaryMaxLossRunChance);
+		string winStreak = FormatRun(
+			Math.Max(prefix.MaxConsecutiveWins, _summaryMaxWinRun),
+			prefix.MaxConsecutiveWins > _summaryMaxWinRun ? _chanceFilter : _summaryMaxWinRunChance);
 		string scope = _chanceFilter == AllChances
 			? "All bets"
 			: string.Format(CultureInfo.InvariantCulture, "Chance {0}%", _chanceFilter);
+		// Losses and wins are stated as PAIRS. The loss figures stood alone for a long time and read as a
+		// verdict on the engine; beside their mirrors they read as what they are — the two tails of the
+		// same distribution (§40.9).
 		_summaryLabel.Text = string.Format(
 			CultureInfo.InvariantCulture,
-			"{0} — up to selected date: {1} | Max bet amount: {2:F8} SC | Max loss amount: {3:F8} SC | Max consecutive losses: {4}",
+			"{0} — up to selected date: {1} | Max bet: {2:F8} SC | Max loss / won: {3:F8} / {4:F8} SC | " +
+			"Max consecutive losses / wins: {5} / {6}",
 			scope,
-			_summaryTotalBets,
-			_summaryMaxBetAmount,
-			_summaryMaxLossAmount,
-			streak
+			shownBets,
+			shownMaxBet,
+			shownMaxLoss,
+			shownMaxWon,
+			lossStreak,
+			winStreak
 		);
+	}
+
+	// Walks the retained window once and subtracts it from the rollup's lifetime figures. What is left is
+	// what the deleted chunks held. Runs per load, alongside the sort that is already O(n).
+	private void ComputePrunedPrefix()
+	{
+		_prunedPrefixByChance.Clear();
+		_prunedPrefixAll = new PrefixTotals();
+
+		BetStatsRollup rollup = _userStatsService?.Rollup;
+		if (rollup == null || _allRecords.Count == 0)
+		{
+			return;
+		}
+
+		// Retained window, per segment — the same walk the summary does, but over the WHOLE window rather
+		// than up to a date, because the prefix is a property of the window and not of the selection.
+		var retained = new Dictionary<int, PrefixTotals>();
+		var runState = new Dictionary<int, (int Loss, int Win)>();
+		int lastChance = int.MinValue;
+		foreach (BetRecord r in _allRecords)
+		{
+			if (!retained.TryGetValue(r.Chance, out PrefixTotals t))
+			{
+				t = new PrefixTotals();
+				retained[r.Chance] = t;
+			}
+
+			bool isWin = r.Outcome == BetOutcome.Win;
+			t.Bets++;
+			t.Wagered += r.BetAmount;
+			t.NetProfit += r.NetAmount;
+			if (r.BetAmount > t.MaxBetAmount) t.MaxBetAmount = r.BetAmount;
+			if (isWin)
+			{
+				t.Wins++;
+				if (r.NetAmount > t.MaxWonAmount) t.MaxWonAmount = r.NetAmount;
+			}
+			else
+			{
+				decimal loss = Math.Abs(r.NetAmount);
+				if (loss > t.MaxLossAmount) t.MaxLossAmount = loss;
+			}
+
+			runState.TryGetValue(r.Chance, out (int Loss, int Win) run);
+			if (r.Chance != lastChance)
+			{
+				run = (0, 0); // a change of chance ends both runs (§40.8)
+				lastChance = r.Chance;
+			}
+
+			run = isWin ? (0, run.Win + 1) : (run.Loss + 1, 0);
+			runState[r.Chance] = run;
+			if (run.Loss > t.MaxConsecutiveLosses) t.MaxConsecutiveLosses = run.Loss;
+			if (run.Win > t.MaxConsecutiveWins) t.MaxConsecutiveWins = run.Win;
+		}
+
+		// The ALL-BETS prefix comes from the rollup's TOP-LEVEL totals, never from summing the segments.
+		// Per-segment aggregates were added after the rollup shipped, so a file written by the earlier
+		// version carries runs but zeroed counts — summing those would silently report a prefix of zero and
+		// put the grand total right back where the pruning left it. The top-level figures have been
+		// maintained since the first version, so this path is correct for every file that can exist.
+		var heldAll = new PrefixTotals();
+		foreach (PrefixTotals t in retained.Values)
+		{
+			heldAll.Bets += t.Bets;
+			heldAll.Wins += t.Wins;
+			heldAll.Wagered += t.Wagered;
+			heldAll.NetProfit += t.NetProfit;
+			if (t.MaxBetAmount > heldAll.MaxBetAmount) heldAll.MaxBetAmount = t.MaxBetAmount;
+			if (t.MaxLossAmount > heldAll.MaxLossAmount) heldAll.MaxLossAmount = t.MaxLossAmount;
+			if (t.MaxWonAmount > heldAll.MaxWonAmount) heldAll.MaxWonAmount = t.MaxWonAmount;
+			if (t.MaxConsecutiveLosses > heldAll.MaxConsecutiveLosses) heldAll.MaxConsecutiveLosses = t.MaxConsecutiveLosses;
+			if (t.MaxConsecutiveWins > heldAll.MaxConsecutiveWins) heldAll.MaxConsecutiveWins = t.MaxConsecutiveWins;
+		}
+
+		_prunedPrefixAll = new PrefixTotals
+		{
+			Bets = Math.Max(0, rollup.TotalBets - heldAll.Bets),
+			Wins = Math.Max(0, rollup.TotalWins - heldAll.Wins),
+			Wagered = Math.Max(0m, rollup.TotalWagered - heldAll.Wagered),
+			NetProfit = rollup.TotalNetProfit - heldAll.NetProfit,
+			MaxBetAmount = rollup.MaxBetAmount > heldAll.MaxBetAmount ? rollup.MaxBetAmount : 0m,
+			MaxLossAmount = rollup.MaxLossAmount > heldAll.MaxLossAmount ? rollup.MaxLossAmount : 0m,
+			MaxWonAmount = rollup.MaxWonAmount > heldAll.MaxWonAmount ? rollup.MaxWonAmount : 0m,
+			MaxConsecutiveLosses = rollup.MaxConsecutiveLossesOverall().Run > heldAll.MaxConsecutiveLosses
+				? rollup.MaxConsecutiveLossesOverall().Run : 0,
+			MaxConsecutiveWins = rollup.MaxConsecutiveWinsOverall().Run > heldAll.MaxConsecutiveWins
+				? rollup.MaxConsecutiveWinsOverall().Run : 0
+		};
+
+		foreach (BetStatsRollup.SegmentRuns seg in rollup.Segments.Values)
+		{
+			retained.TryGetValue(seg.Chance, out PrefixTotals held);
+			held ??= new PrefixTotals();
+
+			var prefix = new PrefixTotals
+			{
+				Bets = Math.Max(0, seg.Bets - held.Bets),
+				Wins = Math.Max(0, seg.Wins - held.Wins),
+				Wagered = Math.Max(0m, seg.Wagered - held.Wagered),
+				NetProfit = seg.NetProfit - held.NetProfit, // may legitimately be negative
+				// A lifetime maximum LARGER than anything still on disk can only have come from a pruned
+				// bet, so it is carried. When they are equal the record is still retained and the scan will
+				// find it — carrying it anyway would double nothing, but claiming it as pruned would let a
+				// rewound view show a peak that had not happened yet.
+				MaxBetAmount = seg.MaxBetAmount > held.MaxBetAmount ? seg.MaxBetAmount : 0m,
+				MaxLossAmount = seg.MaxLossAmount > held.MaxLossAmount ? seg.MaxLossAmount : 0m,
+				MaxWonAmount = seg.MaxWonAmount > held.MaxWonAmount ? seg.MaxWonAmount : 0m,
+				MaxConsecutiveLosses = seg.MaxConsecutiveLosses > held.MaxConsecutiveLosses ? seg.MaxConsecutiveLosses : 0,
+				MaxConsecutiveWins = seg.MaxConsecutiveWins > held.MaxConsecutiveWins ? seg.MaxConsecutiveWins : 0
+			};
+
+			_prunedPrefixByChance[seg.Chance] = prefix;
+		}
+	}
+
+	private PrefixTotals ActivePrefix() =>
+		_chanceFilter == AllChances
+			? _prunedPrefixAll
+			: (_prunedPrefixByChance.TryGetValue(_chanceFilter, out PrefixTotals p) ? p : new PrefixTotals());
+
+	// ── The cursor ──────────────────────────────────────────────────────────────
+
+	// The frontier the cursor may never pass. Reading it does not move it.
+	//
+	// It is the LATER of the live clock and the recorded frontier, and both halves are needed.
+	// `GamePresentLocalDateTime` alone froze live-follow: `_gamePresent` is only written by explicit
+	// calls (SetNow, PersistCurrentTime, the init paths) and NOT by the per-frame advance, so during a
+	// running autobet it stands still while `CurrentLocalDateTime` moves — the cursor pinned itself to a
+	// stale frontier and the view stopped following the game. `CurrentLocalDateTime` alone would be wrong
+	// the other way, in the one case where the clock legitimately sits behind the frontier: a checkpoint
+	// restore. Taking the max is correct in both.
+	private DateTime PresentLocal()
+	{
+		if (_calendarTimeService == null)
+		{
+			return DateTime.Now;
+		}
+
+		DateTime live = _calendarTimeService.CurrentLocalDateTime;
+		DateTime frontier = _calendarTimeService.GamePresentLocalDateTime;
+		return live > frontier ? live : frontier;
+	}
+
+	// The scene's whole time model, in one method. Live-follow pins the cursor to the present; otherwise
+	// Play advances it at the chosen replay speed. Nothing here writes to CalendarTimeService.
+	private void AdvanceCursor(double delta)
+	{
+		DateTime present = PresentLocal();
+
+		if (_liveMode)
+		{
+			// Following the present rather than replaying: the cursor IS the present each frame, so new
+			// bets appear as they settle.
+			_selectedLocal = present;
+			return;
+		}
+
+		if (!_cursorRunning)
+		{
+			return;
+		}
+
+		_selectedLocal = _selectedLocal.AddSeconds(delta * _cursorSpeed);
+
+		// Reaching the present ends the replay — there is nothing past it to show. It does NOT switch to
+		// live-follow: that is the player's explicit choice (the Live button), and silently adopting it
+		// would make a replay quietly become a live view without anyone asking for it.
+		if (_selectedLocal >= present)
+		{
+			_selectedLocal = present;
+			_cursorRunning = false;
+			RefreshControlLabels();
+		}
+	}
+
+	// ── Replay window ───────────────────────────────────────────────────────────
+
+	// Establishes the window floor from the loaded history and snaps the selection up to it if the player
+	// asked for an earlier date. Runs once per load, before the first render, so the very first frame is
+	// already inside the window — a clamp applied later would flash an empty replay first.
+	private void ApplyReplayWindowFloor()
+	{
+		_windowFloorLocal = null;
+		_selectionWasClamped = false;
+
+		if (_allRecords.Count <= 0)
+		{
+			return;
+		}
+
+		DateTime floorLocal = _allRecords[0].TimestampUtc.ToLocalTime();
+		_windowFloorLocal = floorLocal;
+
+		if (_selectedLocal >= floorLocal)
+		{
+			return;
+		}
+
+		// Below the floor: snap to the oldest bet we still hold. The calendar is moved with it, so the
+		// clock, this scene and whatever the player picks next all agree — leaving them disagreeing is how
+		// a "date I chose" quietly stops matching the history being shown.
+		_selectedLocal = floorLocal;
+		_selectionWasClamped = true;
+		// Only the cursor moves. The world clock is not ours (§9.1); the seed is updated so the calendar
+		// reopens where the player actually ended up rather than where they asked to go.
+		_calendarTimeService?.SetExplorerSelectedLocalDateTime(floorLocal);
+	}
+
+	private string BuildWindowSuffix()
+	{
+		if (_windowFloorLocal == null)
+		{
+			return string.Empty;
+		}
+
+		string floor = _windowFloorLocal.Value.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+		return _selectionWasClamped
+			? $"   |   ⟵ snapped to the oldest stored bet ({floor})"
+			: $"   |   History stored from: {floor}";
 	}
 
 	// ── Chance-to-win filter ────────────────────────────────────────────────────
@@ -504,11 +805,28 @@ public partial class BetsHistoryExplorer : Control
 		RefreshHistoricalViewForCurrentTime(GetCurrentLocal().ToUniversalTime(), forceRebuild: true);
 	}
 
+	// With a chance filter active every record shares that chance, so the "(at N%)" qualifier the
+	// unfiltered figure needs (§40.8) is redundant — the scope already says it once, at the front.
+	private string FormatRun(int run, int chance)
+	{
+		if (run <= 0)
+		{
+			return "0";
+		}
+
+		return _chanceFilter == AllChances
+			? string.Format(CultureInfo.InvariantCulture, "{0} (at {1}%)", run, chance)
+			: run.ToString(CultureInfo.InvariantCulture);
+	}
+
 	private void ResetStreakSummary()
 	{
 		_summaryConsecutiveLosses = 0;
 		_summaryMaxLossRun = 0;
 		_summaryMaxLossRunChance = 0;
+		_summaryConsecutiveWins = 0;
+		_summaryMaxWinRun = 0;
+		_summaryMaxWinRunChance = 0;
 		_summarySegmentGameId = null;
 		_summarySegmentChance = -1;
 		_summarySegmentBets = 0;
@@ -531,6 +849,7 @@ public partial class BetsHistoryExplorer : Control
 			_summaryTotalBets = 0;
 			_summaryMaxBetAmount = 0m;
 			_summaryMaxLossAmount = 0m;
+			_summaryMaxWonAmount = 0m;
 			ResetStreakSummary();
 		}
 
@@ -551,9 +870,13 @@ public partial class BetsHistoryExplorer : Control
 					_summaryMaxLossAmount = absLoss;
 				}
 			}
+			else if (record.NetAmount > _summaryMaxWonAmount)
+			{
+				_summaryMaxWonAmount = record.NetAmount;
+			}
 
 			// A new segment starts wherever the game or the win chance changes: whatever the player was
-			// doing before is a different experiment, and its losing run does not continue into this one.
+			// doing before is a different experiment, and neither of its runs continues into this one.
 			if (record.Chance != _summarySegmentChance ||
 				!string.Equals(record.GameId, _summarySegmentGameId, StringComparison.Ordinal))
 			{
@@ -561,12 +884,14 @@ public partial class BetsHistoryExplorer : Control
 				_summarySegmentGameId = record.GameId;
 				_summarySegmentBets = 0;
 				_summaryConsecutiveLosses = 0;
+				_summaryConsecutiveWins = 0;
 			}
 
 			_summarySegmentBets++;
 
 			if (record.Outcome == BetOutcome.Loss)
 			{
+				_summaryConsecutiveWins = 0;
 				_summaryConsecutiveLosses++;
 				if (_summaryConsecutiveLosses > _summaryMaxLossRun)
 				{
@@ -579,6 +904,12 @@ public partial class BetsHistoryExplorer : Control
 			}
 
 			_summaryConsecutiveLosses = 0;
+			_summaryConsecutiveWins++;
+			if (_summaryConsecutiveWins > _summaryMaxWinRun)
+			{
+				_summaryMaxWinRun = _summaryConsecutiveWins;
+				_summaryMaxWinRunChance = _summarySegmentChance;
+			}
 		}
 
 		_summaryCursor = endExclusive;
@@ -639,55 +970,100 @@ public partial class BetsHistoryExplorer : Control
 		return lo;
 	}
 
+	// Play/Pause and Speed drive the CURSOR. Both leave live-follow, because asking to replay is asking
+	// not to be pinned to the present.
 	private void OnPlayPausePressed()
 	{
-		if (_calendarTimeService == null || _liveMode)
-			return;
-
-		_calendarTimeService.IsRunning = !_calendarTimeService.IsRunning;
+		_liveMode = false;
+		_cursorRunning = !_cursorRunning;
 		RefreshControlLabels();
 	}
 
 	private void OnSpeedButtonPressed()
 	{
-		if (_calendarTimeService == null)
-			return;
-
-		if (_liveMode)
-		{
-			_calendarTimeService.SpeedMultiplier = _speedSteps[0];
-			RefreshControlLabels();
-			return;
-		}
-
-		double current = _calendarTimeService.SpeedMultiplier;
-		int idx = Array.FindIndex(_speedSteps, s => Math.Abs(s - current) < 0.001d);
+		_liveMode = false;
+		int idx = Array.FindIndex(_speedSteps, s => Math.Abs(s - _cursorSpeed) < 0.001d);
 		idx = idx < 0 ? 0 : (idx + 1) % _speedSteps.Length;
-		_calendarTimeService.SpeedMultiplier = _speedSteps[idx];
+		_cursorSpeed = _speedSteps[idx];
 		RefreshControlLabels();
 	}
 
-	// The background sim is an autoload and survives scene changes → always navigate normally. In live mode
-	// the clock is owned by the running autobet, so we don't touch it; only the time-travel (non-live)
-	// browsing resets the clock before leaving.
-	// SF.4.2: origin-aware back — BetsHistoryExplorer is now reachable from more than one hub (CalendarsNavigator
-	// AND ScFinances), so return to whichever scene launched it (SceneManager.PreviousScene), falling back to
-	// Main Menu if that memory is empty (e.g. deep-linked or first navigation).
+	// §9.3 — the Live button, which until now was only a CAPTION on Play/Pause that did nothing when
+	// pressed. It jumps the cursor to the newest bet and follows the present from there.
+	//
+	// Enabled only while a player autobet is running: with no run the present does not advance, so
+	// "follow the present" and "sit still" are the same thing and the control would be inert. §24.13b's
+	// rule — an enabled-but-inert control is a lie — which this button had been since it was labelled.
+	private void OnGoLivePressed()
+	{
+		if (!CanGoLive())
+		{
+			return;
+		}
+
+		_liveMode = true;
+		_cursorRunning = false;      // live-follow supersedes replay; nothing to advance
+		_cursorSpeed = _speedSteps[0]; // back to 1X, so leaving Live later resumes at a sane rate
+		_selectedLocal = PresentLocal();
+		_lastRenderedSecond = long.MinValue;
+		_lastRenderedEndExclusive = -1;
+		RefreshControlLabels();
+		RefreshHistoricalViewForCurrentTime(GetCurrentLocal().ToUniversalTime(), forceRebuild: true);
+	}
+
+	// Pressing it does something only when a run is producing new bets AND the view is not already
+	// following them. Outside that, the button is not greyed — it is not SHOWN (developer's call).
+	//
+	// Hiding rather than disabling is the stronger version of §24.13b's rule: a greyed control still
+	// occupies the eye and still poses a question ("why can't I use that?"), whereas a control that
+	// appears exactly when it is useful never poses one. It suits this button in particular because its
+	// two unavailable states are both states in which the player has no reason to want it.
+	private bool CanGoLive() => _calendarTimeService?.IsAutobetActive == true && !_liveMode;
+
+	// Re-evaluated every frame, not only on a control press: an autobet can start or stop at any moment
+	// (a stop condition, a mined block, an exhausted bankroll), and the transport must follow it. Two bool
+	// comparisons per frame; the nodes are touched only on an edge.
+	private void RefreshGoLiveVisibility()
+	{
+		if (_goLiveButton != null)
+		{
+			bool show = CanGoLive();
+			if (show != _goLiveVisible || !_goLiveVisibilityApplied)
+			{
+				_goLiveVisible = show;
+				_goLiveVisibilityApplied = true;
+				_goLiveButton.Visible = show;
+			}
+		}
+
+		// Play and Speed are meaningless with nothing ahead of the cursor to replay — following live, or
+		// already standing at the present. Not a flicker risk despite the present moving during a run: a
+		// replay that reaches the present stops there, the sim then advances the present past it, and both
+		// controls become live again because there genuinely IS new material to play through.
+		bool nothingToReplay = _liveMode || GetCurrentLocal() >= PresentLocal();
+		if (nothingToReplay != _transportInert || !_transportStateApplied)
+		{
+			_transportInert = nothingToReplay;
+			_transportStateApplied = true;
+			if (_speedButton != null) _speedButton.Disabled = nothingToReplay;
+			if (_playPauseButton != null) _playPauseButton.Disabled = nothingToReplay;
+		}
+	}
+
+	// Navigation no longer touches the clock at all — the cursor was never the world's time, so there is
+	// nothing to put back. (Both handlers previously reset IsRunning, and one called SetNow(); that was
+	// the scene tidying up after borrowing something it should not have borrowed.)
+	// SF.4.2: origin-aware back — BetsHistoryExplorer is reachable from more than one hub
+	// (CalendarsNavigator AND ScFinances), so return to whichever scene launched it, falling back to Main
+	// Menu if that memory is empty (e.g. deep-linked or first navigation).
 	private void OnBackToCalendarPressed()
 	{
-		if (!_liveMode && _calendarTimeService != null)
-			_calendarTimeService.IsRunning = false;
 		SceneManager.SceneId target = _sceneManager?.PreviousScene ?? SceneManager.SceneId.MainMenu;
 		_sceneManager?.Go(target);
 	}
 
 	private void OnBackToDicePressed()
 	{
-		if (!_liveMode && _calendarTimeService != null)
-		{
-			_calendarTimeService.IsRunning = false;
-			_calendarTimeService.SetNow();
-		}
 		_sceneManager?.Go(SceneManager.SceneId.DiceGame);
 	}
 
@@ -695,21 +1071,24 @@ public partial class BetsHistoryExplorer : Control
 
 	private void RefreshControlLabels()
 	{
+		RefreshGoLiveVisibility();
+
 		if (_liveMode)
 		{
-			_playPauseButton.Text = "Live";
+			_playPauseButton.Text = "Play";
 			_speedButton.Text = "1x (Live)";
 			return;
 		}
-		bool running = _calendarTimeService?.IsRunning ?? true;
-		double speed = _calendarTimeService?.SpeedMultiplier ?? GameBaseSpeed;
-		double speedX = speed / GameBaseSpeed;
-		_playPauseButton.Text = running ? "Pause" : "Play";
+
+		double speedX = _cursorSpeed / GameBaseSpeed;
+		_playPauseButton.Text = _cursorRunning ? "Pause" : "Play";
 		_speedButton.Text = string.Create(CultureInfo.InvariantCulture, $"Speed {speedX:0.##}x");
 	}
 
 	private DateTime GetCurrentLocal()
 	{
-		return _calendarTimeService?.CurrentLocalDateTime ?? _selectedLocal;
+		// THE CURSOR — no longer the world clock (§9.2). Every consumer in this scene reads through here,
+		// so the summary, the preview window and the chance selector all followed for free.
+		return _selectedLocal;
 	}
 }

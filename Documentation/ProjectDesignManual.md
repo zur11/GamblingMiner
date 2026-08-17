@@ -5082,6 +5082,51 @@ Full forensic record, including the measured tables: `Documentation/INCIDENT_LOG
 
 ---
 
+### 40.10 — The lifetime rollup: a running total that outlives its source (mini-plan 03, 2026-08-14)
+
+§40.8 closed a defect where a *corrupted* input distorted a displayed figure. This one is its opposite: a **correct** input, deleted on purpose, silently shrinking the figures derived from it.
+
+**The defect.** `UserBettingStats` was never persisted — `UserStatsService._Ready()` rebuilt it at every boot by scanning the journal. Since P15.11 the journal retains only its newest `MaxRetainedJournalChunks × MaxJournalEntriesPerChunkFile` = **200,000** bets, so the instant the first chunk was trimmed, every pruned bet left the "lifetime" totals on the next restart, permanently and without a symptom. The developer's world had already crossed it. **Retention bounded what was written; nothing bounded what was read, and the figures quietly became "the last 200,000 bets" while still being labelled lifetime.**
+
+**The fix** is `BetStatsRollup`: a running total maintained on every settled bet, holding totals, wagered, net P/L, max bet, max loss and **max won**, plus per-`(GameId, Chance)` **max consecutive losses and wins** — with the run *in progress* persisted beside the maxima, so a restart resumes a run instead of restarting the count at 1. It is checkpoint-covered like all player-facing state (a block is the only commit), sits in the world-reset delete list, and needed **no `WorldFormatVersion` bump**: a new file plus one nullable checkpoint field is data that *appeared*, not data whose meaning changed.
+
+**Vocabulary, decided against an earlier proposal:** "max martingale level" is not built. Ladder depth and outcome run coincide only while nothing resets the progression — insist resets, the §25.5 bankroll-limit reset and every auto-recharge all break that — so the design uses **max consecutive losses and max consecutive wins**, stated as a pair. §40.8's lesson applies directly: a label whose definition must be reconstructed from the code cannot be sanity-checked by anyone.
+
+#### 40.10a — A store that anything may rewrite cannot report its own completeness
+
+The first design was Mode A/B: while nothing had been pruned a scan was authoritative and *re-seeded* the rollup — self-healing, so the two could not drift apart unnoticed — and past the boundary the rollup took over. It rested on `HasPrunedHistory()`, which read the surviving chunk indices.
+
+**That question cannot be answered, and no variant of the test can answer it.** `BetHistoryRepository.RollbackToUtc` **rewrites the journal from scratch**, recreating the base file and renumbering chunks from 1. After any rollback, a journal that has lost 10,000 pruned bets is byte-for-byte indistinguishable from one that never lost a record: the rewrite destroyed the evidence.
+
+Measured rather than reasoned: the rollup reported `IsComplete: true` while the union of the live journal and an archive — deduplicated by `BetRecord.Id` — proved **215,550** canonical bets against a rollup claiming **205,562**. Records older than the live window floor cannot have been rolled back (a rollback removes the *newest*), so they are canonical by construction and the 9,988-bet shortfall was certain, not inferred.
+
+The rollup is therefore **seeded once, on creation, and thereafter adjusted only by the checkpoint** — the component that actually owns the world's timeline. Nothing re-derives it. `HasPrunedHistory` survives only as an `[Obsolete]` marker carrying this reasoning so it is not re-invented.
+
+> **A store that anything is allowed to REWRITE cannot report its own completeness.** Completeness belongs to whoever owns the history, not to the storage.
+
+And the corollary that made the discarded design *feel* safe, which is the more dangerous half:
+
+> **A "self-healing" re-derivation heals only while its source is authoritative.** Once the source can be shorter than the truth, the identical code *destroys* the truth instead — quietly, at boot, with nothing failing for anyone to notice.
+
+A rollup seeded against a journal that already holds bets is a **floor**, not a lifetime figure, and is marked `IsComplete = false` with a `SeededAtUtc`. Only one created in a world with zero recorded bets can honestly claim completeness.
+
+#### 40.10b — Deletion must be invisible in the numbers; only the WINDOW is visible
+
+The developer read **195,562** in `BetsHistoryExplorer` as their lifetime total when the true figure was larger — the summary counts loaded records, and retention had removed 10,000 of them. The ruling: *pruning is a storage decision the player never made, and it must not appear in any statistic.* The only thing they should notice is that the replay cannot go back past the oldest stored bet.
+
+So the explorer displays **pruned prefix + scan up to the selected date**. The correction is exact rather than an estimate because two facts hold together: every pruned bet is older than the window floor, **and** the selection is clamped to that floor — so for any date the player can select, the entire pruned contribution belongs in the total, with no partial case to get wrong. The replay still behaves like a replay: figures grow as the timeline is scrubbed and land on the true lifetime at the present.
+
+Two details decide whether it is right:
+
+- **The all-bets prefix comes from the rollup's TOP-LEVEL totals, never from summing segments.** Per-segment aggregates were added after the rollup shipped, so a file written by the first version carries run maxima with zeroed counts; summing those reports a prefix of zero and puts the total straight back where pruning left it. *When a record gains fields, the reader must still be correct for the records written before them.*
+- **A maximum is carried only when the lifetime value EXCEEDS anything still on disk** — that can only have come from a pruned bet. Carrying an equal one would let a rewound view display a peak that had not happened yet.
+
+**The window itself is surfaced** as an in-game date (`History stored from: …`), and a calendar selection below it **snaps** to the oldest stored bet rather than opening an empty replay — clamped at both ends of the trip, because correcting on arrival makes the player watch their chosen date change under them, while correcting at departure is the same fix delivered before it looks like a malfunction.
+
+**And the clock says when it is lying.** A rewound date is the one figure on the StatusBar that cannot be sanity-checked by eye — `2009-05-12` looks exactly as plausible as `2009-05-24` — so a replayed clock reads as the real one and every balance beside it silently becomes a historical figure. The clock is therefore tinted violet whenever `current < present`. Driven by that state rather than by which scene is open, so leaving the replay restores the present and clears the colour with no per-scene bookkeeping.
+
+---
+
 ## Chapter 41 — Player Participation in Company Governance: Pause, Policy, Abstention (Step 16 P16.5/P16.8)
 
 Three controls in `CompanyDetails` decide how the player takes part in a company's board votes, and they

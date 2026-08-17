@@ -4,23 +4,23 @@
 
 [node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increaseOnLossPercentInput", "_increaseOnWinPercentInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_autoRechargeToggle", "_insistAfterStopOnProfitToggle", "_insistAfterStopOnLossToggle")]
 layout_mode = 3
-anchor_right = 0.48100004
-anchor_bottom = 0.30600002
-offset_right = 0.47991943
-offset_bottom = -0.480011
+anchor_right = 0.536
+anchor_bottom = 0.41400003
+offset_right = -0.11999512
+offset_bottom = -0.120025635
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_lmglg")
 _betOnceBtn = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/BetOnceBtn")
 _autoBetToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoBetToggle")
 _autoPauseResumeToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoPauseResumeToggle")
-_increaseOnLossPercentInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnLossInput")
-_increaseOnWinPercentInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnWinInput")
 _maxBetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer/MaxBetAmountBtn")
 _minBetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer/MinBetAmountBtn")
 _x2BetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer/X2BetAmountBtn")
 _divBy2BetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer/DivBy2BetAmountBtn")
 _betAmountInput = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/AmountToBetContainer/BetInput")
+_increaseOnLossPercentInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnLossInput")
+_increaseOnWinPercentInput = NodePath("VBoxContainer/HBoxContainer/IncreasePercentageContainer/IncreaseOnWinInput")
 _numberOfBetsInput = NodePath("VBoxContainer/GridContainer/NumberOfBetsContainer/NumberOfBetsInput")
 _stopOnProfitInput = NodePath("VBoxContainer/GridContainer/StopOnProfitContainer/StopOnProfitInput")
 _stopOnLossInput = NodePath("VBoxContainer/GridContainer/StopOnLossContainer/StopOnLossInput")
@@ -103,8 +103,8 @@ text = "Increase on loss"
 custom_minimum_size = Vector2(130, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 30
-alignment = 1
 placeholder_text = "0"
+alignment = 1
 max_length = 10
 
 [node name="IncreaseOnLossPercentText" type="Label" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
@@ -121,8 +121,8 @@ text = "Increase on win"
 custom_minimum_size = Vector2(130, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 30
-alignment = 1
 placeholder_text = "0"
+alignment = 1
 max_length = 10
 
 [node name="IncreaseOnWinPercentText" type="Label" parent="VBoxContainer/HBoxContainer/IncreasePercentageContainer"]
@@ -222,8 +222,8 @@ text = "Profit stop behavior"
 [node name="InsistAfterStopOnProfitToggle" type="Button" parent="VBoxContainer/GridContainer/InsistAfterStopOnProfitContainer"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 30
-toggle_mode = true
 disabled = true
+toggle_mode = true
 text = "Insist On Profit: OFF"
 
 [node name="InsistAfterStopOnLossContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
@@ -237,8 +237,8 @@ text = "Loss stop behavior"
 [node name="InsistAfterStopOnLossToggle" type="Button" parent="VBoxContainer/GridContainer/InsistAfterStopOnLossContainer"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 30
-toggle_mode = true
 disabled = true
+toggle_mode = true
 text = "Insist On Loss: OFF"
 
 [node name="AutoRechargeContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]

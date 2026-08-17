@@ -58,6 +58,31 @@ namespace Scripts.User
 
 		public bool IsInDrawdown => CurrentDrawdown < 0m;
 
+		// Rebuilds this object from the persisted rollup instead of by replaying the journal (mini-plan 03
+		// stage 1). Every field here is a running value the rollup already maintains with identical
+		// arithmetic, so the result is the same object a full replay would produce — which is what allows
+		// the boot-time scan of ~200,000 records to be dropped entirely.
+		public static UserBettingStats FromRollup(BetStatsRollup rollup)
+		{
+			var stats = new UserBettingStats();
+			if (rollup == null)
+			{
+				return stats;
+			}
+
+			stats.TotalBets = rollup.TotalBets;
+			stats.TotalWins = rollup.TotalWins;
+			stats.TotalAmountWagered = rollup.TotalWagered;
+			stats.TotalProfit = rollup.TotalNetProfit;
+			stats.BetsSinceLastDeposit = rollup.SinceDepositBets;
+			stats.AmountWageredSinceDeposit = rollup.SinceDepositWagered;
+			stats.ProfitSinceDeposit = rollup.SinceDepositProfit;
+			stats._peakProfit = rollup.PeakProfit;
+			stats.CurrentDrawdown = rollup.CurrentDrawdown;
+			stats.MaxDrawdown = rollup.MaxDrawdown;
+			return stats;
+		}
+
 		private void ValidateBet(BetTransactionEvent bet)
 		{
 			if (bet == null)
