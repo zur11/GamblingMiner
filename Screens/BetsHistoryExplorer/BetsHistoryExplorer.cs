@@ -24,6 +24,11 @@ public partial class BetsHistoryExplorer : Control
 	private ProgressBar _loaderProgress;
 	private Button _playPauseButton;
 	private Button _speedButton;
+	private Button _goLiveButton;
+	private bool _goLiveVisible;
+	private bool _goLiveVisibilityApplied;
+	private bool _transportInert;
+	private bool _transportStateApplied;
 	private Button _backToCalendarButton;
 	private Button _backToDiceButton;
 	private BetHistoryContainer _betHistoryContainer;
@@ -34,7 +39,23 @@ public partial class BetsHistoryExplorer : Control
 	private CalendarTimeService _calendarTimeService;
 	private UserStatsService _userStatsService;
 	private SceneManager _sceneManager;
-	private DateTime _selectedLocal;
+	// ── The replay cursor (mini-plan 03 §9) ─────────────────────────────────────
+	// This scene used to REWIND THE WORLD CLOCK to browse history. There is only one clock and the
+	// simulation advances it as the authoritative present, so borrowing it meant bets settled after a
+	// rewind were journaled with timestamps in the PAST — corrupting the chronological order the journal,
+	// the rollup's run counters and every UpperBound seek all depend on (§6.13).
+	//
+	// The cursor is this scene's own. Nothing here writes to CalendarTimeService any more: only the owner
+	// of the timeline may move it (the simulation, and the checkpoint restore correcting it).
+	// Same violet the StatusBar clock used, now marking the CURSOR rather than the world clock.
+	private static readonly Color ReplayCursorColor = new(0.72f, 0.45f, 0.95f);
+	private bool _labelShowsReplay;
+	private bool _labelColorApplied;
+
+	private DateTime _selectedLocal;   // THE CURSOR: the instant being replayed
+	private bool _cursorRunning;       // Play/Pause, driving the cursor rather than the clock
+	private double _cursorSpeed = 100d; // game-seconds per real second, the old _speedSteps scale
+	// Live-follow: the cursor tracks the present each frame instead of advancing on its own.
 	private bool _liveMode;
 	private readonly double[] _speedSteps = { 100d, 200d, 400d, 1000d };
 
@@ -139,6 +160,7 @@ public partial class BetsHistoryExplorer : Control
 		_loaderProgress = GetNode<ProgressBar>("%LoaderProgress");
 		_playPauseButton = GetNode<Button>("%PlayPauseButton");
 		_speedButton = GetNode<Button>("%SpeedButton");
+		_goLiveButton = GetNode<Button>("%GoLiveButton");
 		_backToCalendarButton = GetNode<Button>("%BackToCalendarButton");
 		_backToDiceButton = GetNode<Button>("%BackToDiceButton");
 		_betHistoryContainer = GetNode<BetHistoryContainer>("%BetHistoryContainer");
@@ -156,28 +178,24 @@ public partial class BetsHistoryExplorer : Control
 		rootVBox.AddChild(statusBar);
 		rootVBox.MoveChild(statusBar, 0);
 
-		_liveMode = _calendarTimeService?.IsAutobetActive ?? false;
-		if (!_liveMode)
-		{
-			_selectedLocal = _calendarTimeService?.ExplorerSelectedLocalDateTime ?? DateTime.Now;
-			_calendarTimeService?.SetLocalDateTime(_selectedLocal);
-			if (_calendarTimeService != null)
-			{
-				bool isPast = _selectedLocal < _calendarTimeService.GamePresentLocalDateTime;
-				_calendarTimeService.IsRunning = isPast;
-				if (isPast)
-					_calendarTimeService.SpeedMultiplier = _speedSteps[0];
-			}
-		}
-		else
-		{
-			_selectedLocal = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
-			if (_userStatsService != null)
-				_userStatsService.StatsChanged += OnLiveStatsChanged;
-		}
+		// The cursor opens where the calendar (or DiceGame, or the checkpoint) last pointed it. Entering
+		// live-follow is now the player's explicit choice via the Live button, not an automatic
+		// consequence of an autobet running — browsing history during a run is exactly what §9 makes safe.
+		_selectedLocal = _calendarTimeService?.ExplorerSelectedLocalDateTime ?? DateTime.Now;
+		_liveMode = false;
+		_cursorSpeed = _speedSteps[0];
+		// Auto-play only when there is past to replay; sitting at the present, there is nothing to advance
+		// through and a running cursor would just butt against the clamp.
+		_cursorRunning = _selectedLocal < PresentLocal();
+
+		// Subscribed unconditionally now: the player may enter live-follow at any time, so the handler that
+		// keeps the record list current must already be attached when they do.
+		if (_userStatsService != null)
+			_userStatsService.StatsChanged += OnLiveStatsChanged;
 
 		_playPauseButton.Pressed += OnPlayPausePressed;
 		_speedButton.Pressed += OnSpeedButtonPressed;
+		_goLiveButton.Pressed += OnGoLivePressed;
 		_chanceFilterSelector.ItemSelected += OnChanceFilterSelected;
 		_backToCalendarButton.Pressed += OnBackToCalendarPressed;
 		_backToDiceButton.Pressed += OnBackToDicePressed;
@@ -283,19 +301,23 @@ public partial class BetsHistoryExplorer : Control
 	public override void _Process(double delta)
 	{
 		if (!Visible) return;
-		if (_calendarTimeService?.IsRunning == true && !_liveMode)
-		{
-			DateTime present = _calendarTimeService.GamePresentLocalDateTime;
-			if (_calendarTimeService.CurrentLocalDateTime >= present)
-			{
-				_calendarTimeService.SetLocalDateTime(present);
-				_calendarTimeService.IsRunning = false;
-				RefreshControlLabels();
-			}
-		}
+
+		AdvanceCursor(delta);
+		RefreshGoLiveVisibility();
 
 		DateTime current = GetCurrentLocal();
 		_selectedTimeLabel.Text = $"Selected timeline: {current:yyyy-MM-dd HH:mm:ss}{BuildWindowSuffix()}";
+
+		// §9.2 step 6 — the violet moves HERE, to the cursor that is actually in the past. The StatusBar
+		// clock keeps its own tint as a TRIPWIRE: after this phase the world clock is never rewound, so if
+		// that one ever turns violet it has caught a real regression rather than reported a mode.
+		bool replaying = current < PresentLocal();
+		if (replaying != _labelShowsReplay || !_labelColorApplied)
+		{
+			_labelShowsReplay = replaying;
+			_labelColorApplied = true;
+			_selectedTimeLabel.AddThemeColorOverride("font_color", replaying ? ReplayCursorColor : Colors.White);
+		}
 
 		if (_sortedRecords.Count <= 0)
 		{
@@ -558,6 +580,61 @@ public partial class BetsHistoryExplorer : Control
 			? _prunedPrefixAll
 			: (_prunedPrefixByChance.TryGetValue(_chanceFilter, out PrefixTotals p) ? p : new PrefixTotals());
 
+	// ── The cursor ──────────────────────────────────────────────────────────────
+
+	// The frontier the cursor may never pass. Reading it does not move it.
+	//
+	// It is the LATER of the live clock and the recorded frontier, and both halves are needed.
+	// `GamePresentLocalDateTime` alone froze live-follow: `_gamePresent` is only written by explicit
+	// calls (SetNow, PersistCurrentTime, the init paths) and NOT by the per-frame advance, so during a
+	// running autobet it stands still while `CurrentLocalDateTime` moves — the cursor pinned itself to a
+	// stale frontier and the view stopped following the game. `CurrentLocalDateTime` alone would be wrong
+	// the other way, in the one case where the clock legitimately sits behind the frontier: a checkpoint
+	// restore. Taking the max is correct in both.
+	private DateTime PresentLocal()
+	{
+		if (_calendarTimeService == null)
+		{
+			return DateTime.Now;
+		}
+
+		DateTime live = _calendarTimeService.CurrentLocalDateTime;
+		DateTime frontier = _calendarTimeService.GamePresentLocalDateTime;
+		return live > frontier ? live : frontier;
+	}
+
+	// The scene's whole time model, in one method. Live-follow pins the cursor to the present; otherwise
+	// Play advances it at the chosen replay speed. Nothing here writes to CalendarTimeService.
+	private void AdvanceCursor(double delta)
+	{
+		DateTime present = PresentLocal();
+
+		if (_liveMode)
+		{
+			// Following the present rather than replaying: the cursor IS the present each frame, so new
+			// bets appear as they settle.
+			_selectedLocal = present;
+			return;
+		}
+
+		if (!_cursorRunning)
+		{
+			return;
+		}
+
+		_selectedLocal = _selectedLocal.AddSeconds(delta * _cursorSpeed);
+
+		// Reaching the present ends the replay — there is nothing past it to show. It does NOT switch to
+		// live-follow: that is the player's explicit choice (the Live button), and silently adopting it
+		// would make a replay quietly become a live view without anyone asking for it.
+		if (_selectedLocal >= present)
+		{
+			_selectedLocal = present;
+			_cursorRunning = false;
+			RefreshControlLabels();
+		}
+	}
+
 	// ── Replay window ───────────────────────────────────────────────────────────
 
 	// Establishes the window floor from the loaded history and snaps the selection up to it if the player
@@ -586,7 +663,8 @@ public partial class BetsHistoryExplorer : Control
 		// a "date I chose" quietly stops matching the history being shown.
 		_selectedLocal = floorLocal;
 		_selectionWasClamped = true;
-		_calendarTimeService?.SetLocalDateTime(floorLocal);
+		// Only the cursor moves. The world clock is not ours (§9.1); the seed is updated so the calendar
+		// reopens where the player actually ended up rather than where they asked to go.
 		_calendarTimeService?.SetExplorerSelectedLocalDateTime(floorLocal);
 	}
 
@@ -892,55 +970,100 @@ public partial class BetsHistoryExplorer : Control
 		return lo;
 	}
 
+	// Play/Pause and Speed drive the CURSOR. Both leave live-follow, because asking to replay is asking
+	// not to be pinned to the present.
 	private void OnPlayPausePressed()
 	{
-		if (_calendarTimeService == null || _liveMode)
-			return;
-
-		_calendarTimeService.IsRunning = !_calendarTimeService.IsRunning;
+		_liveMode = false;
+		_cursorRunning = !_cursorRunning;
 		RefreshControlLabels();
 	}
 
 	private void OnSpeedButtonPressed()
 	{
-		if (_calendarTimeService == null)
-			return;
-
-		if (_liveMode)
-		{
-			_calendarTimeService.SpeedMultiplier = _speedSteps[0];
-			RefreshControlLabels();
-			return;
-		}
-
-		double current = _calendarTimeService.SpeedMultiplier;
-		int idx = Array.FindIndex(_speedSteps, s => Math.Abs(s - current) < 0.001d);
+		_liveMode = false;
+		int idx = Array.FindIndex(_speedSteps, s => Math.Abs(s - _cursorSpeed) < 0.001d);
 		idx = idx < 0 ? 0 : (idx + 1) % _speedSteps.Length;
-		_calendarTimeService.SpeedMultiplier = _speedSteps[idx];
+		_cursorSpeed = _speedSteps[idx];
 		RefreshControlLabels();
 	}
 
-	// The background sim is an autoload and survives scene changes → always navigate normally. In live mode
-	// the clock is owned by the running autobet, so we don't touch it; only the time-travel (non-live)
-	// browsing resets the clock before leaving.
-	// SF.4.2: origin-aware back — BetsHistoryExplorer is now reachable from more than one hub (CalendarsNavigator
-	// AND ScFinances), so return to whichever scene launched it (SceneManager.PreviousScene), falling back to
-	// Main Menu if that memory is empty (e.g. deep-linked or first navigation).
+	// §9.3 — the Live button, which until now was only a CAPTION on Play/Pause that did nothing when
+	// pressed. It jumps the cursor to the newest bet and follows the present from there.
+	//
+	// Enabled only while a player autobet is running: with no run the present does not advance, so
+	// "follow the present" and "sit still" are the same thing and the control would be inert. §24.13b's
+	// rule — an enabled-but-inert control is a lie — which this button had been since it was labelled.
+	private void OnGoLivePressed()
+	{
+		if (!CanGoLive())
+		{
+			return;
+		}
+
+		_liveMode = true;
+		_cursorRunning = false;      // live-follow supersedes replay; nothing to advance
+		_cursorSpeed = _speedSteps[0]; // back to 1X, so leaving Live later resumes at a sane rate
+		_selectedLocal = PresentLocal();
+		_lastRenderedSecond = long.MinValue;
+		_lastRenderedEndExclusive = -1;
+		RefreshControlLabels();
+		RefreshHistoricalViewForCurrentTime(GetCurrentLocal().ToUniversalTime(), forceRebuild: true);
+	}
+
+	// Pressing it does something only when a run is producing new bets AND the view is not already
+	// following them. Outside that, the button is not greyed — it is not SHOWN (developer's call).
+	//
+	// Hiding rather than disabling is the stronger version of §24.13b's rule: a greyed control still
+	// occupies the eye and still poses a question ("why can't I use that?"), whereas a control that
+	// appears exactly when it is useful never poses one. It suits this button in particular because its
+	// two unavailable states are both states in which the player has no reason to want it.
+	private bool CanGoLive() => _calendarTimeService?.IsAutobetActive == true && !_liveMode;
+
+	// Re-evaluated every frame, not only on a control press: an autobet can start or stop at any moment
+	// (a stop condition, a mined block, an exhausted bankroll), and the transport must follow it. Two bool
+	// comparisons per frame; the nodes are touched only on an edge.
+	private void RefreshGoLiveVisibility()
+	{
+		if (_goLiveButton != null)
+		{
+			bool show = CanGoLive();
+			if (show != _goLiveVisible || !_goLiveVisibilityApplied)
+			{
+				_goLiveVisible = show;
+				_goLiveVisibilityApplied = true;
+				_goLiveButton.Visible = show;
+			}
+		}
+
+		// Play and Speed are meaningless with nothing ahead of the cursor to replay — following live, or
+		// already standing at the present. Not a flicker risk despite the present moving during a run: a
+		// replay that reaches the present stops there, the sim then advances the present past it, and both
+		// controls become live again because there genuinely IS new material to play through.
+		bool nothingToReplay = _liveMode || GetCurrentLocal() >= PresentLocal();
+		if (nothingToReplay != _transportInert || !_transportStateApplied)
+		{
+			_transportInert = nothingToReplay;
+			_transportStateApplied = true;
+			if (_speedButton != null) _speedButton.Disabled = nothingToReplay;
+			if (_playPauseButton != null) _playPauseButton.Disabled = nothingToReplay;
+		}
+	}
+
+	// Navigation no longer touches the clock at all — the cursor was never the world's time, so there is
+	// nothing to put back. (Both handlers previously reset IsRunning, and one called SetNow(); that was
+	// the scene tidying up after borrowing something it should not have borrowed.)
+	// SF.4.2: origin-aware back — BetsHistoryExplorer is reachable from more than one hub
+	// (CalendarsNavigator AND ScFinances), so return to whichever scene launched it, falling back to Main
+	// Menu if that memory is empty (e.g. deep-linked or first navigation).
 	private void OnBackToCalendarPressed()
 	{
-		if (!_liveMode && _calendarTimeService != null)
-			_calendarTimeService.IsRunning = false;
 		SceneManager.SceneId target = _sceneManager?.PreviousScene ?? SceneManager.SceneId.MainMenu;
 		_sceneManager?.Go(target);
 	}
 
 	private void OnBackToDicePressed()
 	{
-		if (!_liveMode && _calendarTimeService != null)
-		{
-			_calendarTimeService.IsRunning = false;
-			_calendarTimeService.SetNow();
-		}
 		_sceneManager?.Go(SceneManager.SceneId.DiceGame);
 	}
 
@@ -948,21 +1071,24 @@ public partial class BetsHistoryExplorer : Control
 
 	private void RefreshControlLabels()
 	{
+		RefreshGoLiveVisibility();
+
 		if (_liveMode)
 		{
-			_playPauseButton.Text = "Live";
+			_playPauseButton.Text = "Play";
 			_speedButton.Text = "1x (Live)";
 			return;
 		}
-		bool running = _calendarTimeService?.IsRunning ?? true;
-		double speed = _calendarTimeService?.SpeedMultiplier ?? GameBaseSpeed;
-		double speedX = speed / GameBaseSpeed;
-		_playPauseButton.Text = running ? "Pause" : "Play";
+
+		double speedX = _cursorSpeed / GameBaseSpeed;
+		_playPauseButton.Text = _cursorRunning ? "Pause" : "Play";
 		_speedButton.Text = string.Create(CultureInfo.InvariantCulture, $"Speed {speedX:0.##}x");
 	}
 
 	private DateTime GetCurrentLocal()
 	{
-		return _calendarTimeService?.CurrentLocalDateTime ?? _selectedLocal;
+		// THE CURSOR — no longer the world clock (§9.2). Every consumer in this scene reads through here,
+		// so the summary, the preview window and the chance selector all followed for free.
+		return _selectedLocal;
 	}
 }

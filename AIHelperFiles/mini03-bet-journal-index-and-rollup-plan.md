@@ -4,8 +4,7 @@
 `mini02-panel-state-and-100k-audit-plan.md` (whose **Part D** this is, promoted to its own plan
 exactly as that plan said it should be).
 
-**Status:** 🔨 **IN PROGRESS — §9 (Phase 2) is the remaining work, and it lands on THIS branch before
-the merge** (developer's call, 2026-08-14 — "option A": the plan lands whole, and the §6.13 autobet
+**Status:** 🔨 **CODE COMPLETE — §9 built; awaiting the §9.5 play-test, then merge** (developer's call, 2026-08-14 — "option A": the plan lands whole, and the §6.13 autobet
 lock never reaches `main`, since Phase 2 deletes it).
 
 | Piece | State |
@@ -15,8 +14,8 @@ lock never reaches `main`, since Phase 2 deletes it).
 | Replay window + clamp + Replay Mode (§6.6, §6.11) | ✅ built and verified |
 | **D1 stage 1** — boot reads nothing (§6.12) | ✅ built |
 | D1 stage 2/3 — the chunk index | 🚫 **not built, trigger recorded** (§6.12): only the explorer could benefit, and only from per-chunk *aggregates*, not from seeking |
-| §6.13 autobet lock | ⚠️ **stopgap** — deleted by §9 |
-| **§9 — the replay cursor + the Live button** | ⏭️ **NEXT** |
+| §6.13 autobet lock | ✅ **deleted by §9**, as designed |
+| **§9 — the replay cursor + the Live button** | ✅ built, build clean — awaiting play-test |
 
 ⚠️ **§6.2 remains the headline of the whole plan:** lifetime statistics were already silently wrong
 in any world past 200,000 bets, including the developer's, and that is what D2 fixes.
@@ -469,7 +468,7 @@ tail of a plan already carrying the rollup, the window and the prefix correction
 
 ---
 
-## 9. Phase 2 — the replay cursor (planned, not built)
+## 9. Phase 2 — the replay cursor ✅ BUILT (2026-08-14)
 
 Implements the fix §6.13 identified, and lifts the autobet block that section shipped as a stopgap.
 
@@ -521,7 +520,7 @@ becomes an action:
 | | Behaviour |
 |---|---|
 | **Enabled** | only while a player autobet is running (`IsAutobetActive`) |
-| **Disabled** | otherwise — with no run the present does not advance, so "follow the present" and "sit still" are the same thing and the button would be a no-op wearing a label |
+| **Hidden** | otherwise — i.e. no run, OR already following live. Not greyed, **not shown** (developer's call, 2026-08-14): a disabled control still occupies the eye and still poses a question, while one that appears exactly when it is useful never poses one. Both unavailable states are states in which the player has no reason to want it. |
 | **On press** | cursor jumps to the newest bet / the present · the view switches to **live-follow** · the timeline label returns from violet to normal · replay speed resets to **1X** |
 | **While live-following** | the cursor tracks the present each frame, so new bets appear as they settle |
 | **Leaving live-follow** | any Play/Pause/Speed action, or applying a date in the calendar, returns to browsing |
@@ -550,6 +549,25 @@ control is a lie — and this button has been exactly that since it was labelled
 - The StatusBar clock is never violet in ordinary play — if it is, the tripwire has caught a real
   regression.
 - The calendar's date controls are editable during a run (the lock is gone) and the world is unharmed.
+
+#### 9.5a — Two defects the play-test found (2026-08-14)
+
+**Live-follow froze.** `PresentLocal()` returned `GamePresentLocalDateTime`, and `_gamePresent` is
+written only by explicit calls (`SetNow`, `PersistCurrentTime`, the init paths) — **never by the
+per-frame advance**. So during a running autobet the frontier stands still while
+`CurrentLocalDateTime` moves, and a cursor pinned to it stopped following the game: the view froze at
+the last set while the StatusBar clock kept ticking. It is now the **later of the two**, because each
+alone is wrong in one direction — the live clock is the present during a run, and the frontier is the
+present in the one case where the clock legitimately sits behind it, a checkpoint restore.
+
+*The general shape: two properties that are equal almost always are the easiest pair to confuse, and
+the case that separates them is the one nobody tests first.*
+
+**Play and Speed stayed live with nothing to replay.** Both are meaningless when the cursor is
+following live or already standing at the present, so both are now disabled in that state — §24.13b
+again. Not a flicker risk despite the present moving during a run: a replay that reaches the present
+stops there, the sim advances the present past it, and both controls return because there genuinely
+is new material to play through.
 
 ### 9.6 — Risks worth naming before starting
 

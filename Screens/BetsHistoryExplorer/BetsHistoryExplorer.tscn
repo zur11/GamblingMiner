@@ -56,6 +56,11 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Speed 1x"
 
+[node name="GoLiveButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Go Live"
+
 [node name="BackToCalendarButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
 unique_name_in_owner = true
 layout_mode = 2

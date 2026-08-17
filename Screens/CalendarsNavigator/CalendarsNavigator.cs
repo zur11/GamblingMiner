@@ -16,7 +16,6 @@ public partial class CalendarsNavigator : Control
 	private CheckButton _replayModeToggle;
 	private Label _replayWindowLabel;
 	private UserStatsService _userStatsService;
-	private bool _autobetLockApplied;
 	private OptionButton _timeSpeedSelector;
 	private SpinBox _yearInput;
 	private SpinBox _monthInput;
@@ -67,7 +66,6 @@ public partial class CalendarsNavigator : Control
 		_hourFormatToggle.Toggled += _ => UpdatePresenters();
 		_replayModeToggle.Toggled += OnReplayModeToggled;
 		RefreshReplayWindowLabel();
-		ApplyAutobetLock();
 		_timeSpeedSelector.ItemSelected += OnTimeSpeedSelected;
 		_applyDateTimeButton.Pressed += OnApplyDateTimePressed;
 		_setNowButton.Pressed += OnSetNowPressed;
@@ -91,25 +89,9 @@ public partial class CalendarsNavigator : Control
 	{
 		if (!Visible) return;
 
-		// The lock is re-applied per frame, not only on entry: an autobet can stop while this scene is
-		// open (a stop condition, a mined block, an exhausted bankroll), and the controls must unlock
-		// the moment it does rather than on the next visit.
-		if (_autobetLockApplied != IsAutobetRunning())
-		{
-			ApplyAutobetLock();
-			RefreshReplayWindowLabel();
-		}
-
-		if (_calendarTimeService?.IsRunning == true && !(_calendarTimeService?.IsAutobetActive ?? false))
-		{
-			DateTime present = _calendarTimeService.GamePresentLocalDateTime;
-			if (_calendarTimeService.CurrentLocalDateTime >= present)
-			{
-				_calendarTimeService.SetLocalDateTime(present);
-				_calendarTimeService.IsRunning = false;
-				SyncInputsFromClock();
-			}
-		}
+		// The §6.13 autobet lock is GONE (§9.2 step 5), along with the block that used to stop the world
+		// clock here. Both existed only because this scene drove the clock; now it edits a selection, so
+		// there is nothing to conflict with a running autobet and nothing to stop.
 		UpdatePresenters();
 	}
 
@@ -147,8 +129,6 @@ public partial class CalendarsNavigator : Control
 
 	private void OnApplyDateTimePressed()
 	{
-		if (IsAutobetRunning()) return; // see ApplyAutobetLock — the clock is not ours to move mid-run
-
 		ValidateDayInput();
 
 		DateTime selected = new(
@@ -170,7 +150,6 @@ public partial class CalendarsNavigator : Control
 		if (selected < floor) selected = floor;
 		if (selected > gamePresent) selected = gamePresent;
 
-		_calendarTimeService?.SetLocalDateTime(selected);
 		_calendarTimeService?.SetExplorerSelectedLocalDateTime(selected);
 		SyncInputsFromClock();
 		UpdatePresenters();
@@ -178,9 +157,7 @@ public partial class CalendarsNavigator : Control
 
 	private void OnSetNowPressed()
 	{
-		if (IsAutobetRunning()) return;
-
-		_calendarTimeService?.SetNow();
+		_calendarTimeService?.SetExplorerSelectedLocalDateTime(_calendarTimeService.GamePresentLocalDateTime);
 		SyncInputsFromClock();
 		UpdatePresenters();
 	}
@@ -196,49 +173,6 @@ public partial class CalendarsNavigator : Control
 	private void OnGoToDiceGamePressed()
 	{
 		_sceneManager?.Go(SceneManager.SceneId.DiceGame);
-	}
-
-	// ⛔ The world clock may NOT be moved while the simulation owns it (mini-plan 03 §6.13).
-	//
-	// This scene rewinds the REAL clock to browse history — there is only one clock, and the running
-	// autobet is advancing it forward at the same time. Moving it mid-run does not merely look odd: the
-	// sim keeps ticking from wherever it was dropped, so settled bets are journaled with timestamps in
-	// the PAST. Chronological append order is an assumption the bet journal, the rollup's run counters and
-	// the explorer's incremental load all depend on, and INC-002 is the standing proof of what disordered
-	// records do to a derived figure. This is data corruption, not a display glitch.
-	//
-	// Blocked crudely and completely for now: while an autobet runs, the date controls are disabled and
-	// say why. The proper fix is to stop sharing the clock at all — see §6.13.
-	private bool IsAutobetRunning() => _calendarTimeService?.IsAutobetActive == true;
-
-	private void ApplyAutobetLock()
-	{
-		bool locked = IsAutobetRunning();
-		_autobetLockApplied = locked;
-
-		foreach (SpinBox input in new[] { _yearInput, _monthInput, _dayInput, _hourInput, _minuteInput, _secondInput })
-		{
-			if (input != null)
-			{
-				input.Editable = !locked;
-				input.Modulate = locked ? new Color(1f, 1f, 1f, 0.5f) : Colors.White;
-			}
-		}
-
-		if (_applyDateTimeButton != null) _applyDateTimeButton.Disabled = locked;
-		if (_setNowButton != null) _setNowButton.Disabled = locked;
-		if (_timeSpeedSelector != null) _timeSpeedSelector.Disabled = locked;
-		// The Replay Mode floor only governs date selection, which is what is being locked.
-		if (_replayModeToggle != null) _replayModeToggle.Disabled = locked;
-
-		// Reaching the explorer stays allowed on purpose: it detects a live autobet and follows the
-		// present instead of rewinding, so it is the one history view that is already safe mid-run.
-		if (locked && _replayWindowLabel != null)
-		{
-			_replayWindowLabel.Text =
-				"Autobet is running — the date is locked. Stop it in DiceGame to travel through history. " +
-				"(Bets Explorer still works: it follows the live clock while a run is active.)";
-		}
 	}
 
 	// The oldest bet still on disk, or null when the journal is empty. This is the earliest instant a
@@ -299,7 +233,6 @@ public partial class CalendarsNavigator : Control
 		DateTime floor = EffectiveFloorLocal();
 		if (GetCurrentLocalDateTime() < floor)
 		{
-			_calendarTimeService?.SetLocalDateTime(floor);
 			_calendarTimeService?.SetExplorerSelectedLocalDateTime(floor);
 			SyncInputsFromClock();
 			UpdatePresenters();
@@ -322,7 +255,6 @@ public partial class CalendarsNavigator : Control
 		}
 
 		_calendarTimeService?.SetExplorerSelectedLocalDateTime(selected);
-		_calendarTimeService?.SetLocalDateTime(selected);
 		_sceneManager?.Go(SceneManager.SceneId.BetsHistoryExplorer);
 	}
 
@@ -413,8 +345,11 @@ public partial class CalendarsNavigator : Control
 		return bestIndex;
 	}
 
+	// The date this scene is EDITING — the explorer's cursor seed, not the world clock (§9.2). The
+	// calendar stopped being a time machine for the world and became what its buttons always claimed:
+	// a way to choose which slice of history to look at.
 	private DateTime GetCurrentLocalDateTime()
 	{
-		return _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
+		return _calendarTimeService?.ExplorerSelectedLocalDateTime ?? DateTime.Now;
 	}
 }
