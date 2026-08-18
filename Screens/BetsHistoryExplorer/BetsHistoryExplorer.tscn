@@ -46,21 +46,6 @@ text = "Chance to win:"
 unique_name_in_owner = true
 layout_mode = 2
 
-[node name="PlayPauseButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Pause"
-
-[node name="SpeedButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Speed 1x"
-
-[node name="GoLiveButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Go Live"
-
 [node name="BackToCalendarButton" type="Button" parent="RootMargin/RootVBox/HeaderRow"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -70,6 +55,48 @@ text = "← Back"
 unique_name_in_owner = true
 layout_mode = 2
 text = "Back to Dice"
+
+[node name="TransportRow" type="HBoxContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="PlayPauseButton" type="Button" parent="RootMargin/RootVBox/TransportRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Play"
+
+[node name="SpeedButton" type="Button" parent="RootMargin/RootVBox/TransportRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Speed 1x"
+
+[node name="StepSeparator" type="VSeparator" parent="RootMargin/RootVBox/TransportRow"]
+layout_mode = 2
+
+[node name="StepModeButton" type="Button" parent="RootMargin/RootVBox/TransportRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "◀ Rewind by day"
+
+[node name="StepApplyButton" type="Button" parent="RootMargin/RootVBox/TransportRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Step"
+
+[node name="GoToNowButton" type="Button" parent="RootMargin/RootVBox/TransportRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Go to Now"
+
+[node name="TransportSpacer" type="Control" parent="RootMargin/RootVBox/TransportRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ReplayThrottleLabel" type="Label" parent="RootMargin/RootVBox/TransportRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = ""
+visible = false
 
 [node name="LoaderPanel" type="PanelContainer" parent="RootMargin/RootVBox"]
 unique_name_in_owner = true
