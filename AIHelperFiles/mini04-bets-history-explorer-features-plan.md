@@ -118,6 +118,9 @@ exact and free.
 repainting 100 rows at a high rate is what §38.8 measured and removed. The new path earns its rate by
 doing far less per step, not by lifting the guard.
 
+And when even the cheap path cannot keep up, **the cursor slows rather than the content thinning** —
+see §6.2, which is R2-C1's throttle applied to the replay.
+
 ---
 
 ## 3. Live-follow: "almost live"
@@ -197,11 +200,50 @@ So `base × 10` is already the maximum, `base × 1` is already "as it happened",
 genuinely stays untouched**. Combined with §2.2, the entire pacing specification reduces to one
 change: **append per crossed bet**.
 
-### 6.2 — Row cap per frame: cap, and SHOW that it capped
+### 6.2 — No bet is ever skipped: the CLOCK pays, not the content (developer, 2026-08-15)
 
-As recommended. A dense burst crossed at 10x can ask for hundreds of rows in a single frame; the cap
-keeps the frame safe, and surfacing it stops the cap from doing quietly the very thing this plan
-exists to prevent — skipping bets. *A limit the player cannot see is indistinguishable from a bug.*
+The earlier suggestion — cap the rows per frame and surface that it capped — is **rejected**. A cap
+drops bets, and dropping bets is the exact failure this plan exists to end; announcing it only makes
+the loss legible, not acceptable.
+
+**The rule instead:**
+
+> **When the frame cannot render every bet the requested speed demands, the REPLAY CLOCK slows down.
+> Not one bet of the retained range is ever skipped.**
+
+The cursor advances only as far as the rows actually emitted allow: emit bets in order, and when the
+frame's budget is spent, **leave the cursor on the timestamp of the last bet emitted** rather than
+where the requested speed wanted it. The next frame resumes from there. The replay falls behind
+wall-clock; it never falls behind the data.
+
+**Shown, not inferred:** a label states both figures whenever they differ, e.g.
+`Speed: 10x requested / 7x actual`. Hidden while they agree, so it reads as information rather than a
+permanent warning.
+
+#### 6.2a — This is R2-C1's throttle, one layer up
+
+The project already solved this exact problem for the simulation, and the parallel is worth making
+explicit because it means the vocabulary and the reasoning already exist:
+
+| | Simulation (R2-C1) | Replay (this plan) |
+|---|---|---|
+| Demand | `delta x SpeedMultiplier x DevTimeScale` | `delta x replay speed` |
+| Bounded by | bets the engine can execute per frame | rows the view can emit per frame |
+| What gives way | **the game clock** (`SimulationThrottle`) | **the replay cursor** |
+| What is preserved | mining work per in-game second | **every bet in the retained range** |
+| Readout | StatusBar `Sim: NN%` | `10x requested / 7x actual` |
+
+R2-C1's rationale transfers word for word: *game time can never outrun the work it represents.* Here,
+**the cursor can never outrun the bets it claims to be showing.**
+
+And so does §38.7's third lesson, which applies to the new readout the moment it appears: **a
+displayed throttle is a MEASUREMENT, not a diagnosis.** If actual sits far below requested, the
+question is what is eating the frame — never "raise the per-frame budget", which only hands a
+saturated frame more work.
+
+**A calibration note, deliberately unpriced:** the per-frame emit budget is a placeholder until it is
+watched at 10x across a dense burst. Per §40.7, it is timed before it is tuned — and unlike a row cap,
+getting it wrong costs only smoothness, never a bet.
 
 ### 6.3 — Almost-live: snap when idle, fall behind while running
 
