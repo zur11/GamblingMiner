@@ -4,8 +4,8 @@
 `mini03-bet-journal-index-and-rollup-plan.md`, which gave this scene its own replay cursor (§9) and
 made its statistics whole (§6.8).
 
-**Status:** ✅ **IMPLEMENTED, awaiting playtest.** All five items of §5 (record: §8), plus the "Go to Now"
-rework and auto-snap (§9). **Test protocol: §10.** Diagnosis §1, objectives §2–§5, decisions §6.
+**Status:** ✅ **COMPLETE — implemented and playtested green (§11, §12).** All five items of §5
+(record: §8), the "Go to Now" rework (§9); auto-snap was built at §9.4 and removed at §12.1. Protocol §10.
 · **World format bump:** none — nothing here persists.
 
 ---
@@ -702,3 +702,157 @@ Cycle the setter through all six kinds and use each once.
 The lowest `actual` from 10.3, anything from 10.1 that still clumped, and any control that was enabled
 while doing nothing (or greyed while it should have worked) — the §24.13b cases are the ones most likely
 to have slipped, since the availability matrix (§9.6) was reasoned out rather than observed.
+
+---
+
+## 11. Playtest 1 — three observations, one defect (2026-08-18)
+
+### 11.1 — Bets arrived in twos in live-follow. The emit path was innocent.
+
+**Diagnosis.** The emit path renders every frame and was doing so correctly. What arrived in batches were
+the **records**: the only thing that grew `_allRecords` was `UserStatsService.StatsChanged`, which is
+**deliberately throttled to 250 ms**. Four batches a second against ~5 bets a second is 1.25 bets per
+batch — ones and twos, exactly as reported.
+
+The journal itself was never batched. `OnBetExecutedRegisterBet` calls `BetHistory.Add(record)`
+**synchronously** on every settled bet; only the *event* is throttled. DiceGame does not have this problem
+because it renders off `ClientBetSettled`, which fires per settled bet with no throttle at all.
+
+> **A refresh cadence sized for repainting a panel is not a data-arrival notification.** Using one as the
+> other silently imports its throttle into the thing it was never meant to gate — and the symptom appears
+> in the consumer, which is why the emit path looked guilty. This is §38.7's lesson approached from the
+> opposite side: there, a correct event fired far too often for the work behind it; here, a correct event
+> fires far too *rarely* for a second job nobody meant to give it.
+
+**Fix.** `_Process` compares `BetHistory.Records.Count` against `_allRecords.Count` — one int against a
+free property (`Records => _records`), real work only behind the edge, Pattern 6's blessed hybrid — and
+calls the extracted `SyncRecordsFromHistory()` when they differ. A bet now reaches the view in the frame
+it settled, in every mode, not just live-follow.
+
+`StatsChanged` stays subscribed as the **correctness backstop**: a history reload can replace the record
+list without changing its length, which a count comparison cannot see, and only its fallback rebuild
+recovers from that. *Latency is the per-frame check's job; integrity is the event's.*
+
+Gated on a new `_historyLoaded`, set at the end of the async loader — before that `_allRecords` is empty
+or half-built, and the comparison would read as "thousands of new bets" and trigger a rebuild the loader
+is about to redo.
+
+### 11.2 — The requested/actual label never appeared. It was right not to.
+
+**Measured, not reasoned.** At 5 hardware credits a 10x replay demands ~47 bets/second — **0.78 per frame**
+at 60 fps, against a budget of 25. The only thing that can spike that is a same-timestamp group, which
+must be emitted whole in one frame; and those are **capped by construction**, because
+`SimulationService.MaxBetsPerFrame = 10` bets settle per frame while the calendar advances once, so at
+most ten bets can share an instant.
+
+Sampled over 8,000 consecutive records of the developer's journal:
+
+| Group size | Groups | % of groups | % of bets |
+|---|---|---|---|
+| 1 | 5,654 | 95.7% | 70.7% |
+| 2–9 | 49 | 0.8% | 4.1% |
+| **10** | 202 | 3.4% | **25.2%** |
+
+Largest group in the sample: **exactly 10**, as the cap predicts. **So at 5 credits the budget cannot
+bind** — 25 is 2.5× the worst spike the simulator is able to produce, and the label is correct to stay
+hidden. This also corrects §1.2a's "median gap 0.00 game-seconds": in *this* journal 70.7% of bets sit
+alone at their instant.
+
+**But "correct to stay hidden" is indistinguishable from "broken", which is a problem on its own.**
+`ReportEmitBudgetBound` (`[Conditional("DEBUG")]`, once per session) now prints the first time the budget
+binds. Silence in the log means the mechanism has never engaged this session — not that the readout
+failed. *When a promise's visible half only appears under conditions the game cannot currently reach, give
+it a way to say so.*
+
+To exercise it deliberately: set `MaxAppendRowsPerFrame` to `1` and replay at 10x. The label must appear
+and the cursor must fall behind wall-clock **without dropping a single row** — that, not the label, is
+what §6.2 promises.
+
+**Note for later:** those 202 groups of ten are a real property of the data, not of the view. A replay
+crossing one *must* show ten rows at once, because the ten bets genuinely carry the same game timestamp.
+No view change can alter that; only the simulator stamping bets sub-frame could. Same family as
+INC-002/§40.8, where colliding timestamps let stable sort adjacency multiply a streak.
+
+### 11.3 — No clock divergence in live-follow. Also correct.
+
+At 5 credits the emit budget (1,500 rows/s) exceeds production (~5 bets/s) by ~300×, so the cursor pins to
+the present exactly and the two clocks agree to the frame. §6.3's gap is real but only opens when
+production outruns the view — a raised DEV time scale, or many more credits. Nothing to fix; the honest
+statement is that this test could not reach the condition.
+
+---
+
+## 12. Playtest 1, round 2 — auto-snap removed, and the gap made readable (2026-08-18)
+
+### 12.1 — Pause freezes, without exception. Auto-snap is deleted.
+
+§9.4 gave a paused panel parked at the present a behaviour: it kept re-snapping to the newest bets on its
+own. It was symmetrical with live-follow, it needed no branch, and **watching it run settled the question
+against it.**
+
+> **A paused panel that keeps changing is not paused.** §4.1's rule — *nothing moves until the player
+> asks* — is not a rule about the cursor. It is a rule about the PANEL, and an auto-snap moves the panel.
+
+`IsAutoSnapping`, `_autoSnapTimer` and the third `_Process` branch are gone; `_Process` is back to two
+branches, and the only two things that move the view are the player and live-follow — which the player
+asks for by leaving the panel in play. Getting back to the present while paused is what "Go to Now" is
+for, and it re-enables as soon as a material gap exists (§9.2, where this started before the amendment).
+`Tracking Now` goes with it; the button's remaining disabled state — paused, at the present, no gap yet —
+needs no caption, because it is over within a second of a live run and *the button coming back is itself
+the news that there are new bets to go to*.
+
+**The symmetry was real and the removal does not refute it.** `IsLiveFollowing` is still exactly "playing
++ a run + asked to be at the present". What the playtest rejected was giving the other side of that axis a
+behaviour at all — which is a different claim from the model being wrong, and worth keeping straight,
+because the same symmetry will look inviting again the next time someone reads the predicate.
+
+`NoRequestSentinel` stays, and earns its keep for a narrower reason now: pausing a live-follow withdraws
+the request, so pressing Play again REPLAYS the bets that accumulated while paused instead of snapping
+past them. Freezing without it would have made Pause a way to skip bets.
+
+### 12.2 — "The violet did not appear while playing" — not reproduced, so the gap got a readout instead
+
+The tint is computed from `current < PresentLocal()` and is **unconditional on the play state** — nothing
+in that block reads `_cursorRunning`, and a rewind while playing sets `_selectedLocal` below the present
+by construction. Inspection found no path where playing suppresses it. Two explanations remain consistent
+with the code, and **neither can be told apart from a defect by eye**:
+
+- the rewind was small relative to the replay's catch-up rate — at 1x the cursor covers 100 game-seconds
+  per real second, so a *rewind by minute* is closed in **0.6 s** and a *rewind by hour* in 36 s;
+- the tint did appear and was too brief to register.
+
+Rather than guess, the panel now answers it itself. The header appends **`(23m 10s behind now)`** whenever
+the cursor trails the present by ≥ 1 second.
+
+> §3 claimed the drift would be "legible without a new indicator, in the two clocks". **It was not.** The
+> two clocks sit in different rows in different formats, and reading a gap out of them means subtracting
+> timestamps by eye — which is exactly why *both* this and the live-follow divergence came back as
+> maybes rather than as facts. **Two numbers on screen are not a comparison; the comparison is the thing
+> the player actually wanted, and it was never displayed.**
+
+The violet says *whether* the cursor is behind; the suffix says *by how much*, which is the half that
+makes it checkable — and it gives §6.3's live-follow gap somewhere to appear when it finally opens.
+Hidden below one second, so live-follow (cursor pinned to the present) stays clean.
+
+#### 12.2a — Resolved: there was no defect (developer, 2026-08-18)
+
+**The cursor never moved.** The developer had been pressing the **setter** (which only cycles
+`rewind by day → hour → minute → forward by …`) believing it was the **action**, so each press changed the
+label and nothing else. A cursor that never left the present is correctly white — the tint was right every
+time. The `(… behind now)` readout stays: it is what would have made this self-evident in the first place,
+and §12.2's argument for it does not depend on there having been a bug.
+
+**Recorded, not fixed — this is a legible design signal, not simply a misuse.** Two adjacent buttons where
+one *selects* and one *acts*, and pressing the wrong one produces a visible label change and no motion,
+which reads as "the action ran and the view failed to respond". The cheap mitigation, if it recurs, is to
+prefix the setter so it cannot be read as a verb — `Mode: ◀ Rewind by day` — one string, no logic. Left
+undone deliberately: the scene works, and a label change would cost another playtest cycle to confirm.
+
+> **When a control is misread, ask what the control looked like before assuming the reader was careless.**
+> A setter that reads as an imperative (`◀ Rewind by day`) is one; the confusion was earned.
+
+*Original text of §12.2 kept above, because the reasoning that produced the readout is worth more than the
+hypothesis that prompted it.*
+
+**If a future run shows `(… behind now)` with a white clock, that is a real defect and the readout has
+localised it.** If both appear together, §12.2's first explanation was right and nothing was ever broken.
