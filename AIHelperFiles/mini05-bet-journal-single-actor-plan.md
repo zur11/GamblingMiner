@@ -229,34 +229,126 @@ implies: it is not over — it is unobserved, and the plan exists to observe.)*
 because money leaving is not a deposit. Nothing in the flow implies the exemption, so it had to be stated —
 which is precisely the shape this check is built to surface, and the reason the exemptions are declarations
 rather than inference.
+
 ---
 
 ## 4. Reproduction protocol
 
 **Run all of it at 1 hardware credit** (§1.5): one bet per 100 game-seconds, met to the second, so a
 second stream is visible by eye in the journal without any tooling at all — and D1–D3 then only have to
-say *who*, not *whether*.
+say *who*, not *whether*. At 1 credit the pace is ≈ **1 bet per real second**, so a two-minute window is
+~120 bets.
 
-The bands last ~2 real minutes (~1,080 bets ÷ 10/s at 5 credits) and correlate with DiceGame navigation.
-With D1–D3 armed, run each of these with an autobet already active, and record which trips D1:
+### 4.0 — Three corrections to the first draft of this section
 
-1. Start autobet in DiceGame → navigate to BetsHistoryExplorer → return to DiceGame.
-2. As (1), but press **Start** again on return.
-3. Start autobet → switch the Active Node Selector to a bot → switch back.
-4. Start autobet → navigate to any other scene and back twice in quick succession.
-5. Start autobet → BetsHistoryExplorer → **Go to Now** → return.
-6. Idle control: start autobet, do not navigate, wait two minutes. **Must not trip.**
+The first draft asked for three things the UI cannot do, which is what a protocol written from hypotheses
+rather than from the screen looks like:
 
-Note (6) is not filler: it separates "navigation causes it" from "it happens anyway and navigation only
-made us look".
+| Asked for | Why it is impossible |
+|---|---|
+| "press **Start** again on return" | The control is a toggle. While a run is live it reads **Stop**; there is no Start to press. |
+| "switch the Active Node Selector to a bot" mid-run | `SetActiveNodeSelectorLocked(true)` **disables** the selector for the whole run. |
+| "start the autobet" in the idle control, under a preamble that said every scenario begins with one already running | Contradicts itself, and never said whether to stop between scenarios. |
 
-**Each run must last well past two real minutes.** §1.5's caution applies to every one of them: an
-observation window the same length as one occurrence of the bug proves nothing when it comes back clean.
-A negative result is only worth recording if the window was long enough to have caught a positive.
+**And H3 turns out not to be reachable from the UI at all.** `StartPlayerAutobet` is called only from the
+toggle handler, which stops the previous session first — so "a second Start over a running one" cannot be
+produced by a player. What replaces it is sharper: do a **normal Stop → Start** and check the trace for the
+old session's `stop` row *before* the new session's `start`. **A missing `stop` is H3**, observed rather
+than provoked.
 
-**And repeat the whole protocol at 5 credits once it has been characterised at 1.** The two credit
-settings are the only lever known to change the picture, so "does it also happen at 1?" is itself a
-finding — either way.
+> **Write the protocol against the screen, not against the hypothesis.** Three of six steps were
+> unexecutable, and every one of them was a step whose shape came from what I wanted to be true.
+
+### 4.1 — Setup, once
+
+1. Player hardware → **1 credit**.
+2. Godot console visible (D1/D3 report through `GD.PrintErr`).
+3. Delete `user://logs/session_lifecycle_trace.csv` if present — it recreates itself with its header.
+4. Have the **StatusBar in-game clock** in view: noting it at each maneuver is what lines the console up
+   against the trace and the journal, none of which share a wall-clock timestamp.
+
+### 4.2 — Run A: the control. **Do this one first.**
+
+Start the autobet in DiceGame and **touch nothing for five minutes.** Do not navigate, do not open a
+panel, do not switch anything. Then Stop.
+
+*First, because if it trips here the other runs prove nothing about navigation and hypotheses H1/H4
+collapse on the spot. A control that runs last is a control that only gets read when the answer is already
+assumed.*
+
+### 4.3 — Run B: navigation, **without ever stopping the autobet**
+
+**"One continuous run" means literally this: press Start once at the beginning, and do not press Stop
+until B3's wait has finished** — about **nine minutes** of uninterrupted running. That constraint is the
+instrument, not an inconvenience: **with no start and no stop from the player, ANY session churn the trace
+shows was not caused by the player.** A run interrupted halfway makes every `start`/`stop` row ambiguous.
+
+The route is `DiceGame → CalendarsNavigator → BetsHistoryExplorer`, since there is no direct button, and
+the return is a single hop via the explorer's own **Back to Dice**. Three scene loads per round trip
+rather than two — better for this test, not worse.
+
+| t (real) | Do | |
+|---|---|---|
+| 0:00 | **Start** the autobet in DiceGame. Wait 1 minute untouched. | baseline |
+| 1:00 | **B1** — DiceGame → Calendar → Explorer → *Back to Dice*. Then wait 2 min in DiceGame. | the base case |
+| 3:00 | **B2** — same route, but press **Go to Now** in the explorer before returning. Wait 2 min. | whether the replay scene participates |
+| 5:00 | **B3** — DiceGame → any other scene → back. **Twice, quickly.** Wait 2 min. | H4, a scene not freed |
+| 7:00 | Optionally repeat B1 once more, then wait 2 min. | the bands are intermittent; one pass is one sample |
+| 9:00 | **Stop.** | |
+
+Note the **in-game clock** at each maneuver.
+
+### 4.4 — Run C: maneuvers that **require stopping**
+
+These cannot be done while a run is live, so each is its own start/stop cycle. Two minutes of running on
+each side of the switch.
+
+| | Maneuver | Targets |
+|---|---|---|
+| C1 | Run → **Stop** → **Start** again | H3's real shape: is there a `stop` row for the old session before the new `start`? |
+| C2 | Run → Stop → switch the selector to a **bot** → Start → run → Stop → switch back to **player** → Start | H2, an `IsPlayerActive` misattribution |
+
+### 4.5 — Run D: the auto-recharge, isolated
+
+This one gets its own run because **forcing a recharge requires a trip to BankrollProgrammer**, and doing
+that mid-run would confound it with exactly what B1/B3 test. Isolating it is what keeps a hit
+interpretable.
+
+1. **With the autobet STOPPED**, go to BankrollProgrammer and move most of the Bankroll back to Main,
+   leaving only a few SC — enough that the progression exhausts it within a couple of minutes.
+2. Return to DiceGame, **Start**, and then **navigate nowhere at all.** Wait for the recharge to fire on
+   its own, then keep running two more minutes.
+
+It matters most of the four maneuvers because it is the closest match to §1.3's evidence: the second line
+arrived **already seven progression steps deep**, so what is being hunted is a session that was already
+turning and began writing — and a recharge restart is the only thing that rebuilds a session *without the
+player stopping anything*.
+
+Run D is also Run A with one variable added, which is what makes the pair readable: same "touch nothing"
+discipline, one difference.
+
+### 4.6 — What counts as a result
+
+**Each observation window must run well past two real minutes.** §1.5's caution applies to every one of
+them: a window the same length as one occurrence of the bug proves nothing when it comes back clean. **A
+negative result is only worth recording if the window was long enough to have caught a positive** — so
+record the duration alongside the outcome, always.
+
+**Repeat the whole protocol at 5 credits** once it is characterised at 1. The credit setting is the only
+lever known to change the picture, so "does it also happen at 1?" is itself a finding either way.
+
+### 4.7 — What to capture
+
+- The full `[BetJournal] UNDECLARED balance discontinuity …` line. The decisive part is the pair
+  `Written by 'X', previous by 'Y'` — `DiceGame ↔ SimulationService` alternating is **H1**, `unknown` on
+  either side is a call site nobody tagged, `RegisterSource` is a third writer that should not exist.
+- `session_lifecycle_trace.csv`, or the rows around the event. Three things in it, in order of weight:
+  **two `start` rows with no `stop` between them**; an owner of **`unknown`** on a `start`/`stop` row
+  (H4 — `(pre-init)` on `construct` rows is normal and means nothing); and **`ALREADY-RUNNING`** in the
+  `note` column (H3, literally).
+- The in-game clock at each maneuver, and the duration of each window.
+- **If the console stays silent but the journal shows bets off the 100-second phase, say so** — that is a
+  different and worse finding: the discontinuity check would be failing to detect a break it should see.
 
 ---
 
@@ -351,3 +443,7 @@ The lesson is already legible and will survive whichever hypothesis wins:
   this plan changes it.
 - The wider "one journal per actor" question for bots (`CasinoClientLedgerService.ClientBetStats` is
   already their book) — unless §5 shows it contaminated too.
+- **A direct DiceGame → BetsHistoryExplorer button** (developer, 2026-08-18). Today the route runs through
+  `CalendarsNavigator`, which is where the display date is set. Wanted, deliberately not built here: adding
+  a navigation path in the middle of an investigation into whether navigation duplicates sessions would
+  change the thing being measured. It belongs to whatever phase follows the fix.
