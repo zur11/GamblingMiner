@@ -4,7 +4,8 @@
 `mini04-bets-history-explorer-features-plan.md`, whose §13 found this while replaying history for an
 unrelated reason.
 
-**Status:** 📋 **SPECIFIED, NOT STARTED.** No code touched, no branch created.
+**Status:** 🔬 **DIAGNOSTICS BUILT (§3), AWAITING THE REPRODUCTION RUN (§4).** Branch
+`bet-journal-single-actor`. No fix yet, by design — see the objective.
 
 **Objective — and it is deliberately not "fix the bug".** The deliverable is **INCIDENT_LOG.md entry
 INC-003**, written *after* the diagnostics in §3 have named the mechanism. The log's own format demands a
@@ -134,11 +135,12 @@ by *"is the player the active node"* and **neither by "is another session alread
 
 ---
 
-## 3. Diagnostics to build (the actual work of this plan)
+## 3. Diagnostics — ✅ BUILT (2026-08-18)
 
 All three are **in-memory or trace-only**: no `BetRecord` field, no `WorldFormatVersion` bump, and
 therefore **no wipe of the evidence** — which is load-bearing, because the journal in hand is the only
-known reproduction.
+known reproduction. Build clean, 0 warnings. What follows is the specification with the as-built notes
+folded in.
 
 ### 3.1 — D1: name the writer
 
@@ -171,6 +173,62 @@ break.
 > whose false positives are routine gets muted within a week; one that is silent by construction keeps its
 > authority.
 
+
+### 3.4 — As built: four decisions the specification did not anticipate
+
+**(a) D1 and D3 merged, because the interesting report is the pair.** The spec had D1 print "two distinct
+sources registered in one process". That test is *wrong*: playing manually in DiceGame and then starting a
+delegated autobet legitimately produces two sources, sequentially, with nothing overlapping. What is
+diagnostic is not *two sources exist* but **who wrote each side of a continuity break** — so the source is
+carried into D3's report (`Written by 'X', previous by 'Y'`) along with per-source counts. One line then
+answers whether there are two wallets *and* which code owns each.
+
+> **A signal that fires on a legitimate configuration is not a signal.** The spec's version would have
+> tripped on the first manual bet of every session.
+
+**(b) `NoteBalanceDiscontinuity` DROPS the baseline instead of setting a skip-once flag.** A pending
+"skip the next one" token can outlive its cause — declare a reseed, have no bet for ten minutes, and the
+token silently absorbs a *real* break. Clearing `_hasLastRegisteredBalance` makes the next bet re-seed
+instead, so repeated declarations before one bet are harmless and nothing lingers.
+
+**(c) The construct row is tagged `(pre-init)`, never `unknown`.** `Owner` is assigned by the creator
+through an object initializer, which runs *after* the base constructor — so every construct row would have
+read `unknown` and destroyed the one word that has to carry hypothesis H4. **A sentinel that appears on
+every row is not a sentinel.** `unknown` on a `start`/`stop` row now means exactly what it says: a session
+nobody tagged.
+
+**(d) `RegisterSource` was kept rather than deleted, and made loud.** §2 established it has no callers,
+which made it tempting to remove — but it is a route *into* the journal that nothing guards, and the
+investigation needs to know if something starts using it. It now `GD.PrintErr`s on subscription and tags
+its bets `RegisterSource`, so a third writer cannot hide inside either known source's count.
+*(§39.16 rule 3 says prefer deletion to a flag when something is over. This is the exception the rule
+implies: it is not over — it is unobserved, and the plan exists to observe.)*
+
+### 3.5 — Where the hooks landed
+
+| Diagnostic | Site |
+|---|---|
+| Session id + `Owner`/`OwnerNodeId`, construct/start/stop rows | `BaseBetSession` — **inside the base class, not at the creation sites**, so H4 (a session nobody knows about) cannot escape the trace |
+| Owner tags | `SimulationService` ×2 player + ×2 bot · `DiceGame.CreateSession` |
+| Source tags | `SimulationService.cs:595` → `SourceSimulation` · `DiceGame.cs:1587` → `SourceDiceGame` · `RegisterSource` → its own |
+| Trace file + delete-list entry | `SessionLifecycleTrace.TracePath`, added to `ResetWorldIfIncompatible` **with the feature** (the TL.3/ND.6b rule) |
+
+**Declared discontinuities** — every legitimate balance jump, each stated where it happens:
+
+| Reason | Where | Covers |
+|---|---|---|
+| `deposit` | `UserStatsService.RegisterDeposit` | every auto-recharge and manual Main→Bankroll transfer, on both the DiceGame and SimulationService paths |
+| `autobet_session_wallet` | `SimulationService.StartPlayerAutobet` | the fresh wallet each run seeds from the bankroll |
+| `manual_return` | `SimulationService.TryManualTransferToBalance` | Bankroll→Main, a **withdrawal** |
+| `wallet_reseed` | `DiceGame.ReseedWalletFromBankrollSource` | every navigation/stop reseed |
+| `node_state_load` | `DiceGame.LoadActiveNodeFinancialState` | player↔bot node switches |
+| `checkpoint_restore` | `DiceGame` checkpoint restore | the one-shot boot restore |
+| `history_rollback` / `history_cleared` | `UserStatsService` | the journal losing its tail under it |
+
+`manual_return` is the one worth pointing at: **it has no `RegisterDeposit` to declare it on its behalf**,
+because money leaving is not a deposit. Nothing in the flow implies the exemption, so it had to be stated —
+which is precisely the shape this check is built to surface, and the reason the exemptions are declarations
+rather than inference.
 ---
 
 ## 4. Reproduction protocol

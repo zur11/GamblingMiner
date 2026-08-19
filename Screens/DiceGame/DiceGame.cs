@@ -536,6 +536,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_principalBalanceService?.SetBalance(state.PrincipalBalance);
 		_bankrollStateService?.SetBalance(state.BankrollBalance);
 		_bankrollProgramService?.ReplaceState(state.AutoRechargeAmount, state.TransferRecords);
+		_userStatsService?.NoteBalanceDiscontinuity("node_state_load");
 		_wallet.SetBalanceForTimeTravel(state.BankrollBalance);
 	}
 
@@ -1204,6 +1205,8 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void ReseedWalletFromBankrollSource()
 	{
+		// Mini-plan 05 D3: a reseed replaces the wallet balance wholesale, so it is a declared jump.
+		_userStatsService?.NoteBalanceDiscontinuity("wallet_reseed");
 		decimal bankroll = _bankrollStateService?.CurrentBalance ?? _wallet?.Balance ?? 0m;
 		_wallet?.SetBalanceForTimeTravel(bankroll);
 		UpdateBalanceUI();
@@ -1330,10 +1333,21 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		var strategy = new ProgressiveBettingStrategy();
 
+		// Mini-plan 05 D2: tag the owner so the lifecycle trace can tell a DiceGame-owned session from a
+		// SimulationService-owned one. DiceGame keeps a local session even while the autobet is DELEGATED
+		// (hypothesis H1), so which of the two is alive at a given moment is precisely the open question.
 		if (isAuto)
-			return new AutoBetSession(_betService, _wallet, strategy);
+			return new AutoBetSession(_betService, _wallet, strategy)
+			{
+				Owner = UserStatsService.SourceDiceGame,
+				OwnerNodeId = _activeNodeId ?? ""
+			};
 
-		return new ManualBetSession(_betService, _wallet, strategy);
+		return new ManualBetSession(_betService, _wallet, strategy)
+		{
+			Owner = UserStatsService.SourceDiceGame,
+			OwnerNodeId = _activeNodeId ?? ""
+		};
 	}
 
 	private void OnSessionStopped(BaseBetSession session)
@@ -1584,7 +1598,7 @@ public partial class DiceGame : Control, IBetEventSource
 			BetExecuted?.Invoke(GameId, betEvent);
 			if (IsPlayerActive())
 			{
-				_userStatsService?.OnBetExecutedRegisterBet(GameId, betEvent);
+				_userStatsService?.OnBetExecutedRegisterBet(GameId, betEvent, UserStatsService.SourceDiceGame);
 			}
 			else
 			{
@@ -2245,6 +2259,7 @@ public partial class DiceGame : Control, IBetEventSource
 		var snapshot = _blockCheckpointService.CurrentSnapshot;
 		_principalBalanceService?.SetBalance(snapshot.PrincipalBalance);
 		_bankrollStateService?.SetBalance(snapshot.BankrollBalance);
+		_userStatsService?.NoteBalanceDiscontinuity("checkpoint_restore");
 		_wallet?.SetBalanceForTimeTravel(snapshot.BankrollBalance);
 		_bankrollProgramService?.ReplaceState(snapshot.AutoRechargeAmount, snapshot.TransferRecords);
 

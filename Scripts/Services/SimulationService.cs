@@ -218,11 +218,22 @@ public partial class SimulationService : Node
 		_config = config;
 		_engine ??= new DiceEngine();
 		decimal bankroll = _bankroll?.CurrentBalance ?? 0m;
+		// Mini-plan 05 D3: a fresh wallet reseeded from the bankroll is a legitimate balance jump away from
+		// whatever the previous session's last bet reported. Declare it so the continuity check re-seeds
+		// instead of reporting a false break on the run's first bet.
+		_userStats?.NoteBalanceDiscontinuity("autobet_session_wallet");
 		_wallet = new Wallet(bankroll);
 		_betService = new BetService(_engine, _wallet, TransactionSource.Bet,
 			() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
 
-		var session = new AutoBetSession(_betService, _wallet, new ProgressiveBettingStrategy());
+		// Mini-plan 05 D2: tag the session so the lifecycle trace can name its owner. Note this method
+		// OVERWRITES `_session` without stopping the previous one — hypothesis H3. If the old session is
+		// still referenced and ticked elsewhere, the trace will show its "start" with no matching "stop".
+		var session = new AutoBetSession(_betService, _wallet, new ProgressiveBettingStrategy())
+		{
+			Owner = UserStatsService.SourceSimulation,
+			OwnerNodeId = config.ActiveNodeId ?? ""
+		};
 		session.Start(config.NumberOfBets, config.Strategy);
 		_session = session;
 
@@ -585,7 +596,7 @@ public partial class SimulationService : Node
 			LastSettledBetEvent = betEvent;
 			if (_config.IsPlayerActive)
 			{
-				_userStats?.OnBetExecutedRegisterBet(_config.GameId, betEvent);
+				_userStats?.OnBetExecutedRegisterBet(_config.GameId, betEvent, UserStatsService.SourceSimulation);
 			}
 		}
 		catch (InvalidOperationException)
@@ -697,7 +708,11 @@ public partial class SimulationService : Node
 		PersistFinancialState(false);
 
 		// Restart the progression from base bet (mirrors DiceGame's recharge-then-restart behaviour).
-		var session = new AutoBetSession(_betService, _wallet, new ProgressiveBettingStrategy());
+		var session = new AutoBetSession(_betService, _wallet, new ProgressiveBettingStrategy())
+		{
+			Owner = UserStatsService.SourceSimulation,
+			OwnerNodeId = _config.ActiveNodeId ?? ""
+		};
 		session.Start(_config.NumberOfBets, _config.Strategy);
 		_session = session;
 
@@ -741,6 +756,11 @@ public partial class SimulationService : Node
 			return false;
 		}
 
+		// Mini-plan 05 D3: a WITHDRAWAL is a legitimate discontinuity too, and it has no RegisterDeposit to
+		// declare it on its behalf — the money leaves the session wallet without ever being a deposit. This
+		// is the shape the check is designed to surface: an exemption that must be stated because nothing
+		// else in the flow implies it.
+		_userStats?.NoteBalanceDiscontinuity("manual_return");
 		_bankroll?.SetBalance(_wallet.Balance);
 		PersistFinancialState(false);
 		EmitSignal(SignalName.BetSettled); // refresh live UI: bankroll dropped
@@ -851,7 +871,11 @@ public partial class SimulationService : Node
 		var wallet = new Wallet(financialState.BankrollBalance);
 		var betService = new BetService(_engine!, wallet, TransactionSource.Bet,
 			() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
-		var session = new AutoBetSession(betService, wallet, new ProgressiveBettingStrategy());
+		var session = new AutoBetSession(betService, wallet, new ProgressiveBettingStrategy())
+		{
+			Owner = "SimulationService.bot",
+			OwnerNodeId = cfg.NodeId
+		};
 		session.Start(cfg.NumberOfBets, cfg.Strategy);
 		return new BotRunner { NodeId = cfg.NodeId, Wallet = wallet, Session = session, Config = cfg };
 	}
@@ -1066,7 +1090,11 @@ public partial class SimulationService : Node
 		_engine ??= new DiceEngine();
 		var betService = new BetService(_engine, runner.Wallet, TransactionSource.Bet,
 			() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
-		var session = new AutoBetSession(betService, runner.Wallet, new ProgressiveBettingStrategy());
+		var session = new AutoBetSession(betService, runner.Wallet, new ProgressiveBettingStrategy())
+		{
+			Owner = "SimulationService.bot",
+			OwnerNodeId = runner.NodeId ?? ""
+		};
 		session.Start(runner.Config.NumberOfBets, runner.Config.Strategy);
 		runner.Session = session;
 	}
