@@ -54,21 +54,36 @@ public partial class BetHistoryContainer : VBoxContainer
 
 		foreach (BetRecord record in records.TakeLast(MaxRecentEntries))
 		{
-			BetTransactionEvent evt = new(
-				record.BetAmount,
-				record.NetAmount,
-				record.NetAmount,
-				record.BalanceAfter,
-				record.Outcome == BetOutcome.Win,
-				record.Roll,
-				record.Chance,
-				record.Multiplier,
-				record.IsHigh,
-				record.TimestampUtc
-			);
-
-			AddEntry(evt);
+			AppendHistoricalRecord(record);
 		}
+	}
+
+	// The single-record twin of the loader above (mini-plan 04 §2.3). BetsHistoryExplorer used to repaint
+	// a whole WINDOW each refresh, which is why its bets arrived in clumps of however many entered the
+	// window since the last repaint; rendering one row per bet the replay cursor crosses reproduces
+	// DiceGame's event-stream behaviour by construction, because DiceGame's own path is `AddEntry` per
+	// settled bet and this is the same call with a persisted record in place of a live event.
+	public void AppendHistoricalRecord(BetRecord record)
+	{
+		if (record == null)
+		{
+			return;
+		}
+
+		BetTransactionEvent evt = new(
+			record.BetAmount,
+			record.NetAmount,
+			record.NetAmount,
+			record.BalanceAfter,
+			record.Outcome == BetOutcome.Win,
+			record.Roll,
+			record.Chance,
+			record.Multiplier,
+			record.IsHigh,
+			record.TimestampUtc
+		);
+
+		AddEntry(evt);
 	}
 
 	public void ClearEntries()

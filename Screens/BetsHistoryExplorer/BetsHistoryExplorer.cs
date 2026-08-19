@@ -24,9 +24,32 @@ public partial class BetsHistoryExplorer : Control
 	private ProgressBar _loaderProgress;
 	private Button _playPauseButton;
 	private Button _speedButton;
-	private Button _goLiveButton;
-	private bool _goLiveVisible;
-	private bool _goLiveVisibilityApplied;
+	private Button _goToNowButton;
+	// ── Stepping through time (§4.2c) ───────────────────────────────────────────
+	// A multi-toggle that picks the KIND of movement and a second button that performs one of them. Split
+	// in two rather than offered as six buttons because the six are mutually exclusive and only one is
+	// wanted at a time; the setter states which, so the action button never has to be read twice.
+	//
+	// Built for the paused state first but correct while playing too: a step is a jump of the cursor, and
+	// the cursor is just a DateTime whether or not something else is also advancing it. Per §6.4 a step
+	// changes WHERE the cursor is and never whether the panel is playing — the two are separate axes.
+	private static readonly (string Label, int Days, int Hours, int Minutes)[] StepModes =
+	{
+		("◀ Rewind by day", -1, 0, 0),
+		("◀ Rewind by hour", 0, -1, 0),
+		("◀ Rewind by minute", 0, 0, -1),
+		("Forward by day ▶", 1, 0, 0),
+		("Forward by hour ▶", 0, 1, 0),
+		("Forward by minute ▶", 0, 0, 1),
+	};
+
+	private Button _stepModeButton;
+	private Button _stepApplyButton;
+	private int _stepModeIndex;   // default: rewind by day (§4.2c)
+	private bool _goToNowDisabled;
+	private bool _goToNowDisabledApplied;
+	private bool _transportCaptionState;
+	private bool _transportCaptionApplied;
 	private bool _transportInert;
 	private bool _transportStateApplied;
 	private Button _backToCalendarButton;
@@ -52,12 +75,83 @@ public partial class BetsHistoryExplorer : Control
 	private bool _labelShowsReplay;
 	private bool _labelColorApplied;
 
-	private DateTime _selectedLocal;   // THE CURSOR: the instant being replayed
+	private DateTime _selectedLocal;   // THE CURSOR: the instant being replayed — where it ACTUALLY is
 	private bool _cursorRunning;       // Play/Pause, driving the cursor rather than the clock
 	private double _cursorSpeed = 100d; // game-seconds per real second, the old _speedSteps scale
-	// Live-follow: the cursor tracks the present each frame instead of advancing on its own.
-	private bool _liveMode;
 	private readonly double[] _speedSteps = { 100d, 200d, 400d, 1000d };
+
+	// ── Demand vs. settled (mini-plan 04 §6.2 / §6.4a) ──────────────────────────
+	// Where the cursor was ASKED to be this frame, as opposed to `_selectedLocal`, where the frame's emit
+	// budget actually let it get to. This is R2-C1's split one layer up: there, the simulation's demand is
+	// `delta × SpeedMultiplier` and the game CLOCK gives way when the engine cannot keep up; here the
+	// demand is `delta × replay speed` and the replay CURSOR gives way when the view cannot emit every bet
+	// the demand crosses. In both cases the thing that must never be corrupted is preserved — mining work
+	// per in-game second there, every bet of the retained range here.
+	private DateTime _cursorDemandLocal;
+	// The present as of the frame in which the demand above was set, so `demand >= present` can be asked
+	// without the answer flipping merely because the world advanced between two frames. A cache of a
+	// computed value, deliberately NOT a mode flag — see IsLiveFollowing.
+	private DateTime _lastPresentLocal;
+	// "No outstanding request" — the value the demand holds whenever the player is not asking to be
+	// anywhere: on arrival, and from the moment they press Pause. See RequestedThePresent.
+	private static readonly DateTime NoRequestSentinel = DateTime.MinValue;
+	// Auto-snap repaints wholesale, so it obeys BOTH guards the snapshot path already obeys: at most once
+	// per real second, and only once a material amount of new material exists. The real-time half is not
+	// optional — the developer's "+100 in-game seconds" equals one real second only at the base scale, and
+	// game time is a quantity the DEV time scale multiplies by up to 90x. A refresh cadence denominated in
+	// game time accelerates with it (the lesson already written into _Process's own throttle).
+
+	// §6.4a — live-follow is DERIVED, never stored. mini-plan 03's `_liveMode` was a flag decided in
+	// _Ready that later became something the player could enter and leave, which is precisely the shape
+	// that drifts out of step with what it claims to describe. A derived value cannot disagree with its
+	// own definition:
+	//
+	//     liveFollowing == playing && cursor-demand is at the present && a run is producing bets
+	//
+	// Every behaviour in the plan falls out of it: rewinding drops the demand below the present so follow
+	// ends while PLAY is untouched (§6.4's two axes); forward-stepping into the present satisfies it again
+	// with no special case; a run stopping drops the last term, and the replay then halts at the present
+	// (§4.2b). "Go to Now" is one assignment — demand := present — which follows only if the panel is also
+	// in play, and is otherwise just the final snap.
+	//
+	// The demand rather than the settled cursor is what is tested, because backpressure (§6.2) legitimately
+	// leaves the SETTLED cursor behind the present while following, and falling behind is the feature
+	// (§6.3), not an exit from it.
+	//
+	// ── "did the player ASK to be at the present?" ──────────────────────────────
+	// A PAUSED PANEL HAS NO DEMAND AT ALL — that is the whole of it, and it is what keeps the expression
+	// this short. The first draft had the paused branch re-assert the settled cursor as a demand, which
+	// made two unrelated situations indistinguishable from a request: arriving with the cursor already at
+	// the present (`CalendarTimeService` seeds `ExplorerSelectedLocalDateTime` FROM the present on boot and
+	// on `SetNow`, so this is the common entry path, not a corner case), and pausing a live-follow that had
+	// no backpressure gap. Both would have started tracking the present on their own — the first breaking
+	// §4.1's "nothing moves until the player asks", the second making Pause not pause.
+	//
+	// An arrival is not a request and a pause withdraws one, so in both the demand is simply absent. The
+	// sentinel earns its keep by making "absent" a value the comparison already handles, rather than a
+	// second flag asking to be kept in step with the first.
+	private bool RequestedThePresent => _cursorDemandLocal >= _lastPresentLocal;
+
+	private bool RunIsProducingBets => _calendarTimeService?.IsAutobetActive == true;
+
+	private bool IsLiveFollowing => _cursorRunning && RunIsProducingBets && RequestedThePresent;
+
+	// ── Auto-snap: BUILT AND REMOVED, same day (playtest 1, 2026-08-18) ─────────
+	// It was `!_cursorRunning && RunIsProducingBets && RequestedThePresent` — the same request as
+	// live-follow read on the other side of the play axis, so a paused panel parked at the present kept
+	// re-snapping to the newest bets on its own. It was symmetrical, it needed no branch, and watching it
+	// run settled the question against it: **a paused panel that keeps changing is not paused.** §4.1's
+	// rule ("nothing moves until the player asks") is not a rule about the cursor, it is a rule about the
+	// panel, and an auto-snap moves the panel.
+	//
+	// So PAUSE FREEZES, without exception, and the only two things that move the view are the player and
+	// live-follow — which the player asks for by leaving the panel in play. Getting back to the present
+	// while paused is what the "Go to Now" button is for, and it re-enables as soon as there is a material
+	// gap to cross (§9.2), which is where this started before the amendment.
+	//
+	// Worth keeping in mind: the symmetry was real and the removal does not refute it. `IsLiveFollowing`
+	// is still exactly "playing + a run + asked to be at the present"; what the playtest rejected was
+	// giving the OTHER side of that axis a behaviour at all.
 
 	// Chance-to-win filter. _allRecords is the full chronological history; _sortedRecords is the VIEW the
 	// rest of this scene reads (identical instance when the filter is "All Bets", so the unfiltered path
@@ -127,9 +221,52 @@ public partial class BetsHistoryExplorer : Control
 	// needs from a history browser, and is independent of the DEV time scale by construction.
 	private const double ViewRefreshIntervalSeconds = 1.0;
 	private double _viewRefreshTimer;
-	// The index of the last record rendered into the preview. When the visible window has not moved there
-	// is nothing to rebuild — cheap, and it makes an idle/paused/time-travel view cost nothing at all.
-	private int _lastRenderedEndExclusive = -1;
+	// How far into `_sortedRecords` the view has actually been rendered, exclusive. Under mini-plan 04 this
+	// is no longer a cache of "what the last snapshot happened to show" but the authoritative emit
+	// frontier: the append path advances it one bet at a time, the summary walks to exactly this index, and
+	// the cursor is not allowed past the bet it names. -1 means "no window rendered yet", which forces the
+	// wholesale path.
+	private int _renderedEndExclusive = -1;
+	// Gates the per-frame record pickup until the async loader has built _allRecords (see _Process).
+	private bool _historyLoaded;
+	private bool _emitBudgetBoundReported;
+	// The emit frontier as of the last summary-label refresh, so a burst that never changes the game
+	// second still refreshes the line that counts it.
+	private int _lastSummaryRenderedEnd = -1;
+
+	// ── The per-frame emit budget (§6.2) ────────────────────────────────────────
+	// The rule this enforces: when the frame cannot render every bet the requested speed demands, the
+	// REPLAY CLOCK slows down — not one bet of the retained range is ever skipped. A row cap that DROPPED
+	// bets was considered and rejected: dropping bets is the exact failure this plan exists to end, and
+	// announcing the drop makes it legible, not acceptable.
+	//
+	// DELIBERATELY UNPRICED (§6.2's calibration note + §40.7): this is a placeholder until it is watched at
+	// 10x across a dense burst, and it is TIMED before it is tuned. Getting it wrong costs only smoothness,
+	// never a bet.
+	//
+	// MEASURED against the developer's 196k-record journal (playtest 1): at 10x the cursor covers 1000
+	// game-seconds per real second at ~0.047 bets/game-second, i.e. ~47 bets/s — 0.78 per frame at 60 fps.
+	// The one thing that can spike it is a SAME-TIMESTAMP GROUP, which must be emitted whole in one frame,
+	// and those are capped by construction: `SimulationService.MaxBetsPerFrame = 10` bets settle per frame
+	// while the calendar advances once, so at most 10 bets can share an instant. Sampled over 8,000
+	// consecutive records: 95.7% of groups are a single bet, and the largest group in the journal is
+	// exactly 10 (3.4% of groups, carrying 25% of the bets). **So at 5 credits this budget cannot bind** —
+	// 25 is 2.5x the worst spike the sim is able to produce. See ReportEmitBudgetBound.
+	private const int MaxAppendRowsPerFrame = 25;
+
+	// The requested-vs-actual readout (§6.2). Measured over a window rather than per frame because the
+	// figure fluctuates by construction — the cursor runs at full speed through the long empty stretches
+	// between bursts and pays only inside them.
+	//
+	// §38.7's third lesson applies the moment this appears: a displayed throttle is a MEASUREMENT, not a
+	// diagnosis. If actual sits far below requested the question is what is eating the frame — never
+	// "raise MaxAppendRowsPerFrame", which only hands a saturated frame more work.
+	private const double ThrottleWindowSeconds = 1.0;
+	private Label _replayThrottleLabel;
+	private double _throttleWindowRealSeconds;
+	private double _throttleWindowGameSeconds;
+	private double _throttleActualSpeedX = -1d;
+	private string _throttleLabelApplied;
 	private int _summaryCursor;
 	private int _summaryTotalBets;
 	private decimal _summaryMaxBetAmount;
@@ -160,7 +297,10 @@ public partial class BetsHistoryExplorer : Control
 		_loaderProgress = GetNode<ProgressBar>("%LoaderProgress");
 		_playPauseButton = GetNode<Button>("%PlayPauseButton");
 		_speedButton = GetNode<Button>("%SpeedButton");
-		_goLiveButton = GetNode<Button>("%GoLiveButton");
+		_goToNowButton = GetNode<Button>("%GoToNowButton");
+		_stepModeButton = GetNode<Button>("%StepModeButton");
+		_stepApplyButton = GetNode<Button>("%StepApplyButton");
+		_replayThrottleLabel = GetNode<Label>("%ReplayThrottleLabel");
 		_backToCalendarButton = GetNode<Button>("%BackToCalendarButton");
 		_backToDiceButton = GetNode<Button>("%BackToDiceButton");
 		_betHistoryContainer = GetNode<BetHistoryContainer>("%BetHistoryContainer");
@@ -182,11 +322,13 @@ public partial class BetsHistoryExplorer : Control
 		// live-follow is now the player's explicit choice via the Live button, not an automatic
 		// consequence of an autobet running — browsing history during a run is exactly what §9 makes safe.
 		_selectedLocal = _calendarTimeService?.ExplorerSelectedLocalDateTime ?? DateTime.Now;
-		_liveMode = false;
 		_cursorSpeed = _speedSteps[0];
-		// Auto-play only when there is past to replay; sitting at the present, there is nothing to advance
-		// through and a running cursor would just butt against the clamp.
-		_cursorRunning = _selectedLocal < PresentLocal();
+		// §4.1 — the scene ARRIVES PAUSED. It used to open playing, cursor already advancing. The scene's
+		// job is to answer "what happened here?", and an auto-advancing view starts destroying that answer
+		// the moment it appears; nothing moves now until the player asks.
+		_cursorRunning = false;
+		_lastPresentLocal = PresentLocal();
+		_cursorDemandLocal = NoRequestSentinel;   // arriving is not asking to be here
 
 		// Subscribed unconditionally now: the player may enter live-follow at any time, so the handler that
 		// keeps the record list current must already be attached when they do.
@@ -195,7 +337,9 @@ public partial class BetsHistoryExplorer : Control
 
 		_playPauseButton.Pressed += OnPlayPausePressed;
 		_speedButton.Pressed += OnSpeedButtonPressed;
-		_goLiveButton.Pressed += OnGoLivePressed;
+		_goToNowButton.Pressed += OnGoToNowPressed;
+		_stepModeButton.Pressed += OnStepModePressed;
+		_stepApplyButton.Pressed += OnStepApplyPressed;
 		_chanceFilterSelector.ItemSelected += OnChanceFilterSelected;
 		_backToCalendarButton.Pressed += OnBackToCalendarPressed;
 		_backToDiceButton.Pressed += OnBackToDicePressed;
@@ -223,7 +367,13 @@ public partial class BetsHistoryExplorer : Control
 	// fallback for the cases where that premise does not hold — a shorter list (checkpoint rollback), a
 	// changed head (history reload), or an out-of-order tail — so a wrong assumption costs a rebuild, never
 	// a wrong view.
-	private void OnLiveStatsChanged(UserBettingStats _)
+	// ⚠ THIS EVENT IS NO LONGER HOW NEW BETS REACH THE VIEW — see SyncRecordsFromHistory's caller in
+	// _Process. It stays subscribed as the CORRECTNESS backstop: a reload can replace the record list
+	// without changing its length, which a count comparison cannot see, and only the fallback below
+	// recovers from that. Latency is the per-frame check's job; integrity is this one's.
+	private void OnLiveStatsChanged(UserBettingStats _) => SyncRecordsFromHistory();
+
+	private void SyncRecordsFromHistory()
 	{
 		if (_userStatsService?.BetHistory == null) return;
 
@@ -302,11 +452,69 @@ public partial class BetsHistoryExplorer : Control
 	{
 		if (!Visible) return;
 
-		AdvanceCursor(delta);
-		RefreshGoLiveVisibility();
+		// ── Why this is here and not on StatsChanged (playtest 1, 2026-08-18) ───────────────────────
+		// Live-follow was showing bets in twos. The emit path was not at fault: it renders every frame.
+		// The RECORDS were arriving in batches, because the only thing that grew `_allRecords` was
+		// `StatsChanged` — which `UserStatsService` deliberately throttles to 250 ms. Four batches a
+		// second against ~5 bets a second is 1.25 bets per batch, i.e. ones and twos. DiceGame does not
+		// have this problem because it renders off `ClientBetSettled`, which fires per settled bet.
+		//
+		// The journal itself was never batched: `OnBetExecutedRegisterBet` calls `BetHistory.Add`
+		// SYNCHRONOUSLY and only the *event* is throttled. The data was already there; nothing was
+		// looking. **A refresh cadence sized for repainting a panel is not a data-arrival notification —
+		// using one as the other imports its throttle into the thing it was never meant to gate.**
+		//
+		// One int comparison against a free property (`Records => _records`) per frame, real work only
+		// behind the edge — Pattern 6's hybrid, the `BtcMarketDataService` shape.
+		if (_historyLoaded &&
+			_userStatsService?.BetHistory != null &&
+			_userStatsService.BetHistory.Records.Count != _allRecords.Count)
+		{
+			SyncRecordsFromHistory();
+		}
+
+		DateTime present = PresentLocal();
+
+		// A checkpoint restore can retract the present BEHIND the cursor. Clamping is not optional: every
+		// index in this scene is derived from a binary search on the cursor, so a cursor claiming a future
+		// the world has taken back would render bets that, from the world's point of view, have not
+		// happened. Jump rather than slide, because the window has to be rebuilt backwards anyway.
+		if (_selectedLocal > present)
+		{
+			JumpCursorTo(present);
+		}
+
+		if (!_cursorRunning)
+		{
+			// PAUSED MEANS FROZEN — no exception, including parked at the present with a run pouring bets
+			// in behind it (playtest 1; the auto-snap that used to live here is gone). The cursor does not
+			// move, so nothing can cross it and there is nothing to emit; and no demand is outstanding,
+			// because arriving somewhere is not asking to be there and pausing withdrew whatever was.
+			// Holding the sentinel here rather than re-asserting the cursor is what makes both of those
+			// true for more than one frame.
+			_cursorDemandLocal = NoRequestSentinel;
+			_lastPresentLocal = present;
+			ResetThrottleMeasurement();
+		}
+		else
+		{
+			DateTime previousCursor = _selectedLocal;
+			_cursorDemandLocal = ComputeCursorDemand(delta, present);
+			_lastPresentLocal = present;
+
+			// §6.2 — the emit step is what actually MOVES the cursor. It renders every bet between the last
+			// emit frontier and the demand, and if the frame's budget runs out first it leaves the cursor
+			// on the timestamp of the last bet emitted instead of where the demand wanted it. The replay
+			// falls behind wall-clock; it never falls behind the data.
+			EmitCrossedBetsAndSettleCursor(_cursorDemandLocal);
+			AccumulateThrottleMeasurement(delta, previousCursor);
+		}
+
+		RefreshTransportAvailability();
 
 		DateTime current = GetCurrentLocal();
-		_selectedTimeLabel.Text = $"Selected timeline: {current:yyyy-MM-dd HH:mm:ss}{BuildWindowSuffix()}";
+		_selectedTimeLabel.Text =
+			$"Selected timeline: {current:yyyy-MM-dd HH:mm:ss}{BuildBehindNowSuffix(current)}{BuildWindowSuffix()}";
 
 		// §9.2 step 6 — the violet moves HERE, to the cursor that is actually in the past. The StatusBar
 		// clock keeps its own tint as a TRIPWIRE: after this phase the world clock is never rewound, so if
@@ -319,32 +527,44 @@ public partial class BetsHistoryExplorer : Control
 			_selectedTimeLabel.AddThemeColorOverride("font_color", replaying ? ReplayCursorColor : Colors.White);
 		}
 
+		RefreshThrottleLabel();
+
 		if (_sortedRecords.Count <= 0)
 		{
 			return;
 		}
 
-		// The rebuild below repopulates TWO UI containers with up to MaxPreviewEntries rows each and
-		// re-walks the summary cursor. Its cadence used to be "whenever the GAME second changes", which is
-		// a cadence the DEV time scale multiplies: at 9000X the game second changes every frame, so this
-		// ran ~520 entry updates per frame. A refresh cadence must be denominated in REAL time — game time
-		// is a quantity the player can accelerate by 90×, and any per-game-second budget accelerates with
-		// it. Both guards are kept: the timer bounds how often, the second-changed test avoids redundant
-		// identical rebuilds when the clock is slow or stopped.
+		// §2.3 — THE 1 Hz FLOOR STAYS IN FORCE FOR THE SNAPSHOT PATH. Appending one row is cheap;
+		// repainting a hundred is what §38.8 measured and removed, and the new append path earns its rate
+		// by doing far less per step, not by lifting this guard. What runs below is now only the
+		// wholesale/summary-label half — the per-bet rendering happens above, every frame, unthrottled.
+		//
+		// Its cadence used to be "whenever the GAME second changes", which is a cadence the DEV time scale
+		// multiplies: at 9000X the game second changes every frame, so this ran ~520 entry updates per
+		// frame. A refresh cadence must be denominated in REAL time — game time is a quantity the player
+		// can accelerate by 90×, and any per-game-second budget accelerates with it. Both guards are kept:
+		// the timer bounds how often, the second-changed test avoids redundant identical work when the
+		// cursor is slow or stopped.
 		_viewRefreshTimer += delta;
 		if (_viewRefreshTimer < ViewRefreshIntervalSeconds)
 		{
 			return;
 		}
 
+		// The second-changed test is no longer sufficient on its own. The emit budget can hold the cursor on
+		// ONE timestamp for many frames while it drains a same-timestamp burst — the journal is full of
+		// them (median gap 0.00 game-seconds) — and during that the rows stream in while the summary line
+		// beneath them would sit frozen, describing a window that is no longer on screen. So either moving
+		// clock or a moved emit frontier earns a refresh; the 1 Hz timer still bounds how often.
 		long currentSecond = new DateTimeOffset(current).ToUnixTimeSeconds();
-		if (currentSecond == _lastRenderedSecond)
+		if (currentSecond == _lastRenderedSecond && _renderedEndExclusive == _lastSummaryRenderedEnd)
 		{
 			return;
 		}
 
 		_viewRefreshTimer = 0d;
 		_lastRenderedSecond = currentSecond;
+		_lastSummaryRenderedEnd = _renderedEndExclusive;
 		RefreshHistoricalViewForCurrentTime(current.ToUniversalTime());
 	}
 
@@ -386,6 +606,10 @@ public partial class BetsHistoryExplorer : Control
 		_loaderLabel.Text = "History ready";
 		_loaderPanel.Visible = false;
 		_contentPanel.Visible = true;
+		// Only now may the per-frame record pickup run. Before this point `_allRecords` is empty or
+		// half-built, so a count comparison against the journal would read as "thousands of new bets" and
+		// send the frame into a full rebuild the loader is about to redo anyway.
+		_historyLoaded = true;
 	}
 
 	private void RefreshHistoricalViewForCurrentTime(DateTime currentUtc, bool forceRebuild = false)
@@ -411,18 +635,33 @@ public partial class BetsHistoryExplorer : Control
 
 		int endExclusive = UpperBound(_sortedRecords, currentUtc);
 
-		// The summary still advances (its cursor is incremental and cheap), but repopulating the two
-		// containers with the identical window is pure waste — and it is the expensive half.
-		if (forceRebuild || endExclusive != _lastRenderedEndExclusive)
+		// THE WHOLESALE PATH IS NOW THE EXCEPTION, and the condition matters more than it looks. It used to
+		// repaint whenever the window had moved AT ALL — which under mini-plan 04 would silently undo the
+		// whole plan: while the emit budget is draining a burst, `endExclusive` legitimately runs ahead of
+		// `_renderedEndExclusive`, and repainting "the last 100 up to endExclusive" would SKIP every bet in
+		// between. That is the exact failure §6.2 exists to end.
+		//
+		// So it rebuilds only when the append path cannot express the change: no window rendered yet, or
+		// the view moved BACKWARDS (a rewind, a retracted present), or a caller forced it. Forward motion
+		// belongs to EmitCrossedBetsAndSettleCursor, which also owns the summary walk while it does.
+		bool mustRebuild = forceRebuild || _renderedEndExclusive < 0 || endExclusive < _renderedEndExclusive;
+		if (mustRebuild)
 		{
-			_lastRenderedEndExclusive = endExclusive;
+			_renderedEndExclusive = endExclusive;
 			int start = Math.Max(0, endExclusive - MaxPreviewEntries);
 			List<BetRecord> preview = _sortedRecords.GetRange(start, endExclusive - start);
 			_previousWinnerNumbersGrid.LoadFromHistoricalRecords(preview);
 			_betHistoryContainer.LoadFromHistoricalRecords(preview);
-		}
 
-		AdvanceSummaryTo(endExclusive, forceRebuild);
+			// `forceRebuild: false` even here, and it is load-bearing rather than an optimisation. A
+			// FORWARD jump — a step, a manual "Go to Now", and now an auto-snap once per real second —
+			// needs the summary only to ADVANCE, which the walk does natively; forcing it would rewalk the
+			// entire journal (196k records in the developer's current world) on every one of them. The
+			// walk still resets itself on the case that genuinely needs it, `endExclusive < _summaryCursor`
+			// (a rewind), and every caller that invalidates the VIEW rather than the position goes through
+			// ApplyChanceFilter, which zeroes the accumulators itself.
+			AdvanceSummaryTo(endExclusive, forceRebuild: false);
+		}
 		// With a chance filter active every record shares that chance, so the "(at N% chance)" qualifier the
 		// unfiltered figure needs (§40.8: a loss run only means something at a fixed chance) is redundant —
 		// the scope line already says it once, at the front.
@@ -603,36 +842,206 @@ public partial class BetsHistoryExplorer : Control
 		return live > frontier ? live : frontier;
 	}
 
-	// The scene's whole time model, in one method. Live-follow pins the cursor to the present; otherwise
-	// Play advances it at the chosen replay speed. Nothing here writes to CalendarTimeService.
-	private void AdvanceCursor(double delta)
+	// The scene's whole time model, in one method — but only its DEMAND half. This says where the cursor
+	// is asked to be; EmitCrossedBetsAndSettleCursor says where it gets to. Nothing here writes to
+	// CalendarTimeService.
+	//
+	// Note the replay branch builds the demand from `_selectedLocal`, the SETTLED cursor, not from the
+	// previous demand: §6.2's rule is that a throttled frame leaves the cursor on the last bet emitted and
+	// "the next frame resumes from there". A demand that kept running ahead would open a gap that never
+	// closed. Only live-follow has a demand of its own — the present — which is why falling behind while
+	// following is a persistent, honest gap (§6.3) rather than a lost position.
+	// Called only while the panel is PLAYING — a paused panel has no demand at all (see
+	// RequestedThePresent), and _Process handles that case without asking this method.
+	private DateTime ComputeCursorDemand(double delta, DateTime present)
 	{
-		DateTime present = PresentLocal();
-
-		if (_liveMode)
+		if (IsLiveFollowing)
 		{
-			// Following the present rather than replaying: the cursor IS the present each frame, so new
-			// bets appear as they settle.
-			_selectedLocal = present;
-			return;
+			return present;
 		}
 
-		if (!_cursorRunning)
+		DateTime next = _selectedLocal.AddSeconds(delta * _cursorSpeed);
+		if (next < present)
 		{
-			return;
+			return next;
 		}
 
-		_selectedLocal = _selectedLocal.AddSeconds(delta * _cursorSpeed);
-
-		// Reaching the present ends the replay — there is nothing past it to show. It does NOT switch to
-		// live-follow: that is the player's explicit choice (the Live button), and silently adopting it
-		// would make a replay quietly become a live view without anyone asking for it.
-		if (_selectedLocal >= present)
+		// §2.1 — on reaching the present the multiplier drops automatically to base × 1.
+		if (Math.Abs(_cursorSpeed - _speedSteps[0]) > 0.001d)
 		{
-			_selectedLocal = present;
+			_cursorSpeed = _speedSteps[0];
+			RefreshControlLabels();
+		}
+
+		// §6.4 supersedes mini-plan 03 §9.3's "reaching the present must never enter live-follow silently".
+		// Under the two-axis model that is not a decision at all: the player already expressed the intent
+		// by leaving the panel in PLAY, and arriving at the present does not need a second confirmation —
+		// with a run still producing bets, `IsLiveFollowing` is simply true from the next frame. With NO
+		// run the present is static, so there is nothing left to replay and the panel stops (§4.2b).
+		if (!RunIsProducingBets)
+		{
 			_cursorRunning = false;
 			RefreshControlLabels();
 		}
+
+		return present;
+	}
+
+	// ── The emit step (§2.3 / §6.2) ─────────────────────────────────────────────
+	// Renders ONE ROW PER BET the cursor crosses, exactly as DiceGame does for a settled bet, and settles
+	// the cursor at whatever that could actually cover this frame.
+	//
+	// The clumping this replaces was never a speed problem and never a timestamp-collision problem: the
+	// scene repainted a WINDOW where DiceGame emits an EVENT, so the number of "new" bets seen per repaint
+	// was (repaint rate) × (cursor rate) × (bet density) — three multipliers, none of which is "one bet".
+	// Rendering every crossed bet reproduces DiceGame's behaviour by construction, at any speed, and gets
+	// the plan's whole pacing specification for free: the hardware rate is already recorded in the data as
+	// the SPACING between bets, so a stretch played at 1 piece replays at 1X because its bets are spaced
+	// that way, and crossing into a 2X stretch speeds up at exactly the first faster bet — no hardware
+	// lookup, no detection step, no threshold. (Which matters, because hardware history is not persisted:
+	// a base derived from hardware STATE could not be computed for a past date at all.)
+	private void EmitCrossedBetsAndSettleCursor(DateTime demandLocal)
+	{
+		// No window rendered yet (fresh load, filter change, invalidated view): the wholesale path owns the
+		// containers until it has run once, so the cursor is free to move and the rebuild will catch up.
+		if (_renderedEndExclusive < 0 || _sortedRecords.Count <= 0)
+		{
+			_selectedLocal = demandLocal;
+			return;
+		}
+
+		int target = UpperBound(_sortedRecords, demandLocal.ToUniversalTime());
+		if (target <= _renderedEndExclusive)
+		{
+			// Nothing crossed — the cursor is passing through a gap between bets and pays nothing for it.
+			_selectedLocal = demandLocal;
+			return;
+		}
+
+		int index = _renderedEndExclusive;
+		int budget = MaxAppendRowsPerFrame;
+		while (index < target && budget > 0)
+		{
+			BetRecord record = _sortedRecords[index];
+			_previousWinnerNumbersGrid.AddWinnerNumber(record.Roll, record.Outcome == BetOutcome.Win);
+			_betHistoryContainer.AppendHistoricalRecord(record);
+			index++;
+			budget--;
+		}
+
+		// The summary walks to the SAME index the rows did, so the figures can never describe a window
+		// different from the one on screen — the two used to be driven by separate binary searches.
+		AdvanceSummaryTo(index, forceRebuild: false);
+		_renderedEndExclusive = index;
+
+		if (index >= target)
+		{
+			_selectedLocal = demandLocal;
+			return;
+		}
+
+		// Budget spent: the CLOCK pays. Leave the cursor on the last bet emitted; the next frame resumes
+		// from there. Never below where it already was — bets sharing a timestamp are common in this
+		// journal (see the note on MaxAppendRowsPerFrame), and the cursor must not appear to move
+		// backwards while a burst is being drained.
+		ReportEmitBudgetBound(target - index);
+		DateTime settled = _sortedRecords[index - 1].TimestampUtc.ToLocalTime();
+		_selectedLocal = settled > _selectedLocal ? settled : _selectedLocal;
+	}
+
+	// §6.2's clock-pays path is a PROMISE that has, so far, never been exercised: at 5 hardware credits a
+	// 10x replay demands ~47 bets/second — 0.78 per frame against a budget of 25 — so the branch above
+	// never runs and the requested/actual label is correct to stay hidden. That is indistinguishable from
+	// the mechanism being broken, which is why it now announces itself the first time it engages. Silence
+	// in the log means the budget has never bound in this session, not that the readout failed.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void ReportEmitBudgetBound(int stillOwed)
+	{
+		if (_emitBudgetBoundReported)
+		{
+			return;
+		}
+
+		_emitBudgetBoundReported = true;
+		GD.Print(string.Create(
+			CultureInfo.InvariantCulture,
+			$"[BetsHistory] Emit budget bound for the first time: {stillOwed} bets still owed after " +
+			$"{MaxAppendRowsPerFrame} rows this frame. The cursor is now paying instead of the content " +
+			$"(§6.2) and the 'requested / actual' label should be visible. MaxAppendRowsPerFrame is an " +
+			$"unpriced placeholder — TIME it before tuning it (§40.7), and a low actual asks what is " +
+			$"eating the frame, never for a bigger budget (§38.7)."));
+	}
+
+	// Moves the cursor somewhere it did not walk to — a step (§4.2c), "Go to Now", or a retracted present.
+	// A jump is NOT a replay, so §6.2's no-skipped-bet rule does not apply to it: the player asked to be
+	// somewhere else, and the answer to "what happened here?" is the last MaxPreviewEntries bets before
+	// that instant, which is exactly what the wholesale path shows.
+	private void JumpCursorTo(DateTime targetLocal)
+	{
+		_selectedLocal = targetLocal;
+		_cursorDemandLocal = targetLocal;
+		_renderedEndExclusive = -1;      // force the wholesale rebuild rather than an append from nowhere
+		_lastRenderedSecond = long.MinValue;
+		ResetThrottleMeasurement();
+		RefreshHistoricalViewForCurrentTime(targetLocal.ToUniversalTime(), forceRebuild: true);
+	}
+
+	// ── The requested-vs-actual readout (§6.2) ──────────────────────────────────
+	private void AccumulateThrottleMeasurement(double delta, DateTime previousCursor)
+	{
+		// Only a replay has a "requested speed" to fall short of. While following the present the demand is
+		// the world's own pace, so comparing it against the multiplier would report a shortfall that means
+		// nothing — the gap that matters there is already legible in the two clocks (§3).
+		if (!_cursorRunning || IsLiveFollowing)
+		{
+			ResetThrottleMeasurement();
+			return;
+		}
+
+		_throttleWindowRealSeconds += delta;
+		_throttleWindowGameSeconds += (_selectedLocal - previousCursor).TotalSeconds;
+		if (_throttleWindowRealSeconds < ThrottleWindowSeconds)
+		{
+			return;
+		}
+
+		_throttleActualSpeedX = _throttleWindowGameSeconds / (_throttleWindowRealSeconds * GameBaseSpeed);
+		_throttleWindowRealSeconds = 0d;
+		_throttleWindowGameSeconds = 0d;
+	}
+
+	private void ResetThrottleMeasurement()
+	{
+		_throttleWindowRealSeconds = 0d;
+		_throttleWindowGameSeconds = 0d;
+		_throttleActualSpeedX = -1d;
+	}
+
+	// Shown ONLY while the two figures differ, so it reads as information rather than a permanent warning.
+	private void RefreshThrottleLabel()
+	{
+		if (_replayThrottleLabel == null)
+		{
+			return;
+		}
+
+		double requested = _cursorSpeed / GameBaseSpeed;
+		string text = null;
+		if (_throttleActualSpeedX >= 0d && _throttleActualSpeedX < requested * 0.95d)
+		{
+			text = string.Create(
+				CultureInfo.InvariantCulture,
+				$"Speed: {requested:0.##}x requested / {_throttleActualSpeedX:0.##}x actual");
+		}
+
+		if (string.Equals(text, _throttleLabelApplied, StringComparison.Ordinal))
+		{
+			return;
+		}
+
+		_throttleLabelApplied = text;
+		_replayThrottleLabel.Text = text ?? string.Empty;
+		_replayThrottleLabel.Visible = text != null;
 	}
 
 	// ── Replay window ───────────────────────────────────────────────────────────
@@ -666,6 +1075,47 @@ public partial class BetsHistoryExplorer : Control
 		// Only the cursor moves. The world clock is not ours (§9.1); the seed is updated so the calendar
 		// reopens where the player actually ended up rather than where they asked to go.
 		_calendarTimeService?.SetExplorerSelectedLocalDateTime(floorLocal);
+	}
+
+	// ── How far behind the present the cursor is (playtest 1, 2026-08-18) ───────
+	// §3 said the drift would be "legible without a new indicator, in the two clocks" — the StatusBar's
+	// world clock and this one. It is not: the two clocks sit in different rows, in different formats, and
+	// reading a gap out of them means subtracting two timestamps by eye. That is why "the violet did not
+	// appear" and "the clocks did not diverge" were BOTH reported as maybes rather than as facts.
+	//
+	// The violet says *whether* the cursor is behind; this says *by how much*, which is the half that
+	// makes it checkable. It also gives §6.3's honest live-follow gap somewhere to show up, and it is what
+	// distinguishes a replay that is genuinely rewound from one that closed the distance a moment later —
+	// at 1x a rewind-by-minute is 60 game-seconds and the replay eats it in well under a second.
+	//
+	// Hidden below one second so live-follow (cursor pinned to the present) stays clean.
+	private string BuildBehindNowSuffix(DateTime currentLocal)
+	{
+		TimeSpan behind = PresentLocal() - currentLocal;
+		if (behind.TotalSeconds < 1d)
+		{
+			return string.Empty;
+		}
+
+		string amount;
+		if (behind.TotalMinutes < 1d)
+		{
+			amount = string.Create(CultureInfo.InvariantCulture, $"{behind.Seconds}s");
+		}
+		else if (behind.TotalHours < 1d)
+		{
+			amount = string.Create(CultureInfo.InvariantCulture, $"{behind.Minutes}m {behind.Seconds:00}s");
+		}
+		else if (behind.TotalDays < 1d)
+		{
+			amount = string.Create(CultureInfo.InvariantCulture, $"{(int)behind.TotalHours}h {behind.Minutes:00}m");
+		}
+		else
+		{
+			amount = string.Create(CultureInfo.InvariantCulture, $"{(int)behind.TotalDays}d {behind.Hours:00}h");
+		}
+
+		return $"   ({amount} behind now)";
 	}
 
 	private string BuildWindowSuffix()
@@ -778,13 +1228,22 @@ public partial class BetsHistoryExplorer : Control
 
 		// The view changed underneath every cached index, so invalidate both caches: the summary cursor
 		// (which counts through the view) and the rendered-window guard.
+		ResetSummaryAccumulators();
+		_renderedEndExclusive = -1;
+		_lastRenderedSecond = long.MinValue;
+	}
+
+	// The two places that zero the summary walk. They were written out twice and had ALREADY drifted —
+	// this one was missing `_summaryMaxWonAmount`, latent only because every caller happened to be followed
+	// by a forced rebuild that zeroed it again. One method, so they cannot drift a second time.
+	private void ResetSummaryAccumulators()
+	{
 		_summaryCursor = 0;
 		_summaryTotalBets = 0;
 		_summaryMaxBetAmount = 0m;
 		_summaryMaxLossAmount = 0m;
+		_summaryMaxWonAmount = 0m;
 		ResetStreakSummary();
-		_lastRenderedEndExclusive = -1;
-		_lastRenderedSecond = long.MinValue;
 	}
 
 	private void OnChanceFilterSelected(long index)
@@ -845,12 +1304,7 @@ public partial class BetsHistoryExplorer : Control
 	{
 		if (forceRebuild || endExclusive < _summaryCursor)
 		{
-			_summaryCursor = 0;
-			_summaryTotalBets = 0;
-			_summaryMaxBetAmount = 0m;
-			_summaryMaxLossAmount = 0m;
-			_summaryMaxWonAmount = 0m;
-			ResetStreakSummary();
+			ResetSummaryAccumulators();
 		}
 
 		for (int i = _summaryCursor; i < endExclusive; i++)
@@ -970,83 +1424,214 @@ public partial class BetsHistoryExplorer : Control
 		return lo;
 	}
 
-	// Play/Pause and Speed drive the CURSOR. Both leave live-follow, because asking to replay is asking
-	// not to be pinned to the present.
+	// Play/Pause toggles the PANEL's state and nothing else (§6.4). It no longer clears a live-follow flag,
+	// because there is no flag: pausing at the present simply makes `IsLiveFollowing` false through its
+	// first term, and pressing Play again there makes it true again — which is exactly right, since
+	// "playing at the present while the world produces bets" IS what live-follow means.
+	// THE ONLY PLACE `_cursorRunning` CAN BECOME TRUE, and that is load-bearing rather than incidental.
+	// Live-follow and auto-snap are both derived from it, so if anything else could start the panel
+	// playing, the scene would be able to put itself into live-follow — which is precisely the thing §4.1
+	// forbids ("nothing moves until the player asks"). The file's only other two writes are both `false`:
+	// arriving (§4.1) and a replay reaching the present with no run left to follow (§4.2b).
 	private void OnPlayPausePressed()
 	{
-		_liveMode = false;
 		_cursorRunning = !_cursorRunning;
+
+		if (!_cursorRunning)
+		{
+			// PAUSING FREEZES — and this line is what makes it so. Without it, pausing a live-follow would
+			// land straight in auto-snap (the identical request, the other side of the play axis) and the
+			// view would go on jumping to the newest bets: the exact opposite of what a player reaches for
+			// Pause to do. Withdrawing the request is the honest statement of what they asked for — stop,
+			// not keep bringing me to now.
+			//
+			// Play deliberately does NOT do the mirror of this. Pressing Play out of auto-snap SHOULD
+			// become live-follow: the player is at the present, already asked to be, and has now asked to
+			// see every bet rather than a refreshed snapshot.
+			_cursorDemandLocal = NoRequestSentinel;
+		}
+
 		RefreshControlLabels();
 	}
 
+	// §6.1 — the ladder is left exactly as it was, and that is a RESULT, not an omission. The base is the
+	// hardware rate in bets per real second (~5 bets/s at 5 credits), so 100 game-seconds/s already means
+	// "as it happened" and the top step, 1000, is already the specified base × 10 ceiling. The premise for
+	// changing it came from a bad statistic — a rate divided by the part of the interval where something
+	// happened rather than by the whole of it, over-reporting density 32× (§1.2a).
 	private void OnSpeedButtonPressed()
 	{
-		_liveMode = false;
 		int idx = Array.FindIndex(_speedSteps, s => Math.Abs(s - _cursorSpeed) < 0.001d);
 		idx = idx < 0 ? 0 : (idx + 1) % _speedSteps.Length;
 		_cursorSpeed = _speedSteps[idx];
+		ResetThrottleMeasurement();
 		RefreshControlLabels();
+		// Raising the speed while parked at the present is how a paused viewer asks to replay again; the
+		// cursor itself is untouched, so nothing here needs to rebuild.
 	}
 
-	// §9.3 — the Live button, which until now was only a CAPTION on Play/Pause that did nothing when
-	// pressed. It jumps the cursor to the newest bet and follows the present from there.
+	// ── "Go to Now" (developer, 2026-08-18 — supersedes mini-plan 03 §9.3's "Go Live") ──────────────────
+	// ONE ASSIGNMENT — put the cursor at the present — with TWO OUTCOMES the handler does not branch on,
+	// because §6.4a's derived expression already tells them apart:
 	//
-	// Enabled only while a player autobet is running: with no run the present does not advance, so
-	// "follow the present" and "sit still" are the same thing and the control would be inert. §24.13b's
-	// rule — an enabled-but-inert control is a lie — which this button had been since it was labelled.
-	private void OnGoLivePressed()
+	//   panel in PLAY + a run producing bets → the jump lands the demand on the present, so on the very
+	//                                          next frame `IsLiveFollowing` is true and the panel follows.
+	//   anything else (paused, or no run)    → the same jump is just the final SNAP: the last
+	//                                          MaxPreviewEntries bets up to now, and the cursor stays.
+	//
+	// So the button no longer sets play, as the old "Go Live" did. Pressing it while paused is a request
+	// to SEE the end of the history, not to start replaying it — and those are the two axes of §6.4, of
+	// which this control belongs to the cursor one alone.
+	private void OnGoToNowPressed()
 	{
-		if (!CanGoLive())
+		if (!CanGoToNow())
 		{
 			return;
 		}
 
-		_liveMode = true;
-		_cursorRunning = false;      // live-follow supersedes replay; nothing to advance
-		_cursorSpeed = _speedSteps[0]; // back to 1X, so leaving Live later resumes at a sane rate
-		_selectedLocal = PresentLocal();
-		_lastRenderedSecond = long.MinValue;
-		_lastRenderedEndExclusive = -1;
+		DateTime present = PresentLocal();
+		_lastPresentLocal = present;
+		JumpCursorTo(present);
 		RefreshControlLabels();
-		RefreshHistoricalViewForCurrentTime(GetCurrentLocal().ToUniversalTime(), forceRebuild: true);
 	}
 
-	// Pressing it does something only when a run is producing new bets AND the view is not already
-	// following them. Outside that, the button is not greyed — it is not SHOWN (developer's call).
-	//
-	// Hiding rather than disabling is the stronger version of §24.13b's rule: a greyed control still
-	// occupies the eye and still poses a question ("why can't I use that?"), whereas a control that
-	// appears exactly when it is useful never poses one. It suits this button in particular because its
-	// two unavailable states are both states in which the player has no reason to want it.
-	private bool CanGoLive() => _calendarTimeService?.IsAutobetActive == true && !_liveMode;
-
-	// Re-evaluated every frame, not only on a control press: an autobet can start or stop at any moment
-	// (a stop condition, a mined block, an exhausted bankroll), and the transport must follow it. Two bool
-	// comparisons per frame; the nodes are touched only on an edge.
-	private void RefreshGoLiveVisibility()
+	// ── Stepping through time (§4.2c) ───────────────────────────────────────────
+	private void OnStepModePressed()
 	{
-		if (_goLiveButton != null)
+		_stepModeIndex = (_stepModeIndex + 1) % StepModes.Length;
+		RefreshControlLabels();
+	}
+
+	private void OnStepApplyPressed()
+	{
+		(string _, int days, int hours, int minutes) = StepModes[_stepModeIndex];
+		DateTime target = _selectedLocal.AddDays(days).AddHours(hours).AddMinutes(minutes);
+
+		// Both bounds are the ones already in force everywhere else in this scene: the replay floor
+		// (mini-plan 03 §6.6 — the oldest bet still on disk) and the present. A forward step that would
+		// overshoot LANDS ON the present rather than being refused, and if the panel is in play, follow
+		// re-engages there by itself (§6.4) — the derived expression needs no case for it.
+		DateTime present = PresentLocal();
+		if (target > present)
 		{
-			bool show = CanGoLive();
-			if (show != _goLiveVisible || !_goLiveVisibilityApplied)
-			{
-				_goLiveVisible = show;
-				_goLiveVisibilityApplied = true;
-				_goLiveButton.Visible = show;
-			}
+			target = present;
 		}
 
-		// Play and Speed are meaningless with nothing ahead of the cursor to replay — following live, or
-		// already standing at the present. Not a flicker risk despite the present moving during a run: a
-		// replay that reaches the present stops there, the sim then advances the present past it, and both
-		// controls become live again because there genuinely IS new material to play through.
-		bool nothingToReplay = _liveMode || GetCurrentLocal() >= PresentLocal();
-		if (nothingToReplay != _transportInert || !_transportStateApplied)
+		if (_windowFloorLocal.HasValue && target < _windowFloorLocal.Value)
 		{
-			_transportInert = nothingToReplay;
+			target = _windowFloorLocal.Value;
+		}
+
+		if (target == _selectedLocal)
+		{
+			return;
+		}
+
+		// Play state is deliberately NOT touched: rewinding leaves live-follow but does not leave PLAY, so
+		// stepping back from the present while playing keeps playing — from the new point, forward, as a
+		// replay (§6.4).
+		_lastPresentLocal = present;
+		JumpCursorTo(target);
+		RefreshControlLabels();
+	}
+
+	// ── What "there is somewhere forward to go" means ───────────────────────────
+	// ONE predicate behind BOTH forward controls — "Go to Now" and a forward-programmed Step — because
+	// §39.16 rule 6 applies squarely here: a displayed signal must share its source with the action it
+	// advertises. Two independently-written tests would eventually let a button offer a jump the handler
+	// then refuses, or grey out one that would have worked.
+	//
+	// The threshold is not zero, and that is the whole design of it. During a live run the present moves
+	// every frame, so `cursor < present` is true essentially always — a zero threshold would leave both
+	// controls permanently enabled, offering jumps of a few milliseconds and flickering on every repaint.
+	// One real second at 1x (= GameBaseSpeed = 100 in-game seconds) is the developer's chosen granularity:
+	// after a snap the controls go quiet, and they come back exactly when a second's worth of new material
+	// exists to go to. With NO run the present is static, so once you arrive they stay quiet until you
+	// rewind — which is correct, since there is genuinely nothing forward.
+	private const double GoToNowMinGapGameSeconds = GameBaseSpeed;
+
+	private bool HasMaterialGapToPresent() =>
+		(PresentLocal() - GetCurrentLocal()).TotalSeconds >= GoToNowMinGapGameSeconds;
+
+	// Disabled while FOLLOWING, and only there. Backpressure (§6.2) can legitimately open a gap wider than
+	// the threshold while following, and offering the jump would invite the player to skip the bets the
+	// replay is still honestly working through — §6.3 makes that gap the feature, not a defect a button
+	// should close.
+	//
+	// While AUTO-SNAPPING it stays available (developer, 2026-08-18): the auto-snap removes the OBLIGATION
+	// to press, not the ability to. The two use different guards and that is what gives the button
+	// something to do — the auto-snap additionally waits on the 1-real-second repaint floor, so whenever
+	// game time runs faster than 100 in-game seconds per real second (any raised DEV time scale) the
+	// material gap opens first and pressing forces the refresh early. At exactly base scale the two
+	// coincide and the button is live for about a frame, which costs nothing.
+	private bool CanGoToNow() => !IsLiveFollowing && HasMaterialGapToPresent();
+
+	private static bool IsForwardStep(int modeIndex)
+	{
+		(string _, int days, int hours, int minutes) = StepModes[modeIndex];
+		return days + hours + minutes > 0;
+	}
+
+	// Re-evaluated every frame, not only on a control press: an autobet can start or stop at any moment
+	// (a stop condition, a mined block, an exhausted bankroll), and the transport must follow it. A handful
+	// of comparisons per frame; the nodes are touched only on an edge.
+	private void RefreshTransportAvailability()
+	{
+		// Greyed, no longer HIDDEN. mini-plan 03 §9.3 hid it because its only unavailable states were ones
+		// the player had no reason to want it in. That stopped being true once the button gained its second
+		// outcome: a greyed "Go to Now" now means one of two things the player DOES want to know — the view
+		// is tracking the present for you, or it is following it bet by bet — and the caption below says
+		// which. An absent control could say neither.
+		bool goToNowDisabled = !CanGoToNow();
+		if (_goToNowButton != null &&
+			(goToNowDisabled != _goToNowDisabled || !_goToNowDisabledApplied))
+		{
+			_goToNowDisabled = goToNowDisabled;
+			_goToNowDisabledApplied = true;
+			_goToNowButton.Disabled = goToNowDisabled;
+			_goToNowButton.Visible = true;
+		}
+
+		// Play/Pause is inert only when the cursor stands at a present that is not moving — no run, nothing
+		// ahead, so playing and sitting still are the same thing. It is NOT disabled at a present a run is
+		// still advancing: pausing there is the player leaving live-follow, which is a real action.
+		//
+		// Speed is inert in that case too, and additionally while FOLLOWING, where the demand is the world's
+		// own pace rather than base × N. §24.13b — an enabled-but-inert control is a lie.
+		bool presentIsStatic = GetCurrentLocal() >= PresentLocal() && !RunIsProducingBets;
+		bool speedInert = presentIsStatic || IsLiveFollowing;
+		if (presentIsStatic != _transportInert || !_transportStateApplied)
+		{
+			_transportInert = presentIsStatic;
 			_transportStateApplied = true;
-			if (_speedButton != null) _speedButton.Disabled = nothingToReplay;
-			if (_playPauseButton != null) _playPauseButton.Disabled = nothingToReplay;
+			if (_playPauseButton != null) _playPauseButton.Disabled = presentIsStatic;
+		}
+
+		if (_speedButton != null && _speedButton.Disabled != speedInert)
+		{
+			_speedButton.Disabled = speedInert;
+		}
+
+		// The Step ACTION follows the SAME predicate as "Go to Now" whenever it is programmed to move
+		// forward — not merely a similar one. A forward step of any size clamps to the present, so it asks
+		// the identical question and must give the identical answer, including the `!IsLiveFollowing` term:
+		// while following, a forward jump would skip the bets the replay is still honestly working through.
+		// A rewind-programmed step is never disabled — there is always past to go back to, bounded by the
+		// replay floor (§4.2c).
+		bool stepInert = IsForwardStep(_stepModeIndex) && !CanGoToNow();
+		if (_stepApplyButton != null && _stepApplyButton.Disabled != stepInert)
+		{
+			_stepApplyButton.Disabled = stepInert;
+		}
+
+		// Live-follow can begin or end with NO button pressed — a run starting or stopping is enough — so
+		// the captions cannot be maintained from the press handlers alone.
+		bool following = IsLiveFollowing;
+		if (following != _transportCaptionState || !_transportCaptionApplied)
+		{
+			_transportCaptionState = following;
+			_transportCaptionApplied = true;
+			ApplyTransportCaptions();
 		}
 	}
 
@@ -1071,11 +1656,34 @@ public partial class BetsHistoryExplorer : Control
 
 	private void RefreshControlLabels()
 	{
-		RefreshGoLiveVisibility();
+		RefreshTransportAvailability();
+		ApplyTransportCaptions();
+	}
 
-		if (_liveMode)
+	// Live-follow is derived, so it can start or end WITHOUT any button being pressed — a run beginning or
+	// stopping is enough. The captions therefore cannot be maintained only from the press handlers, which
+	// is why RefreshTransportAvailability (already per-frame, already edge-triggered) drives them too.
+	private void ApplyTransportCaptions()
+	{
+		if (_stepModeButton != null)
 		{
-			_playPauseButton.Text = "Play";
+			_stepModeButton.Text = StepModes[_stepModeIndex].Label;
+		}
+
+		// The "Go to Now" caption carries the one state that greys it out — a greyed control that does not
+		// say why is the §24.13b problem in its other form. Its other disabled state (paused, already at
+		// the present, no material gap yet) needs no caption: it is over within a second of a live run, and
+		// the button coming back is itself the news that there are new bets to go to.
+		if (_goToNowButton != null)
+		{
+			_goToNowButton.Text = IsLiveFollowing ? "Following Now" : "Go to Now";
+		}
+
+		if (IsLiveFollowing)
+		{
+			// Still "Pause", not "Play": the panel IS playing — following the present is what playing means
+			// here (§6.4), and the button must offer the action, not restate the state.
+			_playPauseButton.Text = "Pause";
 			_speedButton.Text = "1x (Live)";
 			return;
 		}
