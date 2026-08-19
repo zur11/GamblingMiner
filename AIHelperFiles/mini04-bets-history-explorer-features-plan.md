@@ -6,7 +6,8 @@ made its statistics whole (§6.8).
 
 **Status:** ✅ **COMPLETE — implemented and playtested green (§11, §12).** All five items of §5
 (record: §8), the "Go to Now" rework (§9); auto-snap was built at §9.4 and removed at §12.1. Protocol §10.
-· **World format bump:** none — nothing here persists.
+· **World format bump:** none. · ⚠ **§13 records a defect the replay EXPOSED but did not cause** — a second
+bet stream in the player journal, outside this plan's scope, needing its own investigation.
 
 ---
 
@@ -856,3 +857,95 @@ hypothesis that prompted it.*
 
 **If a future run shows `(… behind now)` with a white clock, that is a real defect and the readout has
 localised it.** If both appear together, §12.2's first explanation was right and nothing was ever broken.
+
+---
+
+## 13. A second bet stream in the player's journal — found from the replay (2026-08-18)
+
+**Not a mini-plan 04 defect.** Nothing in this plan touches session lifecycle. It is recorded here because
+the replay is what exposed it, and because it forces a caveat on §11.1.
+
+### 13.1 — The observation
+
+Stepping forward by one minute, the developer counted **7 bets** in the minute after `14:36:57` local, and
+asked why: 5 hardware credits should be 5 bets per **100** in-game seconds, i.e. ~3 per minute.
+
+**The premise is exactly right, and the engine obeys it.** Bets per hour across the journal:
+
+| In-game hour (UTC) | bets/h | per 100 game-s |
+|---|---|---|
+| 2009-05-21 → 05-23 T18 (rolling) | **180** | **5.00** |
+| 2009-05-22 T19 | 270 | 7.50 |
+| **2009-05-23 T19 / T20 / T21** | **333 / 359 / 361** | **9.25 / 9.97 / 10.03** |
+| 2009-05-23 T22 → 05-24 T18 (rolling) | **180** | **5.00** |
+
+180/h is 5.00 per 100 game-seconds to three digits, hour after hour, for ~99% of the journal. The
+screenshot lands dead centre in the one sustained 2× band, which had already ended by T22.
+
+### 13.2 — The cause: two wallets, one journal
+
+Extracting the exact window shows the records **interleave two independent balance lines**:
+
+```
+19:36:16  bet=0.00529    W   bal=837.74339880      ← line A
+19:36:29  bet=0.78310979 W   bal=771.14328571      ← line B
+19:36:35  bet=0.00100    L   bal=837.74239880      ← A
+19:36:57  bet=0.00230    W   bal=837.74465372      ← A
+19:37:03  bet=0.00100    L   bal=771.14228571      ← B
+19:37:15  bet=0.00100    W   bal=837.74563412      ← A
+19:37:19  bet=0.00230    L   bal=771.13998571      ← B
+19:37:35  bet=0.00100    L   bal=837.74463412      ← A
+19:37:36  bet=0.00529    L   bal=771.13469571      ← B
+19:37:53  bet=0.01216700 W   bal=771.14662424      ← B
+19:37:56  bet=0.00230    W   bal=837.74688904      ← A
+```
+
+Each line is **continuous to the satoshi** on its own (`bal[i] = bal[i-1] + net[i]`, exact for every pair),
+each carries its **own martingale progression** (A resets while B is mid-ladder at 0.001 → 0.0023 → 0.00529
+→ 0.0121670), and each fires at **~20 game-second spacing — the correct 5-credit rate.** Two correct
+sessions; the anomaly is only that both write to one journal. Over the last 20,000 records a two-line fit
+explains **92.8%** (the remaining 7.1% are auto-recharges, which legitimately break continuity).
+
+Line A ends at `837.5` — the player's Bankroll, per the StatusBar. **Line B is not the player.**
+
+### 13.3 — Mechanism (likely, not proven)
+
+`DiceGame` owns a local `_session` + `_wallet` + `_betService` **and** delegates to
+`SimulationService.StartPlayerAutobet`. Both register into the player journal —
+`DiceGame.cs:1587` and `SimulationService.cs:588` — and **each is guarded only by "is the player the
+active node", never by "is another session already running".** Two sessions seeded from the same bankroll
+would diverge exactly as A and B do.
+
+Supporting the timing: each band is ~1,080 bets ÷ 10 per real second ≈ **2 real minutes**, and both land
+in the windows when the developer was navigating in and out of DiceGame to playtest this scene.
+
+Not chased further here — it is a different subsystem, and pinning which navigation leaves both alive is
+an investigation, not an edit.
+
+### 13.4 — Blast radius, and why it is worth a plan of its own
+
+- **The contamination is already visible in the developer's own screenshot**: the summary reads
+  `Max bet: 964.63272326 SC` beside a Bankroll of `837.66`. **A single wallet cannot bet more than it
+  holds** — that figure was never the player's.
+- Every lifetime figure inherits it: `Rollup.TotalBets = 215,723`, wagered, net profit, max bet/loss/won.
+- **INC-002's segmentation cannot separate them.** Runs are measured per `(GameId, Chance)` and both
+  streams are `Dice` at `50` — so the loss/win-streak metric concatenates two independent sessions. That
+  is §40.8's exact failure mode wearing new clothes: *the input was corrupted upstream, and the metric that
+  distorts it most is the one that broadcasts it.*
+
+> **The general rule this earns: a journal that is documented as belonging to one actor should ASSERT it.**
+> A `BalanceAfter` continuity check is `O(1)` per record against a field the journal already carries, and
+> it would have caught this the first hour it happened instead of three in-game days later, by eye, from a
+> replay built for something else.
+
+### 13.5 — Caveat this forces on §11.1
+
+§11.1 attributed the "bets in twos" **entirely** to `StatsChanged`'s 250 ms throttle. That throttle was
+real and the per-frame fix was right — but two interleaved streams at ~20 game-seconds each, phase-offset,
+produce exactly an alternating short/long gap pattern, i.e. **visual pairs**, and the developer's first
+playtest fell inside a 2× band. So the throttle was *a* cause; whether it was the *only* one is now
+doubtful, and §11.1's confident "the emit path was innocent, the records were batched" should be read as
+one confirmed contributor rather than a complete account.
+
+*Correcting it costs nothing and leaving it would have made the next reader trust a diagnosis that had a
+second, larger explanation sitting underneath it.*
