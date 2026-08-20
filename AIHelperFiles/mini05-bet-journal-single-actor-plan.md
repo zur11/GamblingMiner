@@ -4,8 +4,9 @@
 `mini04-bets-history-explorer-features-plan.md`, whose §13 found this while replaying history for an
 unrelated reason.
 
-**Status:** 🔬 **DIAGNOSTICS BUILT (§3), AWAITING THE REPRODUCTION RUN (§4).** Branch
-`bet-journal-single-actor`. No fix yet, by design — see the objective.
+**Status:** 🔬 **DIAGNOSTICS BUILT (§3). Runs A, B, C and D done — ALL CLEAN (§4.8, §4.9). All five
+hypotheses exhausted (§2.1, §2.2): H1/H4 refuted, H2/H3 unreachable by design, H5 refuted. Next: repeat
+at 5 hardware credits, the only untested structural variable.** Branch `bet-journal-single-actor`.
 
 **Objective — and it is deliberately not "fix the bug".** The deliverable is **INCIDENT_LOG.md entry
 INC-003**, written *after* the diagnostics in §3 have named the mechanism. The log's own format demands a
@@ -132,6 +133,40 @@ by *"is the player the active node"* and **neither by "is another session alread
 
 > **The journal cannot answer this because it never recorded who wrote each line.** That absence *is* the
 > finding of §7, and fixing it is worth more than fixing whichever of H1–H4 turns out to be true.
+
+### 2.1 — Verdicts after runs A, B and D (2026-08-19)
+
+| # | Verdict |
+|---|---|
+| H1 | **Refuted by measurement.** Run B: five DiceGame round trips, including two inside two seconds. Five `ManualBetSession`s were constructed — one per scene entry, as `_Ready` does — and **not one was ever started.** |
+| H4 | **Refuted by the same run**, for the same reason. |
+| H3 | **Refuted where it can happen at all.** The only automatic restart is the recharge, and Run D shows it stopping session 11 on `InsufficientBalance` *before* constructing session 12 at the recharged balance. It is also **unreachable from the UI**: `StartPlayerAutobet` is called only from the toggle handler, which stops first. |
+| H2 | **Unreachable by design, not merely unobserved.** The game is **Player Centered**: a bot node can be selected only while paused, and the Start controls are **disabled** while one is active, so a bot can never be the active node of a running session. Selecting a bot node exists to CONFIGURE it (load its strategy), never to run it. |
+
+**H2 and H3 are excluded by the design rather than by evidence, and that distinction belongs in INC-003:**
+if the defect reappears it cannot be either of them, whatever the code paths for `!IsPlayerActive` still
+look like.
+
+### 2.2 — H5: the one variable the runs did not have — **bots betting alongside the player**
+
+Established from Run A's own console: the journal took **515** records while `[CasinoSC] bet#…` — which
+counts *every* client's settled bet — reached **500**. **1:1, so no bot was betting.** With four bots
+running the casino counter would climb roughly five times faster than the player's journal.
+
+The historical playtest had them running. That is now the **only** known difference between the reproduced
+conditions and the conditions the defect appeared in — and it fits the §1.2 signature better than anything
+refuted above: **two concurrent engines at the same cadence on different wallets is exactly what a player
+and a bot are.**
+
+Mechanically it should be impossible — `ExecuteBotBet` never calls `_userStats`, and both DiceGame bot
+paths (`StartBotRunners`, `RunBotManualBurst`) are guarded by `IsPlayerActive()`. **Which is why it is
+worth running:** every hypothesis that looked mechanically plausible has now been refuted, so the next
+candidate should be the one the evidence points at rather than the one the code suggests.
+
+**Verdict: REFUTED (Run C, §4.8).** Four bots ran alongside the player — the trace shows five sessions,
+five starts, five stops, each with its own `nodeId` and wallet — and with **8 hardware credits spread
+across five bettors the player's journal took exactly the 329 records that 1 credit owes.** None of the
+bots' ~2,300 bets reached it. The code was right and the evidence's suggestion was wrong.
 
 ---
 
@@ -298,15 +333,35 @@ rather than two — better for this test, not worse.
 
 Note the **in-game clock** at each maneuver.
 
-### 4.4 — Run C: maneuvers that **require stopping**
+### 4.4 — Run C: **bots betting alongside the player** (revised 2026-08-19)
 
-These cannot be done while a run is live, so each is its own start/stop cycle. Two minutes of running on
-each side of the switch.
+**The first version of this section asked for a maneuver the game does not permit** — "switch the selector
+to a bot → Start" — for the second time in this plan, and from the same cause §4.0 had already named. The
+game is **Player Centered**: the Start controls are disabled while a bot node is active, so a bot can never
+be the active node of a running session. Selecting one exists to CONFIGURE it, in pause, and nothing else.
 
-| | Maneuver | Targets |
-|---|---|---|
-| C1 | Run → **Stop** → **Start** again | H3's real shape: is there a `stop` row for the old session before the new `start`? |
-| C2 | Run → Stop → switch the selector to a **bot** → Start → run → Stop → switch back to **player** → Start | H2, an `IsPlayerActive` misattribution |
+> **§4.0's rule did not stick the first time it was written down.** Writing it as a lesson is not the same
+> as applying it, and the second violation had the identical shape: a step whose form came from the
+> hypothesis it was meant to test. The check that would have caught both is mechanical — *can I point at
+> the control this step presses, and is it enabled in the state the step assumes?*
+
+What replaces it is H5 (§2.2), and it is deliberately **Run A with exactly one variable added**:
+
+| | Step |
+|---|---|
+| 1 | With the autobet **stopped**, configure the bots the normal way: selector → bot node → **Load Strategy `st1`**, for each |
+| 2 | Return the active node to **player** |
+| 3 | **Start.** Run **five minutes, touching nothing** |
+| 4 | **Stop** |
+
+Same 1 credit, same touch-nothing discipline, 515 clean records as the paired baseline.
+
+**Validity check before reading anything else:** the casino's `bet#…` counter must climb roughly five times
+faster than the player's journal. If it comes back 1:1 again, the bots did not actually run and the test
+proved nothing — establish why before concluding.
+
+Also expected for the first time: `start` rows with owner **`SimulationService.bot`**. Their absence would
+itself answer the validity check.
 
 ### 4.5 — Run D: the auto-recharge, isolated
 
@@ -349,6 +404,98 @@ lever known to change the picture, so "does it also happen at 1?" is itself a fi
 - The in-game clock at each maneuver, and the duration of each window.
 - **If the console stays silent but the journal shows bets off the 100-second phase, say so** — that is a
   different and worse finding: the discontinuity check would be failing to detect a break it should see.
+
+### 4.8 — Results: runs A, B and D (2026-08-19)
+
+All three at 1 hardware credit, one continuous app process, no restart between them.
+
+| Run | Real duration | Records | Undeclared discontinuities | Concurrent sessions |
+|---|---|---|---|---|
+| **A** — control, untouched | 8 m 34 s | 515 | 0 | 1 |
+| **B** — five scene round trips | 11 m 25 s | 684 | 0 | 1 |
+| **D** — auto-recharge | ~7 m | 268 | 0 *(1 declared: exactly +100.00000000)* | 1 |
+| | **~27 min** | **1,467** | **0** | **always 1** |
+
+Every window is several times the ~2 real minutes one historical band lasted, so each clean result is a
+measurement rather than an absence of sampling (§4.6).
+
+**Cross-checks that held throughout.** Predicted record counts from game-time span ÷ 100 matched the
+journal exactly (A: 514 predicted / 515 actual · B: 684 / 684). Every trace `stop` row's wallet balance
+matched the journal's last `BalanceAfter` for that session to the satoshi. The clock ran at 99.8–100.0
+game-seconds per real second throughout.
+
+**What the trace showed that static reading could not.**
+
+- **Every DiceGame entry constructs a `ManualBetSession`** (ids 4–8 in run B, one per scene load, including
+  a pair two real seconds apart from the double BlockExplorer trip). **None was ever started.** The
+  default manual session is inert, which had been assumed and is now measured.
+- **The recharge restart is correctly ordered**: `stop … InsufficientBalance` at `1.42416296`, then
+  `construct` at `101.42416296`, then `start`. The old session is stopped before the new one exists.
+- The single declared discontinuity in run D is the dose, `+100.00000000` exactly, with its paired deposit
+  record — i.e. the D3 declaration mechanism did its job on its first real firing.
+
+**The runs did not reproduce the defect**, which is itself the finding that produced H5 (§2.2): the one
+condition they all lacked is bots betting alongside the player, and Run A's own console proved they were
+absent (515 journal records against a casino counter of 500 — 1:1).
+
+### 4.9 — Run C, and where four clean runs leave the investigation (2026-08-19)
+
+**Run C** — player + all four bots on the same strategy, **8 hardware credits across five bettors**
+(player 1, bot_1 1, bots 2–4 two each; one bot mining in a private pool, another in the casino pool).
+Five minutes and a half, nothing touched.
+
+The trace shows the bot lifecycle for the first time, and it is symmetric to the row:
+
+```
+09:46:38  start  SimulationService      14  player  125.52653835
+09:46:38  start  SimulationService.bot  15  bot_1   103.93905480
+09:46:38  start  SimulationService.bot  16  bot_2   114.50437796
+09:46:38  start  SimulationService.bot  17  bot_3   109.79807906
+09:46:38  start  SimulationService.bot  18  bot_4   111.16857891
+18:55:27  stop   x5, all ManualStop
+```
+
+Five starts, five stops, each with its own node id and its own wallet. No orphan, none left running, no
+`unknown`. **The player's journal took 329 records against a predicted 329** (32,929 game-seconds ÷ 100 at
+1 credit), ending at `126.74743520` — matching session 14's `stop` row to the satoshi. **Zero undeclared
+discontinuities.** The bots' ~2,300 bets did not reach it.
+
+| Run | Real duration | Records | Undeclared discontinuities | Condition |
+|---|---|---|---|---|
+| A | 8 m 34 s | 515 | 0 | control, untouched |
+| B | 11 m 25 s | 684 | 0 | five scene round trips |
+| D | ~7 m | 268 | 0 *(1 declared)* | auto-recharge |
+| **C** | ~5 m 30 s | 329 | 0 | **four bots + player, 8 credits** |
+| | **~33 min** | **1,796** | **0** | |
+
+**All five hypotheses are exhausted:** H1 and H4 refuted by measurement, H2 and H3 unreachable by design,
+H5 refuted here.
+
+#### What survives, in order of what I would bet on
+
+1. **It needs 5 credits.** The only structural variable never tested. At 1 credit the engine is never
+   frame-tight; at 5 there is backlog, same-frame groups of up to `MaxBetsPerFrame = 10`, and the clamp
+   actually biting. **If the duplication is a race, it has been hunted in the one regime where it cannot
+   occur — and the historical bands happened at exactly 5.**
+2. **The defect no longer exists in this build.** Three commits touched `SimulationService`/`DiceGame`
+   between the contaminated journal and now, including *"Fix the PAUSE button, dead since delegation
+   landed"* and *"the strategy panel survives a scene round-trip"*. Either could have closed the path
+   without anyone knowing it was open.
+3. **It needs something still unlisted** — a multi-hour session, a block mined mid-run, something that
+   only happens in real play.
+
+#### If 5 credits also comes back clean
+
+Then INC-003's honest conclusion is not a mechanism, and saying so is worth more than picking a favourite
+hypothesis to fill the field with:
+
+> **The defect is documented with exact forensic evidence, bounded to a date range, refuted against five
+> named hypotheses, and left under a permanent sentinel that will catch it the moment it recurs.** Root
+> cause: **open**.
+
+*An incident entry whose root-fault field says "open, and here is precisely what it is not" is more useful
+than one that says something plausible. The first is a starting point for whoever meets it next; the
+second is a dead end wearing a conclusion's clothes.*
 
 ---
 
