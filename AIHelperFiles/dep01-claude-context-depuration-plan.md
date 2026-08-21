@@ -117,7 +117,7 @@ One section at a time, **a commit per section**, reporting size before and after
 
 | | Section | Action |
 |---|---|---|
-| **D2.1** | `## File Organization` (4,302) | **Delete.** A file tree that goes stale by itself, and which already needed patching twice in one day. Keep only the Architecture Documentation table, which is a genuine index |
+| **D2.1** | `## File Organization` (4,302) | ✅ **Done** — deleted. See §4.1 for what the measurement found |
 | **D2.2** | `## Core Game Systems` (15,461) + `## Data Models` (1,235) | → `Documentation/ARCHITECTURE.md`, leaving an index |
 | **D2.3** | `## Scene Management` (8,267) | → `Documentation/SCENES.md`, leaving an index |
 | **D2.4** | `## Important Patterns` (26,137) | **NOT extracted** — permanent instructions belong here. What leaves is the long code examples: keep the rule and a minimal example, send the extensive ones to `Documentation/`. **Report how much is rule and how much is example BEFORE touching anything** |
@@ -128,6 +128,31 @@ a file name, UTF-8, and index the new docs where the others are indexed.
 > D2.4's "report before touching" is the phase's most important instruction, not a formality. **The split
 > between rule and illustration is a judgement, and making it visible before acting is what lets the
 > developer overrule it while it is still cheap.**
+
+### 4.1 — D2.1's finding: the tree was not an inventory, it only looked like one
+
+Checked before deleting, because a delete is the one edit that cannot be reviewed afterwards:
+
+- **The `Documentation/` branch was fully redundant** — all 9 docs are in the Architecture Documentation
+  table that D2.1 keeps. Nothing lost.
+- **The `Screens/` branch listed 16 of 24 real entries.** Missing: `BTCPoolsAndHardwareShop`, `BTCWallet`,
+  `BotPlayHistory`, `BotsBtcWallets`, `CasinoFinances`, `FoundersWallets`,
+  `MartingaleCalculatorStandalone` — and **`MainMenu`**, the entry point of the whole navigation graph.
+
+> **It had been stale for so long that it was wrong about a third of its own subject, and nothing showed
+> it, because a tree carries its authority in its shape.** It reads as complete whether or not it is. That
+> is the argument for the policy's "file trees go nowhere" rule stated better than the rule states it: the
+> problem is not that they go stale, it is that they go stale *invisibly*.
+
+**Carried forward to D2.3, which must not inherit the same defect:** the `### Navigation Map` inside
+`## Scene Management` is missing **nine** scenes — the eight above plus `CastMinerWallets` and
+`CompaniesWallets` (`MartingaleCalculatorStandalone` appears in prose there but not in the map).
+**`Documentation/SCENES.md` must be built from the filesystem and verified against `SceneManager.SceneId`,
+never by moving the existing map across.**
+
+*Two scenes — `CompaniesWallets` and `CastMinerWallets` — were named ONLY in the deleted tree. They are not
+lost: they are on disk, they are in `SceneManager`, and D2.3 inventories them properly. What is gone is the
+appearance of a complete picture that was never complete.*
 
 ---
 
