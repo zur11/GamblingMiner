@@ -85,14 +85,25 @@ as rules but reachable only by reading a status entry. They now live in `CLAUDE.
 ### Planned (P0–P8 Roadmap)
 
 > ⚠️ **This table is stale — verified against the code 2026-08-20 during the extraction, not corrected
-> here.** Four rows describe work that has shipped. `PRIVATE_ROADMAP.md` owns these priorities; reconcile
-> there, not in this copy. Note P0 is itself "documentation truth pass", which is what this note is doing.
+> here.** `PRIVATE_ROADMAP.md` owns these priorities; reconcile there, not in this copy. Note P0 is itself
+> "documentation truth pass", which is what this note is doing.
 >
-> - **P3** — `BlockchainService.PendingTransactions:74` exists; bot wallets shipped at Step 16 P16.2. **Done.**
-> - **P4** — `BlockTemplateBuilder.cs` + `MerkleTree.cs` exist and the coinbase pays reward + selected fees, but selection is `OrderByDescending(t => t.Fee)` — plain fee, not ancestor-feerate (the file's own OQ-C2 notes uniform tx size makes fee == feerate for now). **Partial.**
-> - **P5** — `Scripts/Hardware/HardwareAllocationRepository.cs` persists per-node hardware credits and `HardwareRate` is live in `StrategyControlPanel`. **Substantially done** — and note `CLAUDE.md`'s Canonical Decisions still reads `Hardware cap | 100 nonce attempts per time cycle (planned)`, which contradicts it.
-> - **P6** — `CasinoScBalanceService` + `CentralBankService`. **Done.**
-> - **P7** — `CasinoCoinSwaps` + `CasinoCoinSwapService` (Step 13). **Done.**
+> Each row is a *compound* claim, and the honest answer is usually per-clause rather than per-row. A row
+> is only **Done** when every clause in it is:
+>
+> - **P3** *(bot wallets, transactions, casino BTC addresses, public mempool)* — the first three shipped (bot wallets at Step 16 P16.2; `BlockchainService.PendingTransactions:74` holds the mempool). **"Public mempool" is not built:** `BlockExplorer.cs:546` surfaces a pending-tx *count*, and nothing anywhere lists the pending transactions. **Mostly done, mempool surfacing outstanding.**
+> - **P4** *(ancestor-feerate ordering, Merkle root, coinbase fees)* — `BlockTemplateBuilder.cs` + `MerkleTree.cs` exist and the coinbase pays reward + selected fees, but selection is `OrderByDescending(t => t.Fee)` — plain fee, not ancestor-feerate (the file's own OQ-C2 notes uniform tx size makes fee == feerate *for now*). **Partial.**
+> - **P5** *(hardware progression — bets per real second, not time acceleration)* — `HardwareAllocationRepository` persists per-node credits and routes each attempt between the node's own chain and the casino pool (`NextNonceTarget`), but **deliberately without a multiplier**: its own comment reads *"1 bet = 1 nonce attempt, linear model … a true reallocation of mining power, never a multiplier."* `HardwareRate` clamps to `MaxAutoBetBaseAps = 99`. **Partial — the allocation exists, the progression the row names does not.**
+> - **P6** *(SC income/expense, bank credit line)* — the tracking shipped (`CasinoScBalanceService` + `CentralBankService` per-client accounts). **The credit *line* did not:** `BankFundingCapacitySc` returns `decimal.MaxValue` and D-15.1 fixes lending at no interest and no limit, with real limits deferred to ND.8e. **Partial.**
+> - **P7** *(BTC/SC trading via casino BTC addresses)* — `CasinoCoinSwaps` + `CasinoCoinSwapService`, Step 13. **Done.**
+>
+> **Correction, 2026-08-20.** The first version of this note claimed P3 and P6 were Done, called P5
+> "substantially done", and asserted that P5 contradicted `CLAUDE.md`'s `Hardware cap | 100 nonce attempts
+> per time cycle (planned)`. All four were wrong, and the commit message of `f992049` still carries them.
+> There is no contradiction: the Canonical Decisions row describes the *multiplier* that
+> `HardwareAllocationRepository` explicitly does not implement, so `(planned)` is accurate. The error was
+> inferring a feature's existence from a file's NAME instead of reading what it does — the failure
+> `CLAUDE.md` Important Patterns §7 rule 13 describes, committed in the same pass that promoted that rule.
 
 | Priority | Feature |
 |---|---|
