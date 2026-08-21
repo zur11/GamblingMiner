@@ -17,6 +17,46 @@ All project files, source code, UI text, code-facing names, and documentation in
 
 ---
 
+## Document Policy — what belongs in this file
+
+**Read this before writing anything here.** This file is loaded into context on every message of every session; its size is a cost paid continuously, by everyone.
+
+### Belongs here
+Permanent instructions that govern future work: code conventions · invariant rules · canonical decisions (**the statement, not its history**) · indexes saying where detail lives.
+
+### Does not belong here — and where it goes instead
+
+| | Goes to |
+|---|---|
+| How a decision was reached | the plan or manual that recorded it |
+| What is implemented, and when | `Documentation/IMPLEMENTATION_STATUS.md` |
+| A system's specification | that system's own doc in `Documentation/` |
+| Long code examples | the system's doc — keep the rule and a minimal example here |
+| File trees, directory listings | **nowhere.** They go stale by themselves; read them from the filesystem |
+
+### Before writing here — mandatory, in this order
+
+1. **Search first**, in this file *and* `Documentation/`. If the subject already exists, **EDIT it. Never append a second version.**
+2. **If the new contradicts the written, do not write both.** Verify which is true **against the CODE**, correct the false one, and say so to the developer.
+3. **If it is unclear whether something belongs here or in a doc, ASK** before writing.
+4. **A table row or bullet growing past ~500 characters is becoming documentation.** Extract it.
+
+### Budget
+
+| | |
+|---|---|
+| Target | **60,000 characters** |
+| Warning | **100,000** — on crossing it *while writing*, say so in that same reply and propose what to extract |
+| Hard limit | **150,000** — where Claude Code reports the file's size at startup |
+
+**While a depuration plan is actively running, the 100k warning is suspended and only the hard limit applies.** A warning exists to surface an *unnoticed* condition; during a plan whose whole subject is that condition, it is noticed, and repeating it at every step is noise that trains the reader to skip it. The warning resumes when the plan closes — by which point the file should be under target anyway.
+
+### Why this exists
+
+In August 2026 this file reached **228,348 characters** — of which a **single table cell held 32,104** and one section held **57,722 of design record labelled as status**. It was not caught by review; it was caught by accident. **The failure was not that the file was long, it is that nothing measured it.**
+
+---
+
 ## Core Gameplay Loop
 
 ```
