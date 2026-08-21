@@ -19,3 +19,6 @@ export_presets.cfg
 # --- Godot C# ---
 *.mono/
 *.dll
+
+# --- Editor / agent scratch ---
+*.bak
