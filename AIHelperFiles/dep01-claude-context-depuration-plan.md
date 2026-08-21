@@ -120,7 +120,7 @@ One section at a time, **a commit per section**, reporting size before and after
 | **D2.1** | `## File Organization` (4,302) | ✅ **Done** — deleted. See §4.1 for what the measurement found |
 | **D2.2** | `## Core Game Systems` (15,461) + `## Data Models` (1,235) | ✅ **Done** — → `Documentation/ARCHITECTURE.md`; index + three embedded rules kept |
 | **D2.3** | `## Scene Management` (8,267) | ✅ **Done** — **rebuilt** into `Documentation/SCENES.md` from `SceneManager`, not moved; three false claims recorded there in §5 |
-| **D2.4** | `## Important Patterns` (26,137) | **NOT extracted** — permanent instructions belong here. What leaves is the long code examples: keep the rule and a minimal example, send the extensive ones to `Documentation/`. **Report how much is rule and how much is example BEFORE touching anything** |
+| **D2.4** | `## Important Patterns` (26,159) | ✅ **Done** — 26,159 → 20,845. **The phase's premise was wrong and the report caught it** (§4.2) |
 
 **Standing rules for every one of them:** verify against the code any claim that is kept, never infer from
 a file name, UTF-8, and index the new docs where the others are indexed.
@@ -238,3 +238,37 @@ the only phase whose findings depend on where everything has finally landed.
 - `ProjectDesignManual.md`'s own size (651k). It is a long-form record read on demand, not context loaded
   every session — a different problem, if it is one at all.
 - The `Documentation/` files' internal quality beyond what D4 reports. D4 reports; it does not fix.
+
+### 4.2 — D2.4's finding: the phase's own premise was wrong, and the mandatory report caught it
+
+D2.4 was specified as *"what leaves is the long code examples"*. **Measured before touching anything, as
+the phase required: only 477 of 26,159 characters were code blocks — 1.8%.** There were no long examples
+to remove.
+
+What the section actually held was different, and more delicate. Two patterns were **74%** of it with zero
+code between them (Checkpoint/Rollback 9,744 · Prefer Event-Driven 9,697), and inside them six paragraphs
+carried 9,416 characters in one recurring shape: **a dated incident narrative followed by the rule it
+earned.**
+
+**And every narrative was a second copy.** Each cited its own home and the home had it — INC-001 and
+INC-002 in `INCIDENT_LOG.md`; §22.18, §22.20, §38.5, §38.7, §40.7, §40.8 in `ProjectDesignManual.md`. So
+the trim removed duplication rather than content.
+
+| Kept | Removed |
+|---|---|
+| Every rule, verbatim or tightened | The story of the incident that produced it |
+| A clause of *why*, where one line does it | The measurements, the dates, the fix's implementation detail |
+| A pointer to the case | — |
+
+**One entry was deleted outright rather than trimmed:** the copy of Ch. 38's migration-candidate catalogue.
+It was duplicated *and* stale — the same trap D2.1 and D2.3 each found once. It is now a pointer that
+carries Step 17 §5.1's warning to re-derive the list from the code.
+
+**And `### 7. Standing Conventions` was left untouched, deliberately.** Thirteen numbered rules averaging
+240 characters each; all of it is rule. Trimming it would have been trimming to reach a number rather than
+to apply the policy.
+
+> **The instruction that made this phase work was "report before touching".** It was written as a courtesy
+> — a chance for the developer to overrule a judgement while it was cheap — and what it actually did was
+> falsify the phase's own premise before a single edit. **A plan that requires measurement before action
+> gets to be wrong safely.**
