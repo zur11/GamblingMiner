@@ -450,6 +450,8 @@ GamblingMiner/
 │   ├── GLOSSARY.md             # Canonical terminology
 │   ├── PLAYER_GUIDE.md         # What is actually playable now
 │   ├── PRIVATE_ROADMAP.md      # Internal priorities P0–P8
+│   ├── ProjectDesignManual.md  # Long-form design record — one chapter per system
+│   ├── INCIDENT_LOG.md         # Design crashes: data-loss/corruption post-mortems
 │   └── REFERRAL_AUCTION.md     # Referral auction spec + its amendment history
 │
 ├── Screens/                    # UI scenes + screen controllers
