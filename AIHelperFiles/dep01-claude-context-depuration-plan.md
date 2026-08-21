@@ -272,3 +272,45 @@ to apply the policy.
 > — a chance for the developer to overrule a judgement while it was cheap — and what it actually did was
 > falsify the phase's own premise before a single edit. **A plan that requires measurement before action
 > gets to be wrong safely.**
+
+### 5.2 — D3 as built (2026-08-21), and three corrections from the docs check
+
+Verified against the official hook documentation before writing, as the phase required. **The developer's
+understanding was right on three points and out of date on one; the fourth question changed the design.**
+
+| Point | Verdict |
+|---|---|
+| `.claude/settings.json` → `hooks` → event → matcher group → handlers | ✅ Confirmed |
+| `PostToolUse` matcher tests the **tool name**, regex | ✅ Confirmed. Real names: `Edit`, `Write`, `MultiEdit`, `NotebookEdit` — the matcher was widened to `Edit\|Write\|MultiEdit` |
+| Path at `tool_input.file_path` | ✅ Confirmed |
+| Exit 2 surfaces stderr to Claude; exit 1 does nothing useful | ✅ Confirmed — **but no longer the documented preference.** Exit 0 with `hookSpecificOutput.additionalContext` JSON is now the intended path |
+| A hook that sees the developer's manual edits | ❌ **None exists.** Hooks observe Claude's tool calls and lifecycle events only |
+
+**Exit 2 was chosen anyway, against the newer preference, and the reason is the guard's own purpose:** if
+the JSON form is unsupported by the running version the warning **vanishes silently** — which is precisely
+the failure this exists to prevent. Exit 2 either works or is visibly noisy. *A monitoring tool must fail
+loudly; a preferred-but-newer delivery path is the wrong trade for one.*
+
+**The manual-edit answer changed the design, and it is the point that mattered more than the hook.** Since
+nothing observes an editor save, the guard is wired to **two** events:
+
+- **`PostToolUse`** (`Edit|Write|MultiEdit`) — Claude's own edit, in the same turn, which is what the
+  policy's *"say so in that same reply"* requires;
+- **`SessionStart`** — everything else, at every session boundary. A file that reached 228k did so over
+  months through both hands.
+
+> **A guard that watches one of the two ways a file grows is not a guard.** It reports a clean bill of
+> health while the file doubles — which is the exact history this replaces.
+
+**Also built: the policy's suspension, as a marker file.** `.claude/hooks/.depuration-active` raises the
+floor to the hard limit, mirroring the Document Policy's scoped exception. Creating and deleting it is an
+explicit act, which is what keeps the exemption honest rather than ambient.
+
+**Tested manually, six cases, all passing:** under threshold → silent, exit 0 · 120,000 → warning, exit 2 ·
+160,000 → hard-limit message, exit 2 · a different file edited → silent · `SessionStart` with no
+`tool_input` → still measures · marker active at 120,000 → suspended, at 160,000 → still fires, and says
+that the warning was suspended.
+
+**Settings placement (question (a), answered):** `.claude/settings.json` — versioned, shared, and confirmed
+not ignored. `.claude/settings.local.json` is personal and ignored by the developer's **global** git ignore
+rather than the repo's, and nothing under `.claude/` was tracked before this commit.
