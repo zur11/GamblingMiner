@@ -449,7 +449,8 @@ GamblingMiner/
 │   ├── DESIGN_OVERVIEW.md      # Target design with implementation status labels
 │   ├── GLOSSARY.md             # Canonical terminology
 │   ├── PLAYER_GUIDE.md         # What is actually playable now
-│   └── PRIVATE_ROADMAP.md      # Internal priorities P0–P8
+│   ├── PRIVATE_ROADMAP.md      # Internal priorities P0–P8
+│   └── REFERRAL_AUCTION.md     # Referral auction spec + its amendment history
 │
 ├── Screens/                    # UI scenes + screen controllers
 │   ├── DiceGame/               # Main game loop (ManualBet, AutoBet, strategy selector)
@@ -914,6 +915,7 @@ Detailed design documents are in `Documentation/`:
 | `PRIVATE_ROADMAP.md` | Internal priorities P0–P8, canonical decisions, open questions |
 | `ProjectDesignManual.md` | The long-form design record — one chapter per system, written as the work lands. **Ch. 29** UI/Godot layout (read before any `ScrollContainer` work; **§29.12** the number-locale audit + its detector) · **Ch. 30** UTXO model · **Ch. 35** timeline guard · **Ch. 36** network population · **Ch. 38** event-driven vs. `_Process` · **Ch. 39** the Central Bank + §39.16's six standing conventions · **Ch. 40** persistence durability & simulation scale (**§40.8** duplicated records vs. streak metrics — read before trusting any figure computed off `BetHistory`) · **Ch. 41** player participation in company governance (pause / policy / abstention) |
 | `INCIDENT_LOG.md` | **Significant design crashes** — data-loss/corruption events whose cause is a design limitation, not a typo. One entry per incident: symptom, timeline, proximate vs. root fault, evidence, blast radius, recovery, the phase that fixes it, and the generalized lesson. Add an entry whenever a crash costs a world/playtest or reveals a persisted figure that had been silently wrong. Currently: INC-001 (the 1.13 GB bet journal + truncated world snapshot, 2026-07-29) · INC-002 (the impossible martingale level — duplicated records amplified by a streak metric, 2026-08-06) · INC-003 (two bettors in a journal that belongs to one — the explorer's retired world-clock rewind, found three days after its own fix, 2026-08-19) |
+| `REFERRAL_AUCTION.md` | The referral auction's full spec, extracted from this file's Canonical Decisions row when it reached 32,007 characters. **§1 is the current rule** (opening/raise floors, the tracked pool, bot cadence, the exclusion precedence, the three ladder modes, the stuck escalation) — every figure verified against `NetworkRoot.cs` with line references. **§2 is the amendment history** (EB.2 → ND.10l → P16.6), each entry marked still-current or superseded. Read §1 to implement; read §2 only to learn why a rule has its shape |
 
 ---
 
