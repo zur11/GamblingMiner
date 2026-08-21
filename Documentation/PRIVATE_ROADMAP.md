@@ -91,6 +91,41 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 >
 > **State (2026-06-30):** P0–P2 + the candidate engine (P4/Step 4), difficulty regulator + hardware pools (Step 6), **founder economics (Step 7)**, **Step 8 — UTXO realism / address non-reuse**, and **P10 — network fee activation** are all done & verified in-engine. The game starts on **21 Mar 2009** on a Satoshi/Hal-mined chain; founders mine concurrently in the player era; the chain runs a real multi-input/multi-output UTXO model; the whole network is fee-free before 2009-04-26 and all participants pay fees after (see `AIHelperFiles/step10-network-fee-activation-plan.md` + P10 in §5). **The active next work is Step 9 — economy/meta (P6–P8)**; carried-forward deferrals: bots multi-address (OQ-8.2), deposit-address rotation (OQ-8.3), the optional Patoshi forensic view (8.5).
 
+### ▶ NEXT — the agreed working order (2026-08-21)
+
+Three plans are specified and unstarted. **This is the sequence and the reason for it**, decided with the
+developer after measuring the world rather than assuming it.
+
+| # | Plan | Branch | Carries a wipe? |
+|---|---|---|---|
+| **1** | **Mini-plan 06** — prove INC-003's root cause deliberately | `repro/explorer-clock-rewind` | **Yes** — and the wipe is the instrument, not a cost |
+| **2** | **Step 17** — direct explorer access + the event-driven audit | `explorer-access-and-event-driven-audit` | No |
+| **3** | Step 17's suspended halves — Betting Statistics (17.B) and T4 (17.D) | — | 17.B eventually does |
+
+**Why mini-plan 06 goes first, against the intuition that a wipe should be delayed.** The world was
+measured before deciding: **210 blocks, game date 2009-05-27, zero companies founded, Market Birth 416
+in-game days away.** There is nothing accumulated to lose — a fresh world starts at 2009-03-21, about
+twenty real minutes of play behind. **The wipe is cheap, so the argument for delaying it disappears**, and
+what it buys is real: INC-003 closed, the contaminated journal disposed of instead of quietly skewing every
+lifetime figure, and a virgin world in which a reproduced band admits no argument.
+
+> The first framing of this choice was a false dilemma — *wipe now and lose a rich world, or test Step 17
+> on a world you will wipe.* **Both horns rested on "rich", and one measurement removed them both.**
+> Check the premise before weighing the trade-off it implies.
+
+**⚠ And Step 17 carries a constraint discovered in the same measurement** (`step17-…-plan.md` §5.1a): four
+of the event-driven audit's targets — `AuctioningCompanyDetails`, `CompanyDetails`, `CompaniesWallets`,
+`CasinoCoinSwaps` — depend on companies or a market, and **both begin at Market Birth**. They are §39.16
+rule 10 **SUSPENDED**, precondition named: *the world reaching 2010-07-18*. Migrating them blind is
+allowed; declaring them done is not. Without that split, 17.C would sign off with a quarter of its
+migrations never once executed — the same failure this project documented twice in one week (mini-plan
+04's emit budget, shipped without ever running; Ch. 38's catalogue, a month stale while reading as
+current).
+
+**Also carried, and not blocking:** the `user://` archive holding INC-003's evidence lives at
+`%APPDATA%\Godot\app_userdata\GamblingMiner_INC003_evidence_2026-08-20\` — 88 files, 55 MB, verified. The
+world reset deletes the live journal, so that archive is the incident's only surviving evidence.
+
 ### PH - Historical Foundation — ✅ BASELINE REACHED
 
 Goal: establish the historically faithful opening and the network-growth init model **before** economy systems expand on top of it.
@@ -492,7 +527,7 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 
 ## 8. Tech-Debt & Cleanup Tasks
 
-T1–T3 (2026-06-24, ✅ all implemented) came out of the clock/persistence bug fixes — see `Documentation/ProjectDesignManual.md` §24.8. **T4 (2026-07-29, OPEN) is a standing technical objective**, not a scheduled task: it is the structural answer to INC-001 and to the progressive frame-rate decay observed in the same run.
+T1–T3 (2026-06-24, ✅ all implemented) came out of the clock/persistence bug fixes — see `Documentation/ProjectDesignManual.md` §24.8. **T4 (2026-07-29, OPEN) is a standing technical objective**, not a scheduled task: it is the structural answer to INC-001 and to the progressive frame-rate decay observed in the same run. **T5** (2026-08-06) is deferred by decision. **T6** (2026-08-21, ✅ Dep-01 done, pass 2 open) is the newest and the odd one: its subject is not the game but **the files Claude reads**, an artefact class the project had never treated as one — and it took a 228,348-character `CLAUDE.md` going unnoticed to make that visible.
 
 ### T1 — Stop transactions/consensus from committing financial state to disk ✅ DONE (2026-06-24)
 
@@ -609,3 +644,38 @@ Everything above is a hypothesis until the frame is instrumented. Add per-block 
 - Restart the extension so detection re-runs; confirm the tool reports 7.x before trusting anything.
 - **Then:** update the `CLAUDE.md` note that currently reads *"Note PowerShell here is 5.1, not 7"*, and re-run the out-of-repo dataset scripts once to confirm (2) above.
 - **Reversible:** PS7 installs **side-by-side** and never replaces 5.1. Uninstalling `pwsh` returns the agent's tool to `powershell.exe` with no other change.
+
+### T6 — The Claude context system ✅ Dep-01 DONE (2026-08-21), pass 2 open
+
+A third artefact class the project had never treated as one: **the files Claude reads**, which have their
+own failure modes and had no plan, no policy and no measurement.
+
+**What happened.** `CLAUDE.md` reached **228,348 characters** unnoticed, paid for on every message of every
+session. A single table cell held 32,104; one section held 57,722 of design record labelled as status. It
+was found by accident, not by review.
+
+**Fixed across an emergency pass plus `AIHelperFiles/dep01-claude-context-depuration-plan.md`:**
+**228,348 → 70,295, a 69% reduction, with no permanent instruction removed.** A **Document Policy** now
+sits near the top of `CLAUDE.md` (what belongs, what does not and where it goes, the mandatory procedure
+before writing, a 60k/100k/150k budget); four sections were cut or extracted into `ARCHITECTURE.md` and
+`SCENES.md`; and a size guard runs on **both** `PostToolUse` and `SessionStart`.
+
+**The finding worth carrying, because it was the same in all four cuts:** the material was not merely
+surplus, **it had stopped being true and nothing could show it.** The file tree listed 16 of 24 entries and
+omitted `MainMenu`; Scene Management declared a migration pending directly above the paragraph saying it
+was complete; Important Patterns' own premise was false. **A file tree carries its authority in its shape,
+a code sample goes stale *and gets copied*, and a dated narrative reads as a live rule — none announces
+itself.** Which is why the guard matters more than any cut: what failed was not the size, it was that
+nothing measured it.
+
+**Two-event wiring is the part to preserve if this is ever revisited.** No hook observes a manual editor
+save, so a `PostToolUse`-only guard would report a clean bill of health while the developer's own edits
+doubled the file — which is most likely how it reached 228k. `SessionStart` closes that half.
+
+**Open — Dep-01 D4 pass 2.** The sweep covered `CLAUDE.md` against `GLOSSARY.md` and the code: one framing
+collision (fixed), three redundancies (reported, not touched), and four measurable baselines re-run and
+still holding. **Not covered: `Documentation/` against itself — where 949,757 of the ~1.02M characters
+are.** The three contradictions found during the emergency pass were all spotted by hand while doing
+something else, so the density there is probably higher than one finding suggests. Start with the newly
+extracted docs: an extraction is the freshest opportunity for a copy to drift.
+

@@ -131,6 +131,29 @@ re-scan adds, **(1)** does it still poll, **(2)** what state does it actually re
 for that state already exist (§38.4), and **(4)** does it hold live user input that the §38.5 note-1 caveat
 applies to.
 
+### 5.1a — ⚠ A constraint this plan missed when it was written (added 2026-08-21)
+
+**Several §38.5 candidates cannot be VERIFIED in any world that exists today**, and the plan declared none
+of it. Measured on the live world: chain at **210 blocks**, game date **2009-05-27**, **0 companies
+founded**, and **Market Birth (2010-07-18) is 416 in-game days away**. A fresh world is *further* back
+(2009-03-21), so wiping does not help and neither does waiting a little.
+
+| Verifiable now | Suspended until Market Birth |
+|---|---|
+| `StatusBar`, `FinancialBettingStats`, `CalendarsNavigator`, `BetsHistoryExplorer`, `BlockExplorer`, `BTCWallet`, `ScFinances`, `ScTransactions`, `BotPlayHistory`, `CasinoFinances`, `CasinoGamblingFinances`, `ClientsBetsHistory`, `ClientsTransactions`, `FoundersWallets`, `BotsBtcWallets`, `BTCPoolsAndHardwareShop` | `AuctioningCompanyDetails`, `CompanyDetails`, `CompaniesWallets`, `CasinoCoinSwaps` — all need companies or a market, and both begin at Market Birth |
+
+*(The split is provisional: **C.0 re-derives it from the code**, and C.0's output governs.)*
+
+> This is **§39.16 rule 10** — *a phase whose exit depends on states the game cannot yet produce is
+> SUSPENDED, with its missing precondition named.* The named precondition is **the world reaching
+> 2010-07-18**. Migrating those four blind is permitted; **declaring them done is not.**
+
+**Why it matters more than it looks.** Without this split, 17.C would be signed off with roughly a quarter
+of its migrations never once executed — which is precisely the failure this project has now documented
+twice in one week: mini-plan 04's emit budget, shipped to `main` without ever running, and Ch. 38's own
+catalogue, which aged for a month while reading as current. **A migration nobody could exercise is
+indistinguishable from a migration that works.**
+
 ### 5.2 — 17.C.1…n: one scene per phase
 
 Ordering comes out of C.0, by measured or estimated cost — not alphabetically, and not by how easy each
