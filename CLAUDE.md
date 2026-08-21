@@ -456,126 +456,21 @@ If Python is ever installed, delete this section — and disable the Store alias
 
 ---
 
-## Scene Management
+## Scene Management — index
 
-### Current State (to be migrated)
+Full inventory (25 `SceneId`s, every path verified), the navigation map and the `StatusBar` component: **`Documentation/SCENES.md`**.
 
-Scene transitions are currently done inline with hardcoded paths:
-```csharp
-GetTree().ChangeSceneToFile("res://Screens/DiceGame/DiceGame.tscn");
-```
-This pattern is scattered across multiple screen files. It is fragile and should be replaced.
+**Every scene transition goes through `SceneManager`.** All paths live in one place and call sites use a compile-time-safe enum — there are no `ChangeSceneToFile` calls outside the service, and it must stay that way.
 
-### `SceneManager` Autoload
+**Adding a scene** — three steps in `Scripts/Services/SceneManager.cs`:
 
-A `SceneManager` autoload centralizes all scene transitions. All paths live in one place; call sites use a compile-time-safe enum.
+1. add the entry to the `SceneId` enum;
+2. add its path to the `Paths` dictionary;
+3. call `_sceneManager?.Go(SceneManager.SceneId.X)` at the call site.
 
-**`Scripts/Services/SceneManager.cs`** (registered in `project.godot`):
+`Go()` records a one-deep `PreviousScene`, which is what makes **origin-aware back navigation** work for the scenes reachable from more than one hub (`BetsHistoryExplorer`, `CasinoCoinSwaps`): they return to `SceneManager.PreviousScene ?? MainMenu`.
 
-```csharp
-public partial class SceneManager : Node
-{
-    public enum SceneId
-    {
-        DiceGame,
-        BlockExplorer,
-        BankrollProgrammer,
-        BetsHistoryExplorer,
-        CalendarsNavigator,
-        MartingaleCalculator,
-        MainMenu,           // planned
-        // Add new scenes here only
-    }
-
-    private static readonly Dictionary<SceneId, string> Paths = new()
-    {
-        [SceneId.DiceGame]              = "res://Screens/DiceGame/DiceGame.tscn",
-        [SceneId.BlockExplorer]         = "res://Screens/BlockExplorer/BlockExplorer.tscn",
-        [SceneId.BankrollProgrammer]    = "res://Screens/BankrollProgrammer/BankrollProgrammer.tscn",
-        [SceneId.BetsHistoryExplorer]   = "res://Screens/BetsHistoryExplorer/BetsHistoryExplorer.tscn",
-        [SceneId.CalendarsNavigator]    = "res://Screens/CalendarsNavigator/CalendarsNavigator.tscn",
-        [SceneId.MartingaleCalculator]  = "res://Screens/MartingaleCalculator/MartingaleCalculator.tscn",
-        [SceneId.MainMenu]              = "res://Screens/MainMenu/MainMenu.tscn",
-    };
-
-    public void Go(SceneId scene) => GetTree().ChangeSceneToFile(Paths[scene]);
-}
-```
-
-**Usage in any screen after migration:**
-```csharp
-private SceneManager _sceneManager;
-
-public override void _Ready()
-{
-    _sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
-}
-
-private void OnBackButtonPressed()
-{
-    _sceneManager?.Go(SceneManager.SceneId.DiceGame);
-}
-```
-
-All existing main screens have been migrated. Adding a new scene: (1) add entry to `SceneId` enum, (2) add path to `Paths` dictionary, (3) call `_sceneManager?.Go(SceneId.X)` at the call site.
-
-The example above omits several DEV-only scenes for brevity (e.g. `CasinoFinances`, `FoundersWallets`, `BotPlayHistory`). Step 11 added three more, all DEV-only: `CasinoGamblingFinances` (Main Menu → casino SC balances/loans/transfers), `ClientsBetsHistory` (→ from `CasinoGamblingFinances`, per-client P/L + live bet feed), and `ClientsTransactions` (→ from `CasinoGamblingFinances`, per-client SC deposit/withdrawal ledger) — see `Screens/CasinoGamblingFinances/`. Step 12 added two **player-facing** scenes: `ScFinances` (MainMenu → the player's SC-flows hub: Private Bank Account balances, deposit/withdraw, betting stats) and `ScTransactions` (→ from `ScFinances`, the player's own Bank↔Main transfer history) — see `Screens/ScFinances/`. Step 13 added the **player-facing** `CasinoCoinSwaps` (MainMenu + ScFinances → the casino's SC↔BTC swap desk; carries no DEV controls itself — its reserve/fee/auto-floor knobs live in the existing `CasinoFinances`/`CasinoGamblingFinances` DEV scenes) — see `Screens/CasinoCoinSwaps/`. `SceneManager.Go()` also records a one-deep `PreviousScene` for origin-aware back navigation.
-
-### `StatusBar` Component
-
-**`UI/StatusBar/StatusBar.cs`** — pure C# `HBoxContainer` (no .tscn needed). Instantiated programmatically in each screen's `_Ready()`.
-
-Shows Main Balance, Bankroll, **the player's BTC wallet**, the game clock, and the BTC price ticker.
-
-**The two BTC cells are different KINDS of figure and must stay visually distinguishable (2026-08-06).** `BTC Wallet: 12.50000000` is money the player *owns* — coloured **bitcoin orange** (`#F7931A`), placed beside the SC balances it belongs with. `BTC Price: 1,234.56 SC` is a market quote they don't own — default text colour, at the far end, showing `BTC Price: —` before Market Birth (2010-07-18) and `BTC Price: HALT` on the 13 halt days. The SC suffix on the price and the SC suffix on DiceGame's Bankroll / Main Balance labels landed in the same change, for the same reason: once a BTC figure sits in the bar, every unlabelled number becomes ambiguous. **Do not add a third bare number to this bar.**
-
-Refresh cadence differs per cell and this is deliberate:
-- SC balances + clock — `_Process` every frame (cheap field reads; the clock genuinely needs real delta).
-- BTC price — event-only, on `BtcMarketDataService.MarketDayChanged` (daily step function).
-- **BTC wallet — `NetworkRoot.BlockAccepted` (dirty flag drained next frame) + a 2 s fallback tick.** It reads `NetworkRoot.GetPlayerSpendableBalanceStatic()`, which is **one `AggregateSpendable` pass over the whole UTXO set** — cheap at this cadence, ruinous per frame (§38.7's inverse-failure lesson). The block event is the real edge; the fallback exists only because a player's own send (BTCWallet or a swap sell) drops spendable the instant it is broadcast, with no block to announce it. The static event is unsubscribed in `_ExitTree`.
-
-`GetPlayerSpendableBalanceStatic()` is a **static** twin of the instance `GetNodeSpendableBalance` because the StatusBar is instantiated programmatically in every screen and owns no `NetworkRoot` node (the `GetPlayerChainLengthStatic` precedent). It reads the **owned address set**, never `WalletAddress` alone — the P16.6 trap: base-only reads went to zero once change rotation landed.
-
-```csharp
-// In _Ready() of any screen — insert at top of a VBoxContainer:
-var vbox = GetNode<VBoxContainer>("ContainerPath");
-var statusBar = new StatusBar();
-vbox.AddChild(statusBar);
-vbox.MoveChild(statusBar, 0);
-
-// Or for scenes that use a placeholder slot (MainMenu, MartingaleCalculatorStandalone):
-GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
-```
-
-### Navigation Map
-
-```
-MainMenu
-├── DiceGame          (also reachable directly; DiceGame has its own "Main Menu" button)
-│   ├── ScFinances          → Main Menu   (DiceGame's "Deposit Balance" button opens ScFinances; DepositPopup retired in Step 12)
-│   ├── BankrollProgrammer  → Main Menu
-│   ├── BlockExplorer       → Main Menu
-│   │   ├── AuctioningCompanyDetails (Step 14 ND.5, Enroll Mode "Details →" while InAuction; forwards to CompanyDetails on resolution) → BlockExplorer
-│   │   └── CompanyDetails (Step 14 ND.8b.4, Enroll Mode Founded rows' "Details →" — Board Vote / dividend claims) → BlockExplorer
-│   └── CalendarsNavigator  → Main Menu / BetsHistoryExplorer
-│       └── BetsHistoryExplorer → origin-aware back (Main Menu / CalendarsNavigator / ScFinances)
-├── ScFinances [player-facing]  → Main Menu   (Step 12 — the player's SC-flows hub)
-│   ├── ScTransactions              → ScFinances
-│   ├── BetsHistoryExplorer         → (origin-aware back to its launcher)
-│   ├── BankrollProgrammer          → ScFinances / (its own Main Menu back)
-│   └── CasinoCoinSwaps             → origin-aware back (Main Menu / ScFinances)
-├── CasinoCoinSwaps [player-facing]  → Main Menu   (Step 13 — the casino's SC↔BTC swap desk)
-├── MartingaleCalculator (standalone, full-screen) → Main Menu
-├── WorldEconomy [DEV]  → Main Menu   (Step 14 ND.8c — SC Monetary Ledger readout; + ND.8b.6 company inflow/expansion knobs)
-├── CentralBank [DEV]   → Main Menu   (Step 15 P15.1e — the FED's per-client loan accounts, D-15.16)
-└── CasinoGamblingFinances [DEV]  → Main Menu
-    ├── ClientsBetsHistory [DEV]    → Casino Gambling Finances
-    └── ClientsTransactions [DEV]   → Casino Gambling Finances
-```
-
-`BetsHistoryExplorer`'s back button is **origin-aware** (Step 12 / SF.4.2): it returns to `SceneManager.PreviousScene ?? MainMenu`, so it goes back to whichever hub launched it (`CalendarsNavigator` or `ScFinances`).
-
-DiceGame's MartingaleCalc button opens the **popup version** (`Screens/MartingaleCalculator/`) inline — it does not navigate away. The standalone version (`Screens/MartingaleCalculatorStandalone/`) is a full screen reachable only from MainMenu.
+**The `StatusBar` rule that governs new work:** the bar shows Main Balance, Bankroll, the player's BTC wallet, the clock and the BTC price. The two BTC cells are **different kinds of figure** — the wallet is money owned (bitcoin orange `#F7931A`, beside the SC balances), the price is a market quote (default colour, far end). Once a BTC figure sits in the bar every unlabelled number becomes ambiguous, so **do not add a third bare number to it**.
 
 ---
 
@@ -591,6 +486,7 @@ Detailed design documents are in `Documentation/`:
 
 | File | Contents |
 |---|---|
+| `SCENES.md` | **Scenes & navigation in full** — the 25-id inventory generated from `SceneManager` with every path verified, the rebuilt navigation map, the `StatusBar` component, and a record of three claims the old section made that the code contradicts. Extracted and **rebuilt** from this file at 7,470 characters (Dep-01 D2.3) |
 | `ARCHITECTURE.md` | **The core game systems and data models in full** — Dice, betting strategy, sessions, the execution pipeline, blockchain/mining, and the finance/blockchain/history models. Extracted from this file at 16,696 characters (Dep-01 D2.2). This file keeps only the one-line index in **Core Game Systems — index**, plus the three embedded rules that say what *not* to write |
 | `DESIGN_OVERVIEW.md` | Target design per system with implementation status labels |
 | `GLOSSARY.md` | Canonical terminology (source of truth for naming) |
