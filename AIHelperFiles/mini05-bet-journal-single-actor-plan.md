@@ -4,9 +4,9 @@
 `mini04-bets-history-explorer-features-plan.md`, whose §13 found this while replaying history for an
 unrelated reason.
 
-**Status:** 🔬 **DIAGNOSTICS BUILT (§3). Runs A, B, C and D done — ALL CLEAN (§4.8, §4.9). All five
-hypotheses exhausted (§2.1, §2.2): H1/H4 refuted, H2/H3 unreachable by design, H5 refuted. Next: repeat
-at 5 hardware credits, the only untested structural variable.** Branch `bet-journal-single-actor`.
+**Status:** ✅ **COMPLETE — INC-003 written (§8).** Six runs, 7,578 records, zero anomalies (§4.8, §4.9);
+all hypotheses refuted or unreachable (§2.1, §2.2); contamination DATED to ≤ 2026-08-14, two days before
+the clock-rewind fix. Root fault leading-but-unobserved — mini-plan 06 reproduces it deliberately.
 
 **Objective — and it is deliberately not "fix the bug".** The deliverable is **INCIDENT_LOG.md entry
 INC-003**, written *after* the diagnostics in §3 have named the mechanism. The log's own format demands a
@@ -571,7 +571,13 @@ self-evident forever rather than reconstructible. Decide it in the entry, not be
 
 ## 8. Deliverable — INCIDENT_LOG.md INC-003
 
-Written **last**, once §3–§5 have resolved. Per the log's format: symptom · timeline · proximate vs root
+✅ **WRITTEN 2026-08-19** — `Documentation/INCIDENT_LOG.md`, INC-003 "Two bettors in a journal that
+belongs to one". Proximate fault named, blast radius measured, six hypotheses recorded with which were
+refuted by evidence and which are unreachable by design, and the **root fault stated as leading-but-not-
+observed** with its dating evidence. Mini-plan 06 specifies the deliberate reproduction that would settle
+it.
+
+Originally specified as: written **last**, once §3–§5 have resolved. Per the log's format: symptom · timeline · proximate vs root
 fault · evidence · blast radius · recovery · the phase that fixes it · the generalized lesson.
 
 The lesson is already legible and will survive whichever hypothesis wins:
