@@ -8,7 +8,7 @@
 - **Target framework**: .NET 8.0
 - **Primary platform**: Windows
 - **Save format**: Local Godot `user://` data (JSON)
-- **Starting condition**: Player begins on **January 3, 2009** with **40,000 SC** total funds
+- **Starting condition**: the world begins at genesis, **3 Jan 2009**; the player's first bet is **21 Mar 2009**, after the historical bootstrap. Starting funds **40,000 SC**
 - **Public status**: Experimental prototype with a serious game design direction
 
 ### Language Policy

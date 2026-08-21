@@ -5,8 +5,8 @@
 > game.** `CLAUDE.md`, the `Documentation/` set, and the Claude Code configuration are project artefacts
 > with their own failure modes, and they had never had a plan of their own.
 >
-> **Status: SPECIFIED, NOT STARTED (2026-08-21).** Branch `claude-context-depuration` off `main`.
-> **No game code is touched by any phase.**
+> **Status: D1–D4 COMPLETE (2026-08-21).** `CLAUDE.md` 97,959 → 70,214 characters. Branch
+> `claude-context-depuration` off `main`. **No game code touched by any phase.**
 
 ---
 
@@ -314,3 +314,65 @@ that the warning was suspended.
 **Settings placement (question (a), answered):** `.claude/settings.json` — versioned, shared, and confirmed
 not ignored. `.claude/settings.local.json` is personal and ignored by the developer's **global** git ignore
 rather than the repo's, and nothing under `.claude/` was tracked before this commit.
+
+---
+
+## 6.1 — D4 results, pass 1: `CLAUDE.md` × `GLOSSARY.md` × the code (2026-08-21)
+
+**Report only. Nothing was edited.** Every "verified" column below was checked against the **code**, not
+against another document.
+
+### Contradictions
+
+| # | Location A | Location B | What each says | Verified | Severity |
+|---|---|---|---|---|---|
+| **C1** | `CLAUDE.md` Project Overview | `CLAUDE.md` Canonical Decisions → *Player start* | *"Player begins on **January 3, 2009**"* · *"Player start: **21 Mar 2009** after the first-launch bootstrap"* | **Both true, about different things.** `CalendarTimeService.GameStartLocal = 2009-01-03 18:15:06` is the calendar **epoch**; `TimelineConfig.PlayerStartDayLocal = 2009-03-21` is the player's first playable instant, after the bootstrap has mined the intervening blocks | **Medium** — not false, but the overview is the first thing read and it says the player starts in January. A reader who never reaches Canonical Decisions leaves with the wrong date |
+
+**One contradiction, and it is a framing collision rather than a factual error.**
+
+✅ **FIXED at the developer's instruction (2026-08-21)**, as the single authorised edit in an otherwise
+report-only phase. Project Overview now reads: *"the world begins at genesis, **3 Jan 2009**; the player's
+first bet is **21 Mar 2009**, after the historical bootstrap."* Both dates in one clause, in the order a
+reader meets them, and the collision disappears — the overview no longer has to be corrected by a table
+180 lines away.
+
+### Redundancy
+
+| # | Location A | Location B | What is duplicated | Risk |
+|---|---|---|---|---|
+| **R1** | `CLAUDE.md` **Glossary Reference** (8 terms) | `GLOSSARY.md` | `SC`, `Main Balance`, `Bankroll`, `Autobet`, `Nonce`, `RTP`, `Halving`, `Stop on block mined`. Checked one by one — **all eight agree today** | **Medium.** Nothing is wrong now; the risk is entirely future. `GLOSSARY.md` is the declared source of truth, so any change there leaves this copy quietly stale |
+| **R2** | `CLAUDE.md` **Canonical Decisions** (RTP `99.02%`, halving `2,100 blocks`) | `CLAUDE.md` **Glossary Reference** (same two figures) | The same canonical values twice **inside the same file**, ~180 lines apart | **Medium.** Same-file duplication is worse than cross-file: an editor updating the table has no reason to look 180 lines down |
+| **R3** | `CLAUDE.md` Canonical Decisions | `GLOSSARY.md` | `40,000` (4 vs 4 mentions), `39,900` (3 vs 2) | **Low.** Canonical Decisions is the declared home for these and the glossary needs them in context to define its terms |
+
+**Verified against the code, all agreeing:** RTP `0.9902` · `HalvingIntervalBlocks = 2100` ·
+`MaxBlockTransactions = 24` · `TargetBlockSeconds = 58_500` · `InitialDifficulty = 4096d / 7` ·
+**19 autoloads** in `project.godot` against the 19 the file claims.
+
+### Present tense inside historical records
+
+**Nothing found in `CLAUDE.md` at this pass** — and the reason is worth recording, because it is a result
+rather than an absence of looking. Five dated paragraphs use present-tense verbs, and every one is a
+**rule with an adoption date** (*"STAGE → ASK IN CHAT → COMMIT (2026-08-14)"*, *"Upgrading to PowerShell 7
+is DEFERRED by decision (2026-08-06)"*), which is the legitimate form. D2.4 had already removed the dated
+narratives that were the risk here.
+
+### The one claim that could be tested, and was
+
+`CLAUDE.md` states a **measurable baseline** for the locale detector: *"pass 1 returns exactly 5 lines,
+pass 2 returns 0"*, plus two further passes claimed at zero. **All four re-run today and all four hold** —
+pass 1 returns exactly 5, and they are the exact lines named (`FoundersWallets.cs` 247–248,
+`NetworkRoot.cs` 6918 / 7475–7476); pass 2, `CultureInfo.CurrentCulture` and the date-format `ToString`
+each return 0.
+
+> **A documented baseline that can be re-run is worth more than a documented rule.** It is the only kind of
+> claim in this file that can prove itself still true, fifteen days after it was written, without anyone
+> remembering why it was made. **Prefer writing claims in that shape wherever the subject allows it.**
+
+### What this pass did NOT cover
+
+`CLAUDE.md` against `PRIVATE_ROADMAP.md`, `IMPLEMENTATION_STATUS.md`, `SERVICES.md`, `ARCHITECTURE.md`,
+`SCENES.md` and `ProjectDesignManual.md` — and the `Documentation/` files against each other, which is
+where the 949,757 characters actually are. **The three contradictions the developer saw during the
+emergency pass were all found by hand while doing something else**, which suggests the density there is
+higher than this pass's one finding implies. Pass 2 should start with the newly extracted docs, since
+D2's own extractions are the freshest opportunity for a copy to drift.
