@@ -118,7 +118,7 @@ One section at a time, **a commit per section**, reporting size before and after
 | | Section | Action |
 |---|---|---|
 | **D2.1** | `## File Organization` (4,302) | ✅ **Done** — deleted. See §4.1 for what the measurement found |
-| **D2.2** | `## Core Game Systems` (15,461) + `## Data Models` (1,235) | → `Documentation/ARCHITECTURE.md`, leaving an index |
+| **D2.2** | `## Core Game Systems` (15,461) + `## Data Models` (1,235) | ✅ **Done** — → `Documentation/ARCHITECTURE.md`; index + three embedded rules kept |
 | **D2.3** | `## Scene Management` (8,267) | → `Documentation/SCENES.md`, leaving an index |
 | **D2.4** | `## Important Patterns` (26,137) | **NOT extracted** — permanent instructions belong here. What leaves is the long code examples: keep the rule and a minimal example, send the extensive ones to `Documentation/`. **Report how much is rule and how much is example BEFORE touching anything** |
 
