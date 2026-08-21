@@ -8,12 +8,52 @@
 - **Target framework**: .NET 8.0
 - **Primary platform**: Windows
 - **Save format**: Local Godot `user://` data (JSON)
-- **Starting condition**: Player begins on **January 3, 2009** with **40,000 SC** total funds
+- **Starting condition**: the world begins at genesis, **3 Jan 2009**; the player's first bet is **21 Mar 2009**, after the historical bootstrap. Starting funds **40,000 SC**
 - **Public status**: Experimental prototype with a serious game design direction
 
 ### Language Policy
 
 All project files, source code, UI text, code-facing names, and documentation inside the repository **must be in English**. Spanish is reserved exclusively for AI chat and planning conversations outside the repository.
+
+---
+
+## Document Policy — what belongs in this file
+
+**Read this before writing anything here.** This file is loaded into context on every message of every session; its size is a cost paid continuously, by everyone.
+
+### Belongs here
+Permanent instructions that govern future work: code conventions · invariant rules · canonical decisions (**the statement, not its history**) · indexes saying where detail lives.
+
+### Does not belong here — and where it goes instead
+
+| | Goes to |
+|---|---|
+| How a decision was reached | the plan or manual that recorded it |
+| What is implemented, and when | `Documentation/IMPLEMENTATION_STATUS.md` |
+| A system's specification | that system's own doc in `Documentation/` |
+| Long code examples | the system's doc — keep the rule and a minimal example here |
+| File trees, directory listings | **nowhere.** They go stale by themselves; read them from the filesystem |
+
+### Before writing here — mandatory, in this order
+
+1. **Search first**, in this file *and* `Documentation/`. If the subject already exists, **EDIT it. Never append a second version.**
+2. **If the new contradicts the written, do not write both.** Verify which is true **against the CODE**, correct the false one, and say so to the developer.
+3. **If it is unclear whether something belongs here or in a doc, ASK** before writing.
+4. **A table row or bullet growing past ~500 characters is becoming documentation.** Extract it.
+
+### Budget
+
+| | |
+|---|---|
+| Target | **60,000 characters** |
+| Warning | **100,000** — on crossing it *while writing*, say so in that same reply and propose what to extract |
+| Hard limit | **150,000** — where Claude Code reports the file's size at startup |
+
+**While a depuration plan is actively running, the 100k warning is suspended and only the hard limit applies.** A warning exists to surface an *unnoticed* condition; during a plan whose whole subject is that condition, it is noticed, and repeating it at every step is noise that trains the reader to skip it. The warning resumes when the plan closes — by which point the file should be under target anyway.
+
+### Why this exists
+
+In August 2026 this file reached **228,348 characters** — of which a **single table cell held 32,104** and one section held **57,722 of design record labelled as status**. It was not caught by review; it was caught by accident. **The failure was not that the file was long, it is that nothing measured it.**
 
 ---
 
@@ -159,167 +199,26 @@ only for the one you need. Order below is registration order.
 | — | `NetworkPopulationScheduler` | **Not an autoload** — a `static class` driven per-frame by #17. The historical network's visible cast + invisible mass, and the ghost attribution of their blocks |
 ---
 
-## Core Game Systems
+## Core Game Systems — index
 
-### Dice Engine
-**Location**: `Scripts/Dice/DiceEngine.cs`
+Full specification, per system: **`Documentation/ARCHITECTURE.md`**. Read the line here to know which file owns a concern; open the doc only for the one you need.
 
-- 00–99 roll system with configurable chance and multiplier
-- **RTP**: 99.02% (house-favorable)
-- Multiplier formula: `(100 * RTP) / chance%`
-- Profit: `win ? (bet * multiplier - bet) : -bet`
+| System | Lives in | Owns |
+|---|---|---|
+| Dice Engine | `Scripts/Dice/` | The 00–99 roll, the multiplier formula, the profit calculation |
+| Betting Strategy | `Scripts/Betting/` | `IBettingStrategy`, the progression, `BettingStrategyConfig` and its two independent stops |
+| Bet Sessions | `Scripts/Sessions/` | Run state, remaining bets, progression streaks, stop conditions |
+| Bet Execution | `Scripts/Game/` | `BetService` — the wallet↔dice↔stats pipeline and the fractional-profit carry |
+| Blockchain / Mining | `Scripts/BlockchainPort/` | The continuous regulated difficulty, `NodeAgent`, the UTXO model, founder economics |
+| Data models | `Scripts/Finance/`, `Scripts/History/` | `Wallet`, `Money`, `Transaction`, `BetRecord`, the history repository |
 
-### Betting Strategy System
-**Locations**: `Scripts/Betting/`
+### The rules that live here rather than in the doc
 
-- `IBettingStrategy` — strategy interface
-- `ProgressiveBettingStrategy` — the outcome picks its own percent (`IncreaseOnWinPercent` on a win, `IncreaseOnLossPercent` on a loss) and multiplies the bet by `1 + (percent / 100)`; a percent of `0` resets to base bet
-- `BettingStrategyConfig` — data model with all parameters:
-  - `BaseBet`
-  - `IncreaseOnLossPercent` / `IncreaseOnWinPercent` — **one progression percent per outcome, independent, each armed by its own value** (mini-plan 01, 2026-08-06; replaces the single `IncreasePercent` + the `IncreaseOnLoss`/`IncreaseOnWin` which-outcome pair). `0` or blank means *that outcome resets the bet to base*, so a strategy can grow on losses only, on wins only, on **both**, or on neither (flat betting) — the last two were not expressible before. A "trigger outcome" (the thing `ProgressionTriggerStreak` / `ProgressionAnchorBalance` count) is now simply an outcome whose own percent is `> 0`.
-  - `StopOnProfit`, `StopOnLoss` (optional thresholds) — **fully independent since mini-plan 01 (2026-08-06)**. Each is **armed by its own amount alone**: blank, unparseable or `<= 0` all mean *disabled*, normalized at the single parse boundary `StrategyControlPanel.ParsePositiveDecimal` so `HasValue` stays the armed test everywhere downstream. (Before that split, a typed `0` **armed** the profit stop, which then fired on the first bet — the metric is `>= 0`.)
-  - `StopOnBlockMined` — halts session when a block is mined
-  - **Every stop measures from session start** — `ProfitSessionStartingBalance` / `LossSessionStartingBalance`, one baseline per stop. **There is no second baseline mode**: the per-run "Anchor" alternative was deleted at mini-plan 01 round 3 (§25.12) because it is indistinguishable from Session mode whenever both progression percents are set — every outcome is then a trigger, so `ProgressionAnchorBalance` never moves. That value still exists and is still maintained; it just isn't a stop baseline (the Martingale calculator projects from it). The two baselines are **separate fields on purpose**: a reset re-anchors **only the side that fired**, so one stop's reset can never redefine what the other is measuring. See Chapter 25.3.
-  - `InsistAfterStopOnProfit` / `InsistAfterStopOnLoss` — **one switch per stop**: on a hit, **reset the progression to base bet and keep going** instead of stopping. Each UI toggle is gated on **its own** stop amount. **An insisting stop is a SEGMENT boundary** (§25.13): it re-anchors its own baseline always and the *other* side's **only if that side also insists** — two insisting stops share one segment, a non-insisting one keeps its whole-session anchor. This is what makes each stop meaningful independently of the progression percents: a stop's reset-to-base is a **no-op by construction** when its own outcome doesn't drive the progression (the profit stop can only fire on a winning bet, the loss stop only on a losing one), so the segment boundary — not the reset — is what actually bites. `StopOnBlockMined` is never insisted (a mined block always stops if that toggle is on). Insist-on-profit is not just convenience: with Anchor mode gone, the two Insist resets are the *only* things that bring a grown bet back to base, so a win-side (or two-sided) progression without it has no upper reset and only returns to base after the loss stop fires — i.e. after giving the profit back.
-  - **A bot's two Insist switches are forced ON** (mini-plan 01 round 3, reversing D-M1.4): `SimulationService` restarts a bot session only on `InsufficientBalance`, so a stop that *stops* is terminal for that bot — but an insisting stop is not, which is what makes a bot profit stop both safe and necessary (it is the only cap on the bot's bet growth). Forced in **`DiceGame.BuildBotStrategyConfig`**, not merely mirrored from the panel, so a per-node snapshot captured before the change cannot re-create a terminal stop; the panel locks both toggles ON in bot strategy mode and leaves both amount fields editable.
-- `SavedBettingStrategy` / `SavedBettingStrategyRepository` — persistence of named strategies
+Three instructions are embedded in that specification and stay in this file, because each says **what not to write**:
 
-**Progression resets vs. auto-recharge (bankroll management).** Implemented in `BaseBetSession.ApplyStopConditions` + `SimulationService`; shared by player **and** bot sessions. Order of preference — *reset cheaply, recharge only as a last resort*:
-1. **`StopOnLoss` + `InsistAfterStopOnLoss`** (primary): threshold set **below** the bankroll caps a losing run's depth, resetting to base with **no** recharge. `StopOnProfit` + `InsistAfterStopOnProfit` is its mirror on the way up — the upper reset that banks a run and restarts from base.
-2. **Bankroll-limit reset** (safety net): if the grown bet exceeds the bankroll but the **base** bet still fits and `InsistAfterStopOnLoss` is on → reset to base, **no** recharge. This branch reads the loss toggle because it *is* a loss-side condition — the grown bet no longer fits.
-3. **Auto-recharge** (last resort): only when even the **base** bet can't be afforded does the session stop with `InsufficientBalance`; then — *after* the stop — `SimulationService.TryPlayerAutoRechargeAndRestart` / `TryRechargeAndRestartBot` moves funds (Main Balance→Bankroll for the player, `NodeFinancialState.PrincipalBalance` for bots) and **restarts the progression from base**. The recharge is decided *after* the stop because `ApplyStopConditions` self-stops on `InsufficientBalance` *inside* `ExecuteNext`. `InsistAfterStopOnLoss` stays active across recharges. See `Documentation/ProjectDesignManual.md` Chapter 25 (and 24.5).
-
-### Bet Sessions
-**Locations**: `Scripts/Sessions/`
-
-- `BaseBetSession` — abstract; handles run state, remaining bets, current bet, progression streaks, stop conditions; calls `BetService.ExecuteBet()`
-- `AutoBetSession` — extends `BaseBetSession`; adds session ID tracking
-- `ManualBetSession` — single-bet handler
-
-**A running session's parameters come from the SESSION, never from the panel** (mini-plan 02, D-M2.8, 2026-08-07). A session captures its `BettingStrategyConfig` at `Start()` and nothing re-pushes it, so `StrategyControlPanel` is an **editor for the next run**, not a live control surface for the current one. Read a live run's settings through **`BaseBetSession.SessionConfig`** (safe to expose — the config is init-only); every `_strategyPanel.*` read inside a running-session code path is a bug candidate. Two corollaries: (a) **`DiceGame.ApplyRunLock` / `StrategyControlPanel.SetRunLocked` disable every captured-value control while a player session runs** (D-M2.14) — an enabled-but-inert control is a lie; the exceptions are what the session genuinely re-reads (hardware/APS via `HardwareRate`) plus the run controls themselves; (b) **where a stored per-node snapshot and a live session disagree, the executing config wins** (D-M2.2) — re-entering DiceGame refills the panel from `SimulationService.CurrentConfig.Strategy`. `DiceGame._nodeStrategies` is **`static`** so it survives the scene being freed on navigation (D-M2.1 — as an instance field it emptied on every round-trip and silently produced flat betting with both stops disarmed). Full write-up: `Documentation/ProjectDesignManual.md` **§24.13**.
-
-### Bet Execution Pipeline
-
-```
-User/Session calls ExecuteNext()
-  → BetService.ExecuteBet()
-      → Wallet.ApplyTransaction(withdrawal)
-      → DiceEngine.Play()
-      → If win: Wallet.ApplyTransaction(payout)
-      → Accumulate fractional profit remainder
-      → Emit BetTransactionEvent
-  → ProgressiveBettingStrategy.CalculateNextBet()
-  → BaseBetSession.ApplyStopConditions()
-  → UserStatsService.OnBetExecutedRegisterBet()
-  → BankrollProgramService.TryTransferBalanceToBankroll() (auto-recharge if configured)
-```
-
-### Blockchain / Mining System
-**Locations**: `Scripts/BlockchainPort/`
-
-- **Difficulty regulator Round 2 (2026-07-27, `AIHelperFiles/btc-pools-hardware-plan.md` §R2)** — diagnosed from a playtest report of ~2-day blocks. **Not** the casino pool (`playerBotsPower` was a flat 10 throughout): Satoshi's end-game catch-up ramp hit `MaxShare = 0.99`, and since `shareToWeight` is `w = s/(1−s)` that authorized **99× the rest of the network** — power 7,037 vs 72, difficulty anchored at 4.16M, blocks 4–7× target. Underneath it sat a structural fault: **the bet engine can retain at most `MaxBacklogSeconds` (2.0) of simulated time per frame** — the `Math.Min` in `SimulationService.Tick` discards the rest — while `CalendarTimeService` advanced the **full** frame delta regardless, so past the saturation knee (≈45 fps at `DevTimeScale` 90) game time silently outran the mining work and in-game block intervals stretched by exactly the dropped fraction. Four fixes shipped together: **R2-A** `MaxShare` 0.99 → **0.90** (99× → 9×); **R2-D** asymmetric feedback — `MinFeedbackTrim` 0.5 → **0.25** with `DifficultyEaseAlphaDown = 0.9` (cede an overhang fast, take on difficulty slowly: too-high difficulty is slow blocks, too-low **mints coins early**), unwinding the measured overhang in ≤2 blocks instead of 4–5; **R2-C1** `CalendarTimeService.SimulationThrottle` — the clock now advances by the sim-time the engine actually **retained** (`offered − dropped`, power-weighted over player + running bots; the accumulator's *carried* remainder is not a loss), so it is **exactly 1.0 and byte-for-byte inert below the knee** and above it the game slows in **wall-clock** rather than corrupting in-game pacing; **R2-T/R2-ASSERT** `simSecOffered,simSecConsumed` columns in `difficulty_trace.csv` plus a `GD.PrintErr` when `configuredPower > 2× realizedPower` for 3 consecutive blocks (3-block gate because single-block solvetimes are ≈exponential). **Canon decision D-R2.1: Satoshi's retirement DATE is canon, the 11,000 BTC is a TARGET** — under a bounded ceiling he may now retire SHORT, which is what makes any ceiling legal at all and removes the feedback loop (slow blocks → fewer blocks by the deadline → more power demanded). The June 2026 "regulator is correctly calibrated, close this section" verdict still holds **for what it tested** (executable powers 1–10); Round 2 is the envelope outside it. `MaxStepDown` (0.5) is now unread, kept as documentation.
-- `BlockchainService` — **continuous, regulated difficulty** (Step 6, D.1–D.4): `Difficulty` = expected nonce attempts per block; a 64-hex hash meets target when, read as a 256-bit `BigInteger`, `H ≤ 2²⁵⁶ / Difficulty`. `InitialDifficulty = 4096/7 ≈ 585.14` (the exact probability of the old `"00"`+next-hex-≤'6' rule, so pace is unchanged). Persisted per block (`Block.Difficulty`); `ChainIsValid` validates each block against its own stored difficulty (no genesis replay). `GetNextBlockDifficulty(networkPower)` is the **HYBRID retarget**: `target = anchor × feedbackTrim`, eased `next = current + DifficultyEaseAlpha·(target − current)`. **anchor** = `InitialDifficulty × power` (feed-forward from total active power = Σ miners' bets/sec, pushed by `SimulationService.SetActiveMiningPower`); **feedbackTrim** = LWMA over the last `LwmaWindow=20` block solvetimes vs `TargetBlockSeconds=58,500`, clamped `[0.5×,2×]`; `DifficultyEaseAlpha=0.7`. Power `0` (bootstrap/idle) → feedback-only. See `AIHelperFiles/btc-pools-hardware-plan.md` + ProjectDesignManual Ch.26.
-- `NodeAgent` — generates ECDSA wallet keypair; `TryMineSingleNonceAttempt()` = one attempt per call (enforces `1 bet = 1 attempt` rule); caches candidate block to avoid recomputing on each attempt
-- `CryptoUtils` — ECDSA signing/verification, SHA256 hashing, address derivation
-- **Genesis block**: nonce=100, hash=`"0"`, previous=`"0"`, timestamp `2009-01-03 18:15:05 Unix ms`
-- **Coinbase reward**: starts at 50 BTC, halves every **2,100 blocks** (≈ 4 in-game years at 100X); total supply **210,000 BTC** (converges to in-game year ~2141)
-- **Block cap**: 24 transactions per block (`BlockTemplateBuilder.MaxBlockTransactions`, counting the coinbase — implemented)
-- **Founder economics** (Step 7): Satoshi & Hal are **regulated concurrent miners** (`FoundersMiningService`, driven by `SimulationService`) — they mine their own candidates in lockstep with the player's bets (no autonomous clock). Satoshi targets ~10% share toward **11,000 BTC by 2011-04-26**; Hal fades to 0 by **9 Aug 2009**. Scripted historical txs: the **12 Jan 2009 10 BTC Satoshi→Hal** tx (`HistoricalBootstrapService`, in the bootstrap) and the **April 2009 Mike Hearn 32.51 round-trip** (`HistoricalEventScheduler`, player era, → Hearn +82.51, never mines). See `AIHelperFiles/step7-historical-character-economics-plan.md`.
-- **Balance model**: a **real multi-input/multi-output UTXO model** (Step 8 / Appendix A — implemented & in-engine audited). A `Transaction` holds `Inputs[]` (each an `OutPoint` + per-input signature) and `Outputs[]`; balance = Σ of an address's unspent outputs; fee = Σin − Σout. The **UTXO set** is rebuilt by replaying the chain (cached by `_chainVersion`, never persisted — consistent with "a block is the only commit"). One spend path `NetworkRoot.BuildAndBroadcastUtxoSpend` coin-selects owned UTXOs (exact match else largest-first **multi-input** combine) + change to a fresh derived address. **Address non-reuse** (a fresh derived address per receive/coinbase) is **Satoshi-only** (his ~220-address "one coinbase per address" spread). The **player, casino, Hal, and Mike Hearn** become multi-address only via **change outputs on send** (`ReceiveWallet` + `NodeAgent.RotateCoinbaseAddress = false` → coinbase/receives stay on base, change rotates); **only the bots stay single-address** (no stored seed — OQ-8.2). Hearn's one outgoing tx (E6b → Satoshi 32.51) is an exact-match send (no change), so his rotation is inert today — kept for consistency. E8 (17.49 Hearn change) is now a real change output. Legacy `Sender`/`Recipient`/`Amount` survive as read-only `[JsonIgnore]` shims — they expose only `Inputs[0]`/`Outputs[0]`, so **never use them to scan the chain for address membership** (a change output at `Outputs[1]` would be missed — the bug that made change-held funds vanish from wallets after a restart); iterate the full `Inputs`/`Outputs` lists instead. **And never use `tx.Sender` as a PARTICIPANT identity**: a spend whose coin selection consumed a change-address UTXO carries that derived address in `Inputs[0]` — the 2026-07-14 auction donor incident, where the player's bid displayed as an anonymous address. Resolve ownership through the node's full owned-address set (`BuildAuctionBidderIdentity` pattern; an address is a key, not an identity — `Documentation/ProjectDesignManual.md` §30.9). The account→UTXO switch used a **clean reset** (`WorldFormatVersion`). See `Documentation/ProjectDesignManual.md` Ch. 30 + `AIHelperFiles/step8-utxo-realism-plan.md` (Appendix A). NOTE: "Patoshi pattern" is a **misnomer** for this address mechanic — it is **address non-reuse**; the real Patoshi pattern is a mining-forensic fingerprint (D0).
-
----
-
-## Data Models
-
-### Finance
-
-| Class | Purpose |
-|---|---|
-| `Wallet` | Simple balance ledger; `ApplyTransaction()`, `SetBalanceForTimeTravel()` |
-| `Money` | Static utility; 8-decimal precision; `Normalize()`, `FormatSignedAdaptive()` |
-| `Transaction` | Enum types: `Deposit`/`Withdrawal`; source types: `Bet`/`External`/`OtherGame` |
-| `BetTransactionEvent` | Record capturing full roll metadata (bet, profit, roll, chance, multiplier, direction, timestamp) |
-| `BetRecord` | Persistent history entry (game ID, outcome, amounts, roll details) |
-
-### Blockchain
-
-| Class | Purpose |
-|---|---|
-| `Block` | Index, Timestamp (Unix ms), Transactions[], Nonce, Hash, PreviousBlockHash, MinedByNodeId |
-| `BlockTransaction` | Sender/Recipient (BTC addresses), amount, fee, signature (Base64 ECDSA), IsSpendable |
-| `NodeAgent` | Mining node with ECDSA keypair; mines nonces, creates signed transactions |
-
-### History
-
-| Class | Purpose |
-|---|---|
-| `BetHistoryRepository` | Loads/saves JSON chunked by month; rollback to UTC timestamp; time-bucket summaries |
-| `UserBettingStats` | Aggregates wins/losses, total wagered, net profit; per-game stats |
-| `TimeBasedBetStats` | Pre-calculated summaries for fast performance queries |
-
----
-
-## File Organization
-
-```
-GamblingMiner/
-├── Documentation/              # Design docs (English only)
-│   ├── DESIGN_OVERVIEW.md      # Target design with implementation status labels
-│   ├── GLOSSARY.md             # Canonical terminology
-│   ├── PLAYER_GUIDE.md         # What is actually playable now
-│   ├── IMPLEMENTATION_STATUS.md # What shipped, when, and the decisions behind it
-│   ├── SERVICES.md             # The 19 autoloads in full — one section per service
-│   ├── PRIVATE_ROADMAP.md      # Internal priorities P0–P8
-│   ├── ProjectDesignManual.md  # Long-form design record — one chapter per system
-│   ├── INCIDENT_LOG.md         # Design crashes: data-loss/corruption post-mortems
-│   └── REFERRAL_AUCTION.md     # Referral auction spec + its amendment history
-│
-├── Screens/                    # UI scenes + screen controllers
-│   ├── DiceGame/               # Main game loop (ManualBet, AutoBet, strategy selector)
-│   ├── BlockExplorer/          # Blockchain inspector
-│   ├── BankrollProgrammer/     # Main Balance ↔ Bankroll UI
-│   ├── BetsHistoryExplorer/    # Historical stats browser
-│   ├── CalendarsNavigator/     # Time-based history browsing
-│   ├── MartingaleCalculator/   # Strategy planner
-│   ├── ScFinances/             # Player SC-flows hub + ScTransactions (Step 12)
-│   ├── CasinoGamblingFinances/ # Casino SC finances [DEV] + ClientsBetsHistory/ClientsTransactions
-│   ├── CasinoCoinSwaps/        # Casino swap desk — SC↔BTC (Step 13)
-│   ├── AuctioningCompanyDetails/ # Per-non-miner live tracked-donation pool while InAuction (Step 14 ND.5; forwards to CompanyDetails once founded)
-│   ├── CompanyDetails/         # Founded company: stock summary + Board Vote / dividend panels (Step 14 ND.8b.4);
-│   │                           #   Vote Policy + abstention + pause locator (Step 16 P16.5/P16.8, ProjectDesignManual Ch. 41)
-│   ├── CompaniesWallets/       # The 40 companies' BTC wallets [DEV] (Step 16 P16.3b — split out of BotsBtcWallets)
-│   ├── CastMinerWallets/       # The Step-14 historical cast's BTC wallets [DEV] (Step 16 P16.3c — previously unlisted)
-│   ├── WorldEconomy/           # SC Monetary Ledger readout + company inflow/expansion knobs [DEV] (Step 14 ND.8c/ND.8b.6)
-│   ├── CentralBank/            # Central Bank (FED) per-client accounts + monetary invariant [DEV] (Step 15 P15.1e)
-│   └── Shared/                 # Reusable UI components
-│
-├── Scripts/                    # Core logic (~50 C# files)
-│   ├── Services/               # Autoload singletons (19 services)
-│   ├── Betting/                # Strategy config, interface, progression logic
-│   ├── Sessions/               # Bet loop controllers (Base, Auto, Manual)
-│   ├── Dice/                   # DiceEngine, DiceResult
-│   ├── Finance/                # Wallet, Money, Transaction, BetTransactionEvent
-│   ├── Game/                   # BetService, IBetEventSource
-│   ├── History/                # BetHistoryRepository, BetRecord, stats, PlayerFinancialStatsCalculator
-│   ├── BlockchainPort/
-│   │   ├── Blockchain/         # BlockchainService, Models, CryptoUtils
-│   │   └── Simulation/         # NodeAgent, NetworkSimulator
-│   ├── Calendars/              # CalendarModel, GregorianCalendarModel
-│   ├── StateMachines/          # AutoBetSessionStateMachine
-│   ├── Controllers/            # WalletController
-│   └── User/                   # UserBettingStats, UserBetRecord
-│
-├── UI/                         # Reusable UI component scripts
-│   ├── StrategyControlPanel/
-│   ├── FinancialBettingStats/  # Compact 3-scope betting stats (redesigned Step 12); reused in DiceGame + ScFinances
-│   └── StatusBar/              # (DepositPopup/ retired in Step 12 — deposits now flow through ScFinances)
-│
-├── GamblingMiner.csproj        # .NET 8.0, Godot.NET.Sdk 4.5.1
-├── GamblingMiner.sln
-├── Main.cs / Main.tscn
-├── project.godot
-└── CLAUDE.md
-```
+1. **A running session's parameters come from the SESSION, never from the panel** (D-M2.8). A session captures its `BettingStrategyConfig` at `Start()` and nothing re-pushes it, so `StrategyControlPanel` edits the *next* run. Read a live run through `BaseBetSession.SessionConfig`; **every `_strategyPanel.*` read inside a running-session code path is a bug candidate.** `DiceGame._nodeStrategies` is `static` deliberately — as an instance field it emptied on every scene round-trip and silently produced flat betting.
+2. **Never use `Transaction`'s legacy `Sender`/`Recipient`/`Amount` shims to scan the chain for address membership.** They expose only `Inputs[0]`/`Outputs[0]`, so a change output at `Outputs[1]` is missed — the bug that made change-held funds vanish from wallets after a restart. Iterate the full `Inputs`/`Outputs` lists.
+3. **Never use `tx.Sender` as a PARTICIPANT identity.** A spend whose coin selection consumed a change-address UTXO carries that derived address in `Inputs[0]`. Resolve ownership through the node's full owned-address set (the `BuildAuctionBidderIdentity` pattern) — **an address is a key, not an identity.**
 
 ---
 
@@ -392,9 +291,15 @@ This is the service-to-service half of a broader project-wide principle — see 
 
 Full rationale and the bugs this resolved: `Documentation/ProjectDesignManual.md` §24.8 (post-first-block), §24.9 (pre-genesis + the exact-timestamp rule), and §24.10 (the wall-clock-vs-game-time audit).
 
-**⚠️ This rule governs commit TIMING, not commit DURABILITY — they are separate problems (INC-001, 2026-07-29).** "A block is the only commit" says *when* to write and is silent on what a half-written file means. A force-close during a block commit left `blockchain/state.json` truncated 7 bytes short of valid; `TryLoadSnapshot` had no `try`, so the `JsonException` escaped `EnsureInitialized` and **every subsequent launch produced an empty world with nothing printed in the log** — chain, wallets and explorer blank while the money services (own files) restored perfectly. The good file survived only because the throw landed before any writer ran. When persisting player-owned state, answer all three: **is the write atomic** (write `.tmp` → flush → rename, never truncate-and-stream), **does a corrupt read fail loudly** (a `Try` prefix is a promise — honour it or drop it), and **can a failed load ever be persisted back over the good copy** (guard the writer, not just the reader). The same incident exposed a scale limitation — several subsystems encode the hand-play premise (~585 bets/block) as an invariant rather than a tuning parameter, and do not degrade when the background simulator runs them at 9000X: the bet journal reached **1.13 GB / ~5.3M records loaded per boot**, with no retention policy anywhere, and its lifetime stats had been silently double-counting. Full statement: `Documentation/ProjectDesignManual.md` **Chapter 40** (limits + the durability rules) and §39.16 rule 7; forensic record: `Documentation/INCIDENT_LOG.md` INC-001; fix: `AIHelperFiles/step15-bank-companies-sc-provisioning-plan.md` **P15.11**.
+**⚠️ This rule governs commit TIMING, not commit DURABILITY — they are separate problems.** "A block is the only commit" says *when* to write and is silent on what a half-written file means. **When persisting player-owned state, answer all three:** is the write **atomic** (`.tmp` → flush → rename, never truncate-and-stream) · does a corrupt read **fail loudly** (a `Try` prefix is a promise — honour it or drop it) · can a failed load ever be **persisted back over the good copy** (guard the writer, not just the reader). A world was once lost to all three at once. Case: `INCIDENT_LOG.md` **INC-001**; rules: `ProjectDesignManual.md` **Ch. 40** + §39.16 rule 7.
 
-**⚠️ Its sequel — fixing the WRITER is half a fix (INC-002, 2026-08-06, `Documentation/ProjectDesignManual.md` §40.8).** P15.11 closed the duplication source and INC-001 recorded that the lifetime stats had been inflated by it — then stopped, without asking **which readers consume that input**. The reader that mattered was `BetsHistoryExplorer`'s max-loss-streak figure, reported by the developer as showing **>100 consecutive losses at 50% chance** (probability 2⁻¹⁰⁰). Duplicated records do not merely scale a streak the way they scale a sum: bet timestamps **collide heavily** (~3.1 bets share each `CurrentUtcDateTime`, since the calendar advances once per frame while the simulator settles many bets in it) and `OrderBy` is **stable**, so the copies land **adjacent** and the streak **multiplies** — measured 12 → 36 on the archived journal. Verified read-only over 1,081,554 real bets at `Chance=50`: win rate **0.5001**, true max run **19** (theory `log₂n ≈ 20`) — the engine was never at fault. Three fixes shipped together: **(1)** `BetHistoryRepository` deduplicates by `BetRecord.Id` (a Guid written on every journal line since the journal existed and, until now, **read by nothing**) at the loader, the legacy loader and live `Add`, reporting skips loudly; **(2)** the metric is segmented per `(GameId, Chance)`, no longer adds the closing win, and is renamed **"Max consecutive losses"** — it was never a martingale level, since the Insist switches (then a single `InsistAfterStop`) / the bankroll-limit reset / auto-recharge all reset the progression while the run kept counting; **(3)** `AssertLossRunIsPlausible` (`[Conditional("DEBUG")]`) tripwires above `log(n)/log(1/p) + 12`. **Two standing rules: when an incident names a corrupted input, enumerate its consumers and harden the one that DISTORTS the error most (a sum hides it, a streak broadcasts it) — and where a displayed figure has a cheap closed-form bound, assert it, or its only detector is a human being surprised.** A label is also a claim about semantics, and gets audited far less often than the arithmetic under it.
+**⚠️ Its sequel — fixing the WRITER is half a fix.** Three standing rules, each earned by a figure that was wrong on screen for an unknown number of sessions:
+
+- **When an incident names a corrupted input, enumerate its CONSUMERS** and harden the one that *distorts* the error most — a sum hides it, a streak broadcasts it.
+- **Where a displayed figure has a cheap closed-form bound, assert it**, or its only detector is a human being surprised.
+- **A label is a claim about semantics**, and it gets audited far less often than the arithmetic under it.
+
+Cases: `INCIDENT_LOG.md` **INC-002** and **INC-003**; analysis: `ProjectDesignManual.md` **§40.8**.
 
 ### 3. Fractional Profit Accumulation
 
@@ -445,17 +350,28 @@ Two consequences for new work: a service needing one declared *earlier* than its
 
 **A signal doesn't have to be a Godot/C# event — an in-memory flag with edge-triggered updates is the same idea.** ND.8d round 3's stuck-bidder-escalation fix (`NetworkRoot._stuckBidderSignatures`, 2026-07-21) is the freshest example: rather than replaying bid history every roll (expensive, and still not `_Process`-shaped) or polling anything per-frame, it stores a small `(signature, sinceBlockIndex)` per (company, bot) — updated once, exactly when the signature actually changes, inside the SAME block-mined event that already drives the whole bidding cascade. No new persisted state, no per-frame cost, no history replay. When a "since when has X been true" question comes up, reach for an edge-triggered signal like this before reaching for either a poll or a full replay.
 
-**But such a cache is EMPTY AND LYING at process start, and the fix depends on whether the predicate has memory.** ND.10j (§22.18) established the first half: *any in-memory cache a per-block sweep owns has a window at start where it is empty; if a reader can predict the sweep cheaply, it must.* Step 16 P16.6 (2026-07-31, §22.20) found the second half the hard way — **that rule was already written and got violated again**, because ND.10j applied it to the *reader* of `_botsRestingOnReserve` and not to the cache's own *memory*. The bot reserve guard is a **hysteresis** (rest at ≤ 200 BTC, resume only at ≥ 300), so between the thresholds the answer depends on how the bot arrived, and no reading of today's balance can recover it. Every restart silently resolved that ambiguity as "not resting": `bot_4` peaked at 250, never reached 300, and — after a rebuild wiped the set — took the **leading bid in six auctions** it should never have entered. Fixed by `EnsureReserveGuardSeeded`, one chain replay per process (derived, not persisted — no snapshot field, no bump), plus a launch line naming each bot's state and a `[Conditional("DEBUG")]` tripwire at the bid broadcast. **Rule: predicting a sweep from the current value only works for a MEMORYLESS predicate. A predicate with hysteresis has to be REPLAYED.** Corollary worth keeping: a drift filed as "harmless and self-correcting" stops being harmless the moment the mechanism it feeds decides ownership rather than pacing — re-read those judgements when a system's stakes change.
+**But such a cache is EMPTY AND LYING at process start.** Two rules, the second learned only after the first was written down and violated anyway:
+
+- *Any in-memory cache a per-block sweep owns has a window at start where it is empty; if a reader can predict the sweep cheaply, it must.*
+- **But predicting a sweep from the current value only works for a MEMORYLESS predicate. A predicate with hysteresis has to be REPLAYED** — between its two thresholds the answer depends on how the value arrived, and no reading of today's value recovers that.
+
+Corollary: a drift filed as "harmless and self-correcting" stops being harmless the moment the mechanism it feeds decides **ownership** rather than pacing. Re-read those judgements when a system's stakes change. Cases: `ProjectDesignManual.md` **§22.18** and **§22.20**.
 
 **Already-good examples in this codebase (services firing typed events on real state changes):** `UserStatsService.StatsChanged` (throttled 250ms — the reference pattern for a HIGH-FREQUENCY event, `EmitStatsChangedIfNeeded()`), `SimulationService.ClientBetSettled`, `CasinoClientLedgerService.LedgerChanged` / `ScMonetaryLedgerService.LedgerChanged`, `PrincipalBalanceService.BalanceChanged` / `CasinoScBalanceService.BalanceChanged`, `PlayerBankAccountService.BankStateChanged`, `CasinoCoinSwapService.SwapDeskChanged`, `BtcMarketDataService.MarketDayChanged`, `BtcNetworkDataService.NetworkDayChanged`.
 
-**Known migration candidates (audited 2026-07-21, none fixed yet — this is the backlog, not a mandate to stop and fix them now):** roughly fifteen scenes poll on a `RefreshInterval`/`FallbackInterval` timer purely to rebuild a panel from service state that only actually changes on a settled bet, a mined block, or a transfer — `StatusBar`, `FinancialBettingStats`, `CalendarsNavigator`, `BetsHistoryExplorer`, `BTCWallet`, `AuctioningCompanyDetails`, `CompanyDetails`, `BlockExplorer`, `CasinoFinances`, `BotPlayHistory`, `ScFinances`, `ScTransactions`, `CasinoGamblingFinances`, `ClientsTransactions`, `ClientsBetsHistory`, `FoundersWallets`, `CasinoCoinSwaps`, `BTCPoolsAndHardwareShop`, `BotsBtcWallets`. Each is a candidate to migrate to "rebuild once in `_Ready()`, then only when a subscribed event fires" — full write-up, rationale, and the Basic Mode v0.1 gate: `Documentation/ProjectDesignManual.md` Chapter 38.
+**The backlog exists and is catalogued elsewhere.** Roughly fifteen scenes still poll on a timer to rebuild a panel from state that only changes on a discrete event. **Do not add a new poll-shaped `_Process` to it without first checking whether an event already exists** (or should) for the state you are reading. The list, the two implementation caveats, and the Basic Mode v0.1 gate: `Documentation/ProjectDesignManual.md` **Ch. 38** (§38.4 the existing events, §38.5 the candidates) · `PRIVATE_ROADMAP.md` §6. ⚠ That catalogue was audited 2026-07-21 and entries have moved since — **re-derive it from the code before working through it** (Step 17 §5.1).
 
-**The INVERSE failure — a correct event, fired far too often, driving expensive work (R3, 2026-07-28, §38.7)**: this cost more than any poll in the backlog above. `CasinoCoinSwapService` (an **autoload**, alive in every scene) ran the full `RecomputeAvailability` — a CHAIN-side recompute walking the casino's whole address book plus every undistributed pool event — off `CasinoScBalanceService.BalanceChanged`, which since ND.8f fires **on every settled bet of all five clients (~20/frame)**, for an input that cannot move a single chain-side figure. It became the dominant term in the sim's frame time; the only visible symptom was R2-C1's honest `SimulationThrottle` holding the clock at **1/6** of a requested 9000X (the proof was already on disk — `difficulty_trace.csv`'s flat `simSecConsumed/simSecOffered = 1/6`, i.e. the engine retaining exactly its `MaxBacklogSeconds = 2.0` per frame). Fix: `BlockAccepted`/`MarketDayChanged` stay **immediate** (they genuinely move those figures, once per block / in-game day); `BalanceChanged` raises a dirty flag drained at most every `AvailabilityCoalesceSeconds` (0.25 s) in `_Process` — Pattern 6's hybrid used deliberately. Three standing rules: **(1) frequency is part of a subscription's contract** — re-examine subscribers when an event's real rate changes (ND.8f multiplied this one by 5 and nothing re-checked); **(2) coalesce at the consumer when the trigger cannot move the value**; **(3) a displayed throttle is a MEASUREMENT, not a diagnosis** — below-1 retention means "find what is eating the frame", never "raise `MaxBacklogSeconds`/`MaxBetsPerFrame`", which only hands a saturated frame more work. Shipped with it: **`NetworkRoot.AggregateSpendable` now makes ONE pass over the UTXO set for a node's whole owned address set** instead of one full pass PER address (`O(addresses × utxos)` → `O(utxos)`, identical result — an outpoint has exactly one address), which also speeds every wallet panel and bot affordability check. Also fixed here: `difficulty_trace.csv` gained the ND.10j stale-schema `.old` rotation it was missing, so R2-T's appended `simSecOffered,simSecConsumed` columns stop sitting under a 9-column header.
+**The INVERSE failure — a correct event, fired far too often, driving expensive work.** It cost more than any poll in the backlog, so migrating a poll to an event is **not automatically an improvement**. Three standing rules:
+
+1. **Frequency is part of a subscription's contract.** Re-examine subscribers when an event's real rate changes — one such change multiplied a rate by 5 and nothing re-checked.
+2. **Coalesce at the consumer when the trigger cannot move the value** (Pattern 6's hybrid, used deliberately).
+3. **A displayed throttle is a MEASUREMENT, not a diagnosis.** Below-1 retention means *"find what is eating the frame"*, never *"raise `MaxBacklogSeconds`/`MaxBetsPerFrame`"* — which only hands a saturated frame more work.
+
+Case, with the measurement that caught it: `ProjectDesignManual.md` **§38.7**.
 
 **Project goal, tracked in `Documentation/PRIVATE_ROADMAP.md` §6:** before Basic Mode v0.1 is considered complete, audit every `_Process` override in the project against this principle and migrate what's feasible to event-driven design. Not a hard blocker on other work — but do not add a NEW poll-shaped `_Process` to the backlog above without first checking whether an event already exists (or should) for the state you're reading.
 
-**Closing rule — a cost note is a MEASUREMENT or it is a guess wearing a measurement's clothes (Step 16 P16.6, 2026-07-31, §40.7).** Every judgement on this page is a performance judgement, and the P16.2 rescan carried one that read as quantified and had never been timed: *"~20 SHA256 per node past its frontier."* A derivation is a secp256k1 scalar multiply, not a hash — the real figure was **127 ms**, five orders of magnitude out, and because it *looked* measured it was the one number nobody re-checked in the phase that multiplied it by thirteen. Cost: a six-minute cold start. **Time it, or say plainly that you did not.** Its other half was right and worth copying — *"if that ever measures as material it is a T4 finding, never a reason to skip the rescan"* held exactly, and pointed at the layer that actually needed fixing. **When a documented cost comes true, re-read the note for the mitigation it already named.**
+**Closing rule — a cost note is a MEASUREMENT or it is a guess wearing a measurement's clothes.** Every judgement on this page is a performance judgement. **Time it, or say plainly that you did not** — a figure that merely *looks* measured is the one nobody re-checks, and one such note was five orders of magnitude out. And **when a documented cost comes true, re-read the note for the mitigation it already named.** Case: `ProjectDesignManual.md` **§40.7**.
 
 ### 7. Standing Conventions — rules that outlived the phase that produced them
 
@@ -557,126 +473,21 @@ If Python is ever installed, delete this section — and disable the Store alias
 
 ---
 
-## Scene Management
+## Scene Management — index
 
-### Current State (to be migrated)
+Full inventory (25 `SceneId`s, every path verified), the navigation map and the `StatusBar` component: **`Documentation/SCENES.md`**.
 
-Scene transitions are currently done inline with hardcoded paths:
-```csharp
-GetTree().ChangeSceneToFile("res://Screens/DiceGame/DiceGame.tscn");
-```
-This pattern is scattered across multiple screen files. It is fragile and should be replaced.
+**Every scene transition goes through `SceneManager`.** All paths live in one place and call sites use a compile-time-safe enum — there are no `ChangeSceneToFile` calls outside the service, and it must stay that way.
 
-### `SceneManager` Autoload
+**Adding a scene** — three steps in `Scripts/Services/SceneManager.cs`:
 
-A `SceneManager` autoload centralizes all scene transitions. All paths live in one place; call sites use a compile-time-safe enum.
+1. add the entry to the `SceneId` enum;
+2. add its path to the `Paths` dictionary;
+3. call `_sceneManager?.Go(SceneManager.SceneId.X)` at the call site.
 
-**`Scripts/Services/SceneManager.cs`** (registered in `project.godot`):
+`Go()` records a one-deep `PreviousScene`, which is what makes **origin-aware back navigation** work for the scenes reachable from more than one hub (`BetsHistoryExplorer`, `CasinoCoinSwaps`): they return to `SceneManager.PreviousScene ?? MainMenu`.
 
-```csharp
-public partial class SceneManager : Node
-{
-    public enum SceneId
-    {
-        DiceGame,
-        BlockExplorer,
-        BankrollProgrammer,
-        BetsHistoryExplorer,
-        CalendarsNavigator,
-        MartingaleCalculator,
-        MainMenu,           // planned
-        // Add new scenes here only
-    }
-
-    private static readonly Dictionary<SceneId, string> Paths = new()
-    {
-        [SceneId.DiceGame]              = "res://Screens/DiceGame/DiceGame.tscn",
-        [SceneId.BlockExplorer]         = "res://Screens/BlockExplorer/BlockExplorer.tscn",
-        [SceneId.BankrollProgrammer]    = "res://Screens/BankrollProgrammer/BankrollProgrammer.tscn",
-        [SceneId.BetsHistoryExplorer]   = "res://Screens/BetsHistoryExplorer/BetsHistoryExplorer.tscn",
-        [SceneId.CalendarsNavigator]    = "res://Screens/CalendarsNavigator/CalendarsNavigator.tscn",
-        [SceneId.MartingaleCalculator]  = "res://Screens/MartingaleCalculator/MartingaleCalculator.tscn",
-        [SceneId.MainMenu]              = "res://Screens/MainMenu/MainMenu.tscn",
-    };
-
-    public void Go(SceneId scene) => GetTree().ChangeSceneToFile(Paths[scene]);
-}
-```
-
-**Usage in any screen after migration:**
-```csharp
-private SceneManager _sceneManager;
-
-public override void _Ready()
-{
-    _sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
-}
-
-private void OnBackButtonPressed()
-{
-    _sceneManager?.Go(SceneManager.SceneId.DiceGame);
-}
-```
-
-All existing main screens have been migrated. Adding a new scene: (1) add entry to `SceneId` enum, (2) add path to `Paths` dictionary, (3) call `_sceneManager?.Go(SceneId.X)` at the call site.
-
-The example above omits several DEV-only scenes for brevity (e.g. `CasinoFinances`, `FoundersWallets`, `BotPlayHistory`). Step 11 added three more, all DEV-only: `CasinoGamblingFinances` (Main Menu → casino SC balances/loans/transfers), `ClientsBetsHistory` (→ from `CasinoGamblingFinances`, per-client P/L + live bet feed), and `ClientsTransactions` (→ from `CasinoGamblingFinances`, per-client SC deposit/withdrawal ledger) — see `Screens/CasinoGamblingFinances/`. Step 12 added two **player-facing** scenes: `ScFinances` (MainMenu → the player's SC-flows hub: Private Bank Account balances, deposit/withdraw, betting stats) and `ScTransactions` (→ from `ScFinances`, the player's own Bank↔Main transfer history) — see `Screens/ScFinances/`. Step 13 added the **player-facing** `CasinoCoinSwaps` (MainMenu + ScFinances → the casino's SC↔BTC swap desk; carries no DEV controls itself — its reserve/fee/auto-floor knobs live in the existing `CasinoFinances`/`CasinoGamblingFinances` DEV scenes) — see `Screens/CasinoCoinSwaps/`. `SceneManager.Go()` also records a one-deep `PreviousScene` for origin-aware back navigation.
-
-### `StatusBar` Component
-
-**`UI/StatusBar/StatusBar.cs`** — pure C# `HBoxContainer` (no .tscn needed). Instantiated programmatically in each screen's `_Ready()`.
-
-Shows Main Balance, Bankroll, **the player's BTC wallet**, the game clock, and the BTC price ticker.
-
-**The two BTC cells are different KINDS of figure and must stay visually distinguishable (2026-08-06).** `BTC Wallet: 12.50000000` is money the player *owns* — coloured **bitcoin orange** (`#F7931A`), placed beside the SC balances it belongs with. `BTC Price: 1,234.56 SC` is a market quote they don't own — default text colour, at the far end, showing `BTC Price: —` before Market Birth (2010-07-18) and `BTC Price: HALT` on the 13 halt days. The SC suffix on the price and the SC suffix on DiceGame's Bankroll / Main Balance labels landed in the same change, for the same reason: once a BTC figure sits in the bar, every unlabelled number becomes ambiguous. **Do not add a third bare number to this bar.**
-
-Refresh cadence differs per cell and this is deliberate:
-- SC balances + clock — `_Process` every frame (cheap field reads; the clock genuinely needs real delta).
-- BTC price — event-only, on `BtcMarketDataService.MarketDayChanged` (daily step function).
-- **BTC wallet — `NetworkRoot.BlockAccepted` (dirty flag drained next frame) + a 2 s fallback tick.** It reads `NetworkRoot.GetPlayerSpendableBalanceStatic()`, which is **one `AggregateSpendable` pass over the whole UTXO set** — cheap at this cadence, ruinous per frame (§38.7's inverse-failure lesson). The block event is the real edge; the fallback exists only because a player's own send (BTCWallet or a swap sell) drops spendable the instant it is broadcast, with no block to announce it. The static event is unsubscribed in `_ExitTree`.
-
-`GetPlayerSpendableBalanceStatic()` is a **static** twin of the instance `GetNodeSpendableBalance` because the StatusBar is instantiated programmatically in every screen and owns no `NetworkRoot` node (the `GetPlayerChainLengthStatic` precedent). It reads the **owned address set**, never `WalletAddress` alone — the P16.6 trap: base-only reads went to zero once change rotation landed.
-
-```csharp
-// In _Ready() of any screen — insert at top of a VBoxContainer:
-var vbox = GetNode<VBoxContainer>("ContainerPath");
-var statusBar = new StatusBar();
-vbox.AddChild(statusBar);
-vbox.MoveChild(statusBar, 0);
-
-// Or for scenes that use a placeholder slot (MainMenu, MartingaleCalculatorStandalone):
-GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
-```
-
-### Navigation Map
-
-```
-MainMenu
-├── DiceGame          (also reachable directly; DiceGame has its own "Main Menu" button)
-│   ├── ScFinances          → Main Menu   (DiceGame's "Deposit Balance" button opens ScFinances; DepositPopup retired in Step 12)
-│   ├── BankrollProgrammer  → Main Menu
-│   ├── BlockExplorer       → Main Menu
-│   │   ├── AuctioningCompanyDetails (Step 14 ND.5, Enroll Mode "Details →" while InAuction; forwards to CompanyDetails on resolution) → BlockExplorer
-│   │   └── CompanyDetails (Step 14 ND.8b.4, Enroll Mode Founded rows' "Details →" — Board Vote / dividend claims) → BlockExplorer
-│   └── CalendarsNavigator  → Main Menu / BetsHistoryExplorer
-│       └── BetsHistoryExplorer → origin-aware back (Main Menu / CalendarsNavigator / ScFinances)
-├── ScFinances [player-facing]  → Main Menu   (Step 12 — the player's SC-flows hub)
-│   ├── ScTransactions              → ScFinances
-│   ├── BetsHistoryExplorer         → (origin-aware back to its launcher)
-│   ├── BankrollProgrammer          → ScFinances / (its own Main Menu back)
-│   └── CasinoCoinSwaps             → origin-aware back (Main Menu / ScFinances)
-├── CasinoCoinSwaps [player-facing]  → Main Menu   (Step 13 — the casino's SC↔BTC swap desk)
-├── MartingaleCalculator (standalone, full-screen) → Main Menu
-├── WorldEconomy [DEV]  → Main Menu   (Step 14 ND.8c — SC Monetary Ledger readout; + ND.8b.6 company inflow/expansion knobs)
-├── CentralBank [DEV]   → Main Menu   (Step 15 P15.1e — the FED's per-client loan accounts, D-15.16)
-└── CasinoGamblingFinances [DEV]  → Main Menu
-    ├── ClientsBetsHistory [DEV]    → Casino Gambling Finances
-    └── ClientsTransactions [DEV]   → Casino Gambling Finances
-```
-
-`BetsHistoryExplorer`'s back button is **origin-aware** (Step 12 / SF.4.2): it returns to `SceneManager.PreviousScene ?? MainMenu`, so it goes back to whichever hub launched it (`CalendarsNavigator` or `ScFinances`).
-
-DiceGame's MartingaleCalc button opens the **popup version** (`Screens/MartingaleCalculator/`) inline — it does not navigate away. The standalone version (`Screens/MartingaleCalculatorStandalone/`) is a full screen reachable only from MainMenu.
+**The `StatusBar` rule that governs new work:** the bar shows Main Balance, Bankroll, the player's BTC wallet, the clock and the BTC price. The two BTC cells are **different kinds of figure** — the wallet is money owned (bitcoin orange `#F7931A`, beside the SC balances), the price is a market quote (default colour, far end). Once a BTC figure sits in the bar every unlabelled number becomes ambiguous, so **do not add a third bare number to it**.
 
 ---
 
@@ -692,6 +503,8 @@ Detailed design documents are in `Documentation/`:
 
 | File | Contents |
 |---|---|
+| `SCENES.md` | **Scenes & navigation in full** — the 25-id inventory generated from `SceneManager` with every path verified, the rebuilt navigation map, the `StatusBar` component, and a record of three claims the old section made that the code contradicts. Extracted and **rebuilt** from this file at 7,470 characters (Dep-01 D2.3) |
+| `ARCHITECTURE.md` | **The core game systems and data models in full** — Dice, betting strategy, sessions, the execution pipeline, blockchain/mining, and the finance/blockchain/history models. Extracted from this file at 16,696 characters (Dep-01 D2.2). This file keeps only the one-line index in **Core Game Systems — index**, plus the three embedded rules that say what *not* to write |
 | `DESIGN_OVERVIEW.md` | Target design per system with implementation status labels |
 | `GLOSSARY.md` | Canonical terminology (source of truth for naming) |
 | `PLAYER_GUIDE.md` | What is playable now (updated for each release) |
