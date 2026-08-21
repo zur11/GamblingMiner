@@ -567,6 +567,28 @@ Related question worth answering in the same pass: **should `BetRecord` carry it
 string on a persisted record — a format change, hence a wipe — but it would make this class of defect
 self-evident forever rather than reconstructible. Decide it in the entry, not before.
 
+### 7.1 — Merge decision: BOTH diagnostics ship (developer, 2026-08-20)
+
+Recorded explicitly rather than left to drift, because "D3 ships permanently" was written above while D2's
+fate was only ever implied:
+
+| | Ships to `main`? | Cost | Why |
+|---|---|---|---|
+| **D3** — continuity assert + writer tag | **Yes**, permanently | `[Conditional("DEBUG")]`, one subtraction per record | The sentinel this whole plan exists to leave behind |
+| **D2** — `SessionLifecycleTrace` | **Yes**, permanently | A few file writes per session start/stop; trace-only, delete-listed | It is what would NAME a future second writer. D3 says *that* something is wrong; D2 says *who* |
+
+They are two halves of one instrument and shipping only the detector would be the worse half. **D3 without
+D2 puts the next investigation back where mini-plan 05 started: knowing a journal has two writers and
+having no way to ask which code they are.**
+
+### 7.2 — Shipped but never executed: the emit budget (deferred to mini-plan 06 §7)
+
+Flagged at this merge rather than discovered later: mini-plan 04's §6.2 clock-pays backpressure went to
+`main` **without ever running**. `ReportEmitBudgetBound` did not fire once across six runs and 7,578
+records, because at 1 and 5 credits the budget cannot bind. Not a defect — **a shipped promise with no
+execution behind it**, which is a different thing and worth naming as such. Mini-plan 06 §7 exercises it on
+the disposable world it is already building.
+
 ---
 
 ## 8. Deliverable — INCIDENT_LOG.md INC-003

@@ -11,6 +11,11 @@ This plan observes it: deliberately re-create the retired mechanism on a disposa
 05's sentinel armed, and see whether the journal contaminates in the same shape. Success upgrades INC-003's
 root fault from leading hypothesis to fact; failure sends it back to open and is worth just as much.
 
+**Second objective, carried here deliberately (§7).** Mini-plan 04's clock-pays backpressure shipped to
+`main` **without ever having executed** — `ReportEmitBudgetBound` did not fire once across six runs and
+7,578 records. This plan is already building a harness on a disposable world, which is the one context
+where exercising it costs nothing.
+
 ---
 
 ## 1. What is being reproduced
@@ -82,18 +87,38 @@ Delete it once INC-003 is settled.
 
 ---
 
-## 3. The world: disposable, and archived first
+## 3. The world: archive → wipe → reproduce on a CLEAN one
 
-The harness **deliberately corrupts the bet journal**. It must not touch anything the developer wants.
+The harness **deliberately corrupts the bet journal**, so it must not touch anything wanted — and, less
+obviously, it must not run on a world that is *already* contaminated.
 
-1. **Archive `user://` whole**, to a dated folder outside it — the P15.8 precedent
-   (`%APPDATA%\Godot\GamblingMiner_INC003_pre-repro_<date>\`). This is also the archive INC-003's evidence
-   depends on and mini-plan 05 §6.1 already requires before the wipe; doing it here serves both.
-2. Run the harness on the **live** `user://` afterwards, accepting that it will be contaminated — the wipe
-   is already decided (mini-plan 05 §6, option b), so the world is disposable by prior decision.
+### 3.1 — ✅ Step 1 done: the evidence is archived (2026-08-20)
 
-*Restoring the archive afterwards is optional and only matters if the reproduction fails and the world is
-wanted back.*
+```
+%APPDATA%\Godot\app_userdata\GamblingMiner_INC003_evidence_2026-08-20\
+```
+
+**88 files, 55 MB, verified**: 1,053 bet records inside the `2009-05-23 T19–T21` band, 193,660 bet records
+total, `Rollup.TotalBets = 223,137`. This is the archive INC-003 cites as its evidence, and the one
+mini-plan 05 §6.1 requires before the wipe — one copy serves both.
+
+*Taken when it was, because the journal was still living in `user://` and every pre-block restart could
+have rolled it away. It had already survived several by luck.*
+
+### 3.2 — Then wipe, and reproduce on a virgin world
+
+**This reverses the first draft of this section**, which had the harness run on the live world "since it is
+disposable by prior decision". That is true and it is still the wrong order:
+
+> **The world already contains two balance lines.** Introducing a new band on top of them makes the result
+> ambiguous exactly where P1–P5 need to be unambiguous — a second line would have to be told apart from
+> the ones already there, by the same reasoning that took mini-plan 05 a week. **A band that appears in a
+> virgin journal admits no argument.**
+
+So: **archive (done) → `WorldFormatVersion` bump + clean reset (mini-plan 05 §6) → run the harness.**
+
+The wipe is not a cost here, it is the instrument: a fresh world means every record in the journal was
+written during this experiment, and the two-line separation becomes trivial rather than forensic.
 
 ---
 
@@ -143,7 +168,39 @@ learned something no amount of further reasoning could have told it.
 
 ---
 
-## 7. Out of scope
+## 7. Deferred here from mini-plan 04: validate the emit budget, which has never run
+
+`MaxAppendRowsPerFrame = 25` and the whole §6.2 *"the clock pays, not the content"* path shipped to `main`
+in an **unexercised** state. Across mini-plan 05's six runs — 7,578 records, 1 and 5 credits, bots on and
+off — `ReportEmitBudgetBound` never fired once, because at those rates the budget cannot bind (mini-plan 04
+§11.2 measured why: 0.78 bets/frame at 10x against a budget of 25, and same-timestamp groups capped at
+`SimulationService.MaxBetsPerFrame = 10`).
+
+**That is not a defect. It is a shipped promise with no execution behind it**, and the honest place to
+record it was mini-plan 05's merge review rather than a future surprise.
+
+Validating it needs a régime the game cannot reach by playing, which is exactly what this plan already
+builds: a disposable world plus a harness branch that never merges.
+
+| | Step |
+|---|---|
+| 1 | On `repro/explorer-clock-rewind`, temporarily set `MaxAppendRowsPerFrame = 1` |
+| 2 | Replay a dense stretch at **10x** in `BetsHistoryExplorer` |
+| 3 | Confirm **all three**: `ReportEmitBudgetBound` prints · the `Speed: 10x requested / N x actual` label appears · **and the cursor falls behind wall-clock without dropping a single row** |
+
+**Step 3's third clause is the actual test.** The label and the print are conveniences; §6.2's promise is
+that *not one bet of the retained range is ever skipped*, and the way to check it is to count the emitted
+rows against `UpperBound` over the same window and require equality.
+
+Revert the constant before leaving the branch — and since the branch never merges, the revert is belt and
+braces rather than the safeguard.
+
+*If it turns out the mechanism does not work, that is a mini-plan 04 defect found before a player ever met
+it — which is the whole value of noticing that a shipped path had never run.*
+
+---
+
+## 8. Out of scope
 
 - Fixing anything. The mechanism has been gone since 2026-08-16; this plan only establishes that it was
   the one.
