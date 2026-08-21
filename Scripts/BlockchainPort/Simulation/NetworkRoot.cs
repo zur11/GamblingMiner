@@ -7698,6 +7698,7 @@ public partial class NetworkRoot : Node
         DeleteIfExists(CompanyGovernanceTracePath); // ND.8b.3 — added WITH the feature (the TL.3/ND.6b rule)
         DeleteIfExists(CasinoBotBidTracePath);
         DeleteIfExists(BankCreditTracePath); // Step 15 P15.3a — added WITH the feature (the TL.3/ND.6b rule)
+        DeleteIfExists(Scripts.Sessions.SessionLifecycleTrace.TracePath); // mini-plan 05 D2 — added WITH the feature
 
         // The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
         // and the betting stats rebuild from a pristine world.

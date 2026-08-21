@@ -96,8 +96,106 @@ public partial class UserStatsService : Node
         }
     }
 
-    public void OnBetExecutedRegisterBet(string gameId, BetTransactionEvent bet)
+    // ── Mini-plan 05 D1 + D3 — the journal asserts that it belongs to ONE actor ─────────────────────
+    // Mini-plan 04 §13 proved from the data that two independent wallets had been writing here: two
+    // balance lines, each internally exact to the satoshi, each with its own martingale progression,
+    // interleaved second by second. It went unnoticed for at least three in-game days and was found by
+    // eye, from a replay built for something else, because nothing ever checked a property the records
+    // already carried.
+    //
+    // `BalanceAfter[i] == BalanceAfter[i-1] + NetAmount[i]` is one subtraction per bet against fields the
+    // journal has always held. `source` names the writer, so a break says WHO as well as WHETHER — the
+    // question the journal could not answer, because it records no author.
+    public const string SourceDiceGame = "DiceGame";
+    public const string SourceSimulation = "SimulationService";
+
+    private decimal _lastRegisteredBalanceAfter;
+    private bool _hasLastRegisteredBalance;
+    private string _lastRegisteredSource;
+    private string _lastDiscontinuityReason;
+    private int _continuityBreaksReported;
+    private const int MaxContinuityBreaksReported = 20;
+    private readonly Dictionary<string, int> _registrationsBySource = new();
+
+    /// <summary>
+    /// Declares that the next registered bet will legitimately break balance continuity — an auto-recharge,
+    /// a manual transfer, a wallet reseed, a time-travel balance set.
+    ///
+    /// The exceptions have to ANNOUNCE THEMSELVES rather than be inferred, and that is what makes the check
+    /// worth having: a diagnostic whose false positives are routine gets muted within a week, while one that
+    /// is silent by construction keeps its authority. Silence here means a real anomaly.
+    /// </summary>
+    public void NoteBalanceDiscontinuity(string reason)
     {
+        // Drops the baseline rather than setting a "skip once" flag. The next registered bet re-seeds it
+        // instead of being compared across the jump, which makes repeated declarations before a single bet
+        // harmless — and leaves no pending token that could silently absorb a real break much later.
+        _hasLastRegisteredBalance = false;
+        _lastDiscontinuityReason = string.IsNullOrEmpty(reason) ? "unspecified" : reason;
+    }
+
+    [System.Diagnostics.Conditional("DEBUG")]
+    private void AssertSingleActorJournal(BetTransactionEvent bet, string source)
+    {
+        source ??= "unknown";
+        _registrationsBySource.TryGetValue(source, out int seen);
+        _registrationsBySource[source] = seen + 1;
+
+        if (_hasLastRegisteredBalance)
+        {
+            decimal expected = Money.Normalize(_lastRegisteredBalanceAfter + bet.CreditedProfit);
+            if (expected != Money.Normalize(bet.BalanceAfter) &&
+                _continuityBreaksReported < MaxContinuityBreaksReported)
+            {
+                _continuityBreaksReported++;
+                GD.PrintErr(string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "[BetJournal] UNDECLARED balance discontinuity #{0}: previous BalanceAfter {1:F8} " +
+                    "+ net {2:F8} = {3:F8}, but this bet reports {4:F8} (delta {5:F8}). " +
+                    "Written by '{6}', previous by '{7}'. Counts so far: {8}. Last declared jump: {9}. " +
+                    "Two writers on one journal is mini-plan 05's whole question — see its §1.2.",
+                    _continuityBreaksReported,
+                    _lastRegisteredBalanceAfter,
+                    bet.CreditedProfit,
+                    expected,
+                    bet.BalanceAfter,
+                    bet.BalanceAfter - expected,
+                    source,
+                    _lastRegisteredSource ?? "none",
+                    DescribeSourceCounts(),
+                    _lastDiscontinuityReason ?? "none"));
+
+                if (_continuityBreaksReported == MaxContinuityBreaksReported)
+                {
+                    GD.PrintErr("[BetJournal] Continuity-break reporting capped; further breaks are silent. " +
+                                "The bet journal itself remains the full record.");
+                }
+            }
+        }
+
+        _lastRegisteredBalanceAfter = bet.BalanceAfter;
+        _hasLastRegisteredBalance = true;
+        _lastRegisteredSource = source;
+    }
+
+    private string DescribeSourceCounts()
+    {
+        var parts = new List<string>();
+        foreach (KeyValuePair<string, int> entry in _registrationsBySource)
+        {
+            parts.Add(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0}={1}", entry.Key, entry.Value));
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    public void OnBetExecutedRegisterBet(string gameId, BetTransactionEvent bet, string source = "unknown")
+    {
+        // The default is deliberately "unknown" rather than a plausible name: a call site nobody tagged is
+        // exactly what this is hunting, and it must be able to say so.
+        AssertSingleActorJournal(bet, source);
+
         if (EnableHistoryPersistence && BetHistory != null)
         {
             var record = new BetRecord
@@ -128,6 +226,12 @@ public partial class UserStatsService : Node
 
     public void RegisterDeposit(decimal amount, decimal balanceAfter, DateTime timestampUtc)
     {
+        // Mini-plan 05 D3: money arriving from outside the betting loop IS the legitimate discontinuity,
+        // and this method is already the point where every one of them announces itself. Declaring it here
+        // rather than at each recharge/transfer call site means a new funding path inherits the exemption
+        // by construction instead of tripping a false alarm nobody wired it into.
+        NoteBalanceDiscontinuity("deposit");
+
         if (EnableHistoryPersistence && BetHistory != null)
         {
             var depositRecord = new DepositRecord
@@ -146,9 +250,19 @@ public partial class UserStatsService : Node
         EmitStatsChangedImmediate();
     }
 
+    // Mini-plan 05 §2 established this has NO callers. It is kept — rather than deleted — precisely because
+    // it is a route into the journal that nothing currently guards, and the investigation needs to be able
+    // to tell whether something started using it. Anything arriving this way is tagged as such, so it
+    // cannot hide inside either of the two known writers' counts.
+    public const string SourceRegisteredEventSource = "RegisterSource";
+
     public void RegisterSource(IBetEventSource source)
     {
-        source.BetExecuted += OnBetExecutedRegisterBet;
+        GD.PrintErr("[BetJournal] UserStatsService.RegisterSource was called — it had no callers when " +
+                    "mini-plan 05 was written. Every bet arriving through it is a third writer into the " +
+                    "player's journal. See the plan's §2.");
+        source.BetExecuted += (gameId, bet) =>
+            OnBetExecutedRegisterBet(gameId, bet, SourceRegisteredEventSource);
     }
 
     public void FlushHistory()
@@ -229,6 +343,10 @@ public partial class UserStatsService : Node
 
     public void RollbackHistoryToUtc(DateTime checkpointUtc)
     {
+        // Mini-plan 05 D3: the journal just lost its tail, so the tracked balance no longer describes the
+        // last surviving record. Re-seed rather than compare across a rollback.
+        NoteBalanceDiscontinuity("history_rollback");
+
         if (!EnableHistoryPersistence || BetHistory == null)
         {
             return;
@@ -253,6 +371,8 @@ public partial class UserStatsService : Node
     // not have (see OQ-BP.11).
     public void ClearAllHistory()
     {
+        NoteBalanceDiscontinuity("history_cleared");
+
         if (!EnableHistoryPersistence || BetHistory == null)
         {
             return;

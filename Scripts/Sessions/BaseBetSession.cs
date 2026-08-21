@@ -45,6 +45,15 @@ namespace Scripts.Sessions
         protected readonly Wallet _wallet;
         protected readonly ProgressiveBettingStrategy _strategy;
 
+        // ── Mini-plan 05 D2: session identity ───────────────────────────────────────────────────────
+        // Handed out at CONSTRUCTION, not at Start, so a session that is built and never started is still
+        // identifiable — and so is one that is built twice. `Owner` is set by whoever creates the session;
+        // a session that reaches the trace as "unknown" is a finding in itself (hypothesis H4: an instance
+        // nobody knows about). Diagnostic only — nothing reads these but the trace.
+        public int SessionId { get; }
+        public string Owner { get; set; } = "unknown";
+        public string OwnerNodeId { get; set; } = "";
+
         protected BaseBetSession(
             BetService betService,
             Wallet wallet,
@@ -53,10 +62,24 @@ namespace Scripts.Sessions
             _betService = betService;
             _wallet = wallet;
             _strategy = strategy;
+
+            SessionId = SessionLifecycleTrace.NextSessionId();
+            // "(pre-init)", never "unknown": `Owner` is assigned by the creator through an object
+            // initializer, which runs AFTER this constructor, so every construct row would otherwise read
+            // "unknown" and destroy the one value that word has to carry — an untagged session on a
+            // start/stop row is hypothesis H4, and a signal that fires on every row is not a signal.
+            SessionLifecycleTrace.Write(
+                "construct", "(pre-init)", SessionId, GetType().Name, "", wallet?.Balance ?? 0m);
         }
 
         public virtual void Start(int betCount, BettingStrategyConfig config)
         {
+            // Traced BEFORE the state mutation, so a Start on an already-running session is visible as two
+            // consecutive "start" rows rather than being smoothed over.
+            SessionLifecycleTrace.Write(
+                "start", Owner, SessionId, GetType().Name, OwnerNodeId, _wallet?.Balance ?? 0m,
+                note: IsRunning ? "ALREADY-RUNNING" : "");
+
             RemainingBets = betCount <= 0 ? int.MaxValue : betCount;
             ProfitSessionStartingBalance = _wallet.Balance;
             LossSessionStartingBalance = _wallet.Balance;
@@ -78,6 +101,10 @@ namespace Scripts.Sessions
 
             IsRunning = false;
             LastStopReason = reason;
+
+            SessionLifecycleTrace.Write(
+                "stop", Owner, SessionId, GetType().Name, OwnerNodeId, _wallet?.Balance ?? 0m,
+                reason.ToString());
 
             OnStopped?.Invoke(this);
         }

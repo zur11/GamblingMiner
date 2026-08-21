@@ -221,8 +221,19 @@ public partial class CasinoCoinSwaps : Control
 
 		// Read-only — the knob lives in CasinoGamblingFinances (D-SW.9). Additive model (2026-07-08,
 		// supersedes D-SW.1): the network fee is charged SEPARATELY, on top of the %, never absorbed inside it.
-		_feeLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Swap fee: {_swapService.GetSwapFeePercentFor("player"):0.##}% + 0.1 BTC network fee (both directions, both charged)");
+		// The network side is the day's replayed median (ND.7 / D-ND7.9), NOT the retired flat 0.1 scaffold that
+		// was hardcoded into this label until 2026-08-20 — the per-quote breakdowns below already read it live.
+		// It is a genuine 0 from Market Birth (2010-07-18) through 2011-04-13, and the label must not advertise a
+		// charge that is not made. Zero here is a KNOWN value, not missing data, so it reads "no network fee"
+		// rather than the "—" this scene uses for absent/locked figures. RefreshHeader polls every 2 s, so the
+		// label follows the median across a day boundary with no extra wiring.
+		decimal feePercent    = _swapService.GetSwapFeePercentFor("player");
+		decimal networkFeeBtc = _swapService.CurrentNetworkFeeBtc;
+		_feeLabel.Text = networkFeeBtc > 0m
+			? string.Create(CultureInfo.InvariantCulture,
+				$"Swap fee: {feePercent:0.##}% + {networkFeeBtc:N8} BTC network fee (both directions, both charged)")
+			: string.Create(CultureInfo.InvariantCulture,
+				$"Swap fee: {feePercent:0.##}% (both directions) · no network fee at this date");
 	}
 
 	// D-13.11 — the two real historical halts the dataset carries (Source == "none" ranges).

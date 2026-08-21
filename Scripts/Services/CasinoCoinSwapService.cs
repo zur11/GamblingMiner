@@ -20,8 +20,13 @@ using GodotBlockchainPort.Simulation;
 // See AIHelperFiles/step13-sw-casino-coin-swaps-plan.md.
 public partial class CasinoCoinSwapService : Node
 {
-	// §3.1 — rank-ready fee model. One percent governs BOTH swap directions; it INCLUDES the 0.1 BTC network
-	// fee (the casino pays the on-chain fee out of its collected margin, never the player on top — D-SW.1).
+	// §3.1 — rank-ready fee model. One percent governs BOTH swap directions. ADDITIVE since D-SW.11
+	// (2026-07-08, superseding the original inclusive D-SW.1 this comment described until 2026-08-20): the
+	// network fee is a SEPARATE charge SUMMED with the casino's cut — totalFee = networkFee + fee×(gross +
+	// networkFee) — never absorbed inside it, so the player pays it on top. D-SW.12 caps the casino's own cut
+	// alone; the network fee is never capped and is always charged in full. And since ND.7 (D-ND7.9) that
+	// networkFee is the day's replayed historical MEDIAN, not the retired flat 0.1 scaffold — it is a genuine
+	// 0 from Market Birth through 2011-04-13. See ComputeScToBtcCore / ComputeBtcToScCore for the arithmetic.
 	public const decimal DefaultSwapFeePercent = 10m;
 	public const decimal MinSwapFeePercent     = 1m;   // D-SW.9 clamp range
 	public const decimal MaxSwapFeePercent     = 10m;
@@ -693,8 +698,10 @@ public partial class CasinoCoinSwapService : Node
 	// The full §4.1 pipeline. Clamps are re-validated service-side (the UI validates first): the input is
 	// hard-clamped to the binding maximum (§4.3, TriggerManualDeposit's Math.Min safety) and the §3.2
 	// minimum swap size is enforced. Legs: player Main −S (instant) → casino Main +S (instant, D-SW.3) →
-	// casino → player base address on-chain send of netBtc with the 0.1 network fee paid by the casino out
-	// of its margin (D-SW.1/D-SW.6). A failed broadcast unwinds both SC legs — no partial swap ever commits.
+	// casino → player base address on-chain send of netBtc (D-SW.6), carrying the day's replayed median as the
+	// network fee (ND.7 / D-ND7.9 — was a flat 0.1 under D-SW.1). The casino's wallet funds that on-chain fee,
+	// but NOT out of its margin as the inclusive model had it: under D-SW.11 it was already collected from the
+	// player inside quote.FeeCharged. A failed broadcast unwinds both SC legs — no partial swap ever commits.
 	public bool TryExecuteScToBtc(string clientId, decimal scAmount, out string error)
 	{
 		error = string.Empty;
@@ -779,8 +786,9 @@ public partial class CasinoCoinSwapService : Node
 
 	// The full §4.2 pipeline. Clamps are re-validated service-side (input hard-clamped to the binding max,
 	// §4.3; the §3.2 minimum swap size enforced). Legs run in the OPPOSITE order from Panel A: the on-chain
-	// send is the CLIENT's own broadcast, so it goes FIRST — client → casino base address of (B − 0.1) with
-	// the 0.1 network fee, the client paying exactly B total (D-SW.1). The SC leg then fires INSTANTLY
+	// send is the CLIENT's own broadcast, so it goes FIRST — client → casino base address of (B − networkFee)
+	// with that day's replayed median attached as the fee, the client paying exactly B total (ND.7 / D-ND7.9 —
+	// was a flat 0.1 under D-SW.1, and it can be 0 in the zero-median era). The SC leg then fires INSTANTLY
 	// without waiting for confirmation (§4.4 — a restart before the block reverts the mempool AND the SC
 	// balances together, so crediting ahead of confirmation carries no real risk). Doing the broadcast first
 	// means a failed send never needs a rollback — nothing has moved yet.

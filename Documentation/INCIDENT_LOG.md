@@ -286,3 +286,116 @@ landing exactly on the theoretical expectation.
    what made the inflation hard to reason about — nobody can sanity-check a figure whose definition they
    have to reconstruct from the code. **When a displayed name states a domain concept, verify the code
    computes that concept, not merely something correlated with it.**
+
+---
+
+## INC-003 — Two bettors in a journal that belongs to one (2026-08-19)
+
+**World / context** — Branch `main` → `bet-journal-single-actor`, canonical timeline,
+`WorldFormatVersion 5`. Found while replaying history in `BetsHistoryExplorer` during mini-plan 04's
+playtest — by an instrument built for something else entirely.
+
+**Symptom** — The developer stepped the replay forward by one minute and counted **seven bets** where five
+hardware credits owe about three. In their words: *"porque se realizan 7 si solo estaban asignados 5
+credits de hardware y esas 5 bets deberian distribuirse en 100 segundos no en 60"*. The premise was exactly
+right, which is what made the count worth chasing.
+
+**Timeline**
+
+1. **≤ 2026-08-14** — the contaminating records are written. Dated below; nobody noticed at the time.
+2. **2026-08-16** — mini-plan 03 §9 removes the mechanism (commit `95860f4`, *"the replay cursor — history
+   browsing stops borrowing the world clock"*), **describing this exact corruption in its own comment** and
+   not knowing the journal already carried its fossil.
+3. **2026-08-19** — the count anomaly is reported from the mini-plan 04 replay; the journal is measured and
+   two interleaved balance lines are found.
+4. **2026-08-19/20** — mini-plan 05 builds three diagnostics and runs six reproduction runs. All clean.
+5. **2026-08-20** — an archived checkpoint dates the contamination and closes the question of *when*.
+
+**Faults**
+
+1. **PROXIMATE — the journal recorded two bettors and could not say so.** For roughly three in-game days
+   two balance lines coexisted in `bet_history*.jsonl`, each internally continuous to the satoshi, each
+   with its own martingale progression, each at the correct 5-credit cadence, interleaved second by second.
+2. **ROOT (leading, dated, not proven) — `BetsHistoryExplorer` used to rewind the WORLD CLOCK to browse
+   history.** There is one clock; `SimulationService` stamps every settled bet with it. Bets settled while
+   the player browsed with the replay playing were therefore journaled with timestamps in the past, so one
+   session's records land inside an earlier window and read as a second bettor. The scene's own comment,
+   written by the fix, states the mechanism verbatim.
+3. **ENABLING — the journal never recorded an author, and nothing ever checked a property it already
+   carried.** `BalanceAfter[i] == BalanceAfter[i-1] + NetAmount[i]` is one subtraction per record. Nothing
+   performed it. That is why a defect visible in the data survived three in-game days and was found by eye,
+   from a replay built for a different purpose.
+
+**Evidence** — measured read-only over the live journal
+
+- **The engine was never at fault.** 180 bets/hour = **5.00 per 100 game-seconds to three digits**, hour
+  after hour across ~99% of the journal. The anomaly is a bounded *doubling*, never a drift:
+  `2009-05-22 T19` at 270/h, and `2009-05-23 T19/T20/T21` at **333 / 359 / 361** (9.25 / 9.97 / 10.03).
+- **Two balance lines.** In `2009-05-23 T19:00–T22:30`: line A **522 records, 837.66 → 838.43**; line B
+  **629 records, 770.87 → 771.87**. Each satisfies `bal[i] = bal[i-1] + net[i]` exactly on its own; each
+  runs at ~20 game-second spacing. **Neither session was misbehaving — one journal was recording two.**
+- **A two-line fit explains 92.8%** of the last 20,000 records; the residual 7.1% are auto-recharges, which
+  break continuity legitimately.
+- **The intruder is born mid-progression.** At `2009-05-23T19:09:16` two records share one timestamp, and
+  the arriving one bets `0.34048252 = 0.001 × 2.3⁷` — **already seven steps into a martingale ladder.** It
+  was not created at that moment; it was already running and only then began being recorded. No
+  session-lifecycle hypothesis explains that. A time-shifted clock explains it as the defining feature.
+- **Dating (the fact that settles *when*).** `block_session_checkpoint.json.prerepair`, captured
+  **2026-08-14T10:46:28Z**, holds a game clock of **2009-05-24 13:54:40** — already past both bands. Game
+  time only advances. **So the contaminating records were written on or before 2026-08-14, two days before
+  the clock-borrowing fix landed.**
+- **Six reproduction runs on the current build: ~52 real minutes, 7,578 records, zero undeclared
+  discontinuities**, with predicted record counts matching the journal exactly in every run where the count
+  is predictable (515/514, 684/684, 329/329, 2444/2444, 3338/3338). Covering: idle control; five scene
+  round trips; auto-recharge; four bots betting alongside; and the same at 5 credits.
+
+**Blast radius**
+
+- **Every lifetime figure inherits it.** `Rollup.TotalBets = 215,723`, total wagered, net profit, and every
+  max/streak. The rollup is the value designed to survive pruning, so this is the figure with the longest
+  half-life.
+- **Visible on screen and unnoticed for days**: the explorer's summary read `Max bet: 964.63272326 SC`
+  beside a Bankroll of `837.66`. **A single wallet cannot bet more than it holds.**
+- **INC-002's segmentation cannot separate them.** Runs are measured per `(GameId, Chance)` and both
+  streams are `Dice` at `50`, so the loss/win-run figures concatenate two independent sessions — §40.8's
+  failure mode in new clothes, on a new input.
+- **Not affected**: the chain, the casino's books, and every other participant's state. The corruption is
+  confined to the player's own bet journal and the three consumers it feeds.
+
+**Recovery** — none applied yet. Mini-plan 05 §6 decided **bump `WorldFormatVersion` and wipe**, the
+project's standing default, with an ordering constraint that is load-bearing: **archive `user://` to a
+dated folder first** (the P15.8 precedent), because INC-003 cites the journal as its evidence and the world
+reset deletes it. *A wipe is also a destruction of evidence; the two only coexist if the archive happens
+first.*
+
+**Fix** — the mechanism was already closed, by a plan that did not know it was fixing this:
+
+- **`95860f4` (2026-08-16), mini-plan 03 §9** — the replay cursor became the scene's own; nothing in
+  `BetsHistoryExplorer` writes to `CalendarTimeService` any more.
+- **Mini-plan 05 §3 (2026-08-19)** ships the sentinel that would have caught it in its first hour and will
+  catch any recurrence: `UserStatsService` asserts balance continuity at the write boundary, with the
+  legitimate jumps declaring themselves (`NoteBalanceDiscontinuity`), and every registration carrying the
+  name of its writer. Plus `SessionLifecycleTrace`, hooked inside `BaseBetSession` so no session instance
+  can escape it.
+- **Residual uncertainty, stated rather than smoothed over:** the defect was never reproduced, so the root
+  fault is supported by dating and by mechanism-fit, not by observation. Mini-plan 06 specifies the
+  deliberate reproduction that would settle it.
+
+**Lesson** — three, in order of how much they generalize:
+
+1. **A fix closes the mechanism; it does not clean what the mechanism wrote.** Mini-plan 03 §9 identified
+   this corruption precisely, described it in a comment, and shipped the fix — and the contaminated journal
+   sat there for three more days and cost a full investigation, because nobody asked *what has it already
+   written?* This is INC-002's lesson arriving from the other direction: there, an incident named a
+   corrupted input and its consumers went unexamined; here, a fix named a corrupted output and the output
+   went unexamined. **When you close a corruption path, go and look at what came out of it.**
+2. **A record that identifies its author can be audited; one that does not can only be argued about.** The
+   journal had carried `BalanceAfter` since it existed and `BetRecord.Id` since before INC-002 needed it.
+   Both were free. Neither was checked. **Prefer the check the data already affords over the one you would
+   have to add a field for** — and add it in the same phase that creates the data, not after an incident
+   demands it.
+3. **Dating evidence is worth as much as reading it.** Six reproduction runs could not distinguish "already
+   fixed" from "not yet triggered"; a single archived checkpoint, holding a game clock beside a real
+   timestamp, settled it in one line. **Any artefact carrying BOTH clocks is disproportionately valuable in
+   a world whose own records carry only one** — worth keeping deliberately rather than by accident, which
+   is how this one survived.

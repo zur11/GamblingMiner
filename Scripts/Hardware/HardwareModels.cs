@@ -28,7 +28,9 @@ public record CasinoPoolPendingPayout
 	public string RecipientNodeId { get; init; } = string.Empty;
 	public string RecipientAddress { get; init; } = string.Empty;
 	public decimal GrossAmount { get; init; }     // before tx fee
-	public decimal NetAmount { get; init; }        // after 0.1 BTC tx fee
+	public decimal NetAmount { get; init; }        // after the day's replayed median tx fee (ND.7 — was a
+	                                               // flat 0.1; computed by NetworkRoot's pool-payout builder
+	                                               // via NetworkFeePolicy.MedianFeeAt, and 0 pre-Market-Birth)
 	public int FromBlockIndex { get; init; }
 }
 
