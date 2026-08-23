@@ -7678,6 +7678,13 @@ public partial class NetworkRoot : Node
         // rollup would describe a world that no longer exists, and being a running total it could never be
         // corrected by any later scan. Added WITH the feature (the TL.3/ND.6b maintenance rule).
         DeleteIfExists("user://bet_stats_rollup.json");
+        // INC-004 (2026-08-22) — the rollup's two siblings, added WITH the durability fix under the same
+        // TL.3 maintenance rule, and initially MISSED by it. `.corrupt` is a preserved copy of a damaged
+        // rollup: kept deliberately as evidence, but evidence of a world that no longer exists, and it is
+        // never overwritten once created — so a survivor would sit there permanently, describing the wiped
+        // world while looking like a fresh diagnosis. `.tmp` is the uncommitted half of an atomic write.
+        DeleteIfExists("user://bet_stats_rollup.json.corrupt");
+        DeleteIfExists("user://bet_stats_rollup.json.tmp");
 
         // TL.3 gap fix (2026-07-07): hardware/pool/swap world state — found leaking across the timeline
         // wipe during the canon-relaunch verification (alt-bought hardware, bot pool shares, and a casino
