@@ -68,12 +68,53 @@ Manages game-time progression.
 ### `UserStatsService`
 **Location**: `Scripts/Services/UserStatsService.cs`
 
-Tracks betting statistics and history with persistence.
+Owns the player's betting statistics in **two layers with different lifetimes** — a pruned journal and an
+unpruned lifetime rollup. Confusing them is the source of INC-004, so the distinction leads this entry.
 
-- Maintains persistent bet history (JSON, chunked by month)
-- Emits `StatsChanged` event throttled at 250 ms to avoid UI overload
-- Supports time-travel balance reconstruction and historical stats queries
-- Key method: `OnBetExecutedRegisterBet()`
+**Layer 1 — the journal (`BetHistory`, `Scripts/History/BetHistoryRepository.cs`).** The full record of
+individual bets, and it is **pruned**.
+
+- **Segmented by ENTRY COUNT, not by date**: 10,000 entries per file (`MaxJournalEntriesPerChunkFile`,
+  `:16`), index-numbered `bet_history.jsonl`, `bet_history_000001.jsonl`, … Nothing in the repository is
+  month-aware. *(Corrected 2026-08-22 — "chunked by month" was stated here and in three other docs, and
+  was never true.)*
+- **Retention is a cap on SEGMENTS, not on records**: 20 segments (`:22`), oldest deleted first
+  (`:434-461`). Because the newest segment is partly filled, **the retained record count oscillates —
+  roughly 190,000–210,000 depending on where the active segment sits. Never quote it as a flat 200,000.**
+  Two real worlds bracket it: 193,660 (19 full + a 3,660 partial) and 202,817 (20 full + a 2,817 partial,
+  the `cap + 1` case that occurs while a new segment is filling).
+- A rewrite (`RebuildJournalFromCurrentState`) **renumbers from the base file**, so segment indices date
+  only from the last rewrite — they do not reveal how much was pruned before it.
+- Supports rollback to a UTC boundary, time-travel balance reconstruction, and time-bucket summaries.
+
+**Layer 2 — the lifetime rollup (`Rollup`, `user://bet_stats_rollup.json`).** The running totals designed
+to survive layer 1 being pruned — **so past the first prune it is the ONLY record of the deleted bets.**
+
+- Carries lifetime bets/wins/losses/wagered/net-profit, the maxima, drawdown, and per-`(GameId, Chance)`
+  segments. **The maxima and streaks are order-dependent, non-invertible reductions**: once a wrong record
+  enters, no later arithmetic removes it. This is why a contaminated rollup is unrepairable rather than
+  merely wrong.
+- **`IsComplete` is a claim about COVERAGE, never about validity.** `true` means "no bets were pruned
+  before counting began" — it says nothing about whether the counted figures are right. `SeededAtUtc` is
+  its companion: non-null means the rollup was seeded by scanning an existing journal, and a **null on a
+  world with history means the seeding path never ran on that file** — the tell that identified INC-004.
+- **Durability rules, earned by INC-004 — do not weaken them:** written `.tmp` → rename (the rename is the
+  commit); a failed load **latches** and blocks the *writer*, never merely the reader; a damaged file is
+  preserved once to `.corrupt`; the dirty flag clears only after the rename succeeds.
+- **The block checkpoint carries its own copy** (`BlockSessionCheckpointService.Snapshot.BetStatsRollup`)
+  — which makes it the **backup**, and the recovery path from a destroyed rollup file. When
+  `CaptureRollupSnapshot()` declines to report (a failed load), the checkpoint **carries the previous
+  value forward** rather than storing null: declining to record a value is not erasing the value that was
+  there.
+
+**Both layers**
+
+- Emits `StatsChanged` throttled at 250 ms — the reference pattern for a high-frequency service event.
+- Key method: `OnBetExecutedRegisterBet()`. Every settled bet updates both layers.
+- Self-persists eagerly (per bet), so it needs **both** a checkpoint-restore path and a
+  `ResetToPreGenesisDefaults()` path; `ClearAllHistory()` is the pre-genesis one and legitimately resets
+  the rollup to zero-and-complete.
+- **Autoload position #2 is load-bearing** — see CLAUDE.md Important Patterns §5.
 
 ### `BankrollStateService`
 **Location**: `Scripts/Services/BankrollStateService.cs`

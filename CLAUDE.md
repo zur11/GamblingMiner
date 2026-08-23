@@ -160,7 +160,7 @@ Hard-won rules (a scroll bug once cost a full session — full write-up + diagno
 ### JSON Persistence
 
 - All `user://` files use JSON with **CamelCase** naming policy
-- History files are chunked by month to keep file sizes manageable
+- History files are segmented by **10,000 entries per file**, never by date, and retention caps the journal at **20 segments** (~190,000–210,000 records — it oscillates with the active segment; never quote a flat 200,000). The **lifetime rollup** beside it is unpruned and is the only record of pruned bets: `Documentation/SERVICES.md` → `UserStatsService`
 - Always use `FileAccess` (Godot API) for `user://` paths
 
 ---
@@ -178,7 +178,7 @@ only for the one you need. Order below is registration order.
 | # | Service | Owns |
 |---|---|---|
 | 1 | `WorldGuardService` | Runs the world-compatibility guard (format-version or timeline-tag mismatch ⇒ full clean world reset) **before any other autoload can load a `user://` file**. Nothing else. Must stay first |
-| 2 | `UserStatsService` | The player's betting stats (`Stats`) and the persistent bet journal (`BetHistory`, chunked by month); emits `StatsChanged` on a 250 ms throttle |
+| 2 | `UserStatsService` | The player's betting stats in **two layers with different lifetimes**: the pruned bet journal (`BetHistory`, segmented by 10,000 entries, capped at 20 segments) and the **unpruned lifetime rollup** that outlives it; emits `StatsChanged` on a 250 ms throttle |
 | 3 | `CalendarTimeService` | The game clock — local/UTC game time, `SpeedMultiplier`, the DEV `DevTimeScale`, and `SimulationThrottle` (the fraction of simulated time the bet engine actually retained) |
 | 4 | `BankrollStateService` | The **Bankroll** balance — the active betting subaccount. Balance only; transfers are #6 |
 | 5 | `PrincipalBalanceService` | The **Main Balance** — the player's reserve outside active betting; fires `BalanceChanged` on every mutation |
@@ -301,6 +301,14 @@ Full rationale and the bugs this resolved: `Documentation/ProjectDesignManual.md
 
 Cases: `INCIDENT_LOG.md` **INC-002** and **INC-003**; analysis: `ProjectDesignManual.md` **§40.8**.
 
+**⚠️ Its third instalment — the REPAIR is also a writer.** Three more, from INC-004:
+
+- **A default value is an assertion, and a fresh object asserts the most flattering one.** A field encoding *coverage* (`IsComplete`, `IsFull`, `HasAll`) must default to the **pessimistic** side, because the paths that skip initialization are the failure paths — a zeroed object inheriting `true` is how a lie reaches the screen.
+- **Declining to record a value is not the same as erasing the value that was there.** Any capture that returns "nothing" into a structure rewritten wholesale must **carry the previous value forward**, or the first write after a fault destroys the last good copy.
+- **Fixing a writer creates a new writer; ask it the same three questions.** This fix's own first draft was atomic and loud and still turned a recoverable failure into a permanent one.
+
+Case: `INCIDENT_LOG.md` **INC-004**.
+
 ### 3. Fractional Profit Accumulation
 
 `BetService` accumulates sub-satoshi remainders internally. Never round individual bet payouts at the call site — let `BetService` handle precision.
@@ -334,6 +342,7 @@ Use `GetNodeOrNull` (not `GetNode`) so the app does not crash if the autoload is
 - **Every service the checkpoint restores is declared before `BlockSessionCheckpointService`** — it sits at #13 for that reason, and `PlayerBankAccountService` / `CasinoCoinSwapService` / `ScMonetaryLedgerService` / `CentralBankService` were each slotted in ahead of it as they shipped.
 - **Within that group the money services have their own order**: `CentralBankService` restores before `CasinoScBalanceService` (which reads its loan figures through the FED) and before `ScMonetaryLedgerService` (whose reconcile reads the FED's casino account).
 - **`BtcNetworkDataService` comes after `BtcMarketDataService`**, so Market Birth is already known when its derived accessors compute at load.
+- **`UserStatsService` (#2) must stay ahead of `BlockSessionCheckpointService` (#13) — this one is a RECOVERY path, not just an initialization order.** #2 loads the lifetime rollup and latches if the file is unreadable; #13 then restores the checkpoint's own copy and clears the latch. That sequence is what makes a destroyed rollup recoverable at all. Reverse them and the good restored value is overwritten by the failed load, turning a recoverable fault into a permanent one (INC-004).
 
 Two consequences for new work: a service needing one declared *earlier* than itself resolves it **lazily, never in `_Ready`** (`CasinoScBalanceService` resolves the FED this way); and adding an autoload means choosing its position deliberately and saying why — appending to the end of the block is a decision, not a default.
 
