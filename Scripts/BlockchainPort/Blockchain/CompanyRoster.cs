@@ -32,9 +32,12 @@ public static class CompanyRoster
 
     // Step 15 P15.2a (D-15.6): the four roster companies that become SC dealers — FED clients with a
     // CollateralBtc book and a per-client ledger. plan15 adds BEHAVIOR to existing companies and creates
-    // none, so this is a fixed, closed set of four ids rather than a new CSV column: a 45th row can never
-    // silently become a bank, and the alternative (an `is_bank` column) would touch all 44 rows to encode
-    // four `true`s. If banks ever stop being a closed set, promote this to a column — every caller goes
+    // none, so this is a fixed, closed set of four ids rather than a new CSV column: a newly appended
+    // roster row can never silently become a bank, and the alternative (an `is_bank` column) would touch
+    // every row in company_roster.csv to encode four `true`s. (This comment named row counts — "a 45th
+    // row", "all 44 rows" — until 2026-08-23, when the file held 42; the counts were right when written
+    // and rotted in place. Cite the FILE, not its length. Standing Convention 15.)
+    // If banks ever stop being a closed set, promote this to a column — every caller goes
     // through IsBank/Banks, so nothing else would change.
     private static readonly HashSet<string> BankCompanyIds =
     [
