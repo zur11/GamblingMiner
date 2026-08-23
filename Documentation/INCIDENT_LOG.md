@@ -399,3 +399,122 @@ first.*
    timestamp, settled it in one line. **Any artefact carrying BOTH clocks is disproportionately valuable in
    a world whose own records carry only one** — worth keeping deliberately rather than by accident, which
    is how this one survived.
+
+---
+
+## INC-004 — The lifetime rollup that zeroed itself and called it complete (2026-08-22)
+
+**World / context** — Branch `userstats-audit-and-rollup-durability`, canonical timeline,
+`WorldFormatVersion 5`. Found by mini-plan 07's audit of `UserStatsService` — an audit opened to establish
+the blast radius of INC-003, which found a second, independent corruption in the same file.
+
+**Symptom** — No crash. `user://bet_stats_rollup.json` reads `"IsComplete": true` beside
+`"TotalBets": 223137`, on a world whose surviving journals account for **at least 273,000 settled bets**.
+A figure declaring itself complete while missing ~50,000 records, on screen, for an unknown number of
+sessions. **Nothing reported anything.**
+
+**Timeline**
+
+1. **Mini-plan 03** ships the rollup — the running total designed to survive its own source being pruned,
+   and therefore, past the pruning boundary, the ONLY record of the deleted bets.
+2. **Unknown date** — the rollup's count restarts at a boundary in the group stamped
+   `2009-04-02T12:17:57Z` game time. No wall-clock record survives: Godot retains five logs per world.
+3. **2026-08-22** — mini-plan 07 §A.4.3 measures the shortfall; §A.6 eliminates over the paths that can
+   write the flags; the mechanism is reproduced in isolation; §A.6.4 measures the deficit's shape.
+
+**Faults** — one chain of three, plus one independent defect found beside it.
+
+1. **ROOT — A-F1, the writer was not atomic.** `SaveRollupIfDirty` opened the real path with
+   `FileAccess.ModeFlags.Write` and streamed into it. **`FileAccess.Open(Write)` truncates AT OPEN**, so
+   the exposure window was not "mid-write" but *from open until `StoreString` returned* — and it recurred
+   at every mined block and every `FlushHistory`. A kill anywhere inside it left a zero-byte or
+   half-written file. CLAUDE.md's Pattern 2 sequel asks this exact question, and the file created by
+   INC-001's remediation answered it "no".
+2. **A-F2 — a failed load was written back over the good copy.** `LoadRollup`'s `catch` printed and
+   returned, leaving `Rollup` at `new()`. `_Ready` had already established `hadRollupFile == true`, so it
+   took the stage-1 branch, set `RollupIsAuthoritative = true` and returned. The next settled bet set
+   `_rollupDirty`, and the next flush wrote the zeroed rollup over the file that had failed to parse.
+   **Guarding the reader was never enough — the guard belongs on the writer.**
+3. **A-F3 — the zeroed rollup claimed completeness.** `IsComplete` defaults to `true` on a fresh
+   `BetStatsRollup`, and the seeding path that would have set it to `false` is *skipped* by the stage-1
+   early return. So the damaged rollup did not merely lose history; it asserted it had lost none.
+   `SeededAtUtc: null` is the tell — the seeding path sets it unconditionally, so a null proves seeding
+   never ran on that file.
+4. **INDEPENDENT — A-F4, a null file handle wrote nothing and reported success.** The writer ended in
+   `file?.StoreString(...)`: a null handle from `FileAccess.Open` silently skipped the write, and
+   `_rollupDirty` had *already* been cleared, so nothing ever retried. **Its signature is different and
+   that is why it is filed apart: the file is not corrupt and not zeroed, it is STALE** — lagging the
+   in-memory total, adopted permanently at the next boot. **A rollup that is merely behind carries no
+   evidence that anything went wrong.**
+
+**Evidence**
+
+- **The mechanism, reproduced.** A throwaway `dotnet` console replaying `_Ready` → `LoadRollup` →
+  stage-1 return → one `RegisterBet` → `SaveRollupIfDirty` over the real file, damaged three ways:
+  truncated to half (`JsonException`), literal `null` (parses fine, **yields null, raises nothing**), and
+  zero-byte (`JsonException`). **All three wrote `IsComplete=True  SeededAtUtc=null  TotalBets=1` to
+  disk.** The zero-byte case is the likeliest crash residue, since the truncation happens at open.
+- **The shortfall.** Union of the live journal and its pre-contamination ancestor `fresh5cred`
+  (bets only, minus 4,917 rolled back) = **223,638 countable**, against `TotalBets` **223,137** —
+  **501 uncounted**, plus a pruned prefix of **≥50,000** the rollup never covered at all.
+- **The deficit's SHAPE, which decided between two candidate families.** Per-segment counts rebuilt from
+  the union against `Segments[].Bets`: the entire 501 sits in `Dice|50`, the only segment spanning the
+  world's start, while `Dice|39` (2,662), `Dice|60` (988) and `Dice|61` (5) — all played inside one
+  21-hour window at the end — match **to the individual bet**. A contiguous prefix, not scattered session
+  tails. Corroborated independently: `Dice|50` holds 499 records before the boundary derived from the
+  grand total, agreeing with 501 within the unorderable same-timestamp tie group.
+- **What could NOT be checked.** `SinceDepositBets = 5,603` cannot be validated against anything: every
+  deposit record after 2009-05-21 has been pruned from all surviving journals (the live journal carries
+  **zero** deposit lines — a rewrite put them in the base file, which retention then deleted).
+
+**Blast radius**
+
+- **Every lifetime figure the player sees**, and `BetsHistoryExplorer`'s pruned-prefix subtraction, which
+  subtracts the retained window from a lifetime total that is short — so it reports a wrong prefix too.
+- **It would have reached the checkpoint.** The first draft of the fix returned `null` from
+  `CaptureRollupSnapshot` while latched; since the snapshot is rewritten to disk at every block, the first
+  block after a failed load would have replaced the last good rollup with `null` and made a recoverable
+  failure permanent. Caught in review before it shipped. **Declining to record a value is not the same as
+  erasing the value that was there.**
+- **Not affected**: the chain, the journal itself, the casino's books, every other participant's state.
+
+**Recovery** — the block checkpoint carries its own rollup snapshot, so a world whose rollup file is
+destroyed gets a real one back at the next restore. *A block is the only commit, and it turns out to be
+the backup as well.* **This depends on autoload order**: `UserStatsService` (#2) latches before
+`BlockSessionCheckpointService` (#13) restores. Reverse them and the restore is overwritten by the failed
+load — another entry for Pattern 5's list of load-bearing ordering constraints.
+
+**Fix** — shipped on this branch, `cb1779a`:
+
+- `.tmp` → `File.Move(overwrite: true)`; the rename is the commit. **`System.IO.File.Move` deliberately,
+  not `DirAccess.RenameAbsolute`** — the latter does not replace an existing target on Windows and would
+  have frozen the rollup instead: a new failure mode introduced by the fix.
+- A `_rollupLoadFailed` latch that blocks the **writer**; the damaged file preserved once to `.corrupt`;
+  `GD.PushError`, not `PrintErr`, because this is data loss.
+- The `null`-parse case treated as a failure rather than as "nothing to do".
+- `_rollupDirty` cleared **only after** the rename succeeds, so a failed save is retried.
+- The checkpoint capture carries the previous rollup forward instead of writing `null`.
+
+**Still open** — the live world's rollup is not repaired and cannot be: the maxima and streaks are
+order-dependent, non-invertible reductions, and there is no pre-contamination rollup in any archive. It is
+disposed of by the wipe (mini-plan 07, D1), which runs **after** this fix, deliberately: *a clean rollup
+that can lie again is worse than the current one, because the current one is known to be wrong.*
+The in-engine confirmation of the new write path is owed on the disposable world after that wipe.
+
+**Lesson** — three, in order of how much they generalize:
+
+1. **A default value is an assertion, and a fresh object asserts the most flattering one.** `IsComplete`
+   defaults to `true` because a brand-new rollup on a brand-new world genuinely is complete — which is
+   exactly why the *damaged* case inherited a claim of completeness. **When a field encodes a claim about
+   coverage, its default belongs on the pessimistic side, because the paths that skip initialization are
+   the failure paths.**
+2. **Fixing a writer creates a new writer, and it needs the same three questions.** The first draft of
+   this fix answered atomicity and loud-failure correctly and then quietly introduced a worse bug into the
+   *recovery* path — because "return nothing" was written into a structure that overwrites wholesale.
+   **Ask what happens to the last good copy, every time, including in the repair.**
+3. **When two mechanisms both fit, find the measurement whose predictions differ — and if none exists,
+   record that instead of choosing.** Elimination over the paths that *set the flags* looked conclusive
+   and was not; it took the per-segment shape of the deficit to separate a contiguous prefix from
+   scattered tails. The since-deposit check, which looked equally promising, turned out to be
+   unanswerable because its evidence had been pruned. **Both outcomes are results; only one of them is a
+   conclusion.**
