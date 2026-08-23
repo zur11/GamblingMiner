@@ -402,6 +402,10 @@ nobody applies. The phase that produced each is named so the full case is recove
 12. **When deleting a workaround, re-derive the set of cases it covered from the CODE** — never trust the scope list written when it was added; it was accurate then and the code moved.
 13. **When a capability is extended to a new class of participant, the reads that were correct only because that class lacked it will not announce themselves** — they compile, run, and return a plausible number. **Grep for the retired premise, not just the code implementing it.**
 
+**One from mini-plan 07 (2026-08-22):**
+
+14. **A bulk edit made through a shell or a regex is not finished until a corruption grep over the RESULT says so.** Its characteristic failure is not an error — it is **content silently removed**, on a command that reports success. Case: a `node -e "…"` one-liner rewriting five table rows had every **backticked span eaten by the shell** before node ever parsed the script; the rows landed with their code spans and file:line citations blank, and the run printed `rows replaced: 5`. **Before accepting such an edit, grep the result for the shape of what would be missing** — empty code spans, `[V: ]`, a row conspicuously shorter than its neighbours — and prefer the file-editing tool outright when the content carries backticks, `$`, or quotes. The ⚠ bullet under **Money Handling** ("do not fix these with a bulk regex", where a `perl -pi -e` pass blanked 24 lines) is this same rule found on a different day, against different content; **this is its general form, and the two should be read together.**
+
 ---
 
 ## Glossary Reference
