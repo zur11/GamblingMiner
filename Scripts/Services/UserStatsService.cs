@@ -25,7 +25,22 @@ public partial class UserStatsService : Node
     // so scanning stops being a LIFETIME measurement the moment the first chunk is pruned. The rollup is
     // the running total that survives its own source being deleted. See §6.2 of the plan.
     private const string RollupPath = "user://bet_stats_rollup.json";
+    // INC-004 A-F1 — the rollup is written .tmp → rename, never truncate-and-stream. FileAccess.Open(Write)
+    // TRUNCATES AT OPEN, so the exposure window is not "mid-write" but from open until StoreString returns;
+    // a kill anywhere in it left a zero-byte or half-written file. Since this file is, past the pruning
+    // boundary, the ONLY record of the pruned bets, that window destroyed history permanently.
+    private const string RollupTempPath = "user://bet_stats_rollup.json.tmp";
+    // A damaged file is PRESERVED rather than replaced. It is evidence, and the first thing anyone will ask
+    // is what it contained; the wipe-before-archive lesson (INC-003) applies to a single file too.
+    private const string RollupCorruptPath = "user://bet_stats_rollup.json.corrupt";
     private static readonly JsonSerializerOptions RollupJsonOptions = new() { WriteIndented = true };
+
+    // INC-004 A-F2 — set when the rollup on disk could not be read. While true, NOTHING may persist the
+    // in-memory rollup: a failed load leaves it at `new()` (zeroed, and claiming IsComplete = true), and
+    // the old code wrote that back over the good copy on the very next settled bet. Guarding the READER
+    // was never enough — the guard belongs on the WRITER. See ProjectDesignManual Ch. 40 and INC-004.
+    private bool _rollupLoadFailed;
+    private bool _rollupSaveBlockedReported;
     // Bets settle faster than any disk can keep up with; the rollup follows the journal's own dirty-flag
     // discipline and is flushed with it (FlushHistory) and at every block commit.
     private bool _rollupDirty;
@@ -286,18 +301,70 @@ public partial class UserStatsService : Node
         try
         {
             using FileAccess file = FileAccess.Open(RollupPath, FileAccess.ModeFlags.Read);
-            BetStatsRollup loaded = JsonSerializer.Deserialize<BetStatsRollup>(file.GetAsText(), RollupJsonOptions);
-            if (loaded != null)
+            if (file == null)
             {
-                loaded.Segments ??= new Dictionary<string, BetStatsRollup.SegmentRuns>();
-                Rollup = loaded;
+                NoteRollupLoadFailure($"could not open the file ({FileAccess.GetOpenError()})");
+                return;
             }
+
+            BetStatsRollup loaded = JsonSerializer.Deserialize<BetStatsRollup>(file.GetAsText(), RollupJsonOptions);
+            if (loaded == null)
+            {
+                // A file holding the literal `null` parses without throwing and yields null. The old code
+                // treated that as "nothing to do" and fell through with a zeroed rollup — one of the three
+                // damage modes reproduced for INC-004, and the only one that raised no exception at all.
+                NoteRollupLoadFailure("the file parsed to null");
+                return;
+            }
+
+            loaded.Segments ??= new Dictionary<string, BetStatsRollup.SegmentRuns>();
+            Rollup = loaded;
         }
         catch (Exception ex)
         {
             // Loud, never silent: past the pruning boundary this file is the ONLY record of the pruned
             // bets, so losing it loses history permanently (§40.5's durability standard, INC-001).
-            GD.PrintErr($"[UserStatsService] Could not read {RollupPath} — lifetime totals may be incomplete: {ex.Message}");
+            NoteRollupLoadFailure(ex.Message);
+        }
+    }
+
+    // INC-004 A-F2. Three things, in this order, and each of them was missing:
+    //   1. LATCH — so the writer below refuses to run. A `Try`-shaped read that returns a zeroed object
+    //      and lets the caller carry on is a promise the code does not keep.
+    //   2. PRESERVE the damaged file, once. It is the only evidence of what was lost, and overwriting it
+    //      with a second failure would destroy the first one's contents.
+    //   3. PushError, not PrintErr — this is a data-loss event, and it should stop a developer rather
+    //      than scroll past them.
+    private void NoteRollupLoadFailure(string detail)
+    {
+        _rollupLoadFailed = true;
+        PreserveCorruptRollupFile();
+
+        GD.PushError(
+            $"[UserStatsService] Could not read {RollupPath} — {detail}. The lifetime rollup is the ONLY " +
+            $"record of bets retention has already deleted, so it will NOT be overwritten: persistence is " +
+            $"disabled until a block checkpoint restores it. A copy of the damaged file is at " +
+            $"{RollupCorruptPath}. See INCIDENT_LOG INC-004.");
+    }
+
+    // Never overwrites an existing preserved copy: the FIRST failure holds the most history, and a later
+    // one arriving on an already-zeroed world would replace real evidence with none.
+    private void PreserveCorruptRollupFile()
+    {
+        if (!FileAccess.FileExists(RollupPath) || FileAccess.FileExists(RollupCorruptPath))
+        {
+            return;
+        }
+
+        try
+        {
+            System.IO.File.Copy(
+                ProjectSettings.GlobalizePath(RollupPath),
+                ProjectSettings.GlobalizePath(RollupCorruptPath));
+        }
+        catch (Exception ex)
+        {
+            GD.PushError($"[UserStatsService] Could not preserve the damaged rollup: {ex.Message}");
         }
     }
 
@@ -308,15 +375,57 @@ public partial class UserStatsService : Node
             return;
         }
 
-        _rollupDirty = false;
+        // INC-004 A-F2 — the guard that belongs on the WRITER. In memory the rollup is zeroed and claims
+        // to be complete; writing it would replace a recoverable file with an authoritative-looking lie.
+        // Reported once: this runs at every block, and an error repeated every block is an error nobody
+        // reads.
+        if (_rollupLoadFailed)
+        {
+            if (!_rollupSaveBlockedReported)
+            {
+                _rollupSaveBlockedReported = true;
+                GD.PushError(
+                    $"[UserStatsService] Refusing to persist the lifetime rollup: it never loaded, so the " +
+                    $"in-memory copy is empty and would overwrite the real one. {RollupPath} is untouched.");
+            }
+
+            return;
+        }
+
         try
         {
-            using FileAccess file = FileAccess.Open(RollupPath, FileAccess.ModeFlags.Write);
-            file?.StoreString(JsonSerializer.Serialize(Rollup, RollupJsonOptions));
+            // INC-004 A-F1 — atomic: serialize, write the temp file, close it, then rename over the real
+            // one. The rename is the commit; until it happens the good file is intact, and a crash at any
+            // point leaves either the old file or the new one, never half of either.
+            string payload = JsonSerializer.Serialize(Rollup, RollupJsonOptions);
+
+            using (FileAccess file = FileAccess.Open(RollupTempPath, FileAccess.ModeFlags.Write))
+            {
+                if (file == null)
+                {
+                    // Was `file?.StoreString(...)` — a null handle silently wrote NOTHING and still cleared
+                    // the dirty flag, so the failure was invisible and the next flush had nothing to retry.
+                    GD.PushError(
+                        $"[UserStatsService] Could not open {RollupTempPath} " +
+                        $"({FileAccess.GetOpenError()}); the rollup was not saved.");
+                    return;
+                }
+
+                file.StoreString(payload);
+            }
+
+            System.IO.File.Move(
+                ProjectSettings.GlobalizePath(RollupTempPath),
+                ProjectSettings.GlobalizePath(RollupPath),
+                overwrite: true);
+
+            // Cleared only on success. Previously it was cleared BEFORE the write, so a failed save was
+            // never retried — the in-memory total simply ran ahead of the file until the next mutation.
+            _rollupDirty = false;
         }
         catch (Exception ex)
         {
-            GD.PrintErr($"[UserStatsService] Could not write {RollupPath}: {ex.Message}");
+            GD.PushError($"[UserStatsService] Could not write {RollupPath}: {ex.Message}");
         }
     }
 
@@ -325,6 +434,17 @@ public partial class UserStatsService : Node
     public void ApplyRollupSnapshot(BetStatsRollup snapshot)
     {
         Rollup = snapshot?.Clone() ?? new BetStatsRollup();
+
+        // INC-004 — THIS IS THE RECOVERY PATH, and it is the reason the writer above can safely refuse to
+        // run. A block checkpoint carries its own rollup snapshot, so a world whose rollup file was
+        // destroyed gets a real one back at the next restore — a block is the only commit, and it turns
+        // out to be the backup as well. Clearing the latch here is what lets persistence resume.
+        if (snapshot != null)
+        {
+            _rollupLoadFailed = false;
+            _rollupSaveBlockedReported = false;
+        }
+
         _rollupDirty = true;
         SaveRollupIfDirty();
     }
@@ -338,6 +458,17 @@ public partial class UserStatsService : Node
     public BetStatsRollup CaptureRollupSnapshot()
     {
         SaveRollupIfDirty();
+
+        // INC-004 — with a failed load the in-memory rollup is zeroed, and capturing it would launder the
+        // loss INTO the checkpoint: the restore path would then hand that zero back as authoritative and
+        // the corruption would outlive the damaged file. Returning null instead records NO rollup for this
+        // block, which the restore already skips (BlockSessionCheckpointService's null guard) — leaving
+        // the last good snapshot in place. **Recording nothing beats recording a figure known to be wrong.**
+        if (_rollupLoadFailed)
+        {
+            return null;
+        }
+
         return Rollup.Clone();
     }
 
@@ -391,6 +522,11 @@ public partial class UserStatsService : Node
         Rollup.IsComplete = true;   // nothing exists to have been lost
         Rollup.SeededAtUtc = null;
         RollupIsAuthoritative = true; // it is correct and owns itself; never re-derive from the journal
+        // INC-004 — the other legitimate way out of a failed load: a pre-genesis reset discards the world's
+        // history by definition, so there is nothing left for a damaged file to have held, and the zeroed
+        // rollup here is CORRECT rather than a symptom. Persistence resumes.
+        _rollupLoadFailed = false;
+        _rollupSaveBlockedReported = false;
         _rollupDirty = true;
         SaveRollupIfDirty();
 

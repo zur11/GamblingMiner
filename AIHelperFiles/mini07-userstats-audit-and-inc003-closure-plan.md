@@ -193,8 +193,21 @@ The live rollup reads `IsComplete: true, SeededAtUtc: null` while being short by
 (§A.4.3). Only one code path can produce that pair on a world with history, and it was **reproduced in
 isolation** rather than argued — see §A.6.
 
+**A-F4 — a null file handle wrote NOTHING and reported success. A SEPARATE finding, not part of the
+chain** (developer, 2026-08-22). `SaveRollupIfDirty` ended in `file?.StoreString(...)`: when
+`FileAccess.Open` returned null the null-conditional swallowed the write, and `_rollupDirty` had *already*
+been cleared, so nothing ever retried it. **Its signature is different from A-F3's and that is why it must
+be filed apart:** the file is not corrupt and not zeroed — it is simply **STALE**, lagging the in-memory
+total by however much was lost, and the next boot adopts the lag permanently by loading it. **A rollup
+that is merely behind carries no evidence that anything went wrong.**
+
+**A-F5 — the same `?.` shape one line up.** `PreserveCorruptRollupFile` aside, the *read* path had no null
+check on `FileAccess.Open` either; a null handle there threw an NRE that the broad `catch` absorbed into
+the same message as a parse failure. Fixed alongside A-F4.
+
 **These are durability findings, not INC-003 findings.** They belong to the audit because the audit is
-what opened the file. Their disposition is settled: **INC-004, fixed before the wipe.**
+what opened the file. Disposition: **INC-004 carries the A-F1→A-F2→A-F3 chain; A-F4 is written up beside
+it as an independent defect with its own failure signature.** Both fixed before the wipe.
 
 ### A.1.d — Who reads its figures
 
@@ -387,7 +400,64 @@ or is it an artefact of this world's history? It decides whether A-F1/A-F2 are l
 | Seeding [V: `UserStatsService.cs:79-80`] | **No.** Sets `SeededAtUtc = DateTime.UtcNow` unconditionally. A null there proves seeding never ran on this file |
 | `ClearAllHistory` [V: `:386-394`] | Yes — but it clears the **journal in the same call**, so rollup and journal stay consistent. It cannot produce a shortfall |
 | `ApplyRollupSnapshot(null)` | **Unreachable** — guarded at its only call site [V: `BlockSessionCheckpointService.cs:173-177`] |
-| **`LoadRollup` throws, or deserializes to null** [V: `:288-302`] | **Yes, and it is the only one.** `Rollup` stays `new()`; `hadRollupFile` is true so `_Ready` returns early with `RollupIsAuthoritative = true` [V: `:52-59`]; the next settled bet dirties it [V: `:220`] and the next flush writes the zeroed rollup back [V: `:304-322`] |
+| **`LoadRollup` throws, or deserializes to null** [V: `:288-302`] | **Yes.** `Rollup` stays `new()`; `hadRollupFile` is true so `_Ready` returns early with `RollupIsAuthoritative = true` [V: `:52-59`]; the next settled bet dirties it [V: `:220`] and the next flush writes the zeroed rollup back [V: `:304-322`] |
+
+> **⚠ CORRECTION, 2026-08-22 — this table said "and it is the only one", and that was wrong.** It
+> enumerated the paths that **SET the two flags**, and then treated the short total as following from
+> them. It does not. **A-F4 supplies a second family**: flags inherited legitimately from an early
+> pre-genesis `ClearAllHistory` (which sets exactly `IsComplete = true, SeededAtUtc = null` — and this
+> world ran it, since `_Ready` calls `ResetToPreGenesisDefaults` on every boot before the first block
+> [V: `BlockSessionCheckpointService.cs:58-64`]), with the **total** then falling behind through silent
+> write failures, each restart adopting the lag by reloading the stale file.
+>
+> **Both families fit the observed state, and the elimination cannot separate them.** Worse, it
+> undermines §A.6.3: the 501 figure is a *subtraction*, and calling it "uncounted at the front" assumed
+> the uncounted records form one contiguous prefix. Under A-F4 they are **scattered session tails**, and
+> nothing measured so far distinguishes the two shapes. **The dating in §A.6.3 is therefore weaker than
+> it was written** — it stands as arithmetic, not as a located event.
+>
+> The discriminating measurement, for whoever runs Phase A: a contiguous-prefix loss and a
+> scattered-tails loss make different predictions about *which* records the rollup's per-segment
+> aggregates can still account for. That is checkable against `Segments[].Bets`. **✅ DONE — §A.6.4.**
+
+### A.6.4 — The discriminating measurement: the deficit is a CONTIGUOUS PREFIX
+
+Per-segment counts rebuilt from the union (live + `fresh5cred`, bets only, minus the 4,917 rolled-back),
+against the rollup's own `Segments[].Bets` [M, 2026-08-22]:
+
+| Segment | journal (countable) | rollup | deficit | first played | last played |
+|---|---|---|---|---|---|
+| `Dice\|50` | 219,983 | 219,482 | **501** | 2009-04-02 09:26 | 2009-05-28 01:27 |
+| `Dice\|39` | 2,662 | 2,662 | **0** | 2009-05-20 15:23 | 2009-05-21 07:06 |
+| `Dice\|60` | 988 | 988 | **0** | 2009-05-21 07:06 | 2009-05-21 12:43 |
+| `Dice\|61` | 5 | 5 | **0** | 2009-05-20 15:21 | 2009-05-20 15:23 |
+
+**The entire deficit sits in the one segment that spans the beginning of the world. The three late
+segments — all played inside a 21-hour window on 2009-05-20/21 — match to the individual bet.**
+
+- **This is what a contiguous prefix looks like** (family A-F2/A-F3), and it is corroborated from a second
+  direction: `Dice|50` holds **499** records strictly before the boundary derived independently in §A.6.3
+  from the grand total, against a deficit of 501 — agreement within the same-timestamp tie group at the
+  boundary, which cannot be ordered.
+- **It is not what scattered session tails look like** (family A-F4). Losses would land wherever sessions
+  ended, and a session demonstrably ended inside the late window — the rollback of 05-20/21 proves an
+  interruption there. Those segments lost nothing. Under scatter proportional to volume the expected loss
+  outside `Dice|50` is `501 × 3,655/223,638 ≈ 8.2`; observed **0** (Poisson `P(0 | 8.2) ≈ 2.7 × 10⁻⁴`).
+
+**Verdict: the A-F2/A-F3 family stands as the explanation of this world's deficit. A-F4 is a real defect
+but is NOT implicated in this figure.**
+
+**Three limits, so the verdict is not read as stronger than it is:**
+
+1. `Dice|50` spans the end as well as the beginning, so a tail-loss model that *only ever* struck `Dice|50`
+   is not excluded outright — it would have to have missed the 05-20/21 window entirely.
+2. The three clean segments are 1.6% of all bets, so the test's power is bounded by their size, and the
+   Poisson figure rests on the proportional-scatter assumption.
+3. **The since-deposit cross-check is INCONCLUSIVE and cannot be made to work.** The rollup reads
+   `SinceDepositBets = 5,603`; the union holds 22,528 countable bets after its last *visible* deposit
+   (2009-05-21T10:23:21Z). The gap is not a contradiction — every deposit record after that date has been
+   pruned from all surviving journals (live carries **zero** deposit lines, a rewrite having put them all
+   in the base file that retention then deleted). There is nothing left to check 5,603 against.
 
 ### A.6.2 — Reproduced, not argued
 
@@ -407,7 +477,7 @@ open**, so the exposure window is not "mid-write" but *from open until `StoreStr
 anywhere in it leaves a zero-byte or partial file. `SaveRollupIfDirty` runs at every block and every
 `FlushHistory`, so the window recurs for the life of every world.
 
-**Verdict: G6 = REACHABLE. A fresh world drifts to the same state.** The wipe cleans the contaminated
+**Verdict: G6 = REACHABLE. A fresh world drifts to the same state.** (Reachability is unaffected by the correction above — it only widens the set of ways in, it does not narrow it.) The wipe cleans the contaminated
 data and does nothing about recurrence — which is why the fix precedes it (D1).
 
 **What is observed and what is not, kept apart:**
