@@ -316,7 +316,12 @@ right, which is what made the count worth chasing.
 1. **PROXIMATE — the journal recorded two bettors and could not say so.** For roughly three in-game days
    two balance lines coexisted in `bet_history*.jsonl`, each internally continuous to the satoshi, each
    with its own martingale progression, each at the correct 5-credit cadence, interleaved second by second.
-2. **ROOT (leading, dated, not proven) — `BetsHistoryExplorer` used to rewind the WORLD CLOCK to browse
+2. **ROOT — STATUS: `LEADING BUT NOT OBSERVED`.** Stated as a label rather than left to be inferred from
+   a parenthesis (2026-08-22). It is supported by **dating** and by **mechanism-fit**, and by nothing
+   else; it has never been reproduced. **It stays at this status indefinitely** — mini-plan 06, which
+   specifies the deliberate reproduction that would settle it, was **deferred, not cancelled** (mini-plan
+   07, D2/G5), and is on the shelf intact. Any future reader finding this entry unchanged should read the
+   status as current, not as stale. — **`BetsHistoryExplorer` used to rewind the WORLD CLOCK to browse
    history.** There is one clock; `SimulationService` stamps every settled bet with it. Bets settled while
    the player browsed with the replay playing were therefore journaled with timestamps in the past, so one
    session's records land inside an earlier window and read as a second bettor. The scene's own comment,
@@ -351,16 +356,38 @@ right, which is what made the count worth chasing.
 
 **Blast radius**
 
-- **Every lifetime figure inherits it.** `Rollup.TotalBets = 215,723`, total wagered, net profit, and every
+- **Every lifetime figure inherits it.** `Rollup.TotalBets`, total wagered, net profit, and every
   max/streak. The rollup is the value designed to survive pruning, so this is the figure with the longest
   half-life.
+  > ⚠ **Any figure quoted here MUST carry its date** (corrected 2026-08-22). This entry originally read
+  > `Rollup.TotalBets = 215,723` as though the number were a property of the defect. It is not: **the
+  > contaminated SET is fixed, but the total keeps growing with play.** The same world read **223,137 at
+  > 2026-08-20**, and the archive named below is the artefact that pins it. A bare total in an incident
+  > record is a measurement whose moment has been thrown away.
+- **A SECOND persisted file carries copies of the contaminated figures** (added 2026-08-22). Two services
+  read the lifetime stats and hand them to the casino ledger at every funding event:
+  `BankrollProgramService.cs:100-101` (auto-recharges and deposits) and
+  `PlayerBankAccountService.cs:102-104` (Bank→Main deposits). `CasinoClientLedgerService.AddEntry` stamps
+  them into every `LedgerEntry` as `TotalWageredSnapshot` / `NetProfitSnapshot`
+  (`CasinoClientLedgerService.cs:280-294`), persisted to `user://casino_client_ledger.json`
+  (`:48`) and checkpoint-covered. **These are frozen copies**: nothing that repairs the rollup would ever
+  reach them, and they are the since-last-deposit metrics `ClientsTransactions` displays.
 - **Visible on screen and unnoticed for days**: the explorer's summary read `Max bet: 964.63272326 SC`
   beside a Bankroll of `837.66`. **A single wallet cannot bet more than it holds.**
 - **INC-002's segmentation cannot separate them.** Runs are measured per `(GameId, Chance)` and both
   streams are `Dice` at `50`, so the loss/win-run figures concatenate two independent sessions — §40.8's
   failure mode in new clothes, on a new input.
-- **Not affected**: the chain, the casino's books, and every other participant's state. The corruption is
-  confined to the player's own bet journal and the three consumers it feeds.
+- **Not affected**: the chain, and every other participant's state. ~~the casino's books~~ — **corrected
+  2026-08-22**: the casino's client ledger *does* carry copies, per the bullet above. The original
+  sentence ("confined to the player's own bet journal and the three consumers it feeds") was written
+  without enumerating the consumers, and it was wrong by two.
+- ⚠ **THIS WORLD'S FIGURES ARE WRONG FOR TWO INDEPENDENT, NON-SEPARABLE REASONS.** The audit opened to
+  establish this blast radius (mini-plan 07) found a second corruption in the same file: **INC-004**, a
+  non-atomic rollup writer feeding a failed load that was written back over the only surviving copy. So
+  the rollup is **inflated** by INC-003's foreign records *and* **short** by INC-004's uncounted prefix of
+  ≥50,000, **at the same time and in the same number.** Neither error can be measured while the other is
+  present, and no arithmetic separates them. **A reader of INC-003 must not treat this world's totals as
+  "INC-003's figures" — they are not attributable to either incident alone.**
 
 **Recovery** — none applied yet. Mini-plan 05 §6 decided **bump `WorldFormatVersion` and wipe**, the
 project's standing default, with an ordering constraint that is load-bearing: **archive `user://` to a
@@ -378,8 +405,29 @@ first.*
   name of its writer. Plus `SessionLifecycleTrace`, hooked inside `BaseBetSession` so no session instance
   can escape it.
 - **Residual uncertainty, stated rather than smoothed over:** the defect was never reproduced, so the root
-  fault is supported by dating and by mechanism-fit, not by observation. Mini-plan 06 specifies the
-  deliberate reproduction that would settle it.
+  fault is supported by dating and by mechanism-fit, not by observation — `LEADING BUT NOT OBSERVED`, per
+  the status on fault 2. Mini-plan 06 specifies the deliberate reproduction that would settle it, and is
+  **deferred rather than cancelled**.
+
+**Where the evidence lives — verified intact 2026-08-22.** An incident entry whose evidence no longer
+exists is an anecdote, and this entry's evidence had never been located in writing. Both artefacts survive:
+
+1. **`%APPDATA%\Godot\app_userdata\GamblingMiner_INC003_evidence_2026-08-20\`** — 55 MB, 49 files, the
+   20-chunk journal (193,660 bets, `2009-04-09` → `2009-05-28`) and the rollup (`TotalBets 223,137`).
+   **It is byte-identical to the live world**, confirmed by checksum, not assumed:
+   `md5(bet_stats_rollup.json)` and `md5(cat bet_history_*.jsonl)` match on both sides. The four
+   contaminated hours are present and countable in it — `270 / 333 / 359 / 361` against a correct `180/h`,
+   reproducing the four rates quoted above by line count alone.
+2. **The two `.prerepair` files, inside that same archive** — `block_session_checkpoint.json.prerepair`
+   (captured `2026-08-14T10:46:28Z`, holding a game clock of `2009-05-24 13:54:40`), which is the dating
+   evidence, and `bet_stats_rollup.json.prerepair` (`TotalBets 205,562`, older schema).
+
+**Consequence: the wipe is not a deadline.** Mini-plan 05 §6.1 required archiving before the reset
+precisely so these could not be destroyed by it; that ordering was satisfied on 2026-08-20. The live world
+may keep being played and keep pruning, and the wipe may be run whenever, **without losing anything this
+entry depends on.** A third artefact, `GamblingMiner_fresh5cred_2026-08-12`, is a same-lineage
+**pre-contamination** ancestor (167,900 shared record Ids, bands empty) and is worth keeping for the same
+reason.
 
 **Lesson** — three, in order of how much they generalize:
 
