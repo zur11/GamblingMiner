@@ -4,7 +4,34 @@
 `mini06-clock-rewind-reproduction-plan.md` (specified, not started). Numbering follows the established
 `miniNN-<slug>-plan.md` convention of `AIHelperFiles/` — `mini01` … `mini06` exist; this is `mini07`.
 
-**Status:** 📋 **SPECIFIED, NOT STARTED — awaiting review.** Nothing in it has been executed.
+**Status:** ✅ **EXECUTED AND CLOSED, 2026-08-23.** All five steps ran, in the order the developer set
+(fix first, wipe last). Branch `userstats-audit-and-rollup-durability`, unmerged at time of writing.
+
+| Step | Commit |
+|---|---|
+| 1. Fix A-F1/A-F2 (atomic write, writer guard) | `cb1779a`, plus `ccf23b0` for the delete-list omission it left behind |
+| 2. INC-004 written up | `9661108` |
+| 3. INC-003 amended — blast radius, dated totals, evidence located | `380f5e7` |
+| 4. Phase A → `SERVICES.md`, and "chunked by month" corrected in four docs | `833a5fa` |
+| 5. In-engine confirmation, then the wipe (D1) | `a0c27ea` |
+
+**What remains open — deliberately, and none of it is a loose end waiting to be tidied:**
+
+- **The 501-bet residual is a declared HOLE (§A.6.4), not a rounding difference.** 0.22% of the total,
+  unexplained. Two candidates are named there; neither has been measured. It is recorded this way on
+  purpose — absorbing it into "near enough" is exactly the move this plan exists to refuse.
+- **Mini-plan 06 is ON THE SHELF, deferred and not cancelled** (D2 / G5). INC-003's root fault therefore
+  stays `LEADING BUT NOT OBSERVED` indefinitely, and now says so as a label rather than by omission. A
+  later reader finding it unchanged should read that status as current.
+- **Only ONE claim in INC-004 has in-engine evidence: the write guard.** Two launches on the disposable
+  world proved the null-parse and zero-byte detections, the once-only `.corrupt`, the absence of `.tmp`
+  leaks, and — the point of the exercise — that a damaged rollup survives a full session with a settled
+  bet, un-overwritten. Everything else in the chain rests on the console reproduction and on reading the
+  code. The distinction is worth keeping: it is the same distinction INC-003 sits on.
+- Two findings the engine produced that the console harness could not have: **recovery from the checkpoint
+  is immediate at boot**, which is what makes Pattern 5's ordering constraint load-bearing rather than
+  tidy; and **the refusal fires only at a flush point, never per bet**, which is why the first prediction
+  of it was wrong.
 
 **Why one plan and not two.** INC-003's blast radius is stated as *"every lifetime figure inherits it —
 `Rollup.TotalBets`, total wagered, net profit, and every max/streak"*. Every one of those figures is
