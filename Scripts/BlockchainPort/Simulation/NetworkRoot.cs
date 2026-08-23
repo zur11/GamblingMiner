@@ -61,7 +61,17 @@ public partial class NetworkRoot : Node
     // identity file, deliberately EXEMPT from the delete list below (Ch. 35 §35.1), so it carries its own
     // RegistryFormatVersion (BotWalletRegistry, P16.2b) — the two must be bumped TOGETHER, and the registry's
     // is the one that actually regenerates the seeds.
-    private const int WorldFormatVersion = 5;
+    // v6 (mini-plan 07, D1 — 2026-08-22): the playtest world's lifetime figures are wrong for two
+    // independent, non-separable reasons — INC-003's foreign records inflate them, INC-004's uncounted
+    // prefix (≥50,000 bets) deflates them, and no arithmetic separates the two. The rollup is unrepairable
+    // by construction: its maxima and streaks are order-dependent, non-invertible reductions, and no
+    // pre-contamination rollup exists in any archive. So the world is discarded rather than corrected.
+    // NOTE this bump does NOT touch BotWalletRegistry's RegistryFormatVersion, and must not: this is a
+    // world-state change, not an identity change, and that constant's own rule is "bump ONLY when the
+    // identities themselves must be regenerated". The v5 pairing above was specific to seed-derived
+    // addresses. Evidence is preserved OUTSIDE the wipe, in two archives predating it (INC-003's
+    // "Where the evidence lives"), which is what made it safe to run this last rather than first.
+    private const int WorldFormatVersion = 6;
     private const string WorldVersionPath = "user://world_format_version.txt";
     // Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
     // A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
