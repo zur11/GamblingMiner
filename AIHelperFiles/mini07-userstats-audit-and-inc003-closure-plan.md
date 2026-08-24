@@ -636,6 +636,20 @@ the run, before writing the results up**, rather than after.
 
 ## B.3 — What P5 proves, and what it does not
 
+> ⚠ **CORRECTED 2026-08-24 — the premise below is wrong, and mini-plan 06 §9.1 carries the correction.**
+> This section reasons from "an undeclared break under one writer means the writer's own sequence was
+> re-ordered underneath it — which is what a rewound clock does". **A rewound clock does not do that.** The
+> sentinel runs in *registration* order; the clock supplies only the timestamp, and the balance chain is
+> untouched by it [V: `UserStatsService.AssertSingleActorJournal` called from `RegisterBet`;
+> `SimulationService`'s settle path, paced by real `delta`]. Under the clock hypothesis the sentinel is
+> **silent** — so P5 firing would point at a *second writer*, not at the clock. The discriminator that
+> replaces it is mini-plan 06 **§9.2 P7**: the journal's own **write order**, which the first restart
+> destroys by re-sorting on timestamp.
+>
+> Everything below still holds as written *for the second-writer reading*, and its four limits are still the
+> right limits. It is left in place, corrected rather than deleted, because the reasoning is what a later
+> reader needs — Standing Convention 12's habit applied to an argument instead of to code.
+
 P5 is `[BetJournal] UNDECLARED balance discontinuity` firing and **naming the same writer on both sides of
 the break** [V: the message carries `source` and `_lastRegisteredSource`, `UserStatsService.cs:158-167`].
 

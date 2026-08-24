@@ -4,8 +4,10 @@
 `mini05-bet-journal-single-actor-plan.md`, which dated the contamination and named a leading root cause it
 could not observe.
 
-**Status:** 📋 **SPECIFIED, NOT STARTED.** On the shelf by mini-plan 07's **D2** (gate G5, fired as
-*deferred*, not cancelled, 2026-08-22). Its world precondition is now **satisfied** — see §3.
+**Status:** 📋 **SPECIFIED, NOT STARTED — but the run is now PREPARED: see §9.** On the shelf by mini-plan
+07's **D2** (gate G5, fired as *deferred*, not cancelled, 2026-08-22). Its world precondition is now
+**satisfied** — see §3. §9 (2026-08-24) adds the preflight, the four runs, the capture rule that keeps the
+decisive evidence alive, and **a correction to P5 that changes what the run is looking for**.
 
 > ⚠ **BLOCKER — read before starting, not halfway through. The sentinel is DEBUG-only.**
 > `AssertSingleActorJournal` is `[Conditional("DEBUG")]` [V: `Scripts/Services/UserStatsService.cs:152`],
@@ -59,6 +61,11 @@ The prediction is specific enough to be falsifiable. Contaminating a world this 
 **P5 is the discriminator.** If the contamination appears and the writer on both sides is the *same*
 source, that is the clock hypothesis. If the two sides carry different sources, it is not — and mini-plan
 05's whole hypothesis set reopens with a new lead.
+
+> ⚠ **P5's POLARITY IS INVERTED, and §9.1 corrects it (2026-08-24).** The sentinel runs in **registration**
+> order, where a rewound clock leaves the balance chain untouched — so under the clock hypothesis it should
+> be **silent**, not firing. Read §9.1 before calibrating anything against the table above; §9.2 supplies
+> the discriminator P5 was meant to be, and it is a stronger one.
 
 ---
 
@@ -194,7 +201,8 @@ seven thousand clean records:
 - bets/hour against `span ÷ 20`, looking for the **doubling**;
 - the two-line separation over the band, checking each line's satoshi continuity;
 - the birth record: is the intruder **already mid-ladder**?
-- and the console line, for **P5**.
+- and the console line, for **P5** — **read §9.1 first: its polarity is inverted**, and §9.2's P7/P8 are
+  the observations that actually discriminate.
 
 **A clean result is not a failure of the plan.** If the harness cannot produce the shape, the clock
 hypothesis is wrong despite fitting, INC-003's root fault returns to **open**, and the investigation has
@@ -259,3 +267,208 @@ it — which is the whole value of noticing that a shipped path had never run.*
   T4 simulation-scale work in `PRIVATE_ROADMAP.md` §8 rather than here.
 - A direct DiceGame → BetsHistoryExplorer button (mini-plan 05 §9). Still wanted; still not while an
   investigation into navigation is open.
+
+---
+
+# 9. The test set, ready to run (2026-08-24)
+
+**Why this section exists.** §4 and §7 describe *manoeuvres*; they do not say what to capture, when the
+evidence is destroyed, or which observation decides anything. Preparing the run turned up three things that
+change the design — one of them fatal to P5 as written — so they are recorded here rather than discovered
+mid-session. Everything below is verified against the code or measured against the 2026-08-20 archive; the
+legend follows §0 of mini-plan 07 (**[V]** verified in code, **[M]** measured).
+
+## 9.1 — P5 cannot fire under the mechanism it was written to detect
+
+`AssertSingleActorJournal` compares `_lastRegisteredBalanceAfter + CreditedProfit` against the incoming
+`BalanceAfter`, and it is called from `RegisterBet` — i.e. in **registration order**, which is the order
+bets settle [V: `Scripts/Services/UserStatsService.cs`, `AssertSingleActorJournal` and its call site in
+`RegisterBet`].
+
+A rewound clock changes **timestamps**. It does not change registration order, and it does not touch the
+wallet: `SimulationService` settles bets sequentially and each `BalanceAfter` chains off the last one
+regardless of what the calendar reads [V: `SimulationService`, settle path — the bet's timestamp is read
+from `_calendar.CurrentUtcDateTime` at settle time and is not an input to the balance]. Its pacing is
+driven by **real** `delta`, never by the calendar, so rewinding the clock does not stall or reorder the
+engine either [V: `SimulationService._Process`, `simDelta = Math.Max(0d, delta) * DevTimeScale`].
+
+**So the clock hypothesis predicts a SILENT sentinel.** The two balance lines appear only once the journal
+is read back in **timestamp** order. The polarity is therefore the opposite of what §1 and mini-plan 07
+§B.3 assert:
+
+| Mechanism | Sentinel during the run | Journal file in write order |
+|---|---|---|
+| **Clock rewind** (one writer, timestamps moved) | **silent** | balances continuous · **timestamps go backwards** |
+| **A second writer** (two live chains) | **fires**, every alternation | balances break · timestamps monotonic |
+
+This does not weaken the plan — it sharpens it. P5 was never the clock's fingerprint; it was the *rival
+hypothesis's* fingerprint, and it is still worth recording for exactly that reason. It is restated as
+**P5′** in §9.5.
+
+## 9.2 — The real discriminator, and the capture rule that keeps it alive
+
+**P7 — the journal file's own order.** During a session the journal is **appended** in write order. It is
+re-sorted by `TimestampUtc` only by `RebuildJournalFromCurrentState`, whose three callers are the legacy
+migration, `ClearAll`, and **`RollbackHistoryToUtc`** — the checkpoint rollback that runs at boot [V:
+`Scripts/History/BetHistoryRepository.cs`]. So:
+
+> **The first restart after the run destroys the decisive evidence.** The rollback sorts the journal by
+> timestamp, and the backwards jump vanishes into a clean ascending file.
+
+That is measured, not argued: the 2026-08-20 archive holds **193,660 bet records with exactly 0 timestamp
+regressions in file order** [M], while the same file shows the two interleaved lines across the band — it
+had been through many restarts, so it is a *sorted* artefact and cannot discriminate. This is the honest
+reason the archive could never settle INC-003, and it is a better statement of that limit than "the
+mechanism is retired".
+
+**⇒ Capture rule, and it is the single most important line in this section:**
+
+> **Copy the whole `user://` directory the moment the run ends, BEFORE closing the game — and never
+> restart the editor before that copy exists.**
+> `%APPDATA%\Godot\app_userdata\GamblingMiner` → `…\GamblingMiner_mini06_run_<date>`.
+
+**P8 — the two lines' timestamp cadence differs, measurably.** Separating the archive's band
+(`2009-05-23 19:09 → 21:59`) by balance level gives two lines of **513 records each, zero internal
+continuity breaks each**, over the same ~10,240 game-second span [M]:
+
+| Line | median gap | gap distribution | effective rate |
+|---|---|---|---|
+| **A** (`bal ≈ 837`) | `20.0000 s` | continuous, incl. `18.987`, `19.184`, `33.107` — **not** frame-quantized | 5 bets / 100 game-s |
+| **B** (`bal ≈ 771`) | `16.6670 s` | **only** `16.666`/`16.667`/`33.333` — strictly quantized to `100/60` game-second frames | 5 bets / 100 game-s |
+
+Both run at the rate 5 credits produces, so the doubled hourly rate is the two of them summed — P2 holds.
+But they were **stamped by two different processes**: B's gaps are exact multiples of one frame at a steady
+60 fps, A's are not quantized at all. Two live sessions sharing one calendar in one process would share the
+same frame-time distribution. **These do not.** That is a positive observation pointing at a cursor-driven
+clock, available today, and the run should reproduce it.
+
+**P9 — the injected line's size is predicted by the browse, in advance.** Line A spans `10,239 s` of game
+time and holds 513 records; at replay speed `1x` (`_cursorSpeed = 100` game-s per real second [V:
+`BetsHistoryExplorer._speedSteps = { 100, 200, 400, 1000 }`]) that is **~102 real seconds of browsing**, and
+at 5 credits `102 s × 5 bets/s ≈ 510` bets [M]. It matches §4's "leave it replaying 2–3 minutes" to within
+the noise. So before the run: **write down the intended browse duration and speed, and predict the injected
+count.** A reproduction that lands on it is worth far more than one that merely looks similar.
+
+## 9.3 — Preflight, verified 2026-08-24
+
+| | Item | State |
+|---|---|---|
+| ✅ | World is virgin | `world_format_version.txt = 6`, no `bet_history_*.jsonl`, `bet_stats_rollup.json` all-zero [M] |
+| ✅ | Evidence archived | `GamblingMiner_INC003_evidence_2026-08-20`, 88 files [M, §3.1] |
+| ✅ | mini-plan 05 merged into `main` | so §2 branches from `main` [V: `git branch --merged main`] |
+| ✅ | `DevRewindWorldClock` absent from `main` | `grep` returns nothing — §B.2's standing check passes [V] |
+| ⚠ | **Two `.prerepair` files still sit in `user://`** | `bet_stats_rollup.json.prerepair`, `block_session_checkpoint.json.prerepair`, both 2026-08-14. They survived the 5→6 wipe; the suffix sweep (`72a1366`) will destroy them at the **next** one. They are INC-003 evidence — **move them out of `user://` before the run**, per CLAUDE.md's "archive it OUT of `user://` first" |
+| ⚠ | **The build must be DEBUG** | §B1.1. Running from the Godot editor gives it; an **exported build is Release** and produces no sentinel. **And this now applies to §7 as well** — `ReportEmitBudgetBound` is also `[Conditional("DEBUG")]` [V: `BetsHistoryExplorer.cs`], which mini-plan 06 §7 never stated. D5 (the release-safe sentinel) is still **decided and not implemented** [V: `AssertSingleActorJournal` remains `Conditional("DEBUG")`], so the editor run is the cheap way past the blocker |
+| — | Hardware: 5 credits | The world starts every node at **1 individual credit** [M: `hardware_allocation.json`]. Use the DEV **"Buy Hardware"** button in `BTCPoolsAndHardwareShop` on the `player` node **4 times** — it is free and saves eagerly [V: `HardwareAllocationRepository.AddCredits` → `SetNode` → `Save`]. No mining or BTC needed |
+
+## 9.4 — The four runs
+
+Each run's duration is recorded with its outcome — §4.6's rule: a negative result only counts if the window
+was long enough to have caught a positive.
+
+| | Run | Harness | Procedure | Purpose |
+|---|---|---|---|---|
+| **T0** | Control | `DevRewindWorldClock = false` | 5 credits, bots off. Autobet **4 minutes**, one DiceGame → Calendar → BetsHistoryExplorer → back round trip in the middle, **without** touching the replay cursor. Copy `user://`. | Proves this build, at 5 credits, is clean — so anything T1 shows belongs to the harness. Mini-plan 05 never ran a round-trip *at 5 credits*; this closes that gap at the cost of four minutes |
+| **T1** | The reproduction | `true` | §4 steps 1–6 verbatim. Speed **1x**. Note the in-game clock at every step, and the wall-clock duration of the replay. Copy `user://` **before closing** | P1–P4, P5′, P6–P9 |
+| **T2** | Emit budget | `true`, plus `MaxAppendRowsPerFrame = 1` | §7: replay the densest stretch T1 produced at **10x** (the 4th press of the Speed button, `1000` game-s/s) | The §6.2 promise that has never executed |
+| **T4** | **DEV time scale × the explorer** | `true` | §9.6 — the four combinations nobody has ever run | The ceiling, and whether the explorer survives 9000X |
+| **T3** | Disposal | — | Delete the branch **before** writing the results up (§B.2's residual risk). `grep -rn "DevRewindWorldClock"` on `main` must return nothing | Containment |
+
+**T2 needs one line of instrumentation that does not exist.** §7 step 3's third clause — *not one bet of
+the retained range is skipped* — has nothing measuring it today. `_renderedEndExclusive` **is** the count of
+rows emitted, so the check is a single print at the end of the replay comparing it against
+`UpperBound(_sortedRecords, demand)`; equality is the promise. Add it to the harness branch with the
+constant. Without it, T2 can only confirm the print and the label, which are the conveniences, not the test.
+
+## 9.5 — The result table, to be filled in
+
+One verdict per prediction — `observed` / `not observed` / `not measurable` — never a single overall verdict
+(mini-plan 07's Phase B closure criterion 1).
+
+| # | Prediction | How it is checked | Verdict |
+|---|---|---|---|
+| P1 | Two balance lines in one timestamp window, each continuous to the satoshi | separate by balance level over the band; chain each | |
+| P2 | Each at the cadence 5 credits produces | ~20 game-s mean spacing on each line | |
+| P3 | The intruding line born mid-progression | first record of the injected line is not the base bet | |
+| P4 | The band is bounded — it starts and ends with the browse | first/last injected record vs. the noted clock at steps 3 and 5 | |
+| **P5′** | The sentinel is **SILENT** (§9.1) | no `[BetJournal] UNDECLARED balance discontinuity` in the console. **If it fires, the clock is not the whole mechanism** and that is the more valuable result | |
+| P6 | `Rollup.TotalBets` delta = counted records (B1.2) | copy `bet_stats_rollup.json` before and after | |
+| P7 | **Timestamp regression in the journal's WRITE order** (§9.2) | scan the pre-restart copy in file order for `ts[i] < ts[i-1]`; expect **one large backwards jump** at the scrub | |
+| P8 | The injected line's gaps are **not** frame-quantized; the incumbent's are | gap histogram per line (§9.2) | |
+| P9 | Injected count ≈ browse seconds × 5 | predicted before the run, compared after | |
+| B1.3 | `MaxBetAmount` reproduces the legible symptom | field in the rollup copy | |
+| §7 | Budget binds · label appears · **zero rows skipped** | the three clauses, separately | |
+
+**And the negative case stands unchanged** (§5): if the harness cannot produce the shape, the clock
+hypothesis is wrong despite fitting, and INC-003's root fault returns to **open**. §9.1 raises the odds that
+some of P1–P9 come back mixed rather than uniform — that is a result too, and it must be written as one.
+
+## 9.6 — The DEV time scale, the 9000X ceiling, and T4 (developer, 2026-08-24)
+
+**The question, as raised:** the DEV time-scale selector affects *every* scene, `BetsHistoryExplorer`
+included, and has never been tested above the base there. Could the explorer's own 10x replay ladder
+multiply the DEV ceiling to 90000X?
+
+**Measured answer: not through the explorer — through `CalendarsNavigator`, and the arithmetic ceiling is
+exactly the 90000X predicted.** The clock's rate is a product of two independently-set factors [V:
+`CalendarTimeService._Process`]:
+
+```
+rate = SpeedMultiplier × max(1, DevTimeScale)
+```
+
+`DevTimeScale` tops out at `90` [V: `DevTimeScaleSelector.Multipliers`], but `SpeedMultiplier` is offered up
+to **1000** by the Calendar Navigator's own x1/x2/x4/x10 ladder [V: `CalendarsNavigator.InitializeTimeSpeedSelector`,
+`AddSpeedOption("x10", 1000.0)`]. `1000 × 90 = 90,000` game-seconds per real second. **Nothing computed that
+product and nothing forbade it.**
+
+**The explorer is NOT the path.** Its replay cursor advances on `delta * _cursorSpeed`, capped at `1000`
+game-s/real-s and **never consulting `DevTimeScale`** [V: `BetsHistoryExplorer.ComputeCursorDemand`, `_speedSteps`].
+Its "10x" is 10× the 100X base, not 10× the DEV scale. When it live-follows it reads the world clock, which
+is where the ceiling now applies.
+
+**Why 90000X had not happened anyway — three facts in three files, none of them written down as a rule:**
+
+1. `CalendarsNavigator` refuses anything above x1 while `IsAutobetActive` [V: `OnTimeSpeedSelected`] — a
+   flag whose *name* is about betting, doing duty as a clock guard.
+2. Every site that sets `IsRunning = true` also sets `SpeedMultiplier = 100` in the same block [V:
+   `SimulationService.Start`, `DiceGame` ×2], and each is followed by `_autobetDelegated = true`, so
+   `_ExitTree`'s `IsAutobetActive = false` cannot run while the clock is live.
+3. The explorer never writes the world clock — **which is the leg this plan's harness deliberately breaks.**
+
+> **A safeguard held up by three coincidences is not a safeguard; it is a run of luck with good
+> documentation.** Leg 1 keys on the wrong flag, leg 2 is an accident of statement order, and this very plan
+> removes leg 3 on purpose.
+
+**✅ FIXED, and the fix is on `main`, not on the harness branch** — it is a real defence, not test
+scaffolding. `CalendarTimeService.MaxGameSecondsPerRealSecond = 9000.0` clamps the product at the one line
+that spends it, so the limit binds every writer including ones not yet written; a `Conditional("DEBUG")`
+one-shot `GD.PrintErr` names **both factors** when it clamps, because a clamp that silently rescues its
+caller hides the caller. `DevTimeScaleSelector` gains a DEBUG assert that its top step still equals the
+ceiling — the two live in different files and the failure mode is *a control offering a speed the clock
+refuses*, which is worse than a missing control.
+
+**A lateral finding, deliberately NOT fixed here:** by leg 2, the Navigator's **x2 / x4 / x10 options can
+only be selected while the clock is frozen**, and every path that starts the clock resets `SpeedMultiplier`
+to 100 — so those three options do nothing whenever they would matter. That is a UI defect, it is not this
+plan's, and it should not be repaired inside an investigation into clock writers. Filed here so it is not
+lost.
+
+### T4 — the four combinations, none of which has ever been run
+
+Bots off, 5 credits, DEBUG build. **Each step is watched for the `[Clock]` clamp line as well as its own
+result** — the clamp firing anywhere in T4 means a path reached the ceiling, which is information whichever
+way it goes.
+
+| | Step | Expected |
+|---|---|---|
+| 1 | DiceGame, autobet running, DEV scale → **9000X**. Two minutes | Sim% readout drops but the clock stays coherent; no clamp line (`100 × 90` **is** the ceiling, not above it) |
+| 2 | With that still running, navigate to **BetsHistoryExplorer** and let it **live-follow** for two minutes | The explorer keeps up at 9000X, or it does not — **this is the untested case, and it is the one the question was really about.** Watch for `ReportEmitBudgetBound` (at 9000X and 5 credits the budget *can* bind: ~450 bets/s ≈ 7.5 per frame against 25, so it should not — measure, do not assume) |
+| 3 | Scrub back and **replay at 10x** while the DEV scale stays at 9000X | Cursor rate stays 1000 game-s/s — replay speed and DEV scale must NOT compound. **With the harness ON this is also the worst case for the world clock**, so confirm it never exceeds the ceiling |
+| 4 | Return to Calendar Navigator with the autobet **stopped**, select **x10**, then try to resume | The clamp line fires *or* the guard refuses — record which. This is the 90000X path; after the fix the clock must never exceed 9000X regardless |
+
+**The harness must respect the ceiling too.** When `DevRewindWorldClock` writes the world clock from the
+cursor it bypasses `SpeedMultiplier` entirely, so it also bypasses the `_Process` clamp — write it to
+advance the clock by at most `MaxGameSecondsPerRealSecond × delta` per frame, and say so in the harness
+commit. Today's cursor maximum (1000) is already an order of magnitude under the ceiling, so this costs
+nothing and closes the hole rather than relying on the ladder staying short.

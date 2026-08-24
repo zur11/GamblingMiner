@@ -61,6 +61,23 @@ public partial class CalendarTimeService : Node
 		}
 	}
 
+	// THE ABSOLUTE CEILING on how fast game time may run, in game-seconds per real second. 9000X is not a
+	// preference: past it the frame budget collapses and the game stops being playable — which is why
+	// DevTimeScaleSelector's ladder stops at ×90 on the 100X base.
+	//
+	// That ladder is a UI, and a UI cannot be an invariant. The rate is a PRODUCT of two independently-set
+	// factors — SpeedMultiplier, which CalendarsNavigator offers up to 1000, and DevTimeScale, up to 90 —
+	// so the arithmetic ceiling of the controls that exist today is 90000X, ten times the playable limit.
+	// Nothing computed it, and nothing forbade it; it was held down only by a coincidence of three separate
+	// facts in three files (see §9.6 of AIHelperFiles/mini06-clock-rewind-reproduction-plan.md, which
+	// enumerates them and shows one of them is exactly what that plan's harness sets out to break).
+	//
+	// Clamping HERE, at the single line that spends the rate, makes the limit hold for every writer —
+	// including writers not yet written, which is the only kind a guard can actually protect against.
+	public const double MaxGameSecondsPerRealSecond = 9000.0;
+
+	private bool _rateCeilingWarned;
+
 	public override void _Process(double delta)
 	{
 		if (!IsRunning)
@@ -68,8 +85,32 @@ public partial class CalendarTimeService : Node
 			return;
 		}
 
+		double requestedRate = SpeedMultiplier * Math.Max(1, DevTimeScale);
+		WarnOnceIfRateExceedsCeiling(requestedRate);
+
 		CurrentLocalDateTime = CurrentLocalDateTime.AddSeconds(
-			delta * SpeedMultiplier * Math.Max(1, DevTimeScale) * Math.Clamp(SimulationThrottle, 0d, 1d));
+			delta * Math.Min(requestedRate, MaxGameSecondsPerRealSecond)
+				  * Math.Clamp(SimulationThrottle, 0d, 1d));
+	}
+
+	// A clamp that silently rescues its caller teaches nobody anything, and the caller who needed rescuing
+	// is precisely the thing worth knowing. DEBUG-only, once per process, naming BOTH factors so the setter
+	// at fault is identifiable rather than merely implied.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void WarnOnceIfRateExceedsCeiling(double requestedRate)
+	{
+		if (_rateCeilingWarned || requestedRate <= MaxGameSecondsPerRealSecond)
+		{
+			return;
+		}
+
+		_rateCeilingWarned = true;
+		GD.PrintErr(string.Format(
+			System.Globalization.CultureInfo.InvariantCulture,
+			"[Clock] Requested game-time rate {0:N0}X exceeds the {1:N0}X ceiling and was clamped " +
+			"(SpeedMultiplier={2:N0} × DevTimeScale={3}). Past the ceiling the frame budget collapses and " +
+			"the game is unplayable — find the setter that asked for it. Do not raise the ceiling.",
+			requestedRate, MaxGameSecondsPerRealSecond, SpeedMultiplier, DevTimeScale));
 	}
 
 	public void SetLocalDateTime(DateTime localDateTime)
