@@ -29,19 +29,47 @@ extraction time, and is cited **by symbol** — grep the name.
 - **Resolution FOUNDS the company** — the tracked pool mints the NST/PST distribution. No SC cashback, no BTC sweep. **A win is permanent** (D-ND4b.12), never reopened by a later ratchet rework.
 - **Bot cadence** — 0/1/2 weighted bid attempts per mined block (15% / 70% / 15%), drawn only among *eligible* bots: those holding ≥1 qualifying, affordable pool at a nonzero probability.
 - **Parallel rolls** — every biddable pool rolls its own ladder probability each slot; the hits compete in a **weighted** tie-break, an unparticipated pool carrying an explicit `FreshPoolSeedingWeight` (34) rather than its sentinel probability of 100 — applied in `TryBuildCasinoBotBid`.
-- **Exclusions, first match wins** (the `exclusion` chain in `BuildBotPoolOpportunities`: `ExclusionReserve` / `ExclusionSatisfied` / `ExclusionGuard` / `ExclusionPricedOut`) — `reserve` (bot rests at ≤200 BTC spendable, resumes only at ≥300; hysteresis, chain-seeded at first read) → `satisfied` (tier 1 always; tier 3 at ≥2 own bids; tier 2 never) → `guard` (the pool is **full** *and* the bot holds its **smallest** slot, i.e. its own bid would evict its own donation) → `priced out` (`required + fee > spendable × 0.5`). A surviving pool computing to ≤0% is defensively re-labelled `satisfied`.
-- **Ladder, chosen per pool by occupied slot count** — EARLY RUSH (<7 slots): t2 21, t3 13, t4 34, t5 55, t6 89. NORMAL (≥7): t2 5/3 (1 bid / ≥2), t3 2, t4 5, t5 8, t6 13, t7 21, t8 34, t9 55. URGENCY (window inside its final 7 in-game days, NORMAL pools only): one Fibonacci step up — t2 5/5, t3 3, t4 8, t5 13, t6 21, t7 34, t8 55, t9 89. A multi-slot bot rolls the **sum of its two lowest** slot probabilities.
-- **Stuck escalation** — a single-slot bot rolls `max(mode rate, slope × (blocks stuck + 1))`, slopes `t3=2 < t2=3 < t4=5 < t5=8 …`, capped at **34%** inside the NST band (tier ≤ 3) and 100% below it; reset when it re-bids or anyone else's bid re-ranks it. Ordering is DEBUG-asserted (`AssertEscalationSlopesAreOrdered`).
+- **Exclusions, first match wins** (the `exclusion` chain in `BuildBotPoolOpportunities`: `ExclusionReserve` / `ExclusionSatisfied` / `ExclusionGuard` / `ExclusionPricedOut`) — `reserve` (bot rests at ≤ `BotBidReserveStopBtc` spendable, resumes only at ≥ `BotBidReserveResumeBtc`; hysteresis, chain-seeded at first read) → `satisfied` (tier 1 always; tier 3 at ≥2 own bids; tier 2 never — `IsBidderSatisfied`) → `guard` (the pool is **full** at `MaxTrackedDonations` *and* the bot holds its **smallest** slot, i.e. its own bid would evict its own donation) → `priced out` (`required + fee > spendable × MaxBidBalanceFraction`). A surviving pool computing to ≤0% is defensively re-labelled `satisfied`.
+- **Ladder, chosen per pool by occupied slot count** — three modes, selected in `ReBidProbabilityPercentFor`. Tiers 4+ come from a dictionary per mode: `EarlyRushReBidProbabilityPercentByTier` (pool below `EarlyRushSlotThreshold` occupied slots) · `ReBidProbabilityPercentByTier` (NORMAL, at or above it) · `UrgentReBidProbabilityPercentByTier` (window inside its final `AuctionUrgencyWindowMs`, NORMAL pools only — one Fibonacci step up). Tiers 2–3 are bid-count-aware and live in named constants instead, read through `ShallowTierProbabilityPercent`: `Tier2EarlyRushPercent`, `Tier2NormalOneBidPercent` / `Tier2NormalManyBidPercent`, `Tier2UrgencyOneBidPercent` / `Tier2UrgencyManyBidPercent`, `Tier3EarlyRushOneBidPercent`, `Tier3NormalOneBidPercent`, `Tier3UrgencyOneBidPercent`. A multi-slot bot rolls the **sum of its two lowest** slot probabilities. **The tables are mirrored below for reading; the declarations win.**
+- **Stuck escalation** — a single-slot bot rolls `max(mode rate, slope × (blocks stuck + 1))` (`EscalatedStuckDetail`). The slope per tier is `StuckEscalationBasePercent`, which is **not a table of its own**: tier 2 reads `Tier2EscalationBasePercent`, tier 3 reads its NORMAL one-bid shallow rate, and tiers 4+ read the NORMAL ladder directly — so re-tuning NORMAL silently re-tunes the escalation with it. The ceiling is `MaxTopTierEscalationPercent` inside the NST band (tier ≤ `NstTopTierCount`) and 100% below it; it bounds the **escalation only**, so a mode rate above it still wins. Reset when the bot re-bids or anyone else's bid re-ranks it. Slope ordering is DEBUG-asserted (`AssertEscalationSlopesAreOrdered`).
 - **Display parity** — the panel reports the true per-block probability (weighted knapsack DP, 2 decimals, `<0.01%` floor) plus the exclusion reason; player-held slots show no % (the player never rolls the ladder). Position vocabulary is **"tier", never "rank"** — "rank" is reserved for the future casino ranking system.
+
+### The ladder tables, mirrored — a SNAPSHOT, not the source
+
+**Verified against the declarations 2026-08-23; every figure matched.** This mirror exists because a
+ladder is unreadable as a list of symbol names, and unreadable is its own failure mode. But it is a
+second copy with no compiler watching it, so treat it exactly as Standing Convention 15 says: **if this
+disagrees with the code, the code is right and this is stale.** Re-verify before tuning.
+
+| Tier | EARLY RUSH | NORMAL | URGENCY |
+|---|---|---|---|
+| t2 (1 bid / ≥2) | 21 / 21 | 5 / 3 | 5 / 5 |
+| t3 (1 bid; ≥2 ⇒ satisfied) | 13 | 2 | 3 |
+| t4 | 34 | 5 | 8 |
+| t5 | 55 | 8 | 13 |
+| t6 | 89 | 13 | 21 |
+| t7 | — | 21 | 34 |
+| t8 | — | 34 | 55 |
+| t9 | — | 55 | 89 |
+
+Mode thresholds: `EarlyRushSlotThreshold` = 7 occupied slots · `AuctionUrgencyWindowMs` = 7 in-game days ·
+`NstTopTierCount` = 3 · `MaxTopTierEscalationPercent` = 34 · `Tier2EscalationBasePercent` = 3 ·
+`MaxBidBalanceFraction` = 0.5 · `BotBidReserveStopBtc` = 200 / `BotBidReserveResumeBtc` = 300.
+
+*Escalation slopes are not listed separately because they are not separate: `t3 = Tier3NormalOneBidPercent`
+(2), `t2 = Tier2EscalationBasePercent` (3), `t4+` = the NORMAL column above (5, 8, 13, 21, 34, 55). That
+is what produces the documented `t3 < t2 < t4 < t5 …` ordering the DEBUG assertion checks.*
 
 ### Note on the affordability cap
 
-The per-pool filter tests `required + fee > spendable × 0.5` — **the tail is not in the filter**
-(the `ExclusionPricedOut` test in `BuildBotPoolOpportunities`, which reads `requiredAmount + fee > bidBudgetCap` — no tail term). The familiar
-`required + tail + fee ≤ spendable × 0.5` form is the *outgoing-amount invariant*, enforced afterwards
-by clamping the principal to `cap − fee` and sizing the tail from whatever headroom is left
-(the `targetPrincipal` clamp and `headroom`/`tail` sizing in `TryBuildCasinoBotBid`). Both are true; they are
-enforced in different places, and only the first one decides whether a pool is biddable at all.
+The per-pool filter tests `required + fee > spendable × MaxBidBalanceFraction` — **the tail is not in the
+filter** (the `ExclusionPricedOut` test in `BuildBotPoolOpportunities`, which reads
+`requiredAmount + fee > bidBudgetCap`, with no tail term). The familiar
+`required + tail + fee ≤ spendable × MaxBidBalanceFraction` form is the *outgoing-amount invariant*,
+enforced afterwards by clamping the principal to `cap − fee` and sizing the tail from whatever headroom
+is left (the `targetPrincipal` clamp and `headroom` / `tail` sizing in `TryBuildCasinoBotBid`). Both are
+true; they are enforced in different places, and only the first one decides whether a pool is biddable at
+all.
 
 ### Placeholders
 
