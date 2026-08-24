@@ -8,27 +8,27 @@ using Scripts.Game;
 
 namespace Scripts.Sessions
 {
-    public class AutoBetSession : BaseBetSession
-    {
-        private Guid _sessionId;
+	public class AutoBetSession : BaseBetSession
+	{
+		private Guid _sessionId;
 
-        public AutoBetSession(
-            BetService betService,
-            Wallet wallet,
-            ProgressiveBettingStrategy strategy)
-            : base(betService, wallet, strategy)
-        {
-        }
+		public AutoBetSession(
+			BetService betService,
+			Wallet wallet,
+			ProgressiveBettingStrategy strategy)
+			: base(betService, wallet, strategy)
+		{
+		}
 
-        public override void Start(int betCount, BettingStrategyConfig config)
-        {
-            _sessionId = Guid.NewGuid(); // 🔥 única diferencia real
-            base.Start(betCount, config);
-        }
+		public override void Start(int betCount, BettingStrategyConfig config)
+		{
+			_sessionId = Guid.NewGuid(); // 🔥 única diferencia real
+			base.Start(betCount, config);
+		}
 
-        protected override Guid? GetSessionId()
-        {
-            return _sessionId;
-        }
-    }
+		protected override Guid? GetSessionId()
+		{
+			return _sessionId;
+		}
+	}
 }

@@ -12,33 +12,33 @@ namespace GodotBlockchainPort.Blockchain;
 // OQ-C2: uniform tx size for now, so fee ordering == feerate ordering.
 public static class BlockTemplateBuilder
 {
-    public const int MaxBlockTransactions = 24;
+	public const int MaxBlockTransactions = 24;
 
-    public static BlockTemplate Build(string minerAddress, decimal blockReward, IReadOnlyList<Transaction> mempool, int blockIndex)
-    {
-        List<Transaction> selected = mempool
-            .OrderByDescending(t => t.Fee)
-            .Take(MaxBlockTransactions - 1)
-            .ToList();
+	public static BlockTemplate Build(string minerAddress, decimal blockReward, IReadOnlyList<Transaction> mempool, int blockIndex)
+	{
+		List<Transaction> selected = mempool
+			.OrderByDescending(t => t.Fee)
+			.Take(MaxBlockTransactions - 1)
+			.ToList();
 
-        decimal feeTotal = selected.Sum(t => t.Fee);
+		decimal feeTotal = selected.Sum(t => t.Fee);
 
-        // Input-less coinbase output = block reward + Σ selected fees, to the miner (Step 8 / A.7).
-        Transaction coinbase = BlockchainService.CreateCoinbase(minerAddress, blockReward + feeTotal, blockIndex);
+		// Input-less coinbase output = block reward + Σ selected fees, to the miner (Step 8 / A.7).
+		Transaction coinbase = BlockchainService.CreateCoinbase(minerAddress, blockReward + feeTotal, blockIndex);
 
-        var blockTransactions = new List<Transaction>(selected.Count + 1) { coinbase };
-        blockTransactions.AddRange(selected);
+		var blockTransactions = new List<Transaction>(selected.Count + 1) { coinbase };
+		blockTransactions.AddRange(selected);
 
-        string merkleRoot = MerkleTree.ComputeRoot(blockTransactions);
-        return new BlockTemplate(blockTransactions, selected, coinbase, merkleRoot);
-    }
+		string merkleRoot = MerkleTree.ComputeRoot(blockTransactions);
+		return new BlockTemplate(blockTransactions, selected, coinbase, merkleRoot);
+	}
 }
 
 // BlockTransactions = [coinbase, ...selected]; SelectedMempoolTxs = the mempool txs to remove from
 // the miner's pending pool on commit; Coinbase and MerkleRoot are conveniences for the miner.
 public sealed record BlockTemplate(
-    List<Transaction> BlockTransactions,
-    List<Transaction> SelectedMempoolTxs,
-    Transaction Coinbase,
-    string MerkleRoot
+	List<Transaction> BlockTransactions,
+	List<Transaction> SelectedMempoolTxs,
+	Transaction Coinbase,
+	string MerkleRoot
 );

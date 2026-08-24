@@ -316,7 +316,12 @@ right, which is what made the count worth chasing.
 1. **PROXIMATE — the journal recorded two bettors and could not say so.** For roughly three in-game days
    two balance lines coexisted in `bet_history*.jsonl`, each internally continuous to the satoshi, each
    with its own martingale progression, each at the correct 5-credit cadence, interleaved second by second.
-2. **ROOT (leading, dated, not proven) — `BetsHistoryExplorer` used to rewind the WORLD CLOCK to browse
+2. **ROOT — STATUS: `LEADING BUT NOT OBSERVED`.** Stated as a label rather than left to be inferred from
+   a parenthesis (2026-08-22). It is supported by **dating** and by **mechanism-fit**, and by nothing
+   else; it has never been reproduced. **It stays at this status indefinitely** — mini-plan 06, which
+   specifies the deliberate reproduction that would settle it, was **deferred, not cancelled** (mini-plan
+   07, D2/G5), and is on the shelf intact. Any future reader finding this entry unchanged should read the
+   status as current, not as stale. — **`BetsHistoryExplorer` used to rewind the WORLD CLOCK to browse
    history.** There is one clock; `SimulationService` stamps every settled bet with it. Bets settled while
    the player browsed with the replay playing were therefore journaled with timestamps in the past, so one
    session's records land inside an earlier window and read as a second bettor. The scene's own comment,
@@ -351,16 +356,38 @@ right, which is what made the count worth chasing.
 
 **Blast radius**
 
-- **Every lifetime figure inherits it.** `Rollup.TotalBets = 215,723`, total wagered, net profit, and every
+- **Every lifetime figure inherits it.** `Rollup.TotalBets`, total wagered, net profit, and every
   max/streak. The rollup is the value designed to survive pruning, so this is the figure with the longest
   half-life.
+  > ⚠ **Any figure quoted here MUST carry its date** (corrected 2026-08-22). This entry originally read
+  > `Rollup.TotalBets = 215,723` as though the number were a property of the defect. It is not: **the
+  > contaminated SET is fixed, but the total keeps growing with play.** The same world read **223,137 at
+  > 2026-08-20**, and the archive named below is the artefact that pins it. A bare total in an incident
+  > record is a measurement whose moment has been thrown away.
+- **A SECOND persisted file carries copies of the contaminated figures** (added 2026-08-22). Two services
+  read the lifetime stats and hand them to the casino ledger at every funding event:
+  `BankrollProgramService.cs:100-101` (auto-recharges and deposits) and
+  `PlayerBankAccountService.cs:102-104` (Bank→Main deposits). `CasinoClientLedgerService.AddEntry` stamps
+  them into every `LedgerEntry` as `TotalWageredSnapshot` / `NetProfitSnapshot`
+  (`CasinoClientLedgerService.cs:280-294`), persisted to `user://casino_client_ledger.json`
+  (`:48`) and checkpoint-covered. **These are frozen copies**: nothing that repairs the rollup would ever
+  reach them, and they are the since-last-deposit metrics `ClientsTransactions` displays.
 - **Visible on screen and unnoticed for days**: the explorer's summary read `Max bet: 964.63272326 SC`
   beside a Bankroll of `837.66`. **A single wallet cannot bet more than it holds.**
 - **INC-002's segmentation cannot separate them.** Runs are measured per `(GameId, Chance)` and both
   streams are `Dice` at `50`, so the loss/win-run figures concatenate two independent sessions — §40.8's
   failure mode in new clothes, on a new input.
-- **Not affected**: the chain, the casino's books, and every other participant's state. The corruption is
-  confined to the player's own bet journal and the three consumers it feeds.
+- **Not affected**: the chain, and every other participant's state. ~~the casino's books~~ — **corrected
+  2026-08-22**: the casino's client ledger *does* carry copies, per the bullet above. The original
+  sentence ("confined to the player's own bet journal and the three consumers it feeds") was written
+  without enumerating the consumers, and it was wrong by two.
+- ⚠ **THIS WORLD'S FIGURES ARE WRONG FOR TWO INDEPENDENT, NON-SEPARABLE REASONS.** The audit opened to
+  establish this blast radius (mini-plan 07) found a second corruption in the same file: **INC-004**, a
+  non-atomic rollup writer feeding a failed load that was written back over the only surviving copy. So
+  the rollup is **inflated** by INC-003's foreign records *and* **short** by INC-004's uncounted prefix of
+  ≥50,000, **at the same time and in the same number.** Neither error can be measured while the other is
+  present, and no arithmetic separates them. **A reader of INC-003 must not treat this world's totals as
+  "INC-003's figures" — they are not attributable to either incident alone.**
 
 **Recovery** — none applied yet. Mini-plan 05 §6 decided **bump `WorldFormatVersion` and wipe**, the
 project's standing default, with an ordering constraint that is load-bearing: **archive `user://` to a
@@ -378,8 +405,29 @@ first.*
   name of its writer. Plus `SessionLifecycleTrace`, hooked inside `BaseBetSession` so no session instance
   can escape it.
 - **Residual uncertainty, stated rather than smoothed over:** the defect was never reproduced, so the root
-  fault is supported by dating and by mechanism-fit, not by observation. Mini-plan 06 specifies the
-  deliberate reproduction that would settle it.
+  fault is supported by dating and by mechanism-fit, not by observation — `LEADING BUT NOT OBSERVED`, per
+  the status on fault 2. Mini-plan 06 specifies the deliberate reproduction that would settle it, and is
+  **deferred rather than cancelled**.
+
+**Where the evidence lives — verified intact 2026-08-22.** An incident entry whose evidence no longer
+exists is an anecdote, and this entry's evidence had never been located in writing. Both artefacts survive:
+
+1. **`%APPDATA%\Godot\app_userdata\GamblingMiner_INC003_evidence_2026-08-20\`** — 55 MB, 49 files, the
+   20-chunk journal (193,660 bets, `2009-04-09` → `2009-05-28`) and the rollup (`TotalBets 223,137`).
+   **It is byte-identical to the live world**, confirmed by checksum, not assumed:
+   `md5(bet_stats_rollup.json)` and `md5(cat bet_history_*.jsonl)` match on both sides. The four
+   contaminated hours are present and countable in it — `270 / 333 / 359 / 361` against a correct `180/h`,
+   reproducing the four rates quoted above by line count alone.
+2. **The two `.prerepair` files, inside that same archive** — `block_session_checkpoint.json.prerepair`
+   (captured `2026-08-14T10:46:28Z`, holding a game clock of `2009-05-24 13:54:40`), which is the dating
+   evidence, and `bet_stats_rollup.json.prerepair` (`TotalBets 205,562`, older schema).
+
+**Consequence: the wipe is not a deadline.** Mini-plan 05 §6.1 required archiving before the reset
+precisely so these could not be destroyed by it; that ordering was satisfied on 2026-08-20. The live world
+may keep being played and keep pruning, and the wipe may be run whenever, **without losing anything this
+entry depends on.** A third artefact, `GamblingMiner_fresh5cred_2026-08-12`, is a same-lineage
+**pre-contamination** ancestor (167,900 shared record Ids, bands empty) and is worth keeping for the same
+reason.
 
 **Lesson** — three, in order of how much they generalize:
 
@@ -399,3 +447,122 @@ first.*
    timestamp, settled it in one line. **Any artefact carrying BOTH clocks is disproportionately valuable in
    a world whose own records carry only one** — worth keeping deliberately rather than by accident, which
    is how this one survived.
+
+---
+
+## INC-004 — The lifetime rollup that zeroed itself and called it complete (2026-08-22)
+
+**World / context** — Branch `userstats-audit-and-rollup-durability`, canonical timeline,
+`WorldFormatVersion 5`. Found by mini-plan 07's audit of `UserStatsService` — an audit opened to establish
+the blast radius of INC-003, which found a second, independent corruption in the same file.
+
+**Symptom** — No crash. `user://bet_stats_rollup.json` reads `"IsComplete": true` beside
+`"TotalBets": 223137`, on a world whose surviving journals account for **at least 273,000 settled bets**.
+A figure declaring itself complete while missing ~50,000 records, on screen, for an unknown number of
+sessions. **Nothing reported anything.**
+
+**Timeline**
+
+1. **Mini-plan 03** ships the rollup — the running total designed to survive its own source being pruned,
+   and therefore, past the pruning boundary, the ONLY record of the deleted bets.
+2. **Unknown date** — the rollup's count restarts at a boundary in the group stamped
+   `2009-04-02T12:17:57Z` game time. No wall-clock record survives: Godot retains five logs per world.
+3. **2026-08-22** — mini-plan 07 §A.4.3 measures the shortfall; §A.6 eliminates over the paths that can
+   write the flags; the mechanism is reproduced in isolation; §A.6.4 measures the deficit's shape.
+
+**Faults** — one chain of three, plus one independent defect found beside it.
+
+1. **ROOT — A-F1, the writer was not atomic.** `SaveRollupIfDirty` opened the real path with
+   `FileAccess.ModeFlags.Write` and streamed into it. **`FileAccess.Open(Write)` truncates AT OPEN**, so
+   the exposure window was not "mid-write" but *from open until `StoreString` returned* — and it recurred
+   at every mined block and every `FlushHistory`. A kill anywhere inside it left a zero-byte or
+   half-written file. CLAUDE.md's Pattern 2 sequel asks this exact question, and the file created by
+   INC-001's remediation answered it "no".
+2. **A-F2 — a failed load was written back over the good copy.** `LoadRollup`'s `catch` printed and
+   returned, leaving `Rollup` at `new()`. `_Ready` had already established `hadRollupFile == true`, so it
+   took the stage-1 branch, set `RollupIsAuthoritative = true` and returned. The next settled bet set
+   `_rollupDirty`, and the next flush wrote the zeroed rollup over the file that had failed to parse.
+   **Guarding the reader was never enough — the guard belongs on the writer.**
+3. **A-F3 — the zeroed rollup claimed completeness.** `IsComplete` defaults to `true` on a fresh
+   `BetStatsRollup`, and the seeding path that would have set it to `false` is *skipped* by the stage-1
+   early return. So the damaged rollup did not merely lose history; it asserted it had lost none.
+   `SeededAtUtc: null` is the tell — the seeding path sets it unconditionally, so a null proves seeding
+   never ran on that file.
+4. **INDEPENDENT — A-F4, a null file handle wrote nothing and reported success.** The writer ended in
+   `file?.StoreString(...)`: a null handle from `FileAccess.Open` silently skipped the write, and
+   `_rollupDirty` had *already* been cleared, so nothing ever retried. **Its signature is different and
+   that is why it is filed apart: the file is not corrupt and not zeroed, it is STALE** — lagging the
+   in-memory total, adopted permanently at the next boot. **A rollup that is merely behind carries no
+   evidence that anything went wrong.**
+
+**Evidence**
+
+- **The mechanism, reproduced.** A throwaway `dotnet` console replaying `_Ready` → `LoadRollup` →
+  stage-1 return → one `RegisterBet` → `SaveRollupIfDirty` over the real file, damaged three ways:
+  truncated to half (`JsonException`), literal `null` (parses fine, **yields null, raises nothing**), and
+  zero-byte (`JsonException`). **All three wrote `IsComplete=True  SeededAtUtc=null  TotalBets=1` to
+  disk.** The zero-byte case is the likeliest crash residue, since the truncation happens at open.
+- **The shortfall.** Union of the live journal and its pre-contamination ancestor `fresh5cred`
+  (bets only, minus 4,917 rolled back) = **223,638 countable**, against `TotalBets` **223,137** —
+  **501 uncounted**, plus a pruned prefix of **≥50,000** the rollup never covered at all.
+- **The deficit's SHAPE, which decided between two candidate families.** Per-segment counts rebuilt from
+  the union against `Segments[].Bets`: the entire 501 sits in `Dice|50`, the only segment spanning the
+  world's start, while `Dice|39` (2,662), `Dice|60` (988) and `Dice|61` (5) — all played inside one
+  21-hour window at the end — match **to the individual bet**. A contiguous prefix, not scattered session
+  tails. Corroborated independently: `Dice|50` holds 499 records before the boundary derived from the
+  grand total, agreeing with 501 within the unorderable same-timestamp tie group.
+- **What could NOT be checked.** `SinceDepositBets = 5,603` cannot be validated against anything: every
+  deposit record after 2009-05-21 has been pruned from all surviving journals (the live journal carries
+  **zero** deposit lines — a rewrite put them in the base file, which retention then deleted).
+
+**Blast radius**
+
+- **Every lifetime figure the player sees**, and `BetsHistoryExplorer`'s pruned-prefix subtraction, which
+  subtracts the retained window from a lifetime total that is short — so it reports a wrong prefix too.
+- **It would have reached the checkpoint.** The first draft of the fix returned `null` from
+  `CaptureRollupSnapshot` while latched; since the snapshot is rewritten to disk at every block, the first
+  block after a failed load would have replaced the last good rollup with `null` and made a recoverable
+  failure permanent. Caught in review before it shipped. **Declining to record a value is not the same as
+  erasing the value that was there.**
+- **Not affected**: the chain, the journal itself, the casino's books, every other participant's state.
+
+**Recovery** — the block checkpoint carries its own rollup snapshot, so a world whose rollup file is
+destroyed gets a real one back at the next restore. *A block is the only commit, and it turns out to be
+the backup as well.* **This depends on autoload order**: `UserStatsService` (#2) latches before
+`BlockSessionCheckpointService` (#13) restores. Reverse them and the restore is overwritten by the failed
+load — another entry for Pattern 5's list of load-bearing ordering constraints.
+
+**Fix** — shipped on this branch, `cb1779a`:
+
+- `.tmp` → `File.Move(overwrite: true)`; the rename is the commit. **`System.IO.File.Move` deliberately,
+  not `DirAccess.RenameAbsolute`** — the latter does not replace an existing target on Windows and would
+  have frozen the rollup instead: a new failure mode introduced by the fix.
+- A `_rollupLoadFailed` latch that blocks the **writer**; the damaged file preserved once to `.corrupt`;
+  `GD.PushError`, not `PrintErr`, because this is data loss.
+- The `null`-parse case treated as a failure rather than as "nothing to do".
+- `_rollupDirty` cleared **only after** the rename succeeds, so a failed save is retried.
+- The checkpoint capture carries the previous rollup forward instead of writing `null`.
+
+**Still open** — the live world's rollup is not repaired and cannot be: the maxima and streaks are
+order-dependent, non-invertible reductions, and there is no pre-contamination rollup in any archive. It is
+disposed of by the wipe (mini-plan 07, D1), which runs **after** this fix, deliberately: *a clean rollup
+that can lie again is worse than the current one, because the current one is known to be wrong.*
+The in-engine confirmation of the new write path is owed on the disposable world after that wipe.
+
+**Lesson** — three, in order of how much they generalize:
+
+1. **A default value is an assertion, and a fresh object asserts the most flattering one.** `IsComplete`
+   defaults to `true` because a brand-new rollup on a brand-new world genuinely is complete — which is
+   exactly why the *damaged* case inherited a claim of completeness. **When a field encodes a claim about
+   coverage, its default belongs on the pessimistic side, because the paths that skip initialization are
+   the failure paths.**
+2. **Fixing a writer creates a new writer, and it needs the same three questions.** The first draft of
+   this fix answered atomicity and loud-failure correctly and then quietly introduced a worse bug into the
+   *recovery* path — because "return nothing" was written into a structure that overwrites wholesale.
+   **Ask what happens to the last good copy, every time, including in the repair.**
+3. **When two mechanisms both fit, find the measurement whose predictions differ — and if none exists,
+   record that instead of choosing.** Elimination over the paths that *set the flags* looked conclusive
+   and was not; it took the per-segment shape of the deficit to separate a contiguous prefix from
+   scattered tails. The since-deposit check, which looked equally promising, turned out to be
+   unanswerable because its evidence had been pruned. **Both outcomes are results; only one of them is a
+   conclusion.**

@@ -2,3 +2,13 @@ root = true
 
 [*]
 charset = utf-8
+
+# C# indentation is TABS — the convention CLAUDE.md states, now actually enforced.
+# It was enforced by nothing until 2026-08-23: the Godot editor reformats to tabs on open, while
+# Visual Studio, the VS Code C# extension and `dotnet format` all default to spaces for C#. The two
+# pull in opposite directions, and each pass produces a whole-file whitespace diff that buries the real
+# change — one such reformat rode silently into a version-bump commit (mini-plan 07, a0c27ea).
+# This file is the one place all four toolchains read.
+[*.cs]
+indent_style = tab
+tab_width = 4

@@ -203,6 +203,14 @@ public partial class BlockSessionCheckpointService : Node
 
 		CasinoScBalanceService casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 
+		// INC-004 — the last rollup this checkpoint knew about, carried across the rebuild below.
+		// CaptureRollupSnapshot() returns null when UserStatsService could not read its file, and the whole
+		// snapshot is rewritten to disk at every block: without this, the FIRST block after a failed load
+		// would replace the last good rollup with null, and ApplyCheckpointToServices (guarded on != null)
+		// would then have nothing to restore — turning a recoverable failure into a permanent one.
+		// **Declining to record a value is not the same as erasing the value that was there.**
+		Scripts.User.BetStatsRollup previousRollup = CurrentSnapshot?.BetStatsRollup;
+
 		CurrentSnapshot = new Snapshot
 		{
 			PrincipalBalance = principal.CurrentBalance,
@@ -235,7 +243,8 @@ public partial class BlockSessionCheckpointService : Node
 			CasinoCoinSwapState = GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")?.CaptureCheckpointState(),
 			ScMonetaryLedgerState = GetNodeOrNull<ScMonetaryLedgerService>("/root/ScMonetaryLedgerService")?.CaptureCheckpointState(),
 			CentralBankState = GetNodeOrNull<CentralBankService>("/root/CentralBankService")?.CaptureCheckpointState(),
-			BetStatsRollup = GetNodeOrNull<UserStatsService>("/root/UserStatsService")?.CaptureRollupSnapshot(),
+			BetStatsRollup = GetNodeOrNull<UserStatsService>("/root/UserStatsService")?.CaptureRollupSnapshot()
+				?? previousRollup,
 			CapturedAtUtc = DateTime.UtcNow
 		};
 

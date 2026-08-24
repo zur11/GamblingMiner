@@ -364,7 +364,7 @@ public partial class CasinoGamblingFinances : Control
 	private void OnManualLoanPressed()
 	{
 		_loanFeedbackLabel.Text = "";
-		// Type ANY specific amount; blank/invalid falls back to the default draw (InitialLoanAmount = 100M).
+		// Type ANY specific amount; blank/invalid falls back to the default draw (InitialLoanAmount = 40,000 SC).
 		decimal amount = CasinoScBalanceService.InitialLoanAmount;
 		string raw = (_manualLoanInput.Text ?? string.Empty).Trim().Replace(",", "");
 		if (!string.IsNullOrEmpty(raw) &&

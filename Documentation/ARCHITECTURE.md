@@ -106,7 +106,7 @@ User/Session calls ExecuteNext()
 
 | Class | Purpose |
 |---|---|
-| `BetHistoryRepository` | Loads/saves JSON chunked by month; rollback to UTC timestamp; time-bucket summaries |
+| `BetHistoryRepository` | Loads/saves JSON segmented by **10,000 entries per file** (never by date); retention cap of 20 segments, oldest deleted first; rollback to UTC timestamp; time-bucket summaries |
 | `UserBettingStats` | Aggregates wins/losses, total wagered, net profit; per-game stats |
 | `TimeBasedBetStats` | Pre-calculated summaries for fast performance queries |
 
