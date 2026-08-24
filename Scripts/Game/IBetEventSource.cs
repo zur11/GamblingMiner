@@ -3,9 +3,9 @@ using Scripts.Finance;
 
 namespace Scripts.Game
 {
-    public interface IBetEventSource
-    {
-        event Action<string, BetTransactionEvent> BetExecuted;
-        string GameId { get; }
-    }
+	public interface IBetEventSource
+	{
+		event Action<string, BetTransactionEvent> BetExecuted;
+		string GameId { get; }
+	}
 }
