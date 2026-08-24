@@ -4,7 +4,28 @@
 `mini05-bet-journal-single-actor-plan.md`, which dated the contamination and named a leading root cause it
 could not observe.
 
-**Status:** 📋 **SPECIFIED, NOT STARTED.**
+**Status:** 📋 **SPECIFIED, NOT STARTED.** On the shelf by mini-plan 07's **D2** (gate G5, fired as
+*deferred*, not cancelled, 2026-08-22). Its world precondition is now **satisfied** — see §3.
+
+> ⚠ **BLOCKER — read before starting, not halfway through. The sentinel is DEBUG-only.**
+> `AssertSingleActorJournal` is `[Conditional("DEBUG")]` [V: `Scripts/Services/UserStatsService.cs:152`],
+> and **P5 is the discriminator** (§1). A **Release** run therefore produces **four of the five predictions
+> and no verdict** — precisely the ambiguity mini-plan 05 spent a week in, reproduced deliberately and at
+> full cost.
+>
+> Mini-plan 07 **D5** decided the sentinel must exist in **Release**, using the project's two-half pattern
+> (a release-safe quantity written to a trace in every build, plus a `Conditional("DEBUG")` assertion over
+> the same quantity — reference `AssertBotBallotsVary` in `NetworkRoot.cs`, beside its unconditional
+> `spread=` trace emission). **That decision is DECIDED BUT NOT IMPLEMENTED** — verified against `main`,
+> 2026-08-23.
+>
+> *Cited by symbol, not by line. Mini-plan 07 D5 originally gave `NetworkRoot.cs:4172` / `:4279` /
+> `:4173-4178` for these; all three had drifted +10 within a day. D5 has since been re-cited by symbol
+> (2026-08-23) — **grep the name, and do not reintroduce a line number here.***
+>
+> **So, before step 1 of §4, do one of two things:** implement D5, or run a **DEBUG** build deliberately
+> and record that you did. This is mini-plan 07's **B1.1**, and mini-plan 06 never stated it — which is
+> why it is stated here, at the top, rather than left to be discovered mid-run.
 
 **Objective.** INC-003's root fault is *supported* — by dating and by mechanism-fit — and **not observed**.
 This plan observes it: deliberately re-create the retired mechanism on a disposable world, with mini-plan
@@ -99,8 +120,16 @@ obviously, it must not run on a world that is *already* contaminated.
 ```
 
 **88 files, 55 MB, verified**: 1,053 bet records inside the `2009-05-23 T19–T21` band, 193,660 bet records
-total, `Rollup.TotalBets = 223,137`. This is the archive INC-003 cites as its evidence, and the one
-mini-plan 05 §6.1 requires before the wipe — one copy serves both.
+total, **`Rollup.TotalBets = 223,137` as of the archive's capture, 2026-08-20**. This is the archive
+INC-003 cites as its evidence, and the one mini-plan 05 §6.1 requires before the wipe — one copy serves
+both.
+
+> **Both totals in circulation are correct; each is correct for its own date, and neither used to say so.**
+> INC-003 quotes **`215,723`** — the figure as it stood when the incident was written. This section quotes
+> **`223,137`** — the figure at the 2026-08-20 archive capture, after further play. **The rollup kept
+> counting between the two dates**; the difference is not a discrepancy and neither figure supersedes the
+> other. Quote a total with its date attached or not at all. (Mini-plan 07 **B1.4** raised this;
+> this note is the fix.)
 
 *Taken when it was, because the journal was still living in `user://` and every pre-block restart could
 have rolled it away. It had already survived several by luck.*
@@ -119,6 +148,20 @@ So: **archive (done) → `WorldFormatVersion` bump + clean reset (mini-plan 05 �
 
 The wipe is not a cost here, it is the instrument: a fresh world means every record in the journal was
 written during this experiment, and the two-line separation becomes trivial rather than forensic.
+
+> ### ✅ Both preconditions are now SATISFIED — this plan performs neither (2026-08-23)
+>
+> - **The archive** was taken 2026-08-20 (§3.1), and a second byte-identical copy,
+>   `GamblingMiner_prewipe_2026-08-23`, was taken at the wipe. Both verified against mini-plan 07 §A.0.2's
+>   recorded checksums.
+> - **The wipe was executed by mini-plan 07, step 5** — `a0c27ea`, `WorldFormatVersion` 5 → 6. It is
+>   **not** this plan's to perform, in either direction.
+>
+> **The world is already virgin.** `WorldFormatVersion = 6`, the journal is empty, and the game clock reads
+> the canonical player start. This plan may branch and run the harness directly; §4 step 1 is its first
+> action. **The wipe was never an ordering question this plan had to settle — it was a state this plan
+> needed, and the state now holds.** (§6 previously listed it a second time as an *afterward*, contradicting
+> this section. That bullet is removed.)
 
 ---
 
@@ -163,8 +206,16 @@ learned something no amount of further reasoning could have told it.
 
 - Update **INC-003** — root fault confirmed, or returned to open with this ruled out.
 - **Delete the branch.** It exists to hold a deliberate defect.
-- Then the wipe that mini-plan 05 §6 already decided: `WorldFormatVersion` bump, clean reset, archive
-  already taken at §3.
+- **Dispose of the world the run corrupts.** The harness writes a bad journal on purpose, so the world it
+  leaves behind is spent. Archive it if the result is worth keeping, then reset it — but note this is
+  *disposal of this run's output*, not the mini-plan 05 wipe, which is a precondition and is already done
+  (§3.2).
+
+> **Removed here, 2026-08-23:** a third bullet reading *"Then the wipe that mini-plan 05 §6 already
+> decided: `WorldFormatVersion` bump, clean reset."* It was **obsolete and self-contradictory** — obsolete
+> because mini-plan 07 executed that wipe at `a0c27ea`, and contradictory because §3.2 requires the very
+> same wipe **before** the run, as the precondition that makes the result unambiguous. One wipe, needed
+> beforehand, listed twice and placed on both sides of the experiment.
 
 ---
 

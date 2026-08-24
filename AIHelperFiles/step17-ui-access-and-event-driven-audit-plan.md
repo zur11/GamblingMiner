@@ -7,10 +7,14 @@
 >
 > Branch (suggested): `explorer-access-and-event-driven-audit` off `main`.
 >
-> **World treatment: no bump expected.** Nothing in 17.A or 17.C persists. The
-> `WorldFormatVersion` bump that mini-plan 05 §6 decided belongs to **mini-plan 06** and is independent of
-> this step; do not fold them together, because one is a forensic instrument and the other is a UI cleanup
-> and merging their world state would confuse both.
+> **World treatment: no bump expected.** Nothing in 17.A or 17.C persists. The `WorldFormatVersion` bump
+> that mini-plan 05 §6 decided was **executed by mini-plan 07** — step 5, `a0c27ea`, 5 → 6, on 2026-08-23 —
+> and is **already done**, independent of this step. It is not this step's to perform and not a thing this
+> step waits on. *(Attribution corrected 2026-08-23: this note previously said the bump "belongs to
+> **mini-plan 06**". That was the plan of record when this was written; mini-plan 07 took the wipe over as
+> its own step 5, and mini-plan 06 — still shelved by D2 — now inherits it as a satisfied precondition
+> rather than a task.)* The reason for keeping the two apart still stands: one is a forensic instrument and
+> the other is a UI cleanup, and merging their world state would confuse both.
 >
 > **Prior art this step consumes rather than re-derives:** `ProjectDesignManual.md` **Ch. 38** (the whole
 > event-driven principle, the genuine exceptions, the §38.5 catalogue and the §38.7 inverse failure),
