@@ -7,22 +7,29 @@ Extracted from `CLAUDE.md`'s Canonical Decisions table (2026-08-20), where it ha
 against section 1; read section 2 only to understand why a rule is shaped the way it is.
 
 Every figure in section 1 was verified against `Scripts/BlockchainPort/Simulation/NetworkRoot.cs` at
-extraction time, with line references given inline.
+extraction time, and is cited **by symbol** — grep the name.
+
+> **Cited by symbol since 2026-08-23; it was line numbers until then, and all nine had drifted.** Every
+> anchor was off by exactly **+10** — a single insertion earlier in the file moved the whole set at once,
+> and because the drift was uniform and small, each broken link still landed on plausible-looking auction
+> code. Nothing failed; the citations just quietly stopped pointing at what they named. This is Standing
+> Convention 15: **cite the symbol, not the line.** Do not reintroduce line numbers here — the symbols
+> below were each re-verified by grep at the time of the rewrite.
 
 ---
 
 ## 1. Canonical rule (current)
 
 - **Scope** — 40 non-miner companies, introduced from Market Birth (2010-07-18) along the historical active-address curve (all 40 by 2017-12-13). Only the player and `bot_1..4` may bid; the Step-14 cast never qualifies (D-EB.7).
-- **Opening** — the first qualifying bid into an unbid pool must be worth **$0.10, capped at 1 BTC**, floored at one satoshi, priced at that bid's own block timestamp so a chain replay is deterministic; no market data falls back to the 1 BTC cap (`OpeningBidFloorBtcAt`, [NetworkRoot.cs:5863](../Scripts/BlockchainPort/Simulation/NetworkRoot.cs#L5863)). It opens a rolling **20 in-game-day** window (`AuctionWindowMs`, [:1079](../Scripts/BlockchainPort/Simulation/NetworkRoot.cs#L1079)).
-- **Raise floor** — bots must clear `leadingBid + max(openingFloor, 5% × leadingBid)`, coin-flipping between that and `leadingBid + max(2 × openingFloor, 10% × leadingBid)`, plus a random additive tail so bids never repeat as round numbers; the player needs **+1 satoshi**, regardless of size (ND.4d). The absolute floor term is the *live* opening floor, not a constant — `RaiseMin`/`RaiseMax`, [:5874-5875](../Scripts/BlockchainPort/Simulation/NetworkRoot.cs#L5874-L5875). Every accepted bid takes the lead and resets the window to a fresh 20 days.
+- **Opening** — the first qualifying bid into an unbid pool must be worth **$0.10, capped at 1 BTC**, floored at one satoshi, priced at that bid's own block timestamp so a chain replay is deterministic; no market data falls back to the 1 BTC cap (`OpeningBidFloorBtcAt`). It opens a rolling **20 in-game-day** window (`AuctionWindowMs`).
+- **Raise floor** — bots must clear `leadingBid + max(openingFloor, 5% × leadingBid)`, coin-flipping between that and `leadingBid + max(2 × openingFloor, 10% × leadingBid)`, plus a random additive tail so bids never repeat as round numbers; the player needs **+1 satoshi**, regardless of size (ND.4d). The absolute floor term is the *live* opening floor, not a constant — `RaiseMin` / `RaiseMax`. Every accepted bid takes the lead and resets the window to a fresh 20 days.
 - **One bid per donor per block** — the highest counts, the rest are ignored (no lead, no window reset, no tracked slot, no stock, **no refund**); ties keep the earliest `seq`. A send from the current leader never counts as a bid.
 - **Late bids** — still-pending qualifying bids to a resolved company are dropped, so the coins simply stay in the wallet; post-close *confirmed* ones are refunded from the founded company's treasury, fee-deducted (memo `· AUCTION REFUND`).
-- **Tracked Donation Pool** — top 10 by BTC amount (`MaxTrackedDonations`, [:132](../Scripts/BlockchainPort/Simulation/NetworkRoot.cs#L132)), value-ordered and never chronological; ties never evict. The top 3 tiers are the NST band (`NstTopTierCount`, [:2237](../Scripts/BlockchainPort/Simulation/NetworkRoot.cs#L2237)).
+- **Tracked Donation Pool** — top 10 by BTC amount (`MaxTrackedDonations`), value-ordered and never chronological; ties never evict. The top 3 tiers are the NST band (`NstTopTierCount`).
 - **Resolution FOUNDS the company** — the tracked pool mints the NST/PST distribution. No SC cashback, no BTC sweep. **A win is permanent** (D-ND4b.12), never reopened by a later ratchet rework.
 - **Bot cadence** — 0/1/2 weighted bid attempts per mined block (15% / 70% / 15%), drawn only among *eligible* bots: those holding ≥1 qualifying, affordable pool at a nonzero probability.
-- **Parallel rolls** — every biddable pool rolls its own ladder probability each slot; the hits compete in a **weighted** tie-break, an unparticipated pool carrying an explicit `FreshPoolSeedingWeight = 34` rather than its sentinel probability of 100 ([:5682](../Scripts/BlockchainPort/Simulation/NetworkRoot.cs#L5682)).
-- **Exclusions, first match wins** ([:573-579](../Scripts/BlockchainPort/Simulation/NetworkRoot.cs#L573-L579)) — `reserve` (bot rests at ≤200 BTC spendable, resumes only at ≥300; hysteresis, chain-seeded at first read) → `satisfied` (tier 1 always; tier 3 at ≥2 own bids; tier 2 never) → `guard` (the pool is **full** *and* the bot holds its **smallest** slot, i.e. its own bid would evict its own donation) → `priced out` (`required + fee > spendable × 0.5`). A surviving pool computing to ≤0% is defensively re-labelled `satisfied`.
+- **Parallel rolls** — every biddable pool rolls its own ladder probability each slot; the hits compete in a **weighted** tie-break, an unparticipated pool carrying an explicit `FreshPoolSeedingWeight` (34) rather than its sentinel probability of 100 — applied in `TryBuildCasinoBotBid`.
+- **Exclusions, first match wins** (the `exclusion` chain in `BuildBotPoolOpportunities`: `ExclusionReserve` / `ExclusionSatisfied` / `ExclusionGuard` / `ExclusionPricedOut`) — `reserve` (bot rests at ≤200 BTC spendable, resumes only at ≥300; hysteresis, chain-seeded at first read) → `satisfied` (tier 1 always; tier 3 at ≥2 own bids; tier 2 never) → `guard` (the pool is **full** *and* the bot holds its **smallest** slot, i.e. its own bid would evict its own donation) → `priced out` (`required + fee > spendable × 0.5`). A surviving pool computing to ≤0% is defensively re-labelled `satisfied`.
 - **Ladder, chosen per pool by occupied slot count** — EARLY RUSH (<7 slots): t2 21, t3 13, t4 34, t5 55, t6 89. NORMAL (≥7): t2 5/3 (1 bid / ≥2), t3 2, t4 5, t5 8, t6 13, t7 21, t8 34, t9 55. URGENCY (window inside its final 7 in-game days, NORMAL pools only): one Fibonacci step up — t2 5/5, t3 3, t4 8, t5 13, t6 21, t7 34, t8 55, t9 89. A multi-slot bot rolls the **sum of its two lowest** slot probabilities.
 - **Stuck escalation** — a single-slot bot rolls `max(mode rate, slope × (blocks stuck + 1))`, slopes `t3=2 < t2=3 < t4=5 < t5=8 …`, capped at **34%** inside the NST band (tier ≤ 3) and 100% below it; reset when it re-bids or anyone else's bid re-ranks it. Ordering is DEBUG-asserted (`AssertEscalationSlopesAreOrdered`).
 - **Display parity** — the panel reports the true per-block probability (weighted knapsack DP, 2 decimals, `<0.01%` floor) plus the exclusion reason; player-held slots show no % (the player never rolls the ladder). Position vocabulary is **"tier", never "rank"** — "rank" is reserved for the future casino ranking system.
@@ -30,10 +37,10 @@ extraction time, with line references given inline.
 ### Note on the affordability cap
 
 The per-pool filter tests `required + fee > spendable × 0.5` — **the tail is not in the filter**
-([:579](../Scripts/BlockchainPort/Simulation/NetworkRoot.cs#L579)). The familiar
+(the `ExclusionPricedOut` test in `BuildBotPoolOpportunities`, which reads `requiredAmount + fee > bidBudgetCap` — no tail term). The familiar
 `required + tail + fee ≤ spendable × 0.5` form is the *outgoing-amount invariant*, enforced afterwards
 by clamping the principal to `cap − fee` and sizing the tail from whatever headroom is left
-([:5654-5661](../Scripts/BlockchainPort/Simulation/NetworkRoot.cs#L5654-L5661)). Both are true; they are
+(the `targetPrincipal` clamp and `headroom`/`tail` sizing in `TryBuildCasinoBotBid`). Both are true; they are
 enforced in different places, and only the first one decides whether a pool is biddable at all.
 
 ### Placeholders
