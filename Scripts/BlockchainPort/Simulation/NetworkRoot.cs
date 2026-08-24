@@ -7693,6 +7693,9 @@ public partial class NetworkRoot : Node
 		// rollup: kept deliberately as evidence, but evidence of a world that no longer exists, and it is
 		// never overwritten once created — so a survivor would sit there permanently, describing the wiped
 		// world while looking like a fresh diagnosis. `.tmp` is the uncommitted half of an atomic write.
+		// These two are now ALSO caught by the suffix sweep further down, which is the authoritative net;
+		// they are kept named here because a reader looking for the rollup's files should find them beside
+		// the rollup, and because an explicit delete states intent that a wildcard cannot.
 		DeleteIfExists("user://bet_stats_rollup.json.corrupt");
 		DeleteIfExists("user://bet_stats_rollup.json.tmp");
 
@@ -7728,6 +7731,95 @@ public partial class NetworkRoot : Node
 		if (System.IO.Directory.Exists(userDirAbs))
 			foreach (string staleFile in System.IO.Directory.GetFiles(userDirAbs, "bet_history_*.jsonl"))
 				try { System.IO.File.Delete(staleFile); } catch { /* best-effort */ }
+
+		// ── Repair/diagnostic siblings: swept by SUFFIX, because enumerating them does not hold ──────
+		// (2026-08-23) Three suffixes attach themselves to a state file and then outlive it: `.tmp` (the
+		// uncommitted half of an atomic write), `.corrupt` (a damaged copy preserved as evidence, written
+		// ONCE and never overwritten) and `.prerepair` (a by-hand backup taken before a manual repair —
+		// NO code has ever written one, which is precisely why enumeration kept missing them).
+		//
+		// The enumeration rule was tried and it failed twice in one week. cb1779a created `.corrupt` and
+		// `.tmp` and listed NEITHER; ccf23b0 added them afterwards, found by luck while writing an
+		// unrelated runbook. Two `.prerepair` files then survived the WorldFormatVersion 5→6 wipe by the
+		// same omission, and were found by eye days later. A suffix sweep covers the file nobody has
+		// thought of yet — including one a human makes during a future repair, which no "add it WITH the
+		// feature" rule can ever reach, because there is no feature and no commit.
+		//
+		// ⚠ THE CONVENTION THIS SWEEP RELIES ON — stated here so the risk is explicit, not implicit:
+		//
+		//       A FILE CARRYING ONE OF THESE SUFFIXES IS NEVER THE ONLY COPY OF ANYTHING.
+		//
+		// If you are repairing a world by hand, ARCHIVE IT OUT OF `user://` FIRST — copy the whole
+		// directory elsewhere, the way INC-003's evidence archive did (and mini-plan 05 §6.1 required).
+		// A `.prerepair` left sitting in `user://` is a scratch copy, and this sweep is entitled to
+		// destroy it. Anything that must outlive a wipe does not live in `user://` at all.
+		//
+		// INC-004's three questions apply to this sweep, because a deleter is a writer too:
+		//   · LOUD — it prints every file it is about to destroy BEFORE destroying it, so a hand-made
+		//     backup that disappears leaves a record in the session log that took it, rather than
+		//     vanishing silently and being discovered missing much later.
+		//   · Best-effort per file — one locked file cannot abort a world reset.
+		//   · It can never destroy a last copy — guaranteed by the convention above, not by hope.
+		//
+		// Matching is by EndsWith, not by a "*.tmp" glob. .NET documents that GetFiles may treat a
+		// three-character extension as a PREFIX match — "*.tmp" also catching ".tmpfoo" — because of 8.3
+		// short-name handling. Measured on this machine (scratchpad console, 2026-08-23) it did NOT bite:
+		// GetFiles("*.tmp") matched only the true `.tmp`. EndsWith is used anyway, because a deleter must
+		// match exactly what it claims to match and must not depend on a documented quirk happening to be
+		// dormant on one filesystem. The same run verified the sweep takes all six planted repair files
+		// plus `blockchain/state.json.tmp`, and leaves `prerepair_notes.json` and `rollup.tmpfoo` alone.
+		string[] repairSuffixes = { ".prerepair", ".corrupt", ".tmp" };
+		var sweptFiles = new System.Collections.Generic.List<string>();
+		foreach (string sweptDir in new[] { userDirAbs, blocksDirAbs })
+		{
+			if (!System.IO.Directory.Exists(sweptDir))
+				continue;
+			foreach (string candidate in System.IO.Directory.GetFiles(sweptDir))
+				foreach (string suffix in repairSuffixes)
+					if (candidate.EndsWith(suffix, System.StringComparison.OrdinalIgnoreCase))
+					{
+						sweptFiles.Add(candidate);
+						break;
+					}
+		}
+
+		if (sweptFiles.Count > 0)
+		{
+			GD.Print(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+				$"[NetworkRoot] Clean reset — destroying {sweptFiles.Count} repair/diagnostic file(s). " +
+				$"These are scratch copies by convention; anything that had to survive this wipe should " +
+				$"have been archived OUT of user:// beforehand. Listing them before deletion so a " +
+				$"hand-made backup is never lost silently:"));
+			foreach (string sweptFile in sweptFiles)
+			{
+				string detail;
+				try
+				{
+					var info = new System.IO.FileInfo(sweptFile);
+					detail = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+						$"{info.Length} bytes, last written " +
+						$"{info.LastWriteTimeUtc.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)} UTC");
+				}
+				catch { detail = "size/date unavailable"; }
+				GD.Print($"[NetworkRoot]     DELETING  {System.IO.Path.GetFileName(sweptFile)}  ({detail})");
+			}
+		}
+
+		foreach (string sweptFile in sweptFiles)
+			try { System.IO.File.Delete(sweptFile); } catch { /* best-effort */ }
+
+		// Godot's OWN engine logs (`user://logs/godot*.log`) are DELIBERATELY NOT swept, and this comment
+		// is the decision rather than an oversight — the omission that let `.prerepair` through was never
+		// that a file survived, it was that nothing said whether surviving was intended.
+		//   · They are EVIDENCE. Mini-plan 07 §A.6.2 read them as evidence while dating INC-004's rollup
+		//     damage, and the finding there was that no log carried a rollup message — a conclusion only
+		//     reachable because the logs of the previous world still existed.
+		//   · They CANNOT accumulate. Godot rotates them and retains five per world, so unlike a
+		//     `.corrupt` (written once, never overwritten, immortal) they bound themselves.
+		//   · They are engine-managed, not world state. Nothing in the game reads them back, so a log
+		//     describing the old world cannot mislead any code — only a human, who has the timestamps.
+		// If that balance ever changes — logs consulted by code, or retention made unbounded — revisit it
+		// here, and say so, rather than quietly adding them to the sweep above.
 
 		using FileAccess versionStamp = FileAccess.Open(WorldVersionPath, FileAccess.ModeFlags.Write);
 		versionStamp?.StoreString(WorldFormatVersion.ToString());
