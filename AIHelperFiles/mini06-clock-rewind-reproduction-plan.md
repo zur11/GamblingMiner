@@ -28,6 +28,12 @@ decisive evidence alive, and **a correction to P5 that changes what the run is l
 > **So, before step 1 of §4, do one of two things:** implement D5, or run a **DEBUG** build deliberately
 > and record that you did. This is mini-plan 07's **B1.1**, and mini-plan 06 never stated it — which is
 > why it is stated here, at the top, rather than left to be discovered mid-run.
+>
+> ✅ **Half-answered, 2026-08-24 (§9.7d).** D5 itself is still unimplemented, but the *trap* is closed: the
+> build now announces itself at boot, so a Release run can no longer be mistaken for a silent-and-healthy
+> one. **Read the first console line before T1.** §9.1 also revises what P5 means, and the revision makes
+> this blocker sharper rather than milder — under the clock hypothesis silence is the EXPECTED result, and
+> a Release build counterfeits it exactly.
 
 **Objective.** INC-003's root fault is *supported* — by dating and by mechanism-fit — and **not observed**.
 This plan observes it: deliberately re-create the retired mechanism on a disposable world, with mini-plan
@@ -368,7 +374,7 @@ was long enough to have caught a positive.
 
 | | Run | Harness | Procedure | Purpose |
 |---|---|---|---|---|
-| **T0** | Control | `DevRewindWorldClock = false` | 5 credits, bots off. Autobet **4 minutes**, one DiceGame → Calendar → BetsHistoryExplorer → back round trip in the middle, **without** touching the replay cursor. Copy `user://`. | Proves this build, at 5 credits, is clean — so anything T1 shows belongs to the harness. Mini-plan 05 never ran a round-trip *at 5 credits*; this closes that gap at the cost of four minutes |
+| **T0** ✅ | Control — **RUN, PASSED (§9.7)** | `DevRewindWorldClock = false` | 5 credits **in the private/individual pool**, bots off. Autobet **4 minutes**, one DiceGame → Calendar → BetsHistoryExplorer → back round trip in the middle, **without** touching the replay cursor. Copy `user://`. | Proves this build, at 5 credits, is clean — so anything T1 shows belongs to the harness. Mini-plan 05 never ran a round-trip *at 5 credits*; this closes that gap at the cost of four minutes |
 | **T1** | The reproduction | `true` | §4 steps 1–6 verbatim. Speed **1x**. Note the in-game clock at every step, and the wall-clock duration of the replay. Copy `user://` **before closing** | P1–P4, P5′, P6–P9 |
 | **T2** | Emit budget | `true`, plus `MaxAppendRowsPerFrame = 1` | §7: replay the densest stretch T1 produced at **10x** (the 4th press of the Speed button, `1000` game-s/s) | The §6.2 promise that has never executed |
 | **T4** | **DEV time scale × the explorer** | `true` | §9.6 — the four combinations nobody has ever run | The ceiling, and whether the explorer survives 9000X |
@@ -472,3 +478,153 @@ cursor it bypasses `SpeedMultiplier` entirely, so it also bypasses the `_Process
 advance the clock by at most `MaxGameSecondsPerRealSecond × delta` per frame, and say so in the harness
 commit. Today's cursor maximum (1000) is already an order of magnitude under the ceiling, so this costs
 nothing and closes the hole rather than relying on the ladder staying short.
+
+---
+
+## 9.7 — ✅ T0 RESULT: PASS, and it found two things anyway (2026-08-24)
+
+**Run as specified**, 5 credits **all in the private/individual pool** (the developer's call, and the right
+one — it keeps the casino pool out of a control run; §9.3 should have said so and now does). One DiceGame →
+Calendar → BetsHistoryExplorer → back round trip, no Play, no Speed. World captured before closing, to
+`…\Proof of Fun\Tests\Mini-Plan 05\Backup\GamblingMiner_T0_2026-08-24\`.
+
+| Check | Result |
+|---|---|
+| Bet records | **1,375** against **1,380** predicted from `span ÷ 20` [M] |
+| Game span | 7.67 game-hours, `09:57:29Z → 17:37:31Z` [M] |
+| Timestamp regressions in write order | **0** [M] |
+| Undeclared balance discontinuities | **0** — console confirmed clean by the developer |
+| Same-timestamp groups | **none**; all 1,375 timestamps unique [M] |
+
+**The one balance break is DECLARED**, `+0.00412164` at record #613, which is exactly where the scene round
+trip happened: `ReseedWalletFromBankrollSource` calls `NoteBalanceDiscontinuity("wallet_reseed")` [V:
+`DiceGame.cs`, in `ReseedWalletFromBankrollSource`]. An offline scan of the journal cannot see declarations
+and will always flag it — **the sentinel is the instrument for this question, a file scan is not.** Worth
+stating because the same false positive will appear in every T1–T4 scan.
+
+**⇒ This build, at 5 credits, writes a clean single-actor journal across a scene round trip.** Mini-plan 05
+had only established that at 1 credit (§4.8's runs A/B). Anything T1 produces now belongs to the harness.
+
+### 9.7a — Finding 1: 5 credits does NOT bet in bursts
+
+Recorded because the developer expected bursts of 5 and the run refutes it: bets land **one every 20 game-
+seconds, evenly spaced** — `04:57:29 · 04:57:50 · 04:58:10 · 04:58:30 …` [M] — i.e. `100 game-s ÷ 5
+credits`, confirming §1.5's model at a third point. **No same-timestamp group appeared anywhere in 1,375
+records.** This matters beyond trivia: P8's cadence separation and §7's emit-budget test both assume the
+grid, and `MaxAppendRowsPerFrame`'s calibration note reasons from same-timestamp groups capped at 10 — on
+this world they are capped at **1**.
+
+### 9.7b — Finding 2: the explorer's "up to selected date" count is inflated by a sampling skew
+
+**The defect is on `main`, it is a DISPLAY defect, and no stored data is affected.** The screenshot at
+step 3 read `All bets — up to selected date: 7` above a panel showing **one** row, with the cursor parked on
+the first record's timestamp. **The row is right and the summary is wrong.**
+
+```csharp
+Bets      = Math.Max(0, rollup.TotalBets - heldAll.Bets)   // labelled the PRUNED prefix
+shownBets = prefix.Bets + _summaryTotalBets                 // 6 + 1 = 7
+```
+
+That subtraction exists to recover bets **deleted by retention**. This world has pruned nothing — one
+journal file, 1,375 records, against a cap of 20 segments of 10,000 — so the prefix must be **0**. It was 6,
+because the two operands are read at different instants: the in-memory rollup had counted six bets the
+explorer's loaded record list had not yet picked up. At 5 bets/second that is ~1.2 seconds of skew, and it
+**drifts continuously while an autobet runs**.
+
+Corroborated on the same screenshot rather than assumed: `Max bet: 0.00100000` is the first record's bet, so
+the prefix contributed **no** maximum — which is what the same code requires when `rollup.MaxBetAmount ≤
+heldAll.MaxBetAmount`. The count inflated and the maxima did not. That asymmetry is this mechanism's
+signature and not what real pruned data would produce.
+
+> **The family is INC-002's and INC-003's, not the clock's.** A displayed figure derived from a subtraction
+> whose two operands are sampled at different moments, wearing a label — *pruned* — that asserts a cause the
+> arithmetic does not establish. CLAUDE.md's *"a label is a claim about semantics, and it gets audited far
+> less often than the arithmetic under it"*, found by a control run that was looking for something else.
+
+**Not fixed here, and deliberately so:** it is unrelated to INC-003, and repairing the explorer in the
+middle of an investigation that uses the explorer as its instrument is the same mistake §9 already refuses
+elsewhere. It needs its own change. The honest fix is not a bigger `Math.Max(0, …)` — it is that a *pruned*
+count must come from what retention actually deleted, not from a difference that also moves for other
+reasons.
+
+### 9.7c — Finding 3: the rollup FILE lags the journal, and looks exactly like INC-004 while doing it
+
+`bet_stats_rollup.json` read `TotalBets: 612` against 1,375 journal records. **Not damage — an exact
+snapshot**: wins 320, wagered 4.30623783, net 0.78581756, maxBet 0.78310979, all matching the first 612
+records to the satoshi [M]. The journal auto-flushes on its own mutation/time thresholds [V:
+`BetHistoryRepository.MarkDirtyAndSaveIfNeeded`] while `SaveRollupIfDirty` runs only from `FlushHistory()`,
+called from **two** places, both in `DiceGame` [V]. So between blocks the file trails the journal by
+however long since the last one.
+
+Harmless in both regimes — pre-genesis a restart resets everything, post-genesis the checkpoint is the
+authority — **but its on-disk state is `IsComplete: true` + `SeededAtUtc: null`, which is byte-for-byte the
+signature INC-004's damage produces** [V: the legitimate writer is the pre-genesis reset in
+`UserStatsService`, beside `Rollup.Reset()`]. A healthy lagging file and a destroyed one are
+**indistinguishable by inspection**. That is worth carrying into any future rollup investigation, and it is
+the sort of thing only a capture of a known-good world could have shown.
+
+### 9.7d — ✅ The DEBUG canary is built (developer, 2026-08-24)
+
+`UserStatsService` now prints one unconditional line at boot naming the build and what it implies for the
+sentinel [V: `AnnounceSentinelArming`]. It is deliberately **not** `Conditional` — its whole job in a
+Release build is to say so. This closes B1.1's trap: P5′ expects **silence**, and a Release build is
+silent for the wrong reason. Before T1, read the first console line.
+
+### 9.7e — Finding 4: why the explorer opened on the OLDEST bet, and what it should do instead
+
+**The observation.** At step 3 the panel showed one row and the developer expected "fewer than 100, but all
+the rest". The cap was never the constraint: the panel renders *the last ≤100 bets **up to the cursor***,
+and the cursor was parked on the **first bet of the world**, so one row is the correct answer to the
+question the panel was actually asked.
+
+The cursor opens at `CalendarTimeService.ExplorerSelectedLocalDateTime` [V: `BetsHistoryExplorer._Ready`],
+and **that seed is only ever moved by someone deliberately moving it** — a calendar date applied, "Set Now",
+a checkpoint restore, `DiceGame`'s two checkpoint paths [V: every caller of
+`SetExplorerSelectedLocalDateTime`]. **Betting never advances it.** So:
+
+1. Boot leaves the seed at the player-start instant, with the clock frozen (it runs only while betting) —
+   the same instant the 100 SC dose is booked.
+2. The autobet runs. Six hundred bets accumulate. The seed does not move.
+3. Passing through `CalendarsNavigator` raises it to the replayable floor, because it sits below it [V:
+   `CalendarsNavigator`, the `GetCurrentLocalDateTime() < floor` branch] — the floor being the oldest stored
+   bet, i.e. the first one.
+4. The explorer opens there.
+
+**Two defects fall out of this, and neither is a data defect.**
+
+- **The explanation exists and cannot be seen.** The explorer has a dedicated suffix for exactly this case —
+  `⟵ snapped to the oldest stored bet` versus the neutral `History stored from:` [V: `BuildWindowSuffix`].
+  The screenshot shows the neutral branch, because **`CalendarsNavigator` had already done the snapping, one
+  scene earlier and silently**; by the time the explorer ran its own clamp the selection was already legal,
+  so it had nothing to report. **Two components perform the same clamp and only the one that did not do it
+  has the words for it.** The header did say `Selected timeline` and `History stored from` with the *same*
+  value twice, which means "you are standing on the oldest bet you have" — true, and not legible as that.
+- **The default position is the least useful one.** On any world where the player has never picked a date,
+  the seed is below the floor, so the explorer always opens on the **oldest** bet in the journal. To a
+  first-time visitor that reads as *"there is no history here"*, which is the opposite of true.
+
+#### The developer's intent, recorded for the implementation plan that takes this on (2026-08-24)
+
+**Stated as the requirement, not as one option among several. NOT IMPLEMENTED — nothing below describes
+today's behaviour.**
+
+> **Arriving at `CalendarsNavigator` from any scene that is NOT `BetsHistoryExplorer`:** the date/time
+> **updates to the moment the Calendar scene was entered** — a snapshot taken on entry. It then **does not
+> auto-update**, even while an autobet session keeps running in the background.
+>
+> **Arriving from `BetsHistoryExplorer`:** it simply **adopts the date it arrived from** — no snapshot, no
+> jump.
+
+Three notes for whoever builds it:
+
+- **The primitive already exists.** `SceneManager.PreviousScene` is the one-deep origin already used for
+  origin-aware back navigation [V: `SceneManager`]; this is the same question asked at entry rather than at
+  exit, so it needs no new state.
+- **"Does not auto-update" is a deliberate refusal of the event-driven default**, not an oversight to be
+  tidied later. Important Patterns §6 would push a live subscription here; a date the player is in the
+  middle of *choosing* must not move underneath them. Whoever revisits Ch. 38's poll/event backlog should
+  read this rule before "fixing" the calendar.
+- **It also settles the two defects above**, and settles them at the cause: entry-from-elsewhere becomes an
+  implicit "Set Now", so the seed is never below the floor, so the silent snap in `CalendarsNavigator` stops
+  firing at all and the explorer opens somewhere worth looking. **Do not fix the snap notice first** — that
+  would preserve the wrong default and merely announce it.

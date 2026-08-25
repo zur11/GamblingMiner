@@ -54,6 +54,7 @@ public partial class UserStatsService : Node
 
 	public override void _Ready()
 	{
+		AnnounceSentinelArming();
 		Stats = new UserBettingStats();
 		if (EnableHistoryPersistence)
 		{
@@ -147,6 +148,21 @@ public partial class UserStatsService : Node
 		// harmless — and leaves no pending token that could silently absorb a real break much later.
 		_hasLastRegisteredBalance = false;
 		_lastDiscontinuityReason = string.IsNullOrEmpty(reason) ? "unspecified" : reason;
+	}
+
+	// A SILENT SENTINEL IS AMBIGUOUS, and that ambiguity is the whole reason this line exists.
+	// AssertSingleActorJournal is Conditional("DEBUG"), so "no discontinuity was reported" and "the check
+	// was never compiled in" look identical from the console — and mini-plan 06's P5' expects silence as a
+	// RESULT, which makes the two impossible to tell apart at exactly the moment it matters most.
+	//
+	// Deliberately NOT Conditional: its job in a Release build is to say so. One line, once, at boot.
+	private static void AnnounceSentinelArming()
+	{
+		bool debug = OS.IsDebugBuild();
+		GD.Print(debug
+			? "[Build] DEBUG — the bet-journal continuity sentinel is ARMED; silence from it is evidence."
+			: "[Build] RELEASE — the bet-journal continuity sentinel is COMPILED OUT; silence from it " +
+			  "means nothing. Do not run a mini-plan 06 reproduction on this build (B1.1).");
 	}
 
 	[System.Diagnostics.Conditional("DEBUG")]

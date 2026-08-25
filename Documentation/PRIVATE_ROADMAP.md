@@ -403,6 +403,30 @@ Candidate inputs (all already available, none requiring new state):
 
 **Already available to build on:** `BetsHistoryExplorer`'s chance-to-win selector (mini-plan 02) is the same idea one axis smaller — filter the history by a strategy dimension, drive the summary figures from the filtered view, and offer an option only from the moment its first bet exists. Its time-aware option list is the pattern to copy. And **max martingale level** is free at settle time from `BaseBetSession.ProgressionTriggerStreak` (D-M2.10) — it is not the same quantity as INC-002's "max consecutive losses" and must not be conflated with it.
 
+### Calendar entry date — snapshot on arrival, except from the Explorer (requirement stated, NOT implemented)
+
+**Status: the developer's requirement, recorded 2026-08-24. Not built.** Full write-up, with the run that
+exposed it and the two defects it settles: `AIHelperFiles/mini06-clock-rewind-reproduction-plan.md` **§9.7e**.
+
+**The requirement.** Arriving at `CalendarsNavigator` **from any scene except `BetsHistoryExplorer`**, the
+date/time updates to **the moment the Calendar scene was entered** — a snapshot, which then **does not
+auto-update** even while an autobet keeps running behind it. Arriving **from `BetsHistoryExplorer`**, it
+adopts the date it arrived from.
+
+**Why it matters beyond convenience.** Today the explorer's cursor opens at
+`CalendarTimeService.ExplorerSelectedLocalDateTime`, and that seed moves only when something deliberately
+moves it — betting never does. On a world where the player has never picked a date it therefore sits below
+the replayable floor, gets silently raised to the floor by `CalendarsNavigator`, and the explorer opens on
+the **oldest bet in the journal** — which reads as "there is no history here". Observed in mini-plan 06's T0
+run: one row on screen with ~600 bets in the journal, and the panel was right.
+
+**Two notes for the implementation.** `SceneManager.PreviousScene` already answers "where did I arrive
+from" — the same one-deep origin that drives origin-aware back navigation, asked at entry instead of exit,
+so no new state is needed. And **"does not auto-update" is a deliberate refusal of the event-driven
+default** (Important Patterns §6), not an omission: a date the player is in the middle of choosing must not
+move underneath them. Anyone working the Ch. 38 poll/event backlog should read §9.7e before "fixing" the
+calendar.
+
 ### Ghost Miner Typology — four kinds instead of one (design open, after Step 16)
 
 **Status: recorded 2026-07-30 from the Step 16 Round-2 discussion.** Full note: `AIHelperFiles/step16-living-governance-and-bot-wallets-plan.md` **§6.1** (D-16.17).
