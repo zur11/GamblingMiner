@@ -203,8 +203,37 @@ public partial class CasinoScBalanceService : Node
 		BalanceChanged?.Invoke();
 
 		_betCount++;
-		if (_betCount % 100 == 0)
+		if (_betCount % 100 == 0 && ShouldEmitBalanceTrace())
 			GD.Print(string.Create(CultureInfo.InvariantCulture, $"[CasinoSC] bet#{_betCount}  delta={casinoDelta:+0.00000000;-0.00000000}  Bankroll={Bankroll:F8}  Main={MainBalance:F8}  P/L={CumulativeProfitSinceLoan:+0.00;-0.00}"));
+	}
+
+	// The `% 100` above is denominated in BETS, and bets-per-REAL-second scale with
+	// CalendarTimeService.DevTimeScale — so at 9000X this emitted ~4.5 lines per second and buried every
+	// other diagnostic in the Godot editor's Output panel, which is where the developer reads them.
+	//
+	// It is the same defect BetsHistoryExplorer's 1 Hz floor exists for, found in a second file: **a
+	// cadence must be denominated in REAL time, because game time is a quantity the player can accelerate
+	// by 90×, and any budget denominated in game time accelerates with it.**
+	//
+	// Both guards are kept, in the explorer's shape — the bet counter avoids redundant identical work, the
+	// timer bounds how often. At 100X, 100 bets take ~20 real seconds and the timer never binds, so normal
+	// play is unchanged. `[Checkpoint] CAPTURED` is per mined block and is deliberately untouched.
+	//
+	// Wall-clock is correct here and is NOT a violation of the game-time rule: this is a log throttle the
+	// player never sees, the same category as UserStatsService's 250 ms UI throttle.
+	private const double BalanceTraceMinRealSeconds = 2.0;
+	private DateTime _lastBalanceTraceRealUtc = DateTime.MinValue;
+
+	private bool ShouldEmitBalanceTrace()
+	{
+		DateTime nowReal = DateTime.UtcNow;
+		if ((nowReal - _lastBalanceTraceRealUtc).TotalSeconds < BalanceTraceMinRealSeconds)
+		{
+			return false;
+		}
+
+		_lastBalanceTraceRealUtc = nowReal;
+		return true;
 	}
 
 	// On-demand recharge — fixed-DOSE model (CG.1.8 correction). When a player win empties the Bankroll (≤ 0),
