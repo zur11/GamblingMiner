@@ -66,6 +66,43 @@ public partial class SimulationService : Node
 		public double AccumulatorSeconds;
 	}
 
+	// ── Mini-plan 08 §2 — per-bet timestamp fidelity ────────────────────────────────────────────────────
+	//
+	// How far BEFORE the calendar's current instant the bet being settled right now actually occurred, in
+	// game-seconds. Zero everywhere except inside the two settle loops, which set it per bet and clear it
+	// on the way out — so every other reader of the clock is untouched by construction.
+	//
+	// A field rather than a parameter because the timestamp reaches BetService through a provider delegate
+	// captured at construction (`() => SettleTimestampUtc()`), and threading an argument through
+	// ExecuteNext would change a signature four call sites deep for a value only these two loops ever set.
+	private double _settleBackdateGameSeconds;
+
+	// Used only when the calendar is absent — the same fallback shape the timestamp reads already use. The
+	// literal is DiceGame's GameSecondsPerRealSecond; it is duplicated rather than referenced because a
+	// service must not depend on a scene, and it is only ever reached when there is no clock at all.
+	private const double GameSecondsPerRealSecondFallback = 100.0d;
+
+	// The clock, minus this bet's distance from the end of the frame. THE SINGLE SOURCE for every settled
+	// bet's timestamp, player and bot alike; if a third settle path ever appears it must come through here.
+	private DateTime SettleTimestampUtc()
+	{
+		DateTime now = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		return _settleBackdateGameSeconds > 0d ? now.AddSeconds(-_settleBackdateGameSeconds) : now;
+	}
+
+	// How many bets this frame's accumulator can afford, capped the same way the loop that follows is.
+	// Computed BEFORE the loop because a bet's back-date is its distance from the LAST bet of the batch,
+	// which is not knowable while the batch is still draining.
+	private static int PlannedBetsThisFrame(double accumulatorSeconds, double interval)
+	{
+		if (interval <= 0d)
+		{
+			return 1;
+		}
+
+		return Math.Clamp((int)(accumulatorSeconds / interval), 1, MaxBetsPerFrame);
+	}
+
 	private const int MaxBetsPerFrame = 10;
 	private const double MaxBacklogSeconds = 2.0;
 	private const int MaxAutoBetBaseAps = 99;
@@ -224,7 +261,7 @@ public partial class SimulationService : Node
 		_userStats?.NoteBalanceDiscontinuity("autobet_session_wallet");
 		_wallet = new Wallet(bankroll);
 		_betService = new BetService(_engine, _wallet, TransactionSource.Bet,
-			() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
+			() => SettleTimestampUtc());
 
 		// Mini-plan 05 D2: tag the session so the lifecycle trace can name its owner. Note this method
 		// OVERWRITES `_session` without stopping the previous one — hypothesis H3. If the old session is
@@ -396,13 +433,37 @@ public partial class SimulationService : Node
 		_accumulatorSeconds = Math.Min(offeredBacklog, MaxBacklogSeconds);
 		RecordSimTimeRetention(simDelta, offeredBacklog - _accumulatorSeconds, betsPerSecond);
 
+		// Mini-plan 08 §2 — SPREAD THIS FRAME'S BETS ACROSS THE TIME THEY ACTUALLY OCCUPIED.
+		//
+		// The clock advances once per frame; every bet settled inside the frame used to read it and so
+		// carried the SAME instant. At 100X that is invisible (1.67 game-seconds per frame, rarely more than
+		// one bet in it). At 9000X the frame is 150 game-seconds wide and up to MaxBetsPerFrame bets fall
+		// into it, so the journal asserted "ten bets at once, then a 150-second void" — measured on a real
+		// world at 7,926 bets across 949 distinct timestamps (mini-plan 06 §9.10c).
+		//
+		// The engine already knows the true spacing: `interval` is in SIMULATED seconds and the calendar
+		// advances SpeedMultiplier game-seconds per simulated second, so one bet occupies
+		// `interval × SpeedMultiplier` GAME-seconds — correct at every DevTimeScale, because the scale
+		// multiplies both sides. So plan the batch, then back-date each bet by its own distance from the
+		// end of the frame.
+		//
+		// The LAST bet keeps the clock's exact value. That is deliberate and load-bearing: CLAUDE.md's
+		// canonical rule is that the calendar equals the timestamp of the event that most recently defines
+		// the world, and back-dating forward from a frame START would need a frame start this service does
+		// not have.
+		int planned = PlannedBetsThisFrame(_accumulatorSeconds, interval);
+		double stepGameSeconds = interval * (_calendar?.SpeedMultiplier ?? GameSecondsPerRealSecondFallback);
+
 		int executed = 0;
 		while (_accumulatorSeconds >= interval && executed < MaxBetsPerFrame && _session.IsRunning)
 		{
 			_accumulatorSeconds -= interval;
+			_settleBackdateGameSeconds = Math.Max(0, planned - 1 - executed) * stepGameSeconds;
 			ExecutePlayerBetOnce();
 			executed++;
 		}
+
+		_settleBackdateGameSeconds = 0d;
 
 		// Bots advance alongside the player autobet, in every scene (Phase 2).
 		int botExecuted = TickBots(simDelta);
@@ -588,7 +649,7 @@ public partial class SimulationService : Node
 			return;
 		}
 
-		DateTime tsUtc = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		DateTime tsUtc = SettleTimestampUtc();
 
 		try
 		{
@@ -870,7 +931,7 @@ public partial class SimulationService : Node
 			BankrollProgramService.DefaultAutoRechargeAmount);
 		var wallet = new Wallet(financialState.BankrollBalance);
 		var betService = new BetService(_engine!, wallet, TransactionSource.Bet,
-			() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
+			() => SettleTimestampUtc());
 		var session = new AutoBetSession(betService, wallet, new ProgressiveBettingStrategy())
 		{
 			Owner = "SimulationService.bot",
@@ -916,13 +977,23 @@ public partial class SimulationService : Node
 			runner.AccumulatorSeconds = Math.Min(botBacklog, MaxBacklogSeconds);
 			RecordSimTimeRetention(botOffered, botBacklog - runner.AccumulatorSeconds, betsPerSecond);
 
+			// Mini-plan 08 §2, applied to the bots for the same reason and by the same arithmetic. Their
+			// records feed CasinoClientLedgerService and BotPlayHistory rather than the player's journal,
+			// but a per-frame timestamp collapse distorts those readings identically — and leaving one of
+			// two identical loops unfixed is how the next investigation gets a mixed dataset.
+			int botPlanned = PlannedBetsThisFrame(runner.AccumulatorSeconds, interval);
+			double botStepGameSeconds = interval * (_calendar?.SpeedMultiplier ?? GameSecondsPerRealSecondFallback);
+
 			int executed = 0;
 			while (runner.AccumulatorSeconds >= interval && executed < MaxBetsPerFrame && runner.Session.IsRunning)
 			{
 				runner.AccumulatorSeconds -= interval;
+				_settleBackdateGameSeconds = Math.Max(0, botPlanned - 1 - executed) * botStepGameSeconds;
 				ExecuteBotBet(runner);
 				executed++;
 			}
+
+			_settleBackdateGameSeconds = 0d;
 			totalExecuted += executed;
 		}
 
@@ -943,7 +1014,7 @@ public partial class SimulationService : Node
 
 		try
 		{
-			DateTime tsUtc = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
+			DateTime tsUtc = SettleTimestampUtc();
 			var (_, betEvent, _) = runner.Session.ExecuteNext(
 				Math.Clamp(runner.Config.WinningChance, 1, 95),
 				runner.Config.BetHigh,
@@ -1089,7 +1160,7 @@ public partial class SimulationService : Node
 	{
 		_engine ??= new DiceEngine();
 		var betService = new BetService(_engine, runner.Wallet, TransactionSource.Bet,
-			() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
+			() => SettleTimestampUtc());
 		var session = new AutoBetSession(betService, runner.Wallet, new ProgressiveBettingStrategy())
 		{
 			Owner = "SimulationService.bot",

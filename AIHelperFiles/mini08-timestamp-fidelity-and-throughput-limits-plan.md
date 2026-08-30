@@ -54,9 +54,33 @@ Two properties make this the right shape rather than merely a nicer one:
 - **The spacing it produces is the spacing the engine actually simulated.** At 5 credits it reproduces the
   20.000 s grid T0 measured; at 99 credits it gives `100 / 99 ≈ 1.01` game-seconds.
 
-**Verification, and it is cheap:** after the fix a journal written at 9000X must show the *same* timestamp
-spacing as one written at 100X — `SpeedMultiplier / credits` game-seconds — and **zero same-timestamp
-groups**. That is one `node -e` scan of group sizes, exactly as §9.10c ran.
+**Verification, and it is cheap:** after the fix a journal written at 9000X must show **zero same-timestamp
+groups**, and spacing at the nominal `SpeedMultiplier / credits`. That is one `node -e` scan of group sizes,
+exactly as mini-plan 06 §9.10c ran.
+
+### 2.2 — What this fix does NOT achieve, stated before anyone measures it
+
+Anchoring the batch to the frame's **end** is exact *within* a frame and leaves a **bounded jitter across
+frame boundaries**. The accumulator carries a remainder between frames, so the gap between the last bet of
+one frame and the first of the next is not the nominal interval but somewhere between one and roughly two
+of them.
+
+Worked at 5 credits / 9000X: `simDelta = 1.5` sim-seconds per frame at 60 fps, `interval = 0.2`, so seven
+bets fire and 0.1 sim-seconds carry over. Within the frame the seven sit exactly 20.000 game-seconds apart;
+the first bet of the next frame lands ~30 game-seconds after the last of this one rather than 20.
+
+> **That is a reduction from a 150-second void to a ~10-second jitter, not the elimination of error.** P3
+> must therefore assert *zero same-timestamp groups* and *median spacing at the nominal value* — **not
+> "uniform to the tick"**, which this implementation does not deliver and should not be recorded as
+> delivering.
+
+**The exact-phase variant is deliberately not built.** Bet `k` truly fires at
+`frameStart + ((k+1) × interval − a₀) × SpeedMultiplier`, where `a₀` is the accumulator before the frame
+drains. That is uniform across boundaries, but it needs `frameStart`, i.e. the game-time span the calendar
+actually advanced this frame — which is `simDelta × SpeedMultiplier × SimulationThrottle`, a value this
+service *writes* and the calendar *applies*. Recomputing it here risks disagreeing with what the calendar
+did, and a disagreement in the wrong direction **future-dates a bet**, which is worse than the jitter it
+would remove. Build it only if P3 measures the jitter mattering to something.
 
 ### 2.1 — Timestamp PRECISION is not the problem, and here is the arithmetic
 
@@ -129,10 +153,12 @@ in the backlog.
 At the highest `(credits × DevTimeScale)` P2 sustains, run 60 seconds and scan the journal for:
 
 1. **zero same-timestamp groups**;
-2. spacing equal to `SpeedMultiplier / credits` game-seconds, to the tick;
+2. **median** spacing equal to `SpeedMultiplier / credits` game-seconds, with the spread bounded by §2.2's
+   frame-boundary jitter — *not* uniform to the tick, which this implementation does not claim;
 3. **strictly monotonic** timestamps in write order — the P7 check from mini-plan 06 §9.2, now a standing
    regression test rather than a one-off;
-4. the clock's value equal to the **last** bet's timestamp exactly, per §2's design property.
+4. **no bet ever timestamped after the clock.** §2.2 explains why this is the property to guard rather
+   than uniformity: a future-dated bet would be a worse defect than the jitter.
 
 ### P4 — Clock synchrony at 99 credits
 
