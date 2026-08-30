@@ -382,6 +382,7 @@ public partial class BetsHistoryExplorer : Control
 
 		if (!TryAppendNewRecords(source))
 		{
+			CountPerf(ref _perfFallbacks);
 			_allRecords = source.OrderBy(r => r.TimestampUtc).ToList();
 			_chanceFirstSeenUtc.Clear();
 			RegisterChances(_allRecords);
@@ -390,6 +391,7 @@ public partial class BetsHistoryExplorer : Control
 		}
 		else if (_allRecords.Count > knownBefore)
 		{
+			CountPerf(ref _perfAppends);
 			// Only the newly arrived tail can introduce a chance never seen before — this is how a bet
 			// placed at a new chance in DiceGame reaches the selector without rescanning the history. The
 			// refresh decides whether it is yet VISIBLE (its first-seen instant vs. the selected date); in
@@ -528,6 +530,7 @@ public partial class BetsHistoryExplorer : Control
 		}
 
 		RefreshThrottleLabel();
+		ReportExplorerPerf(delta);
 
 		if (_sortedRecords.Count <= 0)
 		{
@@ -647,6 +650,7 @@ public partial class BetsHistoryExplorer : Control
 		bool mustRebuild = forceRebuild || _renderedEndExclusive < 0 || endExclusive < _renderedEndExclusive;
 		if (mustRebuild)
 		{
+			CountPerf(ref _perfRebuilds);
 			_renderedEndExclusive = endExclusive;
 			int start = Math.Max(0, endExclusive - MaxPreviewEntries);
 			List<BetRecord> preview = _sortedRecords.GetRange(start, endExclusive - start);
@@ -925,6 +929,7 @@ public partial class BetsHistoryExplorer : Control
 			BetRecord record = _sortedRecords[index];
 			_previousWinnerNumbersGrid.AddWinnerNumber(record.Roll, record.Outcome == BetOutcome.Win);
 			_betHistoryContainer.AppendHistoricalRecord(record);
+			CountPerf(ref _perfEmitted);
 			index++;
 			budget--;
 		}
@@ -976,6 +981,62 @@ public partial class BetsHistoryExplorer : Control
 	// A jump is NOT a replay, so §6.2's no-skipped-bet rule does not apply to it: the player asked to be
 	// somewhere else, and the answer to "what happened here?" is the last MaxPreviewEntries bets before
 	// that instant, which is exactly what the wholesale path shows.
+	// ══ EXPLORER PERF PROBE ═════════════════════════════════════════════════════════════════════════════
+	//
+	// Built for mini-plan 06 §9.10 and kept because it earned its keep on its first run: it settled, in one
+	// observation, a question three sessions of reasoning had not. The developer reported that the replay
+	// painted in clumps once per second instead of flowing. Five candidates had been eliminated by reading
+	// and the sixth — a 1 Hz wholesale repaint — was wrong too. This probe said so, and pointed at the real
+	// answer: `rebuilds/s=0.0`, `fallbacks/s=0.0`, `fps=60.0`, and `emitted/s` alternating **0.0 / 9.8**.
+	//
+	// **The panel was correct and the DATA was clumped.** At 9000X the clock advances once per frame by
+	// 150 game-seconds while up to `SimulationService.MaxBetsPerFrame` bets settle inside that frame and all
+	// read the same instant — so the journal genuinely contains "ten bets, a 150-second void, ten bets", and
+	// the replay was faithful. Fixing the WRITER is mini-plan 08.
+	//
+	// Kept on `main` because the next performance question about this scene deserves the same instrument
+	// rather than another round of hypotheses — §40.7: **time it, or say plainly that you did not.**
+	//
+	// One line per real second, DEBUG-only, printed only while the cursor is running: no flag to arm, no
+	// flag to forget, and silent in every normal session.
+	private double _perfWindowSeconds;
+	private int _perfFallbacks;
+	private int _perfRebuilds;
+	private int _perfAppends;
+	private int _perfEmitted;
+	private int _perfFrames;
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void CountPerf(ref int counter) => counter++;
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void ReportExplorerPerf(double delta)
+	{
+		_perfFrames++;
+		_perfWindowSeconds += delta;
+		if (_perfWindowSeconds < 1.0d || !_cursorRunning)
+		{
+			return;
+		}
+
+		double secs = _perfWindowSeconds;
+		GD.Print(string.Create(
+			CultureInfo.InvariantCulture,
+			$"[ExplorerPerf] records={_allRecords.Count} sorted={_sortedRecords.Count} " +
+			$"fallbacks/s={_perfFallbacks / secs:0.0} appends/s={_perfAppends / secs:0.0} " +
+			$"rebuilds/s={_perfRebuilds / secs:0.0} emitted/s={_perfEmitted / secs:0.0} " +
+			$"fps={_perfFrames / secs:0.0} speed={_cursorSpeed / GameBaseSpeed:0.##}x requested / " +
+			$"{(_throttleActualSpeedX >= 0d ? _throttleActualSpeedX : 0d):0.##}x actual " +
+			$"behind={(PresentLocal() - _selectedLocal).TotalSeconds:0} game-s"));
+
+		_perfWindowSeconds = 0d;
+		_perfFallbacks = 0;
+		_perfRebuilds = 0;
+		_perfAppends = 0;
+		_perfEmitted = 0;
+		_perfFrames = 0;
+	}
+
 	private void JumpCursorTo(DateTime targetLocal)
 	{
 		_selectedLocal = targetLocal;

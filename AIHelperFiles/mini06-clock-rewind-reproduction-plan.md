@@ -4,10 +4,14 @@
 `mini05-bet-journal-single-actor-plan.md`, which dated the contamination and named a leading root cause it
 could not observe.
 
-**Status:** 📋 **SPECIFIED, NOT STARTED — but the run is now PREPARED: see §9.** On the shelf by mini-plan
-07's **D2** (gate G5, fired as *deferred*, not cancelled, 2026-08-22). Its world precondition is now
-**satisfied** — see §3. §9 (2026-08-24) adds the preflight, the four runs, the capture rule that keeps the
-decisive evidence alive, and **a correction to P5 that changes what the run is looking for**.
+**Status:** ✅ **PRIMARY OBJECTIVE MET, 2026-08-26 — the mechanism is OBSERVED (§9.8), and INC-003's root
+fault is updated to match.** T0 (control) and T1 (the reproduction) both ran; **T2 and T4 have not**, and
+T2's instrumentation is known-invalid (§9.8c). Seven predictions observed, **P3 refuted and withdrawn from
+INC-003** (§9.8a), one new symptom recorded (§9.8b).
+
+*History: specified 2026-08-23 and shelved by mini-plan 07's D2 (gate G5, deferred not cancelled). §9
+(2026-08-24) prepared the run — preflight, four runs, the capture rule that keeps the decisive evidence
+alive, and a correction to P5 that changed what the run was looking for.*
 
 > ⚠ **BLOCKER — read before starting, not halfway through. The sentinel is DEBUG-only.**
 > `AssertSingleActorJournal` is `[Conditional("DEBUG")]` [V: `Scripts/Services/UserStatsService.cs:152`],
@@ -628,3 +632,273 @@ Three notes for whoever builds it:
   implicit "Set Now", so the seed is never below the floor, so the silent snap in `CalendarsNavigator` stops
   firing at all and the explorer opens somewhere worth looking. **Do not fix the snap notice first** — that
   would preserve the wrong default and merely announce it.
+
+---
+
+## 9.8 — ✅ T1 RESULT: the mechanism is OBSERVED (2026-08-26)
+
+**Run on `repro/explorer-clock-rewind`, harness armed, DEBUG build, 5 credits in the private pool, bots
+off, replay speed 1x, on a virgin post-restart world.** Both boot banners confirmed in the **Godot editor's
+Output panel**. World captured before closing to
+`…\Proof of Fun\Tests\Mini-Plan 05\Backup\GamblingMiner_T1_2026-08-26\` — 2,582 bet records,
+`09:57:30Z → 18:11:08Z`.
+
+**The run deviated from §4 in one way, and it made the result stronger.** The rewind landed on the
+journal's floor rather than two hours back, so the band covers 6.22 game-hours — nearly the whole world —
+instead of the ~2 planned.
+
+### The verdicts, one per prediction
+
+| # | Prediction | Verdict | Measurement |
+|---|---|---|---|
+| **P7** | timestamp regression in WRITE order | **OBSERVED** | exactly **one**, at write index #1102, back **6.22 game-hours** |
+| **P1** | two lines, each continuous to the satoshi | **OBSERVED** | in-band: 1,100 incumbent vs **1,121 injected**; injected has **0** internal breaks |
+| **P2** | cadence correct for 5 credits | **OBSERVED** | median gap **20.000 s** on both lines |
+| **P4** | the band is bounded | **OBSERVED** | `09:57:48Z → 16:11:10Z`, ending exactly where the first pass ended |
+| **P5′** | the sentinel is **SILENT** | **OBSERVED** | nothing in Output; and the seam is arithmetically continuous (below) |
+| **P8** | injected line less frame-quantized | **OBSERVED** | incumbent **92.4%** frame-quantized, injected **50.4%** |
+| **P9** | injected count predicts the browse | **OBSERVED** | 1,121 ÷ 5 = **224 s**; band-span ÷ 100 = **224 s** — two independent derivations, identical |
+| **P10** | *(not predicted — see §9.8b)* | **OBSERVED** | the explorer's per-row append path collapses into a 1 Hz wholesale repaint |
+| **P3** | intruder born mid-progression | **NOT OBSERVED** | born at **base bet, ladder level 0** — see §9.8a |
+| P6 / B1.3 | rollup delta | **not measurable as specified** | rollup 903 vs 2,582 journal — the §9.7c stale-file lag, not a delta |
+| §7 | emit budget | **not exercised** | the budget cannot bind at 1x; and the counter is invalid — §9.8c |
+
+### §9.1 confirmed by direct arithmetic, which is the point of the whole run
+
+At the seam between the last pre-rewind record and the first post-rewind one:
+
+```
+prev bal 101.49116647  +  net 0.00098040  =  101.49214687
+this bal 101.49214687        →  CONTINUOUS across a 6.22-hour timestamp jump
+```
+
+**The timestamp moved six hours and the balance chain did not notice.** The sentinel runs in registration
+order, so it is *structurally* blind to this mechanism — its silence is a result, not a gap. P5 as
+originally written expected the opposite and would have been read as a refutation of the very hypothesis
+the run confirmed.
+
+### 9.8a — P3 failed, and that is the most valuable single result
+
+Mini-plan 05 §1.3 found the intruding line born at `0.001 × 2.3⁷` and concluded the trigger *"is not 'a
+session started', it is 'a session started WRITING'"* — a session already running that only then began
+being registered. **T1's injected line was born at base bet, level 0.** The rewind lands wherever the
+ladder happens to be; the level at birth is a coincidence and carries no information about how the line
+came to exist.
+
+> **An inference that survives because nothing depends on it is still an inference nobody checked.** P3 was
+> carried through mini-plan 05, into INC-003's fault 1, and into this plan's own prediction table, and one
+> reproduction retired it. It is withdrawn in INC-003.
+
+### 9.8b — P10, the symptom nobody predicted: the history panel paints in blocks
+
+The developer noticed that during the replay, rows appeared **five at a time** instead of arriving one by
+one as they do in DiceGame — and correctly remembered that mini-plan 04's playtest-1 fix had made arrival
+per-frame. **That fix is intact. Its precondition is what the defect destroys.**
+
+The fast append path refuses out-of-order input by design [V: `TryAppendNewRecords`, the
+`record.TimestampUtc < last` guard — *"not append-ordered after all — fall back rather than render a wrong
+order"*]. Under the rewind every newly settled bet carries a timestamp hours **earlier** than the last one
+held, so the guard fails on every frame a bet arrives and `SyncRecordsFromHistory` takes the fallback: a
+full `OrderBy` over the journal **plus** `ApplyChanceFilter`, which invalidates every cached index. The
+per-row path is dead; the only thing still painting is the wholesale repaint, and that sits behind the 1 Hz
+floor [V: `ViewRefreshIntervalSeconds` guard]. One repaint per real second × 5 bets/second = **blocks of
+five**.
+
+Two reasons to keep this:
+
+- **It is a live symptom requiring no forensics.** Not a balance chain, not a file scan — the panel visibly
+  changes how it paints. A player on the pre-`95860f4` build could have seen it and had no way to know what
+  it meant.
+- **It has a cost, and the cost scales with the journal.** An O(n log n) re-sort plus a full filter rebuild
+  **per frame**. Invisible over 2,582 records; INC-003's world held **193,660** and was running this defect
+  for three in-game days. That is a candidate explanation for slowdowns in that era, testable against the
+  archive, and **not** something this plan measured — stated as a hypothesis, not a finding.
+
+### 9.8c — Two things this run did NOT establish, and one retraction
+
+- **§7's emit-budget check did not run, and its instrumentation is invalid.** The harness printed
+  `Replay ended: -2 rows emitted, 1254 records crossed. MISMATCH`. **Negative rows are impossible; §6.2 is
+  not broken, the counter is.** `HarnessReportRowsEmitted` differences `_renderedEndExclusive` across a
+  window in which `JumpCursorTo` resets it to `-1` and every fallback rebuild resets it again — so it
+  measures nothing. **Do not record that line as a result.** T2 needs a counter incremented inside the emit
+  loop itself, immune to rebuilds, before it can test anything.
+- **P6 could not be measured as B1.2 specified.** The rollup's on-disk copy lags the journal (§9.7c), so
+  "the rollup's delta across the run" is a delta of the lag, not of the count. Measuring it needs the
+  in-memory figure at two instants, which nothing exposes.
+- **A correction to §9.7's T0 write-up.** It cites *"console confirmed clean by the developer"* as evidence
+  of zero undeclared discontinuities. At the time the sentinel emitted **only** via `GD.PrintErr`, which
+  lands in the Godot editor's **Debugger → Errors** tab, while the developer reads **Output** — so that leg
+  confirmed a channel that could not have spoken. **T0's verdict stands** on the offline journal scan, where
+  the single break sits exactly at the scene change and matches `wallet_reseed`. But the console leg was
+  not evidence, and it read exactly like evidence. The rule that came out of it is now in CLAUDE.md.
+
+---
+
+## 9.9 — Priority change: the non-fluid replay, and what is DEFERRED for it (developer, 2026-08-26)
+
+**The developer has re-prioritised.** The open work is now **the non-fluid replay as hardware credits
+increase** (§9.10). Everything below is **deferred, optional, and explicitly not cancelled** — recorded
+here so a later reader does not mistake an unfinished item for an overlooked one (§39.16 rule 10: a phase
+suspended with its missing precondition named is a close, not a gap).
+
+| Deferred | State when set down | What it still needs |
+|---|---|---|
+| **T2 — the emit budget** (§7, §9.8c) | never run; counter redesigned but unexercised | the `DevEmitBudgetProbe` flip, a 10x replay over a dense stretch, and the three clauses of §7 step 3 |
+| **T4 leftovers** (§9.6) | steps 1, 2 and 4 done; step 3 partly | two observations only: whether **Speed is disabled during live-follow**, and the **`Sim:` %** at 9000X |
+| ~~The DEV-scale fluidity sweep~~ | **NOT deferred — it IS §9.10b.** The credits framing was a same-day mis-statement, retracted; DevTimeScale was the variable all along | — |
+| **T3 — delete the branch** | pending | blocked until the above are done or abandoned |
+
+**Commits on this branch that belong on `main` and must be cherry-picked before it is deleted** — none has
+anything to do with the harness: the **balance-trace real-time throttle** (`[CasinoSC]` at 9000X drowned
+every other diagnostic), the **explorer perf probe** of §9.10 if it earns its place, and whatever §9.10's
+fix turns out to be.
+
+*(The two speed-ceiling gates were reverted at the developer's instruction and are NOT in that list: the
+replay cursor never multiplies `DevTimeScale`, the cursor never reaches the present, and
+`CalendarTimeService.MaxGameSecondsPerRealSecond` still bounds the world clock regardless of what either
+control offers. The gates were belt over braces and cost usable speed.)*
+
+## 9.10 — ✅ CLOSED: the replay stops flowing once `DevTimeScale` has been raised — the DATA is clumped, not the panel
+
+> **Corrected 2026-08-26, same day.** This section first named **hardware credits** as the variable, on a
+> mis-statement the developer retracted within the hour. **The variable is `DevTimeScale`** — raising it
+> from 100X to 9000X is what costs the fluidity. The correction is left visible rather than overwritten
+> because the credits framing produced a real clue that survives it (the clump-size arithmetic below), and
+> because a test aimed at the wrong variable is the most expensive kind of mistake to make silently.
+
+**The symptom, in the developer's terms.** The replay does not flow. Rows arrive **in one clump per real
+second** instead of streaming, after `DevTimeScale` has been raised from 100X to 9000X.
+
+**The observation that constrains it hardest, and it was made before the variable was identified:** at DEV
+9000X the panel clumped, and **lowering the scale back to 100X in the same session did not fix it**, while a
+**fresh** 100X run was smooth. A symptom that survives the removal of its supposed cause is not a rate
+problem. Two candidates remain and the probe separates them: the **journal size**, which grows and never
+shrinks within a session, or the **bet rate**, which credits and the DEV scale both raise.
+
+**A clue worth stating rather than leaving implicit: the clump was five rows, at five credits.** At 1x the
+cursor covers 100 game-seconds per real second and bets sit `100 / credits` game-seconds apart, so a
+clump-per-second of exactly `credits` rows is what a **1 Hz wholesale repaint** looks like when the
+per-frame append path is not running. That is a hypothesis with a number attached, and the probe tests it.
+
+**An arithmetic fact the test must not lose sight of: `DevTimeScale` does not change the replay's rendering
+rate at all.** Bets sit `100 / credits` game-seconds apart at *every* DEV scale — the scale multiplies the
+clock and the bet engine by the same factor, which is the invariance the design exists to preserve — and a
+1x cursor covers 100 game-seconds per real second regardless. So at 5 credits a 1x replay crosses **5
+records per second at 100X and at 9000X alike**. What the scale changes is the **live arrival rate into the
+journal behind the cursor**: 5 records/second at 100X, **450 at 9000X**.
+
+> **So the cost is not in rendering the replay. It is in whatever the scene does about records arriving
+> while it replays.** That is the sharpest thing known about this defect and it should drive the reading as
+> much as the test.
+
+**Five candidates eliminated by reading, so the test need not re-cover them** — recorded because a failed
+search is evidence too, and the next person should not repeat it:
+
+| Candidate | Why it is out |
+|---|---|
+| the clock harness | off — no `[HARNESS]` line in the T4 log |
+| `BetHistoryRepository.Records` | `=> _records`, a free property; the per-frame count check is O(1) |
+| the append path | `TryAppendNewRecords` is O(new records), ~7.5/frame even at 9000X |
+| `ApplyChanceFilter` under "All Bets" | assigns `_sortedRecords = _allRecords` by REFERENCE, not a copy |
+| the journal writer | `Flush` is `FileMode.Append` over `_pendingJournalEntries` only — O(pending), never O(journal) |
+
+**Reading did not find it.** That is the honest state, and it is precisely why the probe exists rather than
+another round of hypotheses.
+
+### 9.10a — The instrument
+
+`[ExplorerPerf]`, DEBUG-only, one line per real second, printing **only while the cursor is running** — no
+flag to arm and none to forget:
+
+```
+[ExplorerPerf] records=N sorted=N fallbacks/s=F appends/s=A rebuilds/s=R emitted/s=E
+               fps=X speed=Qx requested / Ax actual behind=B game-s
+```
+
+| Field | What it decides |
+|---|---|
+| **`rebuilds/s`** | the clumping itself. `~1.0` is the 1 Hz wholesale repaint — **the hypothesis above, confirmed**. `0` means the panel is appending and the clumping is somewhere else entirely |
+| **`fallbacks/s`** | `SyncRecordsFromHistory` taking the full re-sort + `ApplyChanceFilter`, which invalidates the frontier and *causes* a rebuild. Non-zero names the cause; `records` prices it |
+| `appends/s` | the fast path working — mutually exclusive with a fallback on the same sync |
+| `emitted/s` | rows actually rendered. Should track `credits`; if it does while rebuilds also run, the rows are all arriving in one frame |
+| `speed` Q vs A | whether the speed control does what it advertises — a second, independent suspicion |
+
+### 9.10b — The test: `DevTimeScale`, and whether the damage is CONCURRENT or PERSISTENT
+
+**Credits stay at 5 throughout. `DevTimeScale` is the only thing that moves**, and the test is built around
+the one observation reasoning could not explain: *lowering it back does not help, but a restart does.*
+
+| | Step | DEV scale while replaying | Record |
+|---|---|---|---|
+| 1 | Fresh run (a restart wipes the journal). Autobet 45 s → explorer → Step back → **Play at 1x**, 15 s | **100X** | the line, and by eye: flowing or clumping? |
+| 2 | Back to Dice, raise to **9000X**, autobet 60 s → explorer → Play at 1x, 15 s | **9000X** | same |
+| 3 | Back to Dice, lower to **100X**, autobet 10 s → explorer → Play at 1x, 15 s | **100X** | same — **this is the one that puzzled us** |
+| 4 | **Restart the app.** DEV **100X**, autobet 45 s → explorer → Play at 1x, 15 s | **100X** | same — **the control** |
+
+**Steps 3 and 4 are the entire experiment; 1 and 2 exist to establish the baseline and the damage.** Step 3
+has a big journal and a low scale. Step 4 has a small journal and a low scale. **They differ in exactly one
+thing, and it is the thing the developer could not remove by lowering the dial.**
+
+| Result | Reading |
+|---|---|
+| **3 clumps, 4 is smooth** | the damage is **PERSISTENT and tied to journal size**. Expect `records` to be large in 3 and small in 4; whichever of `fallbacks/s` or `rebuilds/s` differs between them names the path |
+| **3 is smooth** | the damage is **CONCURRENT** — it needs 450 records/second arriving *now*, not a big journal. Then the cost is in the sync path under load, and step 2's line prices it |
+| **both clump** | something a restart also fixes but the scale does not — session-lifetime state outside the journal. Widen to the autoloads |
+| `rebuilds/s ~ 1.0` wherever it clumps | the 1 Hz wholesale repaint is the clumping, as predicted. `fallbacks/s` then says whether a sync fallback is forcing it |
+| `rebuilds/s = 0` everywhere | the hypothesis is wrong. The cost is per-row rendering, and `emitted/s` against `fps` locates it |
+
+**The clump-size arithmetic is the cross-check, and it survives the corrected variable.** At 5 credits a 1x
+replay must deliver **5 rows per second at every DEV scale**. If `emitted/s ≈ 5` in *both* the smooth and
+the clumping steps, then the same rows are being delivered either spread across frames or bunched into one
+— which is a rendering-cadence fault, not a throughput one, and `rebuilds/s` distinguishes them outright.
+
+**One `[ExplorerPerf]` line from the Godot editor's Output panel per step, plus one word on whether it
+looked fluid.** Four observations, under ten minutes.
+
+### 9.10c — ✅ RESOLVED: it was never a rendering defect. The DATA is clumped.
+
+**Measured on the developer's live journal, 2026-08-26** — `bet_history_000023.jsonl`, 7,926 bets sharing
+only **949 distinct timestamps** [M]:
+
+```
+same-timestamp group sizes:  7 → 244   8 → 361   9 → 83   10 → 255
+median gap between distinct timestamps: 150.00 s
+```
+
+**Every bet arrives in a clump of 7–10 sharing one instant, and the clumps sit 150 game-seconds apart.**
+That is arithmetic, not coincidence:
+
+- `SimulationService.MaxBetsPerFrame = 10` bets settle per frame;
+- `CalendarTimeService` advances the clock **once per frame**, so every bet in a frame reads the **same**
+  timestamp;
+- at 9000X and 60 fps the clock covers `9000 / 60 =` **150 game-seconds per frame**.
+
+A journal written at 9000X therefore *physically contains* "ten bets, then a 150-second void, ten bets". The
+explorer replays it faithfully. **The panel was right and the recording was wrong.**
+
+**The probe is what settled it, and it did so by refuting the hypothesis it was built to test.** Predicted:
+`rebuilds/s ≈ 1.0` from a 1 Hz wholesale repaint. Measured: `rebuilds/s=0.0`, `fallbacks/s=0.0`, `fps=60.0`,
+and `emitted/s` alternating **`0.0 / 9.8`** — one clump crossed every ~1.5 real seconds, average throughput
+exactly right. No rebuild, no fallback, no dropped frame.
+
+| Observation that had puzzled us | Explanation |
+|---|---|
+| lowering `DevTimeScale` back to 100X did not help | the **existing records are already clumped**; the dial does not rewrite history |
+| a fresh 100X run was fluid | at 100X the clock moves 1.67 game-s/frame, so bets land one per timestamp — T0 measured exactly this: **zero same-timestamp groups in 1,375 records** |
+| step 1 clumped although it was called "fresh" | **it was not.** `records=199367` at the first probe line, and the boot log reads `RESTORED from checkpoint`, not a pre-genesis reset. **Once a block has been mined a restart no longer wipes the journal**, so every record ever written at 9000X was still present |
+
+> **Three sessions were spent looking for a defect in the reader.** The reader was correct throughout. What
+> made it findable in the end was one measurement that contradicted the hypothesis — and the lesson is the
+> project's own: *diagnose with numbers, never guess.* Five candidates had already been eliminated by
+> reading (§9.10) and the sixth would have been eliminated the same way, one session later.
+
+**The real defect this exposed is in the WRITER, and it outlives the setting that caused it.** At a high DEV
+scale the simulation stamps up to ten bets with a single instant, so the journal asserts that ten bets
+happened simultaneously and that nothing happened for the next 150 game-seconds. Those records are
+permanent, and every consumer that reads timestamps inherits the distortion: mini-plan 05's two-line
+separation, INC-002's streak metrics, P8's cadence signature, and `MaxAppendRowsPerFrame`'s own calibration
+note — which already assumes groups cap at 10, tolerable at 100X where they essentially never occur, and the
+norm at 9000X.
+
+**Carried to `mini08-timestamp-fidelity-and-throughput-limits-plan.md`** (developer, 2026-08-26): fix the
+writer, then find out how far the engine can actually be pushed.

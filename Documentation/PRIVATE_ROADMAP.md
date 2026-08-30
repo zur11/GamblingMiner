@@ -393,6 +393,30 @@ Candidate inputs (all already available, none requiring new state):
 
 **Promoted in priority by Step 16's own playtest (2026-08-05).** Two of the three participation settings are now per-company (`PlayerPauseOnVotes`, `PlayerAutoAbstain`, plus three policy dials), and with the player holding NST in ten companies the panel-by-panel management is already the slowest part of the loop — this hub is where a bulk view belongs. The step also produced the exact failure it exists to prevent: with the game frozen by a vote at BTC Guild the developer went to ArtForz Cluster, found a normal page, and had no route onward. P16.8e's pause locator patches that one case; **a holdings hub answers the general question ("where is anything waiting for me?") that the locator only answers for the pause.** Reuse `GetCompaniesAwaitingPlayerVote` as the badge source.
 
+### Bet timestamp fidelity + the engine's real throughput ceiling — SPECIFIED, next up (2026-08-26)
+
+**Status: `AIHelperFiles/mini08-timestamp-fidelity-and-throughput-limits-plan.md`, own branch off `main`.**
+Found by mini-plan 06 §9.10c while investigating something else.
+
+**The defect.** Every bet settled in one frame carries the **same** timestamp, because the clock advances
+once per frame and `SimulationService` reads it per bet. Measured on a real journal: 7,926 bets across
+**949 distinct timestamps**, groups of 7–10, spaced 150.00 game-seconds — `9000 / 60`, the clock's stride at
+9000X. The records are permanent, so every consumer that reads a timestamp inherits it: mini-plan 05's
+balance-line separation, INC-002's streak metrics, `MaxAppendRowsPerFrame`'s calibration. **`DevTimeScale`
+claims in-game invariance; timestamp resolution is where that claim silently fails.**
+
+**The fix** back-dates the k-th of n bets in a frame by `(n−1−k) × interval × SpeedMultiplier` game-seconds,
+which reproduces the spacing the engine actually simulated and leaves the last bet on the clock's exact
+value — preserving the canonical clock-equals-last-event rule with no special case.
+
+**The limit question the developer wants answered: 99 credits × 9000X.** Demand is `credits × DevTimeScale`
+= **8,910 bets/s**; supply is `MaxBetsPerFrame × fps` = **600/s**, so the target asks 14.9× what the engine
+is allowed to deliver and `SimulationThrottle` honestly converts the rest into wall-clock slowdown (~600X
+effective). **The frontier today is `credits × DevTimeScale ≤ 600`** — which puts 99 credits at ~600X.
+`MaxBetsPerFrame = 10` is a constant nobody has ever priced, so P1 of that plan times one bet before
+anything is tuned. **Timestamp precision is NOT a constraint**: spacing at 99 credits is 1.01 game-seconds
+against `DateTime`'s 100 ns.
+
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 
 **Status: deferred 2026-08-13 (developer's call), targeted at Basic Mode.** Split out of mini-plan 02's Part D so the storage work there can proceed without waiting on a new screen. Full write-up: `AIHelperFiles/mini02-panel-state-and-100k-audit-plan.md` §D.6.

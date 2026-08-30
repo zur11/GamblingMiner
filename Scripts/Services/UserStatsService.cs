@@ -179,7 +179,16 @@ public partial class UserStatsService : Node
 				_continuityBreaksReported < MaxContinuityBreaksReported)
 			{
 				_continuityBreaksReported++;
-				GD.PrintErr(string.Format(
+				// HARNESS BRANCH — emitted on BOTH channels. mini-plan 06's P5′ reads this sentinel's
+				// silence as its result, and a message that goes only to the editor's Errors panel is
+				// indistinguishable from no message at all to a developer reading Output. Verified the hard
+				// way: the harness's own GD.PrintErr banner was invisible for a whole run attempt while the
+				// build was armed and correct.
+				//
+				// **This belongs on `main`.** A sentinel whose passing state is silence must be audible on
+				// the channel a person actually watches, or its silence proves nothing. Filed rather than
+				// merged from here, because this branch never merges.
+				string breakMessage = string.Format(
 					System.Globalization.CultureInfo.InvariantCulture,
 					"[BetJournal] UNDECLARED balance discontinuity #{0}: previous BalanceAfter {1:F8} " +
 					"+ net {2:F8} = {3:F8}, but this bet reports {4:F8} (delta {5:F8}). " +
@@ -194,7 +203,9 @@ public partial class UserStatsService : Node
 					source,
 					_lastRegisteredSource ?? "none",
 					DescribeSourceCounts(),
-					_lastDiscontinuityReason ?? "none"));
+					_lastDiscontinuityReason ?? "none");
+				GD.Print(breakMessage);
+				GD.PrintErr(breakMessage);
 
 				if (_continuityBreaksReported == MaxContinuityBreaksReported)
 				{

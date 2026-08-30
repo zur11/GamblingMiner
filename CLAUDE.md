@@ -451,6 +451,31 @@ See `Documentation/GLOSSARY.md` for the full canonical terminology list. Key ter
 - Use `DateTime.Utc` for storage; `DateTime.Local` for display
 - High-frequency service events must be throttled — see `UserStatsService.EmitStatsChangedIfNeeded()` as the reference pattern
 
+### Asking the developer to read output — NAME THE PANEL, ALWAYS
+
+**Never write "the console", "the log" or "the output" to the developer. Say WHICH ONE, every time**, in the
+same sentence as the thing to look for: **the Godot editor's Output panel** (the developer's default, and
+where `GD.Print` lands) · **the Godot editor's Debugger → Errors tab** (where a C# `GD.PrintErr` lands) ·
+**the terminal running `dotnet build`** · **a `user://logs/*.csv` trace** (a file, not a console at all).
+
+**Why this is a project rule and not a courtesy.** `GD.Print` and `GD.PrintErr` do **not** land in the same
+place in the Godot editor. On 2026-08-26 a mini-plan 06 harness banner was emitted with `GD.PrintErr`, the
+developer read Output, saw nothing, and a correct armed build was diagnosed as stale — costing a full
+aborted run. The same call had been used for **`AssertSingleActorJournal`'s `[BetJournal] UNDECLARED
+balance discontinuity`**, whose *silence* is a load-bearing result in mini-plans 05, 06 and INC-003. A
+"clean console" reported against the wrong panel is not evidence of anything, and it reads exactly like
+evidence.
+
+Three standing consequences:
+
+- **A diagnostic whose passing state is SILENCE must be emitted where the reader actually looks** — in
+  practice `GD.Print`, or both. This is the twin of the DEBUG-canary rule: that one settles whether the
+  check *exists*, this one settles whether anyone can *hear* it. Both failures end as "nothing happened".
+- **When a test protocol says "watch for X", it must name the panel beside X.** Writing the check without
+  its channel is writing an unverifiable step.
+- **When the developer reports "nothing appeared", the first question is which panel they read** — before
+  build staleness, before code paths. It was the answer once and cost a run.
+
 ### Auditing a playtest run the developer hands you
 
 The developer playtests and hands back a `user://` journal to audit. Two habits, both learned the hard way (2026-08-06, mini-plan 01 rounds 3–4):

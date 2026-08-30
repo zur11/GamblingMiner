@@ -316,16 +316,40 @@ right, which is what made the count worth chasing.
 1. **PROXIMATE — the journal recorded two bettors and could not say so.** For roughly three in-game days
    two balance lines coexisted in `bet_history*.jsonl`, each internally continuous to the satoshi, each
    with its own martingale progression, each at the correct 5-credit cadence, interleaved second by second.
-2. **ROOT — STATUS: `LEADING BUT NOT OBSERVED`.** Stated as a label rather than left to be inferred from
-   a parenthesis (2026-08-22). It is supported by **dating** and by **mechanism-fit**, and by nothing
-   else; it has never been reproduced. **It stays at this status indefinitely** — mini-plan 06, which
-   specifies the deliberate reproduction that would settle it, was **deferred, not cancelled** (mini-plan
-   07, D2/G5), and is on the shelf intact. Any future reader finding this entry unchanged should read the
-   status as current, not as stale. — **`BetsHistoryExplorer` used to rewind the WORLD CLOCK to browse
-   history.** There is one clock; `SimulationService` stamps every settled bet with it. Bets settled while
-   the player browsed with the replay playing were therefore journaled with timestamps in the past, so one
-   session's records land inside an earlier window and read as a second bettor. The scene's own comment,
-   written by the fix, states the mechanism verbatim.
+2. **ROOT — STATUS: `OBSERVED` (2026-08-26).** **`BetsHistoryExplorer` used to rewind the WORLD CLOCK to
+   browse history.** There is one clock; `SimulationService` stamps every settled bet with it. Bets settled
+   while the player browsed with the replay playing were therefore journaled with timestamps in the past,
+   so one session's records land inside an earlier window and read as a second bettor.
+
+   Upgraded from `LEADING BUT NOT OBSERVED` by **mini-plan 06's T1 run** — the retired mechanism re-created
+   deliberately on a quarantined branch, on a virgin world, with the diagnostics armed. Full result and
+   per-prediction verdicts: `AIHelperFiles/mini06-clock-rewind-reproduction-plan.md` **§9.8**. Seven of the
+   plan's predictions were observed, including the two that were only *specified* after reading the code:
+
+   - a **single** backwards timestamp jump in the journal's WRITE order — 6.22 game-hours, one occurrence;
+   - two balance lines in the overlapping window, the injected one continuous to the satoshi across 1,121
+     records with **zero** internal breaks;
+   - the injected line measurably **less frame-quantized** than the incumbent (50.4% vs 92.4%) — the same
+     asymmetry the 2026-08-20 archive shows, which is what ties the reproduction to *this* world's band;
+   - and the injected count predicting the browse duration two independent ways to the second.
+
+   **Four limits, and they are not softenings — they are the boundary of what was observed.** Carried
+   verbatim from mini-plan 07 §B.3, whose own premise this run corrected:
+   1. It shows the clock is **sufficient**, never that it is the only mechanism that could do this.
+   2. It shows the mechanism produces the shape; it does **not** show the historical band was produced this
+      way. That still rests on dating plus mechanism-fit — which the reproduction strengthens without
+      converting into direct observation. **This is the likeliest place for this entry to be overread.**
+   3. It identifies no individual record as an intruder. Assigning records to lines is still balance-
+      continuity separation; the reproduction is a detector, not a classifier.
+   4. It says nothing about the rollup, which counted both lines identically and correctly and has no
+      defence against this class of defect.
+
+   **One thing the reproduction REFUTED, and it was ours.** The plan predicted the sentinel
+   `[BetJournal] UNDECLARED balance discontinuity` would fire, naming one writer on both sides. It cannot:
+   the sentinel runs in **registration** order, where a rewound clock leaves the balance chain untouched.
+   Measured at the seam — `101.49116647 + 0.00098040 = 101.49214687`, continuous **across a 6.22-hour
+   timestamp jump**. The sentinel was silent, correctly, and its silence is now evidence rather than
+   absence. See §9.1 of the plan.
 3. **ENABLING — the journal never recorded an author, and nothing ever checked a property it already
    carried.** `BalanceAfter[i] == BalanceAfter[i-1] + NetAmount[i]` is one subtraction per record. Nothing
    performed it. That is why a defect visible in the data survived three in-game days and was found by eye,
@@ -404,10 +428,19 @@ first.*
   legitimate jumps declaring themselves (`NoteBalanceDiscontinuity`), and every registration carrying the
   name of its writer. Plus `SessionLifecycleTrace`, hooked inside `BaseBetSession` so no session instance
   can escape it.
-- **Residual uncertainty, stated rather than smoothed over:** the defect was never reproduced, so the root
-  fault is supported by dating and by mechanism-fit, not by observation — `LEADING BUT NOT OBSERVED`, per
-  the status on fault 2. Mini-plan 06 specifies the deliberate reproduction that would settle it, and is
-  **deferred rather than cancelled**.
+- **Residual uncertainty — REDUCED, not eliminated (2026-08-26).** ~~The defect was never reproduced.~~ It
+  has been: mini-plan 06's T1 run re-created the mechanism deliberately and it produced the shape, so fault
+  2 now reads **`OBSERVED`**. What remains uncertain is narrower and is stated there in full — the
+  reproduction shows the mechanism is *sufficient*, not that it is *necessary*, and the claim that **this
+  world's** band was produced this way still rests on dating plus mechanism-fit. **The residual moved from
+  "we have never seen this happen" to "we have seen it happen, elsewhere, on purpose."** Those are
+  different sentences and the entry should not be read as claiming the stronger one.
+- **A correction the reproduction forced, worth more than the confirmation.** This entry's fault 1 cites
+  *"each with its own martingale progression"*, and mini-plan 05 §1.3 read the intruding line's birth
+  **seven steps up the ladder** as proof that a session *"was already running and only then began being
+  registered"*. T1's injected line was born at **base bet, level 0** — the rewind lands wherever the ladder
+  happens to be, so the level at birth is a coincidence and carries no information. **That inference is
+  withdrawn.** It changes no conclusion here, which is exactly why it could have survived unexamined.
 
 **Where the evidence lives — verified intact 2026-08-22.** An incident entry whose evidence no longer
 exists is an anecdote, and this entry's evidence had never been located in writing. Both artefacts survive:
