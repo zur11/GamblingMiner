@@ -135,15 +135,31 @@ namespace Scripts.Diagnostics
 				return;
 			}
 
+			// FLUSH BEFORE DISARMING — a partial window is data, and throwing it away is a choice.
+			//
+			// Round 2's first attempt ended at ~2,600 bets and produced NOTHING, because the operator
+			// stopped before the 5,000-bet window closed. The measurement was real, complete for its
+			// sample, sitting in these accumulators, and was discarded by Reset() for no better reason
+			// than not reaching a round number. The threshold is a REPORTING CADENCE, not a minimum
+			// sample size, and it was silently acting as both.
+			//
+			// General rule: an instrument that reports only on its own schedule loses every run that ends
+			// off-schedule — and runs end off-schedule for reasons the instrument never gets to hear.
+			if (!enabled && _betsSinceReport > 0)
+			{
+				Report(partial: true);
+			}
+
 			Enabled = enabled;
 			Reset();
 
 			if (enabled)
 			{
 				GD.Print(string.Create(CultureInfo.InvariantCulture,
-					$"[BetCost] ARMED — reporting one breakdown per {ReportEveryBets:N0} player bets, " +
-					$"to this Output panel and to {TracePath}. This costs a few percent of every bet: " +
-					$"disarm it before measuring the P2 throughput frontier."));
+					$"[BetCost] ARMED — a breakdown prints every {ReportEveryBets:N0} player bets, and a " +
+					$"final partial one prints when you disarm, however few bets it holds. Output panel " +
+					$"plus {TracePath}. Measured overhead is 0.016% of a bet, so leaving it armed does not " +
+					$"perturb a throughput measurement."));
 			}
 			else
 			{
@@ -212,7 +228,10 @@ namespace Scripts.Diagnostics
 			return ticks * 1_000_000.0 / Stopwatch.Frequency / bets;
 		}
 
-		private static void Report()
+		/// <param name="partial">True for the flush on disarm, where the window did not fill. The sample
+		/// size is printed either way, but a short window is LABELLED, because a mean over 300 bets and a
+		/// mean over 5,000 read identically once they are numbers in a table.</param>
+		private static void Report(bool partial = false)
 		{
 			int bets = _betsSinceReport;
 			double totalUs = TicksToMicroseconds(_betTicks, bets);
@@ -234,7 +253,8 @@ namespace Scripts.Diagnostics
 
 			var sb = new StringBuilder();
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
-				$"[BetCost] {bets:N0} player bets — {totalUs:N3} µs/bet mean, {maxUs:N1} µs worst\n"));
+				$"[BetCost]{(partial ? " PARTIAL WINDOW —" : "")} {bets:N0} player bets — " +
+				$"{totalUs:N3} µs/bet mean, {maxUs:N1} µs worst\n"));
 			for (int i = 0; i < SegmentCount; i++)
 			{
 				double share = totalUs > 0d ? perSegment[i] / totalUs * 100.0 : 0d;
