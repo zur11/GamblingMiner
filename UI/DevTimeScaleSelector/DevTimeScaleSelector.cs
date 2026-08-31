@@ -11,13 +11,17 @@ namespace UI.DevTimeScaleSelector
 	{
 		// DevTimeScale multipliers on the 100X base clock. Two régimes, deliberately:
 		//
-		//   ×1..×6  — a FINE low range (100X..600X), added 2026-08-30 for mini-plan 08. The throughput
-		//             frontier is `credits × DevTimeScale`, so at the 99-credit hardware cap the highest
-		//             sustainable scale sits near the TOP of this range, not in the coarse one — with only
-		//             ×1 and ×10 on offer, the entire frontier fell in a gap the selector could not express
-		//             and P2's sweep had no grid to sweep. See §2 of
-		//             AIHelperFiles/mini08-timestamp-fidelity-and-throughput-limits-plan.md.
-		//   ×10..×90 — the original coarse range, for the low-credit runs that saturate nowhere near it.
+		//   ×1..×9   — a FINE range in 100X steps, added 2026-08-30 for mini-plan 08. The throughput
+		//              frontier is `credits × DevTimeScale`, so at high credit counts the highest
+		//              sustainable scale lands in here — with only ×1 and ×10 on offer, the entire frontier
+		//              fell in a gap the selector could not express and P2's sweep had no grid to sweep.
+		//              It runs to ×9, not to the ×6 the 99-credit frontier predicts, because raising
+		//              SimulationService.MaxBetsPerFrame (P1's whole purpose) MOVES that frontier upward,
+		//              and a ladder that stops at today's measured knee reintroduces the same gap one
+		//              measurement later. See §3 of
+		//              AIHelperFiles/mini08-timestamp-fidelity-and-throughput-limits-plan.md.
+		//   ×10..×90 — the original coarse range, in 1000X steps, for the low-credit runs that saturate
+		//              nowhere near it.
 		//
 		// (Capped at ×90 — 10000X hit the MaxBetsPerFrame throughput ceiling and lagged.)
 		//
@@ -25,7 +29,7 @@ namespace UI.DevTimeScaleSelector
 		// CalendarTimeService.MaxGameSecondsPerRealSecond, enforced where the rate is spent, because this
 		// selector is only one of two factors in it — see that constant's note. Shortening this array does
 		// not lower the ceiling and lengthening it does not raise one.
-		private static readonly int[] Multipliers = { 1, 2, 3, 4, 5, 6, 10, 20, 30, 40, 50, 60, 70, 80, 90 };
+		private static readonly int[] Multipliers = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60, 70, 80, 90 };
 
 		// The top of the ladder is meant to BE the ceiling, on the 100X base. Asserted rather than trusted:
 		// the two live in different files and the failure mode is a selector offering a speed the clock
