@@ -282,7 +282,8 @@ public partial class DiceGame : Control, IBetEventSource
 		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
 		_apsSelector.ItemSelected += _ => OnBetsPerSecondChanged(0d);
 
-		// DEV/TEST time-acceleration selector (100X..1000X), placed next to the APS selector.
+		// DEV/TEST time-acceleration selector (the ladder is DevTimeScaleSelector's own), placed next to the
+		// APS selector — the two together are the `credits × DevTimeScale` throughput demand.
 		var devTimeScale = new UI.DevTimeScaleSelector.DevTimeScaleSelector();
 		_apsSelector.GetParent().AddChild(devTimeScale);
 		_apsSelector.GetParent().MoveChild(devTimeScale, _apsSelector.GetIndex() + 1);
