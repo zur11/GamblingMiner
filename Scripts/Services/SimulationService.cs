@@ -104,6 +104,11 @@ public partial class SimulationService : Node
 	}
 
 	private const int MaxBetsPerFrame = 10;
+
+	// Mini-plan 08 P1 — BetCostProfiler prints the measured per-bet cost next to the constant that is
+	// supposed to be justified by it, so a report can be read without opening this file. Read-only and
+	// diagnostic; nothing may set the cap through here.
+	public static int MaxBetsPerFrameForDiagnostics => MaxBetsPerFrame;
 	private const double MaxBacklogSeconds = 2.0;
 	private const int MaxAutoBetBaseAps = 99;
 
@@ -651,14 +656,22 @@ public partial class SimulationService : Node
 
 		DateTime tsUtc = SettleTimestampUtc();
 
+		// Mini-plan 08 P1 — segment timing, DEBUG-only and disarmed by default (Scripts/Diagnostics/
+		// BetCostProfiler.cs). Every call below compiles to nothing in RELEASE. The marks sit immediately
+		// after the work they name, so a segment's time is its own and the residue lands in "unaccounted"
+		// rather than being quietly absorbed by a neighbour.
+		Scripts.Diagnostics.BetCostProfiler.BeginBet();
+
 		try
 		{
 			var (_, betEvent, _) = _session.ExecuteNext(_config.Chance, _config.BetHigh, tsUtc);
+			Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.ExecuteNext);
 			LastSettledBetEvent = betEvent;
 			if (_config.IsPlayerActive)
 			{
 				_userStats?.OnBetExecutedRegisterBet(_config.GameId, betEvent, UserStatsService.SourceSimulation);
 			}
+			Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.RegisterBet);
 		}
 		catch (InvalidOperationException)
 		{
@@ -667,6 +680,7 @@ public partial class SimulationService : Node
 		}
 
 		PersistFinancialState(false);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.PersistFinancial);
 
 		// Settle THIS bet's balances BEFORE mining/checkpoint (OQ-CG.10): if this same bet mines a block, the
 		// checkpoint it captures must reflect the bet's own result, consistently with the bet-history boundary
@@ -683,6 +697,7 @@ public partial class SimulationService : Node
 			_clientLedger?.RegisterSettledBet(_config.ActiveNodeId, LastSettledBetEvent.BetAmount,
 				LastSettledBetEvent.CreditedProfit, LastSettledBetEvent.IsWin);
 		}
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.MoneyServices);
 
 		// One nonce attempt per bet (1 bet = 1 attempt), routed by the active node's hardware allocation
 		// (individual pool → own chain; casino pool → casino chain). Real PoW on the shared chain.
@@ -697,10 +712,17 @@ public partial class SimulationService : Node
 				FreezeCalendarAtBlockStop();
 			}
 		}
+		// Deliberately covers the block path too. A mined block costs far more than an attempt (checkpoint
+		// capture + a full state.json write), and averaging that over the ~thousands of attempts between
+		// blocks is the HONEST per-bet figure — it is a cost every bet shares. The report's "worst µs"
+		// column is what shows the spike separately.
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.NonceAttempt);
 
 		if (LastSettledBetEvent != null)
 			ClientBetSettled?.Invoke(_config.ActiveNodeId, _config.GameId, LastSettledBetEvent);
 		EmitSignal(SignalName.BetSettled);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.EventFanOut);
+		Scripts.Diagnostics.BetCostProfiler.EndBet();
 	}
 
 	private void PersistFinancialState(bool persist)

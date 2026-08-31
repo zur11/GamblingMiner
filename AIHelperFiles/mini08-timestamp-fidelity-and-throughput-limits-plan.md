@@ -137,6 +137,78 @@ about `decimal` arithmetic.
 **Output:** microseconds per bet, and which component dominates. That single number sets the real ceiling on
 `MaxBetsPerFrame` and says whether 99 × 9000X is reachable at all or merely a long way off.
 
+#### P1 as specified is only half-buildable — and the half it can build is the cheap half
+
+**The specification above cannot be executed as written, and the reason is worth recording because it is
+structural, not an oversight.** `ExecutePlayerBetOnce` splits cleanly in two:
+
+| | Reachable in a console project? | Why |
+|---|---|---|
+| `_session.ExecuteNext` — dice, `Money.Normalize`, both wallet mutations, the fractional carry, progression, streak, stop conditions | **yes** | plain C# classes; the only `Godot` reference in the whole path is one `GD.Print` in a debug anomaly branch |
+| the journal append, `PersistFinancialState`, the SC balance sheet, the client ledger, `RouteNonceAttempt`, the four events each bet fires | **no** | `Godot.Node` autoloads and static chain state; none of it exists outside the engine |
+
+So P1 was split into **P1a (desk, done)** and **P1b (in-engine, built and awaiting a run)**. Note which half
+went where: the console project can price the *arithmetic*, which is exactly the half CLAUDE.md's scripting
+table insists must not be reimplemented — and it cannot touch the half this plan's own §4 nominates as the
+suspect. **The instrument the rule demanded is aimed at the component the hypothesis exonerates.**
+
+#### P1a — RESULT (2026-08-30, throwaway console project, real game source linked verbatim)
+
+2,000,000 measured bets per layer after a 200,000-bet warm-up, on a fresh instance, workstation GC.
+Each row adds one ring of the real call stack, so the **difference** between rows is that ring's cost.
+
+| Layer | DEBUG | RELEASE |
+|---|---|---|
+| `DiceEngine.Play` alone | 0.239 µs | 0.264 µs |
+| `+ BetService.ExecuteBet` (2× `Wallet.ApplyTransaction`, carry, event record) | 0.877 µs | 0.522 µs |
+| `+ BaseBetSession.ExecuteNext` (progression, streak, stops) — **the full Godot-free core** | **1.768 µs** | **0.703 µs** |
+
+Allocation: **368 B/bet**, ~1 gen0 collection per 11,400 bets. At the 8,910 bets/s target that is ~3.3 MB/s
+of churn and under one gen0 GC per second — real, but not a candidate for the bottleneck.
+
+**Read DEBUG, not RELEASE.** The developer measures in the Godot editor, which runs the DEBUG build; the
+2.5× gap on the session row is `DebugAssertProgression` plus un-inlined property access. RELEASE is recorded
+only so the exported build's figure is not later guessed.
+
+**What it establishes.** At `MaxBetsPerFrame = 10`, the core costs **17.7 µs of a 16,670 µs frame — 0.1%**.
+At the full 99 × 9000X demand (8,910 bets/s ⇒ 148.5 bets/frame) it costs **263 µs, 1.6% of the frame.**
+
+> **The decimal arithmetic is not the constraint, and it is not close.** `MaxBetsPerFrame = 10` is roughly
+> three orders of magnitude below what the core alone would sustain. Everything that decides this question
+> is in the half a console project cannot see — which is what P1b measures, and is precisely §4's own
+> prediction and CLAUDE.md §38.7's standing suspicion about per-bet events.
+
+**Do not read the last column of that table as a throughput ceiling.** It is what a frame could do if it did
+*nothing else* — no rendering, no bots, no founders, no scheduled network, no UI subscriber. `MaxBetsPerFrame`
+belongs well below it. P2 is what finds where.
+
+#### P1b — the in-engine segment profiler (built 2026-08-30, awaiting a run)
+
+`Scripts/Diagnostics/BetCostProfiler.cs` times one bet in six segments — `ExecuteNext`, `RegisterBet`,
+`PersistFinancialState`, the three money services, `RouteNonceAttempt`, and the event fan-out — and reports
+one breakdown per 20,000 player bets to **the Godot editor's Output panel** and to
+`user://logs/bet_cost_trace.csv`.
+
+Four properties are deliberate:
+
+1. **`ExecuteNext` is measured in BOTH halves**, so P1b's first segment is a cross-check on P1a. If the
+   in-engine reading is far from **1.768 µs**, the console harness is not modelling what the engine runs and
+   every conclusion above is suspect. *That reconciliation is a required output of the run, not a nicety.*
+2. **The residue is reported, not absorbed.** `unaccounted = total − Σsegments` holds both the code between
+   marks and the profiler's own `Stopwatch.GetTimestamp` calls. A breakdown forced to sum to its whole
+   cannot reveal its own overhead.
+3. **Off by default, toggled from `DevTimeScaleSelector`** (`⏱ Bet cost`, DEBUG-only). P2 measures the
+   frontier, and the profiler's few percent per bet is exactly the quantity P2 is measuring — so arming it
+   during P2 would corrupt the result. Arm for P1b, read, disarm.
+4. **It announces arming and disarming**, with `GD.Print`. Mini-plan 06 §9.1's rule: a diagnostic whose
+   passing state is silence must say out loud whether it is running, or "nothing appeared" is ambiguous
+   between "no finding" and "never armed" — and a RELEASE build, where every entry point is stripped by
+   `Conditional("DEBUG")`, counterfeits that silence exactly.
+
+**Run protocol.** DiceGame → set credits and DEV scale → start autobet → tick **⏱ Bet cost** → let it print
+at least three breakdowns (60,000 bets) → untick. Read the blocks in **the Godot editor's Output panel**
+(not the Debugger → Errors tab; these are `GD.Print`). The CSV is the durable copy.
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved

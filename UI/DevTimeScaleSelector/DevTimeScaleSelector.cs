@@ -81,6 +81,39 @@ namespace UI.DevTimeScaleSelector
 			// It is also the only way the reading reaches DICEGAME, which renders its own balance labels and
 			// has no StatusBar to host it.
 			AddChild(new UI.SimRetentionReadout.SimRetentionReadout(18));
+
+			AddBetCostToggle();
+		}
+
+		// Mini-plan 08 P1 — arms Scripts/Diagnostics/BetCostProfiler, which times one bet segment by segment.
+		//
+		// It sits HERE, with the scale selector and the Sim% readout, because the three are one instrument:
+		// the selector sets the demand, Sim% says whether the engine met it, and this says WHERE the frame
+		// went when it did not. §38.7's standing rule is that a low Sim% means "find what is eating the
+		// frame" — this is the thing that answers it, instead of the forbidden reflex of raising
+		// MaxBetsPerFrame.
+		//
+		// DEBUG-only, and absent rather than disabled in an exported build: the profiler's entry points are
+		// all Conditional("DEBUG"), so a RELEASE toggle would be a control wired to nothing — a lying
+		// control, which the ladder assert above exists to prevent in its own domain.
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void AddBetCostToggle()
+		{
+			var toggle = new CheckButton
+			{
+				Text = "⏱ Bet cost",
+				// Default OFF is load-bearing, not a preference: the profiler adds a few percent to every
+				// bet, and mini-plan 08's P2 measures the throughput frontier — where that few percent is
+				// precisely the quantity under test. Arm it for P1, read the breakdown, disarm it for P2.
+				ButtonPressed = false,
+				TooltipText =
+					"DEV — time one bet segment by segment (P1). Reports to the Godot editor's Output panel "
+					+ "and to user://logs/bet_cost_trace.csv. Leave it OFF while measuring throughput: it "
+					+ "costs a few percent of every bet.",
+			};
+			toggle.AddThemeFontSizeOverride("font_size", 16);
+			toggle.Toggled += pressed => Scripts.Diagnostics.BetCostProfiler.Arm(pressed);
+			AddChild(toggle);
 		}
 
 		private void OnScaleSelected(long index)

@@ -1,0 +1,299 @@
+using Godot;
+using System;
+using System.Diagnostics;
+using System.Globalization;
+using System.Text;
+
+namespace Scripts.Diagnostics
+{
+	/// <summary>
+	/// Mini-plan 08 P1 — prices ONE BET, segment by segment, inside the running engine.
+	///
+	/// <para><b>Why this exists at all.</b> <c>SimulationService.MaxBetsPerFrame</c> is 10. That number is a
+	/// CONSTANT, not a measurement — nobody has ever timed a bet — and it is the binding constraint on the
+	/// developer's 99-credits × high-scale target (mini-plan 08 §3). CLAUDE.md's closing rule under
+	/// Important Pattern 6 is that a cost note is a measurement or it is a guess wearing a measurement's
+	/// clothes. This is the measurement.</para>
+	///
+	/// <para><b>Why it could not be desk work.</b> P1 was specified as a throwaway console project. Half of
+	/// <c>ExecutePlayerBetOnce</c> is reachable that way — the dice roll, the wallet, the decimal arithmetic,
+	/// the progression — and that half WAS priced there (scratchpad harness, 2026-08-30): <b>1.77 µs/bet in
+	/// DEBUG, 0.70 µs in RELEASE</b>. The other half is autoloads and static chain state — the journal
+	/// append, the SC balance sheet, the client ledger, the nonce attempt, and the four events each bet
+	/// fires — none of which exist outside the Godot runtime. A console project cannot see the half the
+	/// plan's own hypothesis blames, so the measurement has to happen here.</para>
+	///
+	/// <para><b>Off by default, and that is load-bearing.</b> P2 sweeps the throughput frontier; a profiler
+	/// adding a few percent to every bet would move the very frontier P2 is measuring. Arm it for P1, read
+	/// the breakdown, disarm it before P2. The toggle lives in <c>DevTimeScaleSelector</c>, beside the
+	/// controls that set the demand and the readout that shows the delivery.</para>
+	///
+	/// <para><b>DEBUG only.</b> Every entry point is <see cref="ConditionalAttribute"/>-guarded, so an
+	/// exported RELEASE build contains no calls at all — not a disabled branch, no calls. The corollary is
+	/// mini-plan 06's rule: silence from this class in a RELEASE build means "never compiled in", not
+	/// "nothing to report", which is why <see cref="Arm"/> announces itself.</para>
+	/// </summary>
+	public static class BetCostProfiler
+	{
+		/// <summary>The stages of one bet, in the order <c>ExecutePlayerBetOnce</c> runs them.</summary>
+		public enum Segment
+		{
+			/// <summary>_session.ExecuteNext — dice, wallet, decimal arithmetic, progression, stops.
+			/// The ONE segment the scratchpad harness also measured, so it doubles as a cross-check:
+			/// if this reads far from 1.77 µs, the two measurements disagree and the harness is not
+			/// modelling what the engine runs.</summary>
+			ExecuteNext = 0,
+			/// <summary>UserStatsService.OnBetExecutedRegisterBet — the bet journal append + the rollup.</summary>
+			RegisterBet,
+			/// <summary>PersistFinancialState(false) — builds a NodeFinancialState and hands it to NetworkRoot.</summary>
+			PersistFinancial,
+			/// <summary>The three money services: bankroll SetBalance, casino ApplyBetResult, client ledger.</summary>
+			MoneyServices,
+			/// <summary>RouteNonceAttempt — one real proof-of-work attempt, plus the block path when it hits.</summary>
+			NonceAttempt,
+			/// <summary>ClientBetSettled + the BetSettled Godot signal — the per-bet event fan-out, which
+			/// CLAUDE.md §38.7 names as the first suspect whenever a per-bet cost is larger than it looks.</summary>
+			EventFanOut,
+		}
+
+		private const int SegmentCount = 6;
+
+		private static readonly string[] SegmentNames =
+		{
+			"ExecuteNext (dice+wallet+progression)",
+			"RegisterBet (journal + rollup)",
+			"PersistFinancialState",
+			"MoneyServices (bankroll+casino+ledger)",
+			"NonceAttempt (PoW + block path)",
+			"EventFanOut (ClientBetSettled + signal)",
+		};
+
+		public const string TracePath = "user://logs/bet_cost_trace.csv";
+
+		private const string Header =
+			"reportUtc,bets,totalUsPerBet,accountedUsPerBet,unaccountedUsPerBet," +
+			"executeNextUs,registerBetUs,persistFinancialUs,moneyServicesUs,nonceAttemptUs,eventFanOutUs," +
+			"maxTotalUs,betsPerFrameAt60";
+
+		// How many bets accumulate before a report. Large enough that the report's own cost is noise; small
+		// enough that a 60-second run at a few hundred bets/s still produces several rows. A report is one
+		// GD.Print block and one CSV line — never per bet.
+		private const int ReportEveryBets = 20_000;
+
+		private static readonly long[] _ticks = new long[SegmentCount];
+		private static long _betTicks;
+		private static long _maxBetTicks;
+		private static int _betsSinceReport;
+		private static bool _headerChecked;
+
+		private static long _betStart;
+		private static long _segmentStart;
+
+		/// <summary>Armed state. False by default — see the class remarks on why P2 needs it off.</summary>
+		public static bool Enabled { get; private set; }
+
+		/// <summary>
+		/// Turn measurement on or off, announcing the transition. It ANNOUNCES rather than toggling
+		/// silently for mini-plan 06 §9.1's reason: a diagnostic whose passing state is silence must say
+		/// out loud whether it is running, or "nothing appeared" is ambiguous between "no finding" and
+		/// "never armed". Emitted with GD.Print — the Godot editor's <b>Output</b> panel — never
+		/// GD.PrintErr, which lands in the Debugger → Errors tab where nobody was looking (CLAUDE.md,
+		/// "Asking the developer to read output").
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void Arm(bool enabled)
+		{
+			if (Enabled == enabled)
+			{
+				return;
+			}
+
+			Enabled = enabled;
+			Reset();
+
+			if (enabled)
+			{
+				GD.Print(string.Create(CultureInfo.InvariantCulture,
+					$"[BetCost] ARMED — reporting one breakdown per {ReportEveryBets:N0} player bets, " +
+					$"to this Output panel and to {TracePath}. This costs a few percent of every bet: " +
+					$"disarm it before measuring the P2 throughput frontier."));
+			}
+			else
+			{
+				GD.Print("[BetCost] disarmed — bets are no longer being timed.");
+			}
+		}
+
+		private static void Reset()
+		{
+			Array.Clear(_ticks, 0, SegmentCount);
+			_betTicks = 0;
+			_maxBetTicks = 0;
+			_betsSinceReport = 0;
+		}
+
+		/// <summary>Called at the top of one bet, before any of its work.</summary>
+		[Conditional("DEBUG")]
+		public static void BeginBet()
+		{
+			if (!Enabled) return;
+			_betStart = Stopwatch.GetTimestamp();
+			_segmentStart = _betStart;
+		}
+
+		/// <summary>
+		/// Closes the segment that has been running since the previous mark (or since <see cref="BeginBet"/>)
+		/// and attributes its time to <paramref name="segment"/>. Call it immediately AFTER the work it names.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void Mark(Segment segment)
+		{
+			if (!Enabled) return;
+			long now = Stopwatch.GetTimestamp();
+			_ticks[(int)segment] += now - _segmentStart;
+			_segmentStart = now;
+		}
+
+		/// <summary>
+		/// Closes the bet. The gap between this total and the sum of the marked segments is reported as
+		/// <c>unaccounted</c>, and it is deliberately not hidden: it holds both the code between the marks
+		/// and this profiler's own <see cref="Stopwatch.GetTimestamp"/> calls. A breakdown that silently
+		/// forced the parts to sum to the whole would be unable to reveal its own overhead.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void EndBet()
+		{
+			if (!Enabled) return;
+
+			long elapsed = Stopwatch.GetTimestamp() - _betStart;
+			_betTicks += elapsed;
+			if (elapsed > _maxBetTicks)
+			{
+				_maxBetTicks = elapsed;
+			}
+
+			if (++_betsSinceReport >= ReportEveryBets)
+			{
+				Report();
+				Reset();
+			}
+		}
+
+		private static double TicksToMicroseconds(long ticks, int bets)
+		{
+			if (bets <= 0) return 0d;
+			return ticks * 1_000_000.0 / Stopwatch.Frequency / bets;
+		}
+
+		private static void Report()
+		{
+			int bets = _betsSinceReport;
+			double totalUs = TicksToMicroseconds(_betTicks, bets);
+			double maxUs = TicksToMicroseconds(_maxBetTicks, 1);
+
+			double accountedUs = 0d;
+			var perSegment = new double[SegmentCount];
+			for (int i = 0; i < SegmentCount; i++)
+			{
+				perSegment[i] = TicksToMicroseconds(_ticks[i], bets);
+				accountedUs += perSegment[i];
+			}
+
+			// THE number this whole phase exists to produce: how many bets fit in one 60 fps frame if the
+			// frame did nothing else. It is an UPPER BOUND — rendering, the bots, the founders, the
+			// scheduled network and every UI subscriber all draw from the same 16.67 ms — so
+			// MaxBetsPerFrame belongs well below it, never at it.
+			double betsPerFrameAt60 = totalUs > 0d ? (1000.0 / 60.0) * 1000.0 / totalUs : 0d;
+
+			var sb = new StringBuilder();
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"[BetCost] {bets:N0} player bets — {totalUs:N3} µs/bet mean, {maxUs:N1} µs worst\n"));
+			for (int i = 0; i < SegmentCount; i++)
+			{
+				double share = totalUs > 0d ? perSegment[i] / totalUs * 100.0 : 0d;
+				sb.Append(string.Create(CultureInfo.InvariantCulture,
+					$"           {perSegment[i],8:N3} µs  {share,5:N1}%  {SegmentNames[i]}\n"));
+			}
+
+			double unaccountedUs = totalUs - accountedUs;
+			double unaccountedShare = totalUs > 0d ? unaccountedUs / totalUs * 100.0 : 0d;
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"           {unaccountedUs,8:N3} µs  {unaccountedShare,5:N1}%  unaccounted (inter-mark code + this profiler)\n"));
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"           ⇒ {betsPerFrameAt60:N0} bets per 16.67 ms frame if the frame did NOTHING else " +
+				$"(MaxBetsPerFrame is currently {SimulationService.MaxBetsPerFrameForDiagnostics})"));
+
+			GD.Print(sb.ToString());
+			WriteTraceRow(bets, totalUs, accountedUs, unaccountedUs, perSegment, maxUs, betsPerFrameAt60);
+		}
+
+		private static void WriteTraceRow(
+			int bets, double totalUs, double accountedUs, double unaccountedUs,
+			double[] perSegment, double maxUs, double betsPerFrameAt60)
+		{
+			try
+			{
+				EnsureHeader();
+
+				// Real wall-clock, deliberately: this is DEV telemetry about the MACHINE, not game-world
+				// state, and CLAUDE.md's game-time rule names exactly that exemption. A game-time stamp
+				// here would be actively misleading — the quantity measured is real microseconds.
+				string row = string.Format(
+					CultureInfo.InvariantCulture,
+					"{0},{1},{2:F3},{3:F3},{4:F3},{5:F3},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F1},{12:F0}\n",
+					DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+					bets, totalUs, accountedUs, unaccountedUs,
+					perSegment[0], perSegment[1], perSegment[2],
+					perSegment[3], perSegment[4], perSegment[5],
+					maxUs, betsPerFrameAt60);
+
+				using FileAccess file = FileAccess.Open(TracePath, FileAccess.ModeFlags.ReadWrite);
+				if (file == null)
+				{
+					return;
+				}
+
+				file.SeekEnd();
+				file.StoreString(row);
+			}
+			catch (Exception)
+			{
+				// A diagnostic must never be able to take down the thing it is diagnosing.
+			}
+		}
+
+		private static void EnsureHeader()
+		{
+			if (_headerChecked)
+			{
+				return;
+			}
+
+			_headerChecked = true;
+
+			if (!DirAccess.DirExistsAbsolute("user://logs"))
+			{
+				DirAccess.MakeDirRecursiveAbsolute("user://logs");
+			}
+
+			if (FileAccess.FileExists(TracePath))
+			{
+				// ND.10j's stale-schema rule, as SessionLifecycleTrace applies it: rotate rather than append
+				// rows under a header that no longer describes them. A misaligned trace is worse than no
+				// trace, because it is read as data.
+				using FileAccess existing = FileAccess.Open(TracePath, FileAccess.ModeFlags.Read);
+				string firstLine = existing?.GetLine() ?? string.Empty;
+				existing?.Close();
+				if (string.Equals(firstLine, Header, StringComparison.Ordinal))
+				{
+					return;
+				}
+
+				DirAccess.RenameAbsolute(TracePath, TracePath + ".old");
+			}
+
+			using FileAccess created = FileAccess.Open(TracePath, FileAccess.ModeFlags.Write);
+			created?.StoreString(Header + "\n");
+		}
+	}
+}
