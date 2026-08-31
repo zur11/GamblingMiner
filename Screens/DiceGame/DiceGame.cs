@@ -614,6 +614,9 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateCurrentAppTimeUI();
 		UpdateBoardVotePauseUi();
 		TickAutoBet(delta);
+		// AFTER TickAutoBet, deliberately: the background sim settles this frame's bets during _Process, so
+		// flushing first would paint the previous frame's state and leave this frame's stale until the next.
+		FlushSettledBetUiIfDirty();
 	}
 
 	// Step 14 (ND.8b.3/D-ND8.18 follow-up): while a board vote awaits the player's ballot, BOTH betting
@@ -1214,6 +1217,23 @@ public partial class DiceGame : Control, IBetEventSource
 	}
 
 	// Fired by SimulationService after each background player bet (only while DiceGame is on screen).
+	// Mini-plan 08 P1 — MEASURED at 382.7 µs per bet, 27.1% of a 1,414 µs bet, second only to the bankroll
+	// disk write (four 5,000-bet windows, 2026-08-30). It fires once per settled bet, and SimulationService
+	// settles up to MaxBetsPerFrame bets in a single frame — so this ran up to ten times per frame and
+	// **only the last run's output was ever drawn.** The other nine rebuilt the blockchain status line,
+	// recomputing live difficulty, reading the chain tip and counting the mempool, to paint pixels that were
+	// overwritten in the same frame before anyone saw them.
+	//
+	// This is CLAUDE.md Pattern 6's second rule verbatim — *coalesce at the consumer when the trigger cannot
+	// move the value* — and §38.7's warning that a correct event fired far too often costs more than any
+	// poll in the backlog. The event is right; the subscriber was doing per-bet work that is per-FRAME work.
+	//
+	// The split is by what the work actually depends on, not by cost:
+	//   • PER BET, kept here — the bet-history feed. Every settled bet is a distinct row; coalescing would
+	//     DROP data, not merely defer a repaint. This is the part that must never be throttled.
+	//   • PER FRAME, deferred — the wallet reseed, the two panel readouts, the blockchain status line and
+	//     the mined-block announcement. All four are idempotent reads of current state: running them once
+	//     after the frame's last bet produces exactly what running them ten times produced.
 	private void OnSimBetSettled()
 	{
 		if (_simulationService == null) return;
@@ -1227,6 +1247,20 @@ public partial class DiceGame : Control, IBetEventSource
 			_lastLoggedBetEvent = settled;
 			BetExecuted?.Invoke(GameId, settled);
 		}
+
+		_betSettledUiDirty = true;
+	}
+
+	// Set by OnSimBetSettled, consumed once per frame by _Process. A flag rather than a timer: the work is
+	// idempotent and cheap once, so there is nothing to gain by deferring it past the frame that asked for
+	// it — and a frame-late readout during a 9000X autobet would be visible.
+	private bool _betSettledUiDirty;
+
+	private void FlushSettledBetUiIfDirty()
+	{
+		if (!_betSettledUiDirty || _simulationService == null) return;
+		_betSettledUiDirty = false;
+
 		ReseedWalletFromBankrollSource();
 		_strategyPanel.SetNumberOfBets(_simulationService.SessionInfinite ? 0 : _simulationService.SessionRemainingBets);
 		_strategyPanel.SetBetAmount(_simulationService.SessionCurrentBet);
@@ -1898,7 +1932,10 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		// Balance restore from bet history used to run here, but it is now provably redundant AND harmful:
-		// BankrollStateService/PrincipalBalanceService already self-persist immediately on every change, and
+		// BankrollStateService/PrincipalBalanceService hold the live balance in memory and self-persist it
+		// (BankrollStateService on a 0.5 s throttle since mini-plan 08 P1 — its unthrottled per-bet write was
+		// 66% of a bet; the throttle is invisible here because this reasoning depends on the IN-MEMORY value
+		// and on the checkpoint, never on the file's write cadence), and
 		// BlockSessionCheckpointService.ApplyCheckpointToServices() (autoload boot, before any scene loads)
 		// already reverts them to the last mined block — the actual single source of truth (see
 		// SimulationService's header comment). Bet history logs every bet regardless of whether a block was

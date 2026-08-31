@@ -382,6 +382,42 @@ and remains out — but by ~20%, not by 15×.)
 file cache warming to a file being rewritten hundreds of times a second. It does not change any conclusion,
 and it is the kind of monotone trend that would be a finding in a different context.
 
+#### ⚠ FOUND WHILE FIXING, NOT FIXED HERE — the continuity sentinel was neutered on this path
+
+Verifying that coalescing `OnSimBetSettled` could not break anything turned up something worse than a
+performance problem, and it is recorded here rather than fixed because it is a correctness change and does
+not belong bundled into a performance commit.
+
+`UserStatsService.NoteBalanceDiscontinuity` **drops the comparison baseline** — by design, so the next
+registered bet re-seeds instead of being compared across a declared jump. `ReseedWalletFromBankrollSource`
+calls it with reason `"wallet_reseed"`, and `OnSimBetSettled` called *that* **once per settled bet**.
+
+So the per-bet order was: `OnBetExecutedRegisterBet` sets the baseline → the signal fires → the baseline is
+dropped → repeat. **Every bet's baseline was destroyed before the next bet could be compared against it.
+For the entire delegated-autobet path, with DiceGame as the active scene, the continuity sentinel was
+comparing nothing.**
+
+> **This matters beyond performance.** `[BetJournal] UNDECLARED balance discontinuity` producing silence is
+> a load-bearing *result* in mini-plans 05 and 06 and in INC-003 — and CLAUDE.md states outright that its
+> silence "is evidence". On this path the silence was structural. **A sentinel that has been disarmed by a
+> UI subscriber reads exactly like a sentinel that found nothing** — which is the same failure the T0 boot
+> banner was added to prevent, arriving one layer further in: that banner proves the check was *compiled*,
+> and nothing proved it was *comparing*.
+>
+> The declaration is also spurious on this path. DiceGame's `_wallet` is a display copy; the journal's
+> writer during a delegated autobet is `SimulationService`'s own wallet. The reseed announces a jump on a
+> wallet that is not the one being audited.
+
+**Consequence for the very next run, stated in advance so it is not misread.** Coalescing moves the reseed
+from once per bet to once per frame, so roughly nine bets in ten are now genuinely compared. **If
+`[BetJournal] UNDECLARED balance discontinuity` appears, that is the sentinel working for the first time on
+this path — not a regression introduced by these fixes.** Treat any such line as a finding to investigate on
+its own merits.
+
+**Open, for the developer to schedule:** whether the reseed should declare a discontinuity at all while the
+autobet is delegated. Removing it unconditionally is not obviously safe — `ReseedWalletFromBankrollSource`
+has other callers, and for a manual bet DiceGame's wallet *is* the writer — so this needs its own look.
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved
