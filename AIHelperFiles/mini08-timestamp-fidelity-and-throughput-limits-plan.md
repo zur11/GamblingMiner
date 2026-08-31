@@ -209,6 +209,53 @@ Four properties are deliberate:
 at least three breakdowns (60,000 bets) → untick. Read the blocks in **the Godot editor's Output panel**
 (not the Debugger → Errors tab; these are `GD.Print`). The CSV is the durable copy.
 
+#### P1b's blind spot, PRE-REGISTERED before the run — an O(N) term this world is too young to show
+
+Found by reading the code while instrumenting it, and written down **before** the measurement so it cannot
+be retrofitted to whatever the numbers turn out to say.
+
+`PersistFinancialState(false)` runs on **every bet** and deep-copies the bankroll transfer-record list
+**twice**:
+
+1. `SimulationService.PersistFinancialState` — `_bankrollProgram.Records.Select(…).ToList()`
+2. `NetworkRoot.SetNodeFinancialState` → `state.CloneNormalized()` → `Clone()` →
+   `TransferRecords.Select(CloneTransferRecord).ToList()`
+
+So the segment costs **2N object allocations plus 2 list allocations per bet**, where `N` is the world's
+accumulated transfer-record count. `BankrollProgramService._records` is **uncapped** — the only operations
+on it are `Add` (one per auto-recharge) and `Clear` (on load/restore). N therefore rises monotonically for
+the life of a world and never falls.
+
+**Measured on the developer's live world (2026-08-30): `N = 5`.** At that size the term is a handful of
+small allocations and P1b will, correctly, report `PersistFinancialState` as cheap.
+
+> **That is the trap, and it is the point of pre-registering this.** A single measurement on a young world
+> cannot distinguish a constant from a linear term with a small argument. Reading "PersistFinancialState:
+> 0.4 µs, 3%" and concluding the segment is fine would be **exactly the wrong inference** — the same
+> reading at `N = 1,000` is 2,000 allocations per bet and would dominate every other segment combined.
+
+**This is a candidate explanation for a symptom already on record and never explained**: `PRIVATE_ROADMAP.md`
+§6's note that fluidity at 9000X *"decayed progressively over the last days of the playtest"*. A per-bet cost
+proportional to a monotonically growing counter has precisely that signature — gradual, cumulative,
+irreversible within a world, and invisible on any fresh one. **Candidate, not conclusion:** nothing has
+measured it, and CLAUDE.md's closing rule under Important Pattern 6 applies to this paragraph as much as to
+any other.
+
+**How to actually test it**, in ascending order of cost:
+
+1. **Read N off the world before each run** and record it beside the breakdown —
+   `user://bankroll_program_state.json`, `Records.length`. A cost note without its N is uninterpretable.
+2. **Two-point measurement.** Run P1b, note N; force N upward (lower the bankroll dose so auto-recharge
+   fires often, or run long) and re-run. If `PersistFinancialState` µs tracks N linearly, it is confirmed
+   with two points and no new instrument.
+3. **Only then** decide the fix. The obvious one — don't copy an append-only list on a hot path that never
+   reads it back — is cheap, but it is out of scope until measured, and a cap on `_records` would be a
+   *persisted-figure* change subject to Standing Convention 1.
+
+**Generalized, because the shape will recur:** *a per-bet cost measured once, on one world, prices that
+world's N and nothing else. When a hot path touches a collection, the measurement's unit is µs per bet **at
+a stated collection size** — record the size or the number means nothing later.*
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved
