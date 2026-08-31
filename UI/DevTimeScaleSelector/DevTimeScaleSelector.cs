@@ -114,6 +114,19 @@ namespace UI.DevTimeScaleSelector
 			toggle.AddThemeFontSizeOverride("font_size", 16);
 			toggle.Toggled += pressed => Scripts.Diagnostics.BetCostProfiler.Arm(pressed);
 			AddChild(toggle);
+
+			// Announce that the CONTROL exists, separately from the profiler announcing that it is armed.
+			// The first P1b attempt produced no [BetCost] output at all, and that silence had two possible
+			// causes which no amount of staring at the log could separate: the toggle was never pressed, or
+			// the toggle was never reachable in this scene's layout. One line here splits them — if this
+			// prints and no ARMED line follows, the control exists and was not used.
+			//
+			// This is the DEBUG-canary rule applied to a UI affordance rather than to a check: a control
+			// whose absence and whose non-use look identical in the log is not diagnosable.
+			GD.Print(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+				$"[BetCost] toggle built in this scene — tick '{toggle.Text}' beside the DEV time selector " +
+				$"to arm per-bet segment timing (reports every " +
+				$"{Scripts.Diagnostics.BetCostProfiler.ReportEveryBets:N0} player bets)."));
 		}
 
 		private void OnScaleSelected(long index)

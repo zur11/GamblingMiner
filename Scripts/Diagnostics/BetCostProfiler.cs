@@ -75,10 +75,22 @@ namespace Scripts.Diagnostics
 			"executeNextUs,registerBetUs,persistFinancialUs,moneyServicesUs,nonceAttemptUs,eventFanOutUs," +
 			"maxTotalUs,betsPerFrameAt60";
 
-		// How many bets accumulate before a report. Large enough that the report's own cost is noise; small
-		// enough that a 60-second run at a few hundred bets/s still produces several rows. A report is one
-		// GD.Print block and one CSV line — never per bet.
-		private const int ReportEveryBets = 20_000;
+		// How many bets accumulate before a report. A report is one GD.Print block and one CSV line — never
+		// per bet — so the cost of reporting is noise at any of these sizes, and the only real constraint is
+		// that the sample be large enough for a stable mean. 5,000 is abundant for that.
+		//
+		// It was 20,000 for one run, and that was a MISCALIBRATION against how a session is actually paced.
+		// The developer's natural unit of "let it run a while" is MINED BLOCKS, and in the measured world a
+		// block costs ~2,400 player bets — so 20,000 bets meant ~8 blocks per report and ~25 for the three
+		// the protocol asked for. At 5,000 a report lands roughly every other block, which is a length
+		// somebody will actually sit through.
+		//
+		// The general rule: a diagnostic's reporting period is denominated in the units the OPERATOR paces
+		// the session in, not merely in the units the measurement is taken in.
+		//
+		// PUBLIC because the toggle that arms this quotes it to the developer. Standing Convention 15: the
+		// value lives in exactly one place and every mention of it reads that place.
+		public const int ReportEveryBets = 5_000;
 
 		private static readonly long[] _ticks = new long[SegmentCount];
 		private static long _betTicks;
