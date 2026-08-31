@@ -205,9 +205,23 @@ Four properties are deliberate:
    between "no finding" and "never armed" — and a RELEASE build, where every entry point is stripped by
    `Conditional("DEBUG")`, counterfeits that silence exactly.
 
-**Run protocol.** DiceGame → set credits and DEV scale → start autobet → tick **⏱ Bet cost** → let it print
-at least three breakdowns (60,000 bets) → untick. Read the blocks in **the Godot editor's Output panel**
-(not the Debugger → Errors tab; these are `GD.Print`). The CSV is the durable copy.
+**Run protocol.** DiceGame → set credits and DEV scale → confirm `[BetCost] toggle built in this scene` in
+Output → tick **⏱ Bet cost** and confirm `[BetCost] ARMED` → **then** start the autobet → let it print at
+least three `[BetCost]` breakdowns → stop the autobet → untick. Read the blocks in **the Godot editor's
+Output panel** (not the Debugger → Errors tab; these are `GD.Print`). The CSV is the durable copy.
+
+**Arm before starting, not during — and the reason is not cosmetic.** At a high DEV scale the frame is
+saturated (§38.7 measured this world pinned near ~133 ms/frame, ~7 fps), so a click on the toggle lands late
+or not at all. Nothing disables it and it is **deliberately not being fixed** (developer's call,
+2026-08-30): it is a DEV control, and the protocol has no reason to press it mid-run. Arming first also
+captures from bet #1 instead of from wherever the click happened to land. The single consequence to carry
+forward: **disarming before a P2 sweep means stopping the autobet first** — which P2 does anyway, being its
+own run.
+
+*The first attempt at this protocol failed twice over, and both failures were in the INSTRUCTIONS rather
+than the instrument: it said "wait for 3 blocks" in a project where a block is a mined block, and it set a
+report period of 20,000 bets in a world where a mined block costs ~2,400 — so the three reports it asked for
+were ~25 blocks away. A protocol is part of the apparatus and is wrong in the same ways.*
 
 #### P1b's blind spot, PRE-REGISTERED before the run — an O(N) term this world is too young to show
 

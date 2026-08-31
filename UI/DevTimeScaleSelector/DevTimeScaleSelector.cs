@@ -96,6 +96,16 @@ namespace UI.DevTimeScaleSelector
 		// DEBUG-only, and absent rather than disabled in an exported build: the profiler's entry points are
 		// all Conditional("DEBUG"), so a RELEASE toggle would be a control wired to nothing — a lying
 		// control, which the ladder assert above exists to prevent in its own domain.
+		//
+		// KNOWN AND DELIBERATELY NOT FIXED (developer's call, 2026-08-30): it is effectively unclickable
+		// WHILE an autobet runs at a high DEV scale. Nothing disables it — ApplyRunLock does not touch this
+		// subtree — the frame is simply saturated (§38.7 measured this world pinned at ~133 ms/frame, i.e.
+		// ~7 fps), so a click lands late or not at all. Idle, it works normally.
+		//
+		// It does not need fixing because the protocol never asks for a mid-run press: arm BEFORE starting
+		// the autobet, which also captures from bet #1 rather than from wherever the click lands. The one
+		// consequence to remember is that DISARMING before a P2 throughput sweep means stopping the autobet
+		// first — which P2 does anyway, being a separate run.
 		[System.Diagnostics.Conditional("DEBUG")]
 		private void AddBetCostToggle()
 		{
