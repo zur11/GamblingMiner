@@ -690,14 +690,18 @@ public partial class SimulationService : Node
 		// delegated autobet running on a bot node is simply that bot's play (correct semantics, no longer an
 		// inconsistency with the comment); its settled bets also accrue in the casino's per-client book.
 		_bankroll?.SetBalance(_wallet.Balance);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.BankrollSetBalance);
+
 		_casinoSc?.ApplyBetResult(-(LastSettledBetEvent?.CreditedProfit ?? 0m));
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.CasinoApplyBetResult);
+
 		if (!_config.IsPlayerActive && LastSettledBetEvent != null)
 		{
 			_clientLedger ??= GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 			_clientLedger?.RegisterSettledBet(_config.ActiveNodeId, LastSettledBetEvent.BetAmount,
 				LastSettledBetEvent.CreditedProfit, LastSettledBetEvent.IsWin);
 		}
-		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.MoneyServices);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.ClientLedger);
 
 		// One nonce attempt per bet (1 bet = 1 attempt), routed by the active node's hardware allocation
 		// (individual pool → own chain; casino pool → casino chain). Real PoW on the shared chain.
@@ -720,8 +724,10 @@ public partial class SimulationService : Node
 
 		if (LastSettledBetEvent != null)
 			ClientBetSettled?.Invoke(_config.ActiveNodeId, _config.GameId, LastSettledBetEvent);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.ClientBetSettledEvent);
+
 		EmitSignal(SignalName.BetSettled);
-		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.EventFanOut);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.BetSettledSignal);
 		Scripts.Diagnostics.BetCostProfiler.EndBet();
 	}
 

@@ -47,32 +47,47 @@ namespace Scripts.Diagnostics
 			RegisterBet,
 			/// <summary>PersistFinancialState(false) — builds a NodeFinancialState and hands it to NetworkRoot.</summary>
 			PersistFinancial,
-			/// <summary>The three money services: bankroll SetBalance, casino ApplyBetResult, client ledger.</summary>
-			MoneyServices,
+			/// <summary>BankrollStateService.SetBalance — which calls SaveState(), a synchronous JSON write.
+			/// Split out of the old combined MoneyServices segment after round 1 measured that segment at
+			/// 67% of the whole bet: a two-call bundle cannot say WHICH call to fix.</summary>
+			BankrollSetBalance,
+			/// <summary>CasinoScBalanceService.ApplyBetResult — marks its own save dirty (no disk) and fires
+			/// BalanceChanged, so whatever this costs belongs to that event's subscribers.</summary>
+			CasinoApplyBetResult,
+			/// <summary>CasinoClientLedgerService.RegisterSettledBet — skipped entirely when the player's own
+			/// node is active, so on a player run this segment is expected to read ~0. It is measured anyway:
+			/// a segment assumed to be zero and never checked is how a cost hides.</summary>
+			ClientLedger,
 			/// <summary>RouteNonceAttempt — one real proof-of-work attempt, plus the block path when it hits.</summary>
 			NonceAttempt,
-			/// <summary>ClientBetSettled + the BetSettled Godot signal — the per-bet event fan-out, which
-			/// CLAUDE.md §38.7 names as the first suspect whenever a per-bet cost is larger than it looks.</summary>
-			EventFanOut,
+			/// <summary>The ClientBetSettled C# event alone.</summary>
+			ClientBetSettledEvent,
+			/// <summary>EmitSignal(BetSettled) — the Godot signal, marshalled into native and back out to
+			/// DiceGame.OnSimBetSettled. Split from the C# event for the same reason as the money bundle.</summary>
+			BetSettledSignal,
 		}
 
-		private const int SegmentCount = 6;
+		private const int SegmentCount = 9;
 
 		private static readonly string[] SegmentNames =
 		{
 			"ExecuteNext (dice+wallet+progression)",
 			"RegisterBet (journal + rollup)",
 			"PersistFinancialState",
-			"MoneyServices (bankroll+casino+ledger)",
+			"BankrollSetBalance (SYNC DISK WRITE)",
+			"CasinoApplyBetResult (BalanceChanged)",
+			"ClientLedger (skipped on player node)",
 			"NonceAttempt (PoW + block path)",
-			"EventFanOut (ClientBetSettled + signal)",
+			"ClientBetSettled (C# event)",
+			"BetSettled (Godot signal → DiceGame)",
 		};
 
 		public const string TracePath = "user://logs/bet_cost_trace.csv";
 
 		private const string Header =
 			"reportUtc,bets,totalUsPerBet,accountedUsPerBet,unaccountedUsPerBet," +
-			"executeNextUs,registerBetUs,persistFinancialUs,moneyServicesUs,nonceAttemptUs,eventFanOutUs," +
+			"executeNextUs,registerBetUs,persistFinancialUs,bankrollSetBalanceUs,casinoApplyBetResultUs," +
+			"clientLedgerUs,nonceAttemptUs,clientBetSettledUs,betSettledSignalUs," +
 			"maxTotalUs,betsPerFrameAt60";
 
 		// How many bets accumulate before a report. A report is one GD.Print block and one CSV line — never
@@ -250,14 +265,22 @@ namespace Scripts.Diagnostics
 				// Real wall-clock, deliberately: this is DEV telemetry about the MACHINE, not game-world
 				// state, and CLAUDE.md's game-time rule names exactly that exemption. A game-time stamp
 				// here would be actively misleading — the quantity measured is real microseconds.
-				string row = string.Format(
-					CultureInfo.InvariantCulture,
-					"{0},{1},{2:F3},{3:F3},{4:F3},{5:F3},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F1},{12:F0}\n",
-					DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
-					bets, totalUs, accountedUs, unaccountedUs,
-					perSegment[0], perSegment[1], perSegment[2],
-					perSegment[3], perSegment[4], perSegment[5],
-					maxUs, betsPerFrameAt60);
+				// Built by LOOPING over the segments rather than by a fixed placeholder list. The first
+				// version hardcoded six holes, and splitting two segments into five silently left the row
+				// misaligned against its own header until it was caught by hand. A writer whose column
+				// count is stated twice will eventually state it two different ways.
+				var row = new StringBuilder();
+				row.Append(string.Create(CultureInfo.InvariantCulture,
+					// Real wall-clock, deliberately: this is DEV telemetry about the MACHINE, not
+					// game-world state, and CLAUDE.md's game-time rule names exactly that exemption. A
+					// game-time stamp here would be actively misleading — the quantity is real microseconds.
+					$"{DateTime.UtcNow:O},{bets},{totalUs:F3},{accountedUs:F3},{unaccountedUs:F3}"));
+				for (int i = 0; i < SegmentCount; i++)
+				{
+					row.Append(string.Create(CultureInfo.InvariantCulture, $",{perSegment[i]:F3}"));
+				}
+				row.Append(string.Create(CultureInfo.InvariantCulture,
+					$",{maxUs:F1},{betsPerFrameAt60:F0}\n"));
 
 				using FileAccess file = FileAccess.Open(TracePath, FileAccess.ModeFlags.ReadWrite);
 				if (file == null)
@@ -266,7 +289,7 @@ namespace Scripts.Diagnostics
 				}
 
 				file.SeekEnd();
-				file.StoreString(row);
+				file.StoreString(row.ToString());
 			}
 			catch (Exception)
 			{

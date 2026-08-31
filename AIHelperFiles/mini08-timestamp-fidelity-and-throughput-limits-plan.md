@@ -270,6 +270,73 @@ any other.
 world's N and nothing else. When a hot path touches a collection, the measurement's unit is µs per bet **at
 a stated collection size** — record the size or the number means nothing later.*
 
+#### P1b — RESULT, round 1 (2026-08-30, 5 credits × 9000X, N = 5, three 5,000-bet windows)
+
+Means over the three windows. They agree closely (total spread 1,229–1,388 µs), so this is a stable
+reading, not a sample of noise.
+
+| Segment | µs/bet | share |
+|---|---:|---:|
+| **MoneyServices** (bankroll + casino + ledger) | **872.7** | **66.8%** |
+| **EventFanOut** (`ClientBetSettled` + `BetSettled` signal) | **358.9** | **27.5%** |
+| NonceAttempt (PoW + block path) | 35.6 | 2.7% |
+| RegisterBet (journal + rollup) | 22.0 | 1.7% |
+| ExecuteNext (dice + wallet + progression) | 9.2 | 0.7% |
+| PersistFinancialState | 8.2 | 0.6% |
+| unaccounted | 0.2 | 0.02% |
+| **TOTAL** | **1,306.9** | |
+
+**A bet costs 1.31 MILLISECONDS.** Worst single bet 204 ms, 75 ms, 68 ms in the three windows — the
+block-mining bets, amortized correctly into the mean.
+
+**Four findings, in order of consequence.**
+
+**1. `MaxBetsPerFrame = 10` is not conservative. It is almost exactly right — and §3 of this plan had the
+sign of its error backwards.** §3 supposed the constant might be "two orders of magnitude conservative". At
+1.31 ms a 16.67 ms frame fits **12.8 bets if it does nothing else**, so 10 is at ~78% of an *unshareable*
+budget the frame must also spend on rendering, four bot runners, the founders, the scheduled network and
+every UI subscriber. That is why frames blow out to ~133 ms (§38.7) rather than despite it. **The guess was
+right for reasons nobody knew, which is not the same as being justified — and the plan's premise that it was
+loose was wrong.**
+
+**2. 94.2% of a bet is two segments, and the dominant one is a synchronous disk write.**
+`BankrollStateService.SetBalance` calls `SaveState()` **unconditionally on every call**, which opens
+`bankroll_state.json` in `ModeFlags.Write`, serializes, writes and closes. `SimulationService` calls it once
+per bet. `CasinoScBalanceService.ApplyBetResult`, by contrast, sets `_saveDirty = true` and does no I/O —
+the correct shape, in the same segment, which is why round 2 splits them.
+
+**3. Therefore the headline answer: 99 × 9000X is unreachable today by ~15×, and the reason is now named
+rather than guessed.** Demand is 148 bets/frame; supply is 12.8. But the ~15× is not distributed across the
+engine — it is concentrated in work that has no business being per-bet. If the per-bet disk write and the
+event fan-out were removed entirely, a bet would cost **~75 µs ⇒ ~220 bets/frame**, which puts the target
+*inside* reach with margin. **The prize is a 17× throughput improvement, and it is not in the arithmetic.**
+
+**4. The profiler's own overhead is 0.2 µs — 0.016% of a bet.** The `unaccounted` residue was built to
+expose exactly this, and it does. **This retracts the caution written into the profiler and this plan that
+it must be disarmed before P2.** That caution was reasonable when unmeasured and is now measured: leaving it
+armed during a P2 sweep perturbs the frontier by one part in six thousand. *A precaution stated without a
+measurement is a guess like any other — this one happened to be three orders of magnitude too timid.*
+
+**The `ExecuteNext` cross-check FAILED, and it does not matter — say both halves.** P1a predicted 1.768 µs;
+the engine reads **9.2 µs**, 5.2× higher. The leading cause is that the Godot editor runs the game with a
+debugger attached, which P1a's console harness did not. **It changes no decision** — at 0.7% of the bet, the
+arithmetic is exonerated more strongly than P1a claimed, not less — but the harness's absolute figure is
+**not** transferable to the engine and must not be quoted as if it were. *A cross-check that fails in the
+direction that strengthens your conclusion is still a failed cross-check.*
+
+**The pre-registered O(N) prediction stands, unresolved.** `PersistFinancialState` = **8.2 µs at N = 5**,
+cheap exactly as predicted, and that still does not absolve it. Two-point measurement is still required.
+
+**Round 2 (built, awaiting a run): the two dominant segments are split into five** — `BankrollSetBalance`,
+`CasinoApplyBetResult`, `ClientLedger`, `ClientBetSettled`, `BetSettled` — because a two-call bundle at 67%
+cannot say which call to fix.
+
+**Scope caveat for P2, found while reading the bot path.** The profiler instruments **only**
+`ExecutePlayerBetOnce`. `ExecuteBotBet` is a parallel path, runs up to `MaxBetsPerFrame` **per bot** for four
+bots, and ends with `SaveBotFinancialState(runner)` on every bet — the same per-bet-write shape. So the
+frame's real bet load may be ~5× what this measurement covers. **P2 cannot be read as a whole-engine figure
+until the bot path is priced too.**
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved
