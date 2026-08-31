@@ -337,6 +337,51 @@ bots, and ends with `SaveBotFinancialState(runner)` on every bet — the same pe
 frame's real bet load may be ~5× what this measurement covers. **P2 cannot be read as a whole-engine figure
 until the bot path is priced too.**
 
+#### P1b — RESULT, round 2 (2026-08-30, same world, 4 full windows + 1 partial)
+
+Means over the four full 5,000-bet windows. **Every one of round 1's five predictions was confirmed**,
+which matters as much as the numbers: the diagnosis was written down before the split existed.
+
+| Segment | µs/bet | share | predicted |
+|---|---:|---:|---|
+| **BankrollSetBalance** (sync disk write) | **933.9** | **66.0%** | ~850 ✓ |
+| **BetSettled** (Godot signal → DiceGame) | **382.7** | **27.1%** | ~350 ✓ |
+| NonceAttempt | 47.3 | 3.3% | — |
+| RegisterBet | 24.5 | 1.7% | — |
+| ExecuteNext | 11.2 | 0.8% | — |
+| PersistFinancialState | 10.1 | 0.7% | cheap at N=5 ✓ |
+| CasinoApplyBetResult | 3.9 | 0.3% | few µs ✓ |
+| ClientBetSettled (C# event) | 0.5 | 0.0% | few µs ✓ |
+| ClientLedger | 0.2 | 0.0% | ~0 ✓ |
+| unaccounted | 0.2 | 0.0% | — |
+| **TOTAL** | **1,414.4** | | |
+
+**Two calls are 93.1% of a bet. Everything else together is 97.9 µs.**
+
+**The split earned its keep in both directions.** It confirmed the disk write, and it *exonerated* the C#
+event: `ClientBetSettled` is **0.5 µs** while the Godot signal beside it is **382.7 µs** — a 735× gap that
+the old combined `EventFanOut` segment would have left as a shared 359 µs suspicion over both. **The
+expensive thing is not "events"; it is one subscriber, `DiceGame.OnSimBetSettled`,** which per bet reseeds
+the wallet, updates two panel fields, and calls `UpdateBlockchainStatusUI()` → `BuildMiningStatusLine()` —
+recomputing live difficulty, reading the chain tip, counting the mempool and rebuilding a string, **up to 10
+times per frame, of which only the last is ever seen.** That is CLAUDE.md §38.7's "coalesce at the consumer"
+verbatim.
+
+**What the fixes are worth, arithmetically.** Non-dominant work is 97.9 µs. Throttling the bankroll write
+takes its per-bet cost to ≈0; coalescing DiceGame's refresh to once per frame amortizes 382.7 µs over the
+frame's bets (≈38 µs/bet at 10/frame). **⇒ ~136 µs/bet, ~123 bets/frame — a ~10× improvement.**
+
+**And that settles the developer's actual goal.** 99 credits × 600X demands `99 × 6 ÷ 60 =` **9.9 bets per
+frame**. Today that costs 14.0 ms of a 16.67 ms frame on player bets *alone* — which is why it is not fluid.
+After the fixes it costs **1.35 ms, ~8% of the frame.** *600X at the hardware cap is not a stretch goal; it
+is comfortably inside reach once two calls stop doing per-bet work.* (99 × 9000X would still need ~20 ms
+and remains out — but by ~20%, not by 15×.)
+
+**A drift worth naming, not chasing:** the total fell monotonically across the five windows
+(1,470 → 1,409 → 1,393 → 1,385 → 1,314), tracking `BankrollSetBalance` (966 → 858). Consistent with the OS
+file cache warming to a file being rewritten hundreds of times a second. It does not change any conclusion,
+and it is the kind of monotone trend that would be a finding in a different context.
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved
