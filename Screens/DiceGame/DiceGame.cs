@@ -1102,7 +1102,7 @@ public partial class DiceGame : Control, IBetEventSource
 			SetActiveNodeSelectorLocked(false);
 			ApplyRunLock(false);
 			RefreshNodeSelectorReadyDots(); // D-M2.9
-			ReseedWalletFromBankrollSource();
+			ReseedWalletAcrossTransition(); // delegated run ended — this wallet may write the journal again
 			RefreshCalculatorFromGameSettings();
 			return;
 		}
@@ -1207,10 +1207,44 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateStrategySaveLoadButtons();
 	}
 
-	private void ReseedWalletFromBankrollSource()
+	/// <summary>
+	/// Reseed across a TRANSITION — the delegated autobet started, stopped, or the scene rebound to a
+	/// running one. Declares the jump, because after a transition this wallet may become the journal's
+	/// writer again (a manual bet), and its balance has just moved wholesale.
+	/// </summary>
+	private void ReseedWalletAcrossTransition()
 	{
 		// Mini-plan 05 D3: a reseed replaces the wallet balance wholesale, so it is a declared jump.
 		_userStatsService?.NoteBalanceDiscontinuity("wallet_reseed");
+		ReseedWalletFromBankrollSource();
+	}
+
+	/// <summary>
+	/// The same reseed WITHOUT declaring a discontinuity, for the steady state of a delegated autobet.
+	///
+	/// <para><b>Why the declaration had to go, mini-plan 08 P1.</b>
+	/// <see cref="UserStatsService.NoteBalanceDiscontinuity"/> DROPS the journal's comparison baseline — by
+	/// design, so the next registered bet re-seeds instead of being compared across a declared jump. This
+	/// reseed ran once per settled bet, immediately after <c>OnBetExecutedRegisterBet</c> had just set that
+	/// baseline. So every bet's baseline was destroyed before the next bet could be compared against it, and
+	/// **the continuity sentinel was comparing nothing at all on the entire delegated-autobet path.**</para>
+	///
+	/// <para>Its silence is load-bearing in mini-plans 05 and 06 and in INC-003, and CLAUDE.md states that
+	/// the silence "is evidence". Here it was structural. <b>A sentinel disarmed by a UI subscriber reads
+	/// exactly like a sentinel that found nothing</b> — the same failure the T0 boot banner exists to
+	/// prevent, one layer further in: that banner proves the check is COMPILED, and nothing proved it was
+	/// COMPARING.</para>
+	///
+	/// <para><b>Why dropping it is safe, verified rather than assumed.</b> This wallet is a DISPLAY COPY
+	/// while the autobet is delegated; the journal's writer is <c>SimulationService</c>'s own wallet, so a
+	/// jump here is not a jump in the audited series. And every genuine discontinuity on that path is
+	/// already declared at its source by <c>SimulationService</c>: <c>autobet_session_wallet</c> when the
+	/// session wallet is built, <c>manual_return</c> on a withdrawal, and <c>deposit</c> (via
+	/// <c>RegisterDeposit</c>) on every auto-recharge. This declaration added no coverage; it only destroyed
+	/// the baseline.</para>
+	/// </summary>
+	private void ReseedWalletFromBankrollSource()
+	{
 		decimal bankroll = _bankrollStateService?.CurrentBalance ?? _wallet?.Balance ?? 0m;
 		_wallet?.SetBalanceForTimeTravel(bankroll);
 		UpdateBalanceUI();
@@ -1247,6 +1281,10 @@ public partial class DiceGame : Control, IBetEventSource
 			_lastLoggedBetEvent = settled;
 			BetExecuted?.Invoke(GameId, settled);
 		}
+		// Marked HERE rather than in SimulationService because only this scene knows where the fan-out ends.
+		// Legal despite living in a different file: EmitSignal dispatches synchronously, so this closes
+		// inside the same bet the profiler is timing. See the segment's own note for what it is settling.
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.BetHistoryFeed);
 
 		_betSettledUiDirty = true;
 	}
@@ -1275,7 +1313,7 @@ public partial class DiceGame : Control, IBetEventSource
 		SetActiveNodeSelectorLocked(false);
 		ApplyRunLock(false);
 		RefreshNodeSelectorReadyDots(); // D-M2.9: the run ended — dots fall back to "has a strategy".
-		ReseedWalletFromBankrollSource();
+		ReseedWalletAcrossTransition(); // delegated run ended — this wallet may write the journal again
 		_strategyPanel.SetAutoPaused(false);
 		_strategyPanel.SetAutoRunning(false);
 		_strategyPanel.SetManualEnabled(true);
@@ -1340,7 +1378,7 @@ public partial class DiceGame : Control, IBetEventSource
 		// has to be re-asserted here — this is exactly where it was missing.
 		ApplyRunLock(true);
 		RefreshNodeSelectorReadyDots();
-		ReseedWalletFromBankrollSource();
+		ReseedWalletAcrossTransition(); // scene rebound onto a running sim — a wholesale rebind, not steady state
 		_resultValue.Text = "Auto running (background).";
 	}
 

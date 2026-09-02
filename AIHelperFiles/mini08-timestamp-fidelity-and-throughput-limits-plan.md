@@ -466,11 +466,23 @@ run on this path where the sentinel's silence is evidence rather than an artifac
 > saturation was found and removed first, and the constant is what remains. That is the order the rule
 > prescribes, not an exception to it.
 
-**The next target is named and measured:** the remaining 189.7 µs is 74% of what a bet now costs, and it is
-two UI containers appending a row each, per bet, to displays capped at 100 entries — at 450 bets/s, ~78% of
-those rows are created and evicted without ever being drawn. Batching a frame's appends into one relayout
-would keep every row and remove the per-append overhead. Prior art on these two containers (pooling, the
-100-entry cap) is `ProjectDesignManual.md` §38.8–38.9.
+**The next target is named:** the remaining 189.7 µs is 74% of what a bet now costs, and it is
+`EmitSignal` plus two UI containers each doing a `Setup()` and a `MoveChild(item, 0)` per bet.
+
+**Retracted, from the previous version of this paragraph: "~78% of those rows are created and evicted
+without ever being drawn."** That is false, and reading the containers is what showed it. Both are already
+POOLED — nothing is created per bet — and at 450 bets/s a row survives 100 bets ≈ 0.22 s ≈ **13 frames**, so
+every row is genuinely drawn. The waste is not un-drawn rows; it is **per-bet layout churn inside one
+frame** — up to seven `MoveChild` re-sorts of two containers where one would do. *The claim was invented to
+make the number feel wasteful before anyone had looked at the code that produces it.*
+
+**And the fix is not chosen yet, deliberately.** The per-bet work is `Setup()` (label/text writes) and
+`MoveChild()` (container re-sort + relayout), and those have different fixes. Reading the two files cannot
+say which dominates, so a `BetHistoryFeed` segment was added — marked from inside
+`DiceGame.OnSimBetSettled`, which is legal because `EmitSignal` dispatches synchronously — to split the
+container work from the signal's own marshalling. **One short run decides which of the two to attack, rather
+than optimising one of them blind.** Prior art on these containers (pooling, the 100-entry cap) is
+`ProjectDesignManual.md` §38.8–38.9.
 
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 

@@ -62,12 +62,22 @@ namespace Scripts.Diagnostics
 			NonceAttempt,
 			/// <summary>The ClientBetSettled C# event alone.</summary>
 			ClientBetSettledEvent,
-			/// <summary>EmitSignal(BetSettled) — the Godot signal, marshalled into native and back out to
-			/// DiceGame.OnSimBetSettled. Split from the C# event for the same reason as the money bundle.</summary>
+			/// <summary>The bet-history fan-out inside DiceGame.OnSimBetSettled — BetExecuted → the two
+			/// pooled UI containers, each doing a Setup() and a MoveChild(). Marked from DiceGame itself,
+			/// which is legal because OnSimBetSettled runs SYNCHRONOUSLY inside the EmitSignal below, so it
+			/// still closes in bet order.
+			///
+			/// Split off because P1c left BetSettled at 189.7 µs — 74% of what a bet now costs — and reading
+			/// the two containers could not settle whether the cost is Setup (text/label writes) or
+			/// MoveChild (container re-sort and relayout). Those have different fixes, so guessing would
+			/// mean optimising one of them blind.</summary>
+			BetHistoryFeed,
+			/// <summary>EmitSignal(BetSettled) MINUS the segment above — the Godot signal's own marshalling
+			/// into native and back, plus OnSimBetSettled's dedupe and dirty-flag set.</summary>
 			BetSettledSignal,
 		}
 
-		private const int SegmentCount = 9;
+		private const int SegmentCount = 10;
 
 		private static readonly string[] SegmentNames =
 		{
@@ -79,7 +89,8 @@ namespace Scripts.Diagnostics
 			"ClientLedger (skipped on player node)",
 			"NonceAttempt (PoW + block path)",
 			"ClientBetSettled (C# event)",
-			"BetSettled (Godot signal → DiceGame)",
+			"BetHistoryFeed (2 pooled UI containers)",
+			"BetSettled (signal marshalling + rest)",
 		};
 
 		public const string TracePath = "user://logs/bet_cost_trace.csv";
@@ -87,7 +98,7 @@ namespace Scripts.Diagnostics
 		private const string Header =
 			"reportUtc,bets,totalUsPerBet,accountedUsPerBet,unaccountedUsPerBet," +
 			"executeNextUs,registerBetUs,persistFinancialUs,bankrollSetBalanceUs,casinoApplyBetResultUs," +
-			"clientLedgerUs,nonceAttemptUs,clientBetSettledUs,betSettledSignalUs," +
+			"clientLedgerUs,nonceAttemptUs,clientBetSettledUs,betHistoryFeedUs,betSettledSignalUs," +
 			"maxTotalUs,betsPerFrameAt60";
 
 		// How many bets accumulate before a report. A report is one GD.Print block and one CSV line — never
