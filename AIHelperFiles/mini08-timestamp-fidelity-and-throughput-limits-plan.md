@@ -484,6 +484,55 @@ container work from the signal's own marshalling. **One short run decides which 
 than optimising one of them blind.** Prior art on these containers (pooling, the 100-entry cap) is
 `ProjectDesignManual.md` §38.8–38.9.
 
+#### P1d — the signal path split, and the sentinel's first real result (2026-08-30, 3 full windows)
+
+| | µs/bet | share of the pair |
+|---|---:|---:|
+| **BetHistoryFeed** (2 pooled UI containers) | **215.8** | **98.7%** |
+| BetSettled (Godot signal marshalling + rest) | 2.9 | 1.3% |
+
+**Unambiguous.** The Godot signal itself is ~3 µs; the entire cost is `BetHistoryContainer` and
+`PreviousWinnerNumbersGrid` doing a `Setup()` and a `MoveChild()` each, per bet. Whatever gets optimised
+next, it is not the event system — which is the second time this plan's segment-splitting has cleared a
+suspect that a coarser measurement would have left condemned.
+
+**The continuity sentinel is silent, and it is now genuinely comparing every bet on this path.** Not six in
+seven, as in P1c — the spurious `wallet_reseed` declaration is gone entirely from the delegated steady
+state. This is the strongest evidence the journal has ever had on this path, and it says the journal is
+continuous.
+
+**An unexplained drift, reported rather than smoothed.** Total per-bet cost rose from 257.4 µs (P1c) to
+296.4 µs (P1d) on the same world and configuration, and both runs also rose *within* themselves. The added
+mark cannot account for it (~0.02 µs). No conclusion changes at this magnitude, and nothing here is being
+chased — but **comparisons should be made within a run, not across them**, and if this trend continues past
+a few hundred µs it becomes a finding of its own.
+
+#### The goal is already met — stop optimising and go verify it
+
+At **296 µs/bet**, the developer's target costs:
+
+| target | bets/frame | cost/frame | share of 16.67 ms |
+|---|---:|---:|---:|
+| 99 credits × 600X | 9.9 | 2.93 ms | **17.6%** |
+
+**That is the goal, and it fits.** The remaining 215.8 µs in the UI containers is real and worth taking
+eventually, but it is now an OPTIMISATION rather than a blocker — and this plan's own §38.7 discipline cuts
+both ways: *measure before optimising* also means *stop when the measurement says you are done.* Continuing
+to tune a number that already clears the requirement is how a performance investigation turns into a
+performance hobby.
+
+What remains before the target can actually be run:
+
+1. **`MaxBetsPerFrame` must rise.** 99 × 600X needs 9.9 of the 10 available — it fits with zero margin, so
+   any frame that runs slightly long drops bets and `Sim%` dips below 100. At 296 µs, 20 bets/frame is
+   5.9 ms (35%), which is a defensible cap with real headroom.
+2. **The throughput can be validated WITHOUT buying 94 hardware credits.** Demand is `credits ×
+   DevTimeScale`, so **7 credits × 9000X = 630 bets/s = 10.5 bets/frame** puts the engine in the same
+   regime as 99 × 600X (594 bets/s, 9.9/frame) for a 40% power increase instead of 20×. What 99 credits
+   changes that this does not is the *game-time bet spacing* (1.01 vs 14.3 game-seconds) — which matters to
+   **P3**, not to throughput — and the mining power, which perturbs the world's difficulty permanently.
+   *Buying the 94 credits is a gameplay decision, not a measurement requirement.*
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved

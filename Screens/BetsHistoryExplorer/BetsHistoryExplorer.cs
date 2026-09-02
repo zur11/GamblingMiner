@@ -246,12 +246,24 @@ public partial class BetsHistoryExplorer : Control
 	//
 	// MEASURED against the developer's 196k-record journal (playtest 1): at 10x the cursor covers 1000
 	// game-seconds per real second at ~0.047 bets/game-second, i.e. ~47 bets/s — 0.78 per frame at 60 fps.
-	// The one thing that can spike it is a SAME-TIMESTAMP GROUP, which must be emitted whole in one frame,
-	// and those are capped by construction: `SimulationService.MaxBetsPerFrame = 10` bets settle per frame
-	// while the calendar advances once, so at most 10 bets can share an instant. Sampled over 8,000
-	// consecutive records: 95.7% of groups are a single bet, and the largest group in the journal is
-	// exactly 10 (3.4% of groups, carrying 25% of the bets). **So at 5 credits this budget cannot bind** —
-	// 25 is 2.5x the worst spike the sim is able to produce. See ReportEmitBudgetBound.
+	// The one thing that can spike it is a SAME-TIMESTAMP GROUP, which must be emitted whole in one frame.
+	// Sampled over 8,000 consecutive records of the 196k journal: 95.7% of groups are a single bet, and the
+	// largest is exactly 10 (3.4% of groups, carrying 25% of the bets).
+	//
+	// ⚠ THE PREMISE BEHIND THAT 10 IS RETIRED, and re-derived here rather than left to rot (Standing
+	// Convention 12/13). It used to read "capped by construction: MaxBetsPerFrame = 10 bets settle per frame
+	// while the calendar advances once, so at most 10 can share an instant". Two things have since moved:
+	//
+	//   • Mini-plan 08 §2 fixed the WRITER. Each bet settled in a frame is now back-dated by its own
+	//     interval, so newly written records contain **no same-timestamp groups at all**. The spike this
+	//     budget guards against is no longer produced.
+	//   • `MaxBetsPerFrame` is 20, not 10 — so the old sentence, taken literally, would now claim a worst
+	//     spike of 20 against a budget of 25 (1.25x, not 2.5x) and look alarming for no reason.
+	//
+	// **The budget is still safe, but for a different reason than the one originally written.** Groups of up
+	// to 10 survive PERMANENTLY in journals written before the fix (mini-plan 08 §5 refuses to rewrite
+	// history), and 25 covers those with the same 2.5x margin it always had. It is not covering a live
+	// producer any more; it is covering the archive. See ReportEmitBudgetBound.
 	private const int MaxAppendRowsPerFrame = 25;
 
 	// The requested-vs-actual readout (§6.2). Measured over a window rather than per frame because the

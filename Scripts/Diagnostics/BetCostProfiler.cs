@@ -9,11 +9,11 @@ namespace Scripts.Diagnostics
 	/// <summary>
 	/// Mini-plan 08 P1 — prices ONE BET, segment by segment, inside the running engine.
 	///
-	/// <para><b>Why this exists at all.</b> <c>SimulationService.MaxBetsPerFrame</c> is 10. That number is a
-	/// CONSTANT, not a measurement — nobody has ever timed a bet — and it is the binding constraint on the
+	/// <para><b>Why this exists at all.</b> <c>SimulationService.MaxBetsPerFrame</c> was a CONSTANT with
+	/// nothing behind it — nobody had ever timed a bet — while being the binding constraint on the
 	/// developer's 99-credits × high-scale target (mini-plan 08 §3). CLAUDE.md's closing rule under
 	/// Important Pattern 6 is that a cost note is a measurement or it is a guess wearing a measurement's
-	/// clothes. This is the measurement.</para>
+	/// clothes. This is the measurement, and that constant now cites it.</para>
 	///
 	/// <para><b>Why it could not be desk work.</b> P1 was specified as a throwaway console project. Half of
 	/// <c>ExecutePlayerBetOnce</c> is reachable that way — the dice roll, the wallet, the decimal arithmetic,

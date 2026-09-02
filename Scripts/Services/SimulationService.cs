@@ -103,7 +103,28 @@ public partial class SimulationService : Node
 		return Math.Clamp((int)(accumulatorSeconds / interval), 1, MaxBetsPerFrame);
 	}
 
-	private const int MaxBetsPerFrame = 10;
+	// 10 → 20 (mini-plan 08 P1, 2026-08-30). THE FIRST TIME THIS NUMBER HAS BEEN A MEASUREMENT.
+	//
+	// It was 10 for its whole life with nothing behind it, and P1's §3 assumed it was loosely conservative.
+	// It was not: at the 1,414 µs a bet cost before P1's fixes, a 16.67 ms frame fit **12.8 bets if it did
+	// nothing else**, so 10 was at ~78% of an unshareable budget. The constant was accidentally close to
+	// right, which is not the same as justified.
+	//
+	// After P1 fixed the two per-bet costs that were 93% of a bet (the bankroll disk write and DiceGame's
+	// per-bet UI rebuild), a bet costs **296 µs measured**. 20 bets is then 5.9 ms — 35% of the frame — which
+	// leaves real headroom for rendering, the bot runners, the founders and the scheduled network, all of
+	// which draw from the same 16.67 ms.
+	//
+	// **Why raising it is legitimate here and is NOT the move §38.7 forbids.** That rule says a low `Sim%`
+	// means "find what is eating the frame", never "raise MaxBetsPerFrame" — because handing a saturated
+	// frame more work makes it worse. The saturation was found and removed FIRST; this constant is what
+	// remained binding afterwards. Order is the whole difference, and it is why the number may move now and
+	// could not before.
+	//
+	// The immediate consumer: 99 hardware credits at DevTimeScale ×6 (600X) demands 9.9 bets/frame, which
+	// fits inside 10 with no margin at all — any frame that runs slightly long drops bets and the clock
+	// throttles. 20 gives that target somewhere to breathe.
+	private const int MaxBetsPerFrame = 20;
 
 	// Mini-plan 08 P1 — BetCostProfiler prints the measured per-bet cost next to the constant that is
 	// supposed to be justified by it, so a report can be read without opening this file. Read-only and

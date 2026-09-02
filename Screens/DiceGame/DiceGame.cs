@@ -1253,7 +1253,7 @@ public partial class DiceGame : Control, IBetEventSource
 	// Fired by SimulationService after each background player bet (only while DiceGame is on screen).
 	// Mini-plan 08 P1 — MEASURED at 382.7 µs per bet, 27.1% of a 1,414 µs bet, second only to the bankroll
 	// disk write (four 5,000-bet windows, 2026-08-30). It fires once per settled bet, and SimulationService
-	// settles up to MaxBetsPerFrame bets in a single frame — so this ran up to ten times per frame and
+	// settles up to MaxBetsPerFrame bets in a single frame — so this ran once per settled bet and
 	// **only the last run's output was ever drawn.** The other nine rebuilt the blockchain status line,
 	// recomputing live difficulty, reading the chain tip and counting the mempool, to paint pixels that were
 	// overwritten in the same frame before anyone saw them.
