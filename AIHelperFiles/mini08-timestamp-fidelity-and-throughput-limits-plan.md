@@ -533,6 +533,50 @@ What remains before the target can actually be run:
    **P3**, not to throughput — and the mining power, which perturbs the world's difficulty permanently.
    *Buying the 94 credits is a gameplay decision, not a measurement requirement.*
 
+#### ✅ P1e — THE TARGET REGIME RUNS AT Sim 100% (2026-08-30, 7 credits × 9000X, 7 full windows)
+
+**`Sim:` held at a fixed 100% for the whole minute.** 7 credits × ×90 = **630 bets/s = 10.5 bets/frame**,
+which is the same engine regime as **99 credits × 600X** (594 bets/s, 9.9/frame) — reached for the price of
+2 hardware credits instead of 94, and a 40% power increase instead of 20×.
+
+Per-bet mean **233 µs**; `BetHistoryFeed` ~178 µs (76%); ceiling 68–81 bets/frame against the 20 now
+allowed. **The developer's goal is met and demonstrated, not merely projected.**
+
+> **`Sim%` is the result here, and it does not depend on the profiler.** `CalendarTimeService.SimulationThrottle`
+> is computed by the bet engine from what it retained, entirely independently of `BetCostProfiler`. So the
+> instrument bug below cannot touch this conclusion — which is the only reason the conclusion survives it.
+
+#### ⚠ The profiler was mis-attributing, and its own residue is what caught it
+
+**`unaccounted` went NEGATIVE** — −7.1 µs (−3.0%) and −16.0 µs (−6.5%) in two of the seven windows. That is
+arithmetically impossible when the parts are subsets of the whole, so the parts were not subsets.
+
+**Cause.** `SimulationService` emits `BetSettled` from **four** sites and only one is inside a bet; the other
+three are the auto-recharge restart and two manual-transfer paths. All four reach
+`DiceGame.OnSimBetSettled`, which marks `BetHistoryFeed`. A mark arriving outside a bet attributed
+`now − _segmentStart` — an interval reaching back to the *previous* bet — to that segment, with no bet total
+to absorb it.
+
+**Fixed** with an `_inBet` flag set by `BeginBet`, cleared by `EndBet`, honoured by `Mark`, and cleared by a
+new `AbortBet()` on the insufficient-balance path — which matters precisely because the auto-recharge emit
+follows that abort immediately.
+
+**Blast radius, stated rather than waved away.** `BetHistoryFeed` has been over-attributed in every reading
+since it was introduced (P1d and P1e), by roughly the size of the residue — order 5–15 µs of ~180. It does
+not move any conclusion: the segment still dominates, the goal still clears, and no fix was chosen on the
+strength of the contaminated digits. Earlier rounds (P1a–P1c) had no mark inside `DiceGame` and are
+unaffected.
+
+> **The residue earned its entire keep here.** It exists because a breakdown that forces its parts to sum to
+> its whole cannot reveal its own overhead — and the same property turned an invisible mis-attribution into
+> an impossible number on screen. **A profiler that normalised its segments would have reported a plausible,
+> wrong attribution, and nothing would ever have said otherwise.** Build the check that can print an
+> impossible value; it is the only kind that can tell you it is broken.
+
+*Second-order note: `[BetCost] toggle built in this scene` printed twice this run — DiceGame was entered,
+left for the hardware shop, and re-entered. Benign, and a useful confirmation that the announcement tracks
+scene lifetime.*
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved

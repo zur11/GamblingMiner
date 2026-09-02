@@ -127,6 +127,21 @@ namespace Scripts.Diagnostics
 		private static long _betStart;
 		private static long _segmentStart;
 
+		// TRUE only between BeginBet and EndBet. Without it, a Mark arriving outside a bet attributes
+		// `now - _segmentStart` — an interval stretching back to the LAST bet — to a segment, while no bet
+		// total absorbs it.
+		//
+		// This is not hypothetical: it was caught by the `unaccounted` residue going NEGATIVE (−7.1 µs and
+		// −16.0 µs in two of seven windows, 2026-08-30), which is arithmetically impossible when the parts
+		// are subsets of the whole. `SimulationService` emits `BetSettled` from FOUR sites and only one is
+		// inside a bet — the other three are the auto-recharge restart and two manual-transfer paths — and
+		// every one of them reaches `DiceGame.OnSimBetSettled`, which marks `BetHistoryFeed`.
+		//
+		// **The residue earned its keep here.** It was built so the breakdown could not silently force its
+		// parts to sum to its whole, and that is exactly what exposed this: a profiler that normalised its
+		// segments would have reported a plausible, wrong attribution and nothing would ever have said so.
+		private static bool _inBet;
+
 		/// <summary>Armed state. False by default — see the class remarks on why P2 needs it off.</summary>
 		public static bool Enabled { get; private set; }
 
@@ -184,6 +199,9 @@ namespace Scripts.Diagnostics
 			_betTicks = 0;
 			_maxBetTicks = 0;
 			_betsSinceReport = 0;
+			// Reset runs from Arm and from the report boundary, both OUTSIDE any bet. Leaving the flag set
+			// would let the next stray Mark land against a `_segmentStart` from before the reset.
+			_inBet = false;
 		}
 
 		/// <summary>Called at the top of one bet, before any of its work.</summary>
@@ -193,6 +211,19 @@ namespace Scripts.Diagnostics
 			if (!Enabled) return;
 			_betStart = Stopwatch.GetTimestamp();
 			_segmentStart = _betStart;
+			_inBet = true;
+		}
+
+		/// <summary>
+		/// Abandon the bet in progress without recording it. For the paths that enter a bet and leave by an
+		/// early return — today, the insufficient-balance catch. Without this the flag stays set and the
+		/// NEXT stray <see cref="Mark"/> (an auto-recharge's BetSettled emit, which is exactly what follows
+		/// that catch) is attributed to a bet that never finished.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void AbortBet()
+		{
+			_inBet = false;
 		}
 
 		/// <summary>
@@ -202,7 +233,7 @@ namespace Scripts.Diagnostics
 		[Conditional("DEBUG")]
 		public static void Mark(Segment segment)
 		{
-			if (!Enabled) return;
+			if (!Enabled || !_inBet) return;
 			long now = Stopwatch.GetTimestamp();
 			_ticks[(int)segment] += now - _segmentStart;
 			_segmentStart = now;
@@ -217,7 +248,8 @@ namespace Scripts.Diagnostics
 		[Conditional("DEBUG")]
 		public static void EndBet()
 		{
-			if (!Enabled) return;
+			if (!Enabled || !_inBet) return;
+			_inBet = false;
 
 			long elapsed = Stopwatch.GetTimestamp() - _betStart;
 			_betTicks += elapsed;

@@ -696,6 +696,10 @@ public partial class SimulationService : Node
 		}
 		catch (InvalidOperationException)
 		{
+			// This bet never completed, so it must not be counted — and leaving the profiler "inside a bet"
+			// would attribute the auto-recharge's own BetSettled emit, which follows this stop immediately,
+			// to a bet that does not exist.
+			Scripts.Diagnostics.BetCostProfiler.AbortBet();
 			_session.Stop(IBettingStrategy.StopReason.InsufficientBalance);
 			return;
 		}
