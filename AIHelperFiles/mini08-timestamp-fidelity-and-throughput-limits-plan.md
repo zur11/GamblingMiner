@@ -418,6 +418,60 @@ its own merits.
 autobet is delegated. Removing it unconditionally is not obviously safe — `ReseedWalletFromBankrollSource`
 has other callers, and for a manual bet DiceGame's wallet *is* the writer — so this needs its own look.
 
+#### P1c — VERIFICATION after both fixes (2026-08-30, same world, 5 full windows + 1 partial)
+
+| Segment | before | after | factor |
+|---|---:|---:|---:|
+| BankrollSetBalance | 933.9 | **0.41** | **2,278×** |
+| BetSettled (signal → DiceGame) | 382.7 | **189.7** | 2.0× |
+| NonceAttempt | 47.3 | 27.5 | 1.7× |
+| RegisterBet | 24.5 | 21.8 | 1.1× |
+| ExecuteNext | 11.2 | 8.3 | 1.3× |
+| PersistFinancialState | 10.1 | 8.0 | 1.3× |
+| CasinoApplyBetResult | 3.9 | 1.2 | 3.2× |
+| **TOTAL** | **1,414.4** | **257.4** | **5.5×** |
+| bets per frame if idle | 12 | **65** | |
+
+**Fix 1 did exactly what it claimed.** 933.9 → 0.41 µs. The dominant cost in the engine is gone.
+
+**Fix 2 delivered half of what was predicted, and the prediction was wrong for a reason worth recording.**
+I forecast ~38 µs on the assumption that the whole 382.7 µs was coalescible. It was not: roughly half was
+per-FRAME work (the status line, the reseed, the panel fields — now amortized away) and roughly half is
+per-BET work I had *deliberately kept* — `EmitSignal` marshalling plus the `BetExecuted` fan-out to
+`BetHistoryContainer` and `PreviousWinnerNumbersGrid`. **The commit comment says in as many words that the
+bet-history feed stays per bet; the numeric prediction was then made as though it did not.** *A forecast
+that contradicts the design note sitting three lines above it is not a modelling error, it is not having
+read your own work.*
+
+**Everything else got faster too** — `NonceAttempt` 1.7×, `ExecuteNext` 1.3× — with no change to any of that
+code. Consistent with the frame no longer being saturated: less cache pressure and no stalls behind a
+synchronous write. A saturated frame makes *everything* in it look expensive.
+
+**The sentinel finding, now with a result.** No `[BetJournal] UNDECLARED balance discontinuity` line
+appeared — and this time that silence means something, because the coalesced reseed drops the baseline once
+per frame instead of once per bet, so roughly six bets in seven are genuinely compared. **This is the first
+run on this path where the sentinel's silence is evidence rather than an artifact.**
+
+**Against the developer's goal.** 99 credits × 600X demands 9.9 bets/frame:
+
+| target | bets/frame | cost/frame | verdict |
+|---|---:|---:|---|
+| 99 × 600X | 9.9 | 2.54 ms (15%) | **comfortable** — but see the cap below |
+| 99 × 900X | 14.9 | 3.83 ms (23%) | needs `MaxBetsPerFrame ≥ 15` |
+| 99 × 9000X | 148.5 | 38.2 ms | still out of reach |
+
+> **`MaxBetsPerFrame = 10` is now the binding constraint, and raising it is finally the RIGHT move.** 99 ×
+> 600X needs 9.9 of the 10 available — it fits with no margin at all, so any frame that runs slightly long
+> drops bets and `Sim%` dips. §38.7 forbids raising this constant *as a response to saturation*; here the
+> saturation was found and removed first, and the constant is what remains. That is the order the rule
+> prescribes, not an exception to it.
+
+**The next target is named and measured:** the remaining 189.7 µs is 74% of what a bet now costs, and it is
+two UI containers appending a row each, per bet, to displays capped at 100 entries — at 450 bets/s, ~78% of
+those rows are created and evicted without ever being drawn. Batching a frame's appends into one relayout
+would keep every row and remove the per-append overhead. Prior art on these two containers (pooling, the
+100-entry cap) is `ProjectDesignManual.md` §38.8–38.9.
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved
