@@ -688,6 +688,57 @@ At the highest `(credits × DevTimeScale)` P2 sustains, run 60 seconds and scan 
 4. **no bet ever timestamped after the clock.** §2.2 explains why this is the property to guard rather
    than uniformity: a future-dated bet would be a worse defect than the jitter.
 
+#### P3 — the scanner, and the regression it found on its first run (2026-09-10)
+
+`Tools/verify-bet-journal.js`. Runs the four assertions over the retained journal, per segment and over a
+scoped tail (`--last N`, `--credits N`).
+
+**A4 turned out to be checkable, which it did not look like.** The journal never records which bet mined
+which block, so "no bet after the clock" reads undecidable after the fact. But `ExecutePlayerBetOnce`
+derives the block's timestamp from **the same `tsUtc` it gave the bet** — so a player-mined block's
+timestamp equals its mining bet's to the millisecond, and that join recovers every commit point. **42 of 42
+player-mined blocks in the retained journal matched exactly.** The timestamp pipeline is sound end to end.
+
+**A1 and A2 pass, and A2 is the more interesting of the two.** The per-segment table reads
+`20.000 s → 14.286 s → 10.000 s` implied spacing — i.e. **exactly `SpeedMultiplier / credits` at 5, 7 and
+10 credits**, tracking the hardware across three playtests with no tuning. That is the writer fix working.
+A1 shows 9 same-timestamp groups of size **2** in 205,180 records (0.009%), against the pre-fix shape of
+groups of 7–10 spaced 150 game-seconds.
+
+> ### 🔴 A3 FAILS — 114 timestamp regressions, and we caused them
+>
+> Timestamps run **backwards** in write order: median jump **−20.3 game-seconds**, worst **−102.7**. They
+> appear in segments 20–28 and in **none** of segments 8–19.
+>
+> **The mechanism.** Back-dating spans `(planned − 1) × interval × SpeedMultiplier` game-seconds, but the
+> clock only advances `simDelta × SpeedMultiplier × ` **`SimulationThrottle`**. When the throttle is below
+> 1 — every one of the `Sim:` dips already recorded in P1f/P1g — the back-dating reaches **further back
+> than the clock moved forward**, and the frame's first bet lands before the previous frame's last.
+>
+> | | regression threshold | at 10 credits × 9000X |
+> |---|---|---|
+> | `MaxBetsPerFrame = 10` | throttle < 0.60 | span 90 s vs 150 s advance — dips to 63% stayed just clear |
+> | `MaxBetsPerFrame = 20` | **throttle < 0.93** | span 140 s vs 150 s — **almost any dip regresses** |
+>
+> **Raising `MaxBetsPerFrame` to 20 converted a latent bug into a frequent one**, which is exactly where
+> the segment boundary sits. Predicted magnitudes for throttle 0.9 → 0.63 are −5 s → −45 s; the observed
+> median is −20.3 s. The mechanism is confirmed, not merely plausible.
+>
+> **§2.2 of this plan reasoned about the risk of USING the throttle and never about the risk of not using
+> it.** It rejected the exact-phase variant because recomputing the clock's advance "risks disagreeing with
+> what the calendar did, and a disagreement in the wrong direction **future-dates a bet**". True — and the
+> disagreement in the *other* direction past-dates one, which is what shipped. *A hazard analysis that
+> considers only the failure mode of the option it is rejecting has not compared anything.*
+>
+> **Proposed fix — clamp, do not predict.** Remember the clock value at the end of the previous frame and
+> never back-date a bet before it. This needs no throttle forecast (the aggregate is power-weighted across
+> bots and is not known until after `TickBots`), it is exact rather than approximate, it enforces
+> monotonicity directly instead of inferring it, and at throttle 1 it changes nothing.
+
+**Standing use.** `node Tools/verify-bet-journal.js --last 20000 --credits N` after any run that matters.
+A1/A3 are absolute; A2 is a median and must carry a one-to-two-interval frame-boundary tail (§2.2) — a
+distribution uniform to the tick would mean the scanner is measuring something the engine does not do.
+
 ### P4 — Clock synchrony at 99 credits
 
 The developer's specific worry. With the fix in place, confirm that in-game **block intervals** and the
