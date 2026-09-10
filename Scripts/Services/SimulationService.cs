@@ -732,6 +732,8 @@ public partial class SimulationService : Node
 		// (individual pool → own chain; casino pool → casino chain). Real PoW on the shared chain.
 		long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
 		Block? block = RouteNonceAttempt(_config.ActiveNodeId, tsMs);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.NonceAttempt);
+
 		if (block != null)
 		{
 			CaptureCheckpoint();
@@ -741,11 +743,12 @@ public partial class SimulationService : Node
 				FreezeCalendarAtBlockStop();
 			}
 		}
-		// Deliberately covers the block path too. A mined block costs far more than an attempt (checkpoint
-		// capture + a full state.json write), and averaging that over the ~thousands of attempts between
-		// blocks is the HONEST per-bet figure — it is a cost every bet shares. The report's "worst µs"
-		// column is what shows the spike separately.
-		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.NonceAttempt);
+		// The block path gets its OWN segment, separate from the attempt above. Both readings are honest and
+		// they answer different questions: amortised over thousands of bets this is a few µs (the cost every
+		// bet shares), while the same work inside ONE bet was measured at 96.7 ms — 5.8 frames — which is
+		// what the brief Sim% dips at high throughput actually are. A mean cannot show a spike, and a spike
+		// and a saturation have opposite fixes.
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.BlockCommit);
 
 		if (LastSettledBetEvent != null)
 			ClientBetSettled?.Invoke(_config.ActiveNodeId, _config.GameId, LastSettledBetEvent);

@@ -577,6 +577,41 @@ unaffected.
 left for the hardware shop, and re-entered. Benign, and a useful confirmation that the announcement tracks
 scene lifetime.*
 
+#### P1f — 99 × 900X: steady state passes, and the dips are SPIKES (2026-08-30, 10 credits × 9000X)
+
+10 credits × ×90 = **900 bets/s = 15 bets/frame**, the engine regime of **99 credits × 900X** (891 bets/s,
+14.85/frame). `Sim:` sat at 100% almost throughout, **dipping briefly as low as 63%** before recovering.
+
+Ten full windows: mean **334.6 µs/bet**, `BetHistoryFeed` **254.7 µs (76%)**.
+
+**The dips are not saturation, and the arithmetic separates the two cleanly:**
+
+| | |
+|---|---|
+| steady state, 15 bets × 334.6 µs | **5.02 ms/frame — 30% of 16.67 ms** |
+| worst SINGLE bet in the run | **96.7 ms — 5.8 frames of budget inside one bet** |
+
+A frame spending 30% of its budget is not saturated. **One bet costing 5.8 frames is a spike**, the backlog
+clamp discards what it cannot simulate, and `SimulationThrottle` reports the discard honestly — which is
+`Sim: 63%` doing exactly its job. The high-`NonceAttempt` windows (42.9, 38.8, 47.2 µs against a ~22 µs
+baseline) are precisely the ones carrying `[Checkpoint] CAPTURED` lines, which points at the block-commit
+path: `CaptureCheckpoint` plus a full `state.json` write (§38.8a already lists it as an unexplained
+per-block cost).
+
+> **A mean cannot show a spike, and the two have opposite fixes.** Averaged over thousands of bets the block
+> path reads as a few µs and looks free; the `worst` column is the only place it was visible, and only as an
+> unattributed total. So `NonceAttempt` is now split into the PoW attempt alone and a **`BlockCommit`**
+> segment. *This is the third time in this plan that splitting a segment changed the conclusion — and each
+> time the coarse reading was not wrong, merely unable to distinguish two things with different remedies.*
+
+**A cost that ROSE, named rather than smoothed:** per-bet went 233 µs (7 credits) → 334.6 µs (10 credits),
+against a prediction that it would fall slightly on better per-frame amortisation. `BetHistoryFeed` carries
+it (178 → 255 µs). Two candidates, not separated by this data: more per-frame container churn at 15 appends
+instead of 10.5, or the P1c effect in reverse — *a busier frame makes everything inside it measure slower.*
+
+**Verdict on the developer's escalation:** 99 × 900X is **reachable in steady state today**. What stands
+between it and a flat 100% is a per-block spike, not throughput. Next run measures `BlockCommit` directly.
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved

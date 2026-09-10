@@ -58,8 +58,17 @@ namespace Scripts.Diagnostics
 			/// node is active, so on a player run this segment is expected to read ~0. It is measured anyway:
 			/// a segment assumed to be zero and never checked is how a cost hides.</summary>
 			ClientLedger,
-			/// <summary>RouteNonceAttempt — one real proof-of-work attempt, plus the block path when it hits.</summary>
+			/// <summary>RouteNonceAttempt ALONE — one real proof-of-work attempt, and nothing else.</summary>
 			NonceAttempt,
+			/// <summary>The BLOCK-COMMIT path, taken only on the ~1 bet in thousands that solves a block:
+			/// CaptureCheckpoint plus the stop-on-block handling, and behind them a full state.json write.
+			///
+			/// Split from NonceAttempt because the 10-credit × 9000X run showed a WORST bet of 96.7 ms —
+			/// 5.8 frames of budget spent inside a single bet — while steady state was only 5.02 ms/frame
+			/// (30%). That shape says the brief Sim% dips are a SPIKE, not saturation, and the two have
+			/// opposite fixes. The mean hid it: averaged over thousands of bets the block path reads as a
+			/// few µs, which is why it needs its own column and not just the `worst` figure.</summary>
+			BlockCommit,
 			/// <summary>The ClientBetSettled C# event alone.</summary>
 			ClientBetSettledEvent,
 			/// <summary>The bet-history fan-out inside DiceGame.OnSimBetSettled — BetExecuted → the two
@@ -77,7 +86,7 @@ namespace Scripts.Diagnostics
 			BetSettledSignal,
 		}
 
-		private const int SegmentCount = 10;
+		private const int SegmentCount = 11;
 
 		private static readonly string[] SegmentNames =
 		{
@@ -87,7 +96,8 @@ namespace Scripts.Diagnostics
 			"BankrollSetBalance (SYNC DISK WRITE)",
 			"CasinoApplyBetResult (BalanceChanged)",
 			"ClientLedger (skipped on player node)",
-			"NonceAttempt (PoW + block path)",
+			"NonceAttempt (PoW attempt alone)",
+			"BlockCommit (checkpoint + state.json)",
 			"ClientBetSettled (C# event)",
 			"BetHistoryFeed (2 pooled UI containers)",
 			"BetSettled (signal marshalling + rest)",
@@ -98,7 +108,7 @@ namespace Scripts.Diagnostics
 		private const string Header =
 			"reportUtc,bets,totalUsPerBet,accountedUsPerBet,unaccountedUsPerBet," +
 			"executeNextUs,registerBetUs,persistFinancialUs,bankrollSetBalanceUs,casinoApplyBetResultUs," +
-			"clientLedgerUs,nonceAttemptUs,clientBetSettledUs,betHistoryFeedUs,betSettledSignalUs," +
+			"clientLedgerUs,nonceAttemptUs,blockCommitUs,clientBetSettledUs,betHistoryFeedUs,betSettledSignalUs," +
 			"maxTotalUs,betsPerFrameAt60";
 
 		// How many bets accumulate before a report. A report is one GD.Print block and one CSV line — never
