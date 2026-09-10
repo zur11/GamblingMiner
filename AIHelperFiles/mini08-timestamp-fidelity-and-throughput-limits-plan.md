@@ -735,9 +735,75 @@ groups of 7–10 spaced 150 game-seconds.
 > bots and is not known until after `TickBots`), it is exact rather than approximate, it enforces
 > monotonicity directly instead of inferring it, and at throttle 1 it changes nothing.
 
+#### P3 — THE FIX (implemented 2026-09-10, awaiting its verification run)
+
+`SimulationService.ClampedStepGameSeconds(nominalStep, planned, clockNowUtc)` — the batch's span may not
+exceed the game-time the clock actually moved this frame. `_previousFrameClockUtc` is the anchor, advanced
+**after** both settle paths have read it (the bots settle in the same frame off the same clock; advancing it
+beside the player's loop would hand them a zero-width window and collapse their spacing to nothing).
+
+Reset to `MinValue` on run start and stop, meaning *no anchor yet* → nominal spacing. Without that a run
+would clamp its first frame against an anchor hours of game time stale.
+
+**Verified arithmetically against the measured failure before asking for a playtest** — 10 credits × 9000X,
+`planned = 15`, nominal step 10 game-seconds:
+
+| throttle | clock advance | span before | span after | regression |
+|---:|---:|---:|---:|---|
+| 1.00 | 150.0 | 140.0 | 140.0 | none — **the clamp never binds at full retention** |
+| 0.80 | 120.0 | 140.0 | 120.0 | was −20.0 s, now 0 |
+| 0.63 | 94.5 | 140.0 | 94.5 | was −45.5 s, now 0 |
+| 0.25 | 37.5 | 140.0 | 37.5 | was −102.5 s, now 0 |
+
+The 0.25 row reproduces the journal's observed **worst** regression of −102.7 s to within 0.2 s. *The
+mechanism is not merely consistent with the data — it predicts its extreme.*
+
+**One consequence to expect in A2, so it is not misread as a new fault.** In a throttled frame the spacing
+is now *compressed* below nominal, because the bets genuinely occupy less game-time than nominal — the clock
+did not advance that far. So the scanner's median may sit slightly under `SpeedMultiplier / credits` on a
+run with many dips. **That is the fix working, not A2 failing.** §2.2 already refuses to claim uniformity;
+this widens the tail on the low side as well as the high.
+
 **Standing use.** `node Tools/verify-bet-journal.js --last 20000 --credits N` after any run that matters.
 A1/A3 are absolute; A2 is a median and must carry a one-to-two-interval frame-boundary tail (§2.2) — a
 distribution uniform to the tick would mean the scanner is measuring something the engine does not do.
+
+#### ✅ CLOSING RUN — P3 verified and P1's last spike attributed (2026-09-10, 27 windows, ~137k bets)
+
+**A3 PASSES: zero regressions over 100,000 bets**, against 114 before the clamp. `A1` and `A4` hold, and
+**A2 still reads exactly 10.0000 s with 95,556 of 99,979 gaps exact to the millisecond** — the clamp binds
+in the ~4% of frames that were throttled and nowhere else, which is precisely the design.
+
+**The spike sources separate perfectly, with no overlap at all:**
+
+| | windows | worst bet | GC overlapped the worst bet |
+|---|---:|---|---:|
+| with a player-mined block | 12 | **20.1 – 73.3 ms** | 1 of 12 |
+| without one | 15 | **7.1 – 13.5 ms** | **7 of 15** |
+
+Every block window is ≥ 20.1 ms; every non-block window is ≤ 13.5 ms. **The block commit is the primary
+spike and it is now proven rather than inferred** — the previous run could only show that high `BlockCommit`
+and checkpoints coincided; this one shows the worst-bet *distributions* do not intersect.
+
+**The GC hypothesis was right in kind and wrong in magnitude, which is worth separating.** GC lands on the
+worst bet in **30% of windows against ~0.1% expected by chance** — so it is unambiguously a real spike
+source, not noise. But it is a **secondary** one at 8–13 ms, and P1g predicted it would account for the
+15–21 ms spikes seen in no-block windows. In this run no such spikes exist: the no-block ceiling is 13.5 ms.
+*The prediction identified the mechanism and misjudged the size, and those are different kinds of being
+right.* The earlier 15–21 ms no-block readings are best explained by the same 34% cross-run variance P1g
+documented — which is exactly why that entry made within-run comparison the rule.
+
+**Net picture of a bet, closing P1:**
+- steady state ~265 µs, of which `BetHistoryFeed` is ~76% (two pooled UI containers) — the one named,
+  measured, unfixed cost, and an optimisation rather than a blocker;
+- a **block-commit spike of 20–73 ms**, roughly 1–4 frames, on the ~1 bet in thousands that solves a block;
+- a **GC spike of 8–13 ms**, a few times per 5,000 bets.
+
+Both spikes are what the brief `Sim%` dips are. Neither corrupts anything: `SimulationThrottle` converts a
+frame the engine could not fill into an honest wall-clock slowdown.
+
+*(The `WASAPI: Current output_device invalidated` line in this run is Godot's audio driver reacting to a
+device change on the machine. Unrelated to any of the above, recorded so it is not read as a finding.)*
 
 ### P4 — Clock synchrony at 99 credits
 

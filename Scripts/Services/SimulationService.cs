@@ -90,6 +90,54 @@ public partial class SimulationService : Node
 		return _settleBackdateGameSeconds > 0d ? now.AddSeconds(-_settleBackdateGameSeconds) : now;
 	}
 
+	// ── Mini-plan 08 P3 — the back-date may not reach further back than the clock moved forward ────────
+	//
+	// MEASURED FAILURE (Tools/verify-bet-journal.js, first run, 2026-09-10): 114 bets timestamped BEFORE
+	// their predecessor in write order, median 20.3 game-seconds backwards, worst 102.7.
+	//
+	// The arithmetic. A batch spans `(planned − 1) × interval × SpeedMultiplier` game-seconds, but the
+	// calendar advances `simDelta × SpeedMultiplier ×` **SimulationThrottle** — and the backlog clamp can
+	// hand `planned` a carried remainder that the clock never had to pay for. Whenever the span exceeds
+	// what the clock actually moved, the frame's FIRST bet lands before the previous frame's LAST one.
+	//
+	// Raising MaxBetsPerFrame 10 → 20 is what made it frequent: at 10 credits × 9000X the span was 90
+	// game-seconds against a 150-second advance (regressing only below throttle 0.60, which the measured
+	// dips to 63% just cleared); at 20 the span is 140 against 150, so ANY dip below 0.93 regresses.
+	//
+	// **CLAMP, DO NOT PREDICT.** §2.2 declined to compute the clock's advance from
+	// `simDelta × SpeedMultiplier × SimulationThrottle` because recomputing it "risks disagreeing with what
+	// the calendar did, and a disagreement in the wrong direction future-dates a bet". That reasoning was
+	// sound and incomplete — it weighed only the hazard of the option it rejected, and the opposite
+	// disagreement past-dates one, which is what shipped. Reading the clock's ACTUAL movement has neither
+	// hazard: it is not a forecast, it needs no throttle (the aggregate is power-weighted across the bots
+	// and is not known until after TickBots), and at throttle 1 with no carried backlog it never binds.
+	private DateTime _previousFrameClockUtc = DateTime.MinValue;
+
+	// Per-bet spacing for a batch of `planned` bets, compressed if — and only if — the nominal spacing
+	// would not fit inside the game-time this frame actually bought. Shared by the player and the bots
+	// because they settle in the same frame against the same clock, and a fix applied to one of two
+	// identical loops is how the next investigation gets a mixed dataset.
+	private double ClampedStepGameSeconds(double nominalStep, int planned, DateTime clockNowUtc)
+	{
+		if (planned <= 1 || nominalStep <= 0d)
+		{
+			return nominalStep;
+		}
+
+		// First frame of a run, or the clock jumped backwards (a checkpoint restore, a freeze-on-block).
+		// Re-seed rather than clamp against a stale or negative span: a jump is not a throttle.
+		if (_previousFrameClockUtc == DateTime.MinValue || clockNowUtc < _previousFrameClockUtc)
+		{
+			return nominalStep;
+		}
+
+		double availableGameSeconds = (clockNowUtc - _previousFrameClockUtc).TotalSeconds;
+		double nominalSpan = (planned - 1) * nominalStep;
+		return nominalSpan <= availableGameSeconds
+			? nominalStep
+			: availableGameSeconds / (planned - 1);
+	}
+
 	// How many bets this frame's accumulator can afford, capped the same way the loop that follows is.
 	// Computed BEFORE the loop because a bet's back-date is its distance from the LAST bet of the batch,
 	// which is not knowable while the batch is still draining.
@@ -303,6 +351,10 @@ public partial class SimulationService : Node
 		_accumulatorSeconds = 0d;
 		_lastFounderChainLen = -1; // force a founder-power recompute on the first frame of this run
 		_lastPopulationChainLen = -1; // and a population-scheduler recompute (Step 14)
+		// Mini-plan 08 P3 — a run must not clamp its first frame against an anchor left by a previous run
+		// (or by a scene round-trip), which could be hours of game time stale and would collapse the batch
+		// onto a single instant. MinValue means "no anchor yet" and yields the nominal spacing.
+		_previousFrameClockUtc = DateTime.MinValue;
 		IsRunning = true;
 
 		if (_calendar != null)
@@ -334,6 +386,7 @@ public partial class SimulationService : Node
 		_wallet = null;
 		_config = null;
 		_accumulatorSeconds = 0d;
+		_previousFrameClockUtc = DateTime.MinValue; // see the note at the field: a stopped run leaves no anchor
 
 		if (_calendar != null)
 		{
@@ -478,7 +531,9 @@ public partial class SimulationService : Node
 		// the world, and back-dating forward from a frame START would need a frame start this service does
 		// not have.
 		int planned = PlannedBetsThisFrame(_accumulatorSeconds, interval);
-		double stepGameSeconds = interval * (_calendar?.SpeedMultiplier ?? GameSecondsPerRealSecondFallback);
+		DateTime clockNowUtc = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		double stepGameSeconds = ClampedStepGameSeconds(
+			interval * (_calendar?.SpeedMultiplier ?? GameSecondsPerRealSecondFallback), planned, clockNowUtc);
 
 		int executed = 0;
 		while (_accumulatorSeconds >= interval && executed < MaxBetsPerFrame && _session.IsRunning)
@@ -519,6 +574,12 @@ public partial class SimulationService : Node
 		}
 		// R2-T — the same figures, accumulated for the per-block difficulty trace.
 		NetworkRoot.AccumulateSimSaturation(simDelta, simDelta * retainedFraction);
+
+		// Mini-plan 08 P3 — advance the back-dating anchor LAST, after both settle paths have measured
+		// against it. Placed here rather than beside the player's loop because the bots settle in the same
+		// frame off the same clock; moving it earlier would give them a zero-width window and collapse
+		// their spacing to nothing.
+		_previousFrameClockUtc = clockNowUtc;
 	}
 
 	// Recompute founder powers exactly once per new block on the canonical chain. Satoshi's confirmed-BTC
@@ -1038,7 +1099,10 @@ public partial class SimulationService : Node
 			// but a per-frame timestamp collapse distorts those readings identically — and leaving one of
 			// two identical loops unfixed is how the next investigation gets a mixed dataset.
 			int botPlanned = PlannedBetsThisFrame(runner.AccumulatorSeconds, interval);
-			double botStepGameSeconds = interval * (_calendar?.SpeedMultiplier ?? GameSecondsPerRealSecondFallback);
+			double botStepGameSeconds = ClampedStepGameSeconds(
+				interval * (_calendar?.SpeedMultiplier ?? GameSecondsPerRealSecondFallback),
+				botPlanned,
+				_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
 
 			int executed = 0;
 			while (runner.AccumulatorSeconds >= interval && executed < MaxBetsPerFrame && runner.Session.IsRunning)
