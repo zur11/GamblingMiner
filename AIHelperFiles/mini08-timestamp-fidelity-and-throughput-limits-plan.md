@@ -612,6 +612,59 @@ instead of 10.5, or the P1c effect in reverse — *a busier frame makes everythi
 **Verdict on the developer's escalation:** 99 × 900X is **reachable in steady state today**. What stands
 between it and a flat 100% is a per-block spike, not throughput. Next run measures `BlockCommit` directly.
 
+#### P1g — the block-commit discrimination, and a finding RETRACTED (2026-08-30, 17 full windows)
+
+**The split did its job.** `BlockCommit` separates cleanly into two populations, and the boundary is exactly
+whether the player mined a block in that window:
+
+| windows | `BlockCommit` |
+|---|---|
+| 8 with **no** `[Checkpoint] CAPTURED` | **0.044 – 0.051 µs** (i.e. the branch was not taken) |
+| 6 with a player-mined block | **1.6 – 5.6 µs**, rising with the number of blocks |
+
+`NonceAttempt`, now measuring the PoW attempt alone, fell from a bundled **29.5 µs with spikes to 42.9 /
+38.8 / 47.2** to **16.9 µs, range 14.6 – 20.9**. The variance moved out of it exactly as predicted. Mean
+`BlockCommit` is **0.97 µs** — the block path is a pure spike, invisible in any average, which is why it
+needed a column rather than a footnote.
+
+**The asymmetry is explained, and verified in code rather than assumed.** Three windows carry a
+`[Checkpoint] CAPTURED` line while reading `BlockCommit ≈ 0.05 µs`. `SimulationService` calls
+`CaptureCheckpoint()` from **four** sites: the player's bet, a bot's bet, `DriveFounderMining`, and
+`DriveScheduledMining`. The last two run **outside `ExecutePlayerBetOnce`** — so when Satoshi, Hal or the
+scheduled network solves a block, the checkpoint costs the same tens of milliseconds **in the same frame**
+while being structurally invisible to a profiler scoped to the player's bet. *Those dips are real, are
+caused by the same work, and cannot be attributed by this instrument at all.*
+
+> ### ⛔ RETRACTED — "the cost ROSE from 233 µs at 7 credits to 334.6 at 10"
+>
+> Recorded in P1f as a finding against prediction, and **it was noise.** This run is the same configuration
+> — 10 credits × 9000X, same world, no code change but one added mark — and reads **221.3 µs**, *below* the
+> 7-credit figure it was supposed to have risen from. `BetHistoryFeed` moved with it: 254.7 → **167.9 µs**.
+>
+> | | within one run | between runs, same config |
+> |---|---|---|
+> | spread | 213.9 – 245.3 µs (**±7%**) | 221.3 vs 334.6 (**34%**) |
+>
+> **The instrument is precise and not accurate across sessions.** Window-to-window it is tight enough to
+> trust; run-to-run it moves by more than most of the effects this plan has been discussing. The cause is
+> not identified — machine state, editor state, thermal, background load are all candidates and none is
+> established.
+>
+> **The methodological consequence, which now binds everything above:** *compare only within a run.* Any
+> cross-run claim needs an **A–B–A crossover** — the design §38.8a already used on this exact codebase for
+> exactly this reason — and P1f's comparison was a bare A-vs-B. **A number that stays stable across 17
+> windows looks authoritative and says nothing about the next session.**
+
+**What is still unattributed.** Several windows show a worst bet of **15–21 ms with `BlockCommit ≈ 0`** —
+W2 (17.2 ms), W13 (20.8 ms), W16 (15.5 ms). No player block, and an external checkpoint cannot inflate a
+*bet's own* timing since it runs after the bet loop. **Leading candidate: a garbage collection.** This world
+holds ~100k bet records in memory and a gen2 pass over that heap is comfortably tens of ms.
+
+**Now instrumented, cheaply enough to be free.** Each report adds a GC line: gen0/gen1/gen2 collections in
+the window, how many bets overlapped a collection, and — the question that actually matters — **whether the
+WORST bet overlapped one**. A window's totals cannot answer that; they are spread over 5,000 bets, so the
+worst bet carries its own flag. `GC.CollectionCount` is a field read, two per bet against a 220 µs bet.
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved

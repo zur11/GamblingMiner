@@ -152,6 +152,22 @@ namespace Scripts.Diagnostics
 		// segments would have reported a plausible, wrong attribution and nothing would ever have said so.
 		private static bool _inBet;
 
+		// ── Garbage collection, per window ────────────────────────────────────────────────────────────
+		// Added after the 2026-08-30 discrimination run left a class of spike unattributed: several windows
+		// held a WORST bet of 15–21 ms while their `BlockCommit` read ~0.05 µs, i.e. the player mined no
+		// block in them. A checkpoint mined by a FOUNDER or the scheduled network cannot explain those
+		// either — those run outside `ExecutePlayerBetOnce`, so they never land inside a bet's timing.
+		//
+		// GC is the leading remaining candidate and it is nearly free to test: this world holds ~100k bet
+		// records in memory, and a gen2 collection over a heap that size is comfortably tens of ms.
+		// `GC.CollectionCount` is a field read, so two per bet is noise against a 220 µs bet.
+		//
+		// A collection at ANY generation increments gen0's counter, so gen0 is the "did a GC happen" test.
+		private static int _gc0AtBetStart;
+		private static int _gc0Start, _gc1Start, _gc2Start;
+		private static int _betsOverlappingGc;
+		private static bool _worstBetOverlappedGc;
+
 		/// <summary>Armed state. False by default — see the class remarks on why P2 needs it off.</summary>
 		public static bool Enabled { get; private set; }
 
@@ -212,6 +228,12 @@ namespace Scripts.Diagnostics
 			// Reset runs from Arm and from the report boundary, both OUTSIDE any bet. Leaving the flag set
 			// would let the next stray Mark land against a `_segmentStart` from before the reset.
 			_inBet = false;
+
+			_betsOverlappingGc = 0;
+			_worstBetOverlappedGc = false;
+			_gc0Start = GC.CollectionCount(0);
+			_gc1Start = GC.CollectionCount(1);
+			_gc2Start = GC.CollectionCount(2);
 		}
 
 		/// <summary>Called at the top of one bet, before any of its work.</summary>
@@ -222,6 +244,7 @@ namespace Scripts.Diagnostics
 			_betStart = Stopwatch.GetTimestamp();
 			_segmentStart = _betStart;
 			_inBet = true;
+			_gc0AtBetStart = GC.CollectionCount(0);
 		}
 
 		/// <summary>
@@ -263,9 +286,20 @@ namespace Scripts.Diagnostics
 
 			long elapsed = Stopwatch.GetTimestamp() - _betStart;
 			_betTicks += elapsed;
+
+			// Did a collection run at any generation while this bet was executing? Recorded per bet rather
+			// than only per window, because the question is not "how much GC is there" — it is "is the
+			// WORST bet a GC pause", and only a per-bet flag can answer that.
+			bool overlappedGc = GC.CollectionCount(0) != _gc0AtBetStart;
+			if (overlappedGc)
+			{
+				_betsOverlappingGc++;
+			}
+
 			if (elapsed > _maxBetTicks)
 			{
 				_maxBetTicks = elapsed;
+				_worstBetOverlappedGc = overlappedGc;
 			}
 
 			if (++_betsSinceReport >= ReportEveryBets)
@@ -321,7 +355,15 @@ namespace Scripts.Diagnostics
 				$"           {unaccountedUs,8:N3} µs  {unaccountedShare,5:N1}%  unaccounted (inter-mark code + this profiler)\n"));
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           ⇒ {betsPerFrameAt60:N0} bets per 16.67 ms frame if the frame did NOTHING else " +
-				$"(MaxBetsPerFrame is currently {SimulationService.MaxBetsPerFrameForDiagnostics})"));
+				$"(MaxBetsPerFrame is currently {SimulationService.MaxBetsPerFrameForDiagnostics})\n"));
+
+			// The GC line answers ONE question and is phrased as that question's answer, not as raw counters:
+			// is the worst bet in this window a garbage-collection pause? A window's gen0/1/2 totals cannot
+			// say — they are spread over 5,000 bets — which is why the worst bet carries its own flag.
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"           GC: gen0 {GC.CollectionCount(0) - _gc0Start}, gen1 {GC.CollectionCount(1) - _gc1Start}, " +
+				$"gen2 {GC.CollectionCount(2) - _gc2Start} this window · {_betsOverlappingGc:N0} of {bets:N0} bets " +
+				$"overlapped a collection · WORST BET {(_worstBetOverlappedGc ? "DID" : "did NOT")} overlap one"));
 
 			GD.Print(sb.ToString());
 			WriteTraceRow(bets, totalUs, accountedUs, unaccountedUs, perSegment, maxUs, betsPerFrameAt60);
