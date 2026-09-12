@@ -133,10 +133,40 @@ public partial class SimulationService : Node
 
 		double availableGameSeconds = (clockNowUtc - _previousFrameClockUtc).TotalSeconds;
 		double nominalSpan = (planned - 1) * nominalStep;
-		return nominalSpan <= availableGameSeconds
-			? nominalStep
-			: availableGameSeconds / (planned - 1);
+		if (nominalSpan <= availableGameSeconds)
+		{
+			return nominalStep;
+		}
+
+		double compressed = availableGameSeconds / (planned - 1);
+
+		// ── The one-tick floor, and why it is CONDITIONAL ──────────────────────────────────────────────
+		// Compressing the span is what keeps timestamps monotonic, but pushed hard enough it drives the
+		// step below DateTime's own resolution and adjacent bets round onto the same instant. Measured at
+		// 99 credits: 1 same-timestamp group of 2 bets in 150,000 (P4's A1). Tiny — but the escalation this
+		// exists to serve RAISES `planned`, which is the numerator of the compression, so the artifact gets
+		// worse exactly where we are heading.
+		//
+		// The floor is applied only when the frame's clock advance can actually HOLD `planned` distinct
+		// ticks. An unconditional floor would trade an A1 failure for an A3 one: forcing a 19-tick span
+		// into a frame whose clock moved less than that puts the batch's oldest bet BEFORE the previous
+		// frame's clock — a regression, which the scanner treats as absolute and which is the worse defect
+		// of the two.
+		//
+		// Monotonic, distinct, and never after the clock cannot all three be guaranteed once the clock
+		// advances less than `(planned − 1)` ticks. That is a real trilemma at the limit, not an oversight.
+		// This resolves it by keeping the two that matter — ordering and the clock bound — and surrendering
+		// distinctness only in a frame that advanced under ~2 µs of game time, i.e. one that effectively
+		// did not advance at all.
+		double flooredSpan = (planned - 1) * TimestampTickSeconds;
+		return flooredSpan <= availableGameSeconds
+			? Math.Max(compressed, TimestampTickSeconds)
+			: compressed;
 	}
+
+	// DateTime's resolution: 100 ns. The smallest step that can still yield two distinct timestamps, so it
+	// is the floor above — named rather than written as 1e-7 at the site that uses it.
+	private const double TimestampTickSeconds = 1e-7;
 
 	// How many bets this frame's accumulator can afford, capped the same way the loop that follows is.
 	// Computed BEFORE the loop because a bet's back-date is its distance from the LAST bet of the batch,
@@ -169,10 +199,22 @@ public partial class SimulationService : Node
 	// remained binding afterwards. Order is the whole difference, and it is why the number may move now and
 	// could not before.
 	//
-	// The immediate consumer: 99 hardware credits at DevTimeScale ×6 (600X) demands 9.9 bets/frame, which
-	// fits inside 10 with no margin at all — any frame that runs slightly long drops bets and the clock
-	// throttles. 20 gives that target somewhere to breathe.
-	private const int MaxBetsPerFrame = 20;
+	// 20 → 40 (2026-09-12), to serve 99 credits at 2000X: `99 × 20 ÷ 60 =` **33 bets/frame**, which 20
+	// cannot express at all. 40 clears that demand by ~21%.
+	//
+	// ⚠ THE MEANING OF THIS CONSTANT CHANGED WITH THAT STEP, and the change is worth stating rather than
+	// leaving for someone to infer from a slow frame. At the measured 276.5 µs/bet (99 credits, P4), 40 bets
+	// is **11.1 ms — 66% of a 16.67 ms frame**, and 33 is 9.1 ms (55%). Up to and including 20 this cap sat
+	// comfortably inside a frame that had plenty left over for rendering, the bot runners, the founders and
+	// the scheduled network. It no longer does.
+	//
+	// So from 40 onward the cap is set by **the demand it is meant to serve**, not by a budget the frame can
+	// absorb without noticing, and a run that actually reaches it will show as `Sim%` dips rather than as
+	// dropped work. That is still the honest mechanism — R2-C1 converts a frame the engine cannot fill into
+	// a slower wall clock, never into distorted in-game dynamics (P4 demonstrated exactly this at 94.3%
+	// retention) — but it is a different régime, and **the next person to raise this number should re-price
+	// a bet first rather than extrapolating from here.**
+	private const int MaxBetsPerFrame = 40;
 
 	// Mini-plan 08 P1 — BetCostProfiler prints the measured per-bet cost next to the constant that is
 	// supposed to be justified by it, so a report can be read without opening this file. Read-only and
