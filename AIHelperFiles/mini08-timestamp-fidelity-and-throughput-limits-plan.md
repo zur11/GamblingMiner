@@ -812,6 +812,67 @@ difficulty regulator's feed are unchanged between `(99, 100X)` and `(99, highest
 invariance `DevTimeScale` claims, and it is now testable at a resolution that did not exist before —
 because every bet finally has an instant of its own.
 
+#### ✅ P4 — RESULT (2026-09-12, 99 real hardware credits, A–B–A′, 64 blocks)
+
+**300X was substituted for 100X, and the reason is a cost the plan never priced.** A block takes
+`TargetBlockSeconds ≈ 58,500` game-seconds (~16.3 in-game hours), so 20 blocks at 100X is **115 minutes for
+one leg**. The invariance under test needs two scales with a large ratio, not one specific pair, so the legs
+are **300X / 900X / 300X** — a 3× ratio, both legs unsaturated, ~95 minutes total. *(Even that under-ran:
+the legs took about double the estimate, because the estimate used the historical median solve time from a
+much lower-power era rather than the regulator's actual target.)*
+
+Structure, recovered entirely from the new `devTimeScale` column — 10 blocks settle (×9), 20 A (×3), 13 B
+(×9), 21 A′ (×3). Configured power was **110.1–110.5 in every leg**, so nothing drifted underneath.
+
+**The settle leg earned its place:** difficulty **89,713** there against **61,809 / 61,859 / 63,865** in the
+three measurement legs. The 10× power jump's transient was real and was correctly discarded.
+
+| | pooled 300X (A+A′) | 900X (B) |
+|---|---:|---:|
+| blocks | 41 | 13 |
+| aggregate realized power | 95.67 | 121.64 |
+| configured power | 110.16 | 110.52 |
+| **realized / configured** | **0.869** | **1.101** |
+| simulated-time retention | 1.000 | **0.943** |
+
+**900X / 300X = 1.267, 95% CI [0.68, 2.36] — the bracket contains 1.00, so no violation is detectable.**
+Across all 54 measurement blocks realized power is **100.79 against 110.24 configured (0.914 ± 13.6%)**: the
+regulator delivers what it prices.
+
+> **The sharpest form of the result is the retention row.** Leg B ran at **94.3% retention** — the engine
+> genuinely could not simulate 5.7% of the time offered — **and its in-game block interval still matched the
+> unthrottled 300X legs.** That is R2-C1's entire claim demonstrated rather than asserted: the clock slowed
+> in wall-clock terms instead of the in-game dynamics distorting.
+
+**Stated plainly: this test has LOW POWER and passing is not proof.** The 95% bracket only excludes effects
+below ~0.68× or above ~2.36×; a 20% distortion would pass unnoticed. The binding constraint is the
+≈exponential solve-time distribution — the same-scale legs A and A′ differ from each other by as much as
+either differs from B (0.797 vs 0.947 realized/configured). **Tightening it to ±10% needs ~100 blocks per
+leg, which at 300X is over six hours.** The honest verdict is *consistent with invariance at a resolution of
+roughly ±35%*, not *invariance confirmed*.
+
+**A statistic that had to be thrown away, recorded because the reasoning recurs.** The first pass reported
+mean `realizedPower` per leg — 484 / 253 / **1,228** against ~110 configured, which reads as a spectacular
+violation. It is an artifact: `realizedPower = difficulty × clockSpeed / solveSec` is **inversely**
+proportional to an ≈exponential variable, and `E[1/X]` diverges for an exponential, so the mean is whatever
+the single fastest block was. Leg A′'s maximum was **19,184**. The aggregate estimator
+`Σdifficulty × clockSpeed / Σ solveSec` pools every block and is well-behaved; it gives 1.101 where the mean
+gave 11.1×. *Averaging a per-item rate is not the same as computing the rate over the pooled total, and the
+difference is largest exactly where the denominator is heavy-tailed.*
+
+#### P3 at the spacing only 99 credits can produce
+
+The case §2.1 singled out and no proxy could reach: **`A2 = 1.0100 s measured against 1.0101 s expected`**,
+with 119,803 of 149,998 gaps exact to the millisecond. A3 passes with **0 regressions** over 150,000 bets
+and A4 joins every player-mined block. **Per-bet cost is 276.5 µs at 99 credits against ~265 µs at 10** —
+the cost is per BET, not per credit, as the model assumed but had never checked at the cap.
+
+**A1 now fails at 1 group of 2 bets in 150,000 (0.001%), and the clamp caused it.** When a frame is throttled
+hard the clamp compresses `stepGameSeconds` toward zero, and two adjacent bets can round onto the same tick.
+**This is the trade the clamp makes and it is the right one** — an unbounded ordering corruption exchanged
+for a resolution artifact three orders of magnitude rarer than the defect §1 set out to fix. It is closable
+with a one-tick floor on the step; left open deliberately rather than fixed unmeasured.
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
