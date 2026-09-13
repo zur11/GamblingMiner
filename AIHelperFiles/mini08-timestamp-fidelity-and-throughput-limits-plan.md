@@ -870,8 +870,94 @@ the cost is per BET, not per credit, as the model assumed but had never checked 
 **A1 now fails at 1 group of 2 bets in 150,000 (0.001%), and the clamp caused it.** When a frame is throttled
 hard the clamp compresses `stepGameSeconds` toward zero, and two adjacent bets can round onto the same tick.
 **This is the trade the clamp makes and it is the right one** — an unbounded ordering corruption exchanged
-for a resolution artifact three orders of magnitude rarer than the defect §1 set out to fix. It is closable
-with a one-tick floor on the step; left open deliberately rather than fixed unmeasured.
+for a resolution artifact three orders of magnitude rarer than the defect §1 set out to fix. *⛔ The mechanism
+named here was wrong — see the escalation entry below. The pairs are not sub-tick collapse inside a batch,
+and the one-tick floor built on this sentence did not close them.*
+
+#### Escalation — 99 credits × 900X → 3000X, and the A1 prediction FALSIFIED (2026-09-13)
+
+One continuous autobet, 900X → 1000X → 2000X → 3000X, profiler armed throughout. Legs recovered by the
+`devTimeScale` column in the block trace and by a rate changepoint in the profiler CSV (the 2000X → 3000X
+boundary falls at 02:27:53 UTC).
+
+| leg | bets/s measured | demanded | delivered | block-trace retention | µs/bet |
+|---|---:|---:|---:|---:|---:|
+| 900X | 877 | 891 | — | 1.000 (1 block) | 221.0 |
+| 1000X | 996 | 990 | 100% | 1.000 | 226.8 |
+| 2000X | 1,955 | 1,980 | **98.7%** | **0.988** | 173.5 |
+| 3000X | 2,053 | 2,970 | **69.1%** | **0.691** | 168.9 |
+
+**Two independent instruments agree to the third digit** — the profiler's delivered-rate ratio and the
+block trace's simulated-time retention were computed by different code from different data. The developer's
+by-eye readings match too: `Sim:` pinned at 100% through 1000X, occasional dips at 2000X, ~72% at 3000X.
+
+**Verdict on the escalation: the practical ceiling at 99 credits is about 2,000 bets per second, i.e.
+2000X.** Past it throughput barely moves — 3000X demands 52% more than 2000X and delivers 5% more. The extra
+demand becomes wall-clock slowdown, not bets, which is R2-C1 doing exactly its job.
+
+**The 3000X prediction (~80%) missed by 11 points, and the miss is informative.** 80.8% was `40 ÷ 49.5` —
+the cap binding at 60 fps. Both observations at 3000X, the delivered rate AND the retention, are fitted
+exactly by one frame rate: **≈51 fps**, with the cap binding every frame (`40 × 51.3 = 2,053`;
+`0.404 ÷ 0.585 = 0.691`). *Derived, not measured* — nothing times the whole frame. At that rate a frame is
+~19.5 ms of which the bets are ~6.8 ms; the rest is outside every instrument this plan has built. 2000X is
+consistent with any frame rate ≥ 49.5 fps, so these data **cannot say whether the frame slowed because of
+3000X or was already near 51 fps throughout.** Consequence: *do not raise `MaxBetsPerFrame` again on this
+evidence.* Cap and frame rate bind jointly, and which to move needs a whole-frame timing of
+`SimulationService._Process`, which does not exist yet.
+
+**Within the run, per-bet cost FALLS ~22% from 1000X to 2000X — and uniformly.** `BetHistoryFeed` ×0.78,
+`RegisterBet` ×0.78, `NonceAttempt` ×0.74, total ×0.785. The tempting reading — the UI containers' deferred
+relayout amortising over more appends per frame — is refuted by that uniformity: a UI-specific effect would
+not speed a proof-of-work attempt by the same factor. A whole-loop effect (cache warmth, CPU power state under
+sustained load) fits; nothing here separates those. The direction is trustworthy because it is within one
+run, and it is the opposite of P1f's retracted cross-run "rise".
+
+**The journal regime flagged as never exercised is benign.** At ~2,000 bets/s the ~200k retained records
+cycle roughly every 100 seconds. After the run: **202,057 records in 21 segments** (inside the documented
+190k–210k band), 54.8 MB, lifetime rollup `IsComplete = true` and updated during the run, and `RegisterBet`
+never exceeded **21.8 µs** in any window — pruning under continuous load adds no visible per-bet spike.
+
+> ### 🔴 A1 PREDICTION FALSIFIED — the one-tick floor fixed a mechanism that never occurred
+>
+> Predicted: A1 returns to 0 under the escalation. Observed: **864 same-millisecond pairs** in 202,057 bets.
+>
+> **The tick-level audit settles the mechanism completely:**
+>
+> | consecutive-bet delta | count |
+> |---|---:|
+> | negative (any size) | **0** |
+> | exactly 0 ticks | **448** |
+> | exactly +1 tick | **416** |
+> | +2 ticks up to 1 ms | **0** |
+>
+> Every pair has size exactly 2, and **857 of 864 are followed by compressed spacing while the gap before
+> them is nominal**. Each pair is the entry into a clamped frame. `step = available ÷ (planned − 1)` maps the
+> batch onto the **closed** interval `[previousFrameClock, clockNow]` — and the left endpoint is already
+> occupied, because the previous frame's last bet was stamped at backdate 0, which *is* that clock. The
+> clamped frame's first bet lands on it. The +1 tick variant is the same collision with `AddSeconds`
+> truncating the double back-date's fractional tick.
+>
+> The one-tick floor addressed sub-tick collapse *inside* a batch. That would produce groups of up to
+> `planned` bets; the data contains none larger than 2. **The floor was built for a mechanism reasoned rather
+> than observed, and the observation that would have ruled it out — every group is exactly size 2 — was
+> already in P4's output.**
+>
+> **And a fragility found along the way:** A3 has never failed at tick resolution only because truncation
+> errs *forward*. Had the back-date rounded to nearest, roughly half of these 416 would be one-tick
+> **regressions**. *Monotonicity has been held by a rounding direction nobody chose.*
+>
+> **Fix, proposed and not yet built:** map the batch onto the **half-open** interval — `step = available ÷
+> planned`, so the first bet lands one full step after the previous frame's clock (~0.85 game-seconds at
+> 3000X, not 0–1 tick). The unclamped branch needs a strict `<` for the same reason, and the floor's
+> condition becomes `planned` ticks rather than `planned − 1`. With a full step of separation the rounding
+> direction stops mattering at all.
+
+**A scanner gap found by the same audit.** `verify-bet-journal.js` compares timestamps at **millisecond**
+resolution for A1 and A3, because it truncates for the A4 block join. A sub-millisecond regression would be
+invisible to A3, and A1 is stricter than the property it names (+1 tick is technically distinct). Nothing was
+hidden this time — the tick audit found 0 regressions — but it could be. **Proposed:** A1 and A3 at tick
+resolution, milliseconds kept only for the A4 join, and a separate near-collision diagnostic (consecutive
+bets under 1% of nominal spacing) so this defect is caught whichever way the rounding falls.
 
 ## 5. Out of scope
 
