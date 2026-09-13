@@ -67,9 +67,16 @@ const TICKS_PER_MS = 10000;
 // than written as a bare 100 at the sites that use it (Standing Convention 15).
 const SPEED_MULTIPLIER = 100;
 
-// A gap larger than this many nominal intervals is treated as a BREAK — a stopped session, a scene change, an
-// idle world — not as bet spacing. Without it the max and the mean are dominated by hours of game time in which
-// nobody bet, which says nothing about the writer.
+// A gap larger than this many nominal intervals is excluded from A2's spacing statistics. Without the exclusion the
+// max and the mean are dominated by hours of game time in which nobody bet, which says nothing about the writer.
+//
+// ⚠ An excluded gap is NOT necessarily a session break, and this comment used to say it was. A stopped session, a
+// scene change or an idle world produces one — but so does a continuous autobet under a saturated backlog: the
+// calendar multiplies this frame's delta by a retention ratio measured on the previous frame, so a step UP in
+// frame time advances the clock past what the capped batch can fill, and the remainder is an intra-run hole.
+// Measured 2026-09-13 at 99 credits x 3000X: 139 such holes in one uninterrupted run, 10-69 game-seconds each,
+// 1.49% of game time — the up-step half of a 0.62% clock overspend (mini-plan 08, "session breaks are not
+// breaks"). The exclusion is still right for A2; only the label was wrong.
 const BREAK_FACTOR = 10;
 
 // Consecutive bets this close are the clamp-boundary collision's fingerprint, not frame-boundary jitter. The
@@ -331,8 +338,10 @@ function main() {
 			` => ${a.impliedCredits === null ? '?' : a.impliedCredits.toFixed(1)} implied credits` +
 			'   (pass --credits N to assert)');
 	}
-	console.log(`     ${a.breaks.toLocaleString()} gaps exceeded ${BREAK_FACTOR}x nominal and were excluded as ` +
-		'session breaks, not spacing.');
+	console.log(`     ${a.breaks.toLocaleString()} gaps exceeded ${BREAK_FACTOR}x nominal and were excluded from A2. NOT ` +
+		'necessarily session breaks:');
+	console.log('     under a saturated backlog, a step up in frame time leaves an intra-run hole (mini-plan 08:');
+	console.log('     the lagged-throttle clock overspend).');
 
 	// A3
 	console.log(`${label('A3 monotonic')}${a.regressions === 0 ? 'PASS' : 'FAIL'}  ` +

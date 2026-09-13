@@ -1008,6 +1008,81 @@ Half-open is clean in all 14 scenario × formula runs. Its only cost is that a c
 row's sub-nominal A2 is the model's heavy-clamping assumption at 2000X, not an observation**: no real 2000X
 journal exists, because the escalation's retained ~200k records were written entirely during the 3000X leg.
 
+#### ✅ Half-open clamp VERIFIED (2026-09-13, 99 credits, 2000X → 3000X)
+
+The retained journal — 202,684 bets — was written **entirely during the 3000X leg** (80 profiler windows ×
+5,000 bets exceed the retention cap), the exact regime in which the closed interval produced 864 pairs.
+
+| assertion (tick resolution) | before the fix | after |
+|---|---:|---:|
+| A1 duplicate instants | 448 | **0** |
+| A1b near-collisions (1–10 ticks) | 416 | **0** |
+| A3 regressions | 0 | **0** |
+| A2 median spacing | 1.0101 s | **1.0101 s** |
+| A4 block/bet join | 2 of 2 | **1 of 1** |
+
+**A2's secondary figure matched the model before the run existed:** 160,054 of 202,544 gaps within 1 ms of
+nominal = **79.0%**, against **79.2%** from the half-open model at 2% frame jitter. A number the model was not
+fitted to, landing within 0.2 points.
+
+Throughput: 2000X delivered 1,971 of 1,980 bets/s with block-trace retention **0.996**; 3000X delivered 2,130/s
+at **0.743** (the developer read ~75% by eye). That is above the escalation run's 0.691 — **a cross-run
+difference, not attributable to anything**: the fix touches timestamps, not throughput, and P1g measured 34%
+between sessions. The profiler's `unaccounted` residue never went negative (minimum 0.061 µs).
+
+#### Found while verifying — the scanner's "session breaks" are not breaks, and they expose a 0.62% clock overspend
+
+The scanner excluded **139 gaps larger than 10× nominal "as session breaks"** from a single continuous
+autobet — there were no session breaks. The gaps are frame-aligned (never fewer than 40 bets apart, one capped
+frame), range 10–69 game-seconds (median 19.7), and hold **1.49% of the journal's game time**. The label was
+a claim, and it was false.
+
+Three tests, recorded with their outcomes because two of them failed:
+
+1. **Throttle overspend followed by an under-advancing frame — REFUTED.** That predicts compressed spacing
+   immediately after each gap. The frame after a gap is at exact nominal in **139 of 139**.
+2. **Holes versus clamped frames, counted — DISCARDED as badly posed.** 1,022 clamped frames against 139 holes,
+   but the holes were counted only above 10× nominal and the clamps at any size. Asymmetric thresholds; the
+   comparison meant nothing.
+3. **The lagged-ratio mechanism, tested through the mean of r — CONFIRMED.** With the backlog saturated the
+   cap executes 40 bets, 40.40 game-seconds, every frame, while `CalendarTimeService` advances `40.40 × r`
+   with `r = delta_N ÷ delta_(N−1)` — it multiplies THIS frame's delta by a retention RATIO measured on the
+   PREVIOUS frame. Each frame's `r` is recoverable from the journal's own shapes: a boundary gap `G` gives
+   `r = (G + 39.39) ÷ 40.40`, a clamped frame with step `s` gives `r = 40·s ÷ 40.40`, a nominal frame `r = 1`.
+
+| over ~5,067 frames (1,286 up-steps, 1,022 clamped, 2,759 nominal) | |
+|---|---:|
+| Σ ln r — up-steps / clamped frames | +120.56 / −114.66 |
+| **geometric** mean of r | 1.00117 |
+| **arithmetic** mean of r | 1.00738 |
+| arithmetic ÷ geometric | **1.00620** |
+| net overspend from the total span, computed independently | **0.625%** |
+
+The geometric mean of the TRUE `r` must be 1: `Σ ln r` telescopes to `ln(delta_last ÷ delta_first)`, and the
+frame time did not grow 365-fold over five minutes. So the reconstruction's 1.00117 is its own bias, ~0.12% —
+and dividing it out leaves **0.620% against 0.625%** measured by a different route. The up-step half of each
+fluctuation is a hole; the down-step half is a clamped frame.
+
+**Why it drifts at all: Jensen's inequality.** The arithmetic mean of a ratio of fluctuating positive
+quantities exceeds 1 even when nothing trends. A one-frame-lagged **multiplicative** correction therefore
+overspends systematically; an **additive** one could not.
+
+**Consequence: R2-C1's invariance leaks by ~0.6% when the backlog is saturated.** In-game time passes ~0.6%
+faster than the mining attempts justify, so in-game block intervals read ~0.6% long. Far below P4's ±35%
+resolution, and **zero whenever retention is 1** — at 99 credits, everything up to 1000X, which is where
+normal play lives. It exists only in the regime this plan went looking for.
+
+**Fix, not built — a change to R2-C1's contract, which deserves its own decision:** carry the lagged quantity
+additively, advancing the calendar by the previous frame's *retained simulated seconds × SpeedMultiplier*
+rather than *this frame's delta × last frame's ratio*. The one-frame lag stays; the bias goes, because
+`Σ advance = Σ retained` exactly.
+
+**The scanner's label is corrected** to say what an excluded gap may be, instead of what it was assumed to be.
+
+*Two rules. A lagged multiplicative correction applied to a fluctuating base drifts, and the drift is
+Jensen's, not noise. And a label on an exclusion is a claim about the excluded data — this one quietly
+filed 1.49% of game time under the wrong heading for two runs.*
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
