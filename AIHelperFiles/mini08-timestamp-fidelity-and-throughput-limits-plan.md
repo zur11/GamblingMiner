@@ -1083,6 +1083,82 @@ rather than *this frame's delta × last frame's ratio*. The one-frame lag stays;
 Jensen's, not noise. And a label on an exclusion is a claim about the excluded data — this one quietly
 filed 1.49% of game time under the wrong heading for two runs.*
 
+#### 🔴 DiceGame's betting statistics — four defects diagnosed, a test pre-registered (2026-09-13)
+
+**The report.** After the verification run, DiceGame's statistics panel showed General P/L **+894 SC** while
+Bankroll 2,164 + Main 32,200 = 34,364 SC sits far below the starting funds; and **Total Gambled appeared to
+restart between test runs.**
+
+**First, the balances are correct — to the satoshi.** Starting funds are 40,000 SC (39,900 Main + 100
+Bankroll, not 39,900). `bankroll_program_state.json` holds 78 Main→Bankroll transfers — the startup dose plus
+77 auto-recharges — totalling 7,800, and `40,000 − 7,800 = 32,200`, the Main balance exactly. At the last
+checkpoint `1,687.90910712 = 7,800 − 6,112.09089288`, the rollup's `TotalNetProfit`, exact. In memory at the end
+of the run, `7,800 − 5,635.83182901 = 2,164.16817099`, `bankroll_state.json` exactly. **The player really is
+down ~5,636 SC. What lies is the statistics panel, in four separate ways.**
+
+**D1 — "General" is neither lifetime nor retained: it is re-based once per process.** `FinancialBettingStats`
+reads `UserStatsService.Stats`, which has two writers. At boot, `Stats = UserBettingStats.FromRollup(Rollup)` —
+lifetime. But the **first DiceGame entry of each process** runs `RestoreLegacyCheckpointIfNeeded` →
+`RollbackHistoryToUtc` → `RebuildStatsFromLoadedHistory`, which does `Stats = new UserBettingStats()` and
+replays `BetHistory.Records`, **the retention-capped journal**. From then on live bets add to it and pruning
+never subtracts. So General = *the retained window at that moment + everything bet since*: it grows through a
+run and collapses at every restart. That is both reported symptoms. At ~2,000 bets/s the retained window is
+about two minutes of play. `RebuildStatsFromLoadedHistory`'s own comment protects the ROLLUP from being
+re-derived from the journal — and does nothing to protect `Stats`, which is the figure on screen. The panel's
+tooltip ("covers the retained bet history") is false during any run; the label is a claim.
+
+**D2 — the "Since…" scopes subtract numbers from different scales.** Their ledger snapshots are taken from
+`Stats` (`BankrollProgramService`, `PlayerBankAccountService`) in whatever scale it has at that instant. The
+ledger records the damage: **five drops in the player's `TotalWageredSnapshot` between consecutive
+auto-recharges**, impossible for a lifetime counter — the largest **100,702 → 4,113**. After a rebase,
+`Stats − snapshot` is meaningless, and `PlayerFinancialStatsCalculator`'s `Math.Max(0, …)` — commented *"a
+snapshot can momentarily lead the counter"* — is this defect being clamped out of sight. The tooltip calls these
+scopes "exact".
+
+**D3 — boot `Stats` and restored `Rollup` diverge from the first frame.** Leaving DiceGame calls `FlushHistory`
+unconditionally (`_ExitTree`), which saves the rollup **including bets after the last block**. On the next
+launch, `Stats` is built from that file (autoload #2), then the checkpoint restore (#13) replaces `Rollup` with
+the committed snapshot — and does not touch `Stats`. **Until DiceGame is entered, the panel shows a lifetime
+total containing bets the world has just discarded.**
+
+**D4 — introduced by THIS PLAN: the checkpoint boundary is the frame clock, not the block.**
+`SimulationService.CaptureCheckpoint` stamps `HistoryCheckpointUtc = _calendar.CurrentUtcDateTime` — the
+frame's clock — while §2's back-dating gives the block the **mining bet's** earlier timestamp. Block #385: mined
+at 07:15:32.936, checkpoint boundary 07:15:48.087, **15.15 game-seconds later**. The 15 bets that frame settled
+AFTER the mining bet are timestamped inside the boundary but are not in the checkpoint's balances, so a restart's
+journal rollback **keeps** them: +0.01073557 SC, measured as last-kept `BalanceAfter` 1,687.91984269 against the
+restored bankroll 1,687.90910712. The continuity break is silenced by the `history_rollback` discontinuity
+declaration. **§2 asserted the canonical rule — the clock equals the timestamp of the block that defines the
+checkpointed world — is preserved "with no special case". It holds only when the mining bet is the last of its
+frame, which at 40 bets per frame is roughly one block in forty.** Founder and scheduled-network blocks are
+unaffected; they are stamped with the clock itself.
+
+**Pre-registered test — predictions computed in exact BigInt satoshis before the run.** (A first pass summed
+100,000 `double`s and was **one satoshi out in three figures**; CLAUDE.md's exact-arithmetic rule is the only
+reason these are testable at all.)
+
+Protocol, no betting anywhere: (0) record the panel as it stands; (1) DiceGame → MainMenu → quit; (2) relaunch →
+MainMenu → **ScFinances first**; (3) → MainMenu → DiceGame; (4) → MainMenu → ScFinances; quit.
+
+| step | scope | P/L predicted | Gambled predicted | defect tested |
+|---|---|---:|---:|---|
+| 2 | General | −5635.83182901 | 153,005.57359921 | D3 |
+| 2 | Since last bank deposit | −5635.83182901 | 153,005.57359921 | D3 |
+| 2 | Since last bankroll recharge | −4544.23444475 | 147,624.23084571 | D3 + D2 |
+| 3 | General | +400.76053542 | 2,995.52588484 | D1 |
+| 3 | Since last bank deposit | +400.76053542 | 2,995.52588484 | D1 |
+| 3 | Since last bankroll recharge | +1492.35791968 | **0.00000000** (clamped) | D2 |
+| 4 | all three | identical to step 3 | | D1 is process-wide |
+
+Step 2's screen should contradict itself: Bankroll restored to 1,687.90910712 beside a General P/L of
+−5,635.83, whose identity `7,800 + P/L` gives 2,164.17. D4 is read from disk after step 3: the journal's last
+`BalanceAfter` 1,687.91984269 against `bankroll_state` 1,687.90910712. The committed lifetime truth, for
+contrast: P/L −6112.09089288, Gambled 149,382.93061226.
+
+*Three rules. A displayed figure with two writers in different scales is not a statistic. A clamp justified as
+"momentarily" is a symptom asking to be investigated. And moving a timestamp moves every boundary computed from
+it — the fix that gave each bet its instant never asked what the checkpoint's boundary was derived from.*
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
