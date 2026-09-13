@@ -132,41 +132,44 @@ public partial class SimulationService : Node
 		}
 
 		double availableGameSeconds = (clockNowUtc - _previousFrameClockUtc).TotalSeconds;
+
+		// Unclamped only if the batch's OLDEST bet lands strictly AFTER the previous frame's clock. Strictly,
+		// because the previous frame's last bet was stamped at backdate 0 — which IS that clock — so a batch
+		// reaching exactly back to it lands on a bet already written.
 		double nominalSpan = (planned - 1) * nominalStep;
-		if (nominalSpan <= availableGameSeconds)
+		if (nominalSpan < availableGameSeconds)
 		{
 			return nominalStep;
 		}
 
-		double compressed = availableGameSeconds / (planned - 1);
-
-		// ── The one-tick floor, and why it is CONDITIONAL ──────────────────────────────────────────────
-		// Compressing the span is what keeps timestamps monotonic, but pushed hard enough it drives the
-		// step below DateTime's own resolution and adjacent bets round onto the same instant. Measured at
-		// 99 credits: 1 same-timestamp group of 2 bets in 150,000 (P4's A1). Tiny — but the escalation this
-		// exists to serve RAISES `planned`, which is the numerator of the compression, so the artifact gets
-		// worse exactly where we are heading.
+		// ── Clamped: spread the batch over the HALF-OPEN interval (previousFrameClock, clockNow] ──────────
+		// `planned` bets: the last on clockNow, the first ONE FULL STEP after the previous frame's clock.
 		//
-		// The floor is applied only when the frame's clock advance can actually HOLD `planned` distinct
-		// ticks. An unconditional floor would trade an A1 failure for an A3 one: forcing a 19-tick span
-		// into a frame whose clock moved less than that puts the batch's oldest bet BEFORE the previous
-		// frame's clock — a regression, which the scanner treats as absolute and which is the worse defect
-		// of the two.
+		// This was `available ÷ (planned − 1)` — the CLOSED interval — and the 99-credit escalation measured
+		// what that costs: 864 same-millisecond pairs in 202,057 bets at 3000X, every one exactly size 2 and
+		// 857 of 864 followed by compressed spacing. The closed interval puts a clamped frame's first bet ON
+		// the previous frame's clock, where that frame's last bet already sits. At tick resolution: 448 exact
+		// duplicates and 416 at exactly +1 tick, the +1 being DateTime.AddSeconds truncating the double
+		// back-date's fractional tick.
 		//
-		// Monotonic, distinct, and never after the clock cannot all three be guaranteed once the clock
-		// advances less than `(planned − 1)` ticks. That is a real trilemma at the limit, not an oversight.
-		// This resolves it by keeping the two that matter — ordering and the clock bound — and surrendering
-		// distinctness only in a frame that advanced under ~2 µs of game time, i.e. one that effectively
-		// did not advance at all.
-		double flooredSpan = (planned - 1) * TimestampTickSeconds;
-		return flooredSpan <= availableGameSeconds
-			? Math.Max(compressed, TimestampTickSeconds)
-			: compressed;
+		// That truncation is also why ordering never broke: it always errs FORWARD, so a boundary collision
+		// landed on or after the previous bet, never before it. Had it rounded to nearest, about half of those
+		// 416 would have been one-tick REGRESSIONS. Monotonicity was being held by a rounding direction nobody
+		// chose. With a full step of separation, which way a double rounds stops mattering.
+		//
+		// RETRACTED WITH THIS CHANGE: the conditional one-tick floor that stood here. It was built for sub-tick
+		// collapse INSIDE a batch — a mechanism reasoned rather than observed, which would produce groups of up
+		// to `planned` bets; no group in any run has exceeded 2. Under the half-open interval it is also
+		// redundant: whenever the frame can hold `planned` distinct ticks, `available ÷ planned` is already at
+		// least one tick. Removed rather than kept as a no-op.
+		//
+		// What remains at the true limit, stated rather than hidden: a frame whose clock advanced by less than
+		// `planned` ticks (4 µs of game time at 40 bets) cannot give every bet a distinct instant. It still
+		// never regresses and never passes the clock — the span is strictly shorter than the advance, and
+		// truncation only ever moves a timestamp later — so ordering and the clock bound hold even there, in a
+		// frame that effectively did not advance.
+		return availableGameSeconds / planned;
 	}
-
-	// DateTime's resolution: 100 ns. The smallest step that can still yield two distinct timestamps, so it
-	// is the floor above — named rather than written as 1e-7 at the site that uses it.
-	private const double TimestampTickSeconds = 1e-7;
 
 	// How many bets this frame's accumulator can afford, capped the same way the loop that follows is.
 	// Computed BEFORE the loop because a bet's back-date is its distance from the LAST bet of the batch,

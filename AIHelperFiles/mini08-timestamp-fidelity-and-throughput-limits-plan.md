@@ -959,6 +959,55 @@ hidden this time — the tick audit found 0 regressions — but it could be. **P
 resolution, milliseconds kept only for the A4 join, and a separate near-collision diagnostic (consecutive
 bets under 1% of nominal spacing) so this defect is caught whichever way the rounding falls.
 
+#### Half-open clamp + tick-resolution scanner — BUILT (2026-09-13), verified by model, awaiting a run
+
+**The clamp.** `ClampedStepGameSeconds` now spreads a clamped batch over `(previousFrameClock, clockNow]` —
+`step = available ÷ planned` — so the first bet lands one full step after the previous frame's clock. The
+unclamped branch requires `(planned − 1) × nominal` to be strictly *less* than the advance, for the same
+reason. **The conditional one-tick floor is removed, not adjusted** (the escalation entry proposed moving its
+threshold to `planned` ticks; that was wrong too): under the half-open interval, whenever a frame can hold
+`planned` distinct ticks, `available ÷ planned` already is at least one tick, so the floor could never change
+the result. At the true limit — a frame advancing under `planned` ticks, 4 µs of game time at 40 bets — bets
+may still share an instant, but the span is strictly shorter than the advance and truncation only moves a
+timestamp later, so ordering and the clock bound hold even there.
+
+**The scanner.** A1 counts exact duplicates at tick resolution; **A1b** counts consecutive bets 1–10 ticks apart
+(`NEAR_COLLISION_TICKS`); A3 compares at tick resolution; milliseconds survive only for the A4 block join.
+Run over the escalation journal it reproduces the hand audit exactly — **448 A1 groups, 416 A1b pairs, 0 A3
+regressions** — and A2 now reads 1.0101 s rather than 1.0100, because the median is no longer truncated.
+
+**Verified by a model before any playtest — and the model had to earn that first.** A scratchpad script
+reimplements the player loop, the calendar advance, the backlog clamp, the throttle's one-frame lag and .NET 8
+`DateTime.AddSeconds` truncation exactly, and was required to reproduce the *measured* defect with the
+committed formula before being allowed to judge the new one.
+
+- **Round 1 did not pass.** With frame deltas of exactly 1/60 or 1/30 s it matched rate (2,064/s), retention
+  (0.696), zero regressions and the pair count's magnitude (686) — but put **every** pair at +1 tick, against
+  the journal's 448 exact / 416 +1. Recorded as a failure, not rounded into agreement.
+- **Round 2 tested the explanation.** A 2% multiplicative jitter on the frame delta — Godot's real delta is not
+  a constant — gives **480 exact / 477 +1 tick** (a second seed: 468 / 429), **0 regressions, 2,051 bets/s,
+  0.691 retention**. The split appears exactly as predicted, so the truncation mechanism is confirmed rather
+  than assumed: with too-regular inputs `available` takes so few binary values that all of them round the
+  same way.
+
+Frame-time variability in the model is a 16.67 / 33.33 ms vsync alternation, long with probability 0.169 —
+fitted because it reproduces BOTH the 3000X delivered rate and its retention. *A hypothesis about the machine,
+not a measurement of it,* though it also predicts the observed pair frequency (~14% of frames), which it was
+not fitted to.
+
+| scenario (99 credits) | formula | regressions | exact dup | +1 tick | 2–10 ticks | A2 median |
+|---|---|---:|---:|---:|---:|---:|
+| 3000X, jitter 2% | closed + floor (committed) | 0 | 480 | 477 | 0 | 1.0101 |
+| 3000X, jitter 2% | **half-open** | **0** | **0** | **0** | **0** | 1.0101 |
+| 2000X, jitter 2% | closed + floor | 0 | 2,009 | 1,922 | 0 | 0.8650 |
+| 2000X, jitter 2% | **half-open** | **0** | **0** | **0** | **0** | 0.8434 |
+| 900X / 300X, jitter 2% | both | 0 | 0 | 0 | 0 | 1.0101 |
+
+Half-open is clean in all 14 scenario × formula runs. Its only cost is that a clamped frame's spacing is
+`(planned − 1) ÷ planned` of what the closed interval gave — 2.5% at 40 bets — visible in the 2000X row. **That
+row's sub-nominal A2 is the model's heavy-clamping assumption at 2000X, not an observation**: no real 2000X
+journal exists, because the escalation's retained ~200k records were written entirely during the 3000X leg.
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
