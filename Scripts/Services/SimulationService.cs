@@ -842,7 +842,8 @@ public partial class SimulationService : Node
 
 		if (block != null)
 		{
-			CaptureCheckpoint();
+			// This bet was stamped by SettleTimestampUtc(), so the block and the checkpoint share its instant.
+			CaptureCheckpoint(_settleBackdateGameSeconds);
 			if (_config.StopOnBlockMined && _session.IsRunning)
 			{
 				_session.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
@@ -990,8 +991,20 @@ public partial class SimulationService : Node
 		return true;
 	}
 
-	private void CaptureCheckpoint()
+	// Mini-plan 08 D4 — the instant the latest checkpoint was captured at, in the calendar's LOCAL time, kept so
+	// FreezeCalendarAtBlockStop can stop the clock ON that instant rather than wherever the frame clock stands.
+	// Cleared at the start of every capture, so one that bails out early can never hand the freeze a stale
+	// instant belonging to an earlier block.
+	private DateTime? _checkpointInstantLocal;
+
+	/// <param name="settlingBackdateGameSeconds">
+	/// The back-date of the bet that MINED the block, passed only when the capture runs inside the player's own
+	/// bet. Every other caller passes nothing and captures at the frame clock — see the D4 note below for why that
+	/// asymmetry is correct and not an oversight.
+	/// </param>
+	private void CaptureCheckpoint(double settlingBackdateGameSeconds = 0d)
 	{
+		_checkpointInstantLocal = null;
 		PersistFinancialState(true);
 		if (_principal == null || _bankroll == null || _bankrollProgram == null || _checkpoint == null)
 		{
@@ -1013,9 +1026,22 @@ public partial class SimulationService : Node
 			_bankrollProgram.ReplaceState(playerState.AutoRechargeAmount, playerState.TransferRecords);
 		}
 
-		DateTime historyUtc = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
-		DateTime calendarLocal = _calendar?.CurrentLocalDateTime ?? DateTime.Now;
+		// Mini-plan 08 D4 — THE CHECKPOINT BOUNDARY IS THE INSTANT OF THE LAST BET WHOSE BALANCES IT HOLDS.
+		//
+		// Back-dating (§2) put the player's mining bet up to a frame's width BEHIND the clock, and this read the
+		// clock. The player's loop then kept settling bets stamped between the two — after the capture, so not
+		// in its balances, but at or before its boundary, so RollbackToUtc KEPT them on restart. Measured in the
+		// stats test (plan §D4): journal bets surviving a restart that no restored balance had ever paid for.
+		//
+		// The asymmetry is the frame's ORDER, not an oversight. The player's loop runs to completion before
+		// TickBots, and the founders and the scheduled network mine after both. So when anything OTHER than the
+		// player's own bet mines, every player bet of the frame — stamped up to the clock — is already inside
+		// the balances captured here, and the clock is the correct boundary. Only a capture from inside the
+		// player's loop has bets still to come in the same frame, and only it passes its back-date.
+		DateTime historyUtc = (_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow).AddSeconds(-settlingBackdateGameSeconds);
+		DateTime calendarLocal = (_calendar?.CurrentLocalDateTime ?? DateTime.Now).AddSeconds(-settlingBackdateGameSeconds);
 		_checkpoint.CaptureCheckpoint(_principal, _bankroll, _bankrollProgram, historyUtc, calendarLocal);
+		_checkpointInstantLocal = calendarLocal;
 
 		if (botSession)
 		{
@@ -1247,15 +1273,23 @@ public partial class SimulationService : Node
 	// the calendar always equals the timestamp of the block that defines the checkpointed world). Without
 	// this, the session stops but CalendarTimeService.IsRunning stays true for the frame(s) until the next
 	// _Process reaches ClearRunningState — so CalendarTimeService._Process keeps advancing the clock PAST the
-	// block, and that drifted value later gets persisted to calendar_state.json (OQ-CG.9). We freeze it in
-	// place rather than re-setting it: at this synchronous point the clock still equals the value CaptureCheckpoint
-	// just read (no _Process ran in between), so freezing pins it bit-for-bit to the checkpoint. The drift was
+	// block, and that drifted value later gets persisted to calendar_state.json (OQ-CG.9). The drift was
 	// normally sub-second, but the casino's on-demand loan (CG.1.8) added real-time latency to the block frame,
 	// inflating the next frame's delta and making the overshoot large enough to notice.
+	//
+	// This used to freeze the clock IN PLACE, on the reasoning that the clock still equalled what the capture
+	// had just read. Mini-plan 08 D4 made that false for the player's own block: the capture now reads the
+	// mining bet's back-dated instant, up to a frame's width behind the clock. So the freeze sets the clock ON
+	// the captured instant — a no-op for every external block, whose capture read the clock itself. The
+	// half-open clamp already treats a clock that moved backwards as a re-seed, not a throttle.
 	private void FreezeCalendarAtBlockStop()
 	{
 		if (_calendar == null) return;
 		_calendar.IsRunning = false;
+		if (_checkpointInstantLocal is DateTime checkpointLocal)
+		{
+			_calendar.SetLocalDateTime(checkpointLocal);
+		}
 		_calendar.PersistCurrentTime();
 	}
 

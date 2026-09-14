@@ -431,6 +431,11 @@ function reportBlockJoin(dir, bets, from) {
 			// past the tip, inside the boundary, outside the checkpoint's balances — and a rollback KEEPS them. Run on
 			// a post-rollback journal, the old wording asserted "discarded" about 15 bets that had just survived a
 			// restart. Split the two populations instead of naming them one thing.
+			//
+			// After the D4 fix the kept population means different things by WHO mined the tip. Player-mined: the
+			// boundary is the mining bet's own instant, so the count must be 0 — anything else is D4 back. Mined by
+			// anyone else: the player's loop runs before the bots, founders and scheduled network in every frame,
+			// so the player's bets up to the frame clock are INSIDE the checkpoint's balances and are rightly kept.
 			let keptPastTip = 0, beyondBoundary = 0, boundaryMs = null;
 			try {
 				const m = fs.existsSync(cpPath) && /"HistoryCheckpointUtcTicks"\s*:\s*(\d+)/.exec(fs.readFileSync(cpPath, 'utf8'));
@@ -442,8 +447,11 @@ function reportBlockJoin(dir, bets, from) {
 					if (bets[i].ms <= boundaryMs) keptPastTip++; else beyondBoundary++;
 				}
 				console.log(`     newest bet is ${aheadS.toFixed(0)} game-seconds past the tip. Of the bets past it:`);
-				console.log(`       ${keptPastTip.toLocaleString()} at or before the checkpoint boundary — a rollback KEEPS these, though the`);
-				console.log('         checkpoint balances do not include them when the tip was mined by a back-dated bet (D4);');
+				const playerTip = tip.MinedByNodeId === 'player';
+				console.log(`       ${keptPastTip.toLocaleString()} at or before the checkpoint boundary — a rollback KEEPS these;`);
+				console.log(playerTip
+					? `         the tip is the player's block, so this must be 0 — ${keptPastTip === 0 ? 'OK' : 'FAIL: D4 is back'};`
+					: '         the tip is not the player\'s block, so these settled before the capture and are in its balances;');
 				console.log(`       ${beyondBoundary.toLocaleString()} after it — the uncommitted tail a restart discards.`);
 			} else {
 				console.log(`     newest bet is ${aheadS.toFixed(0)} game-seconds past the tip (no checkpoint to split kept from discarded).`);

@@ -1258,6 +1258,38 @@ consumer that trusts file order.
 *The rule this establishes: when an exact prediction misses, suspect your own instrument before the system — two of
 this test's three surprises were reading tools, and both would have passed unnoticed under a looser prediction.*
 
+#### ✅ D4 built (2026-09-14) — and the direction above was half wrong
+
+**The direction said "for player and bot blocks". Built, it would have moved D4 to the bots.** Every frame runs the
+player's whole settle loop first, then `TickBots`, then the founders and the scheduled network. When a **bot** mines,
+every player bet of that frame — stamped up to the clock — has **already settled** and is inside the balances the
+capture takes. A bot-instant boundary would make a rollback **discard** bets whose money the checkpoint kept: D4
+mirrored. Only a capture from **inside the player's loop** has player bets still to come in its frame.
+
+What shipped (`SimulationService`):
+
+- `CaptureCheckpoint(double settlingBackdateGameSeconds = 0)`. The player's bet path passes its back-date; every
+  other caller passes nothing and captures at the clock. The history boundary and the calendar instant are both the
+  clock minus that back-date — **the mining bet's `tsUtc` and the block's timestamp, to the tick**.
+- `FreezeCalendarAtBlockStop` set the clock **on the captured instant** instead of freezing it in place. The old
+  comment justified the in-place freeze by "the clock still equals the value CaptureCheckpoint just read", which
+  this change made false for the player's own block. For external blocks it is a no-op. The half-open clamp already
+  re-seeds on a clock that moved backwards.
+- The scanner's A4 note now judges by the tip's miner: a player tip must keep **0** bets past it (`FAIL: D4 is
+  back` otherwise); any other tip keeps player bets legitimately.
+
+**A residual, stated rather than hidden: bot-mined blocks.** Their block carries the bot's back-dated mining
+instant while the checkpoint boundary and restored clock are the frame clock, so on restart the clock can sit up to
+one frame past the block (≤ `(MaxBetsPerFrame − 1) ×` step; 1.67 game-seconds per frame at 100X). This is **not a
+regression**: it has held since §2 back-dated bot bets, and it cannot be closed at the capture, because a boundary
+earlier than the clock would cut into the player's bets inside the balances. The honest fix is interleaving the
+player's and bots' settle loops by instant, which is a scheduling change and out of scope. Money is exact either
+way; only the clock's distance from a bot's block is affected.
+
+Build: 0 warnings, 0 errors. **Not yet run.** Its verification is folded into the clean-world test after D2, where
+a player-mined tip with bets after it in the same frame is the case to read (A4 note must print `OK`; restored clock
+== the tip's timestamp; last journal `BalanceAfter` == `bankroll_state`).
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
