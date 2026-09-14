@@ -1290,6 +1290,30 @@ Build: 0 warnings, 0 errors. **Not yet run.** Its verification is folded into th
 a player-mined tip with bets after it in the same frame is the case to read (A4 note must print `OK`; restored clock
 == the tip's timestamp; last journal `BalanceAfter` == `bankroll_state`).
 
+#### ✅ D1 + D3 built (2026-09-14) — `Stats` has one source
+
+`UserStatsService` now rebuilds `Stats` only through `UserBettingStats.FromRollup(Rollup)`:
+
+- **`ApplyRollupSnapshot` (D3).** The checkpoint restore replaced `Rollup` and left `Stats` built from the rollup
+  file, which a DiceGame exit had flushed with uncommitted bets. It now rebuilds `Stats` in the same call and emits.
+  This covers every exit path, including the one D3's run did not reproduce. The flush itself is left alone: the
+  file runs ahead within a session by design, and the restore is what makes it committed.
+- **`RollbackHistoryToUtc` (D1).** The replay of the retained journal is gone; the restore has already put the
+  committed lifetime rollup in place.
+- **`ClearAllHistory`.** Same substitution; the rollup was just zeroed, so the result is identical and the second
+  source is gone.
+- `RebuildStatsFromLoadedHistory` survives only for first-run seeding of a world with no rollup file, and its
+  comment says not to add a caller.
+- **The General tooltip claimed the opposite of the fix**: *"Covers the retained bet history, not the whole run"*.
+  It now says lifetime, read from the lifetime totals. It had also called the "Since…" scopes exact, which D2
+  falsified. They are now described by what they compute, and that becomes true once D2 ships.
+
+**What D1 + D3 do NOT fix, so the next test does not mistake it for a regression:** "Since last bankroll recharge"
+is still wrong on this world. Its ledger snapshot was taken in the rebased scale, and a rebuild cannot repair a
+persisted snapshot. That is D2, fixed with the world reset.
+
+Build: 0 warnings, 0 errors. Not yet run; verification folded into the clean-world test.
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its

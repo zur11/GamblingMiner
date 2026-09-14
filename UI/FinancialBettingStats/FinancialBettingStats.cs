@@ -63,9 +63,9 @@ public partial class FinancialBettingStats : VBoxContainer
 		{
 			generalScope.MouseFilter = MouseFilterEnum.Pass;
 			generalScope.TooltipText =
-				"Covers the retained bet history, not the whole run — older bets are trimmed once the " +
-				"journal passes its retention cap. The two 'Since…' scopes are exact: they are measured " +
-				"from ledger events, not from the journal.";
+				"Covers every bet this world has recorded, including bets the history has since trimmed — " +
+				"it is read from the lifetime totals, not from the retained bet history. The two 'Since…' " +
+				"scopes subtract the lifetime totals captured at that ledger event.";
 		}
 	}
 
