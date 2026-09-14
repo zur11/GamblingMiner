@@ -148,9 +148,24 @@ function label(text) {
 }
 
 function loadSegments(dir) {
-	const files = fs.readdirSync(dir)
-		.filter(f => /^bet_history_\d+\.jsonl$/.test(f))
-		.sort();  // zero-padded, so lexical order IS write order
+	// Segment order is BetHistoryRepository.GetJournalChunkPaths': the BASE file (bet_history.jsonl) first when it
+	// exists, then bet_history_<index>.jsonl by ascending NUMERIC index.
+	//
+	// This scanner first read only the numbered chunks and so silently skipped the base file — which RollbackToUtc
+	// recreates on every checkpoint rollback, holding the OLDEST 10,000 records until retention trims it. Found
+	// 2026-09-14 when a post-rollback journal read 90,604 bets against the 100,604 the stats panel had just been
+	// rebuilt from. Nothing was lost; the tool was blind. Journals that had passed the retention cap since their
+	// last rollback were unaffected, because retention deletes the base file first.
+	const baseFile = 'bet_history.jsonl';
+	const chunkRe = /^bet_history_(\d+)\.jsonl$/;
+	const files = [
+		...(fs.existsSync(path.join(dir, baseFile)) ? [baseFile] : []),
+		...fs.readdirSync(dir)
+			.map(f => ({ f, m: chunkRe.exec(f) }))
+			.filter(x => x.m)
+			.sort((a, b) => Number(a.m[1]) - Number(b.m[1]))
+			.map(x => x.f),
+	];
 	if (files.length === 0) return null;
 
 	const bets = [];
@@ -405,20 +420,45 @@ function reportBlockJoin(dir, bets, from) {
 	}
 
 	if (tipMs !== null) {
+		const tip = blocks[blocks.length - 1];
 		const aheadS = (maxBetMs - tipMs) / 1000;
-		console.log(`     chain tip block #${blocks[blocks.length - 1].Index} at ${fmtMs(tipMs)}; ` +
+		console.log(`     chain tip block #${tip.Index} (mined by ${tip.MinedByNodeId}) at ${fmtMs(tipMs)}; ` +
 			`newest bet ${fmtMs(maxBetMs)}`);
 		if (aheadS > 0) {
-			console.log(`     newest bet is ${aheadS.toFixed(0)} game-seconds past the tip — EXPECTED: those bets`);
-			console.log('     are uncommitted (no block has closed over them yet) and a restart discards them.');
+			// This note used to say every bet past the tip is uncommitted and "a restart discards them". Mini-plan 08
+			// D4 falsified that: the checkpoint's boundary is the FRAME clock, while a player- or bot-mined block
+			// carries its mining bet's BACK-DATED timestamp, so bets settled later in that frame sit between the two —
+			// past the tip, inside the boundary, outside the checkpoint's balances — and a rollback KEEPS them. Run on
+			// a post-rollback journal, the old wording asserted "discarded" about 15 bets that had just survived a
+			// restart. Split the two populations instead of naming them one thing.
+			let keptPastTip = 0, beyondBoundary = 0, boundaryMs = null;
+			try {
+				const m = fs.existsSync(cpPath) && /"HistoryCheckpointUtcTicks"\s*:\s*(\d+)/.exec(fs.readFileSync(cpPath, 'utf8'));
+				if (m) boundaryMs = ticksToUnixMs(m[1]);
+			} catch { /* without a checkpoint the split cannot be made; say only what is known */ }
+			if (boundaryMs !== null) {
+				for (let i = from; i < bets.length; i++) {
+					if (bets[i].ms <= tipMs) continue;
+					if (bets[i].ms <= boundaryMs) keptPastTip++; else beyondBoundary++;
+				}
+				console.log(`     newest bet is ${aheadS.toFixed(0)} game-seconds past the tip. Of the bets past it:`);
+				console.log(`       ${keptPastTip.toLocaleString()} at or before the checkpoint boundary — a rollback KEEPS these, though the`);
+				console.log('         checkpoint balances do not include them when the tip was mined by a back-dated bet (D4);');
+				console.log(`       ${beyondBoundary.toLocaleString()} after it — the uncommitted tail a restart discards.`);
+			} else {
+				console.log(`     newest bet is ${aheadS.toFixed(0)} game-seconds past the tip (no checkpoint to split kept from discarded).`);
+			}
 		}
 	}
 
 	if (fs.existsSync(cpPath)) {
 		try {
-			const cp = JSON.parse(fs.readFileSync(cpPath, 'utf8'));
-			if (cp.HistoryCheckpointUtcTicks) {
-				const boundary = ticksToUnixMs(cp.HistoryCheckpointUtcTicks);
+			// Read from the RAW text, never through JSON.parse: at ~6.3e17 the tick count exceeds 2^53 and a double
+			// moves it — measured at 51 ticks on 2026-09-14, enough to misplace a bet sitting within a few
+			// microseconds of the boundary.
+			const m = /"HistoryCheckpointUtcTicks"\s*:\s*(\d+)/.exec(fs.readFileSync(cpPath, 'utf8'));
+			if (m) {
+				const boundary = ticksToUnixMs(m[1]);
 				let after = 0;
 				for (let i = from; i < bets.length; i++) if (bets[i].ms > boundary) after++;
 				console.log(`     history checkpoint boundary ${fmtMs(boundary)} — ` +

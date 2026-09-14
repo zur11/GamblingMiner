@@ -1185,6 +1185,79 @@ window scale. D2 does not need D3 to show.
 not take that path. The observation still teaches something: **D3 depends on HOW the app is left**, and any
 future reproduction has to control the exit rather than assume it.
 
+#### ✅ Stats test RESULTS (2026-09-14) — 18 of 18 cells exact to the satoshi; D1, D2 and D4 confirmed
+
+The developer ran steps 0–5 and screenshotted each panel.
+
+| step | General P/L | General Gambled | Since recharge P/L | Since recharge Gambled | vs prediction |
+|---|---:|---:|---:|---:|---|
+| 0 — DiceGame, before closing | +894.93153003 | 19,983.20064980 | +1986.52891429 | 14,601.85789630 | *(no prediction)* |
+| 2 — ScFinances first (control) | −6112.09089288 | 149,382.93061226 | −5020.49350862 | 144,001.58785876 | **exact** |
+| 3 — DiceGame | +400.76053542 | 2,995.52588484 | +1492.35791968 | **0.00000000** | **exact** |
+| 4 — ScFinances again | +400.76053542 | 2,995.52588484 | +1492.35791968 | 0.00000000 | **exact** |
+
+"Since deposit" equalled General in every step, as predicted (the only deposit-kind entry is `initial`, 0 / 0).
+
+**Step 0, though unpredicted, is internally exact:** `894.93153003 + 1,091.59738426 = 1,986.52891429` and
+`19,983.20064980 − 5,381.3427535 = 14,601.8578963`. Its offset from the in-memory lifetime rollup — **+6,530.76 P/L,
+−133,022.37 wagered** — is D1's rebase, constant for the whole process.
+
+**Step 4 puts the contradiction on one screen:** ScFinances' own *"Overall P/L — game-over metric: −6112.09089288"*,
+computed from balances, sits directly above *"General +400.76053542"*.
+
+**Three confirmations nobody predicted:**
+
+- **The nonce counter counts D4's bets independently.** Step 0's DiceGame read *"Current nonce attempt: 102095"*;
+  `102,095 = 15 + 102,080` — the bets after the mining bet, counted by a counter that is not the journal.
+- **The clock came back to the frame, not to the block.** After the restart the clock read 02:15:48 local
+  (07:15:48 UTC, the boundary), not 02:15:32 (block #385).
+- **D4's bets were on screen.** Step 3's DiceGame history listed bets from 02:15:35 to 02:15:48 — settled *after*
+  the block the world had just "returned to".
+
+**D4 from disk after step 3.** The rewritten journal holds 100,604 bets, none past the boundary; the 15 after the
+mining bet are kept, +0.01073557; the last `BalanceAfter` is **1,687.91984269** against `bankroll_state`
+**1,687.90910712**. The rewrite itself is sound: 0 continuity breaks, 0 duplicate ids, the scanner passes. And the
+frame's last bet carries the clock **to the tick** — both read `633885093480878413`. The clock and the frame agree;
+**it is the block that does not.**
+
+**Two artifacts of my own instruments, each exposed only because a prediction was exact:**
+
+1. **The scanner was blind to the base file.** It read only `bet_history_<n>.jsonl`, but
+   `BetHistoryRepository.GetJournalChunkPaths` puts `bet_history.jsonl` first — and `RollbackToUtc` recreates that
+   file on every rollback, holding the oldest 10,000 records. The post-rollback journal therefore read **90,604**
+   against the 100,604 the panel had just been rebuilt from. Nothing was lost. **Fixed:** base file first, then chunks
+   by numeric index. Earlier results stand: in those journals retention had already trimmed the base away, which it
+   deletes first once more than 20 segments exist.
+2. **`HistoryCheckpointUtcTicks` does not survive a double.** At ~6.3e17 it exceeds 2^53, and `JSON.parse` moved it
+   **51 ticks** — enough to report the frame's last bet as not matching the boundary when it matches exactly. No count
+   changed (the nearest bet is ~1 s away). **Fixed in the scanner:** the boundary is read from the raw text.
+
+**And a claim in the scanner's own output that D4 falsifies.** Its A4 note said every bet past the chain tip is
+uncommitted and *"a restart discards them"*. Run on the post-rollback journal it printed exactly that about the 15
+bets that had just survived a restart — two lines above reporting 0 bets past the checkpoint boundary. The note now
+splits bets past the tip into those at or before the boundary (kept by a rollback; D4 when the tip was mined by a
+back-dated bet) and those after it (the tail a restart really discards).
+
+**Minor, recorded rather than fixed.** `RollbackToUtc`'s rebuild writes every deposit before every bet under a
+comment reading *"Chronological by construction"* — false in file order whenever a deposit is newer than the oldest
+retained bet. The loader keeps deposits and bets in separate lists, so nothing breaks today; it is a trap for any
+consumer that trusts file order.
+
+**Fix directions — none built; each is a decision:**
+
+- **D1 + D3:** derive `Stats` only from `Rollup` — `Stats = FromRollup(Rollup)` after `ApplyRollupSnapshot` and in
+  `RollbackHistoryToUtc`, never a replay of the retention-capped journal. The panel then reads committed lifetime
+  plus live bets, whatever scene was visited first and however the app was left.
+- **D2:** take ledger snapshots from `Rollup`. The existing snapshots are in mixed scales, so "Since recharge" stays
+  wrong until the next recharge writes a correct one, unless the world is reset — per project policy a version bump
+  and clean reset rather than a repair.
+- **D4:** capture the checkpoint at the **mining bet's** instant for player and bot blocks (`historyUtc` = that bet's
+  back-dated `tsUtc`). The canonical rule then holds exactly again, and a rollback discards the post-block bets
+  together with the balances they changed. Founder and scheduled-network blocks already stamp with the clock.
+
+*The rule this establishes: when an exact prediction misses, suspect your own instrument before the system — two of
+this test's three surprises were reading tools, and both would have passed unnoticed under a looser prediction.*
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
