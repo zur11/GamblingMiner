@@ -1159,6 +1159,32 @@ contrast: P/L −6112.09089288, Gambled 149,382.93061226.
 "momentarily" is a symptom asking to be investigated. And moving a timestamp moves every boundary computed from
 it — the fix that gave each bet its instant never asked what the checkpoint's boundary was derived from.*
 
+**Amendment BEFORE the run (2026-09-13) — step 1 was not executed as written, so step 2's prediction changes.**
+The developer screenshotted the panel (step 0) and closed the game directly from DiceGame, together with the
+editor, instead of navigating to the Main Menu first. Read back from disk before anything else ran: no Godot
+process alive; `bet_stats_rollup.json` **unchanged since the checkpoint** (13:12:23 UTC, `TotalNetProfit`
+−6,112.09089288), so the uncommitted tail was **not** flushed on this exit; the journal, Bankroll and Main
+untouched (202,684 bets, 102,080 past the boundary, last balance 2,164.16817099). No bets have been placed
+since, so steps 3 and 4 stand exactly as registered above.
+
+Step 2 therefore becomes a **control** rather than a reproduction of D3 — `Stats` boots from a rollup file that
+holds only committed bets:
+
+| step 2 (control) | P/L predicted | Gambled predicted |
+|---|---:|---:|
+| General | −6112.09089288 | 149,382.93061226 |
+| Since deposit | −6112.09089288 | 149,382.93061226 |
+| Since recharge | −5020.49350862 | 144,001.58785876 |
+
+General and Since deposit are then **correct** — they agree with Bankroll 1,687.90910712 = 7,800 − 6,112.09089288
+— but **Since recharge is still wrong even here**, because its snapshot (wagered 5,381.34) was taken in a rebased
+window scale. D2 does not need D3 to show.
+
+**D3 is recorded as NOT REPRODUCED by this run, not as refuted.** Its trigger is leaving DiceGame through
+`_ExitTree` → `FlushHistory` → `SaveRollupIfDirty`, and the rollup is dirtied on every settled bet; this exit did
+not take that path. The observation still teaches something: **D3 depends on HOW the app is left**, and any
+future reproduction has to control the exit rather than assume it.
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
