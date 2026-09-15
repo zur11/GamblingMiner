@@ -1452,6 +1452,51 @@ saturated; the hole itself is evidence they were.
 Under the old code, the clock and the newest history row would have read about 13:30:23, 20 bets later, and the
 journal's last balance would not have matched `bankroll_state`.
 
+#### ✅ Step 9 RESULTS (2026-09-15) — D4 exact after a restart; one prediction of mine missed
+
+**On screen (DiceGame), every registered figure exact:**
+- *Current app time* 2009-03-24 13:30:03, and the newest history row at 13:30:03, which is the mining bet
+  (0.14803588, +0.14513438), with no row after it;
+- Bankroll 730.26718617 and Main 39,800.00000000;
+- General and Since deposit +530.26718617 / 4,372.04320344, Since recharge +595.25019382 / 4,131.70516349;
+- DEV counter 251,164.
+
+*(The step said "StatusBar"; DiceGame has none. Its "Current app time" is the clock readout. Another protocol
+step naming a surface that does not exist.)*
+
+**On disk afterwards:**
+- the history boundary, `calendar_state` and the newest journal bet are all tick `…038514515`, block #116's
+  instant;
+- 0 bets after the boundary;
+- last `BalanceAfter` 730.26718617 == `bankroll_state`;
+- the rollup file == the checkpoint rollup (251,164 / 4,372.04320344 / +530.26718617);
+- scanner A1–A4 all PASS.
+
+**The miss: journal length, predicted 201,166, measured 191,166 — my model, not the engine.**
+`RebuildJournalFromCurrentState` rewrites the rollback's 201,166 bets as 21 segments (20 full + 1,166). It then
+calls `EnforceRetentionCap`, which deletes the oldest to leave 20. The prediction applied the rollback and forgot
+that the rewrite applies retention. It is the "cap + 1 while filling" oscillation `SERVICES.md` already documents,
+seen from the rewrite side.
+
+The miss matters for the fixes it did not break. **That restart pruned 10,000 more bets, and every statistic on
+screen stayed exact.** Before D1, a retention change under a rollback moved "General" by exactly the pruned amount.
+
+#### Verdict — D1, D2, D3 and D4 are fixed and verified on a clean v7 world
+
+| defect | verified by | result |
+|---|---|---|
+| D1 (Stats rebased onto the retained journal) | step 5 vs the old-code column; step 9 across a further prune | exact |
+| D2 (snapshots in mixed scales) | screenshot A onward: since-recharge = lifetime − snapshot, never clamped | exact |
+| D3 (restore replaced the rollup, not Stats) | step 4, after a deliberate MainMenu flush 2,689 bets ahead | exact |
+| D4 (checkpoint at the frame clock) | steps 7–9: boundary on the mining bet to the tick, ~20 back-dated bets discarded, clock restored onto the block | exact |
+
+**Recorded, not fixed (candidates for the plan's close-out):**
+- `ResultValue` in `DiceGame.tscn` is `visible = false`, so block announcements are written but never seen.
+- `saved_betting_strategies.json` survives a world wipe by design (the exempt set). The developer expected it to
+  be deleted, so this is a decision to revisit at the next reset.
+- R2-C1's lagged-throttle overspend (0.62%), still producing the holes this test used as frame markers.
+- The deposits-first "chronological by construction" comment in `RollbackToUtc`'s rebuild.
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
