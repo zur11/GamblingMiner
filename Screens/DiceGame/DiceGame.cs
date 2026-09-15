@@ -1376,7 +1376,7 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateBlockchainStatusUI();
 		if (_simulationService.LastSettledBetEvent is BetTransactionEvent lastSettled)
 		{
-			ShowRoll(lastSettled.Roll);
+			ShowRoll(lastSettled.Roll, lastSettled.IsWin);
 		}
 	}
 
@@ -1773,7 +1773,7 @@ public partial class DiceGame : Control, IBetEventSource
 			// Shown unconditionally. This used to return first when the session had stopped, so the roll would
 			// not overwrite the "stopped" message — which meant a manual bet, whose session stops after its one
 			// bet, never showed its roll at all. The stop message is gone, and so is the reason to skip.
-			ShowRoll(result.Roll);
+			ShowRoll(result.Roll, result.IsWin);
 		}
 		catch (InvalidOperationException ex)
 		{
@@ -2216,10 +2216,17 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 	}
 
-	// The ONLY writer of ResultValue: the roll, two digits, as the winner-range readout prints it ("00 to 49").
-	private void ShowRoll(int roll)
+	// Same two colours as the bet-history rows (BetHistoryItem's own exports), so a roll and the row it
+	// produces agree at a glance rather than by coincidence.
+	[Export] private Color _rollWinColor = Colors.Green;
+	[Export] private Color _rollLossColor = Colors.Red;
+
+	// The ONLY writer of ResultValue: the roll, two digits, as the winner-range readout prints it ("00 to 49"),
+	// tinted by whether that roll won.
+	private void ShowRoll(int roll, bool isWin)
 	{
 		_resultValue.Text = roll.ToString("00", CultureInfo.InvariantCulture);
+		_resultValue.Modulate = isWin ? _rollWinColor : _rollLossColor;
 	}
 
 	private double GetEffectiveAutoBetsPerGameSecond()
