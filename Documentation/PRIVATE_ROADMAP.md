@@ -410,12 +410,21 @@ which reproduces the spacing the engine actually simulated and leaves the last b
 value — preserving the canonical clock-equals-last-event rule with no special case.
 
 **The limit question the developer wants answered: 99 credits × 9000X.** Demand is `credits × DevTimeScale`
-= **8,910 bets/s**; supply is `MaxBetsPerFrame × fps` = **600/s**, so the target asks 14.9× what the engine
-is allowed to deliver and `SimulationThrottle` honestly converts the rest into wall-clock slowdown (~600X
-effective). **The frontier today is `credits × DevTimeScale ≤ 600`** — which puts 99 credits at ~600X.
-`MaxBetsPerFrame = 10` is a constant nobody has ever priced, so P1 of that plan times one bet before
-anything is tuned. **Timestamp precision is NOT a constraint**: spacing at 99 credits is 1.01 game-seconds
-against `DateTime`'s 100 ns.
+= **8,910 bets/s**; supply is `MaxBetsPerFrame × fps`. **Timestamp precision is NOT a constraint**: spacing
+at 99 credits is 1.01 game-seconds against `DateTime`'s 100 ns.
+
+**✅ ANSWERED, 2026-08-30 (mini-plan 08 P1).** A bet was priced for the first time and cost **1,414 µs** —
+so `MaxBetsPerFrame = 10` was not the loose guess this entry assumed, it was at ~78% of what a frame could
+physically deliver. **93% of that bet was two calls doing per-bet work that was not per-bet work**:
+`BankrollStateService.SetBalance` writing `bankroll_state.json` synchronously on every bet (934 µs, and its
+output is discarded at every boot), and `DiceGame.OnSimBetSettled` rebuilding the blockchain status line up
+to `MaxBetsPerFrame` times per frame with only the last drawn (383 µs). Both fixed; **a bet now costs
+296 µs, and `MaxBetsPerFrame` is 20 — the first time that number has been a measurement.**
+
+Where that leaves the target: **99 credits × 600X is comfortable** (9.9 bets/frame, 2.93 ms, 18% of a
+16.67 ms frame). 99 × 9000X remains out of reach — 148 bets/frame would need ~44 ms — but by ~3×, not the
+15× this entry recorded. Remaining named cost: the bet-history UI containers at 216 µs/bet, 73% of what a
+bet now costs. Full record: `AIHelperFiles/mini08-timestamp-fidelity-and-throughput-limits-plan.md` §4.
 
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 

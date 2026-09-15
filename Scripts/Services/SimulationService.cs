@@ -66,7 +66,163 @@ public partial class SimulationService : Node
 		public double AccumulatorSeconds;
 	}
 
-	private const int MaxBetsPerFrame = 10;
+	// ── Mini-plan 08 §2 — per-bet timestamp fidelity ────────────────────────────────────────────────────
+	//
+	// How far BEFORE the calendar's current instant the bet being settled right now actually occurred, in
+	// game-seconds. Zero everywhere except inside the two settle loops, which set it per bet and clear it
+	// on the way out — so every other reader of the clock is untouched by construction.
+	//
+	// A field rather than a parameter because the timestamp reaches BetService through a provider delegate
+	// captured at construction (`() => SettleTimestampUtc()`), and threading an argument through
+	// ExecuteNext would change a signature four call sites deep for a value only these two loops ever set.
+	private double _settleBackdateGameSeconds;
+
+	// Used only when the calendar is absent — the same fallback shape the timestamp reads already use. The
+	// literal is DiceGame's GameSecondsPerRealSecond; it is duplicated rather than referenced because a
+	// service must not depend on a scene, and it is only ever reached when there is no clock at all.
+	private const double GameSecondsPerRealSecondFallback = 100.0d;
+
+	// The clock, minus this bet's distance from the end of the frame. THE SINGLE SOURCE for every settled
+	// bet's timestamp, player and bot alike; if a third settle path ever appears it must come through here.
+	private DateTime SettleTimestampUtc()
+	{
+		DateTime now = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		return _settleBackdateGameSeconds > 0d ? now.AddSeconds(-_settleBackdateGameSeconds) : now;
+	}
+
+	// ── Mini-plan 08 P3 — the back-date may not reach further back than the clock moved forward ────────
+	//
+	// MEASURED FAILURE (Tools/verify-bet-journal.js, first run, 2026-09-10): 114 bets timestamped BEFORE
+	// their predecessor in write order, median 20.3 game-seconds backwards, worst 102.7.
+	//
+	// The arithmetic. A batch spans `(planned − 1) × interval × SpeedMultiplier` game-seconds, but the
+	// calendar advances `simDelta × SpeedMultiplier ×` **SimulationThrottle** — and the backlog clamp can
+	// hand `planned` a carried remainder that the clock never had to pay for. Whenever the span exceeds
+	// what the clock actually moved, the frame's FIRST bet lands before the previous frame's LAST one.
+	//
+	// Raising MaxBetsPerFrame 10 → 20 is what made it frequent: at 10 credits × 9000X the span was 90
+	// game-seconds against a 150-second advance (regressing only below throttle 0.60, which the measured
+	// dips to 63% just cleared); at 20 the span is 140 against 150, so ANY dip below 0.93 regresses.
+	//
+	// **CLAMP, DO NOT PREDICT.** §2.2 declined to compute the clock's advance from
+	// `simDelta × SpeedMultiplier × SimulationThrottle` because recomputing it "risks disagreeing with what
+	// the calendar did, and a disagreement in the wrong direction future-dates a bet". That reasoning was
+	// sound and incomplete — it weighed only the hazard of the option it rejected, and the opposite
+	// disagreement past-dates one, which is what shipped. Reading the clock's ACTUAL movement has neither
+	// hazard: it is not a forecast, it needs no throttle (the aggregate is power-weighted across the bots
+	// and is not known until after TickBots), and at throttle 1 with no carried backlog it never binds.
+	private DateTime _previousFrameClockUtc = DateTime.MinValue;
+
+	// Per-bet spacing for a batch of `planned` bets, compressed if — and only if — the nominal spacing
+	// would not fit inside the game-time this frame actually bought. Shared by the player and the bots
+	// because they settle in the same frame against the same clock, and a fix applied to one of two
+	// identical loops is how the next investigation gets a mixed dataset.
+	private double ClampedStepGameSeconds(double nominalStep, int planned, DateTime clockNowUtc)
+	{
+		if (planned <= 1 || nominalStep <= 0d)
+		{
+			return nominalStep;
+		}
+
+		// First frame of a run, or the clock jumped backwards (a checkpoint restore, a freeze-on-block).
+		// Re-seed rather than clamp against a stale or negative span: a jump is not a throttle.
+		if (_previousFrameClockUtc == DateTime.MinValue || clockNowUtc < _previousFrameClockUtc)
+		{
+			return nominalStep;
+		}
+
+		double availableGameSeconds = (clockNowUtc - _previousFrameClockUtc).TotalSeconds;
+
+		// Unclamped only if the batch's OLDEST bet lands strictly AFTER the previous frame's clock. Strictly,
+		// because the previous frame's last bet was stamped at backdate 0 — which IS that clock — so a batch
+		// reaching exactly back to it lands on a bet already written.
+		double nominalSpan = (planned - 1) * nominalStep;
+		if (nominalSpan < availableGameSeconds)
+		{
+			return nominalStep;
+		}
+
+		// ── Clamped: spread the batch over the HALF-OPEN interval (previousFrameClock, clockNow] ──────────
+		// `planned` bets: the last on clockNow, the first ONE FULL STEP after the previous frame's clock.
+		//
+		// This was `available ÷ (planned − 1)` — the CLOSED interval — and the 99-credit escalation measured
+		// what that costs: 864 same-millisecond pairs in 202,057 bets at 3000X, every one exactly size 2 and
+		// 857 of 864 followed by compressed spacing. The closed interval puts a clamped frame's first bet ON
+		// the previous frame's clock, where that frame's last bet already sits. At tick resolution: 448 exact
+		// duplicates and 416 at exactly +1 tick, the +1 being DateTime.AddSeconds truncating the double
+		// back-date's fractional tick.
+		//
+		// That truncation is also why ordering never broke: it always errs FORWARD, so a boundary collision
+		// landed on or after the previous bet, never before it. Had it rounded to nearest, about half of those
+		// 416 would have been one-tick REGRESSIONS. Monotonicity was being held by a rounding direction nobody
+		// chose. With a full step of separation, which way a double rounds stops mattering.
+		//
+		// RETRACTED WITH THIS CHANGE: the conditional one-tick floor that stood here. It was built for sub-tick
+		// collapse INSIDE a batch — a mechanism reasoned rather than observed, which would produce groups of up
+		// to `planned` bets; no group in any run has exceeded 2. Under the half-open interval it is also
+		// redundant: whenever the frame can hold `planned` distinct ticks, `available ÷ planned` is already at
+		// least one tick. Removed rather than kept as a no-op.
+		//
+		// What remains at the true limit, stated rather than hidden: a frame whose clock advanced by less than
+		// `planned` ticks (4 µs of game time at 40 bets) cannot give every bet a distinct instant. It still
+		// never regresses and never passes the clock — the span is strictly shorter than the advance, and
+		// truncation only ever moves a timestamp later — so ordering and the clock bound hold even there, in a
+		// frame that effectively did not advance.
+		return availableGameSeconds / planned;
+	}
+
+	// How many bets this frame's accumulator can afford, capped the same way the loop that follows is.
+	// Computed BEFORE the loop because a bet's back-date is its distance from the LAST bet of the batch,
+	// which is not knowable while the batch is still draining.
+	private static int PlannedBetsThisFrame(double accumulatorSeconds, double interval)
+	{
+		if (interval <= 0d)
+		{
+			return 1;
+		}
+
+		return Math.Clamp((int)(accumulatorSeconds / interval), 1, MaxBetsPerFrame);
+	}
+
+	// 10 → 20 (mini-plan 08 P1, 2026-08-30). THE FIRST TIME THIS NUMBER HAS BEEN A MEASUREMENT.
+	//
+	// It was 10 for its whole life with nothing behind it, and P1's §3 assumed it was loosely conservative.
+	// It was not: at the 1,414 µs a bet cost before P1's fixes, a 16.67 ms frame fit **12.8 bets if it did
+	// nothing else**, so 10 was at ~78% of an unshareable budget. The constant was accidentally close to
+	// right, which is not the same as justified.
+	//
+	// After P1 fixed the two per-bet costs that were 93% of a bet (the bankroll disk write and DiceGame's
+	// per-bet UI rebuild), a bet costs **296 µs measured**. 20 bets is then 5.9 ms — 35% of the frame — which
+	// leaves real headroom for rendering, the bot runners, the founders and the scheduled network, all of
+	// which draw from the same 16.67 ms.
+	//
+	// **Why raising it is legitimate here and is NOT the move §38.7 forbids.** That rule says a low `Sim%`
+	// means "find what is eating the frame", never "raise MaxBetsPerFrame" — because handing a saturated
+	// frame more work makes it worse. The saturation was found and removed FIRST; this constant is what
+	// remained binding afterwards. Order is the whole difference, and it is why the number may move now and
+	// could not before.
+	//
+	// 20 → 40 (2026-09-12), to serve 99 credits at 2000X: `99 × 20 ÷ 60 =` **33 bets/frame**, which 20
+	// cannot express at all. 40 clears that demand by ~21%.
+	//
+	// ⚠ THE MEANING OF THIS CONSTANT CHANGED WITH THAT STEP, and the change is worth stating rather than
+	// leaving for someone to infer from a slow frame. At the measured 276.5 µs/bet (99 credits, P4), 40 bets
+	// is **11.1 ms — 66% of a 16.67 ms frame**, and 33 is 9.1 ms (55%). Up to and including 20 this cap sat
+	// comfortably inside a frame that had plenty left over for rendering, the bot runners, the founders and
+	// the scheduled network. It no longer does.
+	//
+	// So from 40 onward the cap is set by **the demand it is meant to serve**, not by a budget the frame can
+	// absorb without noticing, and a run that actually reaches it will show as `Sim%` dips rather than as
+	// dropped work. That is still the honest mechanism — R2-C1 converts a frame the engine cannot fill into
+	// a slower wall clock, never into distorted in-game dynamics (P4 demonstrated exactly this at 94.3%
+	// retention) — but it is a different régime, and **the next person to raise this number should re-price
+	// a bet first rather than extrapolating from here.**
+	private const int MaxBetsPerFrame = 40;
+
+	// Mini-plan 08 P1 — BetCostProfiler prints the measured per-bet cost next to the constant that is
+	// supposed to be justified by it, so a report can be read without opening this file. Read-only and
+	// diagnostic; nothing may set the cap through here.
+	public static int MaxBetsPerFrameForDiagnostics => MaxBetsPerFrame;
 	private const double MaxBacklogSeconds = 2.0;
 	private const int MaxAutoBetBaseAps = 99;
 
@@ -224,7 +380,7 @@ public partial class SimulationService : Node
 		_userStats?.NoteBalanceDiscontinuity("autobet_session_wallet");
 		_wallet = new Wallet(bankroll);
 		_betService = new BetService(_engine, _wallet, TransactionSource.Bet,
-			() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
+			() => SettleTimestampUtc());
 
 		// Mini-plan 05 D2: tag the session so the lifecycle trace can name its owner. Note this method
 		// OVERWRITES `_session` without stopping the previous one — hypothesis H3. If the old session is
@@ -240,6 +396,10 @@ public partial class SimulationService : Node
 		_accumulatorSeconds = 0d;
 		_lastFounderChainLen = -1; // force a founder-power recompute on the first frame of this run
 		_lastPopulationChainLen = -1; // and a population-scheduler recompute (Step 14)
+		// Mini-plan 08 P3 — a run must not clamp its first frame against an anchor left by a previous run
+		// (or by a scene round-trip), which could be hours of game time stale and would collapse the batch
+		// onto a single instant. MinValue means "no anchor yet" and yields the nominal spacing.
+		_previousFrameClockUtc = DateTime.MinValue;
 		IsRunning = true;
 
 		if (_calendar != null)
@@ -271,6 +431,7 @@ public partial class SimulationService : Node
 		_wallet = null;
 		_config = null;
 		_accumulatorSeconds = 0d;
+		_previousFrameClockUtc = DateTime.MinValue; // see the note at the field: a stopped run leaves no anchor
 
 		if (_calendar != null)
 		{
@@ -396,13 +557,39 @@ public partial class SimulationService : Node
 		_accumulatorSeconds = Math.Min(offeredBacklog, MaxBacklogSeconds);
 		RecordSimTimeRetention(simDelta, offeredBacklog - _accumulatorSeconds, betsPerSecond);
 
+		// Mini-plan 08 §2 — SPREAD THIS FRAME'S BETS ACROSS THE TIME THEY ACTUALLY OCCUPIED.
+		//
+		// The clock advances once per frame; every bet settled inside the frame used to read it and so
+		// carried the SAME instant. At 100X that is invisible (1.67 game-seconds per frame, rarely more than
+		// one bet in it). At 9000X the frame is 150 game-seconds wide and up to MaxBetsPerFrame bets fall
+		// into it, so the journal asserted "ten bets at once, then a 150-second void" — measured on a real
+		// world at 7,926 bets across 949 distinct timestamps (mini-plan 06 §9.10c).
+		//
+		// The engine already knows the true spacing: `interval` is in SIMULATED seconds and the calendar
+		// advances SpeedMultiplier game-seconds per simulated second, so one bet occupies
+		// `interval × SpeedMultiplier` GAME-seconds — correct at every DevTimeScale, because the scale
+		// multiplies both sides. So plan the batch, then back-date each bet by its own distance from the
+		// end of the frame.
+		//
+		// The LAST bet keeps the clock's exact value. That is deliberate and load-bearing: CLAUDE.md's
+		// canonical rule is that the calendar equals the timestamp of the event that most recently defines
+		// the world, and back-dating forward from a frame START would need a frame start this service does
+		// not have.
+		int planned = PlannedBetsThisFrame(_accumulatorSeconds, interval);
+		DateTime clockNowUtc = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		double stepGameSeconds = ClampedStepGameSeconds(
+			interval * (_calendar?.SpeedMultiplier ?? GameSecondsPerRealSecondFallback), planned, clockNowUtc);
+
 		int executed = 0;
 		while (_accumulatorSeconds >= interval && executed < MaxBetsPerFrame && _session.IsRunning)
 		{
 			_accumulatorSeconds -= interval;
+			_settleBackdateGameSeconds = Math.Max(0, planned - 1 - executed) * stepGameSeconds;
 			ExecutePlayerBetOnce();
 			executed++;
 		}
+
+		_settleBackdateGameSeconds = 0d;
 
 		// Bots advance alongside the player autobet, in every scene (Phase 2).
 		int botExecuted = TickBots(simDelta);
@@ -432,6 +619,12 @@ public partial class SimulationService : Node
 		}
 		// R2-T — the same figures, accumulated for the per-block difficulty trace.
 		NetworkRoot.AccumulateSimSaturation(simDelta, simDelta * retainedFraction);
+
+		// Mini-plan 08 P3 — advance the back-dating anchor LAST, after both settle paths have measured
+		// against it. Placed here rather than beside the player's loop because the bots settle in the same
+		// frame off the same clock; moving it earlier would give them a zero-width window and collapse
+		// their spacing to nothing.
+		_previousFrameClockUtc = clockNowUtc;
 	}
 
 	// Recompute founder powers exactly once per new block on the canonical chain. Satoshi's confirmed-BTC
@@ -588,24 +781,37 @@ public partial class SimulationService : Node
 			return;
 		}
 
-		DateTime tsUtc = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
+		DateTime tsUtc = SettleTimestampUtc();
+
+		// Mini-plan 08 P1 — segment timing, DEBUG-only and disarmed by default (Scripts/Diagnostics/
+		// BetCostProfiler.cs). Every call below compiles to nothing in RELEASE. The marks sit immediately
+		// after the work they name, so a segment's time is its own and the residue lands in "unaccounted"
+		// rather than being quietly absorbed by a neighbour.
+		Scripts.Diagnostics.BetCostProfiler.BeginBet();
 
 		try
 		{
 			var (_, betEvent, _) = _session.ExecuteNext(_config.Chance, _config.BetHigh, tsUtc);
+			Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.ExecuteNext);
 			LastSettledBetEvent = betEvent;
 			if (_config.IsPlayerActive)
 			{
 				_userStats?.OnBetExecutedRegisterBet(_config.GameId, betEvent, UserStatsService.SourceSimulation);
 			}
+			Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.RegisterBet);
 		}
 		catch (InvalidOperationException)
 		{
+			// This bet never completed, so it must not be counted — and leaving the profiler "inside a bet"
+			// would attribute the auto-recharge's own BetSettled emit, which follows this stop immediately,
+			// to a bet that does not exist.
+			Scripts.Diagnostics.BetCostProfiler.AbortBet();
 			_session.Stop(IBettingStrategy.StopReason.InsufficientBalance);
 			return;
 		}
 
 		PersistFinancialState(false);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.PersistFinancial);
 
 		// Settle THIS bet's balances BEFORE mining/checkpoint (OQ-CG.10): if this same bet mines a block, the
 		// checkpoint it captures must reflect the bet's own result, consistently with the bet-history boundary
@@ -615,31 +821,49 @@ public partial class SimulationService : Node
 		// delegated autobet running on a bot node is simply that bot's play (correct semantics, no longer an
 		// inconsistency with the comment); its settled bets also accrue in the casino's per-client book.
 		_bankroll?.SetBalance(_wallet.Balance);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.BankrollSetBalance);
+
 		_casinoSc?.ApplyBetResult(-(LastSettledBetEvent?.CreditedProfit ?? 0m));
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.CasinoApplyBetResult);
+
 		if (!_config.IsPlayerActive && LastSettledBetEvent != null)
 		{
 			_clientLedger ??= GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 			_clientLedger?.RegisterSettledBet(_config.ActiveNodeId, LastSettledBetEvent.BetAmount,
 				LastSettledBetEvent.CreditedProfit, LastSettledBetEvent.IsWin);
 		}
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.ClientLedger);
 
 		// One nonce attempt per bet (1 bet = 1 attempt), routed by the active node's hardware allocation
 		// (individual pool → own chain; casino pool → casino chain). Real PoW on the shared chain.
 		long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
 		Block? block = RouteNonceAttempt(_config.ActiveNodeId, tsMs);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.NonceAttempt);
+
 		if (block != null)
 		{
-			CaptureCheckpoint();
+			// This bet was stamped by SettleTimestampUtc(), so the block and the checkpoint share its instant.
+			CaptureCheckpoint(_settleBackdateGameSeconds);
 			if (_config.StopOnBlockMined && _session.IsRunning)
 			{
 				_session.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
 				FreezeCalendarAtBlockStop();
 			}
 		}
+		// The block path gets its OWN segment, separate from the attempt above. Both readings are honest and
+		// they answer different questions: amortised over thousands of bets this is a few µs (the cost every
+		// bet shares), while the same work inside ONE bet was measured at 96.7 ms — 5.8 frames — which is
+		// what the brief Sim% dips at high throughput actually are. A mean cannot show a spike, and a spike
+		// and a saturation have opposite fixes.
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.BlockCommit);
 
 		if (LastSettledBetEvent != null)
 			ClientBetSettled?.Invoke(_config.ActiveNodeId, _config.GameId, LastSettledBetEvent);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.ClientBetSettledEvent);
+
 		EmitSignal(SignalName.BetSettled);
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.BetSettledSignal);
+		Scripts.Diagnostics.BetCostProfiler.EndBet();
 	}
 
 	private void PersistFinancialState(bool persist)
@@ -767,8 +991,20 @@ public partial class SimulationService : Node
 		return true;
 	}
 
-	private void CaptureCheckpoint()
+	// Mini-plan 08 D4 — the instant the latest checkpoint was captured at, in the calendar's LOCAL time, kept so
+	// FreezeCalendarAtBlockStop can stop the clock ON that instant rather than wherever the frame clock stands.
+	// Cleared at the start of every capture, so one that bails out early can never hand the freeze a stale
+	// instant belonging to an earlier block.
+	private DateTime? _checkpointInstantLocal;
+
+	/// <param name="settlingBackdateGameSeconds">
+	/// The back-date of the bet that MINED the block, passed only when the capture runs inside the player's own
+	/// bet. Every other caller passes nothing and captures at the frame clock — see the D4 note below for why that
+	/// asymmetry is correct and not an oversight.
+	/// </param>
+	private void CaptureCheckpoint(double settlingBackdateGameSeconds = 0d)
 	{
+		_checkpointInstantLocal = null;
 		PersistFinancialState(true);
 		if (_principal == null || _bankroll == null || _bankrollProgram == null || _checkpoint == null)
 		{
@@ -790,9 +1026,22 @@ public partial class SimulationService : Node
 			_bankrollProgram.ReplaceState(playerState.AutoRechargeAmount, playerState.TransferRecords);
 		}
 
-		DateTime historyUtc = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
-		DateTime calendarLocal = _calendar?.CurrentLocalDateTime ?? DateTime.Now;
+		// Mini-plan 08 D4 — THE CHECKPOINT BOUNDARY IS THE INSTANT OF THE LAST BET WHOSE BALANCES IT HOLDS.
+		//
+		// Back-dating (§2) put the player's mining bet up to a frame's width BEHIND the clock, and this read the
+		// clock. The player's loop then kept settling bets stamped between the two — after the capture, so not
+		// in its balances, but at or before its boundary, so RollbackToUtc KEPT them on restart. Measured in the
+		// stats test (plan §D4): journal bets surviving a restart that no restored balance had ever paid for.
+		//
+		// The asymmetry is the frame's ORDER, not an oversight. The player's loop runs to completion before
+		// TickBots, and the founders and the scheduled network mine after both. So when anything OTHER than the
+		// player's own bet mines, every player bet of the frame — stamped up to the clock — is already inside
+		// the balances captured here, and the clock is the correct boundary. Only a capture from inside the
+		// player's loop has bets still to come in the same frame, and only it passes its back-date.
+		DateTime historyUtc = (_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow).AddSeconds(-settlingBackdateGameSeconds);
+		DateTime calendarLocal = (_calendar?.CurrentLocalDateTime ?? DateTime.Now).AddSeconds(-settlingBackdateGameSeconds);
 		_checkpoint.CaptureCheckpoint(_principal, _bankroll, _bankrollProgram, historyUtc, calendarLocal);
+		_checkpointInstantLocal = calendarLocal;
 
 		if (botSession)
 		{
@@ -870,7 +1119,7 @@ public partial class SimulationService : Node
 			BankrollProgramService.DefaultAutoRechargeAmount);
 		var wallet = new Wallet(financialState.BankrollBalance);
 		var betService = new BetService(_engine!, wallet, TransactionSource.Bet,
-			() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
+			() => SettleTimestampUtc());
 		var session = new AutoBetSession(betService, wallet, new ProgressiveBettingStrategy())
 		{
 			Owner = "SimulationService.bot",
@@ -916,13 +1165,26 @@ public partial class SimulationService : Node
 			runner.AccumulatorSeconds = Math.Min(botBacklog, MaxBacklogSeconds);
 			RecordSimTimeRetention(botOffered, botBacklog - runner.AccumulatorSeconds, betsPerSecond);
 
+			// Mini-plan 08 §2, applied to the bots for the same reason and by the same arithmetic. Their
+			// records feed CasinoClientLedgerService and BotPlayHistory rather than the player's journal,
+			// but a per-frame timestamp collapse distorts those readings identically — and leaving one of
+			// two identical loops unfixed is how the next investigation gets a mixed dataset.
+			int botPlanned = PlannedBetsThisFrame(runner.AccumulatorSeconds, interval);
+			double botStepGameSeconds = ClampedStepGameSeconds(
+				interval * (_calendar?.SpeedMultiplier ?? GameSecondsPerRealSecondFallback),
+				botPlanned,
+				_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
+
 			int executed = 0;
 			while (runner.AccumulatorSeconds >= interval && executed < MaxBetsPerFrame && runner.Session.IsRunning)
 			{
 				runner.AccumulatorSeconds -= interval;
+				_settleBackdateGameSeconds = Math.Max(0, botPlanned - 1 - executed) * botStepGameSeconds;
 				ExecuteBotBet(runner);
 				executed++;
 			}
+
+			_settleBackdateGameSeconds = 0d;
 			totalExecuted += executed;
 		}
 
@@ -943,7 +1205,7 @@ public partial class SimulationService : Node
 
 		try
 		{
-			DateTime tsUtc = _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow;
+			DateTime tsUtc = SettleTimestampUtc();
 			var (_, betEvent, _) = runner.Session.ExecuteNext(
 				Math.Clamp(runner.Config.WinningChance, 1, 95),
 				runner.Config.BetHigh,
@@ -1011,15 +1273,23 @@ public partial class SimulationService : Node
 	// the calendar always equals the timestamp of the block that defines the checkpointed world). Without
 	// this, the session stops but CalendarTimeService.IsRunning stays true for the frame(s) until the next
 	// _Process reaches ClearRunningState — so CalendarTimeService._Process keeps advancing the clock PAST the
-	// block, and that drifted value later gets persisted to calendar_state.json (OQ-CG.9). We freeze it in
-	// place rather than re-setting it: at this synchronous point the clock still equals the value CaptureCheckpoint
-	// just read (no _Process ran in between), so freezing pins it bit-for-bit to the checkpoint. The drift was
+	// block, and that drifted value later gets persisted to calendar_state.json (OQ-CG.9). The drift was
 	// normally sub-second, but the casino's on-demand loan (CG.1.8) added real-time latency to the block frame,
 	// inflating the next frame's delta and making the overshoot large enough to notice.
+	//
+	// This used to freeze the clock IN PLACE, on the reasoning that the clock still equalled what the capture
+	// had just read. Mini-plan 08 D4 made that false for the player's own block: the capture now reads the
+	// mining bet's back-dated instant, up to a frame's width behind the clock. So the freeze sets the clock ON
+	// the captured instant — a no-op for every external block, whose capture read the clock itself. The
+	// half-open clamp already treats a clock that moved backwards as a re-seed, not a throttle.
 	private void FreezeCalendarAtBlockStop()
 	{
 		if (_calendar == null) return;
 		_calendar.IsRunning = false;
+		if (_checkpointInstantLocal is DateTime checkpointLocal)
+		{
+			_calendar.SetLocalDateTime(checkpointLocal);
+		}
 		_calendar.PersistCurrentTime();
 	}
 
@@ -1089,7 +1359,7 @@ public partial class SimulationService : Node
 	{
 		_engine ??= new DiceEngine();
 		var betService = new BetService(_engine, runner.Wallet, TransactionSource.Bet,
-			() => _calendar?.CurrentUtcDateTime ?? DateTime.UtcNow);
+			() => SettleTimestampUtc());
 		var session = new AutoBetSession(betService, runner.Wallet, new ProgressiveBettingStrategy())
 		{
 			Owner = "SimulationService.bot",

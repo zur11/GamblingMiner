@@ -99,8 +99,9 @@ public partial class PlayerBankAccountService : Node
 	// (re-)entering play, which resets the since-last-deposit baseline for both manual and auto (D-SF2.2).
 	private void RegisterLedgerDeposit(decimal amount, string method)
 	{
-		decimal wagered = _userStats?.Stats?.TotalAmountWagered ?? 0m;
-		decimal profit  = _userStats?.Stats?.TotalProfit ?? 0m;
+		// Mini-plan 08 D2 — from the lifetime rollup, as BankrollProgramService's recharge snapshot is.
+		decimal wagered = _userStats?.Rollup?.TotalWagered ?? 0m;
+		decimal profit  = _userStats?.Rollup?.TotalNetProfit ?? 0m;
 		_ledger?.RegisterDeposit("player", amount, GameUtcNow(), wagered, profit, method);
 	}
 

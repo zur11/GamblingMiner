@@ -599,3 +599,100 @@ The in-engine confirmation of the new write path is owed on the disposable world
    scattered tails. The since-deposit check, which looked equally promising, turned out to be
    unanswerable because its evidence had been pruned. **Both outcomes are results; only one of them is a
    conclusion.**
+
+---
+
+## INC-005 — The statistics panel that contradicted the balances (2026-09-13)
+
+**World / context** — Branch `mini08-timestamp-fidelity`, canonical timeline, `WorldFormatVersion 6`, a
+99-credit DEV world driven to 3000X by mini-plan 08's escalation runs. Full diagnosis, pre-registered test and
+verification: `AIHelperFiles/mini08-timestamp-fidelity-and-throughput-limits-plan.md`, from "DiceGame's betting
+statistics — four defects diagnosed".
+
+**Symptom** — In the developer's words: *"en General dice que player lleva 894SC de ganancias pero en bankroll
+tiene solo 2164 + main balance 32200. sumando todo no llega al balance inicial de 39900. también me pareció
+notar como si la cuenta de total gambled se reiniciara entre estos runs de prueba."* A profit figure that the
+balances beside it disproved, and a lifetime total that appeared to reset. **Nothing reported anything.**
+
+**Timeline**
+
+1. **Mini-plan 03** ships the lifetime rollup. Boot rebuilds `Stats` from it; the checkpoint rollback path
+   keeps rebuilding `Stats` by replaying the journal.
+2. **INC-001 / D-15.28** caps the journal at 20 segments. From then on the journal is a window, and a replay of
+   it is not a lifetime figure. The rollback path still compiles and still returns a plausible number.
+3. **Mini-plan 08 §2** back-dates each bet by its own interval. The checkpoint's history boundary keeps reading
+   the frame clock.
+4. **2026-09-13** — the developer reports the contradiction; four defects are diagnosed and a test is
+   pre-registered in exact satoshis.
+5. **2026-09-14** — **18 of 18** predicted cells match to the satoshi. Fixes built; world reset 6 → 7.
+6. **2026-09-15** — clean-world test: every registered figure exact, D4 confirmed on a player-tipped checkpoint.
+
+**Faults** — four, independent, all in the path between a restart and the panel.
+
+1. **ROOT — D1, `Stats` had two writers in different scales.** `RollbackHistoryToUtc` rebuilt `Stats` from the
+   retention-capped journal; boot built it from the unpruned rollup. After the first prune, every DiceGame
+   visit following a restart rebased "General" onto the retained window, **+6,530.76 P/L and −133,022.37
+   wagered** against the committed rollup. The "Since…" scopes kept subtracting lifetime-scale snapshots from
+   it. The panel's own tooltip described the window scale as intended ("covers the retained bet history"): a
+   label had been written to fit the bug.
+2. **D2 — ledger snapshots persisted in the rebased scale, and a clamp hid it.** Recharge and bank-deposit
+   snapshots read `Stats`, so any taken after a D1 rebase were stored in the window scale.
+   `PlayerFinancialStatsCalculator` clamped wagered-since at 0, justified as "a snapshot can momentarily lead
+   the counter", a mechanism that does not exist. It displayed **5,381.34 SC of wrong baseline as 0.00**.
+   Persisted, so unrepairable in place.
+3. **D3 — the restore replaced the rollup but not what was derived from it.** A DiceGame exit flushes the
+   rollup file with uncommitted bets; boot builds `Stats` from that file, and the checkpoint restore then
+   swapped in the committed rollup, leaving `Stats` alone. Until a rebuild, lifetime totals included bets the
+   world had just discarded.
+4. **D4 — introduced by mini-plan 08: the checkpoint boundary was the frame clock, not the block.** The
+   player's mining bet was back-dated; the capture read the clock. Bets settled later in that frame were
+   outside the checkpoint's balances but inside its boundary, so a restart **kept** them. The resulting
+   continuity break was silenced by the rollback's own discontinuity declaration.
+
+**Evidence**
+
+- **Pre-registered and exact.** Steps 2–4 of the v6 test predicted 18 panel cells in BigInt satoshis; all 18
+  matched. Step 4 showed ScFinances' balance-derived *"Overall P/L −6112.09089288"* directly above
+  *"General +400.76053542"*.
+- **D4 on block #385:** checkpoint boundary 15.15 game-seconds after the block; 15 bets kept, +0.01073557 SC.
+  The last kept `BalanceAfter` was 1,687.91984269 against a restored bankroll of 1,687.90910712.
+  The nonce counter independently read `102,095 = 15 + 102,080`.
+- **After the fixes, on a clean world:** step 4 (ScFinances first, after a deliberate flush 2,689 bets ahead)
+  and step 5 (DiceGame, after 49,998 bets pruned) both showed the committed rollup exactly, each figure
+  distinguishable from what the old code would have shown.
+  - Step 9: a restart onto the player's block #116 put the boundary on the mining bet to the tick.
+    About 20 back-dated bets were discarded, and the journal's last balance equalled `bankroll_state`.
+  - A further 10,000-bet prune at that restart left every statistic unchanged.
+
+**Blast radius**
+
+- **Wrong on screen, for an unknown number of sessions:** General, Since deposit and Since recharge in
+  DiceGame and ScFinances, whenever a world had pruned history and had been restarted.
+- **Persisted wrong:** the casino client ledger's player snapshots (D2). Unrepairable, since which entries were
+  rebased cannot be told from the entries.
+- **Journal:** bets surviving restarts that no restored balance had paid for (D4), a few satoshis to cents per
+  block, only when the player's mining bet was not the last bet of its frame.
+- **Not affected:** balances, the chain, the lifetime rollup itself, the casino's books, every other client.
+
+**Recovery** — the v6 world was archived out of `user://` (`GamblingMiner_archive_mini08_world_v6_2026-09-14`),
+then discarded by `WorldFormatVersion` 6 → 7, per project policy.
+
+**Fix** — shipped on `mini08-timestamp-fidelity`:
+- `19b3dbc` — D4: capture at the mining bet's instant, and freeze onto that instant on stop-on-block.
+- `20e5d26` — D1 + D3: `Stats` derives only from the rollup.
+- `c8ccd1d` — D2: snapshots from the rollup, clamp removed, world reset.
+- Verified in `6274e2a` and `8b582f1`.
+
+**Lesson** — three, in order of how much they generalize:
+
+1. **A displayed figure with two writers in different scales is not a statistic.** Boot and rollback each
+   produced a correct number for its own scale, and the panel subtracted one from the other.
+   **Whoever replaces a source must replace what is derived from it in the same breath** (D3), and
+   **a retired premise must be grepped for, not waited for** (Standing Convention 13): the journal stopped
+   being lifetime at INC-001 and the rebuild that assumed it kept compiling.
+2. **A clamp justified by "momentarily" is a symptom asking to be investigated.** Projecting instead of
+   clamping (Standing Convention 7) was not even the right answer here: the right answer was that no negative
+   value could legitimately occur, so the clamp's only work was hiding one.
+3. **Moving a timestamp moves every boundary computed from it.** The fix that gave each bet its true instant
+   never asked what the checkpoint boundary was derived from. **When a change redefines a time or a quantity,
+   enumerate the comparisons that consume it before calling it done.**

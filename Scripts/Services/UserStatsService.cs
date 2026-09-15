@@ -21,9 +21,10 @@ public partial class UserStatsService : Node
 	private bool _hasPendingStatsChange;
 
 	// ── Lifetime rollup (mini-plan 03) ──────────────────────────────────────────
-	// Stats is rebuilt by scanning the journal, and the journal retains only its newest 200,000 bets —
-	// so scanning stops being a LIFETIME measurement the moment the first chunk is pruned. The rollup is
-	// the running total that survives its own source being deleted. See §6.2 of the plan.
+	// Stats was once rebuilt by scanning the journal, and retention caps the journal — so scanning stops
+	// being a LIFETIME measurement the moment the first chunk is pruned. The rollup is the running total
+	// that survives its own source being deleted (§6.2 of the plan), and since mini-plan 08 D1 it is the
+	// ONLY source Stats is ever rebuilt from, outside the one-time first-run seeding.
 	private const string RollupPath = "user://bet_stats_rollup.json";
 	// INC-004 A-F1 — the rollup is written .tmp → rename, never truncate-and-stream. FileAccess.Open(Write)
 	// TRUNCATES AT OPEN, so the exposure window is not "mid-write" but from open until StoreString returns;
@@ -474,6 +475,14 @@ public partial class UserStatsService : Node
 
 		_rollupDirty = true;
 		SaveRollupIfDirty();
+
+		// Mini-plan 08 D3 — STATS FOLLOWS THE ROLLUP IT WAS BUILT FROM. Boot (#2) builds Stats from the rollup
+		// FILE, which leaving DiceGame flushes with every uncommitted bet in it; this restore (#13) then replaced
+		// the rollup with the committed snapshot and left Stats alone. Until something rebuilt it, the panel
+		// showed lifetime totals holding bets the world had just discarded. There is one source for these
+		// figures, and whoever replaces it replaces what is derived from it in the same breath.
+		Stats = UserBettingStats.FromRollup(Rollup);
+		EmitStatsChangedImmediate();
 	}
 
 	// Called by BlockSessionCheckpointService at each block. Flushing here too keeps the standalone file
@@ -517,7 +526,14 @@ public partial class UserStatsService : Node
 		// Once per process (DiceGame's checkpoint restore is guarded), and only when a checkpoint exists.
 		BetHistory.EnsureAllChunksLoaded();
 		BetHistory.RollbackToUtc(checkpointUtc);
-		RebuildStatsFromLoadedHistory();
+
+		// Mini-plan 08 D1 — NOT a replay of the journal. This was RebuildStatsFromLoadedHistory(), which
+		// re-derived Stats from the ~200,000 bets retention still holds: once anything had been pruned, every
+		// visit to DiceGame after a restart silently rebased the "lifetime" General scope onto the retained
+		// window — measured at +6,530.76 P/L and −133,022.37 wagered against the committed rollup — while the
+		// ledger snapshots the "Since…" scopes subtract stayed in the lifetime scale. The rollup the checkpoint
+		// restore already put in place IS the committed lifetime total; the journal is only a window onto it.
+		Stats = UserBettingStats.FromRollup(Rollup);
 		EmitStatsChangedImmediate();
 	}
 
@@ -557,7 +573,7 @@ public partial class UserStatsService : Node
 		_rollupDirty = true;
 		SaveRollupIfDirty();
 
-		RebuildStatsFromLoadedHistory();
+		Stats = UserBettingStats.FromRollup(Rollup);   // zeroed above; the journal is not a second source (D1)
 		EmitStatsChangedImmediate();
 	}
 
@@ -742,10 +758,14 @@ public partial class UserStatsService : Node
 			return;
 		}
 
-		// Seeds the rollup ONLY on its very first creation (RollupIsAuthoritative is false exactly then).
-		// Every later call — a checkpoint rollback, a pre-genesis clear — leaves it alone, because the
-		// journal cannot report its own completeness and a re-derivation would silently replace a correct
-		// running total with whatever retention happens to still hold. See the note in _Ready.
+		// Seeds the rollup ONLY on its very first creation (RollupIsAuthoritative is false exactly then),
+		// because the journal cannot report its own completeness and a re-derivation would silently replace a
+		// correct running total with whatever retention happens to still hold. See the note in _Ready.
+		//
+		// Since mini-plan 08 D1 that first-run seeding in _Ready is the ONLY caller. The rollback and the
+		// pre-genesis clear used to call this too, and for Stats they committed exactly the substitution the
+		// sentence above forbids for the rollup: a retained window presented as a lifetime figure. They now
+		// derive Stats from the rollup. Do not add a caller.
 		bool reseedRollup = !RollupIsAuthoritative;
 		if (reseedRollup)
 		{

@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://dc5d23kpgengh" path="res://UI/FinancialBettingStats/FinancialBettingStats.cs" id="1_jwxx3"]
 
-[node name="FinancialBettingStats" type="VBoxContainer" node_paths=PackedStringArray("_generalProfitLabel", "_generalGambledLabel", "_sinceDepositProfitLabel", "_sinceDepositGambledLabel", "_sinceRechargeProfitLabel", "_sinceRechargeGambledLabel")]
+[node name="FinancialBettingStats" type="VBoxContainer" node_paths=PackedStringArray("_generalProfitLabel", "_generalGambledLabel", "_sinceDepositProfitLabel", "_sinceDepositGambledLabel", "_sinceRechargeProfitLabel", "_sinceRechargeGambledLabel", "_totalBetsLabel")]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -16,6 +16,7 @@ _sinceDepositProfitLabel = NodePath("Grid/SinceDepositProfitValue")
 _sinceDepositGambledLabel = NodePath("Grid/SinceDepositGambledValue")
 _sinceRechargeProfitLabel = NodePath("Grid/SinceRechargeProfitValue")
 _sinceRechargeGambledLabel = NodePath("Grid/SinceRechargeGambledValue")
+_totalBetsLabel = NodePath("TotalBetsValue")
 
 [node name="Title" type="Label" parent="."]
 layout_mode = 2
@@ -87,3 +88,8 @@ text = "0.00000000"
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "0.00000000"
+
+[node name="TotalBetsValue" type="Label" parent="."]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Total bets: 0"

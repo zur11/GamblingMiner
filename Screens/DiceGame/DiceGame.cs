@@ -82,8 +82,27 @@ public partial class DiceGame : Control, IBetEventSource
 	private Button _saveStrategyBtn;
 	private Button _loadStrategyBtn;
 	private SavedBettingStrategyRepository _savedStrategyRepository;
-	private int _lastAnnouncedMinedBlockIndex;
 	private ManualStopGate _manualStopGate = ManualStopGate.None;
+
+	// ── The manual burst is PACED ACROSS FRAMES, not run inside the press ──────────────────────────────
+	// One press buys GameSecondsPerManualBet of game time, which at 99 credits is 99 bets. They used to run
+	// in a single `for` loop inside the button handler, so all 99 rolls and all 99 history rows appeared in
+	// the same frame — the developer's report: autobet looks fluid, manual arrives "de golpe". Nothing was
+	// wrong with the bets; the whole second of play was invisible.
+	//
+	// The bets themselves are unchanged: same count, same game-time stamps (`base + i × timePerBet`), same
+	// clock advance once at the end. Only their execution is spread over ManualBurstRealSeconds of REAL time,
+	// which is what the autobet path does per frame and why it reads as play rather than as a result.
+	// Betting controls are disabled while it runs, so a second press cannot interleave two bursts.
+	private const double ManualBurstRealSeconds = 1.0d;
+	private int _manualBurstTotal;
+	private int _manualBurstRemaining;
+	private int _manualBurstIndex;
+	private int _manualBurstExecuted;
+	private double _manualBurstTimePerBet;
+	private double _manualBurstAccumulator;
+	private DateTime _manualBurstBaseUtc;
+	private bool ManualBurstActive => _manualBurstRemaining > 0;
 	// STATIC so it survives DiceGame being freed and rebuilt on each scene change (mini-plan 02,
 	// D-M2.1 — same reason as _checkpointRestoreSpentThisSession / _bootstrapAppliedThisSession
 	// below). As an instance field this emptied on every navigation, so LoadActiveNodeStrategySnapshot
@@ -140,6 +159,10 @@ public partial class DiceGame : Control, IBetEventSource
 	private Label _balanceValue;
 	private Label _bankrollValue;
 	private Label _principalBalanceValue;
+	// Shows ONLY the latest dice roll (00–99), written by ShowRoll and nothing else. It used to carry ~30
+	// status messages (stops, strategy save/load, block announcements, errors) while the scene kept it
+	// `visible = false`, so none of them ever reached a player. Now that it says one thing, the scene shows
+	// it; its placement and styling belong to the final player-facing UI design.
 	private Label _resultValue;
 
 	private Label _winnerNumbersValue;
@@ -282,7 +305,8 @@ public partial class DiceGame : Control, IBetEventSource
 		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
 		_apsSelector.ItemSelected += _ => OnBetsPerSecondChanged(0d);
 
-		// DEV/TEST time-acceleration selector (100X..1000X), placed next to the APS selector.
+		// DEV/TEST time-acceleration selector (the ladder is DevTimeScaleSelector's own), placed next to the
+		// APS selector — the two together are the `credits × DevTimeScale` throughput demand.
 		var devTimeScale = new UI.DevTimeScaleSelector.DevTimeScaleSelector();
 		_apsSelector.GetParent().AddChild(devTimeScale);
 		_apsSelector.GetParent().MoveChild(devTimeScale, _apsSelector.GetIndex() + 1);
@@ -308,14 +332,14 @@ public partial class DiceGame : Control, IBetEventSource
 		// SF.4B.6: seed the in-game bet-history list from the centralized persistent store so the most-recent
 		// history reproduces on entry (before, it started empty on re-entry). Runs AFTER the checkpoint rollback
 		// above so it reflects committed history; live BetExecuted events keep prepending after this.
-		_betHistoryContainer?.LoadFromHistoricalRecords(
-			_userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries));
+		IReadOnlyList<BetRecord> recentOnEntry = _userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries);
+		_betHistoryContainer?.LoadFromHistoricalRecords(recentOnEntry);
+		SeedRollFromRecentBets(recentOnEntry);
 		LoadActiveNodeFinancialState();
 		LoadActiveNodeStrategySnapshot();
 		EnsureInitialBankrollFunded();
 		EnsureMissingNodeFinancialStates(hadAnyNodeFinancialState);
 		RefreshCalculatorFromGameSettings();
-		_resultValue.Text = "Place your bet.";
 
 		// Background autobet (SimulationService): subscribe for live UI updates, and if a background
 		// autobet is already running (we navigated back into DiceGame), bind to it instead of starting fresh.
@@ -329,8 +353,7 @@ public partial class DiceGame : Control, IBetEventSource
 			}
 			else if (_simulationService.StopNoticePending)
 			{
-				// The background autobet stopped while we were in another scene — surface the reason now.
-				_resultValue.Text = $"Auto stopped: {_simulationService.LastAutobetStopReason}";
+				// The background autobet stopped while we were in another scene — consume its pending notice.
 				_simulationService.ConsumeStopNotice();
 			}
 		}
@@ -464,7 +487,6 @@ public partial class DiceGame : Control, IBetEventSource
 		// Block Explorer (per-node, auto-refreshing).
 		if (_autobetDelegated)
 		{
-			_resultValue.Text = "Stop the autobet to change the active node.";
 			return;
 		}
 
@@ -491,13 +513,12 @@ public partial class DiceGame : Control, IBetEventSource
 		// scene re-entry. Bots keep the cleared list (their history lives in BotPlayHistory).
 		if (IsPlayerActive())
 		{
-			_betHistoryContainer?.LoadFromHistoricalRecords(
-				_userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries));
+			IReadOnlyList<BetRecord> recentForPlayer = _userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries);
+			_betHistoryContainer?.LoadFromHistoricalRecords(recentForPlayer);
+			SeedRollFromRecentBets(recentForPlayer);
 		}
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
-		_resultValue.Modulate = Colors.White;
-		_resultValue.Text = $"Active node: {_activeNodeId}";
 	}
 
 	private bool IsPlayerActive() =>
@@ -612,13 +633,17 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		UpdateCurrentAppTimeUI();
 		UpdateBoardVotePauseUi();
+		TickManualBurst(delta);
 		TickAutoBet(delta);
+		// AFTER TickAutoBet, deliberately: the background sim settles this frame's bets during _Process, so
+		// flushing first would paint the previous frame's state and leave this frame's stale until the next.
+		FlushSettledBetUiIfDirty();
 	}
 
 	// Step 14 (ND.8b.3/D-ND8.18 follow-up): while a board vote awaits the player's ballot, BOTH betting
 	// buttons (manual + AUTO) are disabled — the button-level mirror of the ExecuteBet/SimulationService
 	// gates, so the player can see that time cannot be advanced until the company matter is attended.
-	// Edge-triggered: the per-frame cost is one static flag read; buttons/notice update only on change.
+	// Edge-triggered: the per-frame cost is one static flag read; buttons update only on change.
 	private bool _boardVotePauseActive;
 
 	private void UpdateBoardVotePauseUi()
@@ -631,16 +656,6 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_boardVotePauseActive = awaiting;
 		ApplyBettingControlsAvailability();
-		if (awaiting)
-		{
-			var pending = NetworkRoot.GetCompaniesAwaitingPlayerVote();
-			string where = pending.Count > 0 ? pending[0].companyDisplayName : "a company you co-own";
-			_resultValue.Text = $"Board vote pending at {where} — vote in Block Explorer → Enroll Mode → Details to resume play.";
-		}
-		else
-		{
-			_resultValue.Text = "Board vote attended — you may resume betting.";
-		}
 	}
 
 	// Composes the two independent button locks: only the player node may bet (bot-active lock, see the
@@ -730,8 +745,6 @@ public partial class DiceGame : Control, IBetEventSource
 		});
 
 		SaveActiveNodeStrategySnapshot();
-		_resultValue.Modulate = Colors.White;
-		_resultValue.Text = $"Strategy saved: {strategyName}";
 		UpdateStrategySaveLoadButtons();
 	}
 
@@ -740,10 +753,6 @@ public partial class DiceGame : Control, IBetEventSource
 		string strategyName = _strategyNameInput.Text.Trim();
 		if (!_savedStrategyRepository.TryGet(GameId, strategyName, out SavedBettingStrategy saved))
 		{
-			_resultValue.Modulate = Colors.White;
-			_resultValue.Text = string.IsNullOrWhiteSpace(strategyName)
-				? "No saved strategy found."
-				: $"Strategy not found: {strategyName}";
 			UpdateStrategySaveLoadButtons();
 			return;
 		}
@@ -773,8 +782,6 @@ public partial class DiceGame : Control, IBetEventSource
 		SaveActiveNodeStrategySnapshot();
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
-		_resultValue.Modulate = Colors.White;
-		_resultValue.Text = $"Strategy loaded: {saved.Name}";
 		UpdateStrategySaveLoadButtons();
 	}
 
@@ -992,7 +999,6 @@ public partial class DiceGame : Control, IBetEventSource
 
 		if (!_strategyPanel.TryGetValidBet(out _))
 		{
-			_resultValue.Text = "Invalid bet format.";
 			return;
 		}
 
@@ -1013,30 +1019,106 @@ public partial class DiceGame : Control, IBetEventSource
 		// exact match with a reset/checkpoint boundary is indistinguishable from "part of that boundary" and
 		// can survive a rollback (RollbackToUtc's `TimestampUtc > checkpoint` check) that should have discarded it.
 		DateTime burstBaseUtc = (_calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow).AddSeconds(timePerBet);
-		int executed = 0;
-		for (int i = 0; i < attempts && _session.IsRunning; i++)
+		_manualBurstTotal = attempts;
+		_manualBurstRemaining = attempts;
+		_manualBurstIndex = 0;
+		_manualBurstExecuted = 0;
+		_manualBurstTimePerBet = timePerBet;
+		_manualBurstBaseUtc = burstBaseUtc;
+		_manualBurstAccumulator = 0d;
+		_strategyPanel.SetBettingControlsEnabled(false);
+
+		// The first bet lands inside the press itself, so the button answers immediately; the rest are paced
+		// by TickManualBurst. A one-bet burst therefore never waits for a frame.
+		if (!ExecuteManualBurstBet())
 		{
-			if (_session.CurrentBet > _walletController.Balance)
+			FinishManualBurst();
+		}
+	}
+
+	// One bet of the running burst. Returns false when the burst must end — the session stopped (a stop
+	// condition, a mined block) or the next bet no longer fits the bankroll. These are the two checks the
+	// old synchronous loop made per iteration, unchanged.
+	private bool ExecuteManualBurstBet()
+	{
+		if (!ManualBurstActive || _session == null || !_session.IsRunning)
+		{
+			return false;
+		}
+
+		if (_session.CurrentBet > _walletController.Balance)
+		{
+			return false;
+		}
+
+		ExecuteBet(_manualBurstBaseUtc.AddSeconds(_manualBurstIndex * _manualBurstTimePerBet), suppressClockAdvance: true);
+		_manualBurstIndex++;
+		_manualBurstExecuted++;
+		_manualBurstRemaining--;
+		return _manualBurstRemaining > 0 && _session.IsRunning;
+	}
+
+	// Driven from _Process. The whole burst occupies ManualBurstRealSeconds regardless of how many bets it
+	// holds, so the pace is the hardware's: 99 credits fill the second with 99 rolls, 1 credit with one.
+	private void TickManualBurst(double delta)
+	{
+		if (!ManualBurstActive)
+		{
+			return;
+		}
+
+		double interval = ManualBurstRealSeconds / Math.Max(1, _manualBurstTotal);
+		_manualBurstAccumulator += Math.Max(0d, delta);
+		while (ManualBurstActive && _manualBurstAccumulator >= interval)
+		{
+			_manualBurstAccumulator -= interval;
+			if (!ExecuteManualBurstBet())
 			{
 				break;
 			}
-
-			ExecuteBet(burstBaseUtc.AddSeconds(i * timePerBet), suppressClockAdvance: true);
-			executed++;
 		}
+
+		if (!ManualBurstActive || _session == null || !_session.IsRunning)
+		{
+			FinishManualBurst();
+		}
+	}
+
+	// The tail the button handler used to run straight after its loop: advance the clock once for the whole
+	// burst, then let the bots take their matching turn. Also reached when the burst is cut short — by a stop
+	// condition, or by leaving the scene — so the clock is never left owing a tick for bets already settled.
+	private void FinishManualBurst()
+	{
+		int executed = _manualBurstExecuted;
+		_manualBurstTotal = 0;
+		_manualBurstRemaining = 0;
+		_manualBurstIndex = 0;
+		_manualBurstExecuted = 0;
+		_manualBurstAccumulator = 0d;
+
 		// Stop-on-block must leave the clock EXACTLY at the block it stopped on (canonical rule, OQ-BP.9 /
 		// OQ-CG.9), mirroring FreezeCalendarAtBlockStop in the autobet path: the block was mined at the current
 		// clock, so DON'T advance one manual tick past it when the burst was halted by a mined block. A normal
 		// burst advances as usual. Persist the pinned instant so calendar_state.json matches the checkpoint.
-		bool stoppedOnBlock = !_session.IsRunning
+		bool stoppedOnBlock = _session != null
+			&& !_session.IsRunning
 			&& _session.LastStopReason == IBettingStrategy.StopReason.StopOnBlockMined;
 		if (executed > 0 && !stoppedOnBlock)
 			AdvanceClockForBet();
 		else if (stoppedOnBlock)
 			_calendarTimeService?.PersistCurrentTime();
-		if (_session.IsRunning || _session.LastStopReason != IBettingStrategy.StopReason.StopOnBlockMined)
+		if (_session == null || _session.IsRunning || _session.LastStopReason != IBettingStrategy.StopReason.StopOnBlockMined)
 		{
 			RunBotManualBurst();
+		}
+
+		// Hand the buttons back, unless something else is holding them: a bot active node or a pending board
+		// vote (both composed by ApplyBettingControlsAvailability), or a stop gate that deliberately keeps
+		// manual betting disabled until the player double-clicks the toggle that set it.
+		ApplyBettingControlsAvailability();
+		if (_manualStopGate != ManualStopGate.None || _autobetDelegated)
+		{
+			_strategyPanel.SetManualEnabled(false);
 		}
 	}
 
@@ -1054,7 +1136,6 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			if (!_strategyPanel.TryGetValidBet(out decimal bet))
 			{
-				_resultValue.Text = "Invalid bet format.";
 				return;
 			}
 
@@ -1098,7 +1179,7 @@ public partial class DiceGame : Control, IBetEventSource
 			SetActiveNodeSelectorLocked(false);
 			ApplyRunLock(false);
 			RefreshNodeSelectorReadyDots(); // D-M2.9
-			ReseedWalletFromBankrollSource();
+			ReseedWalletAcrossTransition(); // delegated run ended — this wallet may write the journal again
 			RefreshCalculatorFromGameSettings();
 			return;
 		}
@@ -1142,7 +1223,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_lastPrintedMeasuredRealPerSec = 0d;
 		_lastAutoBetTelemetryPrintMsec = 0;
 		GD.Print($"[AutoBet] Start aps={GetAutoBetBaseAps()}");
-		_resultValue.Text = $"Auto running | {GetAutoBetApsText()}";
 		RefreshCalculatorFromGameSettings();
 	}
 
@@ -1162,9 +1242,6 @@ public partial class DiceGame : Control, IBetEventSource
 		_isAutoPaused = paused;
 		_simulationService.SetPaused(paused);
 		_strategyPanel.SetAutoPaused(paused);
-		_resultValue.Text = paused
-			? $"Auto paused | {GetAutoBetApsText()}"
-			: $"Auto resumed | {GetAutoBetApsText()}";
 	}
 
 	// ── Background autobet (SimulationService) integration ──────────────────────
@@ -1203,16 +1280,67 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateStrategySaveLoadButtons();
 	}
 
-	private void ReseedWalletFromBankrollSource()
+	/// <summary>
+	/// Reseed across a TRANSITION — the delegated autobet started, stopped, or the scene rebound to a
+	/// running one. Declares the jump, because after a transition this wallet may become the journal's
+	/// writer again (a manual bet), and its balance has just moved wholesale.
+	/// </summary>
+	private void ReseedWalletAcrossTransition()
 	{
 		// Mini-plan 05 D3: a reseed replaces the wallet balance wholesale, so it is a declared jump.
 		_userStatsService?.NoteBalanceDiscontinuity("wallet_reseed");
+		ReseedWalletFromBankrollSource();
+	}
+
+	/// <summary>
+	/// The same reseed WITHOUT declaring a discontinuity, for the steady state of a delegated autobet.
+	///
+	/// <para><b>Why the declaration had to go, mini-plan 08 P1.</b>
+	/// <see cref="UserStatsService.NoteBalanceDiscontinuity"/> DROPS the journal's comparison baseline — by
+	/// design, so the next registered bet re-seeds instead of being compared across a declared jump. This
+	/// reseed ran once per settled bet, immediately after <c>OnBetExecutedRegisterBet</c> had just set that
+	/// baseline. So every bet's baseline was destroyed before the next bet could be compared against it, and
+	/// **the continuity sentinel was comparing nothing at all on the entire delegated-autobet path.**</para>
+	///
+	/// <para>Its silence is load-bearing in mini-plans 05 and 06 and in INC-003, and CLAUDE.md states that
+	/// the silence "is evidence". Here it was structural. <b>A sentinel disarmed by a UI subscriber reads
+	/// exactly like a sentinel that found nothing</b> — the same failure the T0 boot banner exists to
+	/// prevent, one layer further in: that banner proves the check is COMPILED, and nothing proved it was
+	/// COMPARING.</para>
+	///
+	/// <para><b>Why dropping it is safe, verified rather than assumed.</b> This wallet is a DISPLAY COPY
+	/// while the autobet is delegated; the journal's writer is <c>SimulationService</c>'s own wallet, so a
+	/// jump here is not a jump in the audited series. And every genuine discontinuity on that path is
+	/// already declared at its source by <c>SimulationService</c>: <c>autobet_session_wallet</c> when the
+	/// session wallet is built, <c>manual_return</c> on a withdrawal, and <c>deposit</c> (via
+	/// <c>RegisterDeposit</c>) on every auto-recharge. This declaration added no coverage; it only destroyed
+	/// the baseline.</para>
+	/// </summary>
+	private void ReseedWalletFromBankrollSource()
+	{
 		decimal bankroll = _bankrollStateService?.CurrentBalance ?? _wallet?.Balance ?? 0m;
 		_wallet?.SetBalanceForTimeTravel(bankroll);
 		UpdateBalanceUI();
 	}
 
 	// Fired by SimulationService after each background player bet (only while DiceGame is on screen).
+	// Mini-plan 08 P1 — MEASURED at 382.7 µs per bet, 27.1% of a 1,414 µs bet, second only to the bankroll
+	// disk write (four 5,000-bet windows, 2026-08-30). It fires once per settled bet, and SimulationService
+	// settles up to MaxBetsPerFrame bets in a single frame — so this ran once per settled bet and
+	// **only the last run's output was ever drawn.** The other nine rebuilt the blockchain status line,
+	// recomputing live difficulty, reading the chain tip and counting the mempool, to paint pixels that were
+	// overwritten in the same frame before anyone saw them.
+	//
+	// This is CLAUDE.md Pattern 6's second rule verbatim — *coalesce at the consumer when the trigger cannot
+	// move the value* — and §38.7's warning that a correct event fired far too often costs more than any
+	// poll in the backlog. The event is right; the subscriber was doing per-bet work that is per-FRAME work.
+	//
+	// The split is by what the work actually depends on, not by cost:
+	//   • PER BET, kept here — the bet-history feed. Every settled bet is a distinct row; coalescing would
+	//     DROP data, not merely defer a repaint. This is the part that must never be throttled.
+	//   • PER FRAME, deferred — the wallet reseed, the two panel readouts, the blockchain status line and
+	//     the mined-block announcement. All four are idempotent reads of current state: running them once
+	//     after the frame's last bet produces exactly what running them ten times produced.
 	private void OnSimBetSettled()
 	{
 		if (_simulationService == null) return;
@@ -1226,11 +1354,32 @@ public partial class DiceGame : Control, IBetEventSource
 			_lastLoggedBetEvent = settled;
 			BetExecuted?.Invoke(GameId, settled);
 		}
+		// Marked HERE rather than in SimulationService because only this scene knows where the fan-out ends.
+		// Legal despite living in a different file: EmitSignal dispatches synchronously, so this closes
+		// inside the same bet the profiler is timing. See the segment's own note for what it is settling.
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.BetHistoryFeed);
+
+		_betSettledUiDirty = true;
+	}
+
+	// Set by OnSimBetSettled, consumed once per frame by _Process. A flag rather than a timer: the work is
+	// idempotent and cheap once, so there is nothing to gain by deferring it past the frame that asked for
+	// it — and a frame-late readout during a 9000X autobet would be visible.
+	private bool _betSettledUiDirty;
+
+	private void FlushSettledBetUiIfDirty()
+	{
+		if (!_betSettledUiDirty || _simulationService == null) return;
+		_betSettledUiDirty = false;
+
 		ReseedWalletFromBankrollSource();
 		_strategyPanel.SetNumberOfBets(_simulationService.SessionInfinite ? 0 : _simulationService.SessionRemainingBets);
 		_strategyPanel.SetBetAmount(_simulationService.SessionCurrentBet);
 		UpdateBlockchainStatusUI();
-		AnnounceLatestMinedBlockIfAny();
+		if (_simulationService.LastSettledBetEvent is BetTransactionEvent lastSettled)
+		{
+			ShowRoll(lastSettled.Roll, lastSettled.IsWin);
+		}
 	}
 
 	// Fired by SimulationService when the background autobet stops on its own (stop condition).
@@ -1240,11 +1389,10 @@ public partial class DiceGame : Control, IBetEventSource
 		SetActiveNodeSelectorLocked(false);
 		ApplyRunLock(false);
 		RefreshNodeSelectorReadyDots(); // D-M2.9: the run ended — dots fall back to "has a strategy".
-		ReseedWalletFromBankrollSource();
+		ReseedWalletAcrossTransition(); // delegated run ended — this wallet may write the journal again
 		_strategyPanel.SetAutoPaused(false);
 		_strategyPanel.SetAutoRunning(false);
 		_strategyPanel.SetManualEnabled(true);
-		_resultValue.Text = $"Auto stopped: {_simulationService?.LastAutobetStopReason}";
 		_simulationService?.ConsumeStopNotice();
 		RefreshCalculatorFromGameSettings();
 	}
@@ -1305,8 +1453,7 @@ public partial class DiceGame : Control, IBetEventSource
 		// has to be re-asserted here — this is exactly where it was missing.
 		ApplyRunLock(true);
 		RefreshNodeSelectorReadyDots();
-		ReseedWalletFromBankrollSource();
-		_resultValue.Text = "Auto running (background).";
+		ReseedWalletAcrossTransition(); // scene rebound onto a running sim — a wholesale rebind, not steady state
 	}
 
 	private void OnBetsPerSecondChanged(double _)
@@ -1315,18 +1462,6 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			SaveActiveNodeStrategySnapshot();
 		}
-
-		if (_session != null && _session.IsRunning && !_isAutoPaused)
-		{
-			// New speed takes effect immediately via TickAutoBet.
-			_resultValue.Text = $"Auto running | {GetAutoBetApsText()}";
-		}
-	}
-
-	// --- Handlers comunes de sesión ---
-	private void HandleSessionStopped(BaseBetSession session, string prefix)
-	{
-		_resultValue.Text = $"{prefix}: {session.LastStopReason}";
 	}
 
 	private BaseBetSession CreateSession(bool isAuto)
@@ -1357,7 +1492,6 @@ public partial class DiceGame : Control, IBetEventSource
 			(_bankrollProgramService?.AutoRechargeEnabled ?? true) && // SF.1.2: service-level off-switch (D-SF.4)
 			TryAutoRechargeBankroll())
 		{
-			_resultValue.Text = "Bankroll recharged. Restarting progression from base bet.";
 			if (_sessionStartBaseBet > 0m)
 			{
 				_strategyPanel.SetBetAmount(_sessionStartBaseBet);
@@ -1377,7 +1511,6 @@ public partial class DiceGame : Control, IBetEventSource
 				_ => ManualStopGate.None
 			};
 			_strategyPanel.SetManualEnabled(false);
-			HandleSessionStopped(session, "Manual stopped");
 		}
 
 		else if (session is AutoBetSession)
@@ -1396,7 +1529,6 @@ public partial class DiceGame : Control, IBetEventSource
 			_strategyPanel.SetAutoPaused(false);
 			_strategyPanel.SetAutoRunning(false);
 			_userStatsService?.SetHighFrequencyMode(false);
-			HandleSessionStopped(session, "Auto stopped");
 		}
 
 		RefreshCalculatorFromGameSettings();
@@ -1409,6 +1541,15 @@ public partial class DiceGame : Control, IBetEventSource
 
 	public override void _ExitTree()
 	{
+		// A paced manual burst is mid-flight only if the player navigated away inside its ~1 second. Close it
+		// here rather than letting it die with the scene: the bets already settled are owed the clock tick and
+		// the bots their matching turn, and neither survives _Process going away. The bets not yet executed are
+		// simply never placed, which is the same outcome as releasing the button early would have.
+		if (ManualBurstActive)
+		{
+			FinishManualBurst();
+		}
+
 		// Stop listening to the background sim; Godot auto-disconnects on free, this is explicit + safe.
 		if (_simulationService != null)
 		{
@@ -1567,9 +1708,6 @@ public partial class DiceGame : Control, IBetEventSource
 		// Mode → Details → Board Vote). SimulationService gates the delegated autobet on the same flag.
 		if (NetworkRoot.IsAwaitingPlayerVote)
 		{
-			var awaiting = NetworkRoot.GetCompaniesAwaitingPlayerVote();
-			string where = awaiting.Count > 0 ? awaiting[0].companyDisplayName : "a company you co-own";
-			_resultValue.Text = $"Board vote pending at {where} — register your vote to resume play.";
 			return;
 		}
 
@@ -1634,10 +1772,10 @@ public partial class DiceGame : Control, IBetEventSource
 			_strategyPanel.SetBetAmount(nextBet);
 			RefreshCalculatorFromGameSettingsThrottled();
 
-			if (!_session.IsRunning)
-				return;
-
-			UpdateResultUI(result);
+			// Shown unconditionally. This used to return first when the session had stopped, so the roll would
+			// not overwrite the "stopped" message — which meant a manual bet, whose session stops after its one
+			// bet, never showed its roll at all. The stop message is gone, and so is the reason to skip.
+			ShowRoll(result.Roll, result.IsWin);
 		}
 		catch (InvalidOperationException ex)
 		{
@@ -1651,13 +1789,10 @@ public partial class DiceGame : Control, IBetEventSource
 			{
 				// Ignore secondary failures.
 			}
-
-			_resultValue.Text = $"Auto error: {ex.GetType().Name}";
 		}
 		catch (Exception ex)
 		{
 			GD.PushError($"[AutoBetError] {ex}");
-			_resultValue.Text = $"Auto error: {ex.GetType().Name}";
 		}
 	}
 
@@ -1897,7 +2032,10 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		// Balance restore from bet history used to run here, but it is now provably redundant AND harmful:
-		// BankrollStateService/PrincipalBalanceService already self-persist immediately on every change, and
+		// BankrollStateService/PrincipalBalanceService hold the live balance in memory and self-persist it
+		// (BankrollStateService on a 0.5 s throttle since mini-plan 08 P1 — its unthrottled per-bet write was
+		// 66% of a bet; the throttle is invisible here because this reasoning depends on the IN-MEMORY value
+		// and on the checkpoint, never on the file's write cadence), and
 		// BlockSessionCheckpointService.ApplyCheckpointToServices() (autoload boot, before any scene loads)
 		// already reverts them to the last mined block — the actual single source of truth (see
 		// SimulationService's header comment). Bet history logs every bet regardless of whether a block was
@@ -1965,7 +2103,6 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		AnnounceLatestMinedBlockIfAny();
 		CaptureBlockCheckpoint();
 		StopPlayerSessionOnExternalBlockMined(sessionToStop);
 		if (sessionToStop != null && sessionToStop.IsRunning && stopOnBlockMined)
@@ -1998,7 +2135,6 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_manualStopGate = ManualStopGate.None;
 		_strategyPanel.SetManualEnabled(true);
-		_resultValue.Text = "Manual re-enabled after Stop on Block.";
 	}
 
 	// Double-clicking either Insist toggle clears the manual-bet gate left by a profit/loss stop.
@@ -2011,24 +2147,6 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_manualStopGate = ManualStopGate.None;
 		_strategyPanel.SetManualEnabled(true);
-		_resultValue.Text = "Manual re-enabled after P/L stop.";
-	}
-
-	private void AnnounceLatestMinedBlockIfAny()
-	{
-		BlockchainMiningAnnouncement announcement = _blockchainNetworkRoot.GetLatestMiningAnnouncement();
-		if (announcement.BlockIndex <= 0 || announcement.BlockIndex == _lastAnnouncedMinedBlockIndex)
-		{
-			return;
-		}
-
-		_lastAnnouncedMinedBlockIndex = announcement.BlockIndex;
-		string streakText = announcement.CurrentMinerStreak > 1
-			? $" | streak {announcement.CurrentMinerStreak} (best {announcement.BestMinerStreak})"
-			: $" | best streak {announcement.BestMinerStreak}";
-		_resultValue.Modulate = announcement.WasPlayer ? Colors.LimeGreen : Colors.White;
-		_resultValue.Text =
-			$"BLOCK #{announcement.BlockIndex} mined by {announcement.MinerNodeId} | nonce {announcement.Nonce}{streakText}";
 	}
 
 	private void UpdateBlockchainStatusUI()
@@ -2042,7 +2160,17 @@ public partial class DiceGame : Control, IBetEventSource
 		string minedDetails = announcement.BlockIndex <= 0
 			? "Last mined: n/a"
 			: $"Last mined #{announcement.BlockIndex} | nonce {announcement.Nonce} | miner {announcement.MinerNodeId}\nHash: {announcement.BlockHash}\nMiner address: {announcement.MinerAddress}";
-		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(_activeNodeId)}\n{minedDetails}";
+		// "Current nonce attempt" (in BuildMiningStatusLine) reads only the active node's OWN chain — its private
+		// pool. Credits moved to the casino pool mine on the casino node's candidate instead, so that count is shown
+		// on its own line, followed by how the active node's credits are split between the two pools.
+		NodeHardwareState hw = HardwareAllocationRepository.GetNode(_activeNodeId);
+		int totalCredits = hw.TotalCredits;
+		decimal privatePct = totalCredits > 0 ? 100m * hw.IndividualPoolCredits / totalCredits : 0m;
+		decimal casinoPct = totalCredits > 0 ? 100m * hw.CasinoPoolCredits / totalCredits : 0m;
+		string poolLines = string.Create(CultureInfo.InvariantCulture,
+			$"Current casino pool nonce attempt: {_blockchainNetworkRoot.GetCasinoPoolCandidateNonce()}\n" +
+			$"Hardware split: private {hw.IndividualPoolCredits} ({privatePct:0.0}%) | casino pool {hw.CasinoPoolCredits} ({casinoPct:0.0}%) of {totalCredits} credits");
+		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(_activeNodeId)}\n{poolLines}\n{minedDetails}";
 	}
 
 
@@ -2090,30 +2218,36 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 	}
 
-	private void UpdateResultUI(DiceResult result)
+	// Same two colours as the bet-history rows (BetHistoryItem's own exports), so a roll and the row it
+	// produces agree at a glance rather than by coincidence.
+	[Export] private Color _rollWinColor = Colors.Green;
+	[Export] private Color _rollLossColor = Colors.Red;
+
+	// The roll readout survives leaving and re-entering the scene, and an app restart, by reading the SAME list
+	// that seeds the bet-history container — so the two can never disagree about which bet was last, and
+	// nothing new is persisted for it. `GetRecentBets` returns oldest-first, so the newest record is the tail.
+	//
+	// After a restart that list has already been rolled back to the checkpoint boundary, which since mini-plan
+	// 08 D4 is the instant of the bet that MINED the last block. The roll shown on entry is therefore that
+	// bet's — the one a Stop-on-block run would have stopped on — and the history's top row is the same bet.
+	private void SeedRollFromRecentBets(IReadOnlyList<BetRecord> recent)
 	{
-		_resultValue.Modulate = Colors.White;
-		string signedProfit = Money.FormatSignedAdaptive(result.Profit);
-		if (result.IsWin)
+		if (recent == null || recent.Count <= 0)
 		{
-			_resultValue.Text = $"WIN {signedProfit} SC - Roll: {result.Roll}{BuildAutoBetResultSuffix()}";
+			return;
 		}
-		else
-		{
-			_resultValue.Text = $"LOSS {signedProfit} SC - Roll: {result.Roll}{BuildAutoBetResultSuffix()}";
-		}
+
+		BetRecord newest = recent[recent.Count - 1];
+		// Qualified: Scripts.Betting and Scripts.History each declare a BetOutcome, and this scene imports both.
+		ShowRoll(newest.Roll, newest.Outcome == Scripts.History.BetOutcome.Win);
 	}
 
-	private string BuildAutoBetResultSuffix()
+	// The ONLY writer of ResultValue: the roll, two digits, as the winner-range readout prints it ("00 to 49"),
+	// tinted by whether that roll won.
+	private void ShowRoll(int roll, bool isWin)
 	{
-		return _session is AutoBetSession && _session.IsRunning
-			? $" | {GetAutoBetApsText()}"
-			: string.Empty;
-	}
-
-	private string GetAutoBetApsText()
-	{
-		return $"APS: {GetAutoBetBaseAps()}";
+		_resultValue.Text = roll.ToString("00", CultureInfo.InvariantCulture);
+		_resultValue.Modulate = isWin ? _rollWinColor : _rollLossColor;
 	}
 
 	private double GetEffectiveAutoBetsPerGameSecond()
@@ -2158,13 +2292,11 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		if (input == 0m)
 		{
-			_resultValue.Text = "Bet input is empty.";
 			return false;
 		}
 
 		if (input > _walletController.Balance)
 		{
-			_resultValue.Text = "Insufficient bankroll.";
 			return false;
 		}
 

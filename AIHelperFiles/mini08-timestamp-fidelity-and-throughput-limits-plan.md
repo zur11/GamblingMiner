@@ -4,8 +4,9 @@
 `mini07-userstats-audit-and-inc003-closure-plan.md`. Its subject was found by mini-plan 06 §9.10c while
 looking for something else entirely.
 
-**Status:** 📋 **SPECIFIED, NOT STARTED.** To be built on its own branch off `main`, after mini-plan 06's
-keepers are cherry-picked and `repro/explorer-clock-rewind` is deleted.
+**Status:** ✅ **COMPLETE (2026-09-15)** on branch `mini08-timestamp-fidelity`, awaiting merge to `main`. The
+close-out summary is **§4.9**, just before §5. *(This line read "SPECIFIED, NOT STARTED" through the whole build,
+never updated as the phases landed.)*
 
 **Objective, in two halves that must be done in this order.**
 
@@ -54,9 +55,33 @@ Two properties make this the right shape rather than merely a nicer one:
 - **The spacing it produces is the spacing the engine actually simulated.** At 5 credits it reproduces the
   20.000 s grid T0 measured; at 99 credits it gives `100 / 99 ≈ 1.01` game-seconds.
 
-**Verification, and it is cheap:** after the fix a journal written at 9000X must show the *same* timestamp
-spacing as one written at 100X — `SpeedMultiplier / credits` game-seconds — and **zero same-timestamp
-groups**. That is one `node -e` scan of group sizes, exactly as §9.10c ran.
+**Verification, and it is cheap:** after the fix a journal written at 9000X must show **zero same-timestamp
+groups**, and spacing at the nominal `SpeedMultiplier / credits`. That is one `node -e` scan of group sizes,
+exactly as mini-plan 06 §9.10c ran.
+
+### 2.2 — What this fix does NOT achieve, stated before anyone measures it
+
+Anchoring the batch to the frame's **end** is exact *within* a frame and leaves a **bounded jitter across
+frame boundaries**. The accumulator carries a remainder between frames, so the gap between the last bet of
+one frame and the first of the next is not the nominal interval but somewhere between one and roughly two
+of them.
+
+Worked at 5 credits / 9000X: `simDelta = 1.5` sim-seconds per frame at 60 fps, `interval = 0.2`, so seven
+bets fire and 0.1 sim-seconds carry over. Within the frame the seven sit exactly 20.000 game-seconds apart;
+the first bet of the next frame lands ~30 game-seconds after the last of this one rather than 20.
+
+> **That is a reduction from a 150-second void to a ~10-second jitter, not the elimination of error.** P3
+> must therefore assert *zero same-timestamp groups* and *median spacing at the nominal value* — **not
+> "uniform to the tick"**, which this implementation does not deliver and should not be recorded as
+> delivering.
+
+**The exact-phase variant is deliberately not built.** Bet `k` truly fires at
+`frameStart + ((k+1) × interval − a₀) × SpeedMultiplier`, where `a₀` is the accumulator before the frame
+drains. That is uniform across boundaries, but it needs `frameStart`, i.e. the game-time span the calendar
+actually advanced this frame — which is `simDelta × SpeedMultiplier × SimulationThrottle`, a value this
+service *writes* and the calendar *applies*. Recomputing it here risks disagreeing with what the calendar
+did, and a disagreement in the wrong direction **future-dates a bet**, which is worse than the jitter it
+would remove. Build it only if P3 measures the jitter mattering to something.
 
 ### 2.1 — Timestamp PRECISION is not the problem, and here is the arithmetic
 
@@ -113,6 +138,534 @@ about `decimal` arithmetic.
 **Output:** microseconds per bet, and which component dominates. That single number sets the real ceiling on
 `MaxBetsPerFrame` and says whether 99 × 9000X is reachable at all or merely a long way off.
 
+#### P1 as specified is only half-buildable — and the half it can build is the cheap half
+
+**The specification above cannot be executed as written, and the reason is worth recording because it is
+structural, not an oversight.** `ExecutePlayerBetOnce` splits cleanly in two:
+
+| | Reachable in a console project? | Why |
+|---|---|---|
+| `_session.ExecuteNext` — dice, `Money.Normalize`, both wallet mutations, the fractional carry, progression, streak, stop conditions | **yes** | plain C# classes; the only `Godot` reference in the whole path is one `GD.Print` in a debug anomaly branch |
+| the journal append, `PersistFinancialState`, the SC balance sheet, the client ledger, `RouteNonceAttempt`, the four events each bet fires | **no** | `Godot.Node` autoloads and static chain state; none of it exists outside the engine |
+
+So P1 was split into **P1a (desk, done)** and **P1b (in-engine, built and awaiting a run)**. Note which half
+went where: the console project can price the *arithmetic*, which is exactly the half CLAUDE.md's scripting
+table insists must not be reimplemented — and it cannot touch the half this plan's own §4 nominates as the
+suspect. **The instrument the rule demanded is aimed at the component the hypothesis exonerates.**
+
+#### P1a — RESULT (2026-08-30, throwaway console project, real game source linked verbatim)
+
+2,000,000 measured bets per layer after a 200,000-bet warm-up, on a fresh instance, workstation GC.
+Each row adds one ring of the real call stack, so the **difference** between rows is that ring's cost.
+
+| Layer | DEBUG | RELEASE |
+|---|---|---|
+| `DiceEngine.Play` alone | 0.239 µs | 0.264 µs |
+| `+ BetService.ExecuteBet` (2× `Wallet.ApplyTransaction`, carry, event record) | 0.877 µs | 0.522 µs |
+| `+ BaseBetSession.ExecuteNext` (progression, streak, stops) — **the full Godot-free core** | **1.768 µs** | **0.703 µs** |
+
+Allocation: **368 B/bet**, ~1 gen0 collection per 11,400 bets. At the 8,910 bets/s target that is ~3.3 MB/s
+of churn and under one gen0 GC per second — real, but not a candidate for the bottleneck.
+
+**Read DEBUG, not RELEASE.** The developer measures in the Godot editor, which runs the DEBUG build; the
+2.5× gap on the session row is `DebugAssertProgression` plus un-inlined property access. RELEASE is recorded
+only so the exported build's figure is not later guessed.
+
+**What it establishes.** At `MaxBetsPerFrame = 10`, the core costs **17.7 µs of a 16,670 µs frame — 0.1%**.
+At the full 99 × 9000X demand (8,910 bets/s ⇒ 148.5 bets/frame) it costs **263 µs, 1.6% of the frame.**
+
+> **The decimal arithmetic is not the constraint, and it is not close.** `MaxBetsPerFrame = 10` is roughly
+> three orders of magnitude below what the core alone would sustain. Everything that decides this question
+> is in the half a console project cannot see — which is what P1b measures, and is precisely §4's own
+> prediction and CLAUDE.md §38.7's standing suspicion about per-bet events.
+
+**Do not read the last column of that table as a throughput ceiling.** It is what a frame could do if it did
+*nothing else* — no rendering, no bots, no founders, no scheduled network, no UI subscriber. `MaxBetsPerFrame`
+belongs well below it. P2 is what finds where.
+
+#### P1b — the in-engine segment profiler (built 2026-08-30, awaiting a run)
+
+`Scripts/Diagnostics/BetCostProfiler.cs` times one bet in six segments — `ExecuteNext`, `RegisterBet`,
+`PersistFinancialState`, the three money services, `RouteNonceAttempt`, and the event fan-out — and reports
+one breakdown per 20,000 player bets to **the Godot editor's Output panel** and to
+`user://logs/bet_cost_trace.csv`.
+
+Four properties are deliberate:
+
+1. **`ExecuteNext` is measured in BOTH halves**, so P1b's first segment is a cross-check on P1a. If the
+   in-engine reading is far from **1.768 µs**, the console harness is not modelling what the engine runs and
+   every conclusion above is suspect. *That reconciliation is a required output of the run, not a nicety.*
+2. **The residue is reported, not absorbed.** `unaccounted = total − Σsegments` holds both the code between
+   marks and the profiler's own `Stopwatch.GetTimestamp` calls. A breakdown forced to sum to its whole
+   cannot reveal its own overhead.
+3. **Off by default, toggled from `DevTimeScaleSelector`** (`⏱ Bet cost`, DEBUG-only). P2 measures the
+   frontier, and the profiler's few percent per bet is exactly the quantity P2 is measuring — so arming it
+   during P2 would corrupt the result. Arm for P1b, read, disarm.
+4. **It announces arming and disarming**, with `GD.Print`. Mini-plan 06 §9.1's rule: a diagnostic whose
+   passing state is silence must say out loud whether it is running, or "nothing appeared" is ambiguous
+   between "no finding" and "never armed" — and a RELEASE build, where every entry point is stripped by
+   `Conditional("DEBUG")`, counterfeits that silence exactly.
+
+**Run protocol.** DiceGame → set credits and DEV scale → confirm `[BetCost] toggle built in this scene` in
+Output → tick **⏱ Bet cost** and confirm `[BetCost] ARMED` → **then** start the autobet → let it print at
+least three `[BetCost]` breakdowns → stop the autobet → untick. Read the blocks in **the Godot editor's
+Output panel** (not the Debugger → Errors tab; these are `GD.Print`). The CSV is the durable copy.
+
+**Arm before starting, not during — and the reason is not cosmetic.** At a high DEV scale the frame is
+saturated (§38.7 measured this world pinned near ~133 ms/frame, ~7 fps), so a click on the toggle lands late
+or not at all. Nothing disables it and it is **deliberately not being fixed** (developer's call,
+2026-08-30): it is a DEV control, and the protocol has no reason to press it mid-run. Arming first also
+captures from bet #1 instead of from wherever the click happened to land. The single consequence to carry
+forward: **disarming before a P2 sweep means stopping the autobet first** — which P2 does anyway, being its
+own run.
+
+*The first attempt at this protocol failed twice over, and both failures were in the INSTRUCTIONS rather
+than the instrument: it said "wait for 3 blocks" in a project where a block is a mined block, and it set a
+report period of 20,000 bets in a world where a mined block costs ~2,400 — so the three reports it asked for
+were ~25 blocks away. A protocol is part of the apparatus and is wrong in the same ways.*
+
+#### P1b's blind spot, PRE-REGISTERED before the run — an O(N) term this world is too young to show
+
+Found by reading the code while instrumenting it, and written down **before** the measurement so it cannot
+be retrofitted to whatever the numbers turn out to say.
+
+`PersistFinancialState(false)` runs on **every bet** and deep-copies the bankroll transfer-record list
+**twice**:
+
+1. `SimulationService.PersistFinancialState` — `_bankrollProgram.Records.Select(…).ToList()`
+2. `NetworkRoot.SetNodeFinancialState` → `state.CloneNormalized()` → `Clone()` →
+   `TransferRecords.Select(CloneTransferRecord).ToList()`
+
+So the segment costs **2N object allocations plus 2 list allocations per bet**, where `N` is the world's
+accumulated transfer-record count. `BankrollProgramService._records` is **uncapped** — the only operations
+on it are `Add` (one per auto-recharge) and `Clear` (on load/restore). N therefore rises monotonically for
+the life of a world and never falls.
+
+**Measured on the developer's live world (2026-08-30): `N = 5`.** At that size the term is a handful of
+small allocations and P1b will, correctly, report `PersistFinancialState` as cheap.
+
+> **That is the trap, and it is the point of pre-registering this.** A single measurement on a young world
+> cannot distinguish a constant from a linear term with a small argument. Reading "PersistFinancialState:
+> 0.4 µs, 3%" and concluding the segment is fine would be **exactly the wrong inference** — the same
+> reading at `N = 1,000` is 2,000 allocations per bet and would dominate every other segment combined.
+
+**This is a candidate explanation for a symptom already on record and never explained**: `PRIVATE_ROADMAP.md`
+§6's note that fluidity at 9000X *"decayed progressively over the last days of the playtest"*. A per-bet cost
+proportional to a monotonically growing counter has precisely that signature — gradual, cumulative,
+irreversible within a world, and invisible on any fresh one. **Candidate, not conclusion:** nothing has
+measured it, and CLAUDE.md's closing rule under Important Pattern 6 applies to this paragraph as much as to
+any other.
+
+**How to actually test it**, in ascending order of cost:
+
+1. **Read N off the world before each run** and record it beside the breakdown —
+   `user://bankroll_program_state.json`, `Records.length`. A cost note without its N is uninterpretable.
+2. **Two-point measurement.** Run P1b, note N; force N upward (lower the bankroll dose so auto-recharge
+   fires often, or run long) and re-run. If `PersistFinancialState` µs tracks N linearly, it is confirmed
+   with two points and no new instrument.
+3. **Only then** decide the fix. The obvious one — don't copy an append-only list on a hot path that never
+   reads it back — is cheap, but it is out of scope until measured, and a cap on `_records` would be a
+   *persisted-figure* change subject to Standing Convention 1.
+
+**Generalized, because the shape will recur:** *a per-bet cost measured once, on one world, prices that
+world's N and nothing else. When a hot path touches a collection, the measurement's unit is µs per bet **at
+a stated collection size** — record the size or the number means nothing later.*
+
+#### P1b — RESULT, round 1 (2026-08-30, 5 credits × 9000X, N = 5, three 5,000-bet windows)
+
+Means over the three windows. They agree closely (total spread 1,229–1,388 µs), so this is a stable
+reading, not a sample of noise.
+
+| Segment | µs/bet | share |
+|---|---:|---:|
+| **MoneyServices** (bankroll + casino + ledger) | **872.7** | **66.8%** |
+| **EventFanOut** (`ClientBetSettled` + `BetSettled` signal) | **358.9** | **27.5%** |
+| NonceAttempt (PoW + block path) | 35.6 | 2.7% |
+| RegisterBet (journal + rollup) | 22.0 | 1.7% |
+| ExecuteNext (dice + wallet + progression) | 9.2 | 0.7% |
+| PersistFinancialState | 8.2 | 0.6% |
+| unaccounted | 0.2 | 0.02% |
+| **TOTAL** | **1,306.9** | |
+
+**A bet costs 1.31 MILLISECONDS.** Worst single bet 204 ms, 75 ms, 68 ms in the three windows — the
+block-mining bets, amortized correctly into the mean.
+
+**Four findings, in order of consequence.**
+
+**1. `MaxBetsPerFrame = 10` is not conservative. It is almost exactly right — and §3 of this plan had the
+sign of its error backwards.** §3 supposed the constant might be "two orders of magnitude conservative". At
+1.31 ms a 16.67 ms frame fits **12.8 bets if it does nothing else**, so 10 is at ~78% of an *unshareable*
+budget the frame must also spend on rendering, four bot runners, the founders, the scheduled network and
+every UI subscriber. That is why frames blow out to ~133 ms (§38.7) rather than despite it. **The guess was
+right for reasons nobody knew, which is not the same as being justified — and the plan's premise that it was
+loose was wrong.**
+
+**2. 94.2% of a bet is two segments, and the dominant one is a synchronous disk write.**
+`BankrollStateService.SetBalance` calls `SaveState()` **unconditionally on every call**, which opens
+`bankroll_state.json` in `ModeFlags.Write`, serializes, writes and closes. `SimulationService` calls it once
+per bet. `CasinoScBalanceService.ApplyBetResult`, by contrast, sets `_saveDirty = true` and does no I/O —
+the correct shape, in the same segment, which is why round 2 splits them.
+
+**3. Therefore the headline answer: 99 × 9000X is unreachable today by ~15×, and the reason is now named
+rather than guessed.** Demand is 148 bets/frame; supply is 12.8. But the ~15× is not distributed across the
+engine — it is concentrated in work that has no business being per-bet. If the per-bet disk write and the
+event fan-out were removed entirely, a bet would cost **~75 µs ⇒ ~220 bets/frame**, which puts the target
+*inside* reach with margin. **The prize is a 17× throughput improvement, and it is not in the arithmetic.**
+
+**4. The profiler's own overhead is 0.2 µs — 0.016% of a bet.** The `unaccounted` residue was built to
+expose exactly this, and it does. **This retracts the caution written into the profiler and this plan that
+it must be disarmed before P2.** That caution was reasonable when unmeasured and is now measured: leaving it
+armed during a P2 sweep perturbs the frontier by one part in six thousand. *A precaution stated without a
+measurement is a guess like any other — this one happened to be three orders of magnitude too timid.*
+
+**The `ExecuteNext` cross-check FAILED, and it does not matter — say both halves.** P1a predicted 1.768 µs;
+the engine reads **9.2 µs**, 5.2× higher. The leading cause is that the Godot editor runs the game with a
+debugger attached, which P1a's console harness did not. **It changes no decision** — at 0.7% of the bet, the
+arithmetic is exonerated more strongly than P1a claimed, not less — but the harness's absolute figure is
+**not** transferable to the engine and must not be quoted as if it were. *A cross-check that fails in the
+direction that strengthens your conclusion is still a failed cross-check.*
+
+**The pre-registered O(N) prediction stands, unresolved.** `PersistFinancialState` = **8.2 µs at N = 5**,
+cheap exactly as predicted, and that still does not absolve it. Two-point measurement is still required.
+
+**Round 2 (built, awaiting a run): the two dominant segments are split into five** — `BankrollSetBalance`,
+`CasinoApplyBetResult`, `ClientLedger`, `ClientBetSettled`, `BetSettled` — because a two-call bundle at 67%
+cannot say which call to fix.
+
+**Scope caveat for P2, found while reading the bot path.** The profiler instruments **only**
+`ExecutePlayerBetOnce`. `ExecuteBotBet` is a parallel path, runs up to `MaxBetsPerFrame` **per bot** for four
+bots, and ends with `SaveBotFinancialState(runner)` on every bet — the same per-bet-write shape. So the
+frame's real bet load may be ~5× what this measurement covers. **P2 cannot be read as a whole-engine figure
+until the bot path is priced too.**
+
+#### P1b — RESULT, round 2 (2026-08-30, same world, 4 full windows + 1 partial)
+
+Means over the four full 5,000-bet windows. **Every one of round 1's five predictions was confirmed**,
+which matters as much as the numbers: the diagnosis was written down before the split existed.
+
+| Segment | µs/bet | share | predicted |
+|---|---:|---:|---|
+| **BankrollSetBalance** (sync disk write) | **933.9** | **66.0%** | ~850 ✓ |
+| **BetSettled** (Godot signal → DiceGame) | **382.7** | **27.1%** | ~350 ✓ |
+| NonceAttempt | 47.3 | 3.3% | — |
+| RegisterBet | 24.5 | 1.7% | — |
+| ExecuteNext | 11.2 | 0.8% | — |
+| PersistFinancialState | 10.1 | 0.7% | cheap at N=5 ✓ |
+| CasinoApplyBetResult | 3.9 | 0.3% | few µs ✓ |
+| ClientBetSettled (C# event) | 0.5 | 0.0% | few µs ✓ |
+| ClientLedger | 0.2 | 0.0% | ~0 ✓ |
+| unaccounted | 0.2 | 0.0% | — |
+| **TOTAL** | **1,414.4** | | |
+
+**Two calls are 93.1% of a bet. Everything else together is 97.9 µs.**
+
+**The split earned its keep in both directions.** It confirmed the disk write, and it *exonerated* the C#
+event: `ClientBetSettled` is **0.5 µs** while the Godot signal beside it is **382.7 µs** — a 735× gap that
+the old combined `EventFanOut` segment would have left as a shared 359 µs suspicion over both. **The
+expensive thing is not "events"; it is one subscriber, `DiceGame.OnSimBetSettled`,** which per bet reseeds
+the wallet, updates two panel fields, and calls `UpdateBlockchainStatusUI()` → `BuildMiningStatusLine()` —
+recomputing live difficulty, reading the chain tip, counting the mempool and rebuilding a string, **up to 10
+times per frame, of which only the last is ever seen.** That is CLAUDE.md §38.7's "coalesce at the consumer"
+verbatim.
+
+**What the fixes are worth, arithmetically.** Non-dominant work is 97.9 µs. Throttling the bankroll write
+takes its per-bet cost to ≈0; coalescing DiceGame's refresh to once per frame amortizes 382.7 µs over the
+frame's bets (≈38 µs/bet at 10/frame). **⇒ ~136 µs/bet, ~123 bets/frame — a ~10× improvement.**
+
+**And that settles the developer's actual goal.** 99 credits × 600X demands `99 × 6 ÷ 60 =` **9.9 bets per
+frame**. Today that costs 14.0 ms of a 16.67 ms frame on player bets *alone* — which is why it is not fluid.
+After the fixes it costs **1.35 ms, ~8% of the frame.** *600X at the hardware cap is not a stretch goal; it
+is comfortably inside reach once two calls stop doing per-bet work.* (99 × 9000X would still need ~20 ms
+and remains out — but by ~20%, not by 15×.)
+
+**A drift worth naming, not chasing:** the total fell monotonically across the five windows
+(1,470 → 1,409 → 1,393 → 1,385 → 1,314), tracking `BankrollSetBalance` (966 → 858). Consistent with the OS
+file cache warming to a file being rewritten hundreds of times a second. It does not change any conclusion,
+and it is the kind of monotone trend that would be a finding in a different context.
+
+#### ⚠ FOUND WHILE FIXING, NOT FIXED HERE — the continuity sentinel was neutered on this path
+
+Verifying that coalescing `OnSimBetSettled` could not break anything turned up something worse than a
+performance problem, and it is recorded here rather than fixed because it is a correctness change and does
+not belong bundled into a performance commit.
+
+`UserStatsService.NoteBalanceDiscontinuity` **drops the comparison baseline** — by design, so the next
+registered bet re-seeds instead of being compared across a declared jump. `ReseedWalletFromBankrollSource`
+calls it with reason `"wallet_reseed"`, and `OnSimBetSettled` called *that* **once per settled bet**.
+
+So the per-bet order was: `OnBetExecutedRegisterBet` sets the baseline → the signal fires → the baseline is
+dropped → repeat. **Every bet's baseline was destroyed before the next bet could be compared against it.
+For the entire delegated-autobet path, with DiceGame as the active scene, the continuity sentinel was
+comparing nothing.**
+
+> **This matters beyond performance.** `[BetJournal] UNDECLARED balance discontinuity` producing silence is
+> a load-bearing *result* in mini-plans 05 and 06 and in INC-003 — and CLAUDE.md states outright that its
+> silence "is evidence". On this path the silence was structural. **A sentinel that has been disarmed by a
+> UI subscriber reads exactly like a sentinel that found nothing** — which is the same failure the T0 boot
+> banner was added to prevent, arriving one layer further in: that banner proves the check was *compiled*,
+> and nothing proved it was *comparing*.
+>
+> The declaration is also spurious on this path. DiceGame's `_wallet` is a display copy; the journal's
+> writer during a delegated autobet is `SimulationService`'s own wallet. The reseed announces a jump on a
+> wallet that is not the one being audited.
+
+**Consequence for the very next run, stated in advance so it is not misread.** Coalescing moves the reseed
+from once per bet to once per frame, so roughly nine bets in ten are now genuinely compared. **If
+`[BetJournal] UNDECLARED balance discontinuity` appears, that is the sentinel working for the first time on
+this path — not a regression introduced by these fixes.** Treat any such line as a finding to investigate on
+its own merits.
+
+**Open, for the developer to schedule:** whether the reseed should declare a discontinuity at all while the
+autobet is delegated. Removing it unconditionally is not obviously safe — `ReseedWalletFromBankrollSource`
+has other callers, and for a manual bet DiceGame's wallet *is* the writer — so this needs its own look.
+
+#### P1c — VERIFICATION after both fixes (2026-08-30, same world, 5 full windows + 1 partial)
+
+| Segment | before | after | factor |
+|---|---:|---:|---:|
+| BankrollSetBalance | 933.9 | **0.41** | **2,278×** |
+| BetSettled (signal → DiceGame) | 382.7 | **189.7** | 2.0× |
+| NonceAttempt | 47.3 | 27.5 | 1.7× |
+| RegisterBet | 24.5 | 21.8 | 1.1× |
+| ExecuteNext | 11.2 | 8.3 | 1.3× |
+| PersistFinancialState | 10.1 | 8.0 | 1.3× |
+| CasinoApplyBetResult | 3.9 | 1.2 | 3.2× |
+| **TOTAL** | **1,414.4** | **257.4** | **5.5×** |
+| bets per frame if idle | 12 | **65** | |
+
+**Fix 1 did exactly what it claimed.** 933.9 → 0.41 µs. The dominant cost in the engine is gone.
+
+**Fix 2 delivered half of what was predicted, and the prediction was wrong for a reason worth recording.**
+I forecast ~38 µs on the assumption that the whole 382.7 µs was coalescible. It was not: roughly half was
+per-FRAME work (the status line, the reseed, the panel fields — now amortized away) and roughly half is
+per-BET work I had *deliberately kept* — `EmitSignal` marshalling plus the `BetExecuted` fan-out to
+`BetHistoryContainer` and `PreviousWinnerNumbersGrid`. **The commit comment says in as many words that the
+bet-history feed stays per bet; the numeric prediction was then made as though it did not.** *A forecast
+that contradicts the design note sitting three lines above it is not a modelling error, it is not having
+read your own work.*
+
+**Everything else got faster too** — `NonceAttempt` 1.7×, `ExecuteNext` 1.3× — with no change to any of that
+code. Consistent with the frame no longer being saturated: less cache pressure and no stalls behind a
+synchronous write. A saturated frame makes *everything* in it look expensive.
+
+**The sentinel finding, now with a result.** No `[BetJournal] UNDECLARED balance discontinuity` line
+appeared — and this time that silence means something, because the coalesced reseed drops the baseline once
+per frame instead of once per bet, so roughly six bets in seven are genuinely compared. **This is the first
+run on this path where the sentinel's silence is evidence rather than an artifact.**
+
+**Against the developer's goal.** 99 credits × 600X demands 9.9 bets/frame:
+
+| target | bets/frame | cost/frame | verdict |
+|---|---:|---:|---|
+| 99 × 600X | 9.9 | 2.54 ms (15%) | **comfortable** — but see the cap below |
+| 99 × 900X | 14.9 | 3.83 ms (23%) | needs `MaxBetsPerFrame ≥ 15` |
+| 99 × 9000X | 148.5 | 38.2 ms | still out of reach |
+
+> **`MaxBetsPerFrame = 10` is now the binding constraint, and raising it is finally the RIGHT move.** 99 ×
+> 600X needs 9.9 of the 10 available — it fits with no margin at all, so any frame that runs slightly long
+> drops bets and `Sim%` dips. §38.7 forbids raising this constant *as a response to saturation*; here the
+> saturation was found and removed first, and the constant is what remains. That is the order the rule
+> prescribes, not an exception to it.
+
+**The next target is named:** the remaining 189.7 µs is 74% of what a bet now costs, and it is
+`EmitSignal` plus two UI containers each doing a `Setup()` and a `MoveChild(item, 0)` per bet.
+
+**Retracted, from the previous version of this paragraph: "~78% of those rows are created and evicted
+without ever being drawn."** That is false, and reading the containers is what showed it. Both are already
+POOLED — nothing is created per bet — and at 450 bets/s a row survives 100 bets ≈ 0.22 s ≈ **13 frames**, so
+every row is genuinely drawn. The waste is not un-drawn rows; it is **per-bet layout churn inside one
+frame** — up to seven `MoveChild` re-sorts of two containers where one would do. *The claim was invented to
+make the number feel wasteful before anyone had looked at the code that produces it.*
+
+**And the fix is not chosen yet, deliberately.** The per-bet work is `Setup()` (label/text writes) and
+`MoveChild()` (container re-sort + relayout), and those have different fixes. Reading the two files cannot
+say which dominates, so a `BetHistoryFeed` segment was added — marked from inside
+`DiceGame.OnSimBetSettled`, which is legal because `EmitSignal` dispatches synchronously — to split the
+container work from the signal's own marshalling. **One short run decides which of the two to attack, rather
+than optimising one of them blind.** Prior art on these containers (pooling, the 100-entry cap) is
+`ProjectDesignManual.md` §38.8–38.9.
+
+#### P1d — the signal path split, and the sentinel's first real result (2026-08-30, 3 full windows)
+
+| | µs/bet | share of the pair |
+|---|---:|---:|
+| **BetHistoryFeed** (2 pooled UI containers) | **215.8** | **98.7%** |
+| BetSettled (Godot signal marshalling + rest) | 2.9 | 1.3% |
+
+**Unambiguous.** The Godot signal itself is ~3 µs; the entire cost is `BetHistoryContainer` and
+`PreviousWinnerNumbersGrid` doing a `Setup()` and a `MoveChild()` each, per bet. Whatever gets optimised
+next, it is not the event system — which is the second time this plan's segment-splitting has cleared a
+suspect that a coarser measurement would have left condemned.
+
+**The continuity sentinel is silent, and it is now genuinely comparing every bet on this path.** Not six in
+seven, as in P1c — the spurious `wallet_reseed` declaration is gone entirely from the delegated steady
+state. This is the strongest evidence the journal has ever had on this path, and it says the journal is
+continuous.
+
+**An unexplained drift, reported rather than smoothed.** Total per-bet cost rose from 257.4 µs (P1c) to
+296.4 µs (P1d) on the same world and configuration, and both runs also rose *within* themselves. The added
+mark cannot account for it (~0.02 µs). No conclusion changes at this magnitude, and nothing here is being
+chased — but **comparisons should be made within a run, not across them**, and if this trend continues past
+a few hundred µs it becomes a finding of its own.
+
+#### The goal is already met — stop optimising and go verify it
+
+At **296 µs/bet**, the developer's target costs:
+
+| target | bets/frame | cost/frame | share of 16.67 ms |
+|---|---:|---:|---:|
+| 99 credits × 600X | 9.9 | 2.93 ms | **17.6%** |
+
+**That is the goal, and it fits.** The remaining 215.8 µs in the UI containers is real and worth taking
+eventually, but it is now an OPTIMISATION rather than a blocker — and this plan's own §38.7 discipline cuts
+both ways: *measure before optimising* also means *stop when the measurement says you are done.* Continuing
+to tune a number that already clears the requirement is how a performance investigation turns into a
+performance hobby.
+
+What remains before the target can actually be run:
+
+1. **`MaxBetsPerFrame` must rise.** 99 × 600X needs 9.9 of the 10 available — it fits with zero margin, so
+   any frame that runs slightly long drops bets and `Sim%` dips below 100. At 296 µs, 20 bets/frame is
+   5.9 ms (35%), which is a defensible cap with real headroom.
+2. **The throughput can be validated WITHOUT buying 94 hardware credits.** Demand is `credits ×
+   DevTimeScale`, so **7 credits × 9000X = 630 bets/s = 10.5 bets/frame** puts the engine in the same
+   regime as 99 × 600X (594 bets/s, 9.9/frame) for a 40% power increase instead of 20×. What 99 credits
+   changes that this does not is the *game-time bet spacing* (1.01 vs 14.3 game-seconds) — which matters to
+   **P3**, not to throughput — and the mining power, which perturbs the world's difficulty permanently.
+   *Buying the 94 credits is a gameplay decision, not a measurement requirement.*
+
+#### ✅ P1e — THE TARGET REGIME RUNS AT Sim 100% (2026-08-30, 7 credits × 9000X, 7 full windows)
+
+**`Sim:` held at a fixed 100% for the whole minute.** 7 credits × ×90 = **630 bets/s = 10.5 bets/frame**,
+which is the same engine regime as **99 credits × 600X** (594 bets/s, 9.9/frame) — reached for the price of
+2 hardware credits instead of 94, and a 40% power increase instead of 20×.
+
+Per-bet mean **233 µs**; `BetHistoryFeed` ~178 µs (76%); ceiling 68–81 bets/frame against the 20 now
+allowed. **The developer's goal is met and demonstrated, not merely projected.**
+
+> **`Sim%` is the result here, and it does not depend on the profiler.** `CalendarTimeService.SimulationThrottle`
+> is computed by the bet engine from what it retained, entirely independently of `BetCostProfiler`. So the
+> instrument bug below cannot touch this conclusion — which is the only reason the conclusion survives it.
+
+#### ⚠ The profiler was mis-attributing, and its own residue is what caught it
+
+**`unaccounted` went NEGATIVE** — −7.1 µs (−3.0%) and −16.0 µs (−6.5%) in two of the seven windows. That is
+arithmetically impossible when the parts are subsets of the whole, so the parts were not subsets.
+
+**Cause.** `SimulationService` emits `BetSettled` from **four** sites and only one is inside a bet; the other
+three are the auto-recharge restart and two manual-transfer paths. All four reach
+`DiceGame.OnSimBetSettled`, which marks `BetHistoryFeed`. A mark arriving outside a bet attributed
+`now − _segmentStart` — an interval reaching back to the *previous* bet — to that segment, with no bet total
+to absorb it.
+
+**Fixed** with an `_inBet` flag set by `BeginBet`, cleared by `EndBet`, honoured by `Mark`, and cleared by a
+new `AbortBet()` on the insufficient-balance path — which matters precisely because the auto-recharge emit
+follows that abort immediately.
+
+**Blast radius, stated rather than waved away.** `BetHistoryFeed` has been over-attributed in every reading
+since it was introduced (P1d and P1e), by roughly the size of the residue — order 5–15 µs of ~180. It does
+not move any conclusion: the segment still dominates, the goal still clears, and no fix was chosen on the
+strength of the contaminated digits. Earlier rounds (P1a–P1c) had no mark inside `DiceGame` and are
+unaffected.
+
+> **The residue earned its entire keep here.** It exists because a breakdown that forces its parts to sum to
+> its whole cannot reveal its own overhead — and the same property turned an invisible mis-attribution into
+> an impossible number on screen. **A profiler that normalised its segments would have reported a plausible,
+> wrong attribution, and nothing would ever have said otherwise.** Build the check that can print an
+> impossible value; it is the only kind that can tell you it is broken.
+
+*Second-order note: `[BetCost] toggle built in this scene` printed twice this run — DiceGame was entered,
+left for the hardware shop, and re-entered. Benign, and a useful confirmation that the announcement tracks
+scene lifetime.*
+
+#### P1f — 99 × 900X: steady state passes, and the dips are SPIKES (2026-08-30, 10 credits × 9000X)
+
+10 credits × ×90 = **900 bets/s = 15 bets/frame**, the engine regime of **99 credits × 900X** (891 bets/s,
+14.85/frame). `Sim:` sat at 100% almost throughout, **dipping briefly as low as 63%** before recovering.
+
+Ten full windows: mean **334.6 µs/bet**, `BetHistoryFeed` **254.7 µs (76%)**.
+
+**The dips are not saturation, and the arithmetic separates the two cleanly:**
+
+| | |
+|---|---|
+| steady state, 15 bets × 334.6 µs | **5.02 ms/frame — 30% of 16.67 ms** |
+| worst SINGLE bet in the run | **96.7 ms — 5.8 frames of budget inside one bet** |
+
+A frame spending 30% of its budget is not saturated. **One bet costing 5.8 frames is a spike**, the backlog
+clamp discards what it cannot simulate, and `SimulationThrottle` reports the discard honestly — which is
+`Sim: 63%` doing exactly its job. The high-`NonceAttempt` windows (42.9, 38.8, 47.2 µs against a ~22 µs
+baseline) are precisely the ones carrying `[Checkpoint] CAPTURED` lines, which points at the block-commit
+path: `CaptureCheckpoint` plus a full `state.json` write (§38.8a already lists it as an unexplained
+per-block cost).
+
+> **A mean cannot show a spike, and the two have opposite fixes.** Averaged over thousands of bets the block
+> path reads as a few µs and looks free; the `worst` column is the only place it was visible, and only as an
+> unattributed total. So `NonceAttempt` is now split into the PoW attempt alone and a **`BlockCommit`**
+> segment. *This is the third time in this plan that splitting a segment changed the conclusion — and each
+> time the coarse reading was not wrong, merely unable to distinguish two things with different remedies.*
+
+**A cost that ROSE, named rather than smoothed:** per-bet went 233 µs (7 credits) → 334.6 µs (10 credits),
+against a prediction that it would fall slightly on better per-frame amortisation. `BetHistoryFeed` carries
+it (178 → 255 µs). Two candidates, not separated by this data: more per-frame container churn at 15 appends
+instead of 10.5, or the P1c effect in reverse — *a busier frame makes everything inside it measure slower.*
+
+**Verdict on the developer's escalation:** 99 × 900X is **reachable in steady state today**. What stands
+between it and a flat 100% is a per-block spike, not throughput. Next run measures `BlockCommit` directly.
+
+#### P1g — the block-commit discrimination, and a finding RETRACTED (2026-08-30, 17 full windows)
+
+**The split did its job.** `BlockCommit` separates cleanly into two populations, and the boundary is exactly
+whether the player mined a block in that window:
+
+| windows | `BlockCommit` |
+|---|---|
+| 8 with **no** `[Checkpoint] CAPTURED` | **0.044 – 0.051 µs** (i.e. the branch was not taken) |
+| 6 with a player-mined block | **1.6 – 5.6 µs**, rising with the number of blocks |
+
+`NonceAttempt`, now measuring the PoW attempt alone, fell from a bundled **29.5 µs with spikes to 42.9 /
+38.8 / 47.2** to **16.9 µs, range 14.6 – 20.9**. The variance moved out of it exactly as predicted. Mean
+`BlockCommit` is **0.97 µs** — the block path is a pure spike, invisible in any average, which is why it
+needed a column rather than a footnote.
+
+**The asymmetry is explained, and verified in code rather than assumed.** Three windows carry a
+`[Checkpoint] CAPTURED` line while reading `BlockCommit ≈ 0.05 µs`. `SimulationService` calls
+`CaptureCheckpoint()` from **four** sites: the player's bet, a bot's bet, `DriveFounderMining`, and
+`DriveScheduledMining`. The last two run **outside `ExecutePlayerBetOnce`** — so when Satoshi, Hal or the
+scheduled network solves a block, the checkpoint costs the same tens of milliseconds **in the same frame**
+while being structurally invisible to a profiler scoped to the player's bet. *Those dips are real, are
+caused by the same work, and cannot be attributed by this instrument at all.*
+
+> ### ⛔ RETRACTED — "the cost ROSE from 233 µs at 7 credits to 334.6 at 10"
+>
+> Recorded in P1f as a finding against prediction, and **it was noise.** This run is the same configuration
+> — 10 credits × 9000X, same world, no code change but one added mark — and reads **221.3 µs**, *below* the
+> 7-credit figure it was supposed to have risen from. `BetHistoryFeed` moved with it: 254.7 → **167.9 µs**.
+>
+> | | within one run | between runs, same config |
+> |---|---|---|
+> | spread | 213.9 – 245.3 µs (**±7%**) | 221.3 vs 334.6 (**34%**) |
+>
+> **The instrument is precise and not accurate across sessions.** Window-to-window it is tight enough to
+> trust; run-to-run it moves by more than most of the effects this plan has been discussing. The cause is
+> not identified — machine state, editor state, thermal, background load are all candidates and none is
+> established.
+>
+> **The methodological consequence, which now binds everything above:** *compare only within a run.* Any
+> cross-run claim needs an **A–B–A crossover** — the design §38.8a already used on this exact codebase for
+> exactly this reason — and P1f's comparison was a bare A-vs-B. **A number that stays stable across 17
+> windows looks authoritative and says nothing about the next session.**
+
+**What is still unattributed.** Several windows show a worst bet of **15–21 ms with `BlockCommit ≈ 0`** —
+W2 (17.2 ms), W13 (20.8 ms), W16 (15.5 ms). No player block, and an external checkpoint cannot inflate a
+*bet's own* timing since it runs after the bet loop. **Leading candidate: a garbage collection.** This world
+holds ~100k bet records in memory and a gen2 pass over that heap is comfortably tens of ms.
+
+**Now instrumented, cheaply enough to be free.** Each report adds a GC line: gen0/gen1/gen2 collections in
+the window, how many bets overlapped a collection, and — the question that actually matters — **whether the
+WORST bet overlapped one**. A window's totals cannot answer that; they are spread over 5,000 bets, so the
+worst bet carries its own flag. `GC.CollectionCount` is a field read, two per bet against a 220 µs bet.
+
 ### P2 — Raise `MaxBetsPerFrame` to what P1 permits, and sweep the frontier
 
 For each `(credits, DevTimeScale)` in a coarse grid, run 60 real seconds and record **`Sim:` %**, achieved
@@ -129,10 +682,129 @@ in the backlog.
 At the highest `(credits × DevTimeScale)` P2 sustains, run 60 seconds and scan the journal for:
 
 1. **zero same-timestamp groups**;
-2. spacing equal to `SpeedMultiplier / credits` game-seconds, to the tick;
+2. **median** spacing equal to `SpeedMultiplier / credits` game-seconds, with the spread bounded by §2.2's
+   frame-boundary jitter — *not* uniform to the tick, which this implementation does not claim;
 3. **strictly monotonic** timestamps in write order — the P7 check from mini-plan 06 §9.2, now a standing
    regression test rather than a one-off;
-4. the clock's value equal to the **last** bet's timestamp exactly, per §2's design property.
+4. **no bet ever timestamped after the clock.** §2.2 explains why this is the property to guard rather
+   than uniformity: a future-dated bet would be a worse defect than the jitter.
+
+#### P3 — the scanner, and the regression it found on its first run (2026-09-10)
+
+`Tools/verify-bet-journal.js`. Runs the four assertions over the retained journal, per segment and over a
+scoped tail (`--last N`, `--credits N`).
+
+**A4 turned out to be checkable, which it did not look like.** The journal never records which bet mined
+which block, so "no bet after the clock" reads undecidable after the fact. But `ExecutePlayerBetOnce`
+derives the block's timestamp from **the same `tsUtc` it gave the bet** — so a player-mined block's
+timestamp equals its mining bet's to the millisecond, and that join recovers every commit point. **42 of 42
+player-mined blocks in the retained journal matched exactly.** The timestamp pipeline is sound end to end.
+
+**A1 and A2 pass, and A2 is the more interesting of the two.** The per-segment table reads
+`20.000 s → 14.286 s → 10.000 s` implied spacing — i.e. **exactly `SpeedMultiplier / credits` at 5, 7 and
+10 credits**, tracking the hardware across three playtests with no tuning. That is the writer fix working.
+A1 shows 9 same-timestamp groups of size **2** in 205,180 records (0.009%), against the pre-fix shape of
+groups of 7–10 spaced 150 game-seconds.
+
+> ### 🔴 A3 FAILS — 114 timestamp regressions, and we caused them
+>
+> Timestamps run **backwards** in write order: median jump **−20.3 game-seconds**, worst **−102.7**. They
+> appear in segments 20–28 and in **none** of segments 8–19.
+>
+> **The mechanism.** Back-dating spans `(planned − 1) × interval × SpeedMultiplier` game-seconds, but the
+> clock only advances `simDelta × SpeedMultiplier × ` **`SimulationThrottle`**. When the throttle is below
+> 1 — every one of the `Sim:` dips already recorded in P1f/P1g — the back-dating reaches **further back
+> than the clock moved forward**, and the frame's first bet lands before the previous frame's last.
+>
+> | | regression threshold | at 10 credits × 9000X |
+> |---|---|---|
+> | `MaxBetsPerFrame = 10` | throttle < 0.60 | span 90 s vs 150 s advance — dips to 63% stayed just clear |
+> | `MaxBetsPerFrame = 20` | **throttle < 0.93** | span 140 s vs 150 s — **almost any dip regresses** |
+>
+> **Raising `MaxBetsPerFrame` to 20 converted a latent bug into a frequent one**, which is exactly where
+> the segment boundary sits. Predicted magnitudes for throttle 0.9 → 0.63 are −5 s → −45 s; the observed
+> median is −20.3 s. The mechanism is confirmed, not merely plausible.
+>
+> **§2.2 of this plan reasoned about the risk of USING the throttle and never about the risk of not using
+> it.** It rejected the exact-phase variant because recomputing the clock's advance "risks disagreeing with
+> what the calendar did, and a disagreement in the wrong direction **future-dates a bet**". True — and the
+> disagreement in the *other* direction past-dates one, which is what shipped. *A hazard analysis that
+> considers only the failure mode of the option it is rejecting has not compared anything.*
+>
+> **Proposed fix — clamp, do not predict.** Remember the clock value at the end of the previous frame and
+> never back-date a bet before it. This needs no throttle forecast (the aggregate is power-weighted across
+> bots and is not known until after `TickBots`), it is exact rather than approximate, it enforces
+> monotonicity directly instead of inferring it, and at throttle 1 it changes nothing.
+
+#### P3 — THE FIX (implemented 2026-09-10, awaiting its verification run)
+
+`SimulationService.ClampedStepGameSeconds(nominalStep, planned, clockNowUtc)` — the batch's span may not
+exceed the game-time the clock actually moved this frame. `_previousFrameClockUtc` is the anchor, advanced
+**after** both settle paths have read it (the bots settle in the same frame off the same clock; advancing it
+beside the player's loop would hand them a zero-width window and collapse their spacing to nothing).
+
+Reset to `MinValue` on run start and stop, meaning *no anchor yet* → nominal spacing. Without that a run
+would clamp its first frame against an anchor hours of game time stale.
+
+**Verified arithmetically against the measured failure before asking for a playtest** — 10 credits × 9000X,
+`planned = 15`, nominal step 10 game-seconds:
+
+| throttle | clock advance | span before | span after | regression |
+|---:|---:|---:|---:|---|
+| 1.00 | 150.0 | 140.0 | 140.0 | none — **the clamp never binds at full retention** |
+| 0.80 | 120.0 | 140.0 | 120.0 | was −20.0 s, now 0 |
+| 0.63 | 94.5 | 140.0 | 94.5 | was −45.5 s, now 0 |
+| 0.25 | 37.5 | 140.0 | 37.5 | was −102.5 s, now 0 |
+
+The 0.25 row reproduces the journal's observed **worst** regression of −102.7 s to within 0.2 s. *The
+mechanism is not merely consistent with the data — it predicts its extreme.*
+
+**One consequence to expect in A2, so it is not misread as a new fault.** In a throttled frame the spacing
+is now *compressed* below nominal, because the bets genuinely occupy less game-time than nominal — the clock
+did not advance that far. So the scanner's median may sit slightly under `SpeedMultiplier / credits` on a
+run with many dips. **That is the fix working, not A2 failing.** §2.2 already refuses to claim uniformity;
+this widens the tail on the low side as well as the high.
+
+**Standing use.** `node Tools/verify-bet-journal.js --last 20000 --credits N` after any run that matters.
+A1/A3 are absolute; A2 is a median and must carry a one-to-two-interval frame-boundary tail (§2.2) — a
+distribution uniform to the tick would mean the scanner is measuring something the engine does not do.
+
+#### ✅ CLOSING RUN — P3 verified and P1's last spike attributed (2026-09-10, 27 windows, ~137k bets)
+
+**A3 PASSES: zero regressions over 100,000 bets**, against 114 before the clamp. `A1` and `A4` hold, and
+**A2 still reads exactly 10.0000 s with 95,556 of 99,979 gaps exact to the millisecond** — the clamp binds
+in the ~4% of frames that were throttled and nowhere else, which is precisely the design.
+
+**The spike sources separate perfectly, with no overlap at all:**
+
+| | windows | worst bet | GC overlapped the worst bet |
+|---|---:|---|---:|
+| with a player-mined block | 12 | **20.1 – 73.3 ms** | 1 of 12 |
+| without one | 15 | **7.1 – 13.5 ms** | **7 of 15** |
+
+Every block window is ≥ 20.1 ms; every non-block window is ≤ 13.5 ms. **The block commit is the primary
+spike and it is now proven rather than inferred** — the previous run could only show that high `BlockCommit`
+and checkpoints coincided; this one shows the worst-bet *distributions* do not intersect.
+
+**The GC hypothesis was right in kind and wrong in magnitude, which is worth separating.** GC lands on the
+worst bet in **30% of windows against ~0.1% expected by chance** — so it is unambiguously a real spike
+source, not noise. But it is a **secondary** one at 8–13 ms, and P1g predicted it would account for the
+15–21 ms spikes seen in no-block windows. In this run no such spikes exist: the no-block ceiling is 13.5 ms.
+*The prediction identified the mechanism and misjudged the size, and those are different kinds of being
+right.* The earlier 15–21 ms no-block readings are best explained by the same 34% cross-run variance P1g
+documented — which is exactly why that entry made within-run comparison the rule.
+
+**Net picture of a bet, closing P1:**
+- steady state ~265 µs, of which `BetHistoryFeed` is ~76% (two pooled UI containers) — the one named,
+  measured, unfixed cost, and an optimisation rather than a blocker;
+- a **block-commit spike of 20–73 ms**, roughly 1–4 frames, on the ~1 bet in thousands that solves a block;
+- a **GC spike of 8–13 ms**, a few times per 5,000 bets.
+
+Both spikes are what the brief `Sim%` dips are. Neither corrupts anything: `SimulationThrottle` converts a
+frame the engine could not fill into an honest wall-clock slowdown.
+
+*(The `WASAPI: Current output_device invalidated` line in this run is Godot's audio driver reacting to a
+device change on the machine. Unrelated to any of the above, recorded so it is not read as a finding.)*
 
 ### P4 — Clock synchrony at 99 credits
 
@@ -140,6 +812,749 @@ The developer's specific worry. With the fix in place, confirm that in-game **bl
 difficulty regulator's feed are unchanged between `(99, 100X)` and `(99, highest sustainable)`. That is the
 invariance `DevTimeScale` claims, and it is now testable at a resolution that did not exist before —
 because every bet finally has an instant of its own.
+
+#### ✅ P4 — RESULT (2026-09-12, 99 real hardware credits, A–B–A′, 64 blocks)
+
+**300X was substituted for 100X, and the reason is a cost the plan never priced.** A block takes
+`TargetBlockSeconds ≈ 58,500` game-seconds (~16.3 in-game hours), so 20 blocks at 100X is **115 minutes for
+one leg**. The invariance under test needs two scales with a large ratio, not one specific pair, so the legs
+are **300X / 900X / 300X** — a 3× ratio, both legs unsaturated, ~95 minutes total. *(Even that under-ran:
+the legs took about double the estimate, because the estimate used the historical median solve time from a
+much lower-power era rather than the regulator's actual target.)*
+
+Structure, recovered entirely from the new `devTimeScale` column — 10 blocks settle (×9), 20 A (×3), 13 B
+(×9), 21 A′ (×3). Configured power was **110.1–110.5 in every leg**, so nothing drifted underneath.
+
+**The settle leg earned its place:** difficulty **89,713** there against **61,809 / 61,859 / 63,865** in the
+three measurement legs. The 10× power jump's transient was real and was correctly discarded.
+
+| | pooled 300X (A+A′) | 900X (B) |
+|---|---:|---:|
+| blocks | 41 | 13 |
+| aggregate realized power | 95.67 | 121.64 |
+| configured power | 110.16 | 110.52 |
+| **realized / configured** | **0.869** | **1.101** |
+| simulated-time retention | 1.000 | **0.943** |
+
+**900X / 300X = 1.267, 95% CI [0.68, 2.36] — the bracket contains 1.00, so no violation is detectable.**
+Across all 54 measurement blocks realized power is **100.79 against 110.24 configured (0.914 ± 13.6%)**: the
+regulator delivers what it prices.
+
+> **The sharpest form of the result is the retention row.** Leg B ran at **94.3% retention** — the engine
+> genuinely could not simulate 5.7% of the time offered — **and its in-game block interval still matched the
+> unthrottled 300X legs.** That is R2-C1's entire claim demonstrated rather than asserted: the clock slowed
+> in wall-clock terms instead of the in-game dynamics distorting.
+
+**Stated plainly: this test has LOW POWER and passing is not proof.** The 95% bracket only excludes effects
+below ~0.68× or above ~2.36×; a 20% distortion would pass unnoticed. The binding constraint is the
+≈exponential solve-time distribution — the same-scale legs A and A′ differ from each other by as much as
+either differs from B (0.797 vs 0.947 realized/configured). **Tightening it to ±10% needs ~100 blocks per
+leg, which at 300X is over six hours.** The honest verdict is *consistent with invariance at a resolution of
+roughly ±35%*, not *invariance confirmed*.
+
+**A statistic that had to be thrown away, recorded because the reasoning recurs.** The first pass reported
+mean `realizedPower` per leg — 484 / 253 / **1,228** against ~110 configured, which reads as a spectacular
+violation. It is an artifact: `realizedPower = difficulty × clockSpeed / solveSec` is **inversely**
+proportional to an ≈exponential variable, and `E[1/X]` diverges for an exponential, so the mean is whatever
+the single fastest block was. Leg A′'s maximum was **19,184**. The aggregate estimator
+`Σdifficulty × clockSpeed / Σ solveSec` pools every block and is well-behaved; it gives 1.101 where the mean
+gave 11.1×. *Averaging a per-item rate is not the same as computing the rate over the pooled total, and the
+difference is largest exactly where the denominator is heavy-tailed.*
+
+#### P3 at the spacing only 99 credits can produce
+
+The case §2.1 singled out and no proxy could reach: **`A2 = 1.0100 s measured against 1.0101 s expected`**,
+with 119,803 of 149,998 gaps exact to the millisecond. A3 passes with **0 regressions** over 150,000 bets
+and A4 joins every player-mined block. **Per-bet cost is 276.5 µs at 99 credits against ~265 µs at 10** —
+the cost is per BET, not per credit, as the model assumed but had never checked at the cap.
+
+**A1 now fails at 1 group of 2 bets in 150,000 (0.001%), and the clamp caused it.** When a frame is throttled
+hard the clamp compresses `stepGameSeconds` toward zero, and two adjacent bets can round onto the same tick.
+**This is the trade the clamp makes and it is the right one** — an unbounded ordering corruption exchanged
+for a resolution artifact three orders of magnitude rarer than the defect §1 set out to fix. *⛔ The mechanism
+named here was wrong — see the escalation entry below. The pairs are not sub-tick collapse inside a batch,
+and the one-tick floor built on this sentence did not close them.*
+
+#### Escalation — 99 credits × 900X → 3000X, and the A1 prediction FALSIFIED (2026-09-13)
+
+One continuous autobet, 900X → 1000X → 2000X → 3000X, profiler armed throughout. Legs recovered by the
+`devTimeScale` column in the block trace and by a rate changepoint in the profiler CSV (the 2000X → 3000X
+boundary falls at 02:27:53 UTC).
+
+| leg | bets/s measured | demanded | delivered | block-trace retention | µs/bet |
+|---|---:|---:|---:|---:|---:|
+| 900X | 877 | 891 | — | 1.000 (1 block) | 221.0 |
+| 1000X | 996 | 990 | 100% | 1.000 | 226.8 |
+| 2000X | 1,955 | 1,980 | **98.7%** | **0.988** | 173.5 |
+| 3000X | 2,053 | 2,970 | **69.1%** | **0.691** | 168.9 |
+
+**Two independent instruments agree to the third digit** — the profiler's delivered-rate ratio and the
+block trace's simulated-time retention were computed by different code from different data. The developer's
+by-eye readings match too: `Sim:` pinned at 100% through 1000X, occasional dips at 2000X, ~72% at 3000X.
+
+**Verdict on the escalation: the practical ceiling at 99 credits is about 2,000 bets per second, i.e.
+2000X.** Past it throughput barely moves — 3000X demands 52% more than 2000X and delivers 5% more. The extra
+demand becomes wall-clock slowdown, not bets, which is R2-C1 doing exactly its job.
+
+**The 3000X prediction (~80%) missed by 11 points, and the miss is informative.** 80.8% was `40 ÷ 49.5` —
+the cap binding at 60 fps. Both observations at 3000X, the delivered rate AND the retention, are fitted
+exactly by one frame rate: **≈51 fps**, with the cap binding every frame (`40 × 51.3 = 2,053`;
+`0.404 ÷ 0.585 = 0.691`). *Derived, not measured* — nothing times the whole frame. At that rate a frame is
+~19.5 ms of which the bets are ~6.8 ms; the rest is outside every instrument this plan has built. 2000X is
+consistent with any frame rate ≥ 49.5 fps, so these data **cannot say whether the frame slowed because of
+3000X or was already near 51 fps throughout.** Consequence: *do not raise `MaxBetsPerFrame` again on this
+evidence.* Cap and frame rate bind jointly, and which to move needs a whole-frame timing of
+`SimulationService._Process`, which does not exist yet.
+
+**Within the run, per-bet cost FALLS ~22% from 1000X to 2000X — and uniformly.** `BetHistoryFeed` ×0.78,
+`RegisterBet` ×0.78, `NonceAttempt` ×0.74, total ×0.785. The tempting reading — the UI containers' deferred
+relayout amortising over more appends per frame — is refuted by that uniformity: a UI-specific effect would
+not speed a proof-of-work attempt by the same factor. A whole-loop effect (cache warmth, CPU power state under
+sustained load) fits; nothing here separates those. The direction is trustworthy because it is within one
+run, and it is the opposite of P1f's retracted cross-run "rise".
+
+**The journal regime flagged as never exercised is benign.** At ~2,000 bets/s the ~200k retained records
+cycle roughly every 100 seconds. After the run: **202,057 records in 21 segments** (inside the documented
+190k–210k band), 54.8 MB, lifetime rollup `IsComplete = true` and updated during the run, and `RegisterBet`
+never exceeded **21.8 µs** in any window — pruning under continuous load adds no visible per-bet spike.
+
+> ### 🔴 A1 PREDICTION FALSIFIED — the one-tick floor fixed a mechanism that never occurred
+>
+> Predicted: A1 returns to 0 under the escalation. Observed: **864 same-millisecond pairs** in 202,057 bets.
+>
+> **The tick-level audit settles the mechanism completely:**
+>
+> | consecutive-bet delta | count |
+> |---|---:|
+> | negative (any size) | **0** |
+> | exactly 0 ticks | **448** |
+> | exactly +1 tick | **416** |
+> | +2 ticks up to 1 ms | **0** |
+>
+> Every pair has size exactly 2, and **857 of 864 are followed by compressed spacing while the gap before
+> them is nominal**. Each pair is the entry into a clamped frame. `step = available ÷ (planned − 1)` maps the
+> batch onto the **closed** interval `[previousFrameClock, clockNow]` — and the left endpoint is already
+> occupied, because the previous frame's last bet was stamped at backdate 0, which *is* that clock. The
+> clamped frame's first bet lands on it. The +1 tick variant is the same collision with `AddSeconds`
+> truncating the double back-date's fractional tick.
+>
+> The one-tick floor addressed sub-tick collapse *inside* a batch. That would produce groups of up to
+> `planned` bets; the data contains none larger than 2. **The floor was built for a mechanism reasoned rather
+> than observed, and the observation that would have ruled it out — every group is exactly size 2 — was
+> already in P4's output.**
+>
+> **And a fragility found along the way:** A3 has never failed at tick resolution only because truncation
+> errs *forward*. Had the back-date rounded to nearest, roughly half of these 416 would be one-tick
+> **regressions**. *Monotonicity has been held by a rounding direction nobody chose.*
+>
+> **Fix, proposed and not yet built:** map the batch onto the **half-open** interval — `step = available ÷
+> planned`, so the first bet lands one full step after the previous frame's clock (~0.85 game-seconds at
+> 3000X, not 0–1 tick). The unclamped branch needs a strict `<` for the same reason, and the floor's
+> condition becomes `planned` ticks rather than `planned − 1`. With a full step of separation the rounding
+> direction stops mattering at all.
+
+**A scanner gap found by the same audit.** `verify-bet-journal.js` compares timestamps at **millisecond**
+resolution for A1 and A3, because it truncates for the A4 block join. A sub-millisecond regression would be
+invisible to A3, and A1 is stricter than the property it names (+1 tick is technically distinct). Nothing was
+hidden this time — the tick audit found 0 regressions — but it could be. **Proposed:** A1 and A3 at tick
+resolution, milliseconds kept only for the A4 join, and a separate near-collision diagnostic (consecutive
+bets under 1% of nominal spacing) so this defect is caught whichever way the rounding falls.
+
+#### Half-open clamp + tick-resolution scanner — BUILT (2026-09-13), verified by model, awaiting a run
+
+**The clamp.** `ClampedStepGameSeconds` now spreads a clamped batch over `(previousFrameClock, clockNow]` —
+`step = available ÷ planned` — so the first bet lands one full step after the previous frame's clock. The
+unclamped branch requires `(planned − 1) × nominal` to be strictly *less* than the advance, for the same
+reason. **The conditional one-tick floor is removed, not adjusted** (the escalation entry proposed moving its
+threshold to `planned` ticks; that was wrong too): under the half-open interval, whenever a frame can hold
+`planned` distinct ticks, `available ÷ planned` already is at least one tick, so the floor could never change
+the result. At the true limit — a frame advancing under `planned` ticks, 4 µs of game time at 40 bets — bets
+may still share an instant, but the span is strictly shorter than the advance and truncation only moves a
+timestamp later, so ordering and the clock bound hold even there.
+
+**The scanner.** A1 counts exact duplicates at tick resolution; **A1b** counts consecutive bets 1–10 ticks apart
+(`NEAR_COLLISION_TICKS`); A3 compares at tick resolution; milliseconds survive only for the A4 block join.
+Run over the escalation journal it reproduces the hand audit exactly — **448 A1 groups, 416 A1b pairs, 0 A3
+regressions** — and A2 now reads 1.0101 s rather than 1.0100, because the median is no longer truncated.
+
+**Verified by a model before any playtest — and the model had to earn that first.** A scratchpad script
+reimplements the player loop, the calendar advance, the backlog clamp, the throttle's one-frame lag and .NET 8
+`DateTime.AddSeconds` truncation exactly, and was required to reproduce the *measured* defect with the
+committed formula before being allowed to judge the new one.
+
+- **Round 1 did not pass.** With frame deltas of exactly 1/60 or 1/30 s it matched rate (2,064/s), retention
+  (0.696), zero regressions and the pair count's magnitude (686) — but put **every** pair at +1 tick, against
+  the journal's 448 exact / 416 +1. Recorded as a failure, not rounded into agreement.
+- **Round 2 tested the explanation.** A 2% multiplicative jitter on the frame delta — Godot's real delta is not
+  a constant — gives **480 exact / 477 +1 tick** (a second seed: 468 / 429), **0 regressions, 2,051 bets/s,
+  0.691 retention**. The split appears exactly as predicted, so the truncation mechanism is confirmed rather
+  than assumed: with too-regular inputs `available` takes so few binary values that all of them round the
+  same way.
+
+Frame-time variability in the model is a 16.67 / 33.33 ms vsync alternation, long with probability 0.169 —
+fitted because it reproduces BOTH the 3000X delivered rate and its retention. *A hypothesis about the machine,
+not a measurement of it,* though it also predicts the observed pair frequency (~14% of frames), which it was
+not fitted to.
+
+| scenario (99 credits) | formula | regressions | exact dup | +1 tick | 2–10 ticks | A2 median |
+|---|---|---:|---:|---:|---:|---:|
+| 3000X, jitter 2% | closed + floor (committed) | 0 | 480 | 477 | 0 | 1.0101 |
+| 3000X, jitter 2% | **half-open** | **0** | **0** | **0** | **0** | 1.0101 |
+| 2000X, jitter 2% | closed + floor | 0 | 2,009 | 1,922 | 0 | 0.8650 |
+| 2000X, jitter 2% | **half-open** | **0** | **0** | **0** | **0** | 0.8434 |
+| 900X / 300X, jitter 2% | both | 0 | 0 | 0 | 0 | 1.0101 |
+
+Half-open is clean in all 14 scenario × formula runs. Its only cost is that a clamped frame's spacing is
+`(planned − 1) ÷ planned` of what the closed interval gave — 2.5% at 40 bets — visible in the 2000X row. **That
+row's sub-nominal A2 is the model's heavy-clamping assumption at 2000X, not an observation**: no real 2000X
+journal exists, because the escalation's retained ~200k records were written entirely during the 3000X leg.
+
+#### ✅ Half-open clamp VERIFIED (2026-09-13, 99 credits, 2000X → 3000X)
+
+The retained journal — 202,684 bets — was written **entirely during the 3000X leg** (80 profiler windows ×
+5,000 bets exceed the retention cap), the exact regime in which the closed interval produced 864 pairs.
+
+| assertion (tick resolution) | before the fix | after |
+|---|---:|---:|
+| A1 duplicate instants | 448 | **0** |
+| A1b near-collisions (1–10 ticks) | 416 | **0** |
+| A3 regressions | 0 | **0** |
+| A2 median spacing | 1.0101 s | **1.0101 s** |
+| A4 block/bet join | 2 of 2 | **1 of 1** |
+
+**A2's secondary figure matched the model before the run existed:** 160,054 of 202,544 gaps within 1 ms of
+nominal = **79.0%**, against **79.2%** from the half-open model at 2% frame jitter. A number the model was not
+fitted to, landing within 0.2 points.
+
+Throughput: 2000X delivered 1,971 of 1,980 bets/s with block-trace retention **0.996**; 3000X delivered 2,130/s
+at **0.743** (the developer read ~75% by eye). That is above the escalation run's 0.691 — **a cross-run
+difference, not attributable to anything**: the fix touches timestamps, not throughput, and P1g measured 34%
+between sessions. The profiler's `unaccounted` residue never went negative (minimum 0.061 µs).
+
+#### Found while verifying — the scanner's "session breaks" are not breaks, and they expose a 0.62% clock overspend
+
+The scanner excluded **139 gaps larger than 10× nominal "as session breaks"** from a single continuous
+autobet — there were no session breaks. The gaps are frame-aligned (never fewer than 40 bets apart, one capped
+frame), range 10–69 game-seconds (median 19.7), and hold **1.49% of the journal's game time**. The label was
+a claim, and it was false.
+
+Three tests, recorded with their outcomes because two of them failed:
+
+1. **Throttle overspend followed by an under-advancing frame — REFUTED.** That predicts compressed spacing
+   immediately after each gap. The frame after a gap is at exact nominal in **139 of 139**.
+2. **Holes versus clamped frames, counted — DISCARDED as badly posed.** 1,022 clamped frames against 139 holes,
+   but the holes were counted only above 10× nominal and the clamps at any size. Asymmetric thresholds; the
+   comparison meant nothing.
+3. **The lagged-ratio mechanism, tested through the mean of r — CONFIRMED.** With the backlog saturated the
+   cap executes 40 bets, 40.40 game-seconds, every frame, while `CalendarTimeService` advances `40.40 × r`
+   with `r = delta_N ÷ delta_(N−1)` — it multiplies THIS frame's delta by a retention RATIO measured on the
+   PREVIOUS frame. Each frame's `r` is recoverable from the journal's own shapes: a boundary gap `G` gives
+   `r = (G + 39.39) ÷ 40.40`, a clamped frame with step `s` gives `r = 40·s ÷ 40.40`, a nominal frame `r = 1`.
+
+| over ~5,067 frames (1,286 up-steps, 1,022 clamped, 2,759 nominal) | |
+|---|---:|
+| Σ ln r — up-steps / clamped frames | +120.56 / −114.66 |
+| **geometric** mean of r | 1.00117 |
+| **arithmetic** mean of r | 1.00738 |
+| arithmetic ÷ geometric | **1.00620** |
+| net overspend from the total span, computed independently | **0.625%** |
+
+The geometric mean of the TRUE `r` must be 1: `Σ ln r` telescopes to `ln(delta_last ÷ delta_first)`, and the
+frame time did not grow 365-fold over five minutes. So the reconstruction's 1.00117 is its own bias, ~0.12% —
+and dividing it out leaves **0.620% against 0.625%** measured by a different route. The up-step half of each
+fluctuation is a hole; the down-step half is a clamped frame.
+
+**Why it drifts at all: Jensen's inequality.** The arithmetic mean of a ratio of fluctuating positive
+quantities exceeds 1 even when nothing trends. A one-frame-lagged **multiplicative** correction therefore
+overspends systematically; an **additive** one could not.
+
+**Consequence: R2-C1's invariance leaks by ~0.6% when the backlog is saturated.** In-game time passes ~0.6%
+faster than the mining attempts justify, so in-game block intervals read ~0.6% long. Far below P4's ±35%
+resolution, and **zero whenever retention is 1** — at 99 credits, everything up to 1000X, which is where
+normal play lives. It exists only in the regime this plan went looking for.
+
+**Fix, not built — a change to R2-C1's contract, which deserves its own decision:** carry the lagged quantity
+additively, advancing the calendar by the previous frame's *retained simulated seconds × SpeedMultiplier*
+rather than *this frame's delta × last frame's ratio*. The one-frame lag stays; the bias goes, because
+`Σ advance = Σ retained` exactly.
+
+**The scanner's label is corrected** to say what an excluded gap may be, instead of what it was assumed to be.
+
+*Two rules. A lagged multiplicative correction applied to a fluctuating base drifts, and the drift is
+Jensen's, not noise. And a label on an exclusion is a claim about the excluded data — this one quietly
+filed 1.49% of game time under the wrong heading for two runs.*
+
+#### 🔴 DiceGame's betting statistics — four defects diagnosed, a test pre-registered (2026-09-13)
+
+**The report.** After the verification run, DiceGame's statistics panel showed General P/L **+894 SC** while
+Bankroll 2,164 + Main 32,200 = 34,364 SC sits far below the starting funds; and **Total Gambled appeared to
+restart between test runs.**
+
+**First, the balances are correct — to the satoshi.** Starting funds are 40,000 SC (39,900 Main + 100
+Bankroll, not 39,900). `bankroll_program_state.json` holds 78 Main→Bankroll transfers — the startup dose plus
+77 auto-recharges — totalling 7,800, and `40,000 − 7,800 = 32,200`, the Main balance exactly. At the last
+checkpoint `1,687.90910712 = 7,800 − 6,112.09089288`, the rollup's `TotalNetProfit`, exact. In memory at the end
+of the run, `7,800 − 5,635.83182901 = 2,164.16817099`, `bankroll_state.json` exactly. **The player really is
+down ~5,636 SC. What lies is the statistics panel, in four separate ways.**
+
+**D1 — "General" is neither lifetime nor retained: it is re-based once per process.** `FinancialBettingStats`
+reads `UserStatsService.Stats`, which has two writers. At boot, `Stats = UserBettingStats.FromRollup(Rollup)` —
+lifetime. But the **first DiceGame entry of each process** runs `RestoreLegacyCheckpointIfNeeded` →
+`RollbackHistoryToUtc` → `RebuildStatsFromLoadedHistory`, which does `Stats = new UserBettingStats()` and
+replays `BetHistory.Records`, **the retention-capped journal**. From then on live bets add to it and pruning
+never subtracts. So General = *the retained window at that moment + everything bet since*: it grows through a
+run and collapses at every restart. That is both reported symptoms. At ~2,000 bets/s the retained window is
+about two minutes of play. `RebuildStatsFromLoadedHistory`'s own comment protects the ROLLUP from being
+re-derived from the journal — and does nothing to protect `Stats`, which is the figure on screen. The panel's
+tooltip ("covers the retained bet history") is false during any run; the label is a claim.
+
+**D2 — the "Since…" scopes subtract numbers from different scales.** Their ledger snapshots are taken from
+`Stats` (`BankrollProgramService`, `PlayerBankAccountService`) in whatever scale it has at that instant. The
+ledger records the damage: **five drops in the player's `TotalWageredSnapshot` between consecutive
+auto-recharges**, impossible for a lifetime counter — the largest **100,702 → 4,113**. After a rebase,
+`Stats − snapshot` is meaningless, and `PlayerFinancialStatsCalculator`'s `Math.Max(0, …)` — commented *"a
+snapshot can momentarily lead the counter"* — is this defect being clamped out of sight. The tooltip calls these
+scopes "exact".
+
+**D3 — boot `Stats` and restored `Rollup` diverge from the first frame.** Leaving DiceGame calls `FlushHistory`
+unconditionally (`_ExitTree`), which saves the rollup **including bets after the last block**. On the next
+launch, `Stats` is built from that file (autoload #2), then the checkpoint restore (#13) replaces `Rollup` with
+the committed snapshot — and does not touch `Stats`. **Until DiceGame is entered, the panel shows a lifetime
+total containing bets the world has just discarded.**
+
+**D4 — introduced by THIS PLAN: the checkpoint boundary is the frame clock, not the block.**
+`SimulationService.CaptureCheckpoint` stamps `HistoryCheckpointUtc = _calendar.CurrentUtcDateTime` — the
+frame's clock — while §2's back-dating gives the block the **mining bet's** earlier timestamp. Block #385: mined
+at 07:15:32.936, checkpoint boundary 07:15:48.087, **15.15 game-seconds later**. The 15 bets that frame settled
+AFTER the mining bet are timestamped inside the boundary but are not in the checkpoint's balances, so a restart's
+journal rollback **keeps** them: +0.01073557 SC, measured as last-kept `BalanceAfter` 1,687.91984269 against the
+restored bankroll 1,687.90910712. The continuity break is silenced by the `history_rollback` discontinuity
+declaration. **§2 asserted the canonical rule — the clock equals the timestamp of the block that defines the
+checkpointed world — is preserved "with no special case". It holds only when the mining bet is the last of its
+frame, which at 40 bets per frame is roughly one block in forty.** Founder and scheduled-network blocks are
+unaffected; they are stamped with the clock itself.
+
+**Pre-registered test — predictions computed in exact BigInt satoshis before the run.** (A first pass summed
+100,000 `double`s and was **one satoshi out in three figures**; CLAUDE.md's exact-arithmetic rule is the only
+reason these are testable at all.)
+
+Protocol, no betting anywhere: (0) record the panel as it stands; (1) DiceGame → MainMenu → quit; (2) relaunch →
+MainMenu → **ScFinances first**; (3) → MainMenu → DiceGame; (4) → MainMenu → ScFinances; quit.
+
+| step | scope | P/L predicted | Gambled predicted | defect tested |
+|---|---|---:|---:|---|
+| 2 | General | −5635.83182901 | 153,005.57359921 | D3 |
+| 2 | Since last bank deposit | −5635.83182901 | 153,005.57359921 | D3 |
+| 2 | Since last bankroll recharge | −4544.23444475 | 147,624.23084571 | D3 + D2 |
+| 3 | General | +400.76053542 | 2,995.52588484 | D1 |
+| 3 | Since last bank deposit | +400.76053542 | 2,995.52588484 | D1 |
+| 3 | Since last bankroll recharge | +1492.35791968 | **0.00000000** (clamped) | D2 |
+| 4 | all three | identical to step 3 | | D1 is process-wide |
+
+Step 2's screen should contradict itself: Bankroll restored to 1,687.90910712 beside a General P/L of
+−5,635.83, whose identity `7,800 + P/L` gives 2,164.17. D4 is read from disk after step 3: the journal's last
+`BalanceAfter` 1,687.91984269 against `bankroll_state` 1,687.90910712. The committed lifetime truth, for
+contrast: P/L −6112.09089288, Gambled 149,382.93061226.
+
+*Three rules. A displayed figure with two writers in different scales is not a statistic. A clamp justified as
+"momentarily" is a symptom asking to be investigated. And moving a timestamp moves every boundary computed from
+it — the fix that gave each bet its instant never asked what the checkpoint's boundary was derived from.*
+
+**Amendment BEFORE the run (2026-09-13) — step 1 was not executed as written, so step 2's prediction changes.**
+The developer screenshotted the panel (step 0) and closed the game directly from DiceGame, together with the
+editor, instead of navigating to the Main Menu first. Read back from disk before anything else ran: no Godot
+process alive; `bet_stats_rollup.json` **unchanged since the checkpoint** (13:12:23 UTC, `TotalNetProfit`
+−6,112.09089288), so the uncommitted tail was **not** flushed on this exit; the journal, Bankroll and Main
+untouched (202,684 bets, 102,080 past the boundary, last balance 2,164.16817099). No bets have been placed
+since, so steps 3 and 4 stand exactly as registered above.
+
+Step 2 therefore becomes a **control** rather than a reproduction of D3 — `Stats` boots from a rollup file that
+holds only committed bets:
+
+| step 2 (control) | P/L predicted | Gambled predicted |
+|---|---:|---:|
+| General | −6112.09089288 | 149,382.93061226 |
+| Since deposit | −6112.09089288 | 149,382.93061226 |
+| Since recharge | −5020.49350862 | 144,001.58785876 |
+
+General and Since deposit are then **correct** — they agree with Bankroll 1,687.90910712 = 7,800 − 6,112.09089288
+— but **Since recharge is still wrong even here**, because its snapshot (wagered 5,381.34) was taken in a rebased
+window scale. D2 does not need D3 to show.
+
+**D3 is recorded as NOT REPRODUCED by this run, not as refuted.** Its trigger is leaving DiceGame through
+`_ExitTree` → `FlushHistory` → `SaveRollupIfDirty`, and the rollup is dirtied on every settled bet; this exit did
+not take that path. The observation still teaches something: **D3 depends on HOW the app is left**, and any
+future reproduction has to control the exit rather than assume it.
+
+#### ✅ Stats test RESULTS (2026-09-14) — 18 of 18 cells exact to the satoshi; D1, D2 and D4 confirmed
+
+The developer ran steps 0–5 and screenshotted each panel.
+
+| step | General P/L | General Gambled | Since recharge P/L | Since recharge Gambled | vs prediction |
+|---|---:|---:|---:|---:|---|
+| 0 — DiceGame, before closing | +894.93153003 | 19,983.20064980 | +1986.52891429 | 14,601.85789630 | *(no prediction)* |
+| 2 — ScFinances first (control) | −6112.09089288 | 149,382.93061226 | −5020.49350862 | 144,001.58785876 | **exact** |
+| 3 — DiceGame | +400.76053542 | 2,995.52588484 | +1492.35791968 | **0.00000000** | **exact** |
+| 4 — ScFinances again | +400.76053542 | 2,995.52588484 | +1492.35791968 | 0.00000000 | **exact** |
+
+"Since deposit" equalled General in every step, as predicted (the only deposit-kind entry is `initial`, 0 / 0).
+
+**Step 0, though unpredicted, is internally exact:** `894.93153003 + 1,091.59738426 = 1,986.52891429` and
+`19,983.20064980 − 5,381.3427535 = 14,601.8578963`. Its offset from the in-memory lifetime rollup — **+6,530.76 P/L,
+−133,022.37 wagered** — is D1's rebase, constant for the whole process.
+
+**Step 4 puts the contradiction on one screen:** ScFinances' own *"Overall P/L — game-over metric: −6112.09089288"*,
+computed from balances, sits directly above *"General +400.76053542"*.
+
+**Three confirmations nobody predicted:**
+
+- **The nonce counter counts D4's bets independently.** Step 0's DiceGame read *"Current nonce attempt: 102095"*;
+  `102,095 = 15 + 102,080` — the bets after the mining bet, counted by a counter that is not the journal.
+- **The clock came back to the frame, not to the block.** After the restart the clock read 02:15:48 local
+  (07:15:48 UTC, the boundary), not 02:15:32 (block #385).
+- **D4's bets were on screen.** Step 3's DiceGame history listed bets from 02:15:35 to 02:15:48 — settled *after*
+  the block the world had just "returned to".
+
+**D4 from disk after step 3.** The rewritten journal holds 100,604 bets, none past the boundary; the 15 after the
+mining bet are kept, +0.01073557; the last `BalanceAfter` is **1,687.91984269** against `bankroll_state`
+**1,687.90910712**. The rewrite itself is sound: 0 continuity breaks, 0 duplicate ids, the scanner passes. And the
+frame's last bet carries the clock **to the tick** — both read `633885093480878413`. The clock and the frame agree;
+**it is the block that does not.**
+
+**Two artifacts of my own instruments, each exposed only because a prediction was exact:**
+
+1. **The scanner was blind to the base file.** It read only `bet_history_<n>.jsonl`, but
+   `BetHistoryRepository.GetJournalChunkPaths` puts `bet_history.jsonl` first — and `RollbackToUtc` recreates that
+   file on every rollback, holding the oldest 10,000 records. The post-rollback journal therefore read **90,604**
+   against the 100,604 the panel had just been rebuilt from. Nothing was lost. **Fixed:** base file first, then chunks
+   by numeric index. Earlier results stand: in those journals retention had already trimmed the base away, which it
+   deletes first once more than 20 segments exist.
+2. **`HistoryCheckpointUtcTicks` does not survive a double.** At ~6.3e17 it exceeds 2^53, and `JSON.parse` moved it
+   **51 ticks** — enough to report the frame's last bet as not matching the boundary when it matches exactly. No count
+   changed (the nearest bet is ~1 s away). **Fixed in the scanner:** the boundary is read from the raw text.
+
+**And a claim in the scanner's own output that D4 falsifies.** Its A4 note said every bet past the chain tip is
+uncommitted and *"a restart discards them"*. Run on the post-rollback journal it printed exactly that about the 15
+bets that had just survived a restart — two lines above reporting 0 bets past the checkpoint boundary. The note now
+splits bets past the tip into those at or before the boundary (kept by a rollback; D4 when the tip was mined by a
+back-dated bet) and those after it (the tail a restart really discards).
+
+**Minor, recorded rather than fixed.** `RollbackToUtc`'s rebuild writes every deposit before every bet under a
+comment reading *"Chronological by construction"* — false in file order whenever a deposit is newer than the oldest
+retained bet. The loader keeps deposits and bets in separate lists, so nothing breaks today; it is a trap for any
+consumer that trusts file order.
+
+**Fix directions — none built; each is a decision:**
+
+- **D1 + D3:** derive `Stats` only from `Rollup` — `Stats = FromRollup(Rollup)` after `ApplyRollupSnapshot` and in
+  `RollbackHistoryToUtc`, never a replay of the retention-capped journal. The panel then reads committed lifetime
+  plus live bets, whatever scene was visited first and however the app was left.
+- **D2:** take ledger snapshots from `Rollup`. The existing snapshots are in mixed scales, so "Since recharge" stays
+  wrong until the next recharge writes a correct one, unless the world is reset — per project policy a version bump
+  and clean reset rather than a repair.
+- **D4:** capture the checkpoint at the **mining bet's** instant for player and bot blocks (`historyUtc` = that bet's
+  back-dated `tsUtc`). The canonical rule then holds exactly again, and a rollback discards the post-block bets
+  together with the balances they changed. Founder and scheduled-network blocks already stamp with the clock.
+
+*The rule this establishes: when an exact prediction misses, suspect your own instrument before the system — two of
+this test's three surprises were reading tools, and both would have passed unnoticed under a looser prediction.*
+
+#### ✅ D4 built (2026-09-14) — and the direction above was half wrong
+
+**The direction said "for player and bot blocks". Built, it would have moved D4 to the bots.** Every frame runs the
+player's whole settle loop first, then `TickBots`, then the founders and the scheduled network. When a **bot** mines,
+every player bet of that frame — stamped up to the clock — has **already settled** and is inside the balances the
+capture takes. A bot-instant boundary would make a rollback **discard** bets whose money the checkpoint kept: D4
+mirrored. Only a capture from **inside the player's loop** has player bets still to come in its frame.
+
+What shipped (`SimulationService`):
+
+- `CaptureCheckpoint(double settlingBackdateGameSeconds = 0)`. The player's bet path passes its back-date; every
+  other caller passes nothing and captures at the clock. The history boundary and the calendar instant are both the
+  clock minus that back-date — **the mining bet's `tsUtc` and the block's timestamp, to the tick**.
+- `FreezeCalendarAtBlockStop` set the clock **on the captured instant** instead of freezing it in place. The old
+  comment justified the in-place freeze by "the clock still equals the value CaptureCheckpoint just read", which
+  this change made false for the player's own block. For external blocks it is a no-op. The half-open clamp already
+  re-seeds on a clock that moved backwards.
+- The scanner's A4 note now judges by the tip's miner: a player tip must keep **0** bets past it (`FAIL: D4 is
+  back` otherwise); any other tip keeps player bets legitimately.
+
+**A residual, stated rather than hidden: bot-mined blocks.** Their block carries the bot's back-dated mining
+instant while the checkpoint boundary and restored clock are the frame clock, so on restart the clock can sit up to
+one frame past the block (≤ `(MaxBetsPerFrame − 1) ×` step; 1.67 game-seconds per frame at 100X). This is **not a
+regression**: it has held since §2 back-dated bot bets, and it cannot be closed at the capture, because a boundary
+earlier than the clock would cut into the player's bets inside the balances. The honest fix is interleaving the
+player's and bots' settle loops by instant, which is a scheduling change and out of scope. Money is exact either
+way; only the clock's distance from a bot's block is affected.
+
+Build: 0 warnings, 0 errors. **Not yet run.** Its verification is folded into the clean-world test after D2, where
+a player-mined tip with bets after it in the same frame is the case to read (A4 note must print `OK`; restored clock
+== the tip's timestamp; last journal `BalanceAfter` == `bankroll_state`).
+
+#### ✅ D1 + D3 built (2026-09-14) — `Stats` has one source
+
+`UserStatsService` now rebuilds `Stats` only through `UserBettingStats.FromRollup(Rollup)`:
+
+- **`ApplyRollupSnapshot` (D3).** The checkpoint restore replaced `Rollup` and left `Stats` built from the rollup
+  file, which a DiceGame exit had flushed with uncommitted bets. It now rebuilds `Stats` in the same call and emits.
+  This covers every exit path, including the one D3's run did not reproduce. The flush itself is left alone: the
+  file runs ahead within a session by design, and the restore is what makes it committed.
+- **`RollbackHistoryToUtc` (D1).** The replay of the retained journal is gone; the restore has already put the
+  committed lifetime rollup in place.
+- **`ClearAllHistory`.** Same substitution; the rollup was just zeroed, so the result is identical and the second
+  source is gone.
+- `RebuildStatsFromLoadedHistory` survives only for first-run seeding of a world with no rollup file, and its
+  comment says not to add a caller.
+- **The General tooltip claimed the opposite of the fix**: *"Covers the retained bet history, not the whole run"*.
+  It now says lifetime, read from the lifetime totals. It had also called the "Since…" scopes exact, which D2
+  falsified. They are now described by what they compute, and that becomes true once D2 ships.
+
+**What D1 + D3 do NOT fix, so the next test does not mistake it for a regression:** "Since last bankroll recharge"
+is still wrong on this world. Its ledger snapshot was taken in the rebased scale, and a rebuild cannot repair a
+persisted snapshot. That is D2, fixed with the world reset.
+
+Build: 0 warnings, 0 errors. Not yet run; verification folded into the clean-world test.
+
+#### ✅ D2 built (2026-09-14) — one source for the snapshots, no clamp, and a clean world
+
+- **Snapshots from the rollup.** `BankrollProgramService` (recharge) and `PlayerBankAccountService` (bank
+  deposit) read `Rollup.TotalWagered` / `TotalNetProfit` instead of `Stats`. After D1 the two agree; reading the
+  rollup removes the second path rather than trusting that they keep agreeing.
+- **The clamp is gone.** `PlayerFinancialStatsCalculator` clamped wagered-since at 0 because "a snapshot can
+  momentarily lead the counter". No such mechanism was found. The counter only grows within a session, and a
+  restart restores `ClientLedgerEntries` and `BetStatsRollup` from the same checkpoint. The clamp absorbed D2
+  itself: 5,381.34 SC of wrong baseline displayed as 0.00. A negative figure is now impossible by construction;
+  if one appears it is a defect, and it reaches the screen. *(Standing Convention 7, "project, never clamp", and
+  the CLAUDE.md rule that a displayed figure with a cheap bound should expose a violation, not hide it.)*
+- **`WorldFormatVersion` 6 → 7.** The existing snapshots cannot be sorted into right and wrong from the entries,
+  so the world is reset rather than repaired (project policy). No new persisted file, so the delete list is
+  unchanged; `RegistryFormatVersion` stays, as v6's note requires.
+- **Evidence archived before the wipe:**
+  `%APPDATA%\Godot\app_userdata\GamblingMiner_archive_mini08_world_v6_2026-09-14`, a full copy of the v6 world
+  the stats test ran on (outside `user://`, so the wipe cannot reach it).
+
+Build: 0 warnings, 0 errors. Verification is the clean-world test of D1–D4, whose predictions are registered
+from disk before its restart step, as the stats test's were.
+
+#### Clean-world test (v7) — steps 0–3 read from disk, predictions registered BEFORE the relaunch (2026-09-15)
+
+**Protocol run:** wipe 6 → 7, 99 credits, 2000X, stop-on-block OFF, auto-recharge ON. Autobet until the new DEV
+counter read 250,706, stop, screenshot (A), DiceGame → MainMenu → quit. That is D3's exit path.
+
+**Screenshot A agrees with disk to the satoshi.** General +529.98945544 / 4,371.22403859 is the rollup FILE
+(250,706 bets). Since recharge +594.97246309 / 4,130.88599864 is that file minus the only player recharge
+snapshot (240.33803995 / −64.98300765). The DEV counter equals the file's `TotalBets`.
+
+**Read from disk, all exact in BigInt satoshis:**
+
+- **Committed (checkpoint):** rollup 248,017 bets, wagered 4,347.71997891, P/L +526.00532435. Main 39,800 +
+  Bankroll 726.00532435 = 40,000 + 526.00532435 — the balance identity holds exactly.
+- **Ahead (rollup file, flushed by the MainMenu exit):** 250,706 / 4,371.22403859 / +529.98945544. File − checkpoint
+  = 2,689 bets / 23.50405968 / +3.98413109 = **exactly** the journal's tail past the boundary. This is D3's
+  condition, reproduced deliberately.
+- **Journal:** 21 segments, 200,708 bets, 0 continuity breaks. **Retention has pruned 49,998 bets** (the base file
+  and segments 1–4 are gone: 49,998 bets + 2 deposits = 50,000 records), so D1 can be told apart from its fix. At
+  or before the boundary: 198,019 bets, 3,608.27483207 / +515.88600542, last `BalanceAfter` **726.00532435** ==
+  the checkpoint bankroll. Scanner: A1, A1b, A2, A3, A4 PASS.
+- **Chain:** tip #115, mined by **artforz** at 2009-03-24 17:36:04.035 UTC == the checkpoint boundary to the tick.
+  Six blocks since the player started: player 4 (#111–#114), satoshi 1, artforz 1.
+
+**Predictions — the fixed build must show the left column; the right column is what the old code would show:**
+
+| step | row | fixed: P/L | fixed: Gambled | old code: P/L | old code: Gambled |
+|---|---|---:|---:|---:|---:|
+| 4 ScFinances first (D3) | General | +526.00532435 | 4,347.71997891 | +529.98945544 | 4,371.22403859 |
+| | Since deposit | +526.00532435 | 4,347.71997891 | +529.98945544 | 4,371.22403859 |
+| | Since recharge | +590.98833200 | 4,107.38193896 | +594.97246309 | 4,130.88599864 |
+| 5 DiceGame (D1) | General | +526.00532435 | 4,347.71997891 | +515.88600542 | 3,608.27483207 |
+| | Since deposit | +526.00532435 | 4,347.71997891 | +515.88600542 | 3,608.27483207 |
+| | Since recharge | +590.98833200 | 4,107.38193896 | +580.86901307 | 3,367.93679212 |
+| 6 ScFinances again | all | identical to step 5 | | | |
+
+Also at step 5: StatusBar Bankroll 726.00532435 and Main 39,800.00000000; clock **2009-03-24 12:36:04** local
+(the boundary, UTC−5); DEV counter **248,017**. On disk after step 5: 198,019 journal bets, last `BalanceAfter`
+726.00532435 == `bankroll_state`. Cross-check nobody needs to run: the fixed Since-recharge figures equal the
+checkpoint rollup's own `SinceDeposit*` fields (590.98833200 / 4,107.38193896), because `Stats.RegisterDeposit`
+resets that window on every recharge.
+
+**D2 is already visible in A.** Since recharge wagered is lifetime minus a snapshot in the same scale, positive
+and exact, where the v6 world showed a clamped 0.00.
+
+**D4 is NOT tested by steps 0–3, and is recorded as inconclusive, not as passed.** The final checkpoint belongs to
+artforz's block, which is stamped with the clock and has no back-date, so the capture path D4 changed never ran
+for it. The player holds 4 of the 6 blocks in this era (one every ~12 game hours, ~20 real seconds at 2000X), so
+a player-tipped checkpoint can be produced on purpose. That is steps 7–9: run with stop-on-block OFF, stop the
+autobet after a green "mined by player" announcement and before the next block, then exit via MainMenu. Pass
+means tip miner == player, boundary == tip timestamp, and the scanner's A4 note printing `OK` (0 bets past the
+tip kept by a rollback). After the relaunch, the clock must equal the tip's local time. The old code would put
+the boundary up to 39 bets × 1.0101 game-seconds past the block and keep those bets.
+
+#### ✅ Steps 4–6 RESULTS (2026-09-15) — every registered cell exact; D1, D2 and D3 fixed
+
+| step | General P/L | General Gambled | Since recharge P/L | Since recharge Gambled | vs prediction |
+|---|---:|---:|---:|---:|---|
+| 4 ScFinances first | +526.00532435 | 4,347.71997891 | +590.98833200 | 4,107.38193896 | **exact** (old code: A's figures) |
+| 5 DiceGame | +526.00532435 | 4,347.71997891 | +590.98833200 | 4,107.38193896 | **exact** (old code: +515.89 / 3,608.27) |
+| 6 ScFinances again | +526.00532435 | 4,347.71997891 | +590.98833200 | 4,107.38193896 | **exact** |
+
+"Since deposit" equalled General on every screen. Also at step 5, all as registered:
+- Bankroll 726.00532435 and Main 39,800.00000000;
+- clock 2009-03-24 12:36:04;
+- DEV counter 248,017;
+- the bet history's newest row at 12:36:04, the boundary bet, with nothing after it.
+
+ScFinances' own balance-derived *"Overall P/L — game-over metric: +526.00532435"* now sits directly above
+*"General +526.00532435"*. **The contradiction the v6 world showed on one screen is gone.**
+
+**The Output panel (Godot editor) confirms the mechanism D3's fix relies on.** Before the restore,
+`CasinoScBalanceService` booted from its own file at Bankroll 70.01054456, which is the uncommitted tail. It was
+then `RESTORED from checkpoint` at 73.99467565. The same shape the player's rollup had, handled the same way.
+
+#### ✅ Step 7 + step 8 (disk) — D4 passes on a player-tipped checkpoint
+
+**A flaw in my own protocol:** step 7 said to watch for a green `BLOCK #N mined by player` line. That label is
+`ResultValue`, and it is `visible = false` in `DiceGame.tscn`: the announcement is written and never shown. The
+developer read "Last mined block: #116 by player" from the mining-status block instead. That is the same fact.
+A protocol step must name a surface the player can actually see.
+
+The run produced one checkpoint (Output panel: `[Checkpoint] CAPTURED — PlayerBankroll=730.26718617`), on the
+player's block #116. Read from disk:
+
+- **Tip #116, miner `player`, 2009-03-24 18:30:03.851 UTC.**
+- **The history boundary is the mining bet's own instant, to the tick:** `633735162038514515` is the timestamp of
+  journal bet #201,165, `18:30:03.8514515Z`, and its millisecond is the block's timestamp. The calendar instant is
+  the same moment in local time (−5 h exactly).
+- **That bet's `BalanceAfter` 730.26718617 == the checkpoint bankroll**, and == the rollup's P/L identity
+  (40,000 + 530.26718617 − 39,800).
+- **Scanner A4: 0 bets past the tip kept by a rollback — `OK`.** 4,766 bets after the boundary, all of them the
+  uncommitted tail. A1, A1b, A2, A3 pass; 5 of 5 player blocks join a bet to the millisecond.
+
+**Was the mining bet back-dated, i.e. did this run exercise the path D4 changed?** Very probably, by 20 bets.
+Under saturation every frame holds exactly `MaxBetsPerFrame` bets. The R2-C1 throttle makes the clock advance
+by exactly what those bets occupied, so a frame edge is normally invisible: the spacing across it is nominal
+too. One edge **is** visible here. 21 bets after the mining bet the journal has an 86.4 game-second hole, the
+lagged-throttle overspend, which can only fall between frames. That puts the frame's last bet 20 bets after the
+mining bet. Its back-date was about 20 × 1.0101 = **20.2 game-seconds**, and the old code would have set the
+boundary there and **kept those 20 bets**, D4's exact symptom. The inference assumes the frames around it stayed
+saturated; the hole itself is evidence they were.
+
+**Predictions for step 9** (relaunch → MainMenu → DiceGame, no betting):
+
+| figure | predicted |
+|---|---|
+| Clock (StatusBar / Current app time) | **2009-03-24 13:30:03** |
+| Bet history, newest row | **13:30:03**, the mining bet; no row after it |
+| Bankroll / Main | 730.26718617 / 39,800.00000000 |
+| DEV counter | 251,164 |
+| General (and Since deposit) | +530.26718617 / 4,372.04320344 |
+| Since recharge | +595.25019382 / 4,131.70516349 |
+| On disk afterwards | journal 201,166 bets, last `BalanceAfter` 730.26718617 == `bankroll_state`; A4 `OK` |
+
+Under the old code, the clock and the newest history row would have read about 13:30:23, 20 bets later, and the
+journal's last balance would not have matched `bankroll_state`.
+
+#### ✅ Step 9 RESULTS (2026-09-15) — D4 exact after a restart; one prediction of mine missed
+
+**On screen (DiceGame), every registered figure exact:**
+- *Current app time* 2009-03-24 13:30:03, and the newest history row at 13:30:03, which is the mining bet
+  (0.14803588, +0.14513438), with no row after it;
+- Bankroll 730.26718617 and Main 39,800.00000000;
+- General and Since deposit +530.26718617 / 4,372.04320344, Since recharge +595.25019382 / 4,131.70516349;
+- DEV counter 251,164.
+
+*(The step said "StatusBar"; DiceGame has none. Its "Current app time" is the clock readout. Another protocol
+step naming a surface that does not exist.)*
+
+**On disk afterwards:**
+- the history boundary, `calendar_state` and the newest journal bet are all tick `…038514515`, block #116's
+  instant;
+- 0 bets after the boundary;
+- last `BalanceAfter` 730.26718617 == `bankroll_state`;
+- the rollup file == the checkpoint rollup (251,164 / 4,372.04320344 / +530.26718617);
+- scanner A1–A4 all PASS.
+
+**The miss: journal length, predicted 201,166, measured 191,166 — my model, not the engine.**
+`RebuildJournalFromCurrentState` rewrites the rollback's 201,166 bets as 21 segments (20 full + 1,166). It then
+calls `EnforceRetentionCap`, which deletes the oldest to leave 20. The prediction applied the rollback and forgot
+that the rewrite applies retention. It is the "cap + 1 while filling" oscillation `SERVICES.md` already documents,
+seen from the rewrite side.
+
+The miss matters for the fixes it did not break. **That restart pruned 10,000 more bets, and every statistic on
+screen stayed exact.** Before D1, a retention change under a rollback moved "General" by exactly the pruned amount.
+
+#### Verdict — D1, D2, D3 and D4 are fixed and verified on a clean v7 world
+
+| defect | verified by | result |
+|---|---|---|
+| D1 (Stats rebased onto the retained journal) | step 5 vs the old-code column; step 9 across a further prune | exact |
+| D2 (snapshots in mixed scales) | screenshot A onward: since-recharge = lifetime − snapshot, never clamped | exact |
+| D3 (restore replaced the rollup, not Stats) | step 4, after a deliberate MainMenu flush 2,689 bets ahead | exact |
+| D4 (checkpoint at the frame clock) | steps 7–9: boundary on the mining bet to the tick, ~20 back-dated bets discarded, clock restored onto the block | exact |
+
+**Recorded, not fixed (candidates for the plan's close-out):**
+- `ResultValue` in `DiceGame.tscn` is `visible = false`, so block announcements are written but never seen.
+- `saved_betting_strategies.json` survives a world wipe by design (the exempt set). The developer expected it to
+  be deleted, so this is a decision to revisit at the next reset.
+- R2-C1's lagged-throttle overspend (0.62%), still producing the holes this test used as frame markers.
+- The deposits-first "chronological by construction" comment in `RollbackToUtc`'s rebuild.
+
+### 4.9 — Close-out (2026-09-15)
+
+**Both halves of the objective are met.**
+
+1. **The writer records when bets happened.** Each bet is back-dated by its own interval (§2), and the batch
+   is clamped onto the half-open interval `(previousFrameClock, clockNow]`. Verified at 99 credits × 3000X
+   over 202,684 bets: 0 duplicate instants, 0 near-collisions, 0 regressions, median spacing 1.0101 s.
+   Re-verified on the clean v7 world. `Tools/verify-bet-journal.js` is the standing regression test for it.
+2. **The engine's ceiling is measured.** At 99 credits it is **about 2,000 bets per second, i.e. 2000X**.
+   `Sim:` holds 100% through 1000X, 2000X delivers 98.7–99.5%, and 3000X delivers 69–74% of its demand.
+   Past 2000X the extra demand becomes wall-clock slowdown (R2-C1), not bets. The 9000X target is
+   reachable only at low credit counts (P1e: 7 credits × 9000X at Sim 100%).
+
+**What shipped along the way, each measured before and after:**
+- **Per-bet cost.** The per-bet bankroll disk write became a throttled save; it was 66% of a bet's cost.
+  The bet-history UI rebuild and the settled-bet signal path were split and coalesced per frame.
+- **Frame capacity.** `MaxBetsPerFrame` 10 → 40, sized for 2000X.
+- **DEV time-scale ladder.** Rungs 200X–900X between 100X and 9000X.
+- **Instruments.** The bet-cost profiler, and `devTimeScale` in the difficulty trace.
+- **The statistics panel (INC-005).** D1–D4 fixed and verified to the satoshi: 18/18 on the v6 world,
+  every registered cell on v7. `WorldFormatVersion` 6 → 7, with the v6 world archived first.
+- **Readouts added at the developer's request.**
+  - A "Total bets" row in the statistics panel (lifetime, from the rollup).
+  - The casino pool's nonce count and the active node's private/casino hardware split, in DiceGame's
+    mining status.
+  - The DEV lifetime-attempt line, added for the test and then removed.
+- **`ResultValue`.** It shows only the latest roll (two digits) from both bet paths. About thirty status
+  messages were deleted, along with the block announcement, `HandleSessionStopped` and two helpers — all of
+  them written into a label the scene kept `visible = false`, so no player ever read one. With one thing
+  left to say, the label is now shown; its placement belongs to the final UI design. The rewrite also fixed
+  a manual bet never writing its roll, because an early return skipped it once its one-bet session stopped.
+- **The manual burst is paced across frames.** One press buys `GameSecondsPerManualBet` of game time — at 99
+  credits, 99 bets — and ran them inside the button handler, so a second of play arrived as a single frame:
+  99 rolls and 99 history rows at once, against an autobet that reads as play because it settles a few per
+  frame. The bets are unchanged (same count, same game-time stamps, one clock advance at the end); only
+  their execution is spread over one real second, with the betting controls disabled until it finishes.
+  Leaving the scene mid-burst closes it: the settled bets get their clock tick, the rest are never placed.
+- **Corrected in passing.**
+  - The false "chronological by construction" comment in the rollback rebuild.
+  - CLAUDE.md's Pattern 2 sentence on commit vs. I/O, and the canonical rule's mechanism, which is now
+    the instant of the bet that mined the block.
+
+**Open, each a separate decision rather than unfinished work here:**
+- **R2-C1's lagged-throttle overspend (0.620%).** It exists only when the backlog is saturated. The fix
+  is additive carry (see "Found while verifying" above). This is the natural next mini-plan.
+- **A whole-frame timing of `SimulationService._Process`.** It must come before `MaxBetsPerFrame` is
+  raised again: at 3000X the frame rate and the cap bind jointly, and nothing measures the frame.
+- **Bot-mined blocks restore the clock up to one frame past their timestamp** (D4 residual; money exact).
+  Closing it means interleaving the player's and bots' settle loops by instant.
+- **`saved_betting_strategies.json` survives a world wipe by design** (CLAUDE.md's exempt set). The
+  developer expected otherwise; revisit at the next reset.
+
+*Protocol lessons this plan paid for, recorded once:*
+- A test step must name a surface the player can actually see: twice a step pointed at one that does not
+  exist (the hidden `ResultValue`, a StatusBar DiceGame lacks).
+- When an exact prediction misses, suspect the instrument before the system: four of this plan's
+  surprises were reading tools or my own model, including the journal-length miss in step 9.
 
 ## 5. Out of scope
 

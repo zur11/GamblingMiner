@@ -3,20 +3,33 @@ using Godot;
 namespace UI.DevTimeScaleSelector
 {
 	// DEV/TEST ONLY — a small selector (label + OptionButton) to accelerate the simulation from the 100X
-	// base up to 1000X, in 10 steps. It drives CalendarTimeService.DevTimeScale, which scales BOTH the
+	// base up to the clock's ceiling. It drives CalendarTimeService.DevTimeScale, which scales BOTH the
 	// calendar clock and the bet-execution rate by the same factor, leaving the difficulty / power /
 	// solvetime dynamics invariant (only wall-clock time compresses). Built programmatically (like StatusBar)
 	// so it can be dropped into any screen without editing its .tscn. Not persisted; resets to 100X on restart.
 	public partial class DevTimeScaleSelector : HBoxContainer
 	{
-		// DevTimeScale multipliers on the 100X base clock: 100X, then 1000X..9000X in 1000X steps.
-		// (Capped at 9000X — 10000X hit the MaxBetsPerFrame throughput ceiling and lagged.)
+		// DevTimeScale multipliers on the 100X base clock. Two régimes, deliberately:
+		//
+		//   ×1..×9   — a FINE range in 100X steps, added 2026-08-30 for mini-plan 08. The throughput
+		//              frontier is `credits × DevTimeScale`, so at high credit counts the highest
+		//              sustainable scale lands in here — with only ×1 and ×10 on offer, the entire frontier
+		//              fell in a gap the selector could not express and P2's sweep had no grid to sweep.
+		//              It runs to ×9, not to the ×6 the 99-credit frontier predicts, because raising
+		//              SimulationService.MaxBetsPerFrame (P1's whole purpose) MOVES that frontier upward,
+		//              and a ladder that stops at today's measured knee reintroduces the same gap one
+		//              measurement later. See §3 of
+		//              AIHelperFiles/mini08-timestamp-fidelity-and-throughput-limits-plan.md.
+		//   ×10..×90 — the original coarse range, in 1000X steps, for the low-credit runs that saturate
+		//              nowhere near it.
+		//
+		// (Capped at ×90 — 10000X hit the MaxBetsPerFrame throughput ceiling and lagged.)
 		//
 		// This ladder is a CONVENIENCE, not the limit. The limit is
 		// CalendarTimeService.MaxGameSecondsPerRealSecond, enforced where the rate is spent, because this
 		// selector is only one of two factors in it — see that constant's note. Shortening this array does
 		// not lower the ceiling and lengthening it does not raise one.
-		private static readonly int[] Multipliers = { 1, 10, 20, 30, 40, 50, 60, 70, 80, 90 };
+		private static readonly int[] Multipliers = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60, 70, 80, 90 };
 
 		// The top of the ladder is meant to BE the ceiling, on the 100X base. Asserted rather than trusted:
 		// the two live in different files and the failure mode is a selector offering a speed the clock
@@ -68,13 +81,71 @@ namespace UI.DevTimeScaleSelector
 			// It is also the only way the reading reaches DICEGAME, which renders its own balance labels and
 			// has no StatusBar to host it.
 			AddChild(new UI.SimRetentionReadout.SimRetentionReadout(18));
+
+			AddBetCostToggle();
+		}
+
+		// Mini-plan 08 P1 — arms Scripts/Diagnostics/BetCostProfiler, which times one bet segment by segment.
+		//
+		// It sits HERE, with the scale selector and the Sim% readout, because the three are one instrument:
+		// the selector sets the demand, Sim% says whether the engine met it, and this says WHERE the frame
+		// went when it did not. §38.7's standing rule is that a low Sim% means "find what is eating the
+		// frame" — this is the thing that answers it, instead of the forbidden reflex of raising
+		// MaxBetsPerFrame.
+		//
+		// DEBUG-only, and absent rather than disabled in an exported build: the profiler's entry points are
+		// all Conditional("DEBUG"), so a RELEASE toggle would be a control wired to nothing — a lying
+		// control, which the ladder assert above exists to prevent in its own domain.
+		//
+		// KNOWN AND DELIBERATELY NOT FIXED (developer's call, 2026-08-30): it is effectively unclickable
+		// WHILE an autobet runs at a high DEV scale. Nothing disables it — ApplyRunLock does not touch this
+		// subtree — the frame is simply saturated (§38.7 measured this world pinned at ~133 ms/frame, i.e.
+		// ~7 fps), so a click lands late or not at all. Idle, it works normally.
+		//
+		// It does not need fixing because the protocol never asks for a mid-run press: arm BEFORE starting
+		// the autobet, which also captures from bet #1 rather than from wherever the click lands. The one
+		// consequence to remember is that DISARMING before a P2 throughput sweep means stopping the autobet
+		// first — which P2 does anyway, being a separate run.
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void AddBetCostToggle()
+		{
+			var toggle = new CheckButton
+			{
+				Text = "⏱ Bet cost",
+				// Default OFF is load-bearing, not a preference: the profiler adds a few percent to every
+				// bet, and mini-plan 08's P2 measures the throughput frontier — where that few percent is
+				// precisely the quantity under test. Arm it for P1, read the breakdown, disarm it for P2.
+				ButtonPressed = false,
+				TooltipText =
+					"DEV — time one bet segment by segment (P1). Reports to the Godot editor's Output panel "
+					+ "and to user://logs/bet_cost_trace.csv. Leave it OFF while measuring throughput: it "
+					+ "costs a few percent of every bet.",
+			};
+			toggle.AddThemeFontSizeOverride("font_size", 16);
+			toggle.Toggled += pressed => Scripts.Diagnostics.BetCostProfiler.Arm(pressed);
+			AddChild(toggle);
+
+			// Announce that the CONTROL exists, separately from the profiler announcing that it is armed.
+			// The first P1b attempt produced no [BetCost] output at all, and that silence had two possible
+			// causes which no amount of staring at the log could separate: the toggle was never pressed, or
+			// the toggle was never reachable in this scene's layout. One line here splits them — if this
+			// prints and no ARMED line follows, the control exists and was not used.
+			//
+			// This is the DEBUG-canary rule applied to a UI affordance rather than to a check: a control
+			// whose absence and whose non-use look identical in the log is not diagnosable.
+			GD.Print(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+				$"[BetCost] toggle built in this scene — tick '{toggle.Text}' beside the DEV time selector " +
+				$"to arm per-bet segment timing (reports every " +
+				$"{Scripts.Diagnostics.BetCostProfiler.ReportEveryBets:N0} player bets)."));
 		}
 
 		private void OnScaleSelected(long index)
 		{
 			if (_calendar != null && index >= 0 && index < Multipliers.Length)
 			{
-				_calendar.DevTimeScale = Multipliers[index]; // index 0 → ×1 (100X) … index 9 → ×90 (9000X)
+				// The item list is built from Multipliers in order, so the index maps straight back into it.
+				// Do not restate the ladder's values here — they live in exactly one place, that array.
+				_calendar.DevTimeScale = Multipliers[index];
 			}
 		}
 	}

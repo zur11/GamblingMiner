@@ -71,7 +71,12 @@ public partial class NetworkRoot : Node
 	// identities themselves must be regenerated". The v5 pairing above was specific to seed-derived
 	// addresses. Evidence is preserved OUTSIDE the wipe, in two archives predating it (INC-003's
 	// "Where the evidence lives"), which is what made it safe to run this last rather than first.
-	private const int WorldFormatVersion = 6;
+	// v7 (mini-plan 08, D2 — 2026-09-14): the casino client ledger's player entries carry wagered/profit
+	// snapshots taken from Stats while D1 was rebasing Stats onto the retained journal, so every such snapshot
+	// after a restart is in a different scale from the lifetime counter it is subtracted from. Which ones
+	// cannot be told from the entries, and a later recharge only overwrites the latest. Per project policy the
+	// world is reset rather than repaired. Same note as v6: BotWalletRegistry's RegistryFormatVersion stays.
+	private const int WorldFormatVersion = 7;
 	private const string WorldVersionPath = "user://world_format_version.txt";
 	// Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
 	// A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
@@ -1697,6 +1702,15 @@ public partial class NetworkRoot : Node
 		}
 
 		return (decimal)(0.10 + ratio * 0.20); // 10% → 30%
+	}
+
+	// The casino pool's candidate nonce: every contributor's pool attempts land on the casino node's candidate,
+	// so this is the pool's shared count since its last block — the counterpart of BuildMiningStatusLine's
+	// "Current nonce attempt", which only ever reads the active node's own (private-pool) chain. 0 if absent.
+	public long GetCasinoPoolCandidateNonce()
+	{
+		EnsureInitialized();
+		return SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino) ? casino.GetCurrentCandidateNonce() : 0L;
 	}
 
 	// One casino-pool nonce attempt: mines on the casino node's behalf. On a hit, the block goes
@@ -5284,8 +5298,17 @@ public partial class NetworkRoot : Node
 	// filter by the `miner` column. realizedPower inverts the equilibrium calibration solvetime = difficulty ×
 	// (TargetBlockSeconds / InitialDifficulty) / power, so realizedPower = difficulty × clockSpeed / solveSec.
 	private const string DifficultyTracePath = "user://logs/difficulty_trace.csv";
+	// `devTimeScale` added 2026-09-10 for mini-plan 08 P4. That phase compares in-game block intervals
+	// across DEV time scales to test the invariance DevTimeScale claims — and the trace recorded every
+	// quantity in that comparison EXCEPT the variable being compared. Without it the legs of a sweep can
+	// only be separated by asking the developer what time they changed the dropdown, which is a
+	// reconstruction, not a record.
+	//
+	// The general form is this plan's most repeated lesson, now on its fourth instance: **a measurement
+	// stored without the configuration it was taken under is uninterpretable later.** Same rule as
+	// recording N beside PersistFinancialState's µs, and as `--credits` on the journal scanner.
 	private const string DifficultyTraceHeader =
-		"utcMs,miner,index,configuredPower,realizedPower,difficulty,anchor,solveSec,solveRatio,simSecOffered,simSecConsumed";
+		"utcMs,miner,index,configuredPower,realizedPower,difficulty,anchor,solveSec,solveRatio,simSecOffered,simSecConsumed,devTimeScale";
 	private static bool _difficultyTraceSchemaChecked;
 
 	// R2-T (2026-07-27) — simulated seconds OFFERED to the bet engine vs. those it actually retained,
@@ -5407,10 +5430,21 @@ public partial class NetworkRoot : Node
 			_simSecondsOffered = 0d;
 			_simSecondsConsumed = 0d;
 
+			// Read through the scene tree rather than held as a field: NetworkRoot is static and owns no
+			// autoload reference, the same shape SessionLifecycleTrace uses for the calendar. Once per
+			// mined block, so the lookup cost is irrelevant. 0 means "no calendar reachable", which is
+			// distinguishable from every real scale (the ladder's floor is 1) rather than silently
+			// indistinguishable from the base scale.
+			int devTimeScale = 0;
+			if (Engine.GetMainLoop() is SceneTree tree)
+			{
+				devTimeScale = tree.Root?.GetNodeOrNull<CalendarTimeService>("CalendarTimeService")?.DevTimeScale ?? 0;
+			}
+
 			file.StoreLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-				"{0},{1},{2},{3:F4},{4:F4},{5:F4},{6:F4},{7:F1},{8:F4},{9:F2},{10:F2}",
+				"{0},{1},{2},{3:F4},{4:F4},{5:F4},{6:F4},{7:F1},{8:F4},{9:F2},{10:F2},{11}",
 				block.Timestamp, miner.NodeId, block.Index, configuredPower, realizedPower,
-				block.Difficulty, anchor, solveSec, solveRatio, simOffered, simConsumed));
+				block.Difficulty, anchor, solveSec, solveRatio, simOffered, simConsumed, devTimeScale));
 
 			CheckExecutablePowerAlarm(block.Index, configuredPower, realizedPower);
 		}

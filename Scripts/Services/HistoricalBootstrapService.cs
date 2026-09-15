@@ -149,9 +149,9 @@ public static class HistoricalBootstrapService
 		}
 
 		// Exactly the last mined block's timestamp — every post-bootstrap checkpoint is captured at the
-		// calendar instant equal to the mined block's own timestamp (CaptureCheckpoint reads
-		// CalendarTimeService.CurrentLocalDateTime synchronously right after mining, no clock advance in
-		// between), so the player's start instant matches that same convention exactly (no +1s offset).
+		// calendar instant equal to the mined block's own timestamp (CaptureCheckpoint stamps the instant of
+		// the bet that mined the block — mini-plan 08 D4), so the player's start instant matches that same
+		// convention exactly (no +1s offset).
 		DateTime landingLocal = DateTimeOffset.FromUnixTimeMilliseconds(lastMinedTs).LocalDateTime;
 		DidRun = true;
 		LandingLocalDateTime = landingLocal;

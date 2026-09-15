@@ -111,6 +111,11 @@ to survive layer 1 being pruned — **so past the first prune it is the ONLY rec
 
 - Emits `StatsChanged` throttled at 250 ms — the reference pattern for a high-frequency service event.
 - Key method: `OnBetExecutedRegisterBet()`. Every settled bet updates both layers.
+- **`Stats` (what the panels read) is derived from the ROLLUP, never re-derived from the journal** — at boot,
+  on the checkpoint's `ApplyRollupSnapshot`, on `RollbackHistoryToUtc` and on the pre-genesis clear. The one
+  exception is the first-run seeding of a world with no rollup file. A journal replay after pruning presents
+  the retained window as a lifetime figure (mini-plan 08 D1), and replacing the rollup without `Stats` shows
+  discarded bets as lifetime totals (D3).
 - Self-persists eagerly (per bet), so it needs **both** a checkpoint-restore path and a
   `ResetToPreGenesisDefaults()` path; `ClearAllHistory()` is the pre-genesis one and legitimately resets
   the rollup to zero-and-complete.
