@@ -15,6 +15,10 @@ public partial class FinancialBettingStats : VBoxContainer
 	[Export] private Label _sinceDepositGambledLabel;
 	[Export] private Label _sinceRechargeProfitLabel;
 	[Export] private Label _sinceRechargeGambledLabel;
+	// Every bet the player has placed in this world. Read from Stats, whose only source is the unpruned lifetime
+	// rollup (mini-plan 08 D1), so it keeps counting past the journal's retention cap. A row below the grid
+	// rather than a column: the ledger snapshots carry no bet count, so the two "Since…" rows would have no value.
+	[Export] private Label _totalBetsLabel;
 
 	[Export] private Color _winColor = Colors.Green;
 	[Export] private Color _lossColor = Colors.Red;
@@ -51,10 +55,11 @@ public partial class FinancialBettingStats : VBoxContainer
 	}
 
 	// INC-001 / D-15.29 (§39.16 rule 1 — a displayed figure must not claim more than it is). The bet journal
-	// is now retention-capped (BetHistoryRepository.MaxRetainedJournalChunks), so the "General" scope is no
-	// longer a lifetime total: it covers whatever history is still retained. Said in a tooltip rather than in
-	// the label, because the caption sits in a compact GridContainer that a longer string would reflow
-	// (Ch. 29). MouseFilter must be PASS, not STOP — a STOP label swallows the mouse wheel inside a
+	// is retention-capped (BetHistoryRepository.MaxRetainedJournalChunks), but since mini-plan 08 D1 "General"
+	// no longer reads it: it is the lifetime rollup, so it IS a lifetime total and the tooltip says so. (This
+	// note used to say the opposite, which was true only while Stats was rebuilt from the journal.) Said in a
+	// tooltip rather than in the label, because the caption sits in a compact GridContainer that a longer
+	// string would reflow (Ch. 29). MouseFilter must be PASS, not STOP — a STOP label swallows the mouse wheel inside a
 	// ScrollContainer, which is the §29 anti-pattern this panel would otherwise walk straight into.
 	public override void _Ready()
 	{
@@ -85,6 +90,10 @@ public partial class FinancialBettingStats : VBoxContainer
 	{
 		if (!GodotObject.IsInstanceValid(this) || _userStats == null) return;
 		UpdateFrom(PlayerFinancialStatsCalculator.Compute(_userStats.Stats, _ledger));
+		if (_totalBetsLabel != null)
+		{
+			_totalBetsLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Total bets: {_userStats.Stats?.TotalBets ?? 0:N0}");
+		}
 	}
 
 	public void UpdateFrom(PlayerFinancialSummary s)
