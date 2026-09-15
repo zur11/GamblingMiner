@@ -43,40 +43,39 @@ theme_override_font_sizes/font_size = 32
 text = "Main Balance"
 
 [node name="ResultText" type="Label" parent="UiTextLabels"]
-visible = false
 layout_mode = 0
-offset_left = 6.0
-offset_top = 204.0
-offset_right = 259.0
-offset_bottom = 300.0
-theme_override_font_sizes/font_size = 70
-text = "Result"
+offset_left = 11.0
+offset_top = 289.0
+offset_right = 225.0
+offset_bottom = 358.0
+theme_override_font_sizes/font_size = 40
+text = "Roll Result:"
 
 [node name="WinnerNumbersText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 18.0
-offset_top = 561.0
-offset_right = 444.0
-offset_bottom = 630.0
-theme_override_font_sizes/font_size = 50
+offset_left = 15.0
+offset_top = 608.0
+offset_right = 356.0
+offset_bottom = 663.0
+theme_override_font_sizes/font_size = 40
 text = "Winner Numbers:"
 
 [node name="ChanceToWinText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 86.0
-offset_top = 637.0
-offset_right = 440.0
-offset_bottom = 706.0
-theme_override_font_sizes/font_size = 50
+offset_left = 70.0
+offset_top = 656.0
+offset_right = 354.0
+offset_bottom = 711.0
+theme_override_font_sizes/font_size = 40
 text = "Chance to win:"
 
 [node name="MultiplierText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 130.0
-offset_top = 713.0
-offset_right = 484.0
-offset_bottom = 782.0
-theme_override_font_sizes/font_size = 50
+offset_left = 108.0
+offset_top = 707.0
+offset_right = 355.0
+offset_bottom = 762.0
+theme_override_font_sizes/font_size = 40
 text = "Payout mult:"
 
 [node name="MultiplierText2" type="Label" parent="UiTextLabels"]
@@ -135,10 +134,10 @@ text = "Auto bets per second:"
 
 [node name="ActiveNodeText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
-offset_left = 9.0
-offset_top = 305.0
-offset_right = 194.0
-offset_bottom = 336.0
+offset_left = 20.0
+offset_top = 377.0
+offset_right = 205.0
+offset_bottom = 408.0
 theme_override_font_sizes/font_size = 22
 text = "Active node:"
 
@@ -175,20 +174,20 @@ text = "40000.00000000 SC"
 [node name="ResultValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 11.0
-offset_top = 294.0
-offset_right = 51.0
-offset_bottom = 390.0
-theme_override_font_sizes/font_size = 70
+offset_left = 246.0
+offset_top = 284.0
+offset_right = 275.0
+offset_bottom = 353.0
+theme_override_font_sizes/font_size = 50
 text = "0"
 
 [node name="ChanceSlider" type="HSlider" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 51.0
-offset_top = 536.0
-offset_right = 503.0
-offset_bottom = 552.0
+offset_left = 16.0
+offset_top = 577.0
+offset_right = 468.0
+offset_bottom = 593.0
 min_value = 1.0
 max_value = 95.0
 value = 50.0
@@ -196,31 +195,31 @@ value = 50.0
 [node name="WinnerNumbersValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 479.0
-offset_top = 565.0
-offset_right = 669.0
-offset_bottom = 634.0
-theme_override_font_sizes/font_size = 50
+offset_left = 385.0
+offset_top = 610.0
+offset_right = 538.0
+offset_bottom = 665.0
+theme_override_font_sizes/font_size = 40
 text = "00 to 49"
 
 [node name="ChanceToWinValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 463.0
-offset_top = 639.0
-offset_right = 563.0
-offset_bottom = 708.0
-theme_override_font_sizes/font_size = 50
+offset_left = 387.0
+offset_top = 660.0
+offset_right = 467.0
+offset_bottom = 715.0
+theme_override_font_sizes/font_size = 40
 text = "50%"
 
 [node name="MultiplierValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 460.0
-offset_top = 715.0
-offset_right = 660.0
-offset_bottom = 784.0
-theme_override_font_sizes/font_size = 50
+offset_left = 386.0
+offset_top = 704.0
+offset_right = 544.0
+offset_bottom = 759.0
+theme_override_font_sizes/font_size = 40
 text = "x 1.9804"
 
 [node name="CurrentAppTimeValue" type="Label" parent="."]
@@ -246,10 +245,10 @@ text = "Blockchain status..."
 [node name="ActiveNodeSelector" type="OptionButton" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 7.0
-offset_top = 338.0
-offset_right = 242.0
-offset_bottom = 381.0
+offset_left = 21.0
+offset_top = 414.0
+offset_right = 256.0
+offset_bottom = 457.0
 theme_override_font_sizes/font_size = 22
 
 [node name="ApsSelector" type="OptionButton" parent="."]
@@ -319,10 +318,10 @@ text = "Load Strategy"
 [node name="HighLowToggleBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 28.0
-offset_top = 436.0
-offset_right = 265.0
-offset_bottom = 527.0
+offset_left = 15.0
+offset_top = 470.0
+offset_right = 252.0
+offset_bottom = 561.0
 theme_override_font_sizes/font_size = 40
 toggle_mode = true
 text = "Betting Low"
