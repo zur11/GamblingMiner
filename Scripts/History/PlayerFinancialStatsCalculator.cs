@@ -52,20 +52,26 @@ namespace Scripts.History
 			CasinoClientLedgerService.LedgerEntry lastRecharge = ledger?.GetLastAutoRecharge(clientId);
 
 			// Before a real bank deposit, GetLastDeposit returns the "initial" (snapshots 0/0) ⇒ since-deposit ==
-			// lifetime. Before any recharge, GetLastAutoRecharge is null ⇒ since-recharge == lifetime. Wagered is
-			// clamped ≥ 0 (a snapshot can momentarily lead the counter); profit is NOT clamped (it may be negative).
+			// lifetime. Before any recharge, GetLastAutoRecharge is null ⇒ since-recharge == lifetime.
+			//
+			// Mini-plan 08 D2 — WAGERED IS NOT CLAMPED ANY MORE. It was `Math.Max(0, …)` under the note "a snapshot
+			// can momentarily lead the counter", and no mechanism for that exists: the counter only grows within a
+			// session, and a restart restores the ledger and the rollup from the same checkpoint. What the clamp
+			// actually absorbed was D2 — a snapshot stored in a different scale from the counter — and it turned a
+			// measured 5,381.34 SC of wrong baseline into a plausible 0.00. A negative wagered figure is impossible
+			// by construction now; if one ever appears it is a defect, and it must reach the screen to be found.
 			decimal profitSinceDeposit = lastDeposit != null
 				? Money.Normalize(totalProfit - lastDeposit.NetProfitSnapshot)
 				: Money.Normalize(totalProfit);
 			decimal wageredSinceDeposit = lastDeposit != null
-				? Money.Normalize(Math.Max(0m, totalWagered - lastDeposit.TotalWageredSnapshot))
+				? Money.Normalize(totalWagered - lastDeposit.TotalWageredSnapshot)
 				: Money.Normalize(totalWagered);
 
 			decimal profitSinceRecharge = lastRecharge != null
 				? Money.Normalize(totalProfit - lastRecharge.NetProfitSnapshot)
 				: Money.Normalize(totalProfit);
 			decimal wageredSinceRecharge = lastRecharge != null
-				? Money.Normalize(Math.Max(0m, totalWagered - lastRecharge.TotalWageredSnapshot))
+				? Money.Normalize(totalWagered - lastRecharge.TotalWageredSnapshot)
 				: Money.Normalize(totalWagered);
 
 			return new PlayerFinancialSummary(

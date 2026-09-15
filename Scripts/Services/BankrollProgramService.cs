@@ -97,8 +97,11 @@ public partial class BankrollProgramService : Node
 		bankrollWallet.ApplyTransaction(new Transaction(TransactionType.Deposit, TransactionSource.External, null, amount));
 		AddRecord(amount, "balance_to_bankroll", reason);
 
-		decimal wageredSnapshot = _userStats?.Stats?.TotalAmountWagered ?? 0m;
-		decimal profitSnapshot  = _userStats?.Stats?.TotalProfit ?? 0m;
+		// Mini-plan 08 D2 — the snapshot is read from the lifetime ROLLUP, the one source the panels subtract it
+		// from. It read Stats, which D1 used to rebase onto the retained journal, so a recharge after a restart
+		// stored its snapshot in a different scale from the counter it would later be subtracted from.
+		decimal wageredSnapshot = _userStats?.Rollup?.TotalWagered ?? 0m;
+		decimal profitSnapshot  = _userStats?.Rollup?.TotalNetProfit ?? 0m;
 
 		// Internal recharges (auto or startup init) are NOT player-initiated deposits.
 		// "deposit" is reserved for future explicit player transfers via the SC wallet screen.

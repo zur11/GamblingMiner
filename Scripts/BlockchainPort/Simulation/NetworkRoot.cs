@@ -71,7 +71,12 @@ public partial class NetworkRoot : Node
 	// identities themselves must be regenerated". The v5 pairing above was specific to seed-derived
 	// addresses. Evidence is preserved OUTSIDE the wipe, in two archives predating it (INC-003's
 	// "Where the evidence lives"), which is what made it safe to run this last rather than first.
-	private const int WorldFormatVersion = 6;
+	// v7 (mini-plan 08, D2 — 2026-09-14): the casino client ledger's player entries carry wagered/profit
+	// snapshots taken from Stats while D1 was rebasing Stats onto the retained journal, so every such snapshot
+	// after a restart is in a different scale from the lifetime counter it is subtracted from. Which ones
+	// cannot be told from the entries, and a later recharge only overwrites the latest. Per project policy the
+	// world is reset rather than repaired. Same note as v6: BotWalletRegistry's RegistryFormatVersion stays.
+	private const int WorldFormatVersion = 7;
 	private const string WorldVersionPath = "user://world_format_version.txt";
 	// Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
 	// A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009

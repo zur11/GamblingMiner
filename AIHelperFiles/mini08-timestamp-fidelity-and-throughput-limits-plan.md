@@ -1314,6 +1314,27 @@ persisted snapshot. That is D2, fixed with the world reset.
 
 Build: 0 warnings, 0 errors. Not yet run; verification folded into the clean-world test.
 
+#### ✅ D2 built (2026-09-14) — one source for the snapshots, no clamp, and a clean world
+
+- **Snapshots from the rollup.** `BankrollProgramService` (recharge) and `PlayerBankAccountService` (bank
+  deposit) read `Rollup.TotalWagered` / `TotalNetProfit` instead of `Stats`. After D1 the two agree; reading the
+  rollup removes the second path rather than trusting that they keep agreeing.
+- **The clamp is gone.** `PlayerFinancialStatsCalculator` clamped wagered-since at 0 because "a snapshot can
+  momentarily lead the counter". No such mechanism was found. The counter only grows within a session, and a
+  restart restores `ClientLedgerEntries` and `BetStatsRollup` from the same checkpoint. The clamp absorbed D2
+  itself: 5,381.34 SC of wrong baseline displayed as 0.00. A negative figure is now impossible by construction;
+  if one appears it is a defect, and it reaches the screen. *(Standing Convention 7, "project, never clamp", and
+  the CLAUDE.md rule that a displayed figure with a cheap bound should expose a violation, not hide it.)*
+- **`WorldFormatVersion` 6 → 7.** The existing snapshots cannot be sorted into right and wrong from the entries,
+  so the world is reset rather than repaired (project policy). No new persisted file, so the delete list is
+  unchanged; `RegistryFormatVersion` stays, as v6's note requires.
+- **Evidence archived before the wipe:**
+  `%APPDATA%\Godot\app_userdata\GamblingMiner_archive_mini08_world_v6_2026-09-14`, a full copy of the v6 world
+  the stats test ran on (outside `user://`, so the wipe cannot reach it).
+
+Build: 0 warnings, 0 errors. Verification is the clean-world test of D1–D4, whose predictions are registered
+from disk before its restart step, as the stats test's were.
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
