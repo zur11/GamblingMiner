@@ -2118,7 +2118,13 @@ public partial class DiceGame : Control, IBetEventSource
 		string minedDetails = announcement.BlockIndex <= 0
 			? "Last mined: n/a"
 			: $"Last mined #{announcement.BlockIndex} | nonce {announcement.Nonce} | miner {announcement.MinerNodeId}\nHash: {announcement.BlockHash}\nMiner address: {announcement.MinerAddress}";
-		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(_activeNodeId)}\n{minedDetails}";
+		// DEV (mini-plan 08 clean-world test) — "Current nonce attempt" restarts at every block, so it cannot tell
+		// when the journal has passed its retention cap. 1 bet = 1 nonce attempt, so the player's lifetime bet
+		// count IS their lifetime attempt count; read from Stats, whose only source is the rollup (D1). It rolls
+		// back with the checkpoint on a restart, exactly as the journal does.
+		string devAttempts = string.Create(CultureInfo.InvariantCulture,
+			$"DEV player attempts (lifetime bets): {_userStatsService?.Stats?.TotalBets ?? 0:N0}");
+		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(_activeNodeId)}\n{devAttempts}\n{minedDetails}";
 	}
 
 
