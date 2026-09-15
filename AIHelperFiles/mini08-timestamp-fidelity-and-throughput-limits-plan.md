@@ -4,8 +4,9 @@
 `mini07-userstats-audit-and-inc003-closure-plan.md`. Its subject was found by mini-plan 06 §9.10c while
 looking for something else entirely.
 
-**Status:** 📋 **SPECIFIED, NOT STARTED.** To be built on its own branch off `main`, after mini-plan 06's
-keepers are cherry-picked and `repro/explorer-clock-rewind` is deleted.
+**Status:** ✅ **COMPLETE (2026-09-15)** on branch `mini08-timestamp-fidelity`, awaiting merge to `main`. The
+close-out summary is **§4.9**, just before §5. *(This line read "SPECIFIED, NOT STARTED" through the whole build,
+never updated as the phases landed.)*
 
 **Objective, in two halves that must be done in this order.**
 
@@ -1496,6 +1497,64 @@ screen stayed exact.** Before D1, a retention change under a rollback moved "Gen
   be deleted, so this is a decision to revisit at the next reset.
 - R2-C1's lagged-throttle overspend (0.62%), still producing the holes this test used as frame markers.
 - The deposits-first "chronological by construction" comment in `RollbackToUtc`'s rebuild.
+
+### 4.9 — Close-out (2026-09-15)
+
+**Both halves of the objective are met.**
+
+1. **The writer records when bets happened.** Each bet is back-dated by its own interval (§2), and the batch
+   is clamped onto the half-open interval `(previousFrameClock, clockNow]`. Verified at 99 credits × 3000X
+   over 202,684 bets: 0 duplicate instants, 0 near-collisions, 0 regressions, median spacing 1.0101 s.
+   Re-verified on the clean v7 world. `Tools/verify-bet-journal.js` is the standing regression test for it.
+2. **The engine's ceiling is measured.** At 99 credits it is **about 2,000 bets per second, i.e. 2000X**.
+   `Sim:` holds 100% through 1000X, 2000X delivers 98.7–99.5%, and 3000X delivers 69–74% of its demand.
+   Past 2000X the extra demand becomes wall-clock slowdown (R2-C1), not bets. The 9000X target is
+   reachable only at low credit counts (P1e: 7 credits × 9000X at Sim 100%).
+
+**What shipped along the way, each measured before and after:**
+- **Per-bet cost.** The per-bet bankroll disk write became a throttled save; it was 66% of a bet's cost.
+  The bet-history UI rebuild and the settled-bet signal path were split and coalesced per frame.
+- **Frame capacity.** `MaxBetsPerFrame` 10 → 40, sized for 2000X.
+- **DEV time-scale ladder.** Rungs 200X–900X between 100X and 9000X.
+- **Instruments.** The bet-cost profiler, and `devTimeScale` in the difficulty trace.
+- **The statistics panel (INC-005).** D1–D4 fixed and verified to the satoshi: 18/18 on the v6 world,
+  every registered cell on v7. `WorldFormatVersion` 6 → 7, with the v6 world archived first.
+- **Readouts added at the developer's request.**
+  - A "Total bets" row in the statistics panel (lifetime, from the rollup).
+  - The casino pool's nonce count and the active node's private/casino hardware split, in DiceGame's
+    mining status.
+  - The DEV lifetime-attempt line, added for the test and then removed.
+- **`ResultValue`.** It shows only the latest roll (two digits) from both bet paths. About thirty status
+  messages were deleted, along with the block announcement, `HandleSessionStopped` and two helpers — all of
+  them written into a label the scene kept `visible = false`, so no player ever read one. With one thing
+  left to say, the label is now shown; its placement belongs to the final UI design. The rewrite also fixed
+  a manual bet never writing its roll, because an early return skipped it once its one-bet session stopped.
+- **The manual burst is paced across frames.** One press buys `GameSecondsPerManualBet` of game time — at 99
+  credits, 99 bets — and ran them inside the button handler, so a second of play arrived as a single frame:
+  99 rolls and 99 history rows at once, against an autobet that reads as play because it settles a few per
+  frame. The bets are unchanged (same count, same game-time stamps, one clock advance at the end); only
+  their execution is spread over one real second, with the betting controls disabled until it finishes.
+  Leaving the scene mid-burst closes it: the settled bets get their clock tick, the rest are never placed.
+- **Corrected in passing.**
+  - The false "chronological by construction" comment in the rollback rebuild.
+  - CLAUDE.md's Pattern 2 sentence on commit vs. I/O, and the canonical rule's mechanism, which is now
+    the instant of the bet that mined the block.
+
+**Open, each a separate decision rather than unfinished work here:**
+- **R2-C1's lagged-throttle overspend (0.620%).** It exists only when the backlog is saturated. The fix
+  is additive carry (see "Found while verifying" above). This is the natural next mini-plan.
+- **A whole-frame timing of `SimulationService._Process`.** It must come before `MaxBetsPerFrame` is
+  raised again: at 3000X the frame rate and the cap bind jointly, and nothing measures the frame.
+- **Bot-mined blocks restore the clock up to one frame past their timestamp** (D4 residual; money exact).
+  Closing it means interleaving the player's and bots' settle loops by instant.
+- **`saved_betting_strategies.json` survives a world wipe by design** (CLAUDE.md's exempt set). The
+  developer expected otherwise; revisit at the next reset.
+
+*Protocol lessons this plan paid for, recorded once:*
+- A test step must name a surface the player can actually see: twice a step pointed at one that does not
+  exist (the hidden `ResultValue`, a StatusBar DiceGame lacks).
+- When an exact prediction misses, suspect the instrument before the system: four of this plan's
+  surprises were reading tools or my own model, including the journal-length miss in step 9.
 
 ## 5. Out of scope
 

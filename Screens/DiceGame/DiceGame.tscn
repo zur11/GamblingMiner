@@ -174,7 +174,6 @@ text = "40000.00000000 SC"
 
 [node name="ResultValue" type="Label" parent="."]
 unique_name_in_owner = true
-visible = false
 layout_mode = 0
 offset_left = 11.0
 offset_top = 294.0

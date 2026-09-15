@@ -876,8 +876,12 @@ namespace Scripts.History
 				entries.Add(HistoryJournalEntry.FromBet(record));
 			}
 
-			// Chronological by construction (deposits then timestamp-ordered bets), which matches the order
-			// GetJournalChunkPaths hands the segments back to the loader.
+			// NOT chronological in file order, despite what this comment used to claim: every deposit is written
+			// before every bet, each kind in its own timestamp order, so a deposit newer than the oldest retained
+			// bet sits ahead of it in the file (mini-plan 08 found this while auditing a rollback). Nothing breaks
+			// today because the loader files deposits and bets into separate lists. What IS preserved is segment
+			// order: GetJournalChunkPaths hands the segments back in the order they are written here. Any consumer
+			// that needs one merged timeline must merge by TimestampUtc, as RebuildStatsFromLoadedHistory does.
 			WriteEntriesRotating(entries);
 			EnforceRetentionCap();
 		}
