@@ -385,10 +385,10 @@ namespace Scripts.Diagnostics
 				// misaligned against its own header until it was caught by hand. A writer whose column
 				// count is stated twice will eventually state it two different ways.
 				var row = new StringBuilder();
+				// The three comment lines that used to sit here repeated the note above verbatim, and pushed the
+				// interpolated string outside the 3-line window CLAUDE.md's locale detector searches for an
+				// InvariantCulture wrapper — so a correctly wrapped row read as an 8th hit against a baseline of 7.
 				row.Append(string.Create(CultureInfo.InvariantCulture,
-					// Real wall-clock, deliberately: this is DEV telemetry about the MACHINE, not
-					// game-world state, and CLAUDE.md's game-time rule names exactly that exemption. A
-					// game-time stamp here would be actively misleading — the quantity is real microseconds.
 					$"{DateTime.UtcNow:O},{bets},{totalUs:F3},{accountedUs:F3},{unaccountedUs:F3}"));
 				for (int i = 0; i < SegmentCount; i++)
 				{
