@@ -1335,6 +1335,59 @@ Build: 0 warnings, 0 errors. Not yet run; verification folded into the clean-wor
 Build: 0 warnings, 0 errors. Verification is the clean-world test of D1–D4, whose predictions are registered
 from disk before its restart step, as the stats test's were.
 
+#### Clean-world test (v7) — steps 0–3 read from disk, predictions registered BEFORE the relaunch (2026-09-15)
+
+**Protocol run:** wipe 6 → 7, 99 credits, 2000X, stop-on-block OFF, auto-recharge ON. Autobet until the new DEV
+counter read 250,706, stop, screenshot (A), DiceGame → MainMenu → quit. That is D3's exit path.
+
+**Screenshot A agrees with disk to the satoshi.** General +529.98945544 / 4,371.22403859 is the rollup FILE
+(250,706 bets). Since recharge +594.97246309 / 4,130.88599864 is that file minus the only player recharge
+snapshot (240.33803995 / −64.98300765). The DEV counter equals the file's `TotalBets`.
+
+**Read from disk, all exact in BigInt satoshis:**
+
+- **Committed (checkpoint):** rollup 248,017 bets, wagered 4,347.71997891, P/L +526.00532435. Main 39,800 +
+  Bankroll 726.00532435 = 40,000 + 526.00532435 — the balance identity holds exactly.
+- **Ahead (rollup file, flushed by the MainMenu exit):** 250,706 / 4,371.22403859 / +529.98945544. File − checkpoint
+  = 2,689 bets / 23.50405968 / +3.98413109 = **exactly** the journal's tail past the boundary. This is D3's
+  condition, reproduced deliberately.
+- **Journal:** 21 segments, 200,708 bets, 0 continuity breaks. **Retention has pruned 49,998 bets** (the base file
+  and segments 1–4 are gone: 49,998 bets + 2 deposits = 50,000 records), so D1 can be told apart from its fix. At
+  or before the boundary: 198,019 bets, 3,608.27483207 / +515.88600542, last `BalanceAfter` **726.00532435** ==
+  the checkpoint bankroll. Scanner: A1, A1b, A2, A3, A4 PASS.
+- **Chain:** tip #115, mined by **artforz** at 2009-03-24 17:36:04.035 UTC == the checkpoint boundary to the tick.
+  Six blocks since the player started: player 4 (#111–#114), satoshi 1, artforz 1.
+
+**Predictions — the fixed build must show the left column; the right column is what the old code would show:**
+
+| step | row | fixed: P/L | fixed: Gambled | old code: P/L | old code: Gambled |
+|---|---|---:|---:|---:|---:|
+| 4 ScFinances first (D3) | General | +526.00532435 | 4,347.71997891 | +529.98945544 | 4,371.22403859 |
+| | Since deposit | +526.00532435 | 4,347.71997891 | +529.98945544 | 4,371.22403859 |
+| | Since recharge | +590.98833200 | 4,107.38193896 | +594.97246309 | 4,130.88599864 |
+| 5 DiceGame (D1) | General | +526.00532435 | 4,347.71997891 | +515.88600542 | 3,608.27483207 |
+| | Since deposit | +526.00532435 | 4,347.71997891 | +515.88600542 | 3,608.27483207 |
+| | Since recharge | +590.98833200 | 4,107.38193896 | +580.86901307 | 3,367.93679212 |
+| 6 ScFinances again | all | identical to step 5 | | | |
+
+Also at step 5: StatusBar Bankroll 726.00532435 and Main 39,800.00000000; clock **2009-03-24 12:36:04** local
+(the boundary, UTC−5); DEV counter **248,017**. On disk after step 5: 198,019 journal bets, last `BalanceAfter`
+726.00532435 == `bankroll_state`. Cross-check nobody needs to run: the fixed Since-recharge figures equal the
+checkpoint rollup's own `SinceDeposit*` fields (590.98833200 / 4,107.38193896), because `Stats.RegisterDeposit`
+resets that window on every recharge.
+
+**D2 is already visible in A.** Since recharge wagered is lifetime minus a snapshot in the same scale, positive
+and exact, where the v6 world showed a clamped 0.00.
+
+**D4 is NOT tested by steps 0–3, and is recorded as inconclusive, not as passed.** The final checkpoint belongs to
+artforz's block, which is stamped with the clock and has no back-date, so the capture path D4 changed never ran
+for it. The player holds 4 of the 6 blocks in this era (one every ~12 game hours, ~20 real seconds at 2000X), so
+a player-tipped checkpoint can be produced on purpose. That is steps 7–9: run with stop-on-block OFF, stop the
+autobet after a green "mined by player" announcement and before the next block, then exit via MainMenu. Pass
+means tip miner == player, boundary == tip timestamp, and the scanner's A4 note printing `OK` (0 bets past the
+tip kept by a rollback). After the relaunch, the clock must equal the tip's local time. The old code would put
+the boundary up to 39 bets × 1.0101 game-seconds past the block and keep those bets.
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
