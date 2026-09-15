@@ -1388,6 +1388,70 @@ means tip miner == player, boundary == tip timestamp, and the scanner's A4 note 
 tip kept by a rollback). After the relaunch, the clock must equal the tip's local time. The old code would put
 the boundary up to 39 bets × 1.0101 game-seconds past the block and keep those bets.
 
+#### ✅ Steps 4–6 RESULTS (2026-09-15) — every registered cell exact; D1, D2 and D3 fixed
+
+| step | General P/L | General Gambled | Since recharge P/L | Since recharge Gambled | vs prediction |
+|---|---:|---:|---:|---:|---|
+| 4 ScFinances first | +526.00532435 | 4,347.71997891 | +590.98833200 | 4,107.38193896 | **exact** (old code: A's figures) |
+| 5 DiceGame | +526.00532435 | 4,347.71997891 | +590.98833200 | 4,107.38193896 | **exact** (old code: +515.89 / 3,608.27) |
+| 6 ScFinances again | +526.00532435 | 4,347.71997891 | +590.98833200 | 4,107.38193896 | **exact** |
+
+"Since deposit" equalled General on every screen. Also at step 5, all as registered:
+- Bankroll 726.00532435 and Main 39,800.00000000;
+- clock 2009-03-24 12:36:04;
+- DEV counter 248,017;
+- the bet history's newest row at 12:36:04, the boundary bet, with nothing after it.
+
+ScFinances' own balance-derived *"Overall P/L — game-over metric: +526.00532435"* now sits directly above
+*"General +526.00532435"*. **The contradiction the v6 world showed on one screen is gone.**
+
+**The Output panel (Godot editor) confirms the mechanism D3's fix relies on.** Before the restore,
+`CasinoScBalanceService` booted from its own file at Bankroll 70.01054456, which is the uncommitted tail. It was
+then `RESTORED from checkpoint` at 73.99467565. The same shape the player's rollup had, handled the same way.
+
+#### ✅ Step 7 + step 8 (disk) — D4 passes on a player-tipped checkpoint
+
+**A flaw in my own protocol:** step 7 said to watch for a green `BLOCK #N mined by player` line. That label is
+`ResultValue`, and it is `visible = false` in `DiceGame.tscn`: the announcement is written and never shown. The
+developer read "Last mined block: #116 by player" from the mining-status block instead. That is the same fact.
+A protocol step must name a surface the player can actually see.
+
+The run produced one checkpoint (Output panel: `[Checkpoint] CAPTURED — PlayerBankroll=730.26718617`), on the
+player's block #116. Read from disk:
+
+- **Tip #116, miner `player`, 2009-03-24 18:30:03.851 UTC.**
+- **The history boundary is the mining bet's own instant, to the tick:** `633735162038514515` is the timestamp of
+  journal bet #201,165, `18:30:03.8514515Z`, and its millisecond is the block's timestamp. The calendar instant is
+  the same moment in local time (−5 h exactly).
+- **That bet's `BalanceAfter` 730.26718617 == the checkpoint bankroll**, and == the rollup's P/L identity
+  (40,000 + 530.26718617 − 39,800).
+- **Scanner A4: 0 bets past the tip kept by a rollback — `OK`.** 4,766 bets after the boundary, all of them the
+  uncommitted tail. A1, A1b, A2, A3 pass; 5 of 5 player blocks join a bet to the millisecond.
+
+**Was the mining bet back-dated, i.e. did this run exercise the path D4 changed?** Very probably, by 20 bets.
+Under saturation every frame holds exactly `MaxBetsPerFrame` bets. The R2-C1 throttle makes the clock advance
+by exactly what those bets occupied, so a frame edge is normally invisible: the spacing across it is nominal
+too. One edge **is** visible here. 21 bets after the mining bet the journal has an 86.4 game-second hole, the
+lagged-throttle overspend, which can only fall between frames. That puts the frame's last bet 20 bets after the
+mining bet. Its back-date was about 20 × 1.0101 = **20.2 game-seconds**, and the old code would have set the
+boundary there and **kept those 20 bets**, D4's exact symptom. The inference assumes the frames around it stayed
+saturated; the hole itself is evidence they were.
+
+**Predictions for step 9** (relaunch → MainMenu → DiceGame, no betting):
+
+| figure | predicted |
+|---|---|
+| Clock (StatusBar / Current app time) | **2009-03-24 13:30:03** |
+| Bet history, newest row | **13:30:03**, the mining bet; no row after it |
+| Bankroll / Main | 730.26718617 / 39,800.00000000 |
+| DEV counter | 251,164 |
+| General (and Since deposit) | +530.26718617 / 4,372.04320344 |
+| Since recharge | +595.25019382 / 4,131.70516349 |
+| On disk afterwards | journal 201,166 bets, last `BalanceAfter` 730.26718617 == `bankroll_state`; A4 `OK` |
+
+Under the old code, the clock and the newest history row would have read about 13:30:23, 20 bets later, and the
+journal's last balance would not have matched `bankroll_state`.
+
 ## 5. Out of scope
 
 - **The explorer.** It was correct throughout mini-plan 06 §9.10 and needs no change. Its
