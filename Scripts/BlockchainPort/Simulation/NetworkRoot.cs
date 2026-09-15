@@ -1704,6 +1704,15 @@ public partial class NetworkRoot : Node
 		return (decimal)(0.10 + ratio * 0.20); // 10% → 30%
 	}
 
+	// The casino pool's candidate nonce: every contributor's pool attempts land on the casino node's candidate,
+	// so this is the pool's shared count since its last block — the counterpart of BuildMiningStatusLine's
+	// "Current nonce attempt", which only ever reads the active node's own (private-pool) chain. 0 if absent.
+	public long GetCasinoPoolCandidateNonce()
+	{
+		EnsureInitialized();
+		return SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino) ? casino.GetCurrentCandidateNonce() : 0L;
+	}
+
 	// One casino-pool nonce attempt: mines on the casino node's behalf. On a hit, the block goes
 	// through the normal broadcast/bookkeeping path and its reward is queued for distribution.
 	public void TryCasinoNonceAttempt(out Block? minedBlock, long? minedAtUnixMs = null)

@@ -2118,13 +2118,17 @@ public partial class DiceGame : Control, IBetEventSource
 		string minedDetails = announcement.BlockIndex <= 0
 			? "Last mined: n/a"
 			: $"Last mined #{announcement.BlockIndex} | nonce {announcement.Nonce} | miner {announcement.MinerNodeId}\nHash: {announcement.BlockHash}\nMiner address: {announcement.MinerAddress}";
-		// DEV (mini-plan 08 clean-world test) — "Current nonce attempt" restarts at every block, so it cannot tell
-		// when the journal has passed its retention cap. 1 bet = 1 nonce attempt, so the player's lifetime bet
-		// count IS their lifetime attempt count; read from Stats, whose only source is the rollup (D1). It rolls
-		// back with the checkpoint on a restart, exactly as the journal does.
-		string devAttempts = string.Create(CultureInfo.InvariantCulture,
-			$"DEV player attempts (lifetime bets): {_userStatsService?.Stats?.TotalBets ?? 0:N0}");
-		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(_activeNodeId)}\n{devAttempts}\n{minedDetails}";
+		// "Current nonce attempt" (in BuildMiningStatusLine) reads only the active node's OWN chain — its private
+		// pool. Credits moved to the casino pool mine on the casino node's candidate instead, so that count is shown
+		// on its own line, followed by how the active node's credits are split between the two pools.
+		NodeHardwareState hw = HardwareAllocationRepository.GetNode(_activeNodeId);
+		int totalCredits = hw.TotalCredits;
+		decimal privatePct = totalCredits > 0 ? 100m * hw.IndividualPoolCredits / totalCredits : 0m;
+		decimal casinoPct = totalCredits > 0 ? 100m * hw.CasinoPoolCredits / totalCredits : 0m;
+		string poolLines = string.Create(CultureInfo.InvariantCulture,
+			$"Current casino pool nonce attempt: {_blockchainNetworkRoot.GetCasinoPoolCandidateNonce()}\n" +
+			$"Hardware split: private {hw.IndividualPoolCredits} ({privatePct:0.0}%) | casino pool {hw.CasinoPoolCredits} ({casinoPct:0.0}%) of {totalCredits} credits");
+		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(_activeNodeId)}\n{poolLines}\n{minedDetails}";
 	}
 
 
