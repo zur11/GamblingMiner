@@ -332,8 +332,9 @@ public partial class DiceGame : Control, IBetEventSource
 		// SF.4B.6: seed the in-game bet-history list from the centralized persistent store so the most-recent
 		// history reproduces on entry (before, it started empty on re-entry). Runs AFTER the checkpoint rollback
 		// above so it reflects committed history; live BetExecuted events keep prepending after this.
-		_betHistoryContainer?.LoadFromHistoricalRecords(
-			_userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries));
+		IReadOnlyList<BetRecord> recentOnEntry = _userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries);
+		_betHistoryContainer?.LoadFromHistoricalRecords(recentOnEntry);
+		SeedRollFromRecentBets(recentOnEntry);
 		LoadActiveNodeFinancialState();
 		LoadActiveNodeStrategySnapshot();
 		EnsureInitialBankrollFunded();
@@ -512,8 +513,9 @@ public partial class DiceGame : Control, IBetEventSource
 		// scene re-entry. Bots keep the cleared list (their history lives in BotPlayHistory).
 		if (IsPlayerActive())
 		{
-			_betHistoryContainer?.LoadFromHistoricalRecords(
-				_userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries));
+			IReadOnlyList<BetRecord> recentForPlayer = _userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries);
+			_betHistoryContainer?.LoadFromHistoricalRecords(recentForPlayer);
+			SeedRollFromRecentBets(recentForPlayer);
 		}
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
@@ -2220,6 +2222,25 @@ public partial class DiceGame : Control, IBetEventSource
 	// produces agree at a glance rather than by coincidence.
 	[Export] private Color _rollWinColor = Colors.Green;
 	[Export] private Color _rollLossColor = Colors.Red;
+
+	// The roll readout survives leaving and re-entering the scene, and an app restart, by reading the SAME list
+	// that seeds the bet-history container — so the two can never disagree about which bet was last, and
+	// nothing new is persisted for it. `GetRecentBets` returns oldest-first, so the newest record is the tail.
+	//
+	// After a restart that list has already been rolled back to the checkpoint boundary, which since mini-plan
+	// 08 D4 is the instant of the bet that MINED the last block. The roll shown on entry is therefore that
+	// bet's — the one a Stop-on-block run would have stopped on — and the history's top row is the same bet.
+	private void SeedRollFromRecentBets(IReadOnlyList<BetRecord> recent)
+	{
+		if (recent == null || recent.Count <= 0)
+		{
+			return;
+		}
+
+		BetRecord newest = recent[recent.Count - 1];
+		// Qualified: Scripts.Betting and Scripts.History each declare a BetOutcome, and this scene imports both.
+		ShowRoll(newest.Roll, newest.Outcome == Scripts.History.BetOutcome.Win);
+	}
 
 	// The ONLY writer of ResultValue: the roll, two digits, as the winner-range readout prints it ("00 to 49"),
 	// tinted by whether that roll won.
