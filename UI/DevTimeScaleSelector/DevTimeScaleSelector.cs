@@ -83,6 +83,32 @@ namespace UI.DevTimeScaleSelector
 			AddChild(new UI.SimRetentionReadout.SimRetentionReadout(18));
 
 			AddBetCostToggle();
+			AddFrameCostToggle();
+		}
+
+		// Mini-plan 09 P1 — arms Scripts/Diagnostics/FrameCostProfiler, the whole-frame twin of the bet toggle
+		// above. Same contract, same reasons: DEBUG-only (absent, not disabled, in an exported build), OFF by
+		// default, and to be armed BEFORE starting the autobet, because a saturated frame makes any control
+		// here slow to answer a click.
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void AddFrameCostToggle()
+		{
+			var toggle = new CheckButton
+			{
+				Text = "⏱ Frame cost",
+				ButtonPressed = false,
+				TooltipText =
+					"DEV — time the WHOLE frame while the background sim runs: its segments, what lies outside it, "
+					+ "bets and PoW attempts per frame, checkpoints and GC. Reports to the Godot editor's Output "
+					+ "panel and to user://logs/frame_cost_trace.csv.",
+			};
+			toggle.AddThemeFontSizeOverride("font_size", 16);
+			toggle.Toggled += pressed => Scripts.Diagnostics.FrameCostProfiler.Arm(pressed);
+			AddChild(toggle);
+
+			GD.Print(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+				$"[FrameCost] toggle built in this scene — tick '{toggle.Text}' beside the DEV time selector to arm " +
+				$"whole-frame timing (reports every {Scripts.Diagnostics.FrameCostProfiler.ReportEveryFrames:N0} simulated frames)."));
 		}
 
 		// Mini-plan 08 P1 — arms Scripts/Diagnostics/BetCostProfiler, which times one bet segment by segment.

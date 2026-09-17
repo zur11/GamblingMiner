@@ -516,6 +516,12 @@ public partial class SimulationService : Node
 			}
 		}
 
+		// Mini-plan 09 P1 — whole-frame timing (Scripts/Diagnostics/FrameCostProfiler.cs), DEBUG-only and disarmed
+		// by default. It starts HERE, after the pause gate, because a frozen frame simulates nothing. The segments
+		// below are contiguous: each Enter closes the previous one.
+		Scripts.Diagnostics.FrameCostProfiler.BeginFrame();
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.Recompute);
+
 		// Step 7.2: founders mine concurrently with the player (no autonomous clock). Recompute their
 		// power only when a new block appeared (cheap-guard around Satoshi's full-chain BTC scan). Step 14
 		// adds the population scheduler's two layers (visible cast + invisible mass) the same way, then
@@ -525,6 +531,8 @@ public partial class SimulationService : Node
 		RecomputeFoundersOnNewBlock(otherMinersPower);
 		RecomputePopulationOnNewBlock(otherMinersPower);
 		_networkRoot?.SetActiveMiningPower(otherMinersPower + (_founders?.TotalActiveFounderPower ?? 0d) + NetworkPopulationScheduler.TotalScheduledPower);
+
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.PlayerLoop);
 
 		// The session may have stopped itself (profit/loss/block/insufficient) while we were away.
 		if (!_session.IsRunning)
@@ -537,6 +545,7 @@ public partial class SimulationService : Node
 				StopNoticePending = true;
 				ClearRunningState();
 				EmitSignal(SignalName.AutobetStopped);
+				Scripts.Diagnostics.FrameCostProfiler.AbortFrame(); // the run ended mid-frame; not a simulated frame
 				return;
 			}
 		}
@@ -590,17 +599,23 @@ public partial class SimulationService : Node
 		}
 
 		_settleBackdateGameSeconds = 0d;
+		Scripts.Diagnostics.FrameCostProfiler.CountPlayerBets(executed, executed >= MaxBetsPerFrame);
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.BotLoop);
 
 		// Bots advance alongside the player autobet, in every scene (Phase 2).
 		int botExecuted = TickBots(simDelta);
+		Scripts.Diagnostics.FrameCostProfiler.CountBotBets(botExecuted);
 
 		// Step 7.2: drive the founders' concurrent attempts in lockstep with the time the player just
 		// advanced (one founder attempt per its power-share of the player+bot attempts this frame).
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.FounderDrive);
 		DriveFounderMining(executed + botExecuted, otherMinersPower);
 
 		// Step 14 (ND.2): drive the scheduled network (visible cast + invisible mass) the same way —
 		// concurrent miners in lockstep with the player's time advancement, never clock movers.
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.ScheduledDrive);
 		DriveScheduledMining(executed + botExecuted, otherMinersPower);
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.Tail);
 
 		// R2-C1 (D-R2.5) — THE CLOCK MAY NOT SPEND TIME THE ENGINE COULD NOT SIMULATE. The retained
 		// fraction is 1.0 whenever nothing was discarded, which is every frame that keeps up: below the
@@ -625,6 +640,11 @@ public partial class SimulationService : Node
 		// frame off the same clock; moving it earlier would give them a zero-width window and collapse
 		// their spacing to nothing.
 		_previousFrameClockUtc = clockNowUtc;
+
+		// Demand = what the running engines asked for this frame: their credits (bets per simulated second)
+		// × DevTimeScale. Mini-plan 08 matched this formula against delivered rates to within 1%.
+		Scripts.Diagnostics.FrameCostProfiler.EndFrame(
+			otherMinersPower * Math.Max(1, _calendar?.DevTimeScale ?? 1), retainedFraction);
 	}
 
 	// Recompute founder powers exactly once per new block on the canonical chain. Satoshi's confirmed-BTC
@@ -676,6 +696,7 @@ public partial class SimulationService : Node
 		long tsMs = new DateTimeOffset(_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
 		foreach ((string founderId, int attempts) in drained)
 		{
+			Scripts.Diagnostics.FrameCostProfiler.CountFounderAttempts(attempts);
 			for (int i = 0; i < attempts; i++)
 			{
 				_networkRoot.TryMineSingleNonceAttempt(founderId, out Block? block, tsMs);
@@ -750,6 +771,7 @@ public partial class SimulationService : Node
 		long tsMs = new DateTimeOffset(_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
 		foreach ((string minerId, int attempts, bool isGhost) in drained)
 		{
+			Scripts.Diagnostics.FrameCostProfiler.CountScheduledAttempts(attempts);
 			if (isGhost)
 			{
 				_networkRoot.EnsureGhostNodeRegistered(minerId);
@@ -1005,6 +1027,7 @@ public partial class SimulationService : Node
 	private void CaptureCheckpoint(double settlingBackdateGameSeconds = 0d)
 	{
 		_checkpointInstantLocal = null;
+		Scripts.Diagnostics.FrameCostProfiler.CountCheckpoint();
 		PersistFinancialState(true);
 		if (_principal == null || _bankroll == null || _bankrollProgram == null || _checkpoint == null)
 		{

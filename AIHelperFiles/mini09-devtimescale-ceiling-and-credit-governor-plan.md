@@ -4,7 +4,8 @@
 `mini08-timestamp-fidelity-and-throughput-limits-plan.md`, whose close-out (§4.9) left this as its first open
 item.
 
-**Status:** 📋 **SPECIFIED, NOT STARTED** (2026-09-16). To be built on its own branch off `main`.
+**Status:** 🔧 **IN PROGRESS** on branch `mini09-devtimescale-governor` (specified 2026-09-16). P1 built,
+awaiting its run.
 
 **Objective, in two halves that must be done in this order.**
 
@@ -91,11 +92,14 @@ credits. Unless the budget fell below that product, `floor(budget ÷ Σ credits)
 
 **`FrameCostProfiler`**, DEBUG-only and disarmed by default, beside `BetCostProfiler` and armed from a toggle
 next to the DEV time selector. **Per frame it records:**
-- **The real frame time**, from `delta`.
+- **The real frame time**, as the period between consecutive frames. *(Specified as "from `delta`"; built
+  with `Stopwatch` instead, because `delta` describes the previous frame — see "P1 — BUILT".)*
 - **`SimulationService._Process`, split into:** player bet loop · bot loop · founder drive · scheduled drive
   · everything else in the method.
-- **Counts:** player and bot bets executed; founder and scheduled **PoW attempts**; checkpoints captured, by
-  source.
+- **Counts:** player and bot bets executed; founder and scheduled **PoW attempts**; checkpoints captured.
+  *(Specified "by source"; built as a per-frame total. The segment timing already shows which drive paid for
+  a spike, so a per-source count would add a column without adding an answer. Revisit if H4's run leaves a
+  spike unattributed.)*
 - **Whether `MaxBetsPerFrame` bound** that frame.
 
 **Per report** (every N frames): p50 / p95 / max per segment, frames over 16.67 ms, and — the question that
@@ -110,6 +114,51 @@ nodes' `_Process`).
 
 If H1 holds, raising `MaxBetsPerFrame` buys nothing, and the budget is set by the outside work. If it fails,
 P3a has a lever.
+
+#### P1 — BUILT (2026-09-16), awaiting its run
+
+`Scripts/Diagnostics/FrameCostProfiler.cs`, armed by the **⏱ Frame cost** toggle beside the DEV time selector.
+
+- **A frame** is the `Stopwatch` period between two consecutive `BeginFrame` calls: this frame's simulation
+  plus everything the engine did before the next one. It is recorded one call late, when that period is known.
+  Godot's `delta` is not used, because it describes the previous frame.
+- **Six contiguous segments** of `SimulationService._Process`: `Recompute`, `PlayerLoop`, `BotLoop`,
+  `FounderDrive`, `ScheduledDrive`, `Tail`. Whatever falls between marks is reported as unaccounted, never
+  normalised away (BetCostProfiler's residue rule).
+- **Per frame:**
+  - player and bot bets, and whether `MaxBetsPerFrame` bound;
+  - founder and scheduled PoW attempts;
+  - checkpoints captured;
+  - whether a GC ran during the period;
+  - demand (`GetTotalActiveMiningPower() × DevTimeScale`) and retention.
+- **Every `ReportEveryFrames` frames**, one block in the Godot editor's Output panel, with H1–H4 each on its
+  own line, and one row in `user://logs/frame_cost_trace.csv` (DEV wall-clock telemetry like
+  `bet_cost_trace.csv`, not on the wipe's delete list). A partial window flushes on disarm.
+- **Three things it deliberately does not see, recorded so they are not mistaken for findings:**
+  - the frame in which an autobet stops itself (discarded);
+  - any period over 1 s (a discontinuity, not a frame);
+  - the report's own cost, since the next frame starts counting after it.
+- **Its own per-frame overhead has not been timed.** It is a handful of `Stopwatch` calls and GC counter reads,
+  expected far below a millisecond. That is stated as an expectation, not as a measurement.
+- Build clean, 0 warnings. Locale detector unchanged at 7 / 0.
+
+**Run protocol — one continuous run, legs compared only within it.**
+
+- **Setup:**
+  - the current world;
+  - **99 hardware credits** on the player, all in the private pool;
+  - Stop-on-block OFF, auto-recharge ON;
+  - **⏱ Bet cost OFF** (its per-bet overhead would contaminate the frame);
+  - **⏱ Frame cost ON**, before starting the autobet.
+- **Legs**, each held for at least three reports (~30 s):
+  1. **1000X** — the unsaturated baseline;
+  2. **2000X** — the measured knee;
+  3. **3000X** — where H1/H2 were derived;
+  4. **9000X** at 99 credits — deep saturation;
+  5. **9000X at 1 credit** — the game-time axis alone (discard 98 credits in the hardware shop; the sim keeps
+     running across the scene change).
+- **End:** disarm the toggle (flushes the partial window), stop the autobet. The CSV carries every leg; the
+  Output panel is not needed.
 
 ### P2 — R2-C1: carry the lagged quantity additively (build + verify)
 
