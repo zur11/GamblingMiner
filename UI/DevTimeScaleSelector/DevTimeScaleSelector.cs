@@ -86,6 +86,24 @@ namespace UI.DevTimeScaleSelector
 			AddFrameCostToggle();
 		}
 
+		// The diagnostic toggles stack in ONE COLUMN at the end of the row instead of extending it sideways.
+		// With two of them side by side the second landed off the reachable area of the screen and could not be
+		// clicked (developer's report, 2026-09-17). Created on first use, so a RELEASE build — where both toggle
+		// methods compile away — adds no empty container.
+		private VBoxContainer _diagnosticColumn;
+
+		private VBoxContainer DiagnosticColumn()
+		{
+			if (_diagnosticColumn == null)
+			{
+				_diagnosticColumn = new VBoxContainer();
+				_diagnosticColumn.AddThemeConstantOverride("separation", 0);
+				AddChild(_diagnosticColumn);
+			}
+
+			return _diagnosticColumn;
+		}
+
 		// Mini-plan 09 P1 — arms Scripts/Diagnostics/FrameCostProfiler, the whole-frame twin of the bet toggle
 		// above. Same contract, same reasons: DEBUG-only (absent, not disabled, in an exported build), OFF by
 		// default, and to be armed BEFORE starting the autobet, because a saturated frame makes any control
@@ -104,7 +122,7 @@ namespace UI.DevTimeScaleSelector
 			};
 			toggle.AddThemeFontSizeOverride("font_size", 16);
 			toggle.Toggled += pressed => Scripts.Diagnostics.FrameCostProfiler.Arm(pressed);
-			AddChild(toggle);
+			DiagnosticColumn().AddChild(toggle);
 
 			GD.Print(string.Create(System.Globalization.CultureInfo.InvariantCulture,
 				$"[FrameCost] toggle built in this scene — tick '{toggle.Text}' beside the DEV time selector to arm " +
@@ -149,7 +167,7 @@ namespace UI.DevTimeScaleSelector
 			};
 			toggle.AddThemeFontSizeOverride("font_size", 16);
 			toggle.Toggled += pressed => Scripts.Diagnostics.BetCostProfiler.Arm(pressed);
-			AddChild(toggle);
+			DiagnosticColumn().AddChild(toggle);
 
 			// Announce that the CONTROL exists, separately from the profiler announcing that it is armed.
 			// The first P1b attempt produced no [BetCost] output at all, and that silence had two possible
