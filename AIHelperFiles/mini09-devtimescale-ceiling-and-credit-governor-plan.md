@@ -4,8 +4,8 @@
 `mini08-timestamp-fidelity-and-throughput-limits-plan.md`, whose close-out (§4.9) left this as its first open
 item.
 
-**Status:** 🔧 **IN PROGRESS** on branch `mini09-devtimescale-governor` (specified 2026-09-16). P1 built,
-awaiting its run.
+**Status:** 🔧 **IN PROGRESS** on branch `mini09-devtimescale-governor` (specified 2026-09-16). P1 built and
+run (2026-09-17); its result redirects P3 — see "P1 — RESULT".
 
 **Objective, in two halves that must be done in this order.**
 
@@ -159,6 +159,91 @@ P3a has a lever.
      running across the scene change).
 - **End:** disarm the toggle (flushes the partial window), stop the autobet. The CSV carries every leg; the
   Output panel is not needed.
+
+#### ✅ P1 — RESULT (2026-09-17, 99 credits, 2009-03 world, 42 reports, one continuous run)
+
+The five legs ran as specified. **Deviation:** on returning from the hardware shop the ⏱ Frame cost toggle
+showed OFF, and the developer took it as disarmed. The profiler was still armed — its state is static, and the
+rebuilt toggle did not read it — so every leg was measured. The only loss is the final partial window, which was
+never flushed. *Fixed in the same commit as this record: both diagnostic toggles now mirror their profiler's
+state when the scene is built.*
+
+Leg boundaries were recovered from the demand column. Reports straddling a change are excluded as transitions.
+Figures are means of report means; frames are summed.
+
+| leg | frames | fps | frame ms | sim ms | outside sim ms | bets/frame | cap bound | delivered/s | retention |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| DiceGame 1000X, 99 cr | 9,000 | 59.5 | 16.80 | 3.32 | 13.48 | 16.6 | 0% | 991 | 1.000 |
+| DiceGame 2000X, 99 cr | 1,800 | 54.6 | 18.34 | 5.81 | 12.53 | 36.0 | 36% | 1,965 | 0.995 |
+| DiceGame 3000X, 99 cr | 3,000 | 51.1 | 19.59 | 6.46 | 13.13 | 40.0 | 100% | 2,043 | 0.702 |
+| DiceGame 9000X, 99 cr | 7,200 | 53.3 | 18.79 | 6.27 | 12.52 | 40.0 | 100% | 2,130 | 0.242 |
+| **Hardware shop** 9000X, 99 cr | 600 | 58.6 | 17.08 | **1.83** | 15.25 | 40.0 | 100% | **2,342** | 0.266 |
+| DiceGame 9000X, **1 cr** | 1,200 | 59.4 | 16.83 | 0.70 | 16.13 | 1.5 | 0% | 89 | **0.987** |
+
+*A frame pinned near 16.7 ms is waiting for the display (the 1000X leg, the shop, 1 credit). There "outside sim"
+includes idle time and is not work. Only the saturated DiceGame legs, whose frames run longer than 16.7 ms,
+measure the outside work itself.*
+
+**H1 — CONFIRMED, and the consequence recorded beside it was WRONG.** The sim is 33% of a saturated DiceGame
+frame (6.3 of 18.8 ms, predicted ~35%). The other ~12.5 ms is outside the sim and does not grow with bets: 13.1 ms
+at 3000X, 12.5 ms at 9000X. What this plan wrote in advance was *"if H1 holds, raising `MaxBetsPerFrame` buys
+nothing"*. That does not follow. A large fixed outside cost means each extra bet costs **frame rate**, not
+throughput. Across the saturated legs the frame fits
+`frame ≈ 12.5 ms + 0.157 ms × bets per frame`, which reproduces them (40 bets → 18.8 ms, 2,128/s; 36 bets at
+2000X → 18.2 ms predicted, 18.3 measured). **The ceiling is the cap, and moving it trades fps for bets/s.**
+
+| minimum fps held | frame | cap that fits | bets/s — **model extrapolation, not measured** |
+|---:|---:|---:|---:|
+| 55 | 18.2 ms | ~36 | ~2,000 |
+| 50 | 20.0 ms | ~48 | ~2,390 |
+| 45 | 22.2 ms | ~62 | ~2,790 |
+| 40 | 25.0 ms | ~80 | ~3,190 |
+
+**So the absolute limit is not a hardware fact, it is a choice of how many fps count as fluid.** Past the choice,
+the curve flattens towards `1 ÷ 0.157 ms ≈ 6,400 bets/s` at 0 fps.
+
+**H2 — CONFIRMED.** The cap bound on 100% of saturated frames at 3000X and 9000X, and on 36% at 2000X, the knee.
+
+**H3 — FALSIFIED in size, harmlessly.** At 99 credits the founders and the scheduled network make **0.136** PoW
+attempts per player bet, a fraction, not the predicted "small multiple". At 1 credit the ratio is ~5, because
+their power does not shrink with the player's. Either way both drives cost under 0.05 ms per frame: negligible
+in this era. §5's era-dependence warning stands for later eras, where the scheduled network is far larger.
+
+**H4 — FALSIFIED.** In the DiceGame legs, 14 of 19 frames over 50 ms carried **neither** a checkpoint nor a GC.
+The Output panel's worst-frame lines (from `godot.log`) say where they happened: in **36 of 42** reports the
+worst frame spent 11 ms or less in the sim. It is 35–95 ms spent **outside** it — render, UI, other nodes, the
+OS — and this profiler cannot divide that time further. Inside the sim, **checkpoints do cost 30–43 ms** when
+they land (4 observed), and **4 more in-sim spikes of 15–67 ms have no checkpoint and no GC**. Those are
+unattributed; candidates, not findings, are a journal segment rotation or a throttled service save inside the
+settle loop.
+
+**Two findings nobody predicted.**
+
+1. **The scene sets the per-bet cost.** In the hardware shop the same 40 bets per frame cost **1.83 ms**, against
+   6.27 ms in DiceGame. That is ~0.11 ms per bet paid by DiceGame's bet-history UI, fed synchronously inside the
+   settle loop — mini-plan 08's `BetHistoryFeed`, now seen from the frame side. The shop still delivered only
+   2,342/s: its frame sits at the display rate, so there too **the cap is what binds**. A budget measured in
+   DiceGame is conservative for every lighter scene.
+2. **9000X is not flat even at 1 credit.** Retention was 0.987 with 0.7 ms of sim per frame, so this is not load.
+   **Leading hypothesis, not yet tested:** `MaxBacklogSeconds` is a window in *simulated* seconds, so at ×90 any
+   frame longer than `MaxBacklogSeconds ÷ 90` (22 ms) loses simulated time, and ordinary frame jitter crosses
+   that. The window widens as the scale drops (33 ms at ×60, 67 ms at ×30). *This is jitter against a window, not
+   saturation. §38.7's rule against raising `MaxBacklogSeconds` was written for saturation and does not settle
+   this case either way.*
+
+#### P3, redirected by P1
+
+- **P3a becomes a cap sweep, and needs a runtime control first.** Changing `MaxBetsPerFrame` today means a
+  rebuild, which makes a within-run A–B–A impossible and a cross-run comparison meaningless (34% spread). **Build
+  a DEBUG-only runtime override** for the cap, then run DiceGame at 99 credits × 9000X (saturated, so the cap
+  binds) through cap 40 → 60 → 80 → 40 in one run. That tests the table above.
+- **P3b tests the backlog-window hypothesis:** 1 credit, ×90 → ×60 → ×30 → ×90 in one run. **Prediction:**
+  retention rises towards 1.000 as the window widens, and the loss tracks the share of frames longer than
+  `MaxBacklogSeconds ÷ scale`.
+- **A decision only the developer can make, needed before §4:** the minimum fps that counts as fluid. It picks
+  the cap, and the cap sets `BetBudgetPerSecond`.
+- **§4's budget is scene-dependent in fact.** The simplest honest governor uses the DiceGame budget everywhere,
+  which is conservative elsewhere. A per-scene budget is possible but is a separate decision, not an assumption.
 
 ### P2 — R2-C1: carry the lagged quantity additively (build + verify)
 

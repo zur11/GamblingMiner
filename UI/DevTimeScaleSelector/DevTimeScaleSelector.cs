@@ -114,7 +114,9 @@ namespace UI.DevTimeScaleSelector
 			var toggle = new CheckButton
 			{
 				Text = "⏱ Frame cost",
-				ButtonPressed = false,
+				// Mirrors the static profiler state, which survives scene changes. It was built as `false`, so on
+				// returning from the hardware shop an ARMED profiler read as off and the run looked disarmed.
+				ButtonPressed = Scripts.Diagnostics.FrameCostProfiler.Enabled,
 				TooltipText =
 					"DEV — time the WHOLE frame while the background sim runs: its segments, what lies outside it, "
 					+ "bets and PoW attempts per frame, checkpoints and GC. Reports to the Godot editor's Output "
@@ -159,7 +161,10 @@ namespace UI.DevTimeScaleSelector
 				// Default OFF is load-bearing, not a preference: the profiler adds a few percent to every
 				// bet, and mini-plan 08's P2 measures the throughput frontier — where that few percent is
 				// precisely the quantity under test. Arm it for P1, read the breakdown, disarm it for P2.
-				ButtonPressed = false,
+				// The PROFILER defaults off; the toggle only MIRRORS it. Its state is static and outlives this
+				// scene, so a toggle built as `false` on re-entry showed an armed profiler as off (mini-plan 09
+				// P1's run). Set before Toggled is connected, so mirroring can never re-arm anything.
+				ButtonPressed = Scripts.Diagnostics.BetCostProfiler.Enabled,
 				TooltipText =
 					"DEV — time one bet segment by segment (P1). Reports to the Godot editor's Output panel "
 					+ "and to user://logs/bet_cost_trace.csv. Leave it OFF while measuring throughput: it "
