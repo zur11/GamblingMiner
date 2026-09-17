@@ -4,8 +4,8 @@
 `mini08-timestamp-fidelity-and-throughput-limits-plan.md`, whose close-out (§4.9) left this as its first open
 item.
 
-**Status:** 🔧 **IN PROGRESS** on branch `mini09-devtimescale-governor` (specified 2026-09-16). P1 built and
-run (2026-09-17); its result redirects P3 — see "P1 — RESULT".
+**Status:** 🔧 **IN PROGRESS** on branch `mini09-devtimescale-governor` (specified 2026-09-16). P1 and P3 built
+and run (2026-09-17). Phase A is measured; §4 awaits decisions D-09.3 to D-09.5 — see "P3 — RESULT".
 
 **Objective, in two halves that must be done in this order.**
 
@@ -298,6 +298,75 @@ DiceGame, **9000X**, so every cap binds: Cap/frame **40 → 48 → 60 → 80 →
 
 **Pass:** each row within ~10% (the within-run spread is ±7%), and the two 40 rows agree with each other. A
 miss is recorded as the model being wrong at that point, not smoothed into agreement.
+
+#### ✅ P3 — RESULT (2026-09-17, one session, 56 reports)
+
+Both parts ran as specified, except that cap 60 held for 2 reports and cap 80 for 1 instead of 3 each. Leg
+boundaries were recovered from demand and `capPerFrame`; reports straddling a change are excluded.
+**Deviation:** at the end the ⏱ Frame cost toggle could not be reached while saturated, so it was disarmed after
+the autobet stopped. The `Sim:` readout's text changes width and pushes the diagnostic column sideways,
+under other controls. The data is unaffected, since disarming only flushes the partial window, which did
+flush. The layout is to be fixed with the governor's readout.
+
+**Part 1 — P3b, the backlog window, 1 credit, cap 40:**
+
+| scale | frames | window (`MaxBacklogSeconds ÷ scale`) | retention | frames > 33 ms per 1,000 | checkpoints |
+|---|---:|---:|---:|---:|---:|
+| 9000X | 1,200 | 22 ms | **0.960** (0.931–0.988) | 1.7 | 2 |
+| 6000X | 2,400 | 33 ms | **0.9992** | 1.7 | 3 |
+| 3000X | 4,200 | 67 ms | **1.0000** | 2.9 | 4 |
+| 9000X again | 1,200 | 22 ms | **0.960** (0.941–0.979) | 7.5 | 5 |
+
+**Confirmed in direction and in the A–B–A** (0.9596 and 0.9602): the loss belongs to the window, not to the
+scale's workload. The simulation took under 1 ms per frame in every leg. The 9000X loss was larger than P1's
+0.987; within each report it tracks the checkpoints, whose 30–43 ms frames exceed a 22 ms window. The
+frames' p95 is ~21–22 ms at every scale, which is why a 22 ms window is so sensitive and a 33 ms one is not.
+
+**Part 2 — P3a, the cap, 99 credits × 9000X:**
+
+| cap | frames | fps | frame | sim | outside sim | delivered/s | predicted | frames > 50 ms per 1,000 | GC frames per 1,000 |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|
+| 40 | 3,600 | 53.1 | 18.85 ms | 6.24 ms | 12.61 ms | **2,123** | 2,130 ✓ | 0.6 | 44 |
+| 48 | 11,400 | 48.3 | 20.71 ms | 7.28 ms | 13.43 ms | **2,317** | 2,390 ✓ (−3%) | 1.6 | 59 |
+| 60 | 1,200 | 40.2 | 24.89 ms | 9.01 ms | 15.87 ms | **2,412** | 2,740 ✗ (−12%) | 6.7 | 87 |
+| 80 | 600 | 33.1 | 30.25 ms | 11.31 ms | 18.94 ms | **2,627** | 3,190 ✗ (−18%) | 36.7 | 110 |
+| 40 again | 2,908 | 51.8 | 19.32 ms | 6.42 ms | 12.90 ms | **2,071** | 2,130 ✓ (A–B–A: −2.4%) | 2.1 | 57 |
+
+**P1's model FAILED past cap 48, and the reason is a variable P1 never varied.** The model assumed the ~12.5 ms
+outside the simulation was a fixed cost. It is not: it grows with bets per frame, 12.6 → 13.4 → 15.9 → 18.9 ms.
+Per bet, the sim stays flat (0.142–0.160 ms), but DiceGame pays a second cost later in the frame, outside the
+profiled method: layout and rendering of what each bet appended. GC frames rise with it (44 → 110 per 1,000).
+**Why P1 could not see it:** both of its saturated legs ran exactly 40 bets per frame, and its 1000X leg's
+frames waited for the display, so their "outside" time was idle, not work. *The extrapolation rested on a
+quantity the data never varied.*
+
+**Fitted over all five legs:** `frame ≈ 7.6 ms + 0.283 ms × bets per frame` (DiceGame, 2009 world). It predicts
+**~44 bets per frame at 50 fps, delivering ~2,190/s** — about 3% above cap 40's ~2,100/s at ~52 fps. The
+asymptote is ~3,500/s at 0 fps.
+
+**What that means for the limit.**
+- **At the chosen 50 fps (D-09.1), moving the cap buys almost nothing:** +3% throughput for a lower frame rate
+  and more stutter, since frames over 50 ms rise 3–60× from cap 48 to 80.
+- **DiceGame's ceiling at 99 credits is therefore ~2,000–2,100 bets/s, i.e. 2000X**, which mini-plan 08 had
+  found empirically, now accounted for rather than observed.
+- **The large lever is not the cap but DiceGame's per-bet UI cost:** the same 40 bets cost 1.83 ms of sim in
+  the hardware shop against 6.24 ms here, plus the outside share measured above. That is a separate piece of
+  work, not this plan's.
+
+**Decisions this result puts to the developer (§4 cannot be built without them):**
+- **D-09.3 — the cap.** Recommended: keep `DefaultMaxBetsPerFrame` at 40. Cap 44 would meet 50 fps
+  exactly, for ~3%.
+- **D-09.4 — the budget.** Recommended: `BetBudgetPerSecond = 2,000`, about 5% under the ~2,100/s measured
+  at cap 40. That makes 99 credits govern to 2000X, where retention was 0.995 in P1.
+- **D-09.5 — the game-time axis.** Two options:
+  - **(a)** lower the effective ceiling to 6000X, where 1 credit retains 0.999;
+  - **(b)** keep 9000X and define the backlog window in **real** time, so that it never shrinks below the
+    frame spikes a normal frame produces (e.g. ≥ 67 ms at any scale, i.e. 6 simulated seconds at ×90).
+
+  Recommended: **(b)**. The loss at 1 credit is catch-up after a long frame, not work the engine cannot do,
+  so widening the window gives up nothing. §38.7's rule forbids raising `MaxBacklogSeconds` to hand a
+  *saturated* frame more work, which this is not: a governed run is, by construction, not saturated.
+  **Verification:** 1 credit × 9000X must then retain ≥ 0.999.
 
 ### P2 — R2-C1: carry the lagged quantity additively (build + verify)
 
