@@ -84,6 +84,32 @@ namespace UI.DevTimeScaleSelector
 
 			AddBetCostToggle();
 			AddFrameCostToggle();
+			AddFrameCapSelector();
+		}
+
+		// Mini-plan 09 P3a — the per-frame bet cap, changeable mid-run so it can be swept A–B–A without a rebuild.
+		// The options are the model's candidates, not a ladder: 40 is today's default, 48 fits the chosen 50 fps
+		// minimum, 60 and 80 test the curve beyond it. It reads the cap back from SimulationService on build, so
+		// returning to the scene shows the cap actually in force (the toggle-mirroring lesson from P1's run).
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void AddFrameCapSelector()
+		{
+			int[] caps = { 40, 48, 60, 80 };
+			var picker = new OptionButton
+			{
+				TooltipText = "DEV — SimulationService.MaxBetsPerFrame, overridden for this session only. "
+					+ "Each extra bet per frame buys throughput with frame rate (mini-plan 09 P1).",
+			};
+			picker.AddThemeFontSizeOverride("font_size", 16);
+			foreach (int cap in caps)
+			{
+				picker.AddItem(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"Cap/frame {cap}"));
+			}
+
+			int current = System.Array.IndexOf(caps, SimulationService.MaxBetsPerFrameForDiagnostics);
+			picker.Select(current < 0 ? 0 : current);
+			picker.ItemSelected += index => SimulationService.SetMaxBetsPerFrameOverrideForDiagnostics(caps[(int)index]);
+			DiagnosticColumn().AddChild(picker);
 		}
 
 		// The diagnostic toggles stack in ONE COLUMN at the end of the row instead of extending it sideways.

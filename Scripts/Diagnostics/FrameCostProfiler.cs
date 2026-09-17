@@ -82,7 +82,7 @@ namespace Scripts.Diagnostics
 			"reportUtc,frames,partial,fps,periodP50Ms,periodP95Ms,periodMaxMs,framesOver16Ms,framesOver33Ms,framesOver50Ms," +
 			"simP50Ms,simP95Ms,simMaxMs,simShare,recomputeMs,playerLoopMs,botLoopMs,founderDriveMs,scheduledDriveMs,tailMs," +
 			"unaccountedMs,playerBetsPerFrame,capBoundShare,botBetsPerFrame,founderAttemptsPerFrame,scheduledAttemptsPerFrame," +
-			"deliveredBetsPerSec,demandBetsPerSec,retentionMean,checkpoints,over50WithCheckpointOrGc,gcFrames";
+			"deliveredBetsPerSec,demandBetsPerSec,retentionMean,checkpoints,over50WithCheckpointOrGc,gcFrames,capPerFrame";
 
 		// ── Committed frames of the current report window (flat arrays: no allocation per frame) ──────────
 		private static readonly double[] _periodMs = new double[ReportEveryFrames];
@@ -431,12 +431,15 @@ namespace Scripts.Diagnostics
 			GD.Print(sb.ToString());
 
 			WriteTraceRow(string.Format(CultureInfo.InvariantCulture,
-				"{0:O},{1},{2},{3:F2},{4:F3},{5:F3},{6:F3},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F4},{14:F4},{15:F4},{16:F4},{17:F4},{18:F4},{19:F4},{20:F4},{21:F3},{22:F4},{23:F3},{24:F3},{25:F3},{26:F1},{27:F1},{28:F4},{29},{30},{31}",
+				"{0:O},{1},{2},{3:F2},{4:F3},{5:F3},{6:F3},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F4},{14:F4},{15:F4},{16:F4},{17:F4},{18:F4},{19:F4},{20:F4},{21:F3},{22:F4},{23:F3},{24:F3},{25:F3},{26:F1},{27:F1},{28:F4},{29},{30},{31},{32}",
 				DateTime.UtcNow, n, partial ? 1 : 0, fps, p50Period, p95Period, maxPeriod, over16, over33, over50,
 				p50Sim, p95Sim, maxSim, simShare,
 				segSum[0] / n, segSum[1] / n, segSum[2] / n, segSum[3] / n, segSum[4] / n, segSum[5] / n, sumUnaccounted / n,
 				(double)sumPlayer / n, capShare, (double)sumBot / n, (double)sumFounder / n, (double)sumScheduled / n,
-				delivered, demand, retention, checkpoints, over50Explained, gcFrames));
+				delivered, demand, retention, checkpoints, over50Explained, gcFrames,
+				// The cap in force when the report closed. A window that straddles a change is a transition and is
+				// read as one; the per-frame bets column shows where inside it the change landed.
+				SimulationService.MaxBetsPerFrameForDiagnostics));
 		}
 
 		private static void WriteTraceRow(string row)

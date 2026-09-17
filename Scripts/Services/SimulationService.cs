@@ -217,12 +217,28 @@ public partial class SimulationService : Node
 	// a slower wall clock, never into distorted in-game dynamics (P4 demonstrated exactly this at 94.3%
 	// retention) — but it is a different régime, and **the next person to raise this number should re-price
 	// a bet first rather than extrapolating from here.**
-	private const int MaxBetsPerFrame = 40;
+	private const int DefaultMaxBetsPerFrame = 40;
 
-	// Mini-plan 08 P1 — BetCostProfiler prints the measured per-bet cost next to the constant that is
-	// supposed to be justified by it, so a report can be read without opening this file. Read-only and
-	// diagnostic; nothing may set the cap through here.
+	// Mini-plan 09 P3a — a DEBUG-only runtime override, so the cap can be swept A–B–A inside ONE run. P1 showed
+	// the ~2,000 bets/s ceiling in DiceGame IS this cap (bound on 100% of saturated frames) and that each extra
+	// bet per frame costs frame rate, not throughput. The only way to measure that trade is to move the cap
+	// while nothing else moves, and between runs the spread is 34%. 0 = no override. RELEASE builds cannot set it
+	// (the setter is Conditional), so there the property always reads the default.
+	private static int _maxBetsPerFrameOverride;
+	private static int MaxBetsPerFrame => _maxBetsPerFrameOverride > 0 ? _maxBetsPerFrameOverride : DefaultMaxBetsPerFrame;
+
+	// Mini-plan 08 P1 — BetCostProfiler prints the measured per-bet cost next to the cap that is supposed to be
+	// justified by it, so a report can be read without opening this file. Reads the EFFECTIVE cap, override
+	// included, so a report taken during a sweep names the cap it actually ran under.
 	public static int MaxBetsPerFrameForDiagnostics => MaxBetsPerFrame;
+
+	/// <summary>DEBUG only — sets the per-frame bet cap for a within-run sweep; 0 restores the default.</summary>
+	[System.Diagnostics.Conditional("DEBUG")]
+	public static void SetMaxBetsPerFrameOverrideForDiagnostics(int cap)
+	{
+		_maxBetsPerFrameOverride = cap <= 0 ? 0 : Math.Min(cap, 1000);
+		GD.Print($"[FrameCap] MaxBetsPerFrame is now {MaxBetsPerFrame} (default {DefaultMaxBetsPerFrame}) — DEBUG override, not persisted.");
+	}
 	private const double MaxBacklogSeconds = 2.0;
 	private const int MaxAutoBetBaseAps = 99;
 

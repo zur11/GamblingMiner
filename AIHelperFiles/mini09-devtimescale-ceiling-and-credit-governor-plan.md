@@ -245,6 +245,60 @@ settle loop.
 - **§4's budget is scene-dependent in fact.** The simplest honest governor uses the DiceGame budget everywhere,
   which is conservative elsewhere. A per-scene budget is possible but is a separate decision, not an assumption.
 
+#### Decisions (2026-09-17)
+
+**D-09.1 — Minimum fps: 50.** The developer's choice, on the recommendation above. P1's model puts it at a cap
+of ~48 and ~2,390 bets/s; P3a measures it instead of trusting the extrapolation.
+
+**D-09.2 — P2 is deferred until after the governor, and its specification was flawed.** P2 said: advance the
+calendar by *last frame's* retained simulated seconds. Reading the frame order to build it:
+`CalendarTimeService` (autoload #3) advances **before** `SimulationService` (#17) in every frame. Under the
+specified change, frame N's clock would move by frame N−1's retained time while frame N simulates its own
+delta.
+- **The two would disagree on every frame whose duration changes, saturated or not.** Today, at retention 1,
+  they agree exactly. The half-open clamp would therefore compress or gap spacing continuously: a 0.62% bias
+  that exists only under saturation, traded for timestamp distortion everywhere.
+- **A lag-free version** has to evaluate every engine's backlog clamp *before* the clock advances, which means
+  restructuring the frame, not editing one line.
+- **Why deferring costs nothing:** the governor's purpose is to keep demand under the budget, so the saturated
+  regime where the bias lives mostly stops occurring.
+
+Re-measure the overspend once the governor runs, and build the restructure only if it is still worth its risk.
+*A fix specified from the arithmetic alone skipped the question of WHEN, inside a frame, each side runs.*
+
+#### P3 — protocol and predictions (registered before the run)
+
+**Instrument added:** a DEBUG-only runtime override of `MaxBetsPerFrame`, set from a **Cap/frame** picker in
+the DEV diagnostic column (40 / 48 / 60 / 80), with the cap in force added as `capPerFrame` to
+`frame_cost_trace.csv`. Not persisted; RELEASE builds cannot set it.
+
+**One session, two parts.** Frame cost ON before starting; Bet cost OFF; Stop-on-block OFF; auto-recharge ON.
+Each step holds for **3 new `[FrameCost]` blocks** in the Godot editor's Output panel.
+
+*Part 1 — P3b, the game-time window.* 1 credit, as the world stands after P1: DEV scale **9000X → 6000X → 3000X
+→ 9000X**, cap 40.
+
+| scale | frame length at which simulated time starts to drop (`MaxBacklogSeconds ÷ scale`) | predicted retention |
+|---|---:|---|
+| 9000X | 22 ms | ~0.987, repeating P1 |
+| 6000X | 33 ms | higher; the loss tracks the share of frames over 33 ms |
+| 3000X | 67 ms | ~1.000 |
+| 9000X again | 22 ms | back to ~0.987 — the A–B–A check |
+
+*Part 2 — P3a, the cap.* Buy back to 99 credits (the autobet keeps running; those reports are transitions),
+DiceGame, **9000X**, so every cap binds: Cap/frame **40 → 48 → 60 → 80 → 40**.
+
+| cap | predicted frame | predicted fps | predicted bets/s |
+|---:|---:|---:|---:|
+| 40 | 18.8 ms | 53 | 2,130 (P1 measured) |
+| 48 | 20.0 ms | 50 | 2,390 |
+| 60 | 21.9 ms | 46 | 2,740 |
+| 80 | 25.1 ms | 40 | 3,190 |
+| 40 again | 18.8 ms | 53 | 2,130 — the A–B–A check |
+
+**Pass:** each row within ~10% (the within-run spread is ±7%), and the two 40 rows agree with each other. A
+miss is recorded as the model being wrong at that point, not smoothed into agreement.
+
 ### P2 — R2-C1: carry the lagged quantity additively (build + verify)
 
 The fix mini-plan 08 specified and did not build. Today the calendar advances `delta × rate × throttle`, where
