@@ -3,7 +3,8 @@
 **Series note:** tenth entry of the *mini-plan* series, following
 `mini09-devtimescale-ceiling-and-credit-governor-plan.md`, whose close-out (§8) left both subjects open.
 
-**Status:** 📋 **SPECIFIED, NOT STARTED** (2026-09-18). To be built on its own branch off `main`.
+**Status:** 🚧 **IN PROGRESS** on `mini10-dicegame-ui-cost-and-clock` (2026-09-18). A1 and B1 are **measured**;
+their results are in §2 A1 and §3 B1/B2, and they changed A2's design — see **D-10.1**.
 
 **Two independent parts, in this order:**
 
@@ -68,19 +69,68 @@ Bet cost's `BetHistoryFeed` segment reads the in-loop share; Frame cost's outsid
 If No reorder recovers little, the cost is in the row writes themselves, and A2's design changes (see A2's
 fallback).
 
-### A2 — The fix: update the lists once per frame, not once per bet
+#### A1 RESULT (run 2026-09-18, 17 reports, `frame_cost_trace.csv`)
 
-**Design (the default; A1 can overturn it):**
-- **Rows never move.** Each list keeps its 100 pooled rows in a fixed order: row 0 is the newest bet, row 99
-  the oldest.
-- **A bet only records its data** in a 100-entry ring buffer, which is O(1): no node work, no layout.
-- **Once per frame, if dirty,** each list rewrites its rows from the ring, newest first. The cost becomes one
-  rewrite per frame, whatever the number of bets in it, instead of `Setup + MoveChild` per bet.
-- **Rewrite only what changed.** A frame with *k* new bets shifts every row's content by *k*, so all visible
-  rows change; rows below the ScrollContainer's visible window can be rewritten lazily when the player
-  scrolls. Whether that virtualisation is needed is decided by measurement, not in advance.
-- **Where the flush runs:** DiceGame already coalesces its settled-bet UI once per frame
-  (`FlushSettledBetUiIfDirty`, after `SimulationService` has settled). The lists flush at the same point.
+Read from `playerLoopMs` — the segment that raises `BetExecuted` — divided by bets per frame. The first report
+of each leg is discarded: it straddles the switch and mixes both modes.
+
+| mode | ms per bet, player loop | of which |
+|---|---:|---|
+| **Full** | 0.198 (0.21 in the second leg) | baseline |
+| **No reorder** | 0.175 | — |
+| **Off** | 0.040 | matches the shop's 0.042 ms ✅ |
+
+- **The UI is 0.158 ms per bet — 80% of the whole cost of processing a bet.** Everything else is 0.040 ms.
+- **`MoveChild` is 0.023 ms of it (15%). The row `Setup` is 0.135 ms (85%).** The pre-registered prediction —
+  that the reorder dominates — is **refuted**, and with it A2's original design (**D-10.1**).
+- At 1,700 bets/s the lists cost **269 ms of CPU per second**, against 68 ms for the simulation itself.
+- **Method caveat, recorded:** in the Off leg the frame hits vsync (p50 16.67 ms, 58 fps), so whole-frame figures
+  measure the display, not the work. Only the player-loop segment is comparable across the three legs, which is
+  why every figure above is read from it. The Off leg's true ceiling was therefore **not** observed — A3 has to
+  go and find it.
+- The two Full legs differ by 6% (0.198 → 0.21), inside mini-plan 09's ~17% between-session spread.
+
+### A2 — The fix: the bet display becomes a window with two costs
+
+**D-10.1 (2026-09-18, replaces this section's original design).** A1 refuted its premise. Reordering is 15% of
+the cost; **repainting rows is 85%**, and no rearrangement of the list touches it. The cost is not *how* the
+rows are written but *how many times*: at 1,700 bets/s the lists repaint ~1,700 rows per second, of which a
+human reads none. So the fix attacks the repaint rate, in two states.
+
+**The two states** (the developer's design, 2026-09-18 — it is what makes the second budget legitimate):
+
+| state | per-bet work | budget |
+|---|---|---|
+| **Hidden** — the bet display is toggled off | **none**, exactly today's `Off` mode: 0.040 ms per bet | the high one |
+| **Visible** | paint the **visible rows only**, at most once per frame | the measured one |
+
+- **The toggle is a PLAYER control, not a DEV one.** Hiding the feed is how the player buys speed, and the
+  trade is legible: you cannot watch what you are not rendering. Default **visible**; not persisted — there is
+  no user-settings persistence yet (`PRIVATE_ROADMAP.md`), and inventing a private one for this is the wrong
+  order of work.
+- **On SHOW, the list rebuilds from the journal's last 100 records** (the existing `LoadFromHistoricalRecords`
+  path). Hiding must never be able to leave a stale row on screen: the panel is a *view*, and a view that was
+  not painted has no content of its own to preserve.
+- **While visible**, the flush runs where DiceGame already coalesces settled-bet UI once per frame
+  (`FlushSettledBetUiIfDirty`, after `SimulationService` has settled), and writes only the rows inside the
+  `ScrollContainer`'s visible window. Rows outside it are written when the player scrolls to them.
+  *Why this is the whole win:* with a 100-row buffer and 30–50 bets per frame, no row is overwritten twice
+  within one frame, so coalescing **alone** saves nothing. Painting ~12 visible rows instead of ~100 is what
+  turns 1,700 repaints per second into ~12 per frame.
+- **Both consumers are in scope** — `BetHistoryContainer` and `PreviousWinnerNumbersGrid`. A1 measured them
+  together and did not split them; if the grid turns out to be the cheap one it can stay visible, but that is a
+  measurement A3 can make, not an assumption to build on.
+
+**The governor gains a second budget, and it is STATE, not adaptation.** `BetBudgetPerSecond` becomes one
+value per cost state, each **measured** (A3), chosen by the state in force. This is not D-09.6's rejected
+adaptive budget: there is no feedback loop and no estimator — two discrete states, two numbers, switched by an
+explicit player action.
+- Showing the display, or entering a scene that paints per bet (**BetsHistoryExplorer**'s replay), re-governs
+  the scale **live** and downward. The orange readout already announces a governed scale; it must say which
+  state is in force, because a speed that changes when a panel opens is otherwise indistinguishable from a bug.
+- **The clock's own ceiling may bind before the hidden budget does** (`CalendarTimeService.MaxGameSecondsPerRealSecond`,
+  the governor's existing `Ceiling` limit). If it does, say so plainly rather than quoting a budget nothing can
+  reach.
 
 **Contract that must not change:**
 - newest first; the same 100-row scrollback; the same colours and texts;
@@ -88,27 +138,31 @@ fallback).
   drives at its own replay pace (mini-plan 04 §2.3). The explorer must render identically; it gets its own
   check in A3;
 - the manual burst stays fluid (mini-plan 08): at most one flush per frame is exactly what the paced burst
-  already assumes.
-
-**Fallback, if A1 shows the row writes themselves dominate:** virtualise first — rewrite only the ~12 visible
-rows per frame, and refresh the rest on scroll.
+  already assumes. **With the display hidden, a manual burst still has to show its result** — the Roll Result
+  label and the balances are not the bet list and keep updating.
 
 ### A3 — Verify, then re-derive the cap and the budget
 
 1. **Behaviour.**
    - DiceGame's list and the winner grid match the journal's last 100 bets exactly: order, values, colours.
+   - **Hide during a run, show again: the list is correct immediately**, not stale and not empty — the case the
+     whole two-state design stands on.
    - After a scene round-trip and after a restart, both show the checkpoint's last bets, as today.
    - BetsHistoryExplorer's replay renders row by row, as before.
 2. **The cap sweep again** (mini-plan 09 P3a's protocol): 99 credits × 9000X, Cap/frame 40 → 60 → 80 → 120 →
-   40 in one run.
+   40 in one run, **with the display visible** — that is the state the visible budget is sized for.
    - Refit `frame ≈ a + b × bets per frame`.
    - **Prediction:** `b` falls from 0.283 ms towards ~0.05 ms, and `a` rises by the per-frame flush cost.
    - Pick the cap that holds D-09.1's 50 fps.
-3. **The budget, sized for the slower session** (D-09.6's lesson): repeat the governed 99-credit leg in a
-   **second session** and size `BetBudgetPerSecond` for the slower of the two, not the faster.
-   **Prediction** (from the refit, to be replaced by measurement): several thousand bets/s, so 99 credits would
-   govern well above today's 1700X.
-4. **Timestamps:** `verify-bet-journal.js` passes A1–A4 on the sweep's journal. A higher cap means more bets per
+3. **The hidden state's ceiling, which A1 could not see.** With the display hidden, the frame sat at vsync, so
+   the run never revealed what it could deliver. Raise the requested scale until either the 50 fps floor or the
+   clock's ceiling binds, and record **which one did**. That figure is the hidden budget; if the ceiling binds
+   first, the hidden budget is "the ceiling" and the number is the clock's, not the frame's.
+4. **The budget(s), sized for the slower session** (D-09.6's lesson): repeat both governed legs in a **second
+   session** and size each `BetBudgetPerSecond` for the slower of the two, not the faster.
+5. **Split the two consumers**, cheaply, while the instrument is armed: one leg with only the winner grid
+   painting. It decides whether the grid needs to hide with the list or can stay.
+6. **Timestamps:** `verify-bet-journal.js` passes A1–A4 on the sweep's journal. A higher cap means more bets per
    frame, which is exactly where the half-open clamp works hardest.
 
 ## 3. Part B — R2-C1's overspend under the governor
@@ -122,6 +176,25 @@ rows per frame, and refresh the rest on scroll.
 
 `overspend = Σ calendar advance ÷ Σ retained − 1`, per report and in the CSV. No journal reconstruction
 needed. Mini-plan 08's 0.620% was an inference from gaps; this is the quantity itself.
+
+#### B1 RESULT (same run as A1)
+
+| retention | overspend |
+|---:|---:|
+| 1.0000 (10 of 17 reports) | **0.000000%** |
+| 0.9988 | 0.073% |
+| 0.9971 | 0.204% |
+| 0.9875 | 0.209% |
+| 0.9700 | 0.329% |
+| 0.9159 | 1.118% |
+
+**The overspend is not a structural bias of the autoload order — it is a symptom of saturation, and it is
+exactly zero when the frame keeps up.** Mini-plan 08's 0.620% was a correct reading *of a saturated run*, and
+reading it as a property of the design was the error this measurement corrects.
+
+Every saturated window in the run was a **Bet UI Full** window: the UI cost is what pushes the 1,700 budget
+into saturation in the first place. **A fixes B**, and B3's criterion should be evaluated after A2 ships, not
+before.
 
 ### B2 — Two readings, from runs that happen anyway
 
@@ -144,9 +217,10 @@ needed. Mini-plan 08's 0.620% was an inference from gaps; this is the quantity i
 
 ## 4. Order, and what each step needs from the developer
 
-1. **Build A1's picker and B1's two sums** (one build) → **run A1** (~2 minutes of play).
-2. **Build A2** → **run A3.1–A3.4** (two sessions for the budget).
-3. **B3 decides from the data already collected**, plus the one forced-saturation leg.
+1. ~~**Build A1's picker and B1's two sums** (one build) → **run A1**~~ ✅ done 2026-09-18. Results in A1 and B1.
+2. **Build A2** — the toggleable display, the visible-row flush, and the two-state budget → **run A3.1–A3.6**
+   (two sessions for the budgets).
+3. **B3 decides from A3's governed data**, plus the one forced-saturation leg — after A2, per B1's result.
 
 ## 5. Out of scope
 
