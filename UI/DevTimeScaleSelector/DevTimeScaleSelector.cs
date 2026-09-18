@@ -87,6 +87,7 @@ namespace UI.DevTimeScaleSelector
 			AddFrameCostToggle();
 			AddFrameCapSelector();
 			AddBetUiModePicker();
+			AddFrameReportCounter();
 
 			// Mini-plan 09 §4 — the governor readout, placed AFTER the diagnostic column so appearing, disappearing
 			// or changing width can never push the toggles out of reach (P3's run lost the Frame cost toggle that
@@ -110,6 +111,52 @@ namespace UI.DevTimeScaleSelector
 			{
 				_calendar.DevTimeScaleChanged -= RefreshEffectiveScale;
 			}
+
+			DisconnectFrameReportCounter();
+		}
+
+		// Mini-plan 10 — the ONLY piece of the frame profiler that is readable from inside the game, deliberately:
+		// a test leg is defined as "three reports", and counting them means watching the Godot editor's Output
+		// panel scroll while playing, which is the one part of the protocol the developer cannot do. The report
+		// CONTENT is not mirrored here — it is read afterwards from user://logs/frame_cost_trace.csv, which is
+		// where the numbers get compared anyway. Hidden while the profiler is disarmed.
+		private Label _frameReportCounterLabel;
+
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void AddFrameReportCounter()
+		{
+			_frameReportCounterLabel = new Label
+			{
+				MouseFilter = MouseFilterEnum.Pass,
+				TooltipText = "DEV — whole-frame reports written since Frame cost was armed. The reports themselves "
+					+ "go to the Godot editor's Output panel and to user://logs/frame_cost_trace.csv.",
+			};
+			_frameReportCounterLabel.AddThemeFontSizeOverride("font_size", 16);
+			DiagnosticColumn().AddChild(_frameReportCounterLabel);
+
+			Scripts.Diagnostics.FrameCostProfiler.ReportPublished += RefreshFrameReportCounter;
+			RefreshFrameReportCounter();
+		}
+
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void DisconnectFrameReportCounter()
+		{
+			if (_frameReportCounterLabel != null)
+			{
+				Scripts.Diagnostics.FrameCostProfiler.ReportPublished -= RefreshFrameReportCounter;
+			}
+		}
+
+		private void RefreshFrameReportCounter()
+		{
+			if (!GodotObject.IsInstanceValid(this) || _frameReportCounterLabel == null)
+			{
+				return;
+			}
+
+			_frameReportCounterLabel.Visible = Scripts.Diagnostics.FrameCostProfiler.Enabled;
+			_frameReportCounterLabel.Text = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+				$"Frame reports: {Scripts.Diagnostics.FrameCostProfiler.ReportCount:N0}");
 		}
 
 		// Event-driven: runs only when the governor changes the effective scale or its reason.

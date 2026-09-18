@@ -129,6 +129,17 @@ namespace Scripts.Diagnostics
 		public static bool Enabled { get; private set; }
 
 		/// <summary>
+		/// Reports written since the profiler was last armed. A test protocol is counted in reports ("three per
+		/// leg"), and counting them by watching the Godot editor's Output panel scroll is the part of the protocol
+		/// the developer cannot do while playing — so the count, and only the count, is readable from inside the
+		/// game. The report CONTENT stays in the Output panel and in the CSV, where it is read afterwards.
+		/// </summary>
+		public static int ReportCount { get; private set; }
+
+		/// <summary>Fires after each report is written, so a DEV readout can show <see cref="ReportCount"/>.</summary>
+		public static event Action ReportPublished;
+
+		/// <summary>
 		/// Turn measurement on or off, announcing the transition in the Godot editor's <b>Output</b> panel
 		/// (GD.Print, never GD.PrintErr). Disarming flushes a partial window: a run that ends off-schedule is
 		/// still data (BetCostProfiler's round-2 lesson).
@@ -147,6 +158,9 @@ namespace Scripts.Diagnostics
 			}
 
 			Enabled = enabled;
+			// Counted per RUN, not per process: the protocol counts reports since arming.
+			ReportCount = 0;
+			ReportPublished?.Invoke();
 			ResetWindow();
 			_pendingValid = false;
 			_inFrame = false;
@@ -455,6 +469,9 @@ namespace Scripts.Diagnostics
 				$"           worst frame {maxPeriod:N1} ms: sim {_simMs[worst]:N1} ms, largest segment {SegmentNames[worstLargestSeg]}, checkpoints {_checkpoints[worst]}, GC {(_gc[worst] ? "yes" : "no")}"));
 
 			GD.Print(sb.ToString());
+
+			++ReportCount;
+			ReportPublished?.Invoke();
 
 			WriteTraceRow(string.Format(CultureInfo.InvariantCulture,
 				"{0:O},{1},{2},{3:F2},{4:F3},{5:F3},{6:F3},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F4},{14:F4},{15:F4},{16:F4},{17:F4},{18:F4},{19:F4},{20:F4},{21:F3},{22:F4},{23:F3},{24:F3},{25:F3},{26:F1},{27:F1},{28:F4},{29},{30},{31},{32},{33:F3},{34:F3},{35:F6},{36}",
