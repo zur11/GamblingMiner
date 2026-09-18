@@ -393,7 +393,11 @@ Candidate inputs (all already available, none requiring new state):
 
 **Promoted in priority by Step 16's own playtest (2026-08-05).** Two of the three participation settings are now per-company (`PlayerPauseOnVotes`, `PlayerAutoAbstain`, plus three policy dials), and with the player holding NST in ten companies the panel-by-panel management is already the slowest part of the loop — this hub is where a bulk view belongs. The step also produced the exact failure it exists to prevent: with the game frozen by a vote at BTC Guild the developer went to ArtForz Cluster, found a normal page, and had no route onward. P16.8e's pause locator patches that one case; **a holdings hub answers the general question ("where is anything waiting for me?") that the locator only answers for the pause.** Reuse `GetCompaniesAwaitingPlayerVote` as the badge source.
 
-### Bet timestamp fidelity + the engine's real throughput ceiling — SPECIFIED, next up (2026-08-26)
+### Bet timestamp fidelity + the engine's real throughput ceiling — ✅ DONE (mini-plan 08, merged 2026-09-15)
+
+> **This entry is history.** Both objectives were met; the figures below are the ones known on 2026-08-30 and
+> were superseded — `MaxBetsPerFrame` ended at 40, the measured ceiling is ~2,000 bets/s at 99 credits, and
+> the run also produced INC-005. Current record: the plan's close-out **§4.9**.
 
 **Status: `AIHelperFiles/mini08-timestamp-fidelity-and-throughput-limits-plan.md`, own branch off `main`.**
 Found by mini-plan 06 §9.10c while investigating something else.
@@ -425,6 +429,28 @@ Where that leaves the target: **99 credits × 600X is comfortable** (9.9 bets/fr
 16.67 ms frame). 99 × 9000X remains out of reach — 148 bets/frame would need ~44 ms — but by ~3×, not the
 15× this entry recorded. Remaining named cost: the bet-history UI containers at 216 µs/bet, 73% of what a
 bet now costs. Full record: `AIHelperFiles/mini08-timestamp-fidelity-and-throughput-limits-plan.md` §4.
+
+### DevTimeScale ceiling + credit-yielding governor — ✅ DONE (mini-plan 09, 2026-09-18)
+
+> Both halves shipped. The budget is `BetBudgetPerSecond = 1,700` (99 credits → 1700X at ≥ 50 fps), and 9000X is
+> real down to 2 credits. The plan's close-out is §8; the open items are listed there and in
+> `IMPLEMENTATION_STATUS.md`. The text below is the original specification.
+
+**Status: `AIHelperFiles/mini09-devtimescale-ceiling-and-credit-governor-plan.md`, own branch off `main`.**
+Picked up from mini-plan 08's close-out, at the developer's request.
+
+**Two halves, in order.** (A) Find the absolute limit: time the whole frame, remove R2-C1's 0.620%
+saturated-backlog overspend, and sweep the bets/s capacity and the game-time ceiling as two separate axes.
+(B) A governor: the developer requests a scale, the game runs at
+`min(requested, BetBudgetPerSecond ÷ Σ running credits, ceiling)`. Buying credits mid-autobet lowers it step
+by step, discarding raises it back, and 100X is never transformed. A readout always shows requested vs
+effective. The budget constant is phase A's result, so B cannot be built first.
+
+**Candidate for a refinement stage after mini-plan 09 (recorded 2026-09-18): an adaptive budget.** The shipped
+governor uses a fixed `BetBudgetPerSecond`, sized for the slowest session measured. That leaves a fast
+session's speed unused and is specific to one machine and one era. Following live delivery would recover that
+speed, but it oscillates and moves the scale for reasons the player cannot see. The measurements to start from
+are in the plan's D-09.6 entry.
 
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 
@@ -537,6 +563,14 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 - [x] Last block and next reward are visible in DiceGame.
 - [x] Block checkpoints restore financial state.
 - [x] Saved strategies work as development/player-owned strategies.
+- [ ] **User settings persistence — a real design, which does not exist yet.** Player-owned settings are
+  scattered across ad-hoc files with no shared rule for what survives a world wipe. The visible symptom
+  (2026-09-15, v6 → v7 reset): `saved_betting_strategies.json` survives every wipe because it sits in the
+  exempt set (`NetworkRoot.ResetWorldIfIncompatible`, CLAUDE.md Pattern 2), and the developer expected it to
+  be deleted. **Do not fix that file alone.** Decide once which settings belong to the player (survive a
+  wipe) and which to the world (wiped with it), then give them one persistence home. Related, and part of
+  the same design: the DEV scale, the strategy panel's last values, and anything a future options menu
+  holds. Required for Basic Mode.
 - [x] User-facing DiceGame label uses `Main Balance`.
 - [~] Clarify auto-recharge behavior in UI and docs. **Docs done** (ProjectDesignManual Ch.25 + CLAUDE.md: progression resets, Insist After Stop, auto-recharge precedence). UI labels/warnings still pending (P2).
 - [x] Add player BTC wallet and addresses.

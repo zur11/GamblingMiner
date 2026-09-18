@@ -217,13 +217,44 @@ public partial class SimulationService : Node
 	// a slower wall clock, never into distorted in-game dynamics (P4 demonstrated exactly this at 94.3%
 	// retention) — but it is a different régime, and **the next person to raise this number should re-price
 	// a bet first rather than extrapolating from here.**
-	private const int MaxBetsPerFrame = 40;
+	private const int DefaultMaxBetsPerFrame = 40;
 
-	// Mini-plan 08 P1 — BetCostProfiler prints the measured per-bet cost next to the constant that is
-	// supposed to be justified by it, so a report can be read without opening this file. Read-only and
-	// diagnostic; nothing may set the cap through here.
+	// Mini-plan 09 P3a — a DEBUG-only runtime override, so the cap can be swept A–B–A inside ONE run. P1 showed
+	// the ~2,000 bets/s ceiling in DiceGame IS this cap (bound on 100% of saturated frames) and that each extra
+	// bet per frame costs frame rate, not throughput. The only way to measure that trade is to move the cap
+	// while nothing else moves, and between runs the spread is 34%. 0 = no override. RELEASE builds cannot set it
+	// (the setter is Conditional), so there the property always reads the default.
+	private static int _maxBetsPerFrameOverride;
+	private static int MaxBetsPerFrame => _maxBetsPerFrameOverride > 0 ? _maxBetsPerFrameOverride : DefaultMaxBetsPerFrame;
+
+	// Mini-plan 08 P1 — BetCostProfiler prints the measured per-bet cost next to the cap that is supposed to be
+	// justified by it, so a report can be read without opening this file. Reads the EFFECTIVE cap, override
+	// included, so a report taken during a sweep names the cap it actually ran under.
 	public static int MaxBetsPerFrameForDiagnostics => MaxBetsPerFrame;
+
+	/// <summary>DEBUG only — sets the per-frame bet cap for a within-run sweep; 0 restores the default.</summary>
+	[System.Diagnostics.Conditional("DEBUG")]
+	public static void SetMaxBetsPerFrameOverrideForDiagnostics(int cap)
+	{
+		_maxBetsPerFrameOverride = cap <= 0 ? 0 : Math.Min(cap, 1000);
+		GD.Print($"[FrameCap] MaxBetsPerFrame is now {MaxBetsPerFrame} (default {DefaultMaxBetsPerFrame}) — DEBUG override, not persisted.");
+	}
 	private const double MaxBacklogSeconds = 2.0;
+
+	// Mini-plan 09 D-09.5 — the backlog window must not shrink below a floor of REAL time. MaxBacklogSeconds is
+	// in SIMULATED seconds, so its real-time width is MaxBacklogSeconds ÷ DevTimeScale: 2 s at 100X, but 22 ms at
+	// 9000X, and ordinary frames cross 22 ms (p95 ~21–22 ms, checkpoint frames 30–43 ms). P3b measured the
+	// consequence at 1 credit, where nothing is saturated: retention 0.960 at 9000X, 0.9992 at 6000X (33 ms), and
+	// 1.0000 at 3000X (67 ms). The floor is the window 3000X already had.
+	//
+	// This is NOT the move §38.7 forbids. That rule stops MaxBacklogSeconds being raised to hand a SATURATED
+	// frame more work. The time lost here is catch-up after a long frame at a demand the engine meets with ease,
+	// and a governed run is by construction not saturated. Below ×30 the floor never binds, so 100X–3000X
+	// behave exactly as before.
+	private const double MinBacklogWindowRealSeconds = 1.0 / 15.0;
+
+	private double BacklogWindowSimSeconds() =>
+		Math.Max(MaxBacklogSeconds, MinBacklogWindowRealSeconds * Math.Max(1, _calendar?.DevTimeScale ?? 1));
 	private const int MaxAutoBetBaseAps = 99;
 
 	// ── Round 2 (R2-T / R2-C1, 2026-07-27) — simulated-time saturation ────────────────────────────────
@@ -359,6 +390,16 @@ public partial class SimulationService : Node
 		_playerBank = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService");
 		_networkData = GetNodeOrNull<BtcNetworkDataService>("/root/BtcNetworkDataService");
 
+		// Mini-plan 09 §4 — the governor's two event-driven inputs. The third, bot runners starting, stopping or
+		// removing themselves, is caught in _Process by comparing the power it already computes every frame.
+		if (_calendar != null)
+		{
+			_calendar.RequestedDevTimeScaleChanged += OnGovernorInputChanged;
+		}
+		HardwareAllocationRepository.HardwareChanged += OnHardwareChangedForGovernor;
+		AssertGovernorNeverLimits100X();
+		OnGovernorInputChanged();
+
 		_networkRoot = new NetworkRoot();
 		AddChild(_networkRoot); // persistent — lives under this autoload
 
@@ -368,6 +409,62 @@ public partial class SimulationService : Node
 
 	// DiceGame calls this when the player starts autobet. The service builds its own session/wallet,
 	// seeded from the current bankroll (the single source of truth).
+	// ── Mini-plan 09 §4 — DevTimeScale governor ────────────────────────────────────────────────────────────
+	private double _lastGovernedCredits = -1d;
+	private int _lastGovernedRequest = -1;
+
+	// The player and bot_1..4 — CasinoClientLedgerService's five canonical clients, the only nodes that bet.
+	private const int BettableNodeCount = 5;
+
+	private void GovernDevTimeScale(double runningCredits)
+	{
+		if (_calendar == null)
+		{
+			return;
+		}
+
+		int requested = _calendar.RequestedDevTimeScale;
+		if (runningCredits == _lastGovernedCredits && requested == _lastGovernedRequest)
+		{
+			return;
+		}
+
+		_lastGovernedCredits = runningCredits;
+		_lastGovernedRequest = requested;
+		(int effective, DevTimeScaleLimit limit) = DevTimeScaleGovernor.Govern(requested, runningCredits);
+		_calendar.ApplyGovernedDevTimeScale(effective, limit, runningCredits);
+	}
+
+	// While nothing runs, the governor PREVIEWS against the player's own credits, so the readout already says what
+	// the next autobet will run at instead of changing the moment it starts.
+	private void OnGovernorInputChanged() =>
+		GovernDevTimeScale(IsRunning ? GetTotalActiveMiningPower() : HardwareRate(PlayerNodeId));
+
+	private void OnHardwareChangedForGovernor(string _) => OnGovernorInputChanged();
+
+	// §4's promise that 100X is never transformed holds only while the budget covers every bettable node at the
+	// credit cap. Printed where the developer reads (the Output panel), not asserted silently.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private static void AssertGovernorNeverLimits100X()
+	{
+		double maxCredits = BettableNodeCount * MaxAutoBetBaseAps;
+		if (DevTimeScaleGovernor.BetBudgetPerSecond < maxCredits)
+		{
+			GD.Print(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+				$"[DevTimeScale] WARNING — BetBudgetPerSecond {DevTimeScaleGovernor.BetBudgetPerSecond:N0} is below " +
+				$"{maxCredits:N0} bets/s ({BettableNodeCount} nodes × {MaxAutoBetBaseAps} credits), so 100X can be slowed."));
+		}
+	}
+
+	public override void _ExitTree()
+	{
+		if (_calendar != null)
+		{
+			_calendar.RequestedDevTimeScaleChanged -= OnGovernorInputChanged;
+		}
+		HardwareAllocationRepository.HardwareChanged -= OnHardwareChangedForGovernor;
+	}
+
 	public void StartPlayerAutobet(PlayerAutobetConfig config)
 	{
 		IsPaused = false; // a fresh run always starts unpaused
@@ -432,6 +529,7 @@ public partial class SimulationService : Node
 		_config = null;
 		_accumulatorSeconds = 0d;
 		_previousFrameClockUtc = DateTime.MinValue; // see the note at the field: a stopped run leaves no anchor
+		OnGovernorInputChanged(); // no engines run now: fall back to the idle preview of the player's own credits
 
 		if (_calendar != null)
 		{
@@ -516,15 +614,28 @@ public partial class SimulationService : Node
 			}
 		}
 
+		// Mini-plan 09 P1 — whole-frame timing (Scripts/Diagnostics/FrameCostProfiler.cs), DEBUG-only and disarmed
+		// by default. It starts HERE, after the pause gate, because a frozen frame simulates nothing. The segments
+		// below are contiguous: each Enter closes the previous one.
+		Scripts.Diagnostics.FrameCostProfiler.BeginFrame();
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.Recompute);
+
 		// Step 7.2: founders mine concurrently with the player (no autonomous clock). Recompute their
 		// power only when a new block appeared (cheap-guard around Satoshi's full-chain BTC scan). Step 14
 		// adds the population scheduler's two layers (visible cast + invisible mass) the same way, then
 		// feeds player+bots+founders+scheduled power to the difficulty regulator so block pacing stays
 		// constant while SHARES follow the historical curve (step14 plan §3.0).
 		double otherMinersPower = GetTotalActiveMiningPower();
+		// Mini-plan 09 §4 — one comparison per frame; the governor runs only when the running credits or the
+		// request actually changed. It runs HERE, before simDelta reads DevTimeScale, so a change applies to this
+		// frame's bets. The calendar already advanced this frame at the previous scale (autoload #3 runs before
+		// #17); the half-open clamp spreads the batch over whatever the clock actually moved.
+		GovernDevTimeScale(otherMinersPower);
 		RecomputeFoundersOnNewBlock(otherMinersPower);
 		RecomputePopulationOnNewBlock(otherMinersPower);
 		_networkRoot?.SetActiveMiningPower(otherMinersPower + (_founders?.TotalActiveFounderPower ?? 0d) + NetworkPopulationScheduler.TotalScheduledPower);
+
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.PlayerLoop);
 
 		// The session may have stopped itself (profit/loss/block/insufficient) while we were away.
 		if (!_session.IsRunning)
@@ -537,6 +648,7 @@ public partial class SimulationService : Node
 				StopNoticePending = true;
 				ClearRunningState();
 				EmitSignal(SignalName.AutobetStopped);
+				Scripts.Diagnostics.FrameCostProfiler.AbortFrame(); // the run ended mid-frame; not a simulated frame
 				return;
 			}
 		}
@@ -554,7 +666,7 @@ public partial class SimulationService : Node
 		_frameWeightedOffered = 0d;
 		_frameWeightedRetained = 0d;
 		double offeredBacklog = _accumulatorSeconds + simDelta;
-		_accumulatorSeconds = Math.Min(offeredBacklog, MaxBacklogSeconds);
+		_accumulatorSeconds = Math.Min(offeredBacklog, BacklogWindowSimSeconds());
 		RecordSimTimeRetention(simDelta, offeredBacklog - _accumulatorSeconds, betsPerSecond);
 
 		// Mini-plan 08 §2 — SPREAD THIS FRAME'S BETS ACROSS THE TIME THEY ACTUALLY OCCUPIED.
@@ -590,17 +702,23 @@ public partial class SimulationService : Node
 		}
 
 		_settleBackdateGameSeconds = 0d;
+		Scripts.Diagnostics.FrameCostProfiler.CountPlayerBets(executed, executed >= MaxBetsPerFrame);
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.BotLoop);
 
 		// Bots advance alongside the player autobet, in every scene (Phase 2).
 		int botExecuted = TickBots(simDelta);
+		Scripts.Diagnostics.FrameCostProfiler.CountBotBets(botExecuted);
 
 		// Step 7.2: drive the founders' concurrent attempts in lockstep with the time the player just
 		// advanced (one founder attempt per its power-share of the player+bot attempts this frame).
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.FounderDrive);
 		DriveFounderMining(executed + botExecuted, otherMinersPower);
 
 		// Step 14 (ND.2): drive the scheduled network (visible cast + invisible mass) the same way —
 		// concurrent miners in lockstep with the player's time advancement, never clock movers.
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.ScheduledDrive);
 		DriveScheduledMining(executed + botExecuted, otherMinersPower);
+		Scripts.Diagnostics.FrameCostProfiler.Enter(Scripts.Diagnostics.FrameCostProfiler.Segment.Tail);
 
 		// R2-C1 (D-R2.5) — THE CLOCK MAY NOT SPEND TIME THE ENGINE COULD NOT SIMULATE. The retained
 		// fraction is 1.0 whenever nothing was discarded, which is every frame that keeps up: below the
@@ -625,6 +743,11 @@ public partial class SimulationService : Node
 		// frame off the same clock; moving it earlier would give them a zero-width window and collapse
 		// their spacing to nothing.
 		_previousFrameClockUtc = clockNowUtc;
+
+		// Demand = what the running engines asked for this frame: their credits (bets per simulated second)
+		// × DevTimeScale. Mini-plan 08 matched this formula against delivered rates to within 1%.
+		Scripts.Diagnostics.FrameCostProfiler.EndFrame(
+			otherMinersPower * Math.Max(1, _calendar?.DevTimeScale ?? 1), retainedFraction);
 	}
 
 	// Recompute founder powers exactly once per new block on the canonical chain. Satoshi's confirmed-BTC
@@ -676,6 +799,7 @@ public partial class SimulationService : Node
 		long tsMs = new DateTimeOffset(_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
 		foreach ((string founderId, int attempts) in drained)
 		{
+			Scripts.Diagnostics.FrameCostProfiler.CountFounderAttempts(attempts);
 			for (int i = 0; i < attempts; i++)
 			{
 				_networkRoot.TryMineSingleNonceAttempt(founderId, out Block? block, tsMs);
@@ -750,6 +874,7 @@ public partial class SimulationService : Node
 		long tsMs = new DateTimeOffset(_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
 		foreach ((string minerId, int attempts, bool isGhost) in drained)
 		{
+			Scripts.Diagnostics.FrameCostProfiler.CountScheduledAttempts(attempts);
 			if (isGhost)
 			{
 				_networkRoot.EnsureGhostNodeRegistered(minerId);
@@ -1005,6 +1130,7 @@ public partial class SimulationService : Node
 	private void CaptureCheckpoint(double settlingBackdateGameSeconds = 0d)
 	{
 		_checkpointInstantLocal = null;
+		Scripts.Diagnostics.FrameCostProfiler.CountCheckpoint();
 		PersistFinancialState(true);
 		if (_principal == null || _bankroll == null || _bankrollProgram == null || _checkpoint == null)
 		{
@@ -1162,7 +1288,7 @@ public partial class SimulationService : Node
 			// dropped sim-time removes its bets AND the founder/scheduled attempts drained off them.
 			double botOffered = Math.Max(0d, delta);
 			double botBacklog = runner.AccumulatorSeconds + botOffered;
-			runner.AccumulatorSeconds = Math.Min(botBacklog, MaxBacklogSeconds);
+			runner.AccumulatorSeconds = Math.Min(botBacklog, BacklogWindowSimSeconds());
 			RecordSimTimeRetention(botOffered, botBacklog - runner.AccumulatorSeconds, betsPerSecond);
 
 			// Mini-plan 08 §2, applied to the bots for the same reason and by the same arithmetic. Their

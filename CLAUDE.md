@@ -180,7 +180,7 @@ only for the one you need. Order below is registration order.
 |---|---|---|
 | 1 | `WorldGuardService` | Runs the world-compatibility guard (format-version or timeline-tag mismatch ⇒ full clean world reset) **before any other autoload can load a `user://` file**. Nothing else. Must stay first |
 | 2 | `UserStatsService` | The player's betting stats in **two layers with different lifetimes**: the pruned bet journal (`BetHistory`, segmented by 10,000 entries, capped at 20 segments) and the **unpruned lifetime rollup** that outlives it; emits `StatsChanged` on a 250 ms throttle |
-| 3 | `CalendarTimeService` | The game clock — local/UTC game time, `SpeedMultiplier`, the DEV `DevTimeScale`, and `SimulationThrottle` (the fraction of simulated time the bet engine actually retained) |
+| 3 | `CalendarTimeService` | The game clock — local/UTC game time, `SpeedMultiplier`, the DEV `DevTimeScale` (the **effective** scale, written only by `DevTimeScaleGovernor` via `SimulationService`; the selector writes `RequestedDevTimeScale`), and `SimulationThrottle` (the fraction of simulated time the bet engine actually retained) |
 | 4 | `BankrollStateService` | The **Bankroll** balance — the active betting subaccount. Balance only; transfers are #6 |
 | 5 | `PrincipalBalanceService` | The **Main Balance** — the player's reserve outside active betting; fires `BalanceChanged` on every mutation |
 | 6 | `BankrollProgramService` | Main ↔ Bankroll transfers: the auto-recharge dose, the `AutoRechargeEnabled` switch, transfer history, recharge counters |

@@ -293,6 +293,22 @@ public partial class DiceGame : Control, IBetEventSource
 		_betHistoryContainer.SubscribeTo(this);
 		_financialStats.ConnectTo(_userStatsService, _casinoClientLedger);
 		_strategyPanel.BetOnceBtnPressed += OnManualBetFromPanel;
+
+		// The strategy panel's PAUSE button is a column to the right of its top row now (2026-09-18), and it
+		// reaches into the navigation buttons' column (x 1392). Those buttons are absolutely placed here, not in a
+		// container shared with the panel, so they cannot be pushed by layout: they are shifted by code, just far
+		// enough to clear PAUSE's real edge, and returned home when it hides. Both signals only mark the shift
+		// dirty; _Process applies it on the next frame, after the containers have laid PAUSE out (Pattern 6's
+		// edge-trigger shape: one flag read per frame, work only on change).
+		foreach (string navName in new[] { "OpenCalculatorBtn", "OpenBlockExplorerBtn", "OpenBankrollProgrammerBtn", "MainMenuBtn", "OpenCalendarNavigatorBtn" })
+		{
+			if (GetNodeOrNull<Control>("%" + navName) is Control navButton)
+			{
+				_navButtonsHome.Add((navButton, navButton.Position));
+			}
+		}
+		_strategyPanel.PauseButton.VisibilityChanged += () => _navShiftDirty = true;
+		_strategyPanel.PauseButton.Resized += () => _navShiftDirty = true;
 		_strategyPanel.AutoBetToggled += OnAutoBetToggled;
 		_strategyPanel.AutoPauseToggled += OnAutoPauseToggled;
 		_strategyPanel.BetAmountInputChanged += OnBetInputChanged;
@@ -308,6 +324,18 @@ public partial class DiceGame : Control, IBetEventSource
 		// DEV/TEST time-acceleration selector (the ladder is DevTimeScaleSelector's own), placed next to the
 		// APS selector — the two together are the `credits × DevTimeScale` throughput demand.
 		var devTimeScale = new UI.DevTimeScaleSelector.DevTimeScaleSelector();
+		// Its DEV test controls (the two profiler toggles, the Cap/frame picker, the governor readout) go in the
+		// empty block right of the LOW button and under Auto Recharge, instead of trailing the top row where they
+		// sat over "Amount to bet" and MAX/MIN (developer's request, 2026-09-18). Bounds from the scene:
+		// HighLowToggleBtn ends at x 252, StrategySaveControls starts at x 704 and ChanceSlider at y 637; Auto
+		// Recharge, laid out inside StrategyControlPanel, ends near y 430. That last bound holds during an autobet
+		// too since PAUSE became a column to the right of the panel's top row instead of growing it downwards
+		// (the interim fix, moving this block to y 498, is superseded by that). Must be set BEFORE the selector
+		// enters the tree, because it builds those controls in _Ready.
+		var devDiagnostics = new VBoxContainer { Position = new Vector2(270f, 445f) };
+		devDiagnostics.AddThemeConstantOverride("separation", 4);
+		AddChild(devDiagnostics);
+		devTimeScale.DiagnosticsHost = devDiagnostics;
 		_apsSelector.GetParent().AddChild(devTimeScale);
 		_apsSelector.GetParent().MoveChild(devTimeScale, _apsSelector.GetIndex() + 1);
 		_session.OnStopped += OnSessionStopped;
@@ -633,6 +661,7 @@ public partial class DiceGame : Control, IBetEventSource
 	{
 		UpdateCurrentAppTimeUI();
 		UpdateBoardVotePauseUi();
+		ApplyNavShiftIfDirty();
 		TickManualBurst(delta);
 		TickAutoBet(delta);
 		// AFTER TickAutoBet, deliberately: the background sim settles this frame's bets during _Process, so
@@ -656,6 +685,38 @@ public partial class DiceGame : Control, IBetEventSource
 
 		_boardVotePauseActive = awaiting;
 		ApplyBettingControlsAvailability();
+	}
+
+	private readonly List<(Control Button, Vector2 Home)> _navButtonsHome = new();
+	private bool _navShiftDirty;
+	private const float NavClearanceFromPause = 12f;
+
+	private void ApplyNavShiftIfDirty()
+	{
+		if (!_navShiftDirty || _navButtonsHome.Count == 0)
+		{
+			return;
+		}
+
+		_navShiftDirty = false;
+		float shift = 0f;
+		Control pause = _strategyPanel?.PauseButton;
+		if (pause != null && pause.IsVisibleInTree())
+		{
+			float homeLeft = float.MaxValue;
+			foreach ((Control _, Vector2 home) in _navButtonsHome)
+			{
+				homeLeft = Math.Min(homeLeft, home.X);
+			}
+
+			// DiceGame fills the viewport from its origin, so the panel's global coordinates are this scene's.
+			shift = Math.Max(0f, pause.GetGlobalRect().End.X + NavClearanceFromPause - homeLeft);
+		}
+
+		foreach ((Control button, Vector2 home) in _navButtonsHome)
+		{
+			button.Position = home + new Vector2(shift, 0f);
+		}
 	}
 
 	// Composes the two independent button locks: only the player node may bet (bot-active lock, see the
