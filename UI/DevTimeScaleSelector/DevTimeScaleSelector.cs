@@ -71,7 +71,8 @@ namespace UI.DevTimeScaleSelector
 				_selector.AddItem($"{mult * 100}X");
 			}
 
-			int current = System.Array.IndexOf(Multipliers, _calendar?.DevTimeScale ?? 1);
+			// The selector shows what was REQUESTED; what actually runs is shown by the governor readout below.
+			int current = System.Array.IndexOf(Multipliers, _calendar?.RequestedDevTimeScale ?? 1);
 			_selector.Select(current < 0 ? 0 : current);
 			_selector.ItemSelected += OnScaleSelected;
 			AddChild(_selector);
@@ -85,6 +86,67 @@ namespace UI.DevTimeScaleSelector
 			AddBetCostToggle();
 			AddFrameCostToggle();
 			AddFrameCapSelector();
+
+			// Mini-plan 09 §4 — the governor readout, placed AFTER the diagnostic column so appearing, disappearing
+			// or changing width can never push the toggles out of reach (P3's run lost the Frame cost toggle that
+			// way to the Sim% text). Hidden while nothing limits the request.
+			_effectiveScaleLabel = new Label { MouseFilter = MouseFilterEnum.Pass };
+			_effectiveScaleLabel.AddThemeFontSizeOverride("font_size", 18);
+			_effectiveScaleLabel.AddThemeColorOverride("font_color", new Color(1f, 0.72f, 0.20f));
+			AddChild(_effectiveScaleLabel);
+			if (_calendar != null)
+			{
+				_calendar.DevTimeScaleChanged += RefreshEffectiveScale;
+			}
+			RefreshEffectiveScale();
+		}
+
+		private Label _effectiveScaleLabel;
+
+		public override void _ExitTree()
+		{
+			if (_calendar != null)
+			{
+				_calendar.DevTimeScaleChanged -= RefreshEffectiveScale;
+			}
+		}
+
+		// Event-driven: runs only when the governor changes the effective scale or its reason.
+		private void RefreshEffectiveScale()
+		{
+			if (!GodotObject.IsInstanceValid(this) || _effectiveScaleLabel == null || _calendar == null)
+			{
+				return;
+			}
+
+			if (_calendar.DevTimeScaleLimit == DevTimeScaleLimit.None)
+			{
+				_effectiveScaleLabel.Visible = false;
+				return;
+			}
+
+			double runningRate = _calendar.DevTimeScale * DevTimeScaleGovernor.DevBaseGameSecondsPerRealSecond;
+			double requestedRate = _calendar.RequestedDevTimeScale * DevTimeScaleGovernor.DevBaseGameSecondsPerRealSecond;
+			double credits = _calendar.DevTimeScaleGovernedCredits;
+			_effectiveScaleLabel.Visible = true;
+
+			if (_calendar.DevTimeScaleLimit == DevTimeScaleLimit.Credits)
+			{
+				_effectiveScaleLabel.Text = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+					$"⇣ {runningRate:N0}X · {credits:N0} credits");
+				_effectiveScaleLabel.TooltipText = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+					$"Requested {requestedRate:N0}X, running at {runningRate:N0}X. {credits:N0} running hardware credits × " +
+					$"{_calendar.DevTimeScale} = {credits * _calendar.DevTimeScale:N0} bets/s, the most that fits the " +
+					$"{DevTimeScaleGovernor.BetBudgetPerSecond:N0} bets/s budget (DiceGame at 50 fps, mini-plan 09). Fewer credits run faster.");
+			}
+			else
+			{
+				_effectiveScaleLabel.Text = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+					$"⇣ {runningRate:N0}X · ceiling");
+				_effectiveScaleLabel.TooltipText = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+					$"Requested {requestedRate:N0}X, running at {runningRate:N0}X: the clock's absolute ceiling " +
+					$"(CalendarTimeService.MaxGameSecondsPerRealSecond).");
+			}
 		}
 
 		// Mini-plan 09 P3a — the per-frame bet cap, changeable mid-run so it can be swept A–B–A without a rebuild.
@@ -220,7 +282,7 @@ namespace UI.DevTimeScaleSelector
 			{
 				// The item list is built from Multipliers in order, so the index maps straight back into it.
 				// Do not restate the ladder's values here — they live in exactly one place, that array.
-				_calendar.DevTimeScale = Multipliers[index];
+				_calendar.RequestedDevTimeScale = Multipliers[index];
 			}
 		}
 	}

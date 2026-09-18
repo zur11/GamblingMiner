@@ -42,6 +42,16 @@ namespace UI.SimRetentionReadout
 		{
 			AddThemeFontSizeOverride("font_size", _fontSize);
 			_calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+
+			// A FIXED width, sized for the widest reading. "Sim: 24%" is narrower than "Sim: 100%", so the label
+			// used to change width as the reading moved, shoving every control to its right; in mini-plan 09's P3 run
+			// that pushed the DEV diagnostic toggles under other controls mid-run. The width is still reserved only
+			// while the readout is visible — it hides outside an autobet.
+			Font font = GetThemeFont("font");
+			if (font != null)
+			{
+				CustomMinimumSize = new Vector2(font.GetStringSize("Sim: 100%", HorizontalAlignment.Left, -1, _fontSize).X, 0f);
+			}
 			Visible = false;
 		}
 

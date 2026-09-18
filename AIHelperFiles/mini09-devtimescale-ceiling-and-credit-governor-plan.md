@@ -5,7 +5,7 @@
 item.
 
 **Status:** 🔧 **IN PROGRESS** on branch `mini09-devtimescale-governor` (specified 2026-09-16). P1 and P3 built
-and run (2026-09-17). Phase A is measured; §4 awaits decisions D-09.3 to D-09.5 — see "P3 — RESULT".
+and run (2026-09-17). Phase A is measured; D-09.3 to D-09.5 decided; §4 built, awaiting its §6 verification run.
 
 **Objective, in two halves that must be done in this order.**
 
@@ -367,6 +367,71 @@ asymptote is ~3,500/s at 0 fps.
   so widening the window gives up nothing. §38.7's rule forbids raising `MaxBacklogSeconds` to hand a
   *saturated* frame more work, which this is not: a governed run is, by construction, not saturated.
   **Verification:** 1 credit × 9000X must then retain ≥ 0.999.
+
+#### Decisions taken (2026-09-17)
+
+- **D-09.3 — cap stays at 40.** Accepted as recommended.
+- **D-09.4 — `BetBudgetPerSecond = 2,000`.** Accepted as recommended.
+- **D-09.5 — (b) is built, and 9000X stays only if it earns it.** The developer's criterion: *if, in what the
+  player actually experiences, 9000X at 1 credit is no different from 6000X, lower the ceiling to 6000X — offer
+  the most honest thing possible.*
+  - **Today they already differ:** 9000X at 0.960 retention runs ~8,640X effective, against 6000X's ~6,000X.
+  - **With the real-time window,** 9000X is expected to run at its full rate.
+  - **So:** build (b), keep 9000X, and apply the developer's criterion to the verification. If 1–2 credits at
+    9000X do **not** reach ≥ 0.999, the ceiling drops to 6000X, together with the ladder, whose top is
+    asserted equal to the ceiling.
+
+#### §4 — BUILT (2026-09-17), awaiting verification
+
+- **`DevTimeScaleGovernor`** (`Scripts/Services/DevTimeScaleGovernor.cs`), pure static.
+  `Govern(requested, runningCredits)` returns `min(requested, ⌊BetBudgetPerSecond ÷ credits⌋, ceiling ÷ 100)`,
+  clamped ≥ 1, plus the reason: `None`, `Credits` or `Ceiling`.
+- **`CalendarTimeService`:**
+  - `RequestedDevTimeScale` is the selector's to write and raises `RequestedDevTimeScaleChanged`.
+  - `DevTimeScale` is now the effective scale, with a **private setter**, so only
+    `ApplyGovernedDevTimeScale` can change it. The compiler enforces that no other writer exists.
+  - `DevTimeScaleLimit` and `DevTimeScaleGovernedCredits` carry the reason and the credits for the readout,
+    and `DevTimeScaleChanged` fires on change.
+  - Every reader of `DevTimeScale` is unchanged: the clock, the bet engine's `simDelta`, the difficulty
+    trace's `devTimeScale` column.
+- **`SimulationService`** governs on three inputs:
+  - the request changing (event);
+  - `HardwareChanged` (event);
+  - the running credits changing, which catches bot runners starting, stopping or removing themselves.
+    That one is a single comparison per frame, against the power `_Process` already computes; the governor
+    runs only on change.
+  - **While idle it previews** against the player's own credits, so the readout already shows what the next
+    autobet will run at.
+  - **DEBUG check at boot:** `BetBudgetPerSecond ≥ 5 bettable nodes × MaxAutoBetBaseAps`. If that ever fails,
+    the Output panel prints a warning, because 100X could then be slowed.
+- **D-09.5(b):** both backlog clamps use `max(MaxBacklogSeconds, MinBacklogWindowRealSeconds × DevTimeScale)`,
+  with the floor at 1/15 s, the window 3000X already had. It never binds below ×30.
+- **Readout:** after the diagnostic column, amber, hidden while nothing limits. It shows
+  `⇣ 2000X · 99 credits` or `⇣ 6000X · ceiling`, with a tooltip spelling out requested vs running and the
+  budget arithmetic. The selector itself always shows the request.
+- **`SimRetentionReadout` has a fixed width** sized for `Sim: 100%`, so its changing text no longer pushes the
+  diagnostic toggles out of reach (P3's run).
+
+#### §6 — verification protocol and predictions (registered before the run)
+
+One session, starting from the world as P3 left it (99 credits). Frame cost ON before starting, Bet cost OFF,
+Stop-on-block OFF, auto-recharge ON, Cap/frame 40. Each measured step holds for **3 new `[FrameCost]` blocks**.
+
+| step | action | predicted readout | predicted retention |
+|---|---|---|---|
+| 1 | idle, request **100X** | none | — |
+| 2 | request **9000X**, still idle | `⇣ 2000X · 99 credits` before the autobet starts | — |
+| 3 | start the autobet | unchanged | ~0.995 (P1's 2000X) at ≥ 50 fps |
+| 4 | discard to **50** credits | `⇣ 4000X · 50 credits` | ≥ 0.99 |
+| 5 | discard to **23** | `⇣ 8600X · 23 credits` | ≥ 0.99 |
+| 6 | discard to **22** | none — 22 × 90 = 1,980 ≤ 2,000 | ≥ 0.99 |
+| 7 | discard to **2** | none, 9000X | **≥ 0.999** — the D-09.5 criterion |
+| 8 | request **100X**, running | none | 1.000 |
+
+**Also from disk afterwards:**
+- `verify-bet-journal.js` passes A1–A4 across every scale change;
+- the difficulty trace's `devTimeScale` column shows the effective values;
+- in the frame trace, delivered bets/s never exceeds ~2,000 while the readout is showing.
 
 ### P2 — R2-C1: carry the lagged quantity additively (build + verify)
 

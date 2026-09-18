@@ -18,7 +18,55 @@ public partial class CalendarTimeService : Node
 	// (SimulationService._Process), keeping attempts-per-IN-GAME-second — and therefore the difficulty /
 	// power / solvetime dynamics — mathematically invariant. Only wall-clock time compresses. NOT persisted;
 	// resets to 1 on restart. Set via the DEV time-scale selector in DiceGame / BlockExplorer.
-	public int DevTimeScale { get; set; } = 1;
+	//
+	// Mini-plan 09 §4 — this is now the EFFECTIVE scale, and only the governor writes it (the setter is private,
+	// so the compiler enforces that). The developer's choice is RequestedDevTimeScale below; SimulationService
+	// runs DevTimeScaleGovernor over it and the running hardware credits, and applies the result here. Every
+	// reader (this clock, the bet engine's simDelta, the difficulty trace) keeps reading this property unchanged.
+	public int DevTimeScale { get; private set; } = 1;
+
+	private int _requestedDevTimeScale = 1;
+
+	/// <summary>The DevTimeScale the developer selected. Written only by the DEV selector.</summary>
+	public int RequestedDevTimeScale
+	{
+		get => _requestedDevTimeScale;
+		set
+		{
+			int clamped = Math.Max(1, value);
+			if (clamped == _requestedDevTimeScale)
+			{
+				return;
+			}
+
+			_requestedDevTimeScale = clamped;
+			RequestedDevTimeScaleChanged?.Invoke();
+		}
+	}
+
+	/// <summary>Why <see cref="DevTimeScale"/> is below the request, if it is.</summary>
+	public DevTimeScaleLimit DevTimeScaleLimit { get; private set; } = DevTimeScaleLimit.None;
+
+	/// <summary>The running credits the current effective scale was governed against — for the readout.</summary>
+	public double DevTimeScaleGovernedCredits { get; private set; }
+
+	public event Action RequestedDevTimeScaleChanged;
+	public event Action DevTimeScaleChanged;
+
+	/// <summary>Called by SimulationService with the governor's result; raises DevTimeScaleChanged only on change.</summary>
+	public void ApplyGovernedDevTimeScale(int effective, DevTimeScaleLimit limit, double governedCredits)
+	{
+		effective = Math.Max(1, effective);
+		if (effective == DevTimeScale && limit == DevTimeScaleLimit && governedCredits == DevTimeScaleGovernedCredits)
+		{
+			return;
+		}
+
+		DevTimeScale = effective;
+		DevTimeScaleLimit = limit;
+		DevTimeScaleGovernedCredits = governedCredits;
+		DevTimeScaleChanged?.Invoke();
+	}
 
 	// R2-C1 (2026-07-27, btc-pools-hardware-plan.md §R2.3a/§R2.7) — the fraction of last frame's simulated
 	// time the bet engine actually retained. `1.0` = it kept up, and the clock advances exactly as it always
