@@ -311,11 +311,14 @@ public partial class DiceGame : Control, IBetEventSource
 		// Its DEV test controls (the two profiler toggles, the Cap/frame picker, the governor readout) go in the
 		// empty block right of the LOW button and under Auto Recharge, instead of trailing the top row where they
 		// sat over "Amount to bet" and MAX/MIN (developer's request, 2026-09-18). Bounds from the scene:
-		// HighLowToggleBtn ends at x 252, StrategySaveControls starts at x 704 and ChanceSlider at y 637; Auto
-		// Recharge, laid out inside StrategyControlPanel, ends near y 430. Must be set BEFORE the selector enters
-		// the tree, because it builds those controls in _Ready.
-		var devDiagnostics = new VBoxContainer { Position = new Vector2(270f, 445f) };
-		devDiagnostics.AddThemeConstantOverride("separation", 4);
+		// HighLowToggleBtn ends at x 252, StrategySaveControls starts at x 704 and ChanceSlider at y 637. Auto
+		// Recharge is laid out inside StrategyControlPanel and MOVES: it ends near y 430 idle but near y 495 while
+		// an autobet runs, because the panel grows when PAUSE appears. The first placement (y 445) was measured
+		// idle and sat over Auto Recharge during every run; y 498 clears the running layout, and the four controls
+		// (~130 px at separation 2) still end above the slider. Must be set BEFORE the selector enters the tree,
+		// because it builds those controls in _Ready.
+		var devDiagnostics = new VBoxContainer { Position = new Vector2(270f, 498f) };
+		devDiagnostics.AddThemeConstantOverride("separation", 2);
 		AddChild(devDiagnostics);
 		devTimeScale.DiagnosticsHost = devDiagnostics;
 		_apsSelector.GetParent().AddChild(devTimeScale);

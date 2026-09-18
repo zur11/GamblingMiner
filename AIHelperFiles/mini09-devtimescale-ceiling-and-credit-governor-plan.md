@@ -5,7 +5,8 @@
 item.
 
 **Status:** 🔧 **IN PROGRESS** on branch `mini09-devtimescale-governor` (specified 2026-09-16). P1 and P3 built
-and run (2026-09-17). Phase A is measured; D-09.3 to D-09.5 decided; §4 built, awaiting its §6 verification run.
+and run (2026-09-17). Phase A is measured; D-09.3 to D-09.5 decided; §4 built and verified (2026-09-18) — the mechanism passes,
+the budget needs D-09.6.
 
 **Objective, in two halves that must be done in this order.**
 
@@ -432,6 +433,60 @@ Stop-on-block OFF, auto-recharge ON, Cap/frame 40. Each measured step holds for 
 - `verify-bet-journal.js` passes A1–A4 across every scale change;
 - the difficulty trace's `devTimeScale` column shows the effective values;
 - in the frame trace, delivered bets/s never exceeds ~2,000 while the readout is showing.
+
+#### §6 — RESULT (2026-09-18): the governor works; the budget does not hold across sessions
+
+The developer ran steps 1–8 and saw every predicted readout. Step 8 was cut short (its three reports at 100X
+would have taken minutes); the frame trace still holds six reports of it.
+
+| step | effective scale | fps | frame | sim per bet | outside sim | demand | delivered | retention |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 3 — 99 credits | 2000X (credits) | 45.6 | 21.97 ms | 0.184 ms | 14.62 ms | 1,980 | 1,822 | **0.936** |
+| 4 — 50 credits | 4000X (credits) | 46.0 | 21.73 ms | 0.168 ms | 15.15 ms | 2,000 | 1,799 | **0.930** |
+| 5 — 23 credits | 8600X (credits) | 45.8 | 21.86 ms | 0.176 ms | 15.05 ms | 1,978 | 1,771 | **0.931** |
+| 6 — 22 credits | 9000X | 46.2 | 21.67 ms | 0.179 ms | 14.57 ms | 1,980 | 1,832 | **0.942** |
+| 7 — 2 credits | 9000X | 58.3 | 17.16 ms | — | — | 180 | 179 | **0.9993** ✓ |
+| 8 — 2 credits | 100X | ~60 | ~16.7 ms | — | — | 2 | 2 | **1.000** ✓ |
+| (hardware shop, 33 bets/frame) | 2000X | 59.7 | 16.75 ms | 0.042 ms | — | 1,980 | 1,981 | 1.000 |
+
+**What passed:**
+- **The mechanism.** Every readout matched. The difficulty trace's `devTimeScale` column records the effective
+  scale per block: 20 → 40 → 86 → 90.
+- **Timestamps under repeated scale changes.** `verify-bet-journal.js`: A1, A1b, A3 PASS; A4 13 of 13
+  player-mined blocks joined to the millisecond.
+- **D-09.5's criterion.** 2 credits at 9000X retained 0.9993 (0.960 before the real-time window), including
+  reports holding 3 and 5 checkpoints. **9000X stays.**
+- **100X untouched.** Retention 1.000 at the display rate.
+
+**What failed: the 50 fps target at the 2,000 budget.** With demand held at the budget (steps 3–6), DiceGame
+delivered ~1,800 bets/s at ~46 fps with retention ~0.93. The same configuration ran at 53–55 fps and 0.995 on
+2026-09-17.
+- **The whole frame was ~17% slower, and evenly:** sim cost per bet 0.184 ms against 0.156 (P3a), and the work
+  outside the sim 14.6 ms against 12.6.
+- **A uniform factor across both halves matches mini-plan 08 P1g's between-session spread** (up to 34%), not a
+  code change: this build added one comparison per frame to the sim path, and nothing else inside it.
+  *Hypothesis, not isolated.* An A–B–A inside one session would settle it, and is not needed for the decision
+  below.
+- **The budget's 5% margin was smaller than the known between-session spread,** so the failure was
+  predictable from P1g. The margin was chosen against within-run noise (±7%), the wrong reference.
+
+**And it matters for honesty, not only for fluidity.** At retention 0.936 the readout said 2000X while game time
+actually ran at ~1,870X. The developer's standard, stated for D-09.5, is to offer the player the most honest
+figure possible. A budget the engine cannot sustain makes the readout overstate the speed.
+
+**D-09.6 — the budget, to be decided.** The slow session's frame, scaled from P3a's fit
+(≈ 1.16 × (7.6 + 0.283 × bets per frame)), holds 50 fps at ~34 bets per frame: **~1,700 bets/s.**
+- **(a) Lower `BetBudgetPerSecond` to 1,700 — recommended.** Holds 50 fps and full retention in both sessions
+  measured. 99 credits govern to 1700X. The cost: ~15% of speed on a fast session, which could have run
+  2000X.
+- **(b) Keep 2,000.** Fast sessions run at ~53 fps; slow ones at ~46 fps, with the readout overstating the
+  rate by ~7%.
+- **(c) An adaptive budget** that follows measured delivery. Rejected in §5 as unpredictable; this result is the
+  evidence §5 said would reopen it, but it is a larger build.
+
+**Layout fix, found in this run's screenshots.** With an autobet running, StrategyControlPanel grows (PAUSE
+appears), and Auto Recharge moves down to ~495. The diagnostic column, placed from an idle screenshot at y 445,
+sat over it. It moves to y 498, with separation 2, which still ends above the chance slider.
 
 ### P2 — R2-C1: carry the lagged quantity additively (build + verify)
 
