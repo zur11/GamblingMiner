@@ -93,7 +93,7 @@ namespace UI.DevTimeScaleSelector
 			_effectiveScaleLabel = new Label { MouseFilter = MouseFilterEnum.Pass };
 			_effectiveScaleLabel.AddThemeFontSizeOverride("font_size", 18);
 			_effectiveScaleLabel.AddThemeColorOverride("font_color", new Color(1f, 0.72f, 0.20f));
-			AddChild(_effectiveScaleLabel);
+			(DiagnosticsHost ?? (Node)this).AddChild(_effectiveScaleLabel);
 			if (_calendar != null)
 			{
 				_calendar.DevTimeScaleChanged += RefreshEffectiveScale;
@@ -180,8 +180,21 @@ namespace UI.DevTimeScaleSelector
 		// methods compile away — adds no empty container.
 		private VBoxContainer _diagnosticColumn;
 
+		/// <summary>
+		/// Optional container, set by the host scene BEFORE this selector enters the tree, that receives the DEV
+		/// test controls (the profiler toggles, the Cap/frame picker, the governor readout) instead of this row.
+		/// DiceGame uses it to put them in a free block of its layout; BlockExplorer leaves it null and keeps them
+		/// at the end of the row.
+		/// </summary>
+		public VBoxContainer DiagnosticsHost { get; set; }
+
 		private VBoxContainer DiagnosticColumn()
 		{
+			if (DiagnosticsHost != null)
+			{
+				return DiagnosticsHost;
+			}
+
 			if (_diagnosticColumn == null)
 			{
 				_diagnosticColumn = new VBoxContainer();

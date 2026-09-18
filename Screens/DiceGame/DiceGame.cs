@@ -308,6 +308,16 @@ public partial class DiceGame : Control, IBetEventSource
 		// DEV/TEST time-acceleration selector (the ladder is DevTimeScaleSelector's own), placed next to the
 		// APS selector — the two together are the `credits × DevTimeScale` throughput demand.
 		var devTimeScale = new UI.DevTimeScaleSelector.DevTimeScaleSelector();
+		// Its DEV test controls (the two profiler toggles, the Cap/frame picker, the governor readout) go in the
+		// empty block right of the LOW button and under Auto Recharge, instead of trailing the top row where they
+		// sat over "Amount to bet" and MAX/MIN (developer's request, 2026-09-18). Bounds from the scene:
+		// HighLowToggleBtn ends at x 252, StrategySaveControls starts at x 704 and ChanceSlider at y 637; Auto
+		// Recharge, laid out inside StrategyControlPanel, ends near y 430. Must be set BEFORE the selector enters
+		// the tree, because it builds those controls in _Ready.
+		var devDiagnostics = new VBoxContainer { Position = new Vector2(270f, 445f) };
+		devDiagnostics.AddThemeConstantOverride("separation", 4);
+		AddChild(devDiagnostics);
+		devTimeScale.DiagnosticsHost = devDiagnostics;
 		_apsSelector.GetParent().AddChild(devTimeScale);
 		_apsSelector.GetParent().MoveChild(devTimeScale, _apsSelector.GetIndex() + 1);
 		_session.OnStopped += OnSessionStopped;
