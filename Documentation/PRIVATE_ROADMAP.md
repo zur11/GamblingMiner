@@ -580,9 +580,19 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   (2026-09-15, v6 → v7 reset): `saved_betting_strategies.json` survives every wipe because it sits in the
   exempt set (`NetworkRoot.ResetWorldIfIncompatible`, CLAUDE.md Pattern 2), and the developer expected it to
   be deleted. **Do not fix that file alone.** Decide once which settings belong to the player (survive a
-  wipe) and which to the world (wiped with it), then give them one persistence home. Related, and part of
-  the same design: the DEV scale, the strategy panel's last values, and anything a future options menu
-  holds. Required for Basic Mode.
+  wipe) and which to the world (wiped with it), then give them one persistence home. Required for Basic Mode.
+
+  **What is waiting for it** — the list is kept here, because each of these is currently a *decision deferred*,
+  and a deferral nobody wrote down becomes an omission. Add a line whenever a feature ships a setting with no
+  home; that is the cost signal telling us when this is due.
+
+  | setting | today | belongs to |
+  |---|---|---|
+  | Saved betting strategies | `saved_betting_strategies.json`, exempt from the wipe — survives, which surprised the developer | the player, probably — but the surprise says the rule was never stated, not that the file is wrong |
+  | **Bet display visible / hidden** (mini-plan 10 A2) | not persisted; resets to visible on every DiceGame entry | the player. It is also a **speed** choice, since the hidden state runs on a higher budget — so forgetting it silently changes how fast the next session runs |
+  | DEV time scale (the requested one) | not persisted | DEV, but the same mechanism |
+  | The strategy panel's last-used values | not persisted; distinct from a *saved* strategy | the player |
+  | Anything a future options menu holds | does not exist | the player |
 - [x] User-facing DiceGame label uses `Main Balance`.
 - [~] Clarify auto-recharge behavior in UI and docs. **Docs done** (ProjectDesignManual Ch.25 + CLAUDE.md: progression resets, Insist After Stop, auto-recharge precedence). UI labels/warnings still pending (P2).
 - [x] Add player BTC wallet and addresses.
