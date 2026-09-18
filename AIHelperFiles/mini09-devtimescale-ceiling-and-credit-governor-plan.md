@@ -5,8 +5,8 @@
 item.
 
 **Status:** 🔧 **IN PROGRESS** on branch `mini09-devtimescale-governor` (specified 2026-09-16). P1 and P3 built
-and run (2026-09-17). Phase A is measured; D-09.3 to D-09.5 decided; §4 built and verified (2026-09-18); D-09.6 decided (budget 1,700),
-awaiting a short confirmation run.
+and run (2026-09-17). Phase A is measured; D-09.3 to D-09.5 decided; §4 built and verified (2026-09-18); D-09.6 decided (budget 1,700)
+and confirmed. Both objectives met; awaiting close-out.
 
 **Objective, in two halves that must be done in this order.**
 
@@ -514,6 +514,29 @@ sat over it. It moves to y 498, with separation 2, which still ends above the ch
     after it appears (after the containers have laid it out), and returns them when it hides. At font 30 the
     shifted column is *estimated* to fit inside the 1920 px viewport, and at 44 to overflow it by ~20 px. Both
     figures come from text widths, not from the screen, and the first is to be confirmed by eye.
+
+#### ✅ D-09.6 — confirmation RESULT (2026-09-18, 99 credits, requested 9000X)
+
+The readout showed `⇣ 1,700X · 99 credits` before and during the run. The frame trace holds 8 full reports at
+demand 1,683 bets/s (99 × 17). The final partial window was not flushed because the toggle was left armed,
+which loses nothing but that window.
+
+| | measured | target |
+|---|---:|---:|
+| fps | **53.1** mean, **50.5** worst report | ≥ 50 (D-09.1) |
+| delivered | **1,679** bets/s against 1,683 demanded | = demand |
+| retention | **0.9984** mean, 0.990 worst report | ~1.000 |
+| cap bound | 5–37% of frames | < 100% (not saturated) |
+
+**The honest-readout criterion holds:** what the readout says (1700X) is what ran. Sim cost was ~0.19 ms per
+bet, as slow as §6's session and slower than P3a's, so the budget held in the kind of session it was sized
+for. The developer watched `Sim:` stay at 100% throughout.
+
+**Layout confirmed by eye** from the developer's screenshots:
+- PAUSE appears to the right of STOP;
+- the navigation column shifts right and stays inside the viewport, which settles the estimate above;
+- RESUME keeps PAUSE's width;
+- Auto Recharge and the diagnostic column do not move.
 
 ### P2 — R2-C1: carry the lagged quantity additively (build + verify)
 
