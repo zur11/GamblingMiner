@@ -430,7 +430,11 @@ Where that leaves the target: **99 credits × 600X is comfortable** (9.9 bets/fr
 15× this entry recorded. Remaining named cost: the bet-history UI containers at 216 µs/bet, 73% of what a
 bet now costs. Full record: `AIHelperFiles/mini08-timestamp-fidelity-and-throughput-limits-plan.md` §4.
 
-### DevTimeScale ceiling + credit-yielding governor — SPECIFIED, next up (2026-09-16)
+### DevTimeScale ceiling + credit-yielding governor — ✅ DONE (mini-plan 09, 2026-09-18)
+
+> Both halves shipped. The budget is `BetBudgetPerSecond = 1,700` (99 credits → 1700X at ≥ 50 fps), and 9000X is
+> real down to 2 credits. The plan's close-out is §8; the open items are listed there and in
+> `IMPLEMENTATION_STATUS.md`. The text below is the original specification.
 
 **Status: `AIHelperFiles/mini09-devtimescale-ceiling-and-credit-governor-plan.md`, own branch off `main`.**
 Picked up from mini-plan 08's close-out, at the developer's request.

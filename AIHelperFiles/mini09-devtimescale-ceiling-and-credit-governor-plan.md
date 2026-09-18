@@ -4,9 +4,8 @@
 `mini08-timestamp-fidelity-and-throughput-limits-plan.md`, whose close-out (§4.9) left this as its first open
 item.
 
-**Status:** 🔧 **IN PROGRESS** on branch `mini09-devtimescale-governor` (specified 2026-09-16). P1 and P3 built
-and run (2026-09-17). Phase A is measured; D-09.3 to D-09.5 decided; §4 built and verified (2026-09-18); D-09.6 decided (budget 1,700)
-and confirmed. Both objectives met; awaiting close-out.
+**Status:** ✅ **COMPLETE (2026-09-18)** on branch `mini09-devtimescale-governor`, awaiting merge to `main`.
+Close-out: **§8**.
 
 **Objective, in two halves that must be done in this order.**
 
@@ -661,3 +660,49 @@ distribution, and the ceiling confirmed or corrected. Written into §6's record 
 - **Persisting the requested scale.** User settings persistence does not exist yet (see `PRIVATE_ROADMAP.md`
   §6), and this plan will not invent a one-off for it.
 - **Interleaving player and bot settle loops** (mini-plan 08's D4 residual). Unrelated to throughput.
+
+## 8. Close-out (2026-09-18)
+
+**Both objectives are met.**
+
+1. **The limit is measured, and it turned out to be a choice, not a wall.**
+   - **In DiceGame the ceiling is `MaxBetsPerFrame` itself,** bound on every saturated frame. Past it, each
+     extra bet per frame costs frame rate, not throughput: `frame ≈ 7.6 ms + 0.283 ms × bets per frame`,
+     fitted in-run over caps 40–80.
+   - **At the chosen 50 fps (D-09.1) the cap stays at 40 (D-09.3).** Sessions on the same machine differ by
+     ~17%, so the budget is sized for the slower: **1,700 bets/s (D-09.6)**. 99 credits run at 1700X, and 1700X
+     is what actually runs (53 fps, retention 0.998, confirmed).
+   - **The game-time ceiling of 9000X stays.** It is real down to 2 credits (0.999 retention) since the
+     backlog window gained a real-time floor (D-09.5).
+2. **The governor gives priority to hardware credits.** Requested vs effective, recomputed on events, 100X
+   never touched, a readout that always says what runs. Verified across 99 → 50 → 23 → 22 → 2 credits, with the
+   timestamp scanner passing A1–A4 over every scale change.
+
+**What shipped:**
+- **Instruments:** `FrameCostProfiler` (whole-frame, H1–H4 per report, `frame_cost_trace.csv`) and a DEBUG
+  runtime `MaxBetsPerFrame` override for within-run sweeps.
+- **The governor:** `DevTimeScaleGovernor`, `RequestedDevTimeScale`, and `DevTimeScale` with a private setter.
+- **The backlog window's real-time floor.**
+- **UI:**
+  - the governor readout;
+  - `Sim:` at a fixed width;
+  - the diagnostic toggles mirroring their profilers' static state;
+  - the DEV test controls in DiceGame's free block;
+  - PAUSE as its own column, with the navigation buttons shifting to clear it.
+
+**Open, each its own decision:**
+- **An adaptive budget** (D-09.6 option c). A candidate for a refinement stage; the data to start from is in
+  D-09.6.
+- **R2-C1's saturated-backlog overspend (P2, D-09.2).** Its specified fix was flawed: it would have
+  desynchronised the clock on every frame. The governor now keeps runs out of saturation, which is the only
+  regime where the overspend exists, so it should be re-measured before anything is built.
+- **DiceGame's per-bet UI cost** — the real lever for going faster. The same 40 bets cost 0.04 ms of sim per bet
+  in the hardware shop against ~0.16–0.19 in DiceGame, plus the outside-sim share P3a measured.
+- **Four in-sim spikes of 15–67 ms with no checkpoint or GC** (P1, H4) remain unattributed.
+
+*Lessons this plan paid for, recorded once:*
+- **An extrapolation is only as good as the variables the data actually varied.** P1's model held the outside
+  cost constant because both saturated legs ran 40 bets per frame, and P3a broke it.
+- **A margin must be sized against the variance that will actually occur.** Within-run noise was the wrong
+  reference; the between-session spread was the right one, and mini-plan 08 had already measured it.
+- **A fix specified from arithmetic alone must also ask WHEN each side runs inside a frame (P2).**

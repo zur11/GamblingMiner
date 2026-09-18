@@ -62,6 +62,15 @@ Manages game-time progression.
 - Advances via `_Process(delta)` when `IsRunning = true`
 - `SpeedMultiplier` allows adjustable time scaling
 - **`SimulationThrottle` (R2-C1, 2026-07-27)** — the fraction of last frame's simulated time the bet engine actually retained; the clock advances `delta × SpeedMultiplier × DevTimeScale × throttle`. `1.0` (inert) whenever nothing is dropped, which is every frame that keeps up; below 1 only when `SimulationService`'s backlog clamp discarded simulated work, so **game time can never outrun the mining it represents**. Written by `SimulationService` each frame, reset to `1.0` when the sim stops. See the Round 2 entry under Blockchain / Mining below
+- **`DevTimeScale` is the EFFECTIVE DEV scale (mini-plan 09).** It has a private setter and changes only
+  through `ApplyGovernedDevTimeScale`, called by `SimulationService` with `DevTimeScaleGovernor`'s result.
+  - The DEV selector writes `RequestedDevTimeScale` instead.
+  - `DevTimeScaleLimit` and `DevTimeScaleGovernedCredits` say why and against what the effective scale sits
+    below the request.
+  - `RequestedDevTimeScaleChanged` and `DevTimeScaleChanged` fire on change.
+  - Every reader of `DevTimeScale` (this clock, the bet engine, the difficulty trace) reads the effective
+    value.
+  - Neither value is persisted; both reset to 100X on restart.
 - Persists to `user://calendar_state.json`
 - Key properties: `CurrentLocalDateTime`, `CurrentUtcDateTime`, `ExplorerSelectedLocalDateTime`
 
@@ -175,6 +184,17 @@ Owns the running **background simulation** so it survives scene changes. While a
 - Signals: `BetSettled` (per player bet), `AutobetStopped` (run ended). Exposes `GetActiveMiningRates()` for the Block Explorer mining indicator.
 - While delegated, it is the **sole owner** of `CalendarTimeService.IsRunning/SpeedMultiplier/IsAutobetActive`. No persisted run state → the app starts with autobet **stopped**.
 - Also **drives the founders' concurrent mining** (Step 7): each frame it recomputes founder power once per new block, feeds `player+bots+founders` power to the difficulty regulator, and runs `FoundersMiningService.DrainFounderAttempts` so Satoshi/Hal mine in lockstep with the player's time advancement. `GetTotalActiveMiningPower()` is player+bots **only** (it is the founders' competition denominator — never sum `GetActiveMiningRates()`, which also lists founders/casino for display).
+- **Governs the DEV scale (mini-plan 09).** It runs `DevTimeScaleGovernor.Govern(requested, running credits)`,
+  with `BetBudgetPerSecond` as the budget, and applies the result to `CalendarTimeService`.
+  - **Triggers:** the request changing (event), `HardwareAllocationRepository.HardwareChanged` (event), and
+    one per-frame comparison of `GetTotalActiveMiningPower()`, which catches bot runners starting or
+    stopping.
+  - **Idle,** it previews against the player's own credits.
+  - **Consequence:** buying credits mid-autobet lowers the effective scale step by step, and 100X is never
+    affected; a DEBUG boot check prints if that could ever stop being true.
+- **The backlog window has a real-time floor** (`MinBacklogWindowRealSeconds`, mini-plan 09 D-09.5). Both
+  backlog clamps use `max(MaxBacklogSeconds, floor × DevTimeScale)`, so at high scales a long frame no longer
+  discards catch-up the engine can easily do. It never binds below ×30.
 - Not persisted; registered in `project.godot` as an autoload.
 - See `Documentation/ProjectDesignManual.md` Chapter 24 and `AIHelperFiles/background-simulation-plan.md`.
 
