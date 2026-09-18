@@ -26,7 +26,20 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 
 	private void OnBetExecuted(string _, BetTransactionEvent betEvent)
 	{
-		AddWinnerNumber(betEvent.Roll, betEvent.IsWin);
+		// Mini-plan 10 A1 — a DEBUG measurement switch; RELEASE builds always take the Full path.
+		switch (Scripts.Diagnostics.BetUiDiagnostics.Mode)
+		{
+			case Scripts.Diagnostics.BetUiMode.Off:
+				return;
+			case Scripts.Diagnostics.BetUiMode.NoReorder:
+				EnsurePool();
+				_pool[_poolIndex].Setup(betEvent.Roll, betEvent.IsWin);
+				_poolIndex = (_poolIndex + 1) % MaxRecentEntries;
+				return;
+			default:
+				AddWinnerNumber(betEvent.Roll, betEvent.IsWin);
+				return;
+		}
 	}
 
 	public void AddWinnerNumber(int number, bool won)

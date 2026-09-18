@@ -742,12 +742,24 @@ public partial class SimulationService : Node
 		// against it. Placed here rather than beside the player's loop because the bots settle in the same
 		// frame off the same clock; moving it earlier would give them a zero-width window and collapse
 		// their spacing to nothing.
+		// Mini-plan 10 B1 — R2-C1's overspend, measured instead of reconstructed. The calendar (autoload #3) moved
+		// this frame by `delta × rate × LAST frame's retained fraction`; the engines retained `simDelta × THIS
+		// frame's fraction`. Summed over a report, the ratio of the two is the overspend mini-plan 08 inferred from
+		// journal gaps (0.620% under saturation). Read BEFORE the anchor below moves. -1 marks a frame with no
+		// previous anchor (a run's first) or a clock that moved backwards (a freeze onto a block), neither of
+		// which is an advance.
+		double calendarAdvanceGameSeconds = _previousFrameClockUtc == DateTime.MinValue || clockNowUtc < _previousFrameClockUtc
+			? -1d
+			: (clockNowUtc - _previousFrameClockUtc).TotalSeconds;
+		double retainedGameSeconds = simDelta * retainedFraction * (_calendar?.SpeedMultiplier ?? GameSecondsPerRealSecondFallback);
+
 		_previousFrameClockUtc = clockNowUtc;
 
 		// Demand = what the running engines asked for this frame: their credits (bets per simulated second)
 		// × DevTimeScale. Mini-plan 08 matched this formula against delivered rates to within 1%.
 		Scripts.Diagnostics.FrameCostProfiler.EndFrame(
-			otherMinersPower * Math.Max(1, _calendar?.DevTimeScale ?? 1), retainedFraction);
+			otherMinersPower * Math.Max(1, _calendar?.DevTimeScale ?? 1), retainedFraction,
+			calendarAdvanceGameSeconds, retainedGameSeconds);
 	}
 
 	// Recompute founder powers exactly once per new block on the canonical chain. Satoshi's confirmed-BTC

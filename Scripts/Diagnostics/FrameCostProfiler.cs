@@ -82,7 +82,8 @@ namespace Scripts.Diagnostics
 			"reportUtc,frames,partial,fps,periodP50Ms,periodP95Ms,periodMaxMs,framesOver16Ms,framesOver33Ms,framesOver50Ms," +
 			"simP50Ms,simP95Ms,simMaxMs,simShare,recomputeMs,playerLoopMs,botLoopMs,founderDriveMs,scheduledDriveMs,tailMs," +
 			"unaccountedMs,playerBetsPerFrame,capBoundShare,botBetsPerFrame,founderAttemptsPerFrame,scheduledAttemptsPerFrame," +
-			"deliveredBetsPerSec,demandBetsPerSec,retentionMean,checkpoints,over50WithCheckpointOrGc,gcFrames,capPerFrame";
+			"deliveredBetsPerSec,demandBetsPerSec,retentionMean,checkpoints,over50WithCheckpointOrGc,gcFrames,capPerFrame," +
+			"calendarAdvanceGameSec,retainedGameSec,overspend,betUiMode";
 
 		// ── Committed frames of the current report window (flat arrays: no allocation per frame) ──────────
 		private static readonly double[] _periodMs = new double[ReportEveryFrames];
@@ -97,6 +98,9 @@ namespace Scripts.Diagnostics
 		private static readonly bool[] _gc = new bool[ReportEveryFrames];
 		private static readonly double[] _demand = new double[ReportEveryFrames];
 		private static readonly double[] _retention = new double[ReportEveryFrames];
+		// Mini-plan 10 B1 — R2-C1's two sides per frame; a negative advance marks a frame with no valid anchor.
+		private static readonly double[] _calendarAdvance = new double[ReportEveryFrames];
+		private static readonly double[] _retainedGame = new double[ReportEveryFrames];
 		private static int _count;
 
 		// ── The frame in progress ─────────────────────────────────────────────────────────────────────────
@@ -117,7 +121,7 @@ namespace Scripts.Diagnostics
 		private static readonly long[] _pendingSegTicks = new long[SegmentCount];
 		private static int _pendingPlayerBets, _pendingBotBets, _pendingFounderAttempts, _pendingScheduledAttempts, _pendingCheckpoints;
 		private static bool _pendingCapBound;
-		private static double _pendingDemand, _pendingRetention;
+		private static double _pendingDemand, _pendingRetention, _pendingCalendarAdvance, _pendingRetainedGame;
 
 		private static bool _headerChecked;
 
@@ -269,9 +273,13 @@ namespace Scripts.Diagnostics
 		/// Bottom of a simulated frame. The frame is held until the next <see cref="BeginFrame"/> supplies its
 		/// period. <paramref name="demandBetsPerSecond"/> is what the running engines asked for this frame
 		/// (their credits × DevTimeScale), so delivered vs demanded can be read off the same report.
+		/// <paramref name="calendarAdvanceGameSeconds"/> and <paramref name="retainedGameSeconds"/> are R2-C1's two
+		/// sides (mini-plan 10 B1): how far the clock moved this frame, and how much simulated time the engines
+		/// actually retained, in game-seconds. A negative advance marks a frame with no valid anchor; it is skipped.
 		/// </summary>
 		[Conditional("DEBUG")]
-		public static void EndFrame(double demandBetsPerSecond, double retention)
+		public static void EndFrame(double demandBetsPerSecond, double retention,
+			double calendarAdvanceGameSeconds, double retainedGameSeconds)
 		{
 			if (!Enabled || !_inFrame) return;
 			long now = Stopwatch.GetTimestamp();
@@ -291,6 +299,8 @@ namespace Scripts.Diagnostics
 			_pendingCapBound = _curCapBound;
 			_pendingDemand = demandBetsPerSecond;
 			_pendingRetention = retention;
+			_pendingCalendarAdvance = calendarAdvanceGameSeconds;
+			_pendingRetainedGame = retainedGameSeconds;
 		}
 
 		private static void Commit(double periodMs, bool gcDuringFrame)
@@ -311,6 +321,8 @@ namespace Scripts.Diagnostics
 			_gc[i] = gcDuringFrame;
 			_demand[i] = _pendingDemand;
 			_retention[i] = _pendingRetention;
+			_calendarAdvance[i] = _pendingCalendarAdvance;
+			_retainedGame[i] = _pendingRetainedGame;
 
 			if (++_count >= ReportEveryFrames)
 			{
@@ -390,6 +402,18 @@ namespace Scripts.Diagnostics
 			double demand = sumDemand / n;
 			double retention = sumRetention / n;
 
+			// Mini-plan 10 B1 — R2-C1's overspend over this window: how much further the clock moved than the time
+			// the engines retained. Frames without a valid anchor (a run's first, a rewind onto a block) are skipped
+			// on BOTH sides, so neither sum carries a frame the other lacks.
+			double sumCalendarAdvance = 0d, sumRetainedGame = 0d;
+			for (int i = 0; i < n; i++)
+			{
+				if (_calendarAdvance[i] < 0d) continue;
+				sumCalendarAdvance += _calendarAdvance[i];
+				sumRetainedGame += _retainedGame[i];
+			}
+			double overspend = sumRetainedGame > 0d ? sumCalendarAdvance / sumRetainedGame - 1d : 0d;
+
 			int worstLargestSeg = 0;
 			for (int s = 1; s < SegmentCount; s++)
 			{
@@ -426,12 +450,14 @@ namespace Scripts.Diagnostics
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           H4 frames over 50 ms: {over50:N0}, of which {over50Explained:N0} carried a checkpoint or a GC · checkpoints {checkpoints:N0} · frames with a GC {gcFrames:N0}\n"));
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"           R2-C1 overspend: {overspend * 100.0:N3}%  (clock advanced {sumCalendarAdvance:N1} game-s vs {sumRetainedGame:N1} retained) · Bet UI {Scripts.Diagnostics.BetUiDiagnostics.Mode}\n"));
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           worst frame {maxPeriod:N1} ms: sim {_simMs[worst]:N1} ms, largest segment {SegmentNames[worstLargestSeg]}, checkpoints {_checkpoints[worst]}, GC {(_gc[worst] ? "yes" : "no")}"));
 
 			GD.Print(sb.ToString());
 
 			WriteTraceRow(string.Format(CultureInfo.InvariantCulture,
-				"{0:O},{1},{2},{3:F2},{4:F3},{5:F3},{6:F3},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F4},{14:F4},{15:F4},{16:F4},{17:F4},{18:F4},{19:F4},{20:F4},{21:F3},{22:F4},{23:F3},{24:F3},{25:F3},{26:F1},{27:F1},{28:F4},{29},{30},{31},{32}",
+				"{0:O},{1},{2},{3:F2},{4:F3},{5:F3},{6:F3},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F4},{14:F4},{15:F4},{16:F4},{17:F4},{18:F4},{19:F4},{20:F4},{21:F3},{22:F4},{23:F3},{24:F3},{25:F3},{26:F1},{27:F1},{28:F4},{29},{30},{31},{32},{33:F3},{34:F3},{35:F6},{36}",
 				DateTime.UtcNow, n, partial ? 1 : 0, fps, p50Period, p95Period, maxPeriod, over16, over33, over50,
 				p50Sim, p95Sim, maxSim, simShare,
 				segSum[0] / n, segSum[1] / n, segSum[2] / n, segSum[3] / n, segSum[4] / n, segSum[5] / n, sumUnaccounted / n,
@@ -439,7 +465,8 @@ namespace Scripts.Diagnostics
 				delivered, demand, retention, checkpoints, over50Explained, gcFrames,
 				// The cap in force when the report closed. A window that straddles a change is a transition and is
 				// read as one; the per-frame bets column shows where inside it the change landed.
-				SimulationService.MaxBetsPerFrameForDiagnostics));
+				SimulationService.MaxBetsPerFrameForDiagnostics,
+				sumCalendarAdvance, sumRetainedGame, overspend, Scripts.Diagnostics.BetUiDiagnostics.Mode));
 		}
 
 		private static void WriteTraceRow(string row)

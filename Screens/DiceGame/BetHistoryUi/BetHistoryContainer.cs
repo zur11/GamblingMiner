@@ -28,7 +28,20 @@ public partial class BetHistoryContainer : VBoxContainer
 
 	private void OnBetExecuted(string _, BetTransactionEvent betEvent)
 	{
-		AddEntry(betEvent);
+		// Mini-plan 10 A1 — a DEBUG measurement switch; RELEASE builds always take the Full path.
+		switch (Scripts.Diagnostics.BetUiDiagnostics.Mode)
+		{
+			case Scripts.Diagnostics.BetUiMode.Off:
+				return;
+			case Scripts.Diagnostics.BetUiMode.NoReorder:
+				EnsurePool();
+				_pool[_poolIndex].Setup(betEvent);
+				_poolIndex = (_poolIndex + 1) % MaxRecentEntries;
+				return;
+			default:
+				AddEntry(betEvent);
+				return;
+		}
 	}
 
 	private void AddEntry(BetTransactionEvent betEvent)

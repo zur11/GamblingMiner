@@ -86,6 +86,7 @@ namespace UI.DevTimeScaleSelector
 			AddBetCostToggle();
 			AddFrameCostToggle();
 			AddFrameCapSelector();
+			AddBetUiModePicker();
 
 			// Mini-plan 09 §4 — the governor readout, placed AFTER the diagnostic column so appearing, disappearing
 			// or changing width can never push the toggles out of reach (P3's run lost the Frame cost toggle that
@@ -171,6 +172,35 @@ namespace UI.DevTimeScaleSelector
 			int current = System.Array.IndexOf(caps, SimulationService.MaxBetsPerFrameForDiagnostics);
 			picker.Select(current < 0 ? 0 : current);
 			picker.ItemSelected += index => SimulationService.SetMaxBetsPerFrameOverrideForDiagnostics(caps[(int)index]);
+			DiagnosticColumn().AddChild(picker);
+		}
+
+		// Mini-plan 10 A1 — what DiceGame's two per-bet lists do on each settled bet: Full (today), No reorder
+		// (Setup only) or Off. Switchable mid-run so the three can be compared inside one session. Reads the mode
+		// back on build, so a scene re-entry shows the mode actually in force.
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void AddBetUiModePicker()
+		{
+			Scripts.Diagnostics.BetUiMode[] modes =
+			{
+				Scripts.Diagnostics.BetUiMode.Full,
+				Scripts.Diagnostics.BetUiMode.NoReorder,
+				Scripts.Diagnostics.BetUiMode.Off,
+			};
+			var picker = new OptionButton
+			{
+				TooltipText = "DEV — what DiceGame's bet history and winner grid do per settled bet (mini-plan 10 A1). "
+					+ "No reorder shows rows in the wrong order on purpose; Off shows nothing new.",
+			};
+			picker.AddThemeFontSizeOverride("font_size", 16);
+			foreach (Scripts.Diagnostics.BetUiMode mode in modes)
+			{
+				picker.AddItem($"Bet UI {mode}");
+			}
+
+			int current = System.Array.IndexOf(modes, Scripts.Diagnostics.BetUiDiagnostics.Mode);
+			picker.Select(current < 0 ? 0 : current);
+			picker.ItemSelected += index => Scripts.Diagnostics.BetUiDiagnostics.SetMode(modes[(int)index]);
 			DiagnosticColumn().AddChild(picker);
 		}
 
