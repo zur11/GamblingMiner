@@ -283,6 +283,14 @@ namespace UI.StrategyControlPanel
 			}
         }
 
+		/// <summary>
+		/// The PAUSE/RESUME button, exposed read-only so the host scene can keep its own controls clear of it.
+		/// Since 2026-09-18 it is its own column to the RIGHT of Bet Once / AUTO, in the panel's top row. It used to
+		/// sit under them, and showing it made that column taller, pushing every row of the panel (and whatever the
+		/// host had laid out below the panel) downwards for the length of an autobet.
+		/// </summary>
+		public Control PauseButton => _autoPauseResumeToggle;
+
 		public void SetAutoPaused(bool paused)
 		{
 			_autoPauseResumeToggle.ButtonPressed = paused;
@@ -294,6 +302,14 @@ namespace UI.StrategyControlPanel
 			_betOnceBtn.Pressed += OnBetOncePressed;
 			_autoBetToggle.Pressed += OnAutoTogglePressed;
 			_autoPauseResumeToggle.Pressed += OnAutoPauseResumePressed;
+
+			// One width for both labels. "RESUME" is wider than "PAUSE", and as its own column the button would
+			// otherwise widen the row, and move whatever the host keeps clear of it, every time a run is paused.
+			string pauseText = _autoPauseResumeToggle.Text;
+			_autoPauseResumeToggle.Text = "RESUME";
+			float resumeWidth = _autoPauseResumeToggle.GetMinimumSize().X;
+			_autoPauseResumeToggle.Text = pauseText;
+			_autoPauseResumeToggle.CustomMinimumSize = new Vector2(resumeWidth, 0f);
             _betAmountInput.TextChanged += OnBetAmountInputTextChanged;
 			_increaseOnLossPercentInput.TextChanged += _ => OnStrategyInputChanged();
 			_increaseOnWinPercentInput.TextChanged += _ => OnStrategyInputChanged();

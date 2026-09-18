@@ -25,16 +25,26 @@ public static class DevTimeScaleGovernor
 	/// <summary>
 	/// D-09.4 — the bets per real second the governor lets the running engines demand.
 	///
-	/// Measured, not chosen (mini-plan 09 P3a): in DiceGame, the most expensive scene to bet in, a saturated
-	/// frame at the default <c>MaxBetsPerFrame</c> delivered ~2,070–2,120 bets/s at ~52 fps, which holds D-09.1's
-	/// 50 fps minimum. This sits about 5% below that, so 99 credits govern to 2000X, where retention was 0.995.
-	/// Lighter scenes (the hardware shop measured at 1.83 ms of sim for the same 40 bets) could run faster; one
-	/// conservative budget everywhere is a deliberate simplification, not an oversight.
+	/// D-09.6 (2026-09-18): 2,000 → 1,700, sized for the SLOWEST session measured, not the fastest.
 	///
-	/// <b>Measured on one machine, in 2009.</b> A later era may cost more per bet (mini-plan 09 §5). A budget
-	/// that turns out generous costs honest wall-clock slowdown through R2-C1, never distorted game dynamics.
+	/// The first value came from mini-plan 09 P3a: in DiceGame, the most expensive scene to bet in, a saturated
+	/// frame at the default <c>MaxBetsPerFrame</c> delivered ~2,070–2,120 bets/s at ~52 fps, and 2,000 sat 5%
+	/// below it. §6's verification ran the whole frame ~17% slower, evenly across sim and outside work, which is
+	/// the between-session spread mini-plan 08 P1g already measured (up to 34%). At 2,000 that session held
+	/// ~46 fps and retention ~0.93, so the readout said 2000X while game time ran at ~1,870X. The 5% margin had
+	/// been set against within-run noise, which was the wrong reference.
+	///
+	/// 1,700 holds D-09.1's 50 fps minimum, at full retention, in the slower session as well (P3a's fitted
+	/// frame scaled by that session's factor gives ~34 bets per frame at 20 ms). 99 credits now govern to 1700X.
+	/// The price is ~15% of speed on a fast session, accepted because what the readout shows must be what runs.
+	/// A budget that follows measured delivery instead is recorded as a candidate for after this plan
+	/// (mini-plan 09, D-09.6 option (c)).
+	///
+	/// Lighter scenes (the hardware shop measured at 0.04 ms of sim per bet against DiceGame's ~0.16–0.18)
+	/// could run faster. One conservative budget everywhere is a deliberate simplification. <b>Measured on one
+	/// machine, in 2009:</b> a later era may cost more per bet (mini-plan 09 §5).
 	/// </summary>
-	public const double BetBudgetPerSecond = 2000.0;
+	public const double BetBudgetPerSecond = 1700.0;
 
 	/// <summary>Game-seconds per real second at DevTimeScale 1 — the 100X base every DEV scale multiplies.</summary>
 	public const double DevBaseGameSecondsPerRealSecond = 100.0;

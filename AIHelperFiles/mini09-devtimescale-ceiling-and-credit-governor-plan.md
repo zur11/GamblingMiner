@@ -5,8 +5,8 @@
 item.
 
 **Status:** 🔧 **IN PROGRESS** on branch `mini09-devtimescale-governor` (specified 2026-09-16). P1 and P3 built
-and run (2026-09-17). Phase A is measured; D-09.3 to D-09.5 decided; §4 built and verified (2026-09-18) — the mechanism passes,
-the budget needs D-09.6.
+and run (2026-09-17). Phase A is measured; D-09.3 to D-09.5 decided; §4 built and verified (2026-09-18); D-09.6 decided (budget 1,700),
+awaiting a short confirmation run.
 
 **Objective, in two halves that must be done in this order.**
 
@@ -487,6 +487,33 @@ figure possible. A budget the engine cannot sustain makes the readout overstate 
 **Layout fix, found in this run's screenshots.** With an autobet running, StrategyControlPanel grows (PAUSE
 appears), and Auto Recharge moves down to ~495. The diagnostic column, placed from an idle screenshot at y 445,
 sat over it. It moves to y 498, with separation 2, which still ends above the chance slider.
+
+#### Decisions taken (2026-09-18)
+
+- **D-09.6 — `BetBudgetPerSecond = 1,700`, option (a).** Sized for the slowest session measured. 99 credits
+  govern to 1700X; the readout shows what actually runs.
+- **Option (c), an adaptive budget, is a candidate for a refinement stage AFTER this plan, not part of it.**
+  - **The case for it:** a fixed constant has to be sized for the worst session, so it leaves a fast session's
+    speed unused, and it is machine- and era-specific (§5).
+  - **The case against, which any design must answer first:** a budget that follows live delivery oscillates.
+    It also moves the effective scale for reasons the player cannot see (a GC, a background process), and it
+    makes the readout harder to trust.
+  - **A study should start from this plan's data:**
+    - the within-run spread (±7%) against the between-session spread (~17% measured here, up to 34% in
+      mini-plan 08);
+    - FrameCostProfiler's per-report delivery, which already measures what an adaptive rule would feed on.
+- **Layout — the interim fix above is superseded by a simpler one, the developer's.** PAUSE no longer sits under
+  Bet Once / AUTO, where showing it made the panel's top row taller and pushed every row below it down for the
+  length of an autobet.
+  - **PAUSE is now its own column to the right of that row,** at Bet Once's font size (30 instead of 44), with
+    one fixed width for "PAUSE" and "RESUME".
+  - **The panel no longer changes height, so Auto Recharge stays put** and the diagnostic column goes back to
+    y 445.
+  - **DiceGame's five navigation buttons** are absolutely placed, not in a container shared with the panel, so
+    they cannot be pushed by layout. DiceGame shifts them just enough to clear PAUSE's real edge, one frame
+    after it appears (after the containers have laid it out), and returns them when it hides. At font 30 the
+    shifted column is *estimated* to fit inside the 1920 px viewport, and at 44 to overflow it by ~20 px. Both
+    figures come from text widths, not from the screen, and the first is to be confirmed by eye.
 
 ### P2 — R2-C1: carry the lagged quantity additively (build + verify)
 

@@ -442,6 +442,12 @@ saturated-backlog overspend, and sweep the bets/s capacity and the game-time cei
 by step, discarding raises it back, and 100X is never transformed. A readout always shows requested vs
 effective. The budget constant is phase A's result, so B cannot be built first.
 
+**Candidate for a refinement stage after mini-plan 09 (recorded 2026-09-18): an adaptive budget.** The shipped
+governor uses a fixed `BetBudgetPerSecond`, sized for the slowest session measured. That leaves a fast
+session's speed unused and is specific to one machine and one era. Following live delivery would recover that
+speed, but it oscillates and moves the scale for reasons the player cannot see. The measurements to start from
+are in the plan's D-09.6 entry.
+
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 
 **Status: deferred 2026-08-13 (developer's call), targeted at Basic Mode.** Split out of mini-plan 02's Part D so the storage work there can proceed without waiting on a new screen. Full write-up: `AIHelperFiles/mini02-panel-state-and-100k-audit-plan.md` §D.6.

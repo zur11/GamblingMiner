@@ -13,7 +13,7 @@ grow_vertical = 2
 script = ExtResource("1_lmglg")
 _betOnceBtn = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/BetOnceBtn")
 _autoBetToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoBetToggle")
-_autoPauseResumeToggle = NodePath("VBoxContainer/HBoxContainer/BetBtnsContainer/AutoPauseResumeToggle")
+_autoPauseResumeToggle = NodePath("VBoxContainer/HBoxContainer/AutoPauseResumeToggle")
 _maxBetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer/MaxBetAmountBtn")
 _minBetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MinMaxBtnsContainer/MinBetAmountBtn")
 _x2BetAmountBtn = NodePath("VBoxContainer/HBoxContainer/BetInputAndCTABtnsContainer/MultDivBtnsContainer/X2BetAmountBtn")
@@ -144,10 +144,10 @@ theme_override_font_sizes/font_size = 30
 toggle_mode = true
 text = "Auto Bet"
 
-[node name="AutoPauseResumeToggle" type="Button" parent="VBoxContainer/HBoxContainer/BetBtnsContainer"]
+[node name="AutoPauseResumeToggle" type="Button" parent="VBoxContainer/HBoxContainer"]
 visible = false
 layout_mode = 2
-theme_override_font_sizes/font_size = 44
+theme_override_font_sizes/font_size = 30
 toggle_mode = true
 text = "PAUSE"
 
