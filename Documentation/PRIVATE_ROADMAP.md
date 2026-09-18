@@ -446,11 +446,23 @@ saturated-backlog overspend, and sweep the bets/s capacity and the game-time cei
 by step, discarding raises it back, and 100X is never transformed. A readout always shows requested vs
 effective. The budget constant is phase A's result, so B cannot be built first.
 
-**Candidate for a refinement stage after mini-plan 09 (recorded 2026-09-18): an adaptive budget.** The shipped
+**Basic Mode refinement option (the developer's decision, 2026-09-18): an adaptive budget.** The shipped
 governor uses a fixed `BetBudgetPerSecond`, sized for the slowest session measured. That leaves a fast
 session's speed unused and is specific to one machine and one era. Following live delivery would recover that
 speed, but it oscillates and moves the scale for reasons the player cannot see. The measurements to start from
 are in the plan's D-09.6 entry.
+
+### DiceGame's per-bet UI cost + R2-C1's overspend under the governor — SPECIFIED, next up (2026-09-18)
+
+**Status: `AIHelperFiles/mini10-dicegame-per-bet-ui-cost-and-clock-overspend-plan.md`, own branch off `main`.**
+Mini-plan 09's two remaining open items, at the developer's request.
+
+- **(A) The per-bet UI cost.** DiceGame pays ~4× more per bet than a scene without its bet lists. Both lists
+  (`BetHistoryContainer`, `PreviousWinnerNumbersGrid`) reorder 100 rows on every bet. The plan attributes the
+  cost with a mid-run DEBUG switch, then updates the lists once per frame from a ring buffer, and re-derives
+  `MaxBetsPerFrame` and `BetBudgetPerSecond` from new measurements, the budget across two sessions.
+- **(B) R2-C1's overspend.** Measured directly by `FrameCostProfiler`, under the governor and in one forced-
+  saturation leg. Closed for good below 0.05%; otherwise fixed with the lag-free design D-09.2 described.
 
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 
