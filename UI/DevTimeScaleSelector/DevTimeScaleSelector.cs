@@ -86,6 +86,7 @@ namespace UI.DevTimeScaleSelector
 			AddBetCostToggle();
 			AddFrameCostToggle();
 			AddFrameCapSelector();
+			AddBudgetSelector();
 			AddFrameReportCounter();
 
 			// Mini-plan 09 §4 — the governor readout, placed AFTER the diagnostic column so appearing, disappearing
@@ -184,7 +185,7 @@ namespace UI.DevTimeScaleSelector
 				_effectiveScaleLabel.TooltipText = string.Create(System.Globalization.CultureInfo.InvariantCulture,
 					$"Requested {requestedRate:N0}X, running at {runningRate:N0}X. {credits:N0} running hardware credits × " +
 					$"{_calendar.DevTimeScale} = {credits * _calendar.DevTimeScale:N0} bets/s, the most that fits the " +
-					$"{DevTimeScaleGovernor.BetBudgetPerSecond:N0} bets/s budget (DiceGame at 50 fps, mini-plan 09). Fewer credits run faster.");
+					$"{DevTimeScaleGovernor.BudgetInForce:N0} bets/s budget (DiceGame at 50 fps, mini-plan 09). Fewer credits run faster.");
 			}
 			else
 			{
@@ -203,7 +204,9 @@ namespace UI.DevTimeScaleSelector
 		[System.Diagnostics.Conditional("DEBUG")]
 		private void AddFrameCapSelector()
 		{
-			int[] caps = { 40, 48, 60, 80 };
+			// 120–200 added for mini-plan 10 A3: with the bet list no longer painting per bet, the question is where
+			// a CHEAP view's frame runs out, and at the clock's ceiling 99 credits demand ~148 bets per 60 fps frame.
+			int[] caps = { 40, 48, 60, 80, 120, 160, 200 };
 			var picker = new OptionButton
 			{
 				TooltipText = "DEV — SimulationService.MaxBetsPerFrame, overridden for this session only. "
@@ -218,6 +221,36 @@ namespace UI.DevTimeScaleSelector
 			int current = System.Array.IndexOf(caps, SimulationService.MaxBetsPerFrameForDiagnostics);
 			picker.Select(current < 0 ? 0 : current);
 			picker.ItemSelected += index => SimulationService.SetMaxBetsPerFrameOverrideForDiagnostics(caps[(int)index]);
+			DiagnosticColumn().AddChild(picker);
+		}
+
+		// Mini-plan 10 A3 — lifts the governor's bet budget inside one run, to find what each bet view can
+		// actually deliver. The budget is the quantity being re-measured, so it cannot be left in charge of the
+		// measurement. Reads the budget in force back on build, like the cap picker.
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void AddBudgetSelector()
+		{
+			double[] budgets = { 0d, 3000d, 5000d, double.PositiveInfinity };
+			var picker = new OptionButton
+			{
+				TooltipText = "DEV — DevTimeScaleGovernor's bet budget, overridden for this session only (mini-plan 10 A3). "
+					+ "Off leaves only the clock's ceiling. Lifting it hands the frame more work than the budget was "
+					+ "measured to hold — it exists to measure the new one.",
+			};
+			picker.AddThemeFontSizeOverride("font_size", 16);
+			foreach (double budget in budgets)
+			{
+				picker.AddItem(budget == 0d
+					? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"Budget {DevTimeScaleGovernor.BetBudgetPerSecond:N0}")
+					: double.IsPositiveInfinity(budget)
+						? "Budget off"
+						: string.Create(System.Globalization.CultureInfo.InvariantCulture, $"Budget {budget:N0}"));
+			}
+
+			double inForce = DevTimeScaleGovernor.BudgetInForce;
+			int current = inForce == DevTimeScaleGovernor.BetBudgetPerSecond ? 0 : System.Array.IndexOf(budgets, inForce);
+			picker.Select(current < 0 ? 0 : current);
+			picker.ItemSelected += index => DevTimeScaleGovernor.SetBudgetOverrideForDiagnostics(budgets[(int)index]);
 			DiagnosticColumn().AddChild(picker);
 		}
 

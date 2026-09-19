@@ -46,6 +46,31 @@ public static class DevTimeScaleGovernor
 	/// </summary>
 	public const double BetBudgetPerSecond = 1700.0;
 
+	// Mini-plan 10 A3 — a DEBUG-only override, so the budget can be lifted inside ONE run to find what a cheaper
+	// bet view can actually deliver. With the budget in force the governor stops demand at 1,700 bets/s, which
+	// is exactly the figure under re-measurement: A1's Off leg sat at vsync with headroom nobody could see.
+	// 0 = no override; double.PositiveInfinity = no budget, only the clock's ceiling. RELEASE builds cannot set
+	// it (the setter is Conditional), so there BudgetInForce always reads the constant.
+	private static double _budgetOverride;
+
+	/// <summary>Raised when the DEBUG override changes, so the caller re-governs instead of waiting for credits.</summary>
+	public static event Action BudgetOverrideChanged;
+
+	/// <summary>The budget <see cref="Govern"/> actually applies: the override when one is set, else the constant.</summary>
+	public static double BudgetInForce => _budgetOverride > 0d ? _budgetOverride : BetBudgetPerSecond;
+
+	/// <summary>DEBUG only — overrides the bet budget for a measurement run; 0 restores the constant.</summary>
+	[System.Diagnostics.Conditional("DEBUG")]
+	public static void SetBudgetOverrideForDiagnostics(double betsPerSecond)
+	{
+		_budgetOverride = betsPerSecond > 0d ? betsPerSecond : 0d;
+		Godot.GD.Print(double.IsPositiveInfinity(BudgetInForce)
+			? "[DevTimeScale] bet budget is now OFF — only the clock's ceiling governs. DEBUG override, not persisted."
+			: string.Create(System.Globalization.CultureInfo.InvariantCulture,
+				$"[DevTimeScale] bet budget is now {BudgetInForce:N0} bets/s (default {BetBudgetPerSecond:N0}) — DEBUG override, not persisted."));
+		BudgetOverrideChanged?.Invoke();
+	}
+
 	/// <summary>Game-seconds per real second at DevTimeScale 1 — the 100X base every DEV scale multiplies.</summary>
 	public const double DevBaseGameSecondsPerRealSecond = 100.0;
 
@@ -61,7 +86,9 @@ public static class DevTimeScaleGovernor
 		int wanted = Math.Max(1, requested);
 		int ceiling = Math.Max(1, (int)Math.Floor(CalendarTimeService.MaxGameSecondsPerRealSecond / DevBaseGameSecondsPerRealSecond));
 		int byCredits = runningCredits > 0d
-			? Math.Max(1, (int)Math.Floor(BetBudgetPerSecond / runningCredits))
+			? (double.IsPositiveInfinity(BudgetInForce)
+				? int.MaxValue
+				: Math.Max(1, (int)Math.Floor(BudgetInForce / runningCredits)))
 			: int.MaxValue;
 
 		int effective = Math.Min(wanted, Math.Min(ceiling, byCredits));

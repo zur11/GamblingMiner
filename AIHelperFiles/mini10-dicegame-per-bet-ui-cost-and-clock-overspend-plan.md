@@ -171,6 +171,15 @@ explicit player action.
    the view in force for each report (A1's DEBUG picker was deleted when A2 made its NoReorder mode
    meaningless). Predictions: Detailed's per-bet slope near zero; Numbers close to A1's old half-cost; Off
    unchanged at 0.040 ms per bet.
+**Run design (2026-09-19) — steps 2, 3 and 5 in ONE saturated run, plus B2's saturation leg for free.**
+A DEBUG **Budget** picker (1,700 / 3,000 / 5,000 / off) now overrides `DevTimeScaleGovernor`'s budget, because
+the budget is the quantity under re-measurement and cannot be left in charge of it; the Cap/frame picker gains
+120, 160 and 200; and the trace records `budgetInForce` beside `betUiMode`. With the budget **off**, 99 credits
+× 9000X demand ~8,910 bets/s, far above any cap, so every frame is cap-bound: bets per frame **equal** the cap,
+and each (view, cap) leg is one clean point of that view's `frame ≈ a + b × bets per frame`. Budget per view =
+50 fps × the bets per frame the fit puts at 20 ms. Bet cost stays **off** — it inflates every bet by a few
+percent, and throughput is exactly what is measured. The saturated legs are B2's forced-saturation reading.
+
 6. **Timestamps:** `verify-bet-journal.js` passes A1–A4 on the sweep's journal. A higher cap means more bets per
    frame, which is exactly where the half-open clamp works hardest.
 

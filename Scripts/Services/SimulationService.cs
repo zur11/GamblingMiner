@@ -397,6 +397,7 @@ public partial class SimulationService : Node
 			_calendar.RequestedDevTimeScaleChanged += OnGovernorInputChanged;
 		}
 		HardwareAllocationRepository.HardwareChanged += OnHardwareChangedForGovernor;
+		DevTimeScaleGovernor.BudgetOverrideChanged += OnBudgetOverrideChanged;
 		AssertGovernorNeverLimits100X();
 		OnGovernorInputChanged();
 
@@ -442,6 +443,14 @@ public partial class SimulationService : Node
 
 	private void OnHardwareChangedForGovernor(string _) => OnGovernorInputChanged();
 
+	// Mini-plan 10 A3 — the budget moved while credits and request did not, so the (credits, request) cache
+	// above would swallow the change. Forget it and re-govern.
+	private void OnBudgetOverrideChanged()
+	{
+		_lastGovernedCredits = -1d;
+		OnGovernorInputChanged();
+	}
+
 	// §4's promise that 100X is never transformed holds only while the budget covers every bettable node at the
 	// credit cap. Printed where the developer reads (the Output panel), not asserted silently.
 	[System.Diagnostics.Conditional("DEBUG")]
@@ -463,6 +472,7 @@ public partial class SimulationService : Node
 			_calendar.RequestedDevTimeScaleChanged -= OnGovernorInputChanged;
 		}
 		HardwareAllocationRepository.HardwareChanged -= OnHardwareChangedForGovernor;
+		DevTimeScaleGovernor.BudgetOverrideChanged -= OnBudgetOverrideChanged;
 	}
 
 	public void StartPlayerAutobet(PlayerAutobetConfig config)
