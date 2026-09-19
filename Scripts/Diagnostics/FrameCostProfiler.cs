@@ -464,7 +464,7 @@ namespace Scripts.Diagnostics
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           H4 frames over 50 ms: {over50:N0}, of which {over50Explained:N0} carried a checkpoint or a GC · checkpoints {checkpoints:N0} · frames with a GC {gcFrames:N0}\n"));
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
-				$"           R2-C1 overspend: {overspend * 100.0:N3}%  (clock advanced {sumCalendarAdvance:N1} game-s vs {sumRetainedGame:N1} retained) · Bet UI {Scripts.Diagnostics.BetUiDiagnostics.Mode}\n"));
+				$"           R2-C1 overspend: {overspend * 100.0:N3}%  (clock advanced {sumCalendarAdvance:N1} game-s vs {sumRetainedGame:N1} retained) · Bet view {Scripts.Diagnostics.BetUiDiagnostics.View}\n"));
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           worst frame {maxPeriod:N1} ms: sim {_simMs[worst]:N1} ms, largest segment {SegmentNames[worstLargestSeg]}, checkpoints {_checkpoints[worst]}, GC {(_gc[worst] ? "yes" : "no")}"));
 
@@ -483,7 +483,7 @@ namespace Scripts.Diagnostics
 				// The cap in force when the report closed. A window that straddles a change is a transition and is
 				// read as one; the per-frame bets column shows where inside it the change landed.
 				SimulationService.MaxBetsPerFrameForDiagnostics,
-				sumCalendarAdvance, sumRetainedGame, overspend, Scripts.Diagnostics.BetUiDiagnostics.Mode));
+				sumCalendarAdvance, sumRetainedGame, overspend, Scripts.Diagnostics.BetUiDiagnostics.View));
 		}
 
 		private static void WriteTraceRow(string row)

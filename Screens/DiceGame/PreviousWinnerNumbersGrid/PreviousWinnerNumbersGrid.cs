@@ -43,20 +43,10 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 			return;
 		}
 
-		// Mini-plan 10 A1 — a DEBUG measurement switch; RELEASE builds always take the Full path.
-		switch (Scripts.Diagnostics.BetUiDiagnostics.Mode)
-		{
-			case Scripts.Diagnostics.BetUiMode.Off:
-				return;
-			case Scripts.Diagnostics.BetUiMode.NoReorder:
-				EnsurePool();
-				_pool[_poolIndex].Setup(betEvent.Roll, betEvent.IsWin);
-				_poolIndex = (_poolIndex + 1) % MaxRecentEntries;
-				return;
-			default:
-				AddWinnerNumber(betEvent.Roll, betEvent.IsWin);
-				return;
-		}
+		// Deliberately still one Setup + MoveChild per bet, unlike BetHistoryContainer (mini-plan 10 A2): all 100
+		// cells are on screen at once, so "paint only what is visible" saves nothing here, and a fixed-order
+		// rewrite would cost 100 cell writes per frame against today's 30–50. A3 measures this view on its own.
+		AddWinnerNumber(betEvent.Roll, betEvent.IsWin);
 	}
 
 	public void AddWinnerNumber(int number, bool won)

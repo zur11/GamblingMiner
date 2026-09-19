@@ -1547,6 +1547,9 @@ public partial class DiceGame : Control, IBetEventSource
 			BetDisplayMode.Numbers => "Bet View: Numbers",
 			_ => "Bet View: OFF",
 		};
+
+		// So every frame-cost report says which view it was measured under (mini-plan 10 A3).
+		Scripts.Diagnostics.BetUiDiagnostics.ReportView(mode.ToString());
 	}
 
 	// Set by OnSimBetSettled, consumed once per frame by _Process. A flag rather than a timer: the work is

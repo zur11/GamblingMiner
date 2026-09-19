@@ -115,8 +115,15 @@ human reads none. So the fix attacks the repaint rate, in two states.
   (`FlushSettledBetUiIfDirty`, after `SimulationService` has settled), and writes only the rows inside the
   `ScrollContainer`'s visible window. Rows outside it are written when the player scrolls to them.
   *Why this is the whole win:* with a 100-row buffer and 30–50 bets per frame, no row is overwritten twice
-  within one frame, so coalescing **alone** saves nothing. Painting ~12 visible rows instead of ~100 is what
-  turns 1,700 repaints per second into ~12 per frame.
+  within one frame, so coalescing **alone** saves nothing. The old path wrote **one row per bet**, i.e. 30–50
+  rows per frame, growing with bets; the new one writes at most the ~14 rows on screen, **whatever the bets per
+  frame**. The prediction is therefore not "cheaper per bet" but **a per-bet slope near zero** for this view.
+  *(Corrected 2026-09-19: this bullet first said "~12 visible rows instead of ~100", which misdescribed the
+  old path — it never repainted 100 rows per bet, only one.)*
+- **The Numbers view does NOT get this treatment, deliberately.** Its 100 cells (10 × 10 at 40 px) all fit in
+  the window at once, so there is no scroll and "only what is visible" is all of it: a fixed-order rewrite
+  would cost 100 cell writes per frame against the old path's 30–50. It keeps one Setup + MoveChild per bet,
+  and A3 measures it on its own — that measurement replaces A3.5's "split the two consumers".
 - **Both consumers are in scope** — `BetHistoryContainer` and `PreviousWinnerNumbersGrid`. A1 measured them
   together and did not split them; if the grid turns out to be the cheap one it can stay visible, but that is a
   measurement A3 can make, not an assumption to build on.
@@ -160,8 +167,10 @@ explicit player action.
    first, the hidden budget is "the ceiling" and the number is the clock's, not the frame's.
 4. **The budget(s), sized for the slower session** (D-09.6's lesson): repeat both governed legs in a **second
    session** and size each `BetBudgetPerSecond` for the slower of the two, not the faster.
-5. **Split the two consumers**, cheaply, while the instrument is armed: one leg with only the winner grid
-   painting. It decides whether the grid needs to hide with the list or can stay.
+5. **One leg per bet view** — Detailed, Numbers, Off — in one run. The trace's `betUiMode` column now records
+   the view in force for each report (A1's DEBUG picker was deleted when A2 made its NoReorder mode
+   meaningless). Predictions: Detailed's per-bet slope near zero; Numbers close to A1's old half-cost; Off
+   unchanged at 0.040 ms per bet.
 6. **Timestamps:** `verify-bet-journal.js` passes A1–A4 on the sweep's journal. A higher cap means more bets per
    frame, which is exactly where the half-open clamp works hardest.
 
