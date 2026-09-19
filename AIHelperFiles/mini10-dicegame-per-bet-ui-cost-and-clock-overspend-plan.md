@@ -215,7 +215,14 @@ Per bet, from `playerLoopMs` ÷ bets per frame, clean reports only:
 - **Timestamps:** `verify-bet-journal.js` passes A1, A1b, A3 and A4 over the whole journal, which includes 149
   bets per frame — the densest the half-open clamp has ever been exercised.
 
-**What remains of A3:** D-10.2's build; then a short **second session** (D-09.6's rule: size for the slower
+**D-10.2 built (2026-09-19):** `PreviousWinnerNumbersGrid` takes a roll into a ring buffer, keeps its cells in
+fixed order (cell i = i-th newest), and rewrites all filled cells once per dirty frame; no `MoveChild`, so the
+`GridContainer` re-lays out only while the grid is filling. `WinnerNumberPresenter.Setup` skips a write that
+would change nothing, because assigning a stylebox colour queues a redraw even when it is the same colour.
+BetsHistoryExplorer's replay drives the same grid through `AddWinnerNumber` and inherits the change;
+coalescing within a frame is invisible there for the same reason as in the list.
+
+**What remains of A3:** then a short **second session** (D-09.6's rule: size for the slower
 one) covering Numbers-after-the-fix and Detailed at cap 160; then the defaults — `DefaultMaxBetsPerFrame` and
 one budget per view.
 
