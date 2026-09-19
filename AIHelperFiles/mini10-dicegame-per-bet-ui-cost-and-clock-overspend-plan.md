@@ -180,7 +180,46 @@ and each (view, cap) leg is one clean point of that view's `frame ≈ a + b × b
 50 fps × the bets per frame the fit puts at 20 ms. Bet cost stays **off** — it inflates every bet by a few
 percent, and throughput is exactly what is measured. The saturated legs are B2's forced-saturation reading.
 
-6. **Timestamps:** `verify-bet-journal.js` passes A1–A4 on the sweep's journal. A higher cap means more bets per
+#### A3 RUN 1 RESULT (2026-09-19, 36 reports, one session)
+
+*What actually ran:* legs 1–14 ran at the **1,700 budget** — the Budget picker had been missed, so Detailed was
+never cap-bound there (28 bets/frame at every cap). Legs 15–36 ran with the budget **off**, as designed. Two
+legs used a neighbouring cap to the one in the protocol; every report is labelled in the trace, so each is
+simply another point.
+
+Per bet, from `playerLoopMs` ÷ bets per frame, clean reports only:
+
+| view | cap | ms per bet | delivered bets/s | fps | retention |
+|---|---:|---:|---:|---:|---:|
+| **Detailed** | 160 | **0.025** | **8,904–8,912** (= all 8,910 demanded) | 60 | 1.000 |
+| Off | 160 | 0.025 | 8,912–8,933 | 60 | 1.000 |
+| Detailed | 80 (budget off) | 0.027 | 4,765 (cap-bound: 80 × 60) | 60 | 0.54 |
+| Detailed | any (budget 1,700) | 0.029 | 1,682–1,690 | 60 | 1.000 |
+| **Numbers** | 40 (budget 1,700) | 0.14 | 1,161–1,190 | 29–30 | 0.69–0.71 |
+| **Numbers** | 60 | 0.15 | 1,064–1,222 | 18–20 | 0.12–0.14 |
+| **Numbers** | 120 | 0.12 | 1,650–1,824 | 14–15 | 0.19–0.21 |
+
+- **Detailed now costs exactly what Off costs** — 0.025 ms per bet against A1's 0.198, ~8× cheaper — and the
+  frame stays at vsync. With it, **99 credits run at the clock's ceiling, 9000X, at 60 fps and full retention**,
+  where mini-plan 09 had to govern them down to 1,700X. For this view **the clock's ceiling binds before any
+  frame limit**; its true frame ceiling lies above 8,910 bets/s and cannot be observed, which for the game does
+  not matter. The one thing standing between it and the ceiling is `DefaultMaxBetsPerFrame` = 40, which caps
+  delivery at 2,400 bets/s at 60 fps; ~150 is needed.
+- **Numbers is now the expensive view, and worse than the old list.** It cannot hold even the old 1,700 budget
+  (29–33 fps), and its outside-sim time — 29 ms per frame at 40 bets, 53 at 120 — is the `GridContainer`
+  re-laying out 100 cells on every `MoveChild`. **This refutes A2's claim above that a fixed-order rewrite of
+  all 100 cells would cost more than the per-bet path:** that assumed the cell write dominates, and the move
+  does. A1 could not have shown it — the grid was invisible then, and a hidden container does not re-sort.
+  **D-10.2: Numbers gets the Detailed treatment** — ring buffer, fixed order, all 100 cells rewritten once per
+  frame, no `MoveChild`.
+- **Timestamps:** `verify-bet-journal.js` passes A1, A1b, A3 and A4 over the whole journal, which includes 149
+  bets per frame — the densest the half-open clamp has ever been exercised.
+
+**What remains of A3:** D-10.2's build; then a short **second session** (D-09.6's rule: size for the slower
+one) covering Numbers-after-the-fix and Detailed at cap 160; then the defaults — `DefaultMaxBetsPerFrame` and
+one budget per view.
+
+6. **Timestamps:** `verify-bet-journal.js` passes A1–A4 on the sweep's journal. ✅ Run 1 (see above). A higher cap means more bets per
    frame, which is exactly where the half-open clamp works hardest.
 
 ## 3. Part B — R2-C1's overspend under the governor
@@ -220,6 +259,18 @@ before.
 - **Forced saturation:** one leg with `Cap/frame` overridden low (e.g. 20 at 99 credits, which cannot deliver
   1,700 bets/s). **Prediction:** it reproduces ~0.6%, which validates the instrument against mini-plan 08's
   independent reconstruction.
+
+#### B2 RESULT (A3 run 1) and B3's verdict
+
+- **Governed:** every report at retention 1.000 — 16 of A3's 36 (14 Detailed, 2 Off; Numbers never reached full
+  retention) — reads overspend **0.000000%**, as in B1.
+- **Forced saturation:** the budget-off legs were saturated far deeper than the planned Cap/frame 20 leg would
+  have been (retention down to 0.12). Overspend there ranged 0.02%–1.9%, the largest in transition reports.
+  The ~0.6% prediction was of the right order; the reading is noisier than a single figure because saturation
+  depth varied from leg to leg.
+- **B3 verdict, by the pre-registered rule: governed overspend is below 0.05% — it is zero. P2 closes.**
+  R2-C1 stays, nothing is deleted, and saturation remains possible only when something outside the governor's
+  control stalls the frame — which, after A2, is the Numbers view at the old budget and nothing else measured.
 
 ### B3 — Decision rule, registered before the data
 
