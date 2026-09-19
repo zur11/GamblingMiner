@@ -26,8 +26,28 @@ public partial class BetHistoryContainer : VBoxContainer
 		game.BetExecuted += OnBetExecuted;
 	}
 
+	// Mini-plan 10 A2 — a bet the player cannot see costs nothing. The gate reads TREE visibility rather than a
+	// flag of its own, so the window's `Visible` and this can never disagree; it is also why the winner grid
+	// stops costing anything the day this ships, the scene having kept it `visible = false` all along while it
+	// still repainted a row per bet (A1 measured 0.135 ms/bet of row writes across the two lists).
+	//
+	// Only the LIVE path is gated. LoadFromHistoricalRecords / AppendHistoricalRecord stay unconditional,
+	// because BetsHistoryExplorer drives them at its own replay pace into a panel that is not toggled.
+	private bool _paintsPerBet = true;
+
+	public override void _Ready()
+	{
+		_paintsPerBet = IsVisibleInTree();
+		VisibilityChanged += () => _paintsPerBet = IsVisibleInTree();
+	}
+
 	private void OnBetExecuted(string _, BetTransactionEvent betEvent)
 	{
+		if (!_paintsPerBet)
+		{
+			return;
+		}
+
 		// Mini-plan 10 A1 — a DEBUG measurement switch; RELEASE builds always take the Full path.
 		switch (Scripts.Diagnostics.BetUiDiagnostics.Mode)
 		{

@@ -24,8 +24,25 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 		game.BetExecuted += OnBetExecuted;
 	}
 
+	// Mini-plan 10 A2 — the same visibility gate as BetHistoryContainer, and the reason it was found: DiceGame's
+	// scene has this grid's ScrollContainer at `visible = false`, so every row written here since then was paid
+	// for and never drawn. It is now DiceGame's "Numbers" bet view, which rebuilds it from the journal each time
+	// it is shown.
+	private bool _paintsPerBet = true;
+
+	public override void _Ready()
+	{
+		_paintsPerBet = IsVisibleInTree();
+		VisibilityChanged += () => _paintsPerBet = IsVisibleInTree();
+	}
+
 	private void OnBetExecuted(string _, BetTransactionEvent betEvent)
 	{
+		if (!_paintsPerBet)
+		{
+			return;
+		}
+
 		// Mini-plan 10 A1 — a DEBUG measurement switch; RELEASE builds always take the Full path.
 		switch (Scripts.Diagnostics.BetUiDiagnostics.Mode)
 		{
