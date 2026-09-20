@@ -432,9 +432,10 @@ bet now costs. Full record: `AIHelperFiles/mini08-timestamp-fidelity-and-through
 
 ### DevTimeScale ceiling + credit-yielding governor — ✅ DONE (mini-plan 09, 2026-09-18)
 
-> Both halves shipped. The budget is `BetBudgetPerSecond = 1,700` (99 credits → 1700X at ≥ 50 fps), and 9000X is
-> real down to 2 credits. The plan's close-out is §8; the open items are listed there and in
-> `IMPLEMENTATION_STATUS.md`. The text below is the original specification.
+> Both halves shipped, and 9000X became real down to 2 credits. The budget it set — `BetBudgetPerSecond =
+> 1,700`, 99 credits → 1700X — was **superseded by mini-plan 10** (9,000, the clock's demand at the hardware
+> cap) once DiceGame's bet list stopped costing 0.198 ms per bet. The plan's close-out is §8; the open items
+> are listed there and in `IMPLEMENTATION_STATUS.md`. The text below is the original specification.
 
 **Status: `AIHelperFiles/mini09-devtimescale-ceiling-and-credit-governor-plan.md`, own branch off `main`.**
 Picked up from mini-plan 08's close-out, at the developer's request.
@@ -446,11 +447,32 @@ saturated-backlog overspend, and sweep the bets/s capacity and the game-time cei
 by step, discarding raises it back, and 100X is never transformed. A readout always shows requested vs
 effective. The budget constant is phase A's result, so B cannot be built first.
 
-**Candidate for a refinement stage after mini-plan 09 (recorded 2026-09-18): an adaptive budget.** The shipped
+**Basic Mode refinement option (the developer's decision, 2026-09-18): an adaptive budget.** The shipped
 governor uses a fixed `BetBudgetPerSecond`, sized for the slowest session measured. That leaves a fast
 session's speed unused and is specific to one machine and one era. Following live delivery would recover that
 speed, but it oscillates and moves the scale for reasons the player cannot see. The measurements to start from
 are in the plan's D-09.6 entry.
+
+### DiceGame's per-bet UI cost + R2-C1's overspend under the governor — ✅ DONE (mini-plan 10, 2026-09-20)
+
+> Both parts closed. **(A)** The bet list was 80% of the cost of a bet and now costs 0.025 ms, the same as
+> drawing nothing: rows never move and only the ~14 visible ones are painted, once per frame. 99 credits run
+> at the clock's ceiling, 9000X, against 1700X before — `DefaultMaxBetsPerFrame` 40 → 160 and
+> `BetBudgetPerSecond` 1,700 → 9,000, the latter **derived** as the clock's demand at the hardware cap rather
+> than measured. A player-facing Bet View button (Detailed / OFF) makes hiding the list the way to buy speed.
+> **(B)** The overspend is **0.000000% at full retention** and rises only with saturation, so P2 closed by its
+> pre-registered rule. **Deferred past Basic Mode:** the Numbers view, entry above. The text below is the
+> original specification.
+
+**Status: `AIHelperFiles/mini10-dicegame-per-bet-ui-cost-and-clock-overspend-plan.md`, own branch off `main`.**
+Mini-plan 09's two remaining open items, at the developer's request.
+
+- **(A) The per-bet UI cost.** DiceGame pays ~4× more per bet than a scene without its bet lists. Both lists
+  (`BetHistoryContainer`, `PreviousWinnerNumbersGrid`) reorder 100 rows on every bet. The plan attributes the
+  cost with a mid-run DEBUG switch, then updates the lists once per frame from a ring buffer, and re-derives
+  `MaxBetsPerFrame` and `BetBudgetPerSecond` from new measurements, the budget across two sessions.
+- **(B) R2-C1's overspend.** Measured directly by `FrameCostProfiler`, under the governor and in one forced-
+  saturation leg. Closed for good below 0.05%; otherwise fixed with the lag-free design D-09.2 described.
 
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 
@@ -568,9 +590,30 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   (2026-09-15, v6 → v7 reset): `saved_betting_strategies.json` survives every wipe because it sits in the
   exempt set (`NetworkRoot.ResetWorldIfIncompatible`, CLAUDE.md Pattern 2), and the developer expected it to
   be deleted. **Do not fix that file alone.** Decide once which settings belong to the player (survive a
-  wipe) and which to the world (wiped with it), then give them one persistence home. Related, and part of
-  the same design: the DEV scale, the strategy panel's last values, and anything a future options menu
-  holds. Required for Basic Mode.
+  wipe) and which to the world (wiped with it), then give them one persistence home. Required for Basic Mode.
+
+  **What is waiting for it** — the list is kept here, because each of these is currently a *decision deferred*,
+  and a deferral nobody wrote down becomes an omission. Add a line whenever a feature ships a setting with no
+  home; that is the cost signal telling us when this is due.
+
+  | setting | today | belongs to |
+  |---|---|---|
+  | Saved betting strategies | `saved_betting_strategies.json`, exempt from the wipe — survives, which surprised the developer | the player, probably — but the surprise says the rule was never stated, not that the file is wrong |
+  | **Bet display visible / hidden** (mini-plan 10 A2) | not persisted; resets to visible on every DiceGame entry | the player. It is also a **speed** choice, since the hidden state runs on a higher budget — so forgetting it silently changes how fast the next session runs |
+  | DEV time scale (the requested one) | not persisted | DEV, but the same mechanism |
+  | The strategy panel's last-used values | not persisted; distinct from a *saved* strategy | the player |
+  | Anything a future options menu holds | does not exist | the player |
+
+- [ ] **The Numbers bet view in DiceGame — DEFERRED past Basic Mode (2026-09-20, D-10.3).** The red/green roll
+  grid (`PreviousWinnerNumbersGrid`) costs **~0.21 ms per cell repaint**, and since every one of its 100 cells
+  changes on every frame that carries bets, it halves the frame rate (26 fps against 57 with the same grid
+  visible but not written to). Mini-plan 10 took its per-bet cost down to the detailed list's 0.025 ms and
+  proved the remainder is the repaint itself, not what is written — so the two ways out both change what the
+  view promises rather than how it is built: **a refresh cadence** (say 10 Hz, ~50 fps by arithmetic) or
+  **fewer cells**. Neither is a bug fix, so it waits. The grid still serves BetsHistoryExplorer, where the
+  replay cursor is slow enough that none of this bites. Full measurements: mini-plan 10 §A3, D-10.3. Whoever
+  revives it must also fix the scene geometry, which has never been on screen: it starts at y 534 and its 540
+  minimum height runs past the bottom band (ProjectDesignManual Ch. 29 §29.11).
 - [x] User-facing DiceGame label uses `Main Balance`.
 - [~] Clarify auto-recharge behavior in UI and docs. **Docs done** (ProjectDesignManual Ch.25 + CLAUDE.md: progression resets, Insist After Stop, auto-recharge precedence). UI labels/warnings still pending (P2).
 - [x] Add player BTC wallet and addresses.

@@ -217,7 +217,15 @@ public partial class SimulationService : Node
 	// a slower wall clock, never into distorted in-game dynamics (P4 demonstrated exactly this at 94.3%
 	// retention) — but it is a different régime, and **the next person to raise this number should re-price
 	// a bet first rather than extrapolating from here.**
-	private const int DefaultMaxBetsPerFrame = 40;
+	//
+	// 40 → 160 (D-10.5, 2026-09-20), and the instruction above was followed: a bet WAS re-priced first.
+	// Mini-plan 10 took DiceGame's per-bet cost from 0.198 ms to **0.025** (the bet list stopped moving rows and
+	// now paints only the ~14 inside the scroll's viewport, once per frame), so 160 bets is ~3.7 ms of the
+	// frame, back inside the régime the ⚠ above says 40 had left. The demand it serves is the clock's ceiling:
+	// `99 credits × 90 ÷ 60 =` **149 bets/frame**, which 40 cannot express — at 40 the game could not exceed
+	// 2,400 bets/s whatever the budget allowed. Two sessions measured cap 160 delivering all ~8,910 bets/s at
+	// 58–60 fps, frame p50 16.6 ms, p95 22–24 ms, retention 1.000.
+	private const int DefaultMaxBetsPerFrame = 160;
 
 	// Mini-plan 09 P3a — a DEBUG-only runtime override, so the cap can be swept A–B–A inside ONE run. P1 showed
 	// the ~2,000 bets/s ceiling in DiceGame IS this cap (bound on 100% of saturated frames) and that each extra
@@ -397,6 +405,7 @@ public partial class SimulationService : Node
 			_calendar.RequestedDevTimeScaleChanged += OnGovernorInputChanged;
 		}
 		HardwareAllocationRepository.HardwareChanged += OnHardwareChangedForGovernor;
+		DevTimeScaleGovernor.BudgetOverrideChanged += OnBudgetOverrideChanged;
 		AssertGovernorNeverLimits100X();
 		OnGovernorInputChanged();
 
@@ -442,6 +451,14 @@ public partial class SimulationService : Node
 
 	private void OnHardwareChangedForGovernor(string _) => OnGovernorInputChanged();
 
+	// Mini-plan 10 A3 — the budget moved while credits and request did not, so the (credits, request) cache
+	// above would swallow the change. Forget it and re-govern.
+	private void OnBudgetOverrideChanged()
+	{
+		_lastGovernedCredits = -1d;
+		OnGovernorInputChanged();
+	}
+
 	// §4's promise that 100X is never transformed holds only while the budget covers every bettable node at the
 	// credit cap. Printed where the developer reads (the Output panel), not asserted silently.
 	[System.Diagnostics.Conditional("DEBUG")]
@@ -463,6 +480,7 @@ public partial class SimulationService : Node
 			_calendar.RequestedDevTimeScaleChanged -= OnGovernorInputChanged;
 		}
 		HardwareAllocationRepository.HardwareChanged -= OnHardwareChangedForGovernor;
+		DevTimeScaleGovernor.BudgetOverrideChanged -= OnBudgetOverrideChanged;
 	}
 
 	public void StartPlayerAutobet(PlayerAutobetConfig config)
@@ -742,12 +760,24 @@ public partial class SimulationService : Node
 		// against it. Placed here rather than beside the player's loop because the bots settle in the same
 		// frame off the same clock; moving it earlier would give them a zero-width window and collapse
 		// their spacing to nothing.
+		// Mini-plan 10 B1 — R2-C1's overspend, measured instead of reconstructed. The calendar (autoload #3) moved
+		// this frame by `delta × rate × LAST frame's retained fraction`; the engines retained `simDelta × THIS
+		// frame's fraction`. Summed over a report, the ratio of the two is the overspend mini-plan 08 inferred from
+		// journal gaps (0.620% under saturation). Read BEFORE the anchor below moves. -1 marks a frame with no
+		// previous anchor (a run's first) or a clock that moved backwards (a freeze onto a block), neither of
+		// which is an advance.
+		double calendarAdvanceGameSeconds = _previousFrameClockUtc == DateTime.MinValue || clockNowUtc < _previousFrameClockUtc
+			? -1d
+			: (clockNowUtc - _previousFrameClockUtc).TotalSeconds;
+		double retainedGameSeconds = simDelta * retainedFraction * (_calendar?.SpeedMultiplier ?? GameSecondsPerRealSecondFallback);
+
 		_previousFrameClockUtc = clockNowUtc;
 
 		// Demand = what the running engines asked for this frame: their credits (bets per simulated second)
 		// × DevTimeScale. Mini-plan 08 matched this formula against delivered rates to within 1%.
 		Scripts.Diagnostics.FrameCostProfiler.EndFrame(
-			otherMinersPower * Math.Max(1, _calendar?.DevTimeScale ?? 1), retainedFraction);
+			otherMinersPower * Math.Max(1, _calendar?.DevTimeScale ?? 1), retainedFraction,
+			calendarAdvanceGameSeconds, retainedGameSeconds);
 	}
 
 	// Recompute founder powers exactly once per new block on the canonical chain. Satoshi's confirmed-BTC

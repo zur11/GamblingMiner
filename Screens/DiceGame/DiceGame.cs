@@ -363,6 +363,7 @@ public partial class DiceGame : Control, IBetEventSource
 		IReadOnlyList<BetRecord> recentOnEntry = _userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries);
 		_betHistoryContainer?.LoadFromHistoricalRecords(recentOnEntry);
 		SeedRollFromRecentBets(recentOnEntry);
+		BuildBetDisplayToggle();
 		LoadActiveNodeFinancialState();
 		LoadActiveNodeStrategySnapshot();
 		EnsureInitialBankrollFunded();
@@ -1421,6 +1422,117 @@ public partial class DiceGame : Control, IBetEventSource
 		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.BetHistoryFeed);
 
 		_betSettledUiDirty = true;
+	}
+
+	// --- Mini-plan 10 A2 — the bet display window ---
+	//
+	// Closing the bet list is how the player buys speed: hidden, DiceGame does no per-bet UI work at all
+	// (A1 measured 0.040 ms per bet against 0.198 with the list painting — the UI is 80% of the cost of a bet).
+	// The containers gate themselves on TREE visibility, so this button only has to show and hide nodes; there
+	// is no second flag that could drift from what is on screen.
+	//
+	// NOT persisted: user-settings persistence does not exist yet (PRIVATE_ROADMAP.md), so the window opens
+	// visible on every entry. That is the honest default — a speed that silently carried over from a setting
+	// nobody can see would be worse than one the player re-chooses.
+	// The bet window's two states: the detailed list, or nothing. Hiding it is how the player buys speed.
+	//
+	// A THIRD view — the red/green roll numbers (PreviousWinnerNumbersGrid) — shipped on 2026-09-19 and was
+	// DEFERRED until after Basic Mode on 2026-09-20 (developer's call), because making it as cheap as the list
+	// turned out to be a redesign rather than a fix: A3 measured its cost as ~0.21 ms per CELL REPAINT, and at
+	// 160 bets per frame all 100 cells change every frame, which halves the frame rate whatever is written to
+	// them. The grid itself is untouched and still serves BetsHistoryExplorer; only DiceGame's view is gone.
+	// The measurements and the two candidate fixes (a refresh cadence, or fewer cells) are in mini-plan 10 §A3
+	// and PRIVATE_ROADMAP.md.
+	private enum BetDisplayMode
+	{
+		Detailed = 0,
+		Off,
+	}
+
+	private Button _betDisplayToggleBtn;
+	private Control[] _detailedWindow;
+	private BetDisplayMode _betDisplayMode = BetDisplayMode.Detailed;
+
+	private void BuildBetDisplayToggle()
+	{
+		// The detailed window is the list's scroll plus its four column headers. The headers are absolutely
+		// positioned labels under UiTextLabels and are resolved BY PATH rather than reparented into a container:
+		// moving an absolutely-positioned control into a container relayouts it (ProjectDesignManual Ch. 29).
+		string[] detailedPaths =
+		{
+			"ScrollContainer2",
+			"UiTextLabels/BetTimeText",
+			"UiTextLabels/MultiplierText2",
+			"UiTextLabels/BetAmountText",
+			"UiTextLabels/ProfitAmountText",
+		};
+
+		var nodes = new List<Control>();
+		foreach (string path in detailedPaths)
+		{
+			if (GetNodeOrNull<Control>(path) is Control node)
+			{
+				nodes.Add(node);
+			}
+		}
+
+		_detailedWindow = nodes.ToArray();
+		if (_detailedWindow.Length == 0)
+		{
+			return;
+		}
+
+		// The deferred Numbers view's grid stays hidden, which is also what makes it free: both per-bet consumers
+		// gate on tree visibility. Whoever revives it must first fix its scene geometry — it starts at y 534,
+		// under this button, and its 540 minimum height pushes its bottom past y 1074, into the band a windowed
+		// game can leave off-screen (Ch. 29 §29.11). Hidden since long before this plan, so nobody had seen it.
+		if (GetNodeOrNull<Control>("ScrollContainer") is Control numbersWindow)
+		{
+			numbersWindow.Visible = false;
+		}
+
+		// Sits in the free band between the strategy save controls (which end at y 526) and the column headers
+		// (which start at y 574), directly above the window it governs.
+		_betDisplayToggleBtn = new Button
+		{
+			Position = new Vector2(706f, 528f),
+			CustomMinimumSize = new Vector2(260f, 42f),
+			TooltipText = "What the bet window shows: every bet in detail, only the roll numbers in red and green, "
+				+ "or nothing. Each step is lighter to draw, so the game can run faster — with the window off it "
+				+ "draws nothing per bet. Switching back reloads the last bets from your history.",
+		};
+		_betDisplayToggleBtn.Pressed += () => SetBetDisplayMode(
+			_betDisplayMode == BetDisplayMode.Detailed ? BetDisplayMode.Off : BetDisplayMode.Detailed);
+		AddChild(_betDisplayToggleBtn);
+		SetBetDisplayMode(BetDisplayMode.Detailed);
+	}
+
+	private void SetBetDisplayMode(BetDisplayMode mode)
+	{
+		if (_detailedWindow == null)
+		{
+			return;
+		}
+
+		_betDisplayMode = mode;
+		foreach (Control node in _detailedWindow)
+		{
+			node.Visible = mode == BetDisplayMode.Detailed;
+		}
+
+		// A view that was hidden painted nothing while it was closed, so it has no content of its own to
+		// preserve: showing it rebuilds from the journal. Restoring whatever was on screen when it closed would
+		// be a lie with a timestamp on it.
+		if (mode == BetDisplayMode.Detailed)
+		{
+			_betHistoryContainer?.LoadFromHistoricalRecords(
+				_userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries));
+		}
+
+		_betDisplayToggleBtn.Text = mode == BetDisplayMode.Detailed ? "Bet View: Detailed" : "Bet View: OFF";
+
+		// So every frame-cost report says which view it was measured under (mini-plan 10 A3).
+		Scripts.Diagnostics.BetUiDiagnostics.ReportView(mode.ToString());
 	}
 
 	// Set by OnSimBetSettled, consumed once per frame by _Process. A flag rather than a timer: the work is
