@@ -40,12 +40,13 @@ public partial class WinnerNumberPresenter : PanelContainer
 		// Mini-plan 10 A3 run 3 — a DEBUG measurement switch; RELEASE builds always write both.
 		Scripts.Diagnostics.WinnerCellWrite writes = Scripts.Diagnostics.WinnerCellDiagnostics.Mode;
 
-		if (writes != Scripts.Diagnostics.WinnerCellWrite.ColourOnly)
+		if (writes == Scripts.Diagnostics.WinnerCellWrite.Both || writes == Scripts.Diagnostics.WinnerCellWrite.TextOnly)
 		{
 			_numberLabel.Text = number.ToString("D2");
 		}
 
-		if (_styleBox != null && writes != Scripts.Diagnostics.WinnerCellWrite.TextOnly)
+		if (_styleBox != null
+			&& (writes == Scripts.Diagnostics.WinnerCellWrite.Both || writes == Scripts.Diagnostics.WinnerCellWrite.ColourOnly))
 		{
 			_styleBox.BgColor = won ? _winColor : _lossColor;
 		}

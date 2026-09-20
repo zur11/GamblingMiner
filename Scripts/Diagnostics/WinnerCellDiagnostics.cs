@@ -11,6 +11,13 @@ namespace Scripts.Diagnostics
 		TextOnly,
 		/// <summary>Only the background colour. Numbers go stale on purpose.</summary>
 		ColourOnly,
+
+		/// <summary>
+		/// Neither — the grid still flushes, the cells still exist and are still visible, but nothing is written
+		/// to them. The baseline run 3 lacked: splitting the two writes could not separate them, because each
+		/// one queues the SAME redraw of the whole cell. This is what says whether the redraw is the cost.
+		/// </summary>
+		None,
 	}
 
 	/// <summary>

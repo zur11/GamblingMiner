@@ -265,6 +265,7 @@ namespace UI.DevTimeScaleSelector
 				Scripts.Diagnostics.WinnerCellWrite.Both,
 				Scripts.Diagnostics.WinnerCellWrite.TextOnly,
 				Scripts.Diagnostics.WinnerCellWrite.ColourOnly,
+				Scripts.Diagnostics.WinnerCellWrite.None,
 			};
 			var picker = new OptionButton
 			{
