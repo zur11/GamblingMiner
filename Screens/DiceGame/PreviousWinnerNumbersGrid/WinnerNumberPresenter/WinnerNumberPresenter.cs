@@ -36,9 +36,16 @@ public partial class WinnerNumberPresenter : PanelContainer
 
 		_shownNumber = number;
 		_shownWon = won;
-		_numberLabel.Text = number.ToString("D2");
 
-		if (_styleBox != null)
+		// Mini-plan 10 A3 run 3 — a DEBUG measurement switch; RELEASE builds always write both.
+		Scripts.Diagnostics.WinnerCellWrite writes = Scripts.Diagnostics.WinnerCellDiagnostics.Mode;
+
+		if (writes != Scripts.Diagnostics.WinnerCellWrite.ColourOnly)
+		{
+			_numberLabel.Text = number.ToString("D2");
+		}
+
+		if (_styleBox != null && writes != Scripts.Diagnostics.WinnerCellWrite.TextOnly)
 		{
 			_styleBox.BgColor = won ? _winColor : _lossColor;
 		}
