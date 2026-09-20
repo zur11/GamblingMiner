@@ -185,7 +185,8 @@ namespace UI.DevTimeScaleSelector
 				_effectiveScaleLabel.TooltipText = string.Create(System.Globalization.CultureInfo.InvariantCulture,
 					$"Requested {requestedRate:N0}X, running at {runningRate:N0}X. {credits:N0} running hardware credits × " +
 					$"{_calendar.DevTimeScale} = {credits * _calendar.DevTimeScale:N0} bets/s, the most that fits the " +
-					$"{DevTimeScaleGovernor.BudgetInForce:N0} bets/s budget (DiceGame at 50 fps, mini-plan 09). Fewer credits run faster.");
+					$"{DevTimeScaleGovernor.BudgetInForce:N0} bets/s budget (mini-plan 10: the clock's demand at the " +
+					$"hardware cap). Fewer credits run faster.");
 			}
 			else
 			{

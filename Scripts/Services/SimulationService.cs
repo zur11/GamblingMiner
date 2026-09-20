@@ -217,7 +217,15 @@ public partial class SimulationService : Node
 	// a slower wall clock, never into distorted in-game dynamics (P4 demonstrated exactly this at 94.3%
 	// retention) — but it is a different régime, and **the next person to raise this number should re-price
 	// a bet first rather than extrapolating from here.**
-	private const int DefaultMaxBetsPerFrame = 40;
+	//
+	// 40 → 160 (D-10.5, 2026-09-20), and the instruction above was followed: a bet WAS re-priced first.
+	// Mini-plan 10 took DiceGame's per-bet cost from 0.198 ms to **0.025** (the bet list stopped moving rows and
+	// now paints only the ~14 inside the scroll's viewport, once per frame), so 160 bets is ~3.7 ms of the
+	// frame, back inside the régime the ⚠ above says 40 had left. The demand it serves is the clock's ceiling:
+	// `99 credits × 90 ÷ 60 =` **149 bets/frame**, which 40 cannot express — at 40 the game could not exceed
+	// 2,400 bets/s whatever the budget allowed. Two sessions measured cap 160 delivering all ~8,910 bets/s at
+	// 58–60 fps, frame p50 16.6 ms, p95 22–24 ms, retention 1.000.
+	private const int DefaultMaxBetsPerFrame = 160;
 
 	// Mini-plan 09 P3a — a DEBUG-only runtime override, so the cap can be swept A–B–A inside ONE run. P1 showed
 	// the ~2,000 bets/s ceiling in DiceGame IS this cap (bound on 100% of saturated frames) and that each extra

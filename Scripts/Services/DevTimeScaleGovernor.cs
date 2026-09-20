@@ -25,6 +25,25 @@ public static class DevTimeScaleGovernor
 	/// <summary>
 	/// D-09.4 — the bets per real second the governor lets the running engines demand.
 	///
+	/// <b>D-10.4 (2026-09-20): 1,700 → 9,000, and it is now DERIVED rather than measured.</b> It is what the
+	/// clock can demand at the hardware cap — 100 credits × the ceiling's scale of 90 — so for the hardware that
+	/// exists the budget never binds and <see cref="CalendarTimeService.MaxGameSecondsPerRealSecond"/> governs
+	/// instead. Raise the hardware cap and this binds again, which is the correct behaviour.
+	///
+	/// <para>What made that safe was mini-plan 10: DiceGame's bet list cost 0.198 ms per bet and now costs
+	/// <b>0.025</b>, because rows no longer move and only the ~14 rows inside the scroll's viewport are painted,
+	/// once per frame. Two sessions (2026-09-19 and 2026-09-20) agree: at 99 credits × 9000X the game delivers
+	/// all ~8,910 bets/s at 58–60 fps with retention 1.000, and the frame's own limit was never found because
+	/// the clock's ceiling binds first. This figure is therefore NOT "the most the frame can take" — it is "more
+	/// than anything can ask for today", which is a different claim and the honest one.</para>
+	///
+	/// <para><b>Measured with the player betting alone, in 2009, in DiceGame.</b> A bot bet is assumed to cost
+	/// like a player bet; that has not been measured. The budget is a TOTAL over every running engine, so if it
+	/// ever binds again, re-price a bet first — and with several engines running, per-engine
+	/// <c>MaxBetsPerFrame</c> is the other half of the story.</para>
+	///
+	/// <para>The history below is kept because it is what the number used to mean.</para>
+	///
 	/// D-09.6 (2026-09-18): 2,000 → 1,700, sized for the SLOWEST session measured, not the fastest.
 	///
 	/// The first value came from mini-plan 09 P3a: in DiceGame, the most expensive scene to bet in, a saturated
@@ -44,11 +63,12 @@ public static class DevTimeScaleGovernor
 	/// could run faster. One conservative budget everywhere is a deliberate simplification. <b>Measured on one
 	/// machine, in 2009:</b> a later era may cost more per bet (mini-plan 09 §5).
 	/// </summary>
-	public const double BetBudgetPerSecond = 1700.0;
+	public const double BetBudgetPerSecond = 9000.0;
 
 	// Mini-plan 10 A3 — a DEBUG-only override, so the budget can be lifted inside ONE run to find what a cheaper
-	// bet view can actually deliver. With the budget in force the governor stops demand at 1,700 bets/s, which
-	// is exactly the figure under re-measurement: A1's Off leg sat at vsync with headroom nobody could see.
+	// bet view can actually deliver: the budget was the figure under re-measurement, so it could not be left in
+	// charge of the measurement (A1's Off leg sat at vsync with headroom nobody could see). It is kept because
+	// D-10.4's budget is derived, not measured — the next re-measurement needs the same escape hatch.
 	// 0 = no override; double.PositiveInfinity = no budget, only the clock's ceiling. RELEASE builds cannot set
 	// it (the setter is Conditional), so there BudgetInForce always reads the constant.
 	private static double _budgetOverride;

@@ -247,6 +247,25 @@ DiceGame's Bet View is now **Detailed / OFF**. The grid class keeps D-10.2's des
 BetsHistoryExplorer; only DiceGame's third view is gone, along with the DEBUG cell-write picker and the
 trace's `cellWrite` column.
 
+#### A3 CLOSED — the two defaults (2026-09-20)
+
+The second session (2026-09-20, Detailed at cap 160, budget off) reproduces the first within noise: 0.023–0.026
+ms per bet, 8,745–8,938 bets/s delivered, 58.0–59.7 fps, retention 0.991–1.000. Sized for the slower of the
+two as D-09.6 requires — here they are the same session to within the spread.
+
+| constant | was | now | why |
+|---|---:|---:|---|
+| `SimulationService.DefaultMaxBetsPerFrame` (**D-10.5**) | 40 | **160** | the clock's ceiling demands `99 × 90 ÷ 60 =` 149 bets/frame; 40 capped delivery at 2,400 bets/s whatever the budget allowed. At 0.025 ms/bet, 160 bets is ~3.7 ms of the frame — back inside the régime the constant's own ⚠ note says 40 had left. Its instruction ("re-price a bet first") was followed: mini-plan 10 is that re-pricing |
+| `DevTimeScaleGovernor.BetBudgetPerSecond` (**D-10.4**) | 1,700 | **9,000** | **derived, not measured**: the clock's demand at the hardware cap (100 credits × the ceiling's scale of 90). For the hardware that exists the budget no longer binds and the clock's ceiling governs; raise the hardware cap and it binds again, correctly |
+
+**What this buys the player:** 99 credits ran at 1700X and now run at **9000X**, with the bet list visible —
+5.3× faster, at 58–60 fps and full retention.
+
+**Stated as a limit, not hidden:** the frame's own capacity was never found, because the clock's ceiling binds
+first. 9,000 is therefore "more than anything can ask for today", not "the most the frame can take". It was
+measured with the player betting alone, in 2009, in DiceGame; a bot bet is assumed to cost like a player bet
+and that is unmeasured. The DEBUG budget override survives for the next re-measurement.
+
 **What remains of A3:** then a short **second session** (D-09.6's rule: size for the slower
 one) covering Numbers-after-the-fix and Detailed at cap 160; then the defaults — `DefaultMaxBetsPerFrame` and
 one budget per view.
