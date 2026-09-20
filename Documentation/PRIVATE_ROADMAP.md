@@ -432,9 +432,10 @@ bet now costs. Full record: `AIHelperFiles/mini08-timestamp-fidelity-and-through
 
 ### DevTimeScale ceiling + credit-yielding governor — ✅ DONE (mini-plan 09, 2026-09-18)
 
-> Both halves shipped. The budget is `BetBudgetPerSecond = 1,700` (99 credits → 1700X at ≥ 50 fps), and 9000X is
-> real down to 2 credits. The plan's close-out is §8; the open items are listed there and in
-> `IMPLEMENTATION_STATUS.md`. The text below is the original specification.
+> Both halves shipped, and 9000X became real down to 2 credits. The budget it set — `BetBudgetPerSecond =
+> 1,700`, 99 credits → 1700X — was **superseded by mini-plan 10** (9,000, the clock's demand at the hardware
+> cap) once DiceGame's bet list stopped costing 0.198 ms per bet. The plan's close-out is §8; the open items
+> are listed there and in `IMPLEMENTATION_STATUS.md`. The text below is the original specification.
 
 **Status: `AIHelperFiles/mini09-devtimescale-ceiling-and-credit-governor-plan.md`, own branch off `main`.**
 Picked up from mini-plan 08's close-out, at the developer's request.
@@ -452,7 +453,16 @@ session's speed unused and is specific to one machine and one era. Following liv
 speed, but it oscillates and moves the scale for reasons the player cannot see. The measurements to start from
 are in the plan's D-09.6 entry.
 
-### DiceGame's per-bet UI cost + R2-C1's overspend under the governor — SPECIFIED, next up (2026-09-18)
+### DiceGame's per-bet UI cost + R2-C1's overspend under the governor — ✅ DONE (mini-plan 10, 2026-09-20)
+
+> Both parts closed. **(A)** The bet list was 80% of the cost of a bet and now costs 0.025 ms, the same as
+> drawing nothing: rows never move and only the ~14 visible ones are painted, once per frame. 99 credits run
+> at the clock's ceiling, 9000X, against 1700X before — `DefaultMaxBetsPerFrame` 40 → 160 and
+> `BetBudgetPerSecond` 1,700 → 9,000, the latter **derived** as the clock's demand at the hardware cap rather
+> than measured. A player-facing Bet View button (Detailed / OFF) makes hiding the list the way to buy speed.
+> **(B)** The overspend is **0.000000% at full retention** and rises only with saturation, so P2 closed by its
+> pre-registered rule. **Deferred past Basic Mode:** the Numbers view, entry above. The text below is the
+> original specification.
 
 **Status: `AIHelperFiles/mini10-dicegame-per-bet-ui-cost-and-clock-overspend-plan.md`, own branch off `main`.**
 Mini-plan 09's two remaining open items, at the developer's request.

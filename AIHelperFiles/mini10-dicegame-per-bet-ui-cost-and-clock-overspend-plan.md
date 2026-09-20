@@ -3,8 +3,7 @@
 **Series note:** tenth entry of the *mini-plan* series, following
 `mini09-devtimescale-ceiling-and-credit-governor-plan.md`, whose close-out (§8) left both subjects open.
 
-**Status:** 🚧 **IN PROGRESS** on `mini10-dicegame-ui-cost-and-clock` (2026-09-18). A1 and B1 are **measured**;
-their results are in §2 A1 and §3 B1/B2, and they changed A2's design — see **D-10.1**.
+**Status:** ✅ **COMPLETE** (2026-09-20). Close-out: §6. Built on `mini10-dicegame-ui-cost-and-clock`.
 
 **Two independent parts, in this order:**
 
@@ -348,3 +347,43 @@ before.
 - **Other scenes' per-bet UI** (ClientsBetsHistory's live feed, BetsHistoryExplorer's own panels), beyond
   keeping the explorer's rendering unchanged. DiceGame is the scene the budget is sized for.
 - **The four unattributed in-sim spikes** (mini-plan 09 P1, H4) — a separate investigation if they matter.
+
+---
+
+## 6. Close-out (2026-09-20)
+
+**Both parts closed.** Five measurement runs, each labelled in `user://logs/frame_cost_trace.csv`.
+
+**A — the per-bet UI cost.** DiceGame's bet list was **80% of the cost of a bet** (0.198 ms of 0.238) and now
+costs **0.025 ms**, the same as drawing nothing. Rows never move; a settled bet goes into a ring buffer and
+once per frame only the ~14 rows inside the scroll's viewport are rewritten. A player-facing **Bet View**
+button (Detailed / OFF) makes hiding the list the way to buy speed, gated on tree visibility so what is on
+screen and what is paid for cannot drift apart.
+
+**The defaults that follow from it:** `DefaultMaxBetsPerFrame` 40 → **160**, `BetBudgetPerSecond` 1,700 →
+**9,000**. **99 credits went from 1700X to 9000X — the clock's ceiling — at 58–60 fps and retention 1.000.**
+The closing run confirmed it with no overrides set: 8,914–8,940 bets/s delivered against 8,910 demanded,
+frame p50 16.65 ms, p95 21–22 ms, overspend 0.
+
+**B — R2-C1's overspend.** Measured directly instead of reconstructed: **0.000000% in every report at full
+retention**, across both sessions, rising only with saturation (1.9% at retention 0.12). It is a symptom of a
+frame that cannot keep up, not a structural bias of the autoload order, so **P2 closed by its pre-registered
+rule** and nothing was deleted.
+
+**Deferred:** the Numbers bet view (D-10.3), past Basic Mode, recorded in `PRIVATE_ROADMAP.md` with its
+measurements so nobody repeats the four runs.
+
+### What this plan teaches, beyond its own subject
+
+1. **A cost's SHAPE decides the fix, and measuring it per-bet can hide that it is per-frame.** The list was a
+   per-bet cost and the grid a per-frame one; the same ring-buffer change fixed the first and did nothing for
+   the second. Ask which one you have before designing.
+2. **Splitting a cost between two writes cannot separate them when both converge on the same invalidation**
+   (run 3). When a split comes back flat, the missing leg is usually *do neither*.
+3. **A budget that governs a measurement cannot be the subject of it.** A1's cheapest leg sat at vsync with
+   headroom nobody could see, and only a DEBUG override made the ceiling observable.
+4. **A derived default beats a measured one where the derivation exists.** 9,000 is the clock's demand at the
+   hardware cap, so it states its own expiry condition; 1,700 was a number that had to be re-measured to be
+   trusted.
+5. **A pre-registered decision rule is what makes a measurement able to CLOSE something.** B3 was written
+   before B1 ran, so the verdict cost no argument.
