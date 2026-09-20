@@ -1434,19 +1434,23 @@ public partial class DiceGame : Control, IBetEventSource
 	// NOT persisted: user-settings persistence does not exist yet (PRIVATE_ROADMAP.md), so the window opens
 	// visible on every entry. That is the honest default — a speed that silently carried over from a setting
 	// nobody can see would be worse than one the player re-chooses.
-	// Three views of the same bets, one at a time, in one window: the detailed list, the red/green roll numbers
-	// (PreviousWinnerNumbersGrid), or nothing. Each is cheaper than the one before it, so the button reads as a
-	// speed ladder as well as a view choice (developer's design, 2026-09-19).
+	// The bet window's two states: the detailed list, or nothing. Hiding it is how the player buys speed.
+	//
+	// A THIRD view — the red/green roll numbers (PreviousWinnerNumbersGrid) — shipped on 2026-09-19 and was
+	// DEFERRED until after Basic Mode on 2026-09-20 (developer's call), because making it as cheap as the list
+	// turned out to be a redesign rather than a fix: A3 measured its cost as ~0.21 ms per CELL REPAINT, and at
+	// 160 bets per frame all 100 cells change every frame, which halves the frame rate whatever is written to
+	// them. The grid itself is untouched and still serves BetsHistoryExplorer; only DiceGame's view is gone.
+	// The measurements and the two candidate fixes (a refresh cadence, or fewer cells) are in mini-plan 10 §A3
+	// and PRIVATE_ROADMAP.md.
 	private enum BetDisplayMode
 	{
 		Detailed = 0,
-		Numbers,
 		Off,
 	}
 
 	private Button _betDisplayToggleBtn;
 	private Control[] _detailedWindow;
-	private Control _numbersWindow;
 	private BetDisplayMode _betDisplayMode = BetDisplayMode.Detailed;
 
 	private void BuildBetDisplayToggle()
@@ -1478,18 +1482,13 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		// The numbers view takes the list's HEADERS-plus-scroll rectangle, since the two are never shown at once.
-		// Its scene geometry cannot be used as it stands: it starts at y 534, under this button, and its minimum
-		// height of 540 pushes its bottom to y 1074 plus, into the band a windowed game can leave off-screen
-		// (Ch. 29 §29.11). The scene has kept it hidden, so nobody has seen that until now.
-		_numbersWindow = GetNodeOrNull<Control>("ScrollContainer");
-		if (_numbersWindow != null && _detailedWindow[0] is Control listScroll)
+		// The deferred Numbers view's grid stays hidden, which is also what makes it free: both per-bet consumers
+		// gate on tree visibility. Whoever revives it must first fix its scene geometry — it starts at y 534,
+		// under this button, and its 540 minimum height pushes its bottom past y 1074, into the band a windowed
+		// game can leave off-screen (Ch. 29 §29.11). Hidden since long before this plan, so nobody had seen it.
+		if (GetNodeOrNull<Control>("ScrollContainer") is Control numbersWindow)
 		{
-			_numbersWindow.CustomMinimumSize = listScroll.CustomMinimumSize;
-			_numbersWindow.OffsetLeft = listScroll.OffsetLeft;
-			_numbersWindow.OffsetRight = listScroll.OffsetRight;
-			_numbersWindow.OffsetTop = 574f; // where the detailed view's headers start — the numbers need none
-			_numbersWindow.OffsetBottom = listScroll.OffsetBottom;
+			numbersWindow.Visible = false;
 		}
 
 		// Sits in the free band between the strategy save controls (which end at y 526) and the column headers
@@ -1502,7 +1501,8 @@ public partial class DiceGame : Control, IBetEventSource
 				+ "or nothing. Each step is lighter to draw, so the game can run faster — with the window off it "
 				+ "draws nothing per bet. Switching back reloads the last bets from your history.",
 		};
-		_betDisplayToggleBtn.Pressed += () => SetBetDisplayMode((BetDisplayMode)(((int)_betDisplayMode + 1) % 3));
+		_betDisplayToggleBtn.Pressed += () => SetBetDisplayMode(
+			_betDisplayMode == BetDisplayMode.Detailed ? BetDisplayMode.Off : BetDisplayMode.Detailed);
 		AddChild(_betDisplayToggleBtn);
 		SetBetDisplayMode(BetDisplayMode.Detailed);
 	}
@@ -1520,33 +1520,16 @@ public partial class DiceGame : Control, IBetEventSource
 			node.Visible = mode == BetDisplayMode.Detailed;
 		}
 
-		if (_numbersWindow != null)
-		{
-			_numbersWindow.Visible = mode == BetDisplayMode.Numbers;
-		}
-
 		// A view that was hidden painted nothing while it was closed, so it has no content of its own to
 		// preserve: showing it rebuilds from the journal. Restoring whatever was on screen when it closed would
-		// be a lie with a timestamp on it. The winner grid had never been rebuilt by anything before this,
-		// because nothing ever showed it.
-		IReadOnlyList<BetRecord> recent = mode == BetDisplayMode.Off
-			? null
-			: _userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries);
+		// be a lie with a timestamp on it.
 		if (mode == BetDisplayMode.Detailed)
 		{
-			_betHistoryContainer?.LoadFromHistoricalRecords(recent);
-		}
-		else if (mode == BetDisplayMode.Numbers)
-		{
-			_previousWinnerNumbersGrid?.LoadFromHistoricalRecords(recent);
+			_betHistoryContainer?.LoadFromHistoricalRecords(
+				_userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries));
 		}
 
-		_betDisplayToggleBtn.Text = mode switch
-		{
-			BetDisplayMode.Detailed => "Bet View: Detailed",
-			BetDisplayMode.Numbers => "Bet View: Numbers",
-			_ => "Bet View: OFF",
-		};
+		_betDisplayToggleBtn.Text = mode == BetDisplayMode.Detailed ? "Bet View: Detailed" : "Bet View: OFF";
 
 		// So every frame-cost report says which view it was measured under (mini-plan 10 A3).
 		Scripts.Diagnostics.BetUiDiagnostics.ReportView(mode.ToString());

@@ -593,6 +593,17 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   | DEV time scale (the requested one) | not persisted | DEV, but the same mechanism |
   | The strategy panel's last-used values | not persisted; distinct from a *saved* strategy | the player |
   | Anything a future options menu holds | does not exist | the player |
+
+- [ ] **The Numbers bet view in DiceGame — DEFERRED past Basic Mode (2026-09-20, D-10.3).** The red/green roll
+  grid (`PreviousWinnerNumbersGrid`) costs **~0.21 ms per cell repaint**, and since every one of its 100 cells
+  changes on every frame that carries bets, it halves the frame rate (26 fps against 57 with the same grid
+  visible but not written to). Mini-plan 10 took its per-bet cost down to the detailed list's 0.025 ms and
+  proved the remainder is the repaint itself, not what is written — so the two ways out both change what the
+  view promises rather than how it is built: **a refresh cadence** (say 10 Hz, ~50 fps by arithmetic) or
+  **fewer cells**. Neither is a bug fix, so it waits. The grid still serves BetsHistoryExplorer, where the
+  replay cursor is slow enough that none of this bites. Full measurements: mini-plan 10 §A3, D-10.3. Whoever
+  revives it must also fix the scene geometry, which has never been on screen: it starts at y 534 and its 540
+  minimum height runs past the bottom band (ProjectDesignManual Ch. 29 §29.11).
 - [x] User-facing DiceGame label uses `Main Balance`.
 - [~] Clarify auto-recharge behavior in UI and docs. **Docs done** (ProjectDesignManual Ch.25 + CLAUDE.md: progression resets, Insist After Stop, auto-recharge precedence). UI labels/warnings still pending (P2).
 - [x] Add player BTC wallet and addresses.

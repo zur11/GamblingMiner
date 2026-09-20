@@ -222,6 +222,31 @@ would change nothing, because assigning a stylebox colour queues a redraw even w
 BetsHistoryExplorer's replay drives the same grid through `AddWinnerNumber` and inherits the change;
 coalescing within a frame is invisible there for the same reason as in the list.
 
+#### D-10.3 — the Numbers view is DEFERRED until after Basic Mode (developer's call, 2026-09-20)
+
+Three runs measured it and each refuted the fix the previous one implied. The record, so nobody repeats them:
+
+| run | change | result |
+|---|---|---|
+| 2 | D-10.2: ring buffer, fixed order, no `MoveChild` | in-loop cost fell to Detailed's **0.025 ms/bet**; throughput 1,650 → 4,150 bets/s; **but the frame stayed at 26 fps** — 20–45 ms per dirty frame outside the sim, the same at cap 80 and cap 160, i.e. **per frame, not per bet** |
+| 3 | split the cell's two writes (text / colour) | **no difference**: Both 26.0, TextOnly 25.9–26.9, ColourOnly 26.6–27.5 fps. Both hypotheses refuted |
+| 4 | write NOTHING, cells still visible and flushing | **56.6–57.5 fps, 8,912 bets/s delivered, retention 0.998** — the clock's ceiling, exactly like Detailed |
+
+**The cost is the REPAINT of 100 cells per frame — ~0.21 ms per cell, ~21 ms per frame — and is independent of
+what is written to them.** At 160 bets per frame every cell changes every frame, and no cell-level optimisation
+can help: the two candidate fixes both change the view's contract rather than its implementation — **a refresh
+cadence** (10 Hz would cost ~50 fps by arithmetic, unmeasured) or **fewer cells**. That is a redesign, and it
+is deferred; `PRIVATE_ROADMAP.md` carries it.
+
+**Method lesson, general:** *splitting a cost between two writes cannot separate them when both converge on the
+same invalidation.* Run 3 measured two paths that end in the same repaint, and its flat result looked like
+"neither is expensive" when it meant "the question does not decompose that way". The baseline that settled it
+was the one the split omitted: **do neither**. When a split comes back flat, the missing leg is usually *none*.
+
+DiceGame's Bet View is now **Detailed / OFF**. The grid class keeps D-10.2's design and still serves
+BetsHistoryExplorer; only DiceGame's third view is gone, along with the DEBUG cell-write picker and the
+trace's `cellWrite` column.
+
 **What remains of A3:** then a short **second session** (D-09.6's rule: size for the slower
 one) covering Numbers-after-the-fix and Detailed at cap 160; then the defaults — `DefaultMaxBetsPerFrame` and
 one budget per view.

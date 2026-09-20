@@ -87,7 +87,6 @@ namespace UI.DevTimeScaleSelector
 			AddFrameCostToggle();
 			AddFrameCapSelector();
 			AddBudgetSelector();
-			AddWinnerCellSelector();
 			AddFrameReportCounter();
 
 			// Mini-plan 09 §4 — the governor readout, placed AFTER the diagnostic column so appearing, disappearing
@@ -252,35 +251,6 @@ namespace UI.DevTimeScaleSelector
 			int current = inForce == DevTimeScaleGovernor.BetBudgetPerSecond ? 0 : System.Array.IndexOf(budgets, inForce);
 			picker.Select(current < 0 ? 0 : current);
 			picker.ItemSelected += index => DevTimeScaleGovernor.SetBudgetOverrideForDiagnostics(budgets[(int)index]);
-			DiagnosticColumn().AddChild(picker);
-		}
-
-		// Mini-plan 10 A3 run 3 — which of a Numbers cell's two writes runs, to split the grid's remaining
-		// per-frame cost between the text and the background colour. Only affects the Numbers view.
-		[System.Diagnostics.Conditional("DEBUG")]
-		private void AddWinnerCellSelector()
-		{
-			Scripts.Diagnostics.WinnerCellWrite[] modes =
-			{
-				Scripts.Diagnostics.WinnerCellWrite.Both,
-				Scripts.Diagnostics.WinnerCellWrite.TextOnly,
-				Scripts.Diagnostics.WinnerCellWrite.ColourOnly,
-				Scripts.Diagnostics.WinnerCellWrite.None,
-			};
-			var picker = new OptionButton
-			{
-				TooltipText = "DEV — which write a Numbers cell performs (mini-plan 10 A3). The half that is not "
-					+ "written goes stale on purpose; switch back to Both to make the grid honest again.",
-			};
-			picker.AddThemeFontSizeOverride("font_size", 16);
-			foreach (Scripts.Diagnostics.WinnerCellWrite mode in modes)
-			{
-				picker.AddItem($"Cell {mode}");
-			}
-
-			int current = System.Array.IndexOf(modes, Scripts.Diagnostics.WinnerCellDiagnostics.Mode);
-			picker.Select(current < 0 ? 0 : current);
-			picker.ItemSelected += index => Scripts.Diagnostics.WinnerCellDiagnostics.SetMode(modes[(int)index]);
 			DiagnosticColumn().AddChild(picker);
 		}
 
