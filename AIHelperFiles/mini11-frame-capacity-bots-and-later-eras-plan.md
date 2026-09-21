@@ -7,8 +7,9 @@ result. This plan measures them.
 **Status:** 🚧 **IN PROGRESS** on `mini11-frame-capacity-bots-and-eras` (branch created 2026-09-21, plan
 committed). **§5 step 1 done** (2026-09-21): C1's trace columns, two A1 columns §2 needed and did not list,
 and the §0 governor-comment correction — one build, no behaviour change (§3 C1 records what was built).
-**§5 step 2 prepared:** the legs are made by credits mid-run, not by restarting (§2, revised before data), and
-the hardware shop has two DEV buttons for it. **Next: run A1/B1** with the protocol given in the chat.
+**§5 step 2 done** (A1/B1, session 1, results in §2): the frame delivered the largest demand the game can
+produce (44,331 of 44,545 bets/s) at 57 fps without breaking; a bot bet costs 22% of a player bet; the per-engine
+cap binds first. **Next: §5 step 3, A2** — the densest leg after a restart, plus a short Bet cost leg.
 
 **Three questions, one per part:**
 
@@ -127,9 +128,76 @@ and cap-bound frames still supply points, up to 5 × the cap.
   hundred bets beyond the fixed per-frame work.
 - The per-engine caps do not bind before the frame does.
 
+### A1/B1 — results, session 1 (2026-09-21, 18:10–18:14 UTC)
+
+One run, six legs, 24 reports: 18 full, plus 6 partial flushes at the leg changes, which are not used. World
+2009-08-01 → 08-28, chain height 300 → 338. Budget off, cap 160, Detailed, 9000X. No bot error; the developer
+watched the retention readout, which never left 100% on screen.
+
+| Leg | demand bets/s | delivered | % | fps | frame p50 / p95 ms | sim ms | outside sim ms | bets/frame | player loop cut | a bot loop cut | retention |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| L0 — player + four 1-credit bots | 9,270 | 9,280 | 100.1 | 59.4 | 16.63 / 22.3 | 4.40 | 12.44 | 156 | 15% | 0% | 0.9997 |
+| L1 — + bot_1 at the cap | 18,090 | 18,076 | 99.9 | 59.2 | 16.62 / 22.3 | 5.33 | 11.55 | 305 | 16% | 16% | 0.9994 |
+| L2 — + bot_2 | 26,910 | 26,907 | 100.0 | 59.5 | 16.58 / 22.1 | 6.07 | 10.72 | 452 | 10% | 9% | 1.0000 |
+| L3 — + bot_3 | 35,730 | 35,706 | 99.9 | 59.0 | 16.52 / 22.9 | 7.22 | 9.73 | 605 | 22% | 21% | 0.9996 |
+| L4 — + bot_4 | 44,545 | 44,331 | 99.5 | 57.0 | 16.88 / 24.2 | 8.65 | 8.90 | 778 | 60% | 61% | 0.9966 |
+| L5 — control, all bots back to 1 | 9,270 | 9,259 | 99.9 | 59.2 | 16.62 / 22.7 | 4.55 | 12.35 | 157 | 17% | 0% | 0.9993 |
+
+Each figure is the mean of a leg's three full reports; "sim" and "outside sim" are per-frame means.
+
+**The frame did not break, again.** L4 is the largest demand the game can produce with the hardware that exists:
+five engines, each clamped to `MaxAutoBetBaseAps`, at the clock's ceiling. The frame delivered 99.5% of it at
+57 fps. §2's fit, "the `k` at which the frame reaches 20 ms", therefore lies **outside the measured range and was
+not measured.** What was measured is a lower bound: **at least 44,331 bets/s at 57 fps**, in this mix.
+- *Extrapolation, labelled as one, and not to be fed to §4.* The sim grows ~0.0068 ms per extra bot bet
+  (4.40 → 8.65 ms over +622 bets a frame; L2 and L3 sit 0.3 ms below that line). Outside-sim time falls from
+  12.4 to 8.9 ms as the sim grows, which is vsync wait being used up, so the real outside work is at most 8.9 ms.
+  If both hold, a 20 ms frame takes ~1,140 bets, ~57,000 bets/s.
+- **Control:** L5 repeats L0 within noise (59.2 vs 59.4 fps, sim 4.55 vs 4.40 ms, player bet 0.029 vs 0.028 ms).
+  No drift over the four minutes.
+
+**B — a bot bet costs 0.0062 ms against the player's 0.028 ms, 22% of it. The ±30% prediction is refuted: bots
+are ~4.5× cheaper.** Bot figure = `BotLoop` ÷ bot bets, over L2–L4, where bot bets dominate. L0 and L5 read
+0.011–0.012, which is the four runners' fixed per-frame overhead spread over six bets. Player figure =
+`PlayerLoop` ÷ player bets, 0.027–0.029 in every leg. The player's extra lies on its own path: the journal
+(`OnBetExecutedRegisterBet`), `PersistFinancialState` (a fresh `NodeFinancialState` per bet, with a LINQ copy of
+every transfer record), `BankrollStateService.SetBalance`, and the `BetSettled` signal into DiceGame. The frame
+profiler cannot split these. §4 B requires the cause to be named, so A2 ends with a short Bet cost leg, whose
+segments are exactly the player's bet. §4 B's "fix a dominant bot-only call first" has nothing to act on: the
+bots are the cheap side.
+
+**Per-engine cap — the third prediction is refuted, as the arithmetic above said.** At L4, 57 fps, the player's
+loop was cut on 60% of frames and some bot loop on 61%. Cost: 0.5% of demand undelivered, retention 0.9966, so
+the clock ran 0.34% slow. Even L0 cuts the player's loop on 15% of frames: its p95 frame, 22 ms, is past the
+~18 ms at which 160 bets run out. At retention 0.9997 that costs nothing measurable.
+
+**Recorded on the way:**
+- **Founder attempts:** 0.12 per player/bot bet throughout, **3.2 µs each** (`FounderDrive` ÷ attempts, L1–L4).
+  §1's ~4 µs estimate was the right order and slightly high.
+- **Block work, C1's first reading:** 18–25 ms per block over 23 blocks, one at 59.6 ms (the first after arming).
+  **One block costs more than a whole frame.** It is what the frames over 33 ms are: every frame over 50 ms in a
+  full report carried a checkpoint or a GC. Heights 300–338 are too narrow a range to show growth; that is C2's job.
+- **GC:** gen-0 collections in 31% of frames at L0, 84% at L4. Allocation grows with bot bets. It did not cost
+  frame rate here; recorded, not chased.
+- **Scheduled network:** 0–1 cast miner powered, scheduled power ≤ 1.1, ~0–2 attempts a frame,
+  `scheduledCapShare` 0. August 2009 is still an idle network, as §1 said.
+
+**Against §4, pending A2 — nothing is decided on one session:**
+- **A:** ≥ 44,331 bets/s at 50 fps or better, far above 9,000, so the first branch applies: the budget becomes
+  the measured figure, rounded down. Consequence to weigh at step 4: rounded to 44,000, the budget would bind at
+  L4 itself (495 credits → 88X, not 90X).
+- **B:** outside ±30%, on the cheap side. A single budget priced on the player's bet is conservative for bots.
+- **Cap:** it binds first, so 160 does not stay. §4 names no replacement. The arithmetic candidate is
+  `8,910 ÷ 50` ≈ **179** bets a frame: one engine at the cap, served down to D-09.1's 50 fps floor.
+
 ### A2 — the second session
 
-Repeat the densest leg in another session, after a restart (D-09.6: size for the slower one).
+Repeat the densest leg in another session, after a restart (D-09.6: size for the slower one). **Added after
+A1:** a short Bet cost leg at the end, Frame cost off, to name the player's extra cost by segment (§4 B).
+
+**Pre-registered, from session 1:** L4 holds 50 fps if this session is no more than **~14% slower** than
+session 1, because `(8.65 + 8.90) × 1.14 ≈ 20 ms`. Mini-plan 08 measured sessions up to 34% apart; a session
+that slow would not hold it.
 
 ---
 
