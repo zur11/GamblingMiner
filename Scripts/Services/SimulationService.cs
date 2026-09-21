@@ -529,6 +529,7 @@ public partial class SimulationService : Node
 		// (or by a scene round-trip), which could be hours of game time stale and would collapse the batch
 		// onto a single instant. MinValue means "no anchor yet" and yields the nominal spacing.
 		_previousFrameClockUtc = DateTime.MinValue;
+		_mirrorStateVersion = -1; // D-11.3: a run's first settled bet always writes the full mirror
 		IsRunning = true;
 
 		if (_calendar != null)
@@ -561,6 +562,7 @@ public partial class SimulationService : Node
 		_config = null;
 		_accumulatorSeconds = 0d;
 		_previousFrameClockUtc = DateTime.MinValue; // see the note at the field: a stopped run leaves no anchor
+		_mirrorStateVersion = -1; // D-11.3: between runs DiceGame writes the mirror itself; trust nothing cached
 		OnGovernorInputChanged(); // no engines run now: fall back to the idle preview of the player's own credits
 
 		if (_calendar != null)
@@ -1046,9 +1048,33 @@ public partial class SimulationService : Node
 		Scripts.Diagnostics.BetCostProfiler.EndBet();
 	}
 
+	// Mini-plan 11 D-11.3 — the BankrollProgramService.StateVersion at which the active node's mirror was last
+	// written IN FULL, and for which node. -1 = not written in this run, which forces the full write.
+	private int _mirrorStateVersion = -1;
+	private string? _mirrorNodeId;
+
 	private void PersistFinancialState(bool persist)
 	{
 		if (_config == null || _wallet == null) return;
+
+		// Mini-plan 11 D-11.3 — THE PER-BET FAST PATH. This runs on every settled bet, and it used to rebuild the
+		// whole mirror each time: a fresh NodeFinancialState with a LINQ copy of every transfer record, which
+		// SetNodeFinancialState's CloneNormalized then copied a second time. Mini-plan 11 B measured it at 11.6 µs,
+		// 41% of a player bet, with 64 records — and the record count only grows, by one per recharge. A bet moves
+		// the two balances and nothing else. So while the dose and the records are unchanged, only the balances are
+		// written. Anything that changes either one bumps StateVersion, so the very next call takes the full path;
+		// and every block commit (persist: true) takes it regardless, so what reaches disk is always a full write.
+		// The principal is still refreshed on every bet: it can move mid-run without a transfer record (the Private
+		// Bank's auto-deposit, a manual Bank → Main in ScFinances).
+		int version = _bankrollProgram?.StateVersion ?? -1;
+		if (!persist
+			&& version >= 0
+			&& version == _mirrorStateVersion
+			&& string.Equals(_mirrorNodeId, _config.ActiveNodeId, StringComparison.Ordinal)
+			&& _networkRoot.TryUpdateNodeFinancialBalances(_config.ActiveNodeId, _principal?.CurrentBalance ?? 0m, _wallet.Balance))
+		{
+			return;
+		}
 
 		var state = new NodeFinancialState
 		{
@@ -1067,6 +1093,8 @@ public partial class SimulationService : Node
 		};
 
 		_networkRoot.SetNodeFinancialState(_config.ActiveNodeId, state, persist);
+		_mirrorStateVersion = version;
+		_mirrorNodeId = _config.ActiveNodeId;
 	}
 
 	// If the player's autobet stopped for insufficient funds and auto-recharge is on, top up the bankroll
@@ -1556,6 +1584,16 @@ public partial class SimulationService : Node
 
 	private void SaveBotFinancialState(BotRunner runner)
 	{
+		// Mini-plan 11 D-11.3 — the bot's twin of PersistFinancialState's fast path, for the same per-bet double copy
+		// of the transfer records (GetOrCreateNodeFinancialState clones, SetNodeFinancialState clones again). A bot
+		// bet moves only its bankroll. Its principal, dose and records change in TryAutoRechargeBot, which writes the
+		// whole state itself, and in company dividends, which credit the principal in place — so the principal is
+		// left alone here, exactly as the full path below preserves it by cloning the current mirror.
+		if (_networkRoot.TryUpdateNodeFinancialBalances(runner.NodeId, null, runner.Wallet.Balance))
+		{
+			return;
+		}
+
 		NodeFinancialState state = _networkRoot.GetOrCreateNodeFinancialState(
 			runner.NodeId,
 			BankrollProgramService.InitialPrincipalBalanceBaseline - BankrollProgramService.DefaultAutoRechargeAmount,

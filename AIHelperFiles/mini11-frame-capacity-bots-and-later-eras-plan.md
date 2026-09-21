@@ -12,7 +12,7 @@ produce (44,331 of 44,545 bets/s) at 57 fps without breaking; a bot bet costs 22
 cap binds first. **§5 step 3 done** (A2, §2): the slower session delivered 44,195 bets/s at 56 fps; the
 player's bet is 72% player-only work, 41% of it one per-bet copy of every transfer record.
 **§5 step 4 decided** (end of §4): D-11.1 budget 44,000, D-11.2 cap 180, D-11.3 fix the per-bet record copy
-before C2. **Next:** D-11.3's build, then one verification run, then C2.
+before C2. **D-11.3 built** (end of §4). **Next:** the verification run (predictions at the end of §4), then C2.
 
 **Three questions, one per part:**
 
@@ -376,9 +376,26 @@ advanced or reset freely, so C2 runs on it as it stands.
   every recharge, and C2 is an hour of play whose `PlayerLoop` should be a flat control against the network's
   cost, not a second thing growing with the era.
 
-**Verification, one run after D-11.3's build:** the densest configuration at the **default** budget and cap
-must read **88X** on the governor's label, with retention 1.000 and the per-engine cap cutting almost no frames.
-A Bet cost leg must show `PersistFinancial` near zero, with no other segment grown to replace it.
+**D-11.3 as built.** `BankrollProgramService.StateVersion` is a counter bumped on every change to the dose or the
+records (`SetAutoRechargeAmount`, `AddRecord`, `ReplaceState`, `LoadState`, the only four writers). On a
+non-persisting call with the version unchanged, `PersistFinancialState` writes **only the two balances**, in
+place, through `NetworkRoot.TryUpdateNodeFinancialBalances`. It takes the full path on any version change, on a
+node change, on a run's first bet, and on every block commit (`persist: true`), so what reaches disk is always a
+full write. The principal is still refreshed every bet, because the Private Bank's auto-deposit and ScFinances can
+move it without a record. **The bots got the same fix:** `SaveBotFinancialState` paid the same double copy
+(`GetOrCreateNodeFinancialState` clones, `SetNodeFinancialState` clones again). It now updates only the bankroll.
+That leaves the principal as the full path always did, which matters because company dividends credit a
+bot's principal in place.
+
+**Verification, one run after D-11.3's build. Predictions:**
+- the densest configuration at the **default** budget and cap reads **⇣ 8,800X · 495 credits** on the governor's
+  label; it delivers ~43,560 bets/s, retention ≥ 0.999, and the per-engine cap cuts ≤ 10% of frames. At 88X one
+  engine asks 8,712 bets/s, which 180 bets per frame serve down to ~48 fps;
+- Bet cost: `PersistFinancial` falls from 11.6 µs to **under 1 µs**, the player's bet from 28.5 to ~17–18 µs,
+  and no other segment grows by more than 1 µs;
+- **correctness**: after a manual Main → Bankroll transfer mid-run and a block after it, the player's persisted
+  mirror (`blockchain/state.json`), `bankroll_program_state.json` and the checkpoint all hold **65** records and
+  the same balances. Before the build all three held 64, with Main 33,600 and Bankroll 1,704.89806442.
 
 ---
 
