@@ -475,9 +475,10 @@ Mini-plan 09's two remaining open items, at the developer's request.
 - **(B) R2-C1's overspend.** Measured directly by `FrameCostProfiler`, under the governor and in one forced-
   saturation leg. Closed for good below 0.05%; otherwise fixed with the lag-free design D-09.2 described.
 
-### The frame's real capacity, bots betting alongside, and later eras — SPECIFIED, next up (2026-09-21)
+### The frame's real capacity, bots betting alongside, and later eras — IN PROGRESS (mini-plan 11, 2026-09-21)
 
-**Status: `AIHelperFiles/mini11-frame-capacity-bots-and-later-eras-plan.md`, own branch off `main`.** The three
+**Status: `AIHelperFiles/mini11-frame-capacity-bots-and-later-eras-plan.md`, on branch
+`mini11-frame-capacity-bots-and-eras`; the plan's own Status line says what is next.** The three
 limits mini-plan 10 stated about its own result, at the developer's request.
 
 - **(A) The frame's capacity.** Never observed: the clock's ceiling binds first with the player alone. Bots

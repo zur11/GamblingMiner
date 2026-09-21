@@ -4,7 +4,9 @@
 `mini10-dicegame-per-bet-ui-cost-and-clock-overspend-plan.md`, whose close-out stated three limits of its own
 result. This plan measures them.
 
-**Status:** 📋 **SPECIFIED, NOT STARTED** (2026-09-21). To be built on its own branch off `main`.
+**Status:** 🚧 **IN PROGRESS** on `mini11-frame-capacity-bots-and-eras` (branch created 2026-09-21, plan
+committed). **Next: §5 step 1** — C1's trace columns and the §0 governor-comment correction, one build, no
+behaviour change.
 
 **Three questions, one per part:**
 
