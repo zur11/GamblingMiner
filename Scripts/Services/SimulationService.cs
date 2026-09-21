@@ -225,7 +225,20 @@ public partial class SimulationService : Node
 	// `99 credits × 90 ÷ 60 =` **149 bets/frame**, which 40 cannot express — at 40 the game could not exceed
 	// 2,400 bets/s whatever the budget allowed. Two sessions measured cap 160 delivering all ~8,910 bets/s at
 	// 58–60 fps, frame p50 16.6 ms, p95 22–24 ms, retention 1.000.
-	private const int DefaultMaxBetsPerFrame = 160;
+	//
+	// 160 → 180 (D-11.2, 2026-09-21). This cap is PER ENGINE: the player's loop and each bot runner's loop apply
+	// it separately. Mini-plan 11 ran all five at the hardware cap and found it binding BEFORE the frame did. At
+	// 56–57 fps it cut 60–93% of frames, so the densest configuration delivered 99.2–99.5% of its demand and the
+	// clock ran slow. The reason is arithmetic: one engine at the cap and the clock's ceiling asks for 8,910 bets/s,
+	// which is 160 bets per frame at ~55.7 fps. Any frame longer than ~18 ms therefore under-serves it, and a full
+	// 800-bet frame takes about that long, which leaves nothing to catch up after a block's 20–50 ms frame. 180 is
+	// the smallest clean figure ≥ `8,910 ÷ 50`: one engine at the cap, served down to D-09.1's 50 fps floor.
+	// Re-priced first, as the ⚠ above requires. A player bet costs 0.0286 ms and a bot bet 0.0062 ms (mini-plan 11
+	// B), so a full frame at 180 is `180 × 0.0286 + 4 × 180 × 0.0062` ≈ 9.6 ms of bets.
+	// This is NOT the raise §38.7 rule 3 forbids. That rule stops the cap being raised to hand a SATURATED frame
+	// more work. Here the frame was not saturated: 56 fps, above the 50 fps floor, with the sim at 49% of it. The
+	// below-1 retention was diagnosed first, and what was eating it was this cap, not the frame.
+	private const int DefaultMaxBetsPerFrame = 180;
 
 	// Mini-plan 09 P3a — a DEBUG-only runtime override, so the cap can be swept A–B–A inside ONE run. P1 showed
 	// the ~2,000 bets/s ceiling in DiceGame IS this cap (bound on 100% of saturated frames) and that each extra

@@ -25,18 +25,34 @@ public static class DevTimeScaleGovernor
 	/// <summary>
 	/// D-09.4 — the bets per real second the governor lets the running engines demand.
 	///
-	/// <b>D-10.4 (2026-09-20): 1,700 → 9,000, and it is now DERIVED rather than measured.</b> It is what the
-	/// clock can demand at the hardware cap — 100 credits × the ceiling's scale of 90 — so <b>with the player
-	/// betting alone</b>, for the hardware that exists, the budget never binds and
-	/// <see cref="CalendarTimeService.MaxGameSecondsPerRealSecond"/> governs instead. Raise the hardware cap and
-	/// this binds again, which is the correct behaviour.
+	/// <b>D-11.1 (2026-09-21): 9,000 → 44,000, MEASURED again, and D-10.4's derivation below is retired.</b> It
+	/// means what it meant before D-10.4: what the frame can take. Mini-plan 11 ran the largest demand the game can
+	/// produce — the player and all four bots at the hardware cap, at the clock's ceiling, 44,550 bets/s — in
+	/// DiceGame's Detailed view, in two sessions. The slower one delivered <b>44,195 bets/s at 56 fps</b>, and
+	/// 44,000 is that figure rounded down, per mini-plan 11 §4 A.
+	///
+	/// <para>It is a <b>lower bound</b> on the frame, not its limit: the frame never broke, because there was no
+	/// more demand to give it. So it binds in exactly one configuration — all five engines at the cap — and holds
+	/// it to 88X instead of 90X. At 90X that configuration was already slightly saturated: the clock ran 0.3–0.5%
+	/// slower than the readout said. Every other configuration reaches the ceiling.</para>
+	///
+	/// <para><b>One budget for every engine type, priced on the dearest.</b> A bot bet costs 0.0062 ms, a player
+	/// bet 0.0286 ms (mini-plan 11 B). Weighting engines would let bots run faster; it is a design change nothing
+	/// here needs, because the budget binds only at the configuration above. <b>Measured in August 2009</b>, when
+	/// the historical network mines almost nothing; mini-plan 11 Part C measures later eras.</para>
+	///
+	/// <para>The history below is kept because it is what the number used to mean.</para>
+	///
+	/// D-10.4 (2026-09-20): 1,700 → 9,000, DERIVED rather than measured. It was what the clock could demand at
+	/// the hardware cap — 100 credits × the ceiling's scale of 90 — so <b>with the player betting alone</b>, for the
+	/// hardware that exists, the budget never bound and <see cref="CalendarTimeService.MaxGameSecondsPerRealSecond"/>
+	/// governed instead.
 	///
 	/// <para>⚠ <b>Not with bots running (mini-plan 11 §0, 2026-09-21).</b> <c>runningCredits</c> is the sum over
 	/// EVERY running engine, and each engine is clamped to the hardware cap on its own, so the player and four
 	/// bots at the cap ask for five times what one engine can. The budget then holds the scale to about a fifth of
-	/// the ceiling — a consequence of the derivation above, not a measured limit. Whether that throttles the bots
-	/// for nothing depends on what the frame can really take, which mini-plan 11 Part A measures, and by which
-	/// this figure is re-decided (that plan's §4).</para>
+	/// the ceiling — a consequence of the derivation above, not a measured limit. It did throttle the bots for
+	/// nothing: the frame took all five at the ceiling (D-11.1 above).</para>
 	///
 	/// <para>What made that safe was mini-plan 10: DiceGame's bet list cost 0.198 ms per bet and now costs
 	/// <b>0.025</b>, because rows no longer move and only the ~14 rows inside the scroll's viewport are painted,
@@ -45,12 +61,10 @@ public static class DevTimeScaleGovernor
 	/// the clock's ceiling binds first. This figure is therefore NOT "the most the frame can take" — it is "more
 	/// than anything can ask for today", which is a different claim and the honest one.</para>
 	///
-	/// <para><b>Measured with the player betting alone, in 2009, in DiceGame.</b> A bot bet is assumed to cost
-	/// like a player bet; that has not been measured. The budget is a TOTAL over every running engine, so if it
+	/// <para><b>Measured with the player betting alone, in 2009, in DiceGame.</b> A bot bet was assumed to cost
+	/// like a player bet (mini-plan 11 B measured it at 22% of one). The budget is a TOTAL over every running engine, so if it
 	/// ever binds again, re-price a bet first — and with several engines running, per-engine
 	/// <c>MaxBetsPerFrame</c> is the other half of the story.</para>
-	///
-	/// <para>The history below is kept because it is what the number used to mean.</para>
 	///
 	/// D-09.6 (2026-09-18): 2,000 → 1,700, sized for the SLOWEST session measured, not the fastest.
 	///
@@ -71,7 +85,7 @@ public static class DevTimeScaleGovernor
 	/// could run faster. One conservative budget everywhere is a deliberate simplification. <b>Measured on one
 	/// machine, in 2009:</b> a later era may cost more per bet (mini-plan 09 §5).
 	/// </summary>
-	public const double BetBudgetPerSecond = 9000.0;
+	public const double BetBudgetPerSecond = 44000.0;
 
 	// Mini-plan 10 A3 — a DEBUG-only override, so the budget can be lifted inside ONE run to find what a cheaper
 	// bet view can actually deliver: the budget was the figure under re-measurement, so it could not be left in

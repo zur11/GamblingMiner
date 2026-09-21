@@ -11,8 +11,8 @@ and the §0 governor-comment correction — one build, no behaviour change (§3 
 produce (44,331 of 44,545 bets/s) at 57 fps without breaking; a bot bet costs 22% of a player bet; the per-engine
 cap binds first. **§5 step 3 done** (A2, §2): the slower session delivered 44,195 bets/s at 56 fps; the
 player's bet is 72% player-only work, 41% of it one per-bet copy of every transfer record.
-**Next: §5 step 4** — the developer decides the budget, the cap, and whether the record copy is fixed before C2
-(readings and candidates at the end of §2).
+**§5 step 4 decided** (end of §4): D-11.1 budget 44,000, D-11.2 cap 180, D-11.3 fix the per-bet record copy
+before C2. **Next:** D-11.3's build, then one verification run, then C2.
 
 **Three questions, one per part:**
 
@@ -360,6 +360,25 @@ advanced or reset freely, so C2 runs on it as it stands.
      hashes into O(1). It changes how the network is simulated, not what it produces, and the project's
      "1 bet = 1 nonce attempt" rule concerns the player's bets, not the network's. Still a design decision, and the
      developer's.
+
+### Decisions, step 4 (developer, 2026-09-21: "vamos con tus recomendaciones en los 3 puntos")
+
+- **D-11.1 — `BetBudgetPerSecond` 9,000 → 44,000.** §4 A's first branch, applied as registered: the slower
+  session's measured figure (44,195 bets/s at 56 fps), rounded down. D-10.4's derivation is retired, and the
+  budget means "what the frame was measured to take" again. It binds only with all five engines at the cap, and
+  holds them to 88X. **One budget for all engine types stays** (§4 B, the cheap side).
+- **D-11.2 — `DefaultMaxBetsPerFrame` 160 → 180.** §4's cap rule said 160 does not stay, and named no figure.
+  180 is the smallest clean figure ≥ `8,910 ÷ 50`, re-priced at ~9.6 ms for a full frame. It is not the raise
+  §38.7 rule 3 forbids: the frame was not saturated (56 fps, sim 49%), and the cap was the thing binding. The DEV
+  cap picker gains `180`: a default missing from its list reads back as index 0 and would show 40.
+- **D-11.3 — the per-bet transfer-record copy is fixed before C2**, as its own unit. It is a case §4 B did not
+  register: the dominant call is player-only, not bot-only. Why now: it is 41% of a player bet, it grows with
+  every recharge, and C2 is an hour of play whose `PlayerLoop` should be a flat control against the network's
+  cost, not a second thing growing with the era.
+
+**Verification, one run after D-11.3's build:** the densest configuration at the **default** budget and cap
+must read **88X** on the governor's label, with retention 1.000 and the per-engine cap cutting almost no frames.
+A Bet cost leg must show `PersistFinancial` near zero, with no other segment grown to replace it.
 
 ---
 
