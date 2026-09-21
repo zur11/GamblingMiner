@@ -475,6 +475,22 @@ Mini-plan 09's two remaining open items, at the developer's request.
 - **(B) R2-C1's overspend.** Measured directly by `FrameCostProfiler`, under the governor and in one forced-
   saturation leg. Closed for good below 0.05%; otherwise fixed with the lag-free design D-09.2 described.
 
+### The frame's real capacity, bots betting alongside, and later eras — SPECIFIED, next up (2026-09-21)
+
+**Status: `AIHelperFiles/mini11-frame-capacity-bots-and-later-eras-plan.md`, own branch off `main`.** The three
+limits mini-plan 10 stated about its own result, at the developer's request.
+
+- **(A) The frame's capacity.** Never observed: the clock's ceiling binds first with the player alone. Bots
+  provide demand the clock does not cap, so they are how it gets measured. It also corrects D-10.4's claim that
+  the budget "never binds for the hardware that exists": that holds for the player alone. With all four bots
+  running, the governor divides the budget across five engines.
+- **(B) A bot bet's cost.** Different path from the player's (ledger, per-client book, event), never priced.
+- **(C) Later eras.** The historical network hashes alongside the player, capped per frame, and the governor
+  leaves it out on the strength of a 2009 measurement. A long unattended run past Market Birth, with the trace
+  reading cost against the game date. Two candidate fixes are named, not chosen: a network term in the governor,
+  or one probability draw instead of *k* hashes for the invisible mass. It advances the world permanently, which
+  the developer accepted (no archive).
+
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 
 **Status: deferred 2026-08-13 (developer's call), targeted at Basic Mode.** Split out of mini-plan 02's Part D so the storage work there can proceed without waiting on a new screen. Full write-up: `AIHelperFiles/mini02-panel-state-and-100k-audit-plan.md` §D.6.
