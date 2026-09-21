@@ -27,6 +27,11 @@ namespace Scripts.Diagnostics
 	/// <c>MaxBetsPerFrame</c> binds, H3 founder + scheduled PoW attempts per player/bot bet, H4 whether every
 	/// frame over 50 ms carries a checkpoint or a GC.</para>
 	///
+	/// <para><b>Mini-plan 11 adds two lines.</b> <c>A1</c>: how many bot loops ran per frame and how often one
+	/// was cut by <c>MaxBetsPerFrame</c>, since H2 sees the player's loop only. <c>C1</c>: the era the window ran
+	/// in (game date, chain height, the scheduled network's size), how often the network's drain hit its
+	/// per-frame cap, and the work of the attempts that produced a block.</para>
+	///
 	/// <para><b>Off by default, DEBUG only</b>, armed from the toggle beside the DEV time selector — the same
 	/// contract as <see cref="BetCostProfiler"/>, and for the same reasons. Its own overhead is a handful of
 	/// <see cref="Stopwatch.GetTimestamp"/> calls and GC counter reads per frame; that has <b>not been
@@ -83,7 +88,9 @@ namespace Scripts.Diagnostics
 			"simP50Ms,simP95Ms,simMaxMs,simShare,recomputeMs,playerLoopMs,botLoopMs,founderDriveMs,scheduledDriveMs,tailMs," +
 			"unaccountedMs,playerBetsPerFrame,capBoundShare,botBetsPerFrame,founderAttemptsPerFrame,scheduledAttemptsPerFrame," +
 			"deliveredBetsPerSec,demandBetsPerSec,retentionMean,checkpoints,over50WithCheckpointOrGc,gcFrames,capPerFrame," +
-			"calendarAdvanceGameSec,retainedGameSec,overspend,betUiMode,budgetInForce";
+			"calendarAdvanceGameSec,retainedGameSec,overspend,betUiMode,budgetInForce," +
+			"gameDateUtc,chainHeight,castPowered,scheduledPower,scheduledCapShare,blockWorkMsPerBlock,blockWorkMaxMs," +
+			"botEnginesPerFrame,botCapBoundShare";
 
 		// ── Committed frames of the current report window (flat arrays: no allocation per frame) ──────────
 		private static readonly double[] _periodMs = new double[ReportEveryFrames];
@@ -101,7 +108,23 @@ namespace Scripts.Diagnostics
 		// Mini-plan 10 B1 — R2-C1's two sides per frame; a negative advance marks a frame with no valid anchor.
 		private static readonly double[] _calendarAdvance = new double[ReportEveryFrames];
 		private static readonly double[] _retainedGame = new double[ReportEveryFrames];
+		// Mini-plan 11 C1 — the network's drain at its per-frame cap, and the work of the attempts that produced a
+		// block (their block handling, checkpoint and any stop that follows). A1/B1 — how many bot loops ran, and
+		// whether any of them was cut by MaxBetsPerFrame (H2 above sees the player's loop only).
+		private static readonly bool[] _scheduledCapBound = new bool[ReportEveryFrames];
+		private static readonly double[] _blockWorkMs = new double[ReportEveryFrames];
+		private static readonly double[] _blockWorkMaxMs = new double[ReportEveryFrames];
+		private static readonly int[] _blocks = new int[ReportEveryFrames];
+		private static readonly int[] _botEngines = new int[ReportEveryFrames];
+		private static readonly bool[] _botCapBound = new bool[ReportEveryFrames];
 		private static int _count;
+
+		// ── The era, as last noted inside a frame (mini-plan 11 C1) ───────────────────────────────────────
+		// Read by the report, which runs inside the NEXT frame's BeginFrame, before that frame notes its own —
+		// so these always describe the last frame committed. Slow-moving, so no per-frame array.
+		private static DateTime _eraGameUtc;
+		private static int _eraChainHeight, _eraCastPowered;
+		private static double _eraScheduledPower;
 
 		// ── The frame in progress ─────────────────────────────────────────────────────────────────────────
 		private static bool _inFrame;
@@ -112,6 +135,9 @@ namespace Scripts.Diagnostics
 		private static long _openSince;
 		private static int _curPlayerBets, _curBotBets, _curFounderAttempts, _curScheduledAttempts, _curCheckpoints;
 		private static bool _curCapBound;
+		private static int _curBlocks, _curBotEngines;
+		private static long _curBlockWorkTicks, _curBlockWorkMaxTicks, _attemptSince;
+		private static bool _curScheduledCapBound, _curBotCapBound;
 
 		// ── The frame waiting for its period (recorded when the NEXT frame begins) ───────────────────────
 		private static bool _pendingValid;
@@ -121,6 +147,9 @@ namespace Scripts.Diagnostics
 		private static readonly long[] _pendingSegTicks = new long[SegmentCount];
 		private static int _pendingPlayerBets, _pendingBotBets, _pendingFounderAttempts, _pendingScheduledAttempts, _pendingCheckpoints;
 		private static bool _pendingCapBound;
+		private static int _pendingBlocks, _pendingBotEngines;
+		private static long _pendingBlockWorkTicks, _pendingBlockWorkMaxTicks;
+		private static bool _pendingScheduledCapBound, _pendingBotCapBound;
 		private static double _pendingDemand, _pendingRetention, _pendingCalendarAdvance, _pendingRetainedGame;
 
 		private static bool _headerChecked;
@@ -213,6 +242,9 @@ namespace Scripts.Diagnostics
 			_openSegment = -1;
 			_curPlayerBets = _curBotBets = _curFounderAttempts = _curScheduledAttempts = _curCheckpoints = 0;
 			_curCapBound = false;
+			_curBlocks = _curBotEngines = 0;
+			_curBlockWorkTicks = _curBlockWorkMaxTicks = 0;
+			_curScheduledCapBound = _curBotCapBound = false;
 		}
 
 		/// <summary>Closes the open segment (if any) and opens <paramref name="segment"/>.</summary>
@@ -272,6 +304,65 @@ namespace Scripts.Diagnostics
 			_curCheckpoints++;
 		}
 
+		/// <summary>One bot runner's settle loop ran this frame; <paramref name="capBound"/> if MaxBetsPerFrame cut it.</summary>
+		[Conditional("DEBUG")]
+		public static void CountBotEngine(bool capBound)
+		{
+			if (!Enabled || !_inFrame) return;
+			_curBotEngines++;
+			_curBotCapBound |= capBound;
+		}
+
+		/// <summary>The scheduled network's drain ran this frame; <paramref name="capBound"/> if its per-frame cap cut it.</summary>
+		[Conditional("DEBUG")]
+		public static void CountScheduledCapBound(bool capBound)
+		{
+			if (!Enabled || !_inFrame) return;
+			_curScheduledCapBound |= capBound;
+		}
+
+		/// <summary>
+		/// Mini-plan 11 C1 — marks the start of ONE nonce attempt, from any engine. Every attempt is marked,
+		/// because whether it finds a block is known only afterwards; one <see cref="Stopwatch.GetTimestamp"/> is
+		/// tens of nanoseconds against ~4 µs per attempt (an estimate, mini-plan 11 §1 — not timed here). Attempts
+		/// never nest, so one field holds the mark.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void BeginAttempt()
+		{
+			if (!Enabled || !_inFrame) return;
+			_attemptSince = Stopwatch.GetTimestamp();
+		}
+
+		/// <summary>
+		/// The attempt marked by <see cref="BeginAttempt"/> produced a block, and everything the block caused has
+		/// run: the chain's block handling, the checkpoint capture, and any stop-on-block freeze. Only these
+		/// attempts are billed to the block-work bucket; the others are simply not closed.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void EndBlockWork()
+		{
+			if (!Enabled || !_inFrame) return;
+			long ticks = Stopwatch.GetTimestamp() - _attemptSince;
+			_curBlocks++;
+			_curBlockWorkTicks += ticks;
+			if (ticks > _curBlockWorkMaxTicks) _curBlockWorkMaxTicks = ticks;
+		}
+
+		/// <summary>
+		/// Mini-plan 11 C1 — where in history this frame ran, so cost can be read against the era and not only
+		/// against the run. Call once per frame, before <see cref="EndFrame"/>.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void NoteEra(DateTime gameUtc, int chainHeight, int castPowered, double scheduledPower)
+		{
+			if (!Enabled || !_inFrame) return;
+			_eraGameUtc = gameUtc;
+			_eraChainHeight = chainHeight;
+			_eraCastPowered = castPowered;
+			_eraScheduledPower = scheduledPower;
+		}
+
 		/// <summary>
 		/// Discards the frame in progress — for the early return where the autobet stops itself. The previous
 		/// frame was already committed by this frame's <see cref="BeginFrame"/>, so nothing else is lost.
@@ -311,6 +402,12 @@ namespace Scripts.Diagnostics
 			_pendingScheduledAttempts = _curScheduledAttempts;
 			_pendingCheckpoints = _curCheckpoints;
 			_pendingCapBound = _curCapBound;
+			_pendingBlocks = _curBlocks;
+			_pendingBotEngines = _curBotEngines;
+			_pendingBlockWorkTicks = _curBlockWorkTicks;
+			_pendingBlockWorkMaxTicks = _curBlockWorkMaxTicks;
+			_pendingScheduledCapBound = _curScheduledCapBound;
+			_pendingBotCapBound = _curBotCapBound;
 			_pendingDemand = demandBetsPerSecond;
 			_pendingRetention = retention;
 			_pendingCalendarAdvance = calendarAdvanceGameSeconds;
@@ -337,6 +434,12 @@ namespace Scripts.Diagnostics
 			_retention[i] = _pendingRetention;
 			_calendarAdvance[i] = _pendingCalendarAdvance;
 			_retainedGame[i] = _pendingRetainedGame;
+			_scheduledCapBound[i] = _pendingScheduledCapBound;
+			_blockWorkMs[i] = TicksToMs(_pendingBlockWorkTicks);
+			_blockWorkMaxMs[i] = TicksToMs(_pendingBlockWorkMaxTicks);
+			_blocks[i] = _pendingBlocks;
+			_botEngines[i] = _pendingBotEngines;
+			_botCapBound[i] = _pendingBotCapBound;
 
 			if (++_count >= ReportEveryFrames)
 			{
@@ -428,6 +531,24 @@ namespace Scripts.Diagnostics
 			}
 			double overspend = sumRetainedGame > 0d ? sumCalendarAdvance / sumRetainedGame - 1d : 0d;
 
+			// Mini-plan 11 C1 + A1/B1.
+			int scheduledCapFrames = 0, botCapFrames = 0;
+			long sumBlocks = 0, sumBotEngines = 0;
+			double sumBlockWork = 0d, maxBlockWork = 0d;
+			for (int i = 0; i < n; i++)
+			{
+				if (_scheduledCapBound[i]) scheduledCapFrames++;
+				if (_botCapBound[i]) botCapFrames++;
+				sumBlocks += _blocks[i];
+				sumBotEngines += _botEngines[i];
+				sumBlockWork += _blockWorkMs[i];
+				if (_blockWorkMaxMs[i] > maxBlockWork) maxBlockWork = _blockWorkMaxMs[i];
+			}
+			double scheduledCapShare = (double)scheduledCapFrames / n;
+			double botCapShare = (double)botCapFrames / n;
+			double blockWorkPerBlock = sumBlocks > 0 ? sumBlockWork / sumBlocks : 0d;
+			double botEngines = (double)sumBotEngines / n;
+
 			int worstLargestSeg = 0;
 			for (int s = 1; s < SegmentCount; s++)
 			{
@@ -466,6 +587,12 @@ namespace Scripts.Diagnostics
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           R2-C1 overspend: {overspend * 100.0:N3}%  (clock advanced {sumCalendarAdvance:N1} game-s vs {sumRetainedGame:N1} retained) · Bet view {Scripts.Diagnostics.BetUiDiagnostics.View}\n"));
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"           A1 bot engines {botEngines:N2} per frame · a bot loop was cut by MaxBetsPerFrame on {botCapShare * 100.0:N1}% of frames\n"));
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"           C1 era {_eraGameUtc:yyyy-MM-dd} (game UTC) · chain height {_eraChainHeight:N0} · cast powered {_eraCastPowered} · scheduled power {_eraScheduledPower:N1} · " +
+				$"drain at its {NetworkPopulationScheduler.MaxScheduledAttemptsPerFrame:N0}-attempt cap on {scheduledCapShare * 100.0:N1}% of frames · " +
+				$"block work {blockWorkPerBlock:N2} ms/block over {sumBlocks:N0} blocks, max {maxBlockWork:N1} ms\n"));
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           worst frame {maxPeriod:N1} ms: sim {_simMs[worst]:N1} ms, largest segment {SegmentNames[worstLargestSeg]}, checkpoints {_checkpoints[worst]}, GC {(_gc[worst] ? "yes" : "no")}"));
 
 			GD.Print(sb.ToString());
@@ -474,7 +601,7 @@ namespace Scripts.Diagnostics
 			ReportPublished?.Invoke();
 
 			WriteTraceRow(string.Format(CultureInfo.InvariantCulture,
-				"{0:O},{1},{2},{3:F2},{4:F3},{5:F3},{6:F3},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F4},{14:F4},{15:F4},{16:F4},{17:F4},{18:F4},{19:F4},{20:F4},{21:F3},{22:F4},{23:F3},{24:F3},{25:F3},{26:F1},{27:F1},{28:F4},{29},{30},{31},{32},{33:F3},{34:F3},{35:F6},{36},{37:F0}",
+				"{0:O},{1},{2},{3:F2},{4:F3},{5:F3},{6:F3},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F4},{14:F4},{15:F4},{16:F4},{17:F4},{18:F4},{19:F4},{20:F4},{21:F3},{22:F4},{23:F3},{24:F3},{25:F3},{26:F1},{27:F1},{28:F4},{29},{30},{31},{32},{33:F3},{34:F3},{35:F6},{36},{37:F0},{38:O},{39},{40},{41:F1},{42:F4},{43:F3},{44:F3},{45:F3},{46:F4}",
 				DateTime.UtcNow, n, partial ? 1 : 0, fps, p50Period, p95Period, maxPeriod, over16, over33, over50,
 				p50Sim, p95Sim, maxSim, simShare,
 				segSum[0] / n, segSum[1] / n, segSum[2] / n, segSum[3] / n, segSum[4] / n, segSum[5] / n, sumUnaccounted / n,
@@ -484,7 +611,10 @@ namespace Scripts.Diagnostics
 				// read as one; the per-frame bets column shows where inside it the change landed.
 				SimulationService.MaxBetsPerFrameForDiagnostics,
 				sumCalendarAdvance, sumRetainedGame, overspend, Scripts.Diagnostics.BetUiDiagnostics.View,
-				DevTimeScaleGovernor.BudgetInForce));
+				DevTimeScaleGovernor.BudgetInForce,
+				// The era of the window's LAST frame. A window is ~10 real seconds, about one game-day at 9000X.
+				_eraGameUtc, _eraChainHeight, _eraCastPowered, _eraScheduledPower, scheduledCapShare,
+				blockWorkPerBlock, maxBlockWork, botEngines, botCapShare));
 		}
 
 		private static void WriteTraceRow(string row)

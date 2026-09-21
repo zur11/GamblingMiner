@@ -773,6 +773,10 @@ public partial class SimulationService : Node
 
 		_previousFrameClockUtc = clockNowUtc;
 
+		// Mini-plan 11 C1 — the era this frame ran in. Chain height is the tip's index (genesis is 0).
+		Scripts.Diagnostics.FrameCostProfiler.NoteEra(clockNowUtc, (_networkRoot?.GetPlayerChainLength() ?? 0) - 1,
+			NetworkPopulationScheduler.PoweredCastIds.Count, NetworkPopulationScheduler.TotalScheduledPower);
+
 		// Demand = what the running engines asked for this frame: their credits (bets per simulated second)
 		// × DevTimeScale. Mini-plan 08 matched this formula against delivered rates to within 1%.
 		Scripts.Diagnostics.FrameCostProfiler.EndFrame(
@@ -832,11 +836,13 @@ public partial class SimulationService : Node
 			Scripts.Diagnostics.FrameCostProfiler.CountFounderAttempts(attempts);
 			for (int i = 0; i < attempts; i++)
 			{
+				Scripts.Diagnostics.FrameCostProfiler.BeginAttempt();
 				_networkRoot.TryMineSingleNonceAttempt(founderId, out Block? block, tsMs);
 				if (block != null)
 				{
 					CaptureCheckpoint();
 					StopPlayerOnExternalBlockMined();
+					Scripts.Diagnostics.FrameCostProfiler.EndBlockWork();
 				}
 			}
 		}
@@ -896,6 +902,7 @@ public partial class SimulationService : Node
 
 		IReadOnlyList<(string minerId, int attempts, bool isGhost)> drained =
 			NetworkPopulationScheduler.DrainScheduledAttempts(nonScheduledAttempts, otherMinersPower);
+		Scripts.Diagnostics.FrameCostProfiler.CountScheduledCapBound(NetworkPopulationScheduler.LastDrainBudgetBound);
 		if (drained.Count == 0)
 		{
 			return;
@@ -912,6 +919,7 @@ public partial class SimulationService : Node
 
 			for (int i = 0; i < attempts; i++)
 			{
+				Scripts.Diagnostics.FrameCostProfiler.BeginAttempt();
 				_networkRoot.TryMineSingleNonceAttempt(minerId, out Block? block, tsMs);
 				if (block != null)
 				{
@@ -921,6 +929,7 @@ public partial class SimulationService : Node
 					}
 					CaptureCheckpoint();
 					StopPlayerOnExternalBlockMined();
+					Scripts.Diagnostics.FrameCostProfiler.EndBlockWork();
 				}
 			}
 		}
@@ -992,6 +1001,7 @@ public partial class SimulationService : Node
 		// One nonce attempt per bet (1 bet = 1 attempt), routed by the active node's hardware allocation
 		// (individual pool → own chain; casino pool → casino chain). Real PoW on the shared chain.
 		long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
+		Scripts.Diagnostics.FrameCostProfiler.BeginAttempt();
 		Block? block = RouteNonceAttempt(_config.ActiveNodeId, tsMs);
 		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.NonceAttempt);
 
@@ -1004,6 +1014,7 @@ public partial class SimulationService : Node
 				_session.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
 				FreezeCalendarAtBlockStop();
 			}
+			Scripts.Diagnostics.FrameCostProfiler.EndBlockWork();
 		}
 		// The block path gets its OWN segment, separate from the attempt above. Both readings are honest and
 		// they answer different questions: amortised over thousands of bets this is a few µs (the cost every
@@ -1342,6 +1353,8 @@ public partial class SimulationService : Node
 
 			_settleBackdateGameSeconds = 0d;
 			totalExecuted += executed;
+			// Mini-plan 11 A1 — each runner has its own cap, and H2 sees only the player's.
+			Scripts.Diagnostics.FrameCostProfiler.CountBotEngine(executed >= MaxBetsPerFrame);
 		}
 
 		return totalExecuted;
@@ -1379,11 +1392,13 @@ public partial class SimulationService : Node
 			ClientBetSettled?.Invoke(runner.NodeId, "Dice", betEvent); // bots are Dice-only (no GameId on BotConfig)
 
 			long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
+			Scripts.Diagnostics.FrameCostProfiler.BeginAttempt();
 			Block? block = RouteNonceAttempt(runner.NodeId, tsMs);
 			if (block != null)
 			{
 				CaptureCheckpoint();
 				StopPlayerOnExternalBlockMined();
+				Scripts.Diagnostics.FrameCostProfiler.EndBlockWork();
 			}
 			SaveBotFinancialState(runner);
 		}

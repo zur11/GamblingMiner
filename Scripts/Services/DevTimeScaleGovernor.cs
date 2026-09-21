@@ -26,9 +26,17 @@ public static class DevTimeScaleGovernor
 	/// D-09.4 — the bets per real second the governor lets the running engines demand.
 	///
 	/// <b>D-10.4 (2026-09-20): 1,700 → 9,000, and it is now DERIVED rather than measured.</b> It is what the
-	/// clock can demand at the hardware cap — 100 credits × the ceiling's scale of 90 — so for the hardware that
-	/// exists the budget never binds and <see cref="CalendarTimeService.MaxGameSecondsPerRealSecond"/> governs
-	/// instead. Raise the hardware cap and this binds again, which is the correct behaviour.
+	/// clock can demand at the hardware cap — 100 credits × the ceiling's scale of 90 — so <b>with the player
+	/// betting alone</b>, for the hardware that exists, the budget never binds and
+	/// <see cref="CalendarTimeService.MaxGameSecondsPerRealSecond"/> governs instead. Raise the hardware cap and
+	/// this binds again, which is the correct behaviour.
+	///
+	/// <para>⚠ <b>Not with bots running (mini-plan 11 §0, 2026-09-21).</b> <c>runningCredits</c> is the sum over
+	/// EVERY running engine, and each engine is clamped to the hardware cap on its own, so the player and four
+	/// bots at the cap ask for five times what one engine can. The budget then holds the scale to about a fifth of
+	/// the ceiling — a consequence of the derivation above, not a measured limit. Whether that throttles the bots
+	/// for nothing depends on what the frame can really take, which mini-plan 11 Part A measures, and by which
+	/// this figure is re-decided (that plan's §4).</para>
 	///
 	/// <para>What made that safe was mini-plan 10: DiceGame's bet list cost 0.198 ms per bet and now costs
 	/// <b>0.025</b>, because rows no longer move and only the ~14 rows inside the scroll's viewport are painted,

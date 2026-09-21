@@ -53,8 +53,15 @@ public static class NetworkPopulationScheduler
 	// could stall a frame at high DevTimeScale. Undelivered attempts stay in the accumulators (capped
 	// below, shedding truly unpayable debt); a sustained shortfall just slows blocks slightly, which the
 	// difficulty regulator's LWMA feedback then trims — the system self-corrects by design (Ch. 26).
-	private const int MaxScheduledAttemptsPerFrame = 5000;
+	// PUBLIC so FrameCostProfiler's report can name the cap it measures against (Standing Convention 15).
+	public const int MaxScheduledAttemptsPerFrame = 5000;
 	private const double AccumulatorCap = 10000d;
+
+	// Mini-plan 11 C1 — whether the LAST drain was cut short by MaxScheduledAttemptsPerFrame: some miner was
+	// owed a whole attempt it did not get, or was skipped because the budget had already run out. A skipped
+	// cast member is not even accrued that frame (the loop breaks before its accumulator), so "stays in the
+	// accumulators" holds for the invisible mass only. Read by SimulationService right after the drain.
+	public static bool LastDrainBudgetBound { get; private set; }
 
 	private static readonly Dictionary<string, double> _castAccumulators = new();
 	private static double _invisibleAccumulator;
@@ -130,6 +137,7 @@ public static class NetworkPopulationScheduler
 	public static IReadOnlyList<(string minerId, int attempts, bool isGhost)> DrainScheduledAttempts(int playerBotAttempts, double playerBotsPower)
 	{
 		var result = new List<(string, int, bool)>();
+		LastDrainBudgetBound = false;
 		if (playerBotAttempts <= 0 || playerBotsPower <= 0d)
 		{
 			return result;
@@ -141,12 +149,18 @@ public static class NetworkPopulationScheduler
 		{
 			if (budget <= 0)
 			{
+				LastDrainBudgetBound = true;
 				break;
 			}
 
 			double acc = _castAccumulators.TryGetValue(castId, out double a) ? a : 0d;
 			acc = Math.Min(AccumulatorCap, acc + playerBotAttempts * (_castPowerEach / playerBotsPower));
-			int attempts = Math.Min(budget, (int)Math.Floor(acc));
+			int owed = (int)Math.Floor(acc);
+			int attempts = Math.Min(budget, owed);
+			if (attempts < owed)
+			{
+				LastDrainBudgetBound = true;
+			}
 			if (attempts > 0)
 			{
 				acc -= attempts;
@@ -156,10 +170,19 @@ public static class NetworkPopulationScheduler
 			_castAccumulators[castId] = acc;
 		}
 
-		if (_invisiblePower > 0d && budget > 0)
+		if (_invisiblePower > 0d && budget <= 0)
+		{
+			LastDrainBudgetBound = true;
+		}
+		else if (_invisiblePower > 0d)
 		{
 			_invisibleAccumulator = Math.Min(AccumulatorCap, _invisibleAccumulator + playerBotAttempts * (_invisiblePower / playerBotsPower));
-			int attempts = Math.Min(budget, (int)Math.Floor(_invisibleAccumulator));
+			int owed = (int)Math.Floor(_invisibleAccumulator);
+			int attempts = Math.Min(budget, owed);
+			if (attempts < owed)
+			{
+				LastDrainBudgetBound = true;
+			}
 			if (attempts > 0)
 			{
 				_invisibleAccumulator -= attempts;

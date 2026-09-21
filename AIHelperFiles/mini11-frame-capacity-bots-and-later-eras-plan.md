@@ -5,8 +5,9 @@
 result. This plan measures them.
 
 **Status:** 🚧 **IN PROGRESS** on `mini11-frame-capacity-bots-and-eras` (branch created 2026-09-21, plan
-committed). **Next: §5 step 1** — C1's trace columns and the §0 governor-comment correction, one build, no
-behaviour change.
+committed). **§5 step 1 done** (2026-09-21): C1's trace columns, two A1 columns §2 needed and did not list,
+and the §0 governor-comment correction — one build, no behaviour change (§3 C1 records what was built).
+**Next: §5 step 2** — the A1/B1 run; its protocol is given in the chat before the run.
 
 **Three questions, one per part:**
 
@@ -58,6 +59,10 @@ So a bot bet may be cheaper or dearer than the player's; nothing in the code set
   attempts are capped per frame at `MaxScheduledAttemptsPerFrame`; what is not delivered stays in the
   accumulators, and past `AccumulatorCap` it is shed. A sustained shortfall slows blocks, which the difficulty
   regulator is meant to absorb (ProjectDesignManual Ch. 26).
+  *Found while building C1:* "stays in the accumulators" is true of the invisible mass only. The cast loop
+  **breaks** once the budget is spent, before the remaining members' accumulators are touched, so those members
+  are not even accrued that frame. The invisible mass is drained last, so it is the one truncated first, and a
+  cast member is skipped only if the cast alone owes the whole budget. `scheduledCapShare` counts both cases.
 - Arithmetic worth stating: the network's attempts per real second = **DevTimeScale × scheduled power**, whatever
   the player's credits. The governor never sees them — its comment says so, and says why: *"cost under 0.05 ms
   per frame in 2009 (P1, H3)"*.
@@ -122,6 +127,22 @@ Repeat the densest leg in another session, after a restart (D-09.6: size for the
 
 `ScheduledDrive` ms and scheduled attempts per frame already exist, so the cost per network attempt falls out
 without anything new.
+
+**As built (2026-09-21, step 1).** Nine columns appended to `frame_cost_trace.csv`, so the header changes and the
+first report rotates the old trace to `frame_cost_trace.csv.old` (ND.10j). The Output panel's report gains an
+`A1` line and a `C1` line.
+
+| Column | Meaning |
+|---|---|
+| `gameDateUtc`, `chainHeight` | The game clock and the tip's index (genesis 0) at the window's **last** frame. A window is ~10 real seconds, about one game-day at 9000X |
+| `castPowered`, `scheduledPower` | `PoweredCastIds.Count` and `TotalScheduledPower` at the same frame |
+| `scheduledCapShare` | Share of frames in which the drain was cut short by `MaxScheduledAttemptsPerFrame`: a miner owed a whole attempt it did not get, or was skipped (§1) |
+| `blockWorkMsPerBlock`, `blockWorkMaxMs` | Mean and worst time of a block-producing attempt, from before the hash to after the checkpoint **and any stop-on-block freeze**. All four engine types are timed: player, bots, founders, scheduled. The plan's single `blockWorkMs` is split in two, because a mean cannot show a spike (mini-plan 08's 96.7 ms block inside one bet) |
+| `botEnginesPerFrame` | Mean bot settle loops run per frame. **Added for A1:** it names each leg from the CSV, not from a clock |
+| `botCapBoundShare` | Share of frames in which any bot loop was cut by `MaxBetsPerFrame`. **Added for A1:** H2's `capBoundShare` sees the player's loop only, so §2's "per-engine cap" question had no instrument |
+
+The per-attempt `Stopwatch` read is paid only while Frame cost is armed, and nothing of it exists in a RELEASE
+build (every call is `[Conditional("DEBUG")]`, arguments included).
 
 ### C2 — the run
 
