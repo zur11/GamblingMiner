@@ -357,8 +357,12 @@ before.
 **A — the per-bet UI cost.** DiceGame's bet list was **80% of the cost of a bet** (0.198 ms of 0.238) and now
 costs **0.025 ms**, the same as drawing nothing. Rows never move; a settled bet goes into a ring buffer and
 once per frame only the ~14 rows inside the scroll's viewport are rewritten. A player-facing **Bet View**
-button (Detailed / OFF) makes hiding the list the way to buy speed, gated on tree visibility so what is on
-screen and what is paid for cannot drift apart.
+button (Detailed / OFF) shows or hides the list, gated on tree visibility so what is on screen and what is
+paid for cannot drift apart. *(Correction, 2026-09-21: this sentence first said the button "makes hiding the
+list the way to buy speed". That was A2's premise, and A2's own result removed it. Detailed now measures
+0.023–0.026 ms per bet against 0.025 with nothing drawn, and both states reach the clock's ceiling. The
+two-budget design of §A2, a higher budget while hidden, was never built, because a single budget stopped
+binding for both. The button is a view preference, and its tooltip no longer promises a speed-up.)*
 
 **The defaults that follow from it:** `DefaultMaxBetsPerFrame` 40 → **160**, `BetBudgetPerSecond` 1,700 →
 **9,000**. **99 credits went from 1700X to 9000X — the clock's ceiling — at 58–60 fps and retention 1.000.**
@@ -370,8 +374,9 @@ retention**, across both sessions, rising only with saturation (1.9% at retentio
 frame that cannot keep up, not a structural bias of the autoload order, so **P2 closed by its pre-registered
 rule** and nothing was deleted.
 
-**Deferred:** the Numbers bet view (D-10.3), past Basic Mode, recorded in `PRIVATE_ROADMAP.md` with its
-measurements so nobody repeats the four runs.
+**Withdrawn, kept as an option for a later version:** the Numbers bet view (D-10.3). Not a Basic Mode need.
+It is recorded in `PRIVATE_ROADMAP.md` under Post-Basic Mode with its measurements, so nobody repeats the four
+runs.
 
 ### What this plan teaches, beyond its own subject
 

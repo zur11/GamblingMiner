@@ -1426,15 +1426,17 @@ public partial class DiceGame : Control, IBetEventSource
 
 	// --- Mini-plan 10 A2 — the bet display window ---
 	//
-	// Closing the bet list is how the player buys speed: hidden, DiceGame does no per-bet UI work at all
-	// (A1 measured 0.040 ms per bet against 0.198 with the list painting — the UI is 80% of the cost of a bet).
-	// The containers gate themselves on TREE visibility, so this button only has to show and hide nodes; there
-	// is no second flag that could drift from what is on screen.
+	// The bet window's two states: the detailed list, or nothing. A VIEW preference, not a speed setting.
 	//
-	// NOT persisted: user-settings persistence does not exist yet (PRIVATE_ROADMAP.md), so the window opens
-	// visible on every entry. That is the honest default — a speed that silently carried over from a setting
-	// nobody can see would be worse than one the player re-chooses.
-	// The bet window's two states: the detailed list, or nothing. Hiding it is how the player buys speed.
+	// It was built as a speed setting. When it shipped, the list cost 0.198 ms per bet against 0.040 with nothing
+	// drawn (A1), so hiding it was how the player bought speed. Mini-plan 10's own fix then removed that reason:
+	// the list now paints only its ~14 visible rows once per frame and measures 0.023–0.026 ms per bet, the same
+	// as drawing nothing (0.025), and both states run 99 credits at the clock's ceiling. Nothing on screen may
+	// promise a speed-up that is no longer there. If a later, heavier view revives the trade, measure it first.
+	//
+	// The containers gate themselves on TREE visibility, so this button only has to show and hide nodes; there
+	// is no second flag that could drift from what is on screen. NOT persisted: user-settings persistence does
+	// not exist yet (PRIVATE_ROADMAP.md), so the window opens visible on every entry.
 	//
 	// A THIRD view — the red/green roll numbers (PreviousWinnerNumbersGrid) — shipped on 2026-09-19 and was
 	// DEFERRED until after Basic Mode on 2026-09-20 (developer's call), because making it as cheap as the list
@@ -1497,9 +1499,8 @@ public partial class DiceGame : Control, IBetEventSource
 		{
 			Position = new Vector2(706f, 528f),
 			CustomMinimumSize = new Vector2(260f, 42f),
-			TooltipText = "What the bet window shows: every bet in detail, only the roll numbers in red and green, "
-				+ "or nothing. Each step is lighter to draw, so the game can run faster — with the window off it "
-				+ "draws nothing per bet. Switching back reloads the last bets from your history.",
+			TooltipText = "Show or hide the list of your latest bets. Switching it back on reloads the last bets "
+				+ "from your history.",
 		};
 		_betDisplayToggleBtn.Pressed += () => SetBetDisplayMode(
 			_betDisplayMode == BetDisplayMode.Detailed ? BetDisplayMode.Off : BetDisplayMode.Detailed);

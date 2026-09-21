@@ -459,10 +459,11 @@ are in the plan's D-09.6 entry.
 > drawing nothing: rows never move and only the ~14 visible ones are painted, once per frame. 99 credits run
 > at the clock's ceiling, 9000X, against 1700X before — `DefaultMaxBetsPerFrame` 40 → 160 and
 > `BetBudgetPerSecond` 1,700 → 9,000, the latter **derived** as the clock's demand at the hardware cap rather
-> than measured. A player-facing Bet View button (Detailed / OFF) makes hiding the list the way to buy speed.
+> than measured. A player-facing Bet View button (Detailed / OFF) shows or hides the list; once the list got
+> cheap it became a view preference rather than a speed setting.
 > **(B)** The overspend is **0.000000% at full retention** and rises only with saturation, so P2 closed by its
-> pre-registered rule. **Deferred past Basic Mode:** the Numbers view, entry above. The text below is the
-> original specification.
+> pre-registered rule. **Withdrawn, as an option for a later version:** the Numbers view, see "Post-Basic
+> Mode v1 — Checklist". The text below is the original specification.
 
 **Status: `AIHelperFiles/mini10-dicegame-per-bet-ui-cost-and-clock-overspend-plan.md`, own branch off `main`.**
 Mini-plan 09's two remaining open items, at the developer's request.
@@ -570,6 +571,7 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 - [x] ~~**Bots multi-address (Step 8, OQ-8.2).**~~ **PROMOTED out of this list (2026-07-28)** — the deferral reason (an unknown, possibly large miner-bot population) is gone now that the casino-miner set is fixed at four. Scheduled for the end of Step 15; see **"Bot Seed Phrases & Full UTXO Integration (OQ-8.2)"** in §5 above for the why-now, the scope tiers and the design constraints.
 - [ ] **Player/casino deposit-address rotation (Step 8, OQ-8.3).** Rotate the *incoming* receive address after each external deposit (full HD behavior). v1 delivers UTXO realism via change-on-send only. Design: `step8-utxo-realism-plan.md` OQ-8.3.
 - [ ] **Divergent Chains / Fork Simulation** — see the "Post-Basic Mode — Divergent Chains / Fork Simulation" section above (`IMPLEMENTATION_ROADMAP.md` Step 10).
+- [ ] **A "Numbers" bet view in DiceGame — an option for a later version, not a Basic Mode need** (developer's call, 2026-09-20, D-10.3). A second way to watch bets: only the roll numbers, red or green, in `PreviousWinnerNumbersGrid`. It shipped briefly in mini-plan 10 and was withdrawn because it halved the frame rate at high speed. **The measurements are done; only the design choice is open:** a cell repaint costs **~0.21 ms**, and at 160 bets per frame all 100 cells change every frame (26 fps, against 57 with the same grid visible but not written to). What is written makes no difference, so no cell-level optimisation helps. The two ways out both change what the view promises: **a refresh cadence** (~10 Hz, ~50 fps by arithmetic, unmeasured) or **fewer cells**. Its per-bet cost is already solved (D-10.2: ring buffer, fixed order, 0.025 ms/bet). **Before showing it, fix its scene geometry**, which has never been on screen: it starts at y 534, under the Bet View button, and its 540 minimum height runs past the bottom band (ProjectDesignManual Ch. 29 §29.11). The grid still serves BetsHistoryExplorer, whose replay is slow enough that none of this bites. Full record: mini-plan 10 §A3, D-10.3.
 
 ---
 
@@ -599,21 +601,11 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   | setting | today | belongs to |
   |---|---|---|
   | Saved betting strategies | `saved_betting_strategies.json`, exempt from the wipe — survives, which surprised the developer | the player, probably — but the surprise says the rule was never stated, not that the file is wrong |
-  | **Bet display visible / hidden** (mini-plan 10 A2) | not persisted; resets to visible on every DiceGame entry | the player. It is also a **speed** choice, since the hidden state runs on a higher budget — so forgetting it silently changes how fast the next session runs |
+  | **Bet View: Detailed / OFF** (mini-plan 10) | not persisted; resets to Detailed on every DiceGame entry | the player. A **view preference only**: after mini-plan 10 both states cost the same (~0.025 ms per bet) and both reach the clock's ceiling, so forgetting it changes nothing but what is on screen. *(Until 2026-09-21 this row called it a speed choice with a higher hidden budget. That was the design before the list got cheap, and the two-budget plan was never built.)* |
   | DEV time scale (the requested one) | not persisted | DEV, but the same mechanism |
   | The strategy panel's last-used values | not persisted; distinct from a *saved* strategy | the player |
   | Anything a future options menu holds | does not exist | the player |
 
-- [ ] **The Numbers bet view in DiceGame — DEFERRED past Basic Mode (2026-09-20, D-10.3).** The red/green roll
-  grid (`PreviousWinnerNumbersGrid`) costs **~0.21 ms per cell repaint**, and since every one of its 100 cells
-  changes on every frame that carries bets, it halves the frame rate (26 fps against 57 with the same grid
-  visible but not written to). Mini-plan 10 took its per-bet cost down to the detailed list's 0.025 ms and
-  proved the remainder is the repaint itself, not what is written — so the two ways out both change what the
-  view promises rather than how it is built: **a refresh cadence** (say 10 Hz, ~50 fps by arithmetic) or
-  **fewer cells**. Neither is a bug fix, so it waits. The grid still serves BetsHistoryExplorer, where the
-  replay cursor is slow enough that none of this bites. Full measurements: mini-plan 10 §A3, D-10.3. Whoever
-  revives it must also fix the scene geometry, which has never been on screen: it starts at y 534 and its 540
-  minimum height runs past the bottom band (ProjectDesignManual Ch. 29 §29.11).
 - [x] User-facing DiceGame label uses `Main Balance`.
 - [~] Clarify auto-recharge behavior in UI and docs. **Docs done** (ProjectDesignManual Ch.25 + CLAUDE.md: progression resets, Insist After Stop, auto-recharge precedence). UI labels/warnings still pending (P2).
 - [x] Add player BTC wallet and addresses.
