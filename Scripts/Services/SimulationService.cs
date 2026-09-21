@@ -263,7 +263,8 @@ public partial class SimulationService : Node
 
 	private double BacklogWindowSimSeconds() =>
 		Math.Max(MaxBacklogSeconds, MinBacklogWindowRealSeconds * Math.Max(1, _calendar?.DevTimeScale ?? 1));
-	private const int MaxAutoBetBaseAps = 99;
+	// PUBLIC so the hardware shop's DEV "Set to cap" button targets the clamp HardwareRate applies (mini-plan 11).
+	public const int MaxAutoBetBaseAps = 99;
 
 	// ── Round 2 (R2-T / R2-C1, 2026-07-27) — simulated-time saturation ────────────────────────────────
 	// The bet engine can retain at most MaxBacklogSeconds of simulated time per frame: the Math.Min below

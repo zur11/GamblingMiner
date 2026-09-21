@@ -7,7 +7,8 @@ result. This plan measures them.
 **Status:** 🚧 **IN PROGRESS** on `mini11-frame-capacity-bots-and-eras` (branch created 2026-09-21, plan
 committed). **§5 step 1 done** (2026-09-21): C1's trace columns, two A1 columns §2 needed and did not list,
 and the §0 governor-comment correction — one build, no behaviour change (§3 C1 records what was built).
-**Next: §5 step 2** — the A1/B1 run; its protocol is given in the chat before the run.
+**§5 step 2 prepared:** the legs are made by credits mid-run, not by restarting (§2, revised before data), and
+the hardware shop has two DEV buttons for it. **Next: run A1/B1** with the protocol given in the chat.
 
 **Three questions, one per part:**
 
@@ -89,6 +90,26 @@ busts and drops out mid-leg). Detailed view, 9000X requested, `Budget off`, Fram
 
 **Legs**, ~3 reports each: player alone → + bot 1 → + bot 2 → + bot 3 → + bot 4, then back to the player
 alone as the control against session drift.
+
+**How the legs are made — revised 2026-09-21, before any data.** Adding bots by stopping the autobet cannot
+produce the control leg: once a bot node has a valid strategy, nothing in the UI removes it before the app
+restarts (`_nodeStrategies` is process-lifetime, and a base bet of 0 is ignored by the snapshot rather than
+clearing it). A pause does not help either: it keeps the Active node selector locked, and bots are started
+only at autobet start. What does work is that **credits are read fresh every frame** (`HardwareRate`). So all
+four bots get their flat strategy before the run and start at the 1-credit floor, and each leg raises one bot
+to the cap **mid-run**. The control leg drops them back to 1. The hardware shop gains two DEV buttons for this,
+`Set to cap` and `Set to 1`; at one credit per click it was 98 clicks a bot, each way.
+
+Consequence, stated: the two "player alone" legs are **player + four 1-credit bots**, about 360 bets/s of bot
+demand, some 6 bets a frame at 60 fps, identical at both ends. The legs are told apart in the CSV by
+`demandBetsPerSecond`, since `botEnginesPerFrame` stays at 4 throughout.
+
+**Arithmetic, before data, against the third prediction below.** One engine at the cap asks 8,910 bets/s. At
+the per-engine cap that is `8,910 ÷ DefaultMaxBetsPerFrame` ≈ **55.7 fps**, so every engine at the cap is cut
+by its own `MaxBetsPerFrame` as soon as the frame drops below ~56 fps. That is after vsync is left and before
+the 50 fps floor. The prediction is expected to fail on this alone. It stays registered as written, because
+§4's cap rule is what that failure feeds. The frame fit is unaffected: it uses bets actually settled per frame,
+and cap-bound frames still supply points, up to 5 × the cap.
 
 **What each leg gives:**
 - **Frame fit beyond vsync.** Total bets per frame rises with each engine until frames exceed 16.7 ms. Fitting
@@ -202,8 +223,9 @@ advanced or reset freely, so C2 runs on it as it stands.
 ## 5. Order, and what each step needs from the developer
 
 1. **Build C1's columns and the §0 correction** (one build, no behaviour change) → staged, commit approved.
-2. **Run A1/B1** (~5 minutes). **Setup first:** give each bot node credits in the hardware shop and save a flat
-   strategy on it from DiceGame's Active node selector. The protocol will list both steps screen by screen.
+2. **Run A1/B1** (~5 minutes). **Setup first:** save a flat strategy on each bot node from DiceGame's Active node
+   selector, with the bots left at 1 credit. Each leg then raises one bot to the cap mid-run in the hardware shop
+   (§2, revised). The protocol lists every step screen by screen.
 3. **Run A2** in another session (~1 minute).
 4. **Decide A and B** by §4.
 5. **Run C2** (about an hour, unattended). No archive: waived by the developer.
