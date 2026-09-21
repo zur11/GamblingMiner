@@ -9,7 +9,10 @@ committed). **§5 step 1 done** (2026-09-21): C1's trace columns, two A1 columns
 and the §0 governor-comment correction — one build, no behaviour change (§3 C1 records what was built).
 **§5 step 2 done** (A1/B1, session 1, results in §2): the frame delivered the largest demand the game can
 produce (44,331 of 44,545 bets/s) at 57 fps without breaking; a bot bet costs 22% of a player bet; the per-engine
-cap binds first. **Next: §5 step 3, A2** — the densest leg after a restart, plus a short Bet cost leg.
+cap binds first. **§5 step 3 done** (A2, §2): the slower session delivered 44,195 bets/s at 56 fps; the
+player's bet is 72% player-only work, 41% of it one per-bet copy of every transfer record.
+**Next: §5 step 4** — the developer decides the budget, the cap, and whether the record copy is fixed before C2
+(readings and candidates at the end of §2).
 
 **Three questions, one per part:**
 
@@ -198,6 +201,78 @@ A1:** a short Bet cost leg at the end, Frame cost off, to name the player's extr
 **Pre-registered, from session 1:** L4 holds 50 fps if this session is no more than **~14% slower** than
 session 1, because `(8.65 + 8.90) × 1.14 ≈ 20 ms`. Mini-plan 08 measured sessions up to 34% apart; a session
 that slow would not hold it.
+
+### A2 — results, session 2 (2026-09-21, 18:28–18:29 UTC, after a restart)
+
+L4 only: player + four bots at the cap, same settings as A1. Three full reports plus one partial flush. Chain
+height 342 → 346. No bot error.
+
+| | session 1 (L4) | session 2 (L4) |
+|---|---|---|
+| fps | 57.0 | **56.2** |
+| frame p50 / p95 ms | 16.88 / 24.2 | 17.09 / 24.3 |
+| sim / outside sim, ms per frame | 8.65 / 8.90 | 8.79 / 9.00 |
+| delivered of demanded bets/s | 44,331 of 44,545 (99.5%) | **44,195 of 44,540 (99.2%)** |
+| retention | 0.9966 | 0.9949 |
+| player loop / a bot loop cut by the cap | 60% / 61% | 75% / 75% |
+| player bet / bot bet, ms | 0.028 / 0.0062 | 0.0286 / 0.0062 |
+
+**The prediction held.** Session 2 is the slower one, but by ~1.5% (sim +1.6%, frame period +1.4%), far inside
+the 14% that 50 fps allows. **The slower session's figure is 44,195 bets/s at 56 fps.** It is still a lower bound
+on the frame, not its limit.
+
+**The cap got worse within the leg.** The three reports read 64%, 66% and 93% of frames cut, and the partial
+flush after them, 1.4 s long, reads 100% with retention 0.972. At full load one frame of 800 bets takes ~18 ms,
+right at the ~18 ms where 160 bets per engine run out. The loop leaves itself almost no headroom to catch up
+after a block's 20–50 ms frame, so the backlog fills and then sheds. This is most likely the brief dip the
+developer saw on the retention readout near the end. The trace puts it in the last 1.4 s before Frame cost was
+switched off, just before Bet cost was switched on. No report averaged below 54 fps.
+
+**Block work:** 8 blocks at 20.5–30.6 ms mean per report, max 50.7 ms; weighted mean 26 ms.
+
+### B — the player's extra cost, named (Bet cost leg, 37 reports, 180,173 player bets)
+
+| Segment | µs per player bet | share | on the bot path too? |
+|---|---|---|---|
+| `PersistFinancial` | **11.63** | **40.8%** | no |
+| `RegisterBet` (the journal) | 6.72 | 23.6% | no |
+| `NonceAttempt` | 5.67 | 19.9% | yes |
+| `ExecuteNext` | 1.80 | 6.3% | yes |
+| `BetHistoryFeed` | 1.68 | 5.9% | no |
+| `CasinoApplyBetResult` + `ClientLedger` + `ClientBetSettled` | 0.49 | 1.7% | yes |
+| `BetSettledSignal` + `BankrollSetBalance` | 0.46 | 1.6% | no |
+| **total** (unaccounted 0.04) | **28.52** | | |
+
+The total matches the frame profiler's 0.0286 ms, from a different instrument. **Player-only work is 20.5 µs,
+72% of the bet, and the largest part is one call:** `PersistFinancialState(false)` runs on every bet and builds
+the player's `NodeFinancialState` mirror, copying **every transfer record** with a LINQ `Select`. Then
+`SetNodeFinancialState` → `CloneNormalized` copies them **again**, normalising each amount. This world holds 64
+records, so each bet makes ~130 record allocations plus two lists and two state objects: over a million
+allocations a second at 9000X, which is consistent with the gen-0 GC in 84% of frames. The records change only on a
+transfer, and **their number only grows**, by one per recharge. The copy is O(records) by construction.
+*Its growth rate per record is not measured*: one point, 64 records, 11.6 µs.
+
+The bot's `SaveBotFinancialState` goes through the same `CloneNormalized`, with each bot's own records. Bots
+recharge rarely at a 0.01 flat bet, which is why it does not show in a bot's 6.2 µs.
+
+*Loose end, not chased:* the segments a bot shares cost 8.0 µs inside the player's bet, against 6.2 µs for a
+whole bot bet. The bet profiler's own marks, or warmer caches in the bots' tight loop, would both do it.
+
+### Against §4 — the readings, for the developer to decide (step 4)
+
+- **A.** The slower session's measured capacity is **≥ 44,195 bets/s**, above 9,000, so the first branch applies:
+  `BetBudgetPerSecond` becomes it, rounded down to a clean figure, **44,000**. D-10.4's derivation is retired.
+  Consequence: the budget binds only with all five engines at the cap, and holds that one configuration at
+  **88X (8,800X)** instead of 90X. At 90X that configuration delivered 99.2–99.5%, with the clock 0.3–0.5% slow.
+- **B.** A bot bet is outside ±30%, on the cheap side. **One budget for all engines stays.** A budget priced on
+  the player's bet is conservative for bots, and weighting engines would be a design change nothing here needs.
+  §4 B's "fix a dominant call first" was written for a bot-only call. **The dominant call turned out to be
+  player-only** (`PersistFinancialState`, above), a case the rule did not register. Whether to fix it here is a
+  new decision.
+- **Cap.** It binds first, in both sessions, so `DefaultMaxBetsPerFrame = 160` does not stay. §4 registered no
+  replacement. The arithmetic candidate is **180**: the smallest clean figure ≥ `8,910 ÷ 50` = 178.2, i.e. one
+  engine at the cap served down to D-09.1's 50 fps floor. Re-priced first, as the constant's own ⚠ note requires:
+  a full frame at 180 is `180 × 0.0286 + 4 × 180 × 0.0062` ≈ **9.6 ms** of bets, plus ~1 ms fixed.
 
 ---
 
