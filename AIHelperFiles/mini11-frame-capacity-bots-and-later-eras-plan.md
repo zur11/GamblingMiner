@@ -12,7 +12,8 @@ produce (44,331 of 44,545 bets/s) at 57 fps without breaking; a bot bet costs 22
 cap binds first. **§5 step 3 done** (A2, §2): the slower session delivered 44,195 bets/s at 56 fps; the
 player's bet is 72% player-only work, 41% of it one per-bet copy of every transfer record.
 **§5 step 4 decided** (end of §4): D-11.1 budget 44,000, D-11.2 cap 180, D-11.3 fix the per-bet record copy
-before C2. **D-11.3 built** (end of §4). **Next:** the verification run (predictions at the end of §4), then C2.
+before C2. **D-11.3 built and verified** (end of §4): 88X delivered in full, a player bet 28.5 → 15.7 µs, the
+three stores of the transfer records identical. **Next: §5 step 5, C2** — the long unattended run.
 
 **Three questions, one per part:**
 
@@ -328,6 +329,25 @@ advanced or reset freely, so C2 runs on it as it stands.
   several milliseconds per frame, taken from the same 16.7 ms the bets use.
 - `blockWorkMs` per block grows slowly with `chainHeight`.
 
+**Before the run — facts and arithmetic (2026-09-22), stated so they are not read later as findings:**
+- **A correction to A1–A2's setup.** The player's strategy in A1, A2 and the verification was **not flat**. The
+  journal shows base 0.001 with +130% on loss. A bet's cost does not depend on its size, so no figure above
+  changes. But an hour of a loss-progression at 8,910 bets/s is a real risk to the world's balances, so C2 uses
+  the flat strategy the plan specifies. At base 0.001 the house edge costs `0.001 × 0.98% × 8,910 × 3,600` ≈
+  **314 SC an hour**.
+- **The bots must not run**, and a bot strategy cannot be removed without restarting the app (§2), so C2 starts
+  from a fresh launch.
+- **The journal writes ~10 GB in the hour.** A 10,000-bet segment is 2.85 MB, and at 8,910 bets/s one fills
+  about every second (three consecutive segments stamped 07:03:42, :43, :44). Retention keeps 20, ~57 MB on disk.
+  This is the existing design; it was already true of every 9000X run. Recorded, not chased.
+- **If the second prediction comes true, the run slows down in real time.** A1 measured a founder attempt at
+  ~3.2 µs. A network attempt makes the same `TryMineSingleNonceAttempt` call, so a drain at its 5,000-attempt
+  cap costs **~16 ms a frame**, a whole frame on its own. The frame
+  would then run near 30 fps. The player's loop would be cut at 180, retention would fall, and R2-C1 would slow
+  the clock, so reaching Market Birth could take well over the estimated 50 minutes. That would be the data,
+  not a failure of the run.
+- **No board vote can pause it for now:** the world has no founded company yet (`CompanyFoundings` is empty).
+
 ---
 
 ## 4. Decision rules, registered before the data
@@ -396,6 +416,36 @@ bot's principal in place.
 - **correctness**: after a manual Main → Bankroll transfer mid-run and a block after it, the player's persisted
   mirror (`blockchain/state.json`), `bankroll_program_state.json` and the checkpoint all hold **65** records and
   the same balances. Before the build all three held 64, with Main 33,600 and Bankroll 1,704.89806442.
+
+**Verification — results (2026-09-22, 12:02–12:03 UTC, session 3).** Three full reports plus one partial, chain
+height 348 → 353, budget 44,000 and cap 180 in force (trace columns). No error.
+
+| | before (A2, budget off, cap 160, 90X) | after (defaults, 88X) |
+|---|---|---|
+| demand → delivered bets/s | 44,540 → 44,195 (99.2%) | **43,560 → 43,554 (100.0%)** |
+| fps | 56.2 | 58.6 |
+| sim share of the frame | 49% | 35% |
+| player loop / a bot loop cut by the cap | 75% / 75% | 9.3% / 9.4% |
+| frames with a gen-0 GC | 88% | 43% |
+| player bet / bot bet, µs | 28.6 / 6.2 | **15.7** / 5.8 |
+| retention | 0.9949 | 0.9989 |
+
+- **88X, held.** Demand is exactly 495 credits × 88 = 43,560 bets/s, and it was all delivered.
+- **Cap ≤ 10%, held on the mean** (9.3%). One report of three read 14%, the one with four blocks in it.
+- **Retention ≥ 0.999: refuted, narrowly** — 0.9986, 0.9980, 1.0000. The cause is not the cap. The two short
+  reports are exactly the two that hold a frame longer than **66.7 ms** (72.5 and 79.9 ms), which is D-09.5's
+  backlog floor of 1/15 s of real time: a frame longer than the window drops its excess. Both are block frames
+  (block work up to 68.6 ms). What remains of the shortfall is per-block work, Part C's subject.
+- **`PersistFinancial` under 1 µs: held** — 11.63 → **0.40 µs** (39 reports, 194,119 bets).
+- **Player bet ~17–18 µs: refuted on the good side** — **15.7 µs**, 45% below 28.5. The fix's own 11.2 µs
+  explains 17.3. The rest is every other segment shrinking by a little (`RegisterBet` 6.72 → 6.25, `NonceAttempt`
+  5.67 → 5.12, `BetHistoryFeed` 1.68 → 1.45), which fits the allocation drop. **No segment grew.**
+- **Correctness: held exactly.** Mirror, service and checkpoint hold 65 records, identical record by record; the
+  65th is the 1 SC `manual_recharge`. Main 33,599 and Bankroll 4,282.30124675 agree to the satoshi. The checkpoint
+  was written 36 s after the transfer, at a block. Two bots auto-recharged mid-run (one more record each, 100
+  less principal), so the bot's full path followed by its fast path ran too. Their mirrors are consistent.
+- **Block work: watch in C2.** 26–36 ms per block here, max 68.6, against 18–25 at heights 300–338 in session 1.
+  Heights 348–353 are too close to call that growth rather than session noise; C2 spans hundreds of blocks.
 
 ---
 
