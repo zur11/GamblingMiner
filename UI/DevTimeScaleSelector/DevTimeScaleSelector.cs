@@ -185,8 +185,8 @@ namespace UI.DevTimeScaleSelector
 				_effectiveScaleLabel.TooltipText = string.Create(System.Globalization.CultureInfo.InvariantCulture,
 					$"Requested {requestedRate:N0}X, running at {runningRate:N0}X. {credits:N0} running hardware credits × " +
 					$"{_calendar.DevTimeScale} = {credits * _calendar.DevTimeScale:N0} bets/s, the most that fits the " +
-					$"{DevTimeScaleGovernor.BudgetInForce:N0} bets/s budget (mini-plan 10: the clock's demand at the " +
-					$"hardware cap). Fewer credits run faster.");
+					$"{DevTimeScaleGovernor.BudgetInForce:N0} bets/s budget (mini-plan 11: what the frame was measured to " +
+					$"deliver with every engine at the hardware cap). Fewer credits run faster.");
 			}
 			else
 			{
@@ -207,7 +207,9 @@ namespace UI.DevTimeScaleSelector
 		{
 			// 120–200 added for mini-plan 10 A3: with the bet list no longer painting per bet, the question is where
 			// a CHEAP view's frame runs out, and at the clock's ceiling 99 credits demand ~148 bets per 60 fps frame.
-			int[] caps = { 40, 48, 60, 80, 120, 160, 200 };
+			// 180 added with D-11.2, which made it the default: a default missing from this list reads back as index
+			// 0 and the picker would show "40" while 180 is in force.
+			int[] caps = { 40, 48, 60, 80, 120, 160, 180, 200 };
 			var picker = new OptionButton
 			{
 				TooltipText = "DEV — SimulationService.MaxBetsPerFrame, overridden for this session only. "

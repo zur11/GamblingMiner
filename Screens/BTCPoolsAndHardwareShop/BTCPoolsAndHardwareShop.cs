@@ -24,6 +24,8 @@ public partial class BTCPoolsAndHardwareShop : Control
 	private VBoxContainer _detailVBox = null!;
 	private Button _buyHardwareBtn = null!;
 	private Button _discardHardwareBtn = null!;
+	private Button _setToCapBtn = null!;
+	private Button _setToFloorBtn = null!;
 
 	private readonly Dictionary<string, Button> _nodeButtons = new();
 	private string? _selectedNodeId;
@@ -52,6 +54,18 @@ public partial class BTCPoolsAndHardwareShop : Control
 		_discardHardwareBtn.Pressed += OnDiscardHardwarePressed;
 		_buyHardwareBtn.GetParent().AddChild(_discardHardwareBtn);
 		_buyHardwareBtn.GetParent().MoveChild(_discardHardwareBtn, _buyHardwareBtn.GetIndex() + 1);
+
+		// DEV (mini-plan 11 A1): jump a node straight to the betting cap, or back to the 1-credit floor. That
+		// run's legs raise one bot at a time to the cap MID-RUN — SimulationService reads credits fresh every
+		// frame — and at one credit per click that was 98 clicks a bot, each way.
+		_setToCapBtn = new Button { Text = $"Set to cap ({SimulationService.MaxAutoBetBaseAps})", Visible = false };
+		_setToCapBtn.Pressed += OnSetToCapPressed;
+		_setToFloorBtn = new Button { Text = "Set to 1", Visible = false };
+		_setToFloorBtn.Pressed += OnSetToFloorPressed;
+		_buyHardwareBtn.GetParent().AddChild(_setToCapBtn);
+		_buyHardwareBtn.GetParent().MoveChild(_setToCapBtn, _discardHardwareBtn.GetIndex() + 1);
+		_buyHardwareBtn.GetParent().AddChild(_setToFloorBtn);
+		_buyHardwareBtn.GetParent().MoveChild(_setToFloorBtn, _setToCapBtn.GetIndex() + 1);
 
 		BuildNodeList();
 		ShowNoSelection();
@@ -92,12 +106,16 @@ public partial class BTCPoolsAndHardwareShop : Control
 		{
 			_buyHardwareBtn.Visible = false;
 			_discardHardwareBtn.Visible = false;
+			_setToCapBtn.Visible = false;
+			_setToFloorBtn.Visible = false;
 			BuildCasinoDetail();
 		}
 		else
 		{
 			_buyHardwareBtn.Visible = true; // DEV: free hardware for non-casino nodes
 			_discardHardwareBtn.Visible = true;
+			_setToCapBtn.Visible = true;
+			_setToFloorBtn.Visible = true;
 			UpdateDiscardEnabled(nodeId);
 			BuildNodeDetail(nodeId);
 		}
@@ -108,6 +126,8 @@ public partial class BTCPoolsAndHardwareShop : Control
 		_selectedNodeId = null;
 		_buyHardwareBtn.Visible = false;
 		_discardHardwareBtn.Visible = false;
+		_setToCapBtn.Visible = false;
+		_setToFloorBtn.Visible = false;
 		ClearDetail();
 		AddDetailLabel("Select a mining node to manage its hardware pools.", 18);
 	}
@@ -237,9 +257,33 @@ public partial class BTCPoolsAndHardwareShop : Control
 		UpdateDiscardEnabled(_selectedNodeId);
 	}
 
+	// Credits above the cap are not an error (HardwareRate clamps them), so "to cap" only ever adds.
+	private void OnSetToCapPressed()
+	{
+		if (_selectedNodeId == null || _selectedNodeId == CasinoNodeId) return;
+		int missing = SimulationService.MaxAutoBetBaseAps - HardwareAllocationRepository.GetNode(_selectedNodeId).TotalCredits;
+		HardwareAllocationRepository.AddCredits(_selectedNodeId, missing); // a no-op at or above the cap
+		BuildNodeDetail(_selectedNodeId);
+		UpdateDiscardEnabled(_selectedNodeId);
+	}
+
+	private void OnSetToFloorPressed()
+	{
+		if (_selectedNodeId == null || _selectedNodeId == CasinoNodeId) return;
+		// RemoveCredits already stops at the 1-credit floor, casino pool first.
+		HardwareAllocationRepository.RemoveCredits(_selectedNodeId, HardwareAllocationRepository.GetNode(_selectedNodeId).TotalCredits);
+		BuildNodeDetail(_selectedNodeId);
+		UpdateDiscardEnabled(_selectedNodeId);
+	}
+
 	// Can't discard below 1 total credit — disable the button at the floor for clear feedback.
-	private void UpdateDiscardEnabled(string nodeId) =>
-		_discardHardwareBtn.Disabled = HardwareAllocationRepository.GetNode(nodeId).TotalCredits <= 1;
+	private void UpdateDiscardEnabled(string nodeId)
+	{
+		int total = HardwareAllocationRepository.GetNode(nodeId).TotalCredits;
+		_discardHardwareBtn.Disabled = total <= 1;
+		_setToFloorBtn.Disabled = total <= 1;
+		_setToCapBtn.Disabled = total >= SimulationService.MaxAutoBetBaseAps;
+	}
 
 	// ── Detail panel helpers ─────────────────────────────────────────────────
 

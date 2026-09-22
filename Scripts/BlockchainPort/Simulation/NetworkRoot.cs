@@ -7492,6 +7492,31 @@ public partial class NetworkRoot : Node
 		}
 	}
 
+	// Mini-plan 11 D-11.3 — the per-bet half of SetNodeFinancialState. A settled bet moves balances and nothing
+	// else, so this writes only them, into the existing mirror IN PLACE, normalised exactly as CloneNormalized
+	// normalises them. Everything else the mirror holds (dose, transfer records, and a bot's principal, which
+	// company dividends credit in place) is left as it stands. A null principal leaves the principal too.
+	// Returns false when there is no mirror yet, so the caller does the full write. It never persists: a block is
+	// the only commit (Pattern 2), and every block goes through SetNodeFinancialState with persist: true.
+	// In-place is safe because no reader holds the live object: GetOrCreateNodeFinancialState returns a Clone, and
+	// the disk snapshot clones as well.
+	public bool TryUpdateNodeFinancialBalances(string nodeId, decimal? principalBalance, decimal bankrollBalance)
+	{
+		EnsureInitialized();
+		if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) || node.FinancialState is null)
+		{
+			return false;
+		}
+
+		if (principalBalance is decimal principal)
+		{
+			node.FinancialState.PrincipalBalance = Scripts.Finance.Money.Normalize(Math.Max(0m, principal));
+		}
+		node.FinancialState.BankrollBalance = Scripts.Finance.Money.Normalize(Math.Max(0m, bankrollBalance));
+		node.FinancialState.UpdatedAtUtc = DateTime.UtcNow;
+		return true;
+	}
+
 	public string BuildMiningStatusLine(string nodeId)
 	{
 		EnsureInitialized();

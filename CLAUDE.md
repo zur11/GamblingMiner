@@ -385,6 +385,18 @@ Case, with the measurement that caught it: `ProjectDesignManual.md` **§38.7**.
 
 **Project goal, tracked in `Documentation/PRIVATE_ROADMAP.md` §6:** before Basic Mode v0.1 is considered complete, audit every `_Process` override in the project against this principle and migrate what's feasible to event-driven design. Not a hard blocker on other work — but do not add a NEW poll-shaped `_Process` to the backlog above without first checking whether an event already exists (or should) for the state you're reading.
 
+**Two more, from one 65-minute run** (mini-plan 11 C2 — `ProjectDesignManual.md` **§40.11**):
+
+- **A store bounded on disk is not bounded in memory.** The bet journal's retention cap was written, reviewed and
+  verified — on FILES. The same records in RAM had no cap at all, so a session's cost per bet stayed flat for
+  23 M bets and then tripled as the heap filled (6.77 GB on a 7.9 GB machine). **When a retention policy is
+  written, say in the same place what happens to the in-memory copy.** And note the limit is in EVENTS, not
+  hours: the same fault reaches a player at 99 credits after ~74 hours of play.
+- **An instrument that discards outliers cannot see a freeze.** `FrameCostProfiler` drops any period over a
+  second as "not a frame" — correct for scene loads, and the reason its percentiles stayed plausible through
+  **791 seconds of frozen game**. The only witness was the wall-clock gap between its own reports, and nothing
+  was reading it. **When a profiler filters, something must still watch the clock.**
+
 **Closing rule — a cost note is a MEASUREMENT or it is a guess wearing a measurement's clothes.** Every judgement on this page is a performance judgement. **Time it, or say plainly that you did not** — a figure that merely *looks* measured is the one nobody re-checks, and one such note was five orders of magnitude out. And **when a documented cost comes true, re-read the note for the mitigation it already named.** Case: `ProjectDesignManual.md` **§40.7**.
 
 ### 7. Standing Conventions — rules that outlived the phase that produced them
@@ -577,6 +589,16 @@ Detailed design documents are in `Documentation/`:
   - **Why:** once committed, the change is folded into history and the developer loses the easy "what exactly did you just do?" view. Staging first keeps the diff reviewable while the reasoning is still fresh, which is the moment review is worth anything.
   - **The message goes in the CHAT, not into `.git/COMMIT_EDITMSG`.** That file was tried first and does **not** surface in the VS Code Source Control input, so the developer never saw it — a prepared message nobody can read is the same as no message.
   - Claude still **writes** the message to the usual standard (what changed, why, and the rule it establishes). Only the go-ahead is the developer's.
-  - `push`, `merge`, `checkout -b` and branch operations remain **explicit-request only**, unchanged.
+  - **Before staging code:** `dotnet build` clean, and the locale detector at its baseline (Money Handling). Say in the same message if either was skipped.
   - A clean working tree usually means the developer already committed; verify via recent commit history, don't assume there's work to commit.
+- **PLAN LIFECYCLE — four approvals, and the git operations each one authorises (2026-09-21).** A plan (a mini-plan or a step) lives in `AIHelperFiles/` and runs on its own branch. The developer approves in the chat at four points. **Each approval covers the operations listed with it, so none of them is asked for again:**
+  1. **Specify.** Claude writes the plan, with predictions and decision rules registered **before** any data, and a `SPECIFIED` entry in `PRIVATE_ROADMAP.md`. It stages both and posts the commit message **with a proposed branch name** (`miniNN-<subject>`). Approval ⇒ `git checkout -b <branch>` off `main`, then commit.
+  2. **Each unit of work** is the stage → ask → commit loop above. Approval ⇒ commit on the plan's branch.
+  3. **Measurement runs.** Claude gives a numbered protocol that names every setting and the panel to watch, with the prediction stated first. It then reads `user://logs/*.csv` and the journal **itself**, never asking the developer to transcribe output. Results go into the plan, refuted predictions stated as refuted, and are committed like any unit.
+  4. **Close-out.** Claude writes the plan's close-out section, moves the roadmap entry to `DONE`, adds the `IMPLEMENTATION_STATUS.md` entry and marks figures it superseded elsewhere. It stages all of it and posts **both** the close-out commit message and the merge message. Approval ⇒ commit, `git checkout main`, `git merge --no-ff <branch>`, `dotnet build` on `main`, then **`git push origin main`**. That push is a standing authorisation (developer, 2026-09-20).
+  - **Keep the plan's `Status:` line current** in every commit that moves it (what is done, what is next). It is how a new session resumes: open the plan named in the roadmap's `SPECIFIED` / `IN PROGRESS` entry, read its Status and its "Order" section, and continue from there.
+  - **Still explicit-request only:** any other push (a direct commit on `main`, a feature branch), force-push, rebase, deleting a branch, and a merge not approved through step 4.
+  - **Mechanics that have already failed once:**
+    - `git merge` cannot read its message from stdin: `-F -` fails with `could not read file '-'`. Write the message to a file in the scratchpad (`mkdir -p` it first) and pass `-F <file>`. `git commit -F -` with a quoted heredoc does work.
+    - Run multi-step git sequences under `set -e -o pipefail`, and never pipe `git merge` into `tail`/`head`. A pipe once hid a failed merge, and the push after it said "Everything up-to-date" as if it had worked.
 - **Keep docs current on the branch where the work happens — including CLAUDE.md.** When a change alters the architecture, update CLAUDE.md (and the other docs) in the same branch/commits as the change, not deferred to merge. CLAUDE.md stays tracked — do not untrack it (its history matters and Claude Code reads it every session).

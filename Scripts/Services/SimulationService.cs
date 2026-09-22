@@ -225,7 +225,20 @@ public partial class SimulationService : Node
 	// `99 credits × 90 ÷ 60 =` **149 bets/frame**, which 40 cannot express — at 40 the game could not exceed
 	// 2,400 bets/s whatever the budget allowed. Two sessions measured cap 160 delivering all ~8,910 bets/s at
 	// 58–60 fps, frame p50 16.6 ms, p95 22–24 ms, retention 1.000.
-	private const int DefaultMaxBetsPerFrame = 160;
+	//
+	// 160 → 180 (D-11.2, 2026-09-21). This cap is PER ENGINE: the player's loop and each bot runner's loop apply
+	// it separately. Mini-plan 11 ran all five at the hardware cap and found it binding BEFORE the frame did. At
+	// 56–57 fps it cut 60–93% of frames, so the densest configuration delivered 99.2–99.5% of its demand and the
+	// clock ran slow. The reason is arithmetic: one engine at the cap and the clock's ceiling asks for 8,910 bets/s,
+	// which is 160 bets per frame at ~55.7 fps. Any frame longer than ~18 ms therefore under-serves it, and a full
+	// 800-bet frame takes about that long, which leaves nothing to catch up after a block's 20–50 ms frame. 180 is
+	// the smallest clean figure ≥ `8,910 ÷ 50`: one engine at the cap, served down to D-09.1's 50 fps floor.
+	// Re-priced first, as the ⚠ above requires. A player bet costs 0.0286 ms and a bot bet 0.0062 ms (mini-plan 11
+	// B), so a full frame at 180 is `180 × 0.0286 + 4 × 180 × 0.0062` ≈ 9.6 ms of bets.
+	// This is NOT the raise §38.7 rule 3 forbids. That rule stops the cap being raised to hand a SATURATED frame
+	// more work. Here the frame was not saturated: 56 fps, above the 50 fps floor, with the sim at 49% of it. The
+	// below-1 retention was diagnosed first, and what was eating it was this cap, not the frame.
+	private const int DefaultMaxBetsPerFrame = 180;
 
 	// Mini-plan 09 P3a — a DEBUG-only runtime override, so the cap can be swept A–B–A inside ONE run. P1 showed
 	// the ~2,000 bets/s ceiling in DiceGame IS this cap (bound on 100% of saturated frames) and that each extra
@@ -263,7 +276,8 @@ public partial class SimulationService : Node
 
 	private double BacklogWindowSimSeconds() =>
 		Math.Max(MaxBacklogSeconds, MinBacklogWindowRealSeconds * Math.Max(1, _calendar?.DevTimeScale ?? 1));
-	private const int MaxAutoBetBaseAps = 99;
+	// PUBLIC so the hardware shop's DEV "Set to cap" button targets the clamp HardwareRate applies (mini-plan 11).
+	public const int MaxAutoBetBaseAps = 99;
 
 	// ── Round 2 (R2-T / R2-C1, 2026-07-27) — simulated-time saturation ────────────────────────────────
 	// The bet engine can retain at most MaxBacklogSeconds of simulated time per frame: the Math.Min below
@@ -515,6 +529,7 @@ public partial class SimulationService : Node
 		// (or by a scene round-trip), which could be hours of game time stale and would collapse the batch
 		// onto a single instant. MinValue means "no anchor yet" and yields the nominal spacing.
 		_previousFrameClockUtc = DateTime.MinValue;
+		_mirrorStateVersion = -1; // D-11.3: a run's first settled bet always writes the full mirror
 		IsRunning = true;
 
 		if (_calendar != null)
@@ -547,6 +562,7 @@ public partial class SimulationService : Node
 		_config = null;
 		_accumulatorSeconds = 0d;
 		_previousFrameClockUtc = DateTime.MinValue; // see the note at the field: a stopped run leaves no anchor
+		_mirrorStateVersion = -1; // D-11.3: between runs DiceGame writes the mirror itself; trust nothing cached
 		OnGovernorInputChanged(); // no engines run now: fall back to the idle preview of the player's own credits
 
 		if (_calendar != null)
@@ -773,6 +789,10 @@ public partial class SimulationService : Node
 
 		_previousFrameClockUtc = clockNowUtc;
 
+		// Mini-plan 11 C1 — the era this frame ran in. Chain height is the tip's index (genesis is 0).
+		Scripts.Diagnostics.FrameCostProfiler.NoteEra(clockNowUtc, (_networkRoot?.GetPlayerChainLength() ?? 0) - 1,
+			NetworkPopulationScheduler.PoweredCastIds.Count, NetworkPopulationScheduler.TotalScheduledPower);
+
 		// Demand = what the running engines asked for this frame: their credits (bets per simulated second)
 		// × DevTimeScale. Mini-plan 08 matched this formula against delivered rates to within 1%.
 		Scripts.Diagnostics.FrameCostProfiler.EndFrame(
@@ -832,11 +852,13 @@ public partial class SimulationService : Node
 			Scripts.Diagnostics.FrameCostProfiler.CountFounderAttempts(attempts);
 			for (int i = 0; i < attempts; i++)
 			{
+				Scripts.Diagnostics.FrameCostProfiler.BeginAttempt();
 				_networkRoot.TryMineSingleNonceAttempt(founderId, out Block? block, tsMs);
 				if (block != null)
 				{
 					CaptureCheckpoint();
 					StopPlayerOnExternalBlockMined();
+					Scripts.Diagnostics.FrameCostProfiler.EndBlockWork();
 				}
 			}
 		}
@@ -896,6 +918,7 @@ public partial class SimulationService : Node
 
 		IReadOnlyList<(string minerId, int attempts, bool isGhost)> drained =
 			NetworkPopulationScheduler.DrainScheduledAttempts(nonScheduledAttempts, otherMinersPower);
+		Scripts.Diagnostics.FrameCostProfiler.CountScheduledCapBound(NetworkPopulationScheduler.LastDrainBudgetBound);
 		if (drained.Count == 0)
 		{
 			return;
@@ -912,6 +935,7 @@ public partial class SimulationService : Node
 
 			for (int i = 0; i < attempts; i++)
 			{
+				Scripts.Diagnostics.FrameCostProfiler.BeginAttempt();
 				_networkRoot.TryMineSingleNonceAttempt(minerId, out Block? block, tsMs);
 				if (block != null)
 				{
@@ -921,6 +945,7 @@ public partial class SimulationService : Node
 					}
 					CaptureCheckpoint();
 					StopPlayerOnExternalBlockMined();
+					Scripts.Diagnostics.FrameCostProfiler.EndBlockWork();
 				}
 			}
 		}
@@ -992,6 +1017,7 @@ public partial class SimulationService : Node
 		// One nonce attempt per bet (1 bet = 1 attempt), routed by the active node's hardware allocation
 		// (individual pool → own chain; casino pool → casino chain). Real PoW on the shared chain.
 		long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
+		Scripts.Diagnostics.FrameCostProfiler.BeginAttempt();
 		Block? block = RouteNonceAttempt(_config.ActiveNodeId, tsMs);
 		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.NonceAttempt);
 
@@ -1004,6 +1030,7 @@ public partial class SimulationService : Node
 				_session.Stop(IBettingStrategy.StopReason.StopOnBlockMined);
 				FreezeCalendarAtBlockStop();
 			}
+			Scripts.Diagnostics.FrameCostProfiler.EndBlockWork();
 		}
 		// The block path gets its OWN segment, separate from the attempt above. Both readings are honest and
 		// they answer different questions: amortised over thousands of bets this is a few µs (the cost every
@@ -1021,9 +1048,33 @@ public partial class SimulationService : Node
 		Scripts.Diagnostics.BetCostProfiler.EndBet();
 	}
 
+	// Mini-plan 11 D-11.3 — the BankrollProgramService.StateVersion at which the active node's mirror was last
+	// written IN FULL, and for which node. -1 = not written in this run, which forces the full write.
+	private int _mirrorStateVersion = -1;
+	private string? _mirrorNodeId;
+
 	private void PersistFinancialState(bool persist)
 	{
 		if (_config == null || _wallet == null) return;
+
+		// Mini-plan 11 D-11.3 — THE PER-BET FAST PATH. This runs on every settled bet, and it used to rebuild the
+		// whole mirror each time: a fresh NodeFinancialState with a LINQ copy of every transfer record, which
+		// SetNodeFinancialState's CloneNormalized then copied a second time. Mini-plan 11 B measured it at 11.6 µs,
+		// 41% of a player bet, with 64 records — and the record count only grows, by one per recharge. A bet moves
+		// the two balances and nothing else. So while the dose and the records are unchanged, only the balances are
+		// written. Anything that changes either one bumps StateVersion, so the very next call takes the full path;
+		// and every block commit (persist: true) takes it regardless, so what reaches disk is always a full write.
+		// The principal is still refreshed on every bet: it can move mid-run without a transfer record (the Private
+		// Bank's auto-deposit, a manual Bank → Main in ScFinances).
+		int version = _bankrollProgram?.StateVersion ?? -1;
+		if (!persist
+			&& version >= 0
+			&& version == _mirrorStateVersion
+			&& string.Equals(_mirrorNodeId, _config.ActiveNodeId, StringComparison.Ordinal)
+			&& _networkRoot.TryUpdateNodeFinancialBalances(_config.ActiveNodeId, _principal?.CurrentBalance ?? 0m, _wallet.Balance))
+		{
+			return;
+		}
 
 		var state = new NodeFinancialState
 		{
@@ -1042,6 +1093,8 @@ public partial class SimulationService : Node
 		};
 
 		_networkRoot.SetNodeFinancialState(_config.ActiveNodeId, state, persist);
+		_mirrorStateVersion = version;
+		_mirrorNodeId = _config.ActiveNodeId;
 	}
 
 	// If the player's autobet stopped for insufficient funds and auto-recharge is on, top up the bankroll
@@ -1342,6 +1395,8 @@ public partial class SimulationService : Node
 
 			_settleBackdateGameSeconds = 0d;
 			totalExecuted += executed;
+			// Mini-plan 11 A1 — each runner has its own cap, and H2 sees only the player's.
+			Scripts.Diagnostics.FrameCostProfiler.CountBotEngine(executed >= MaxBetsPerFrame);
 		}
 
 		return totalExecuted;
@@ -1379,11 +1434,13 @@ public partial class SimulationService : Node
 			ClientBetSettled?.Invoke(runner.NodeId, "Dice", betEvent); // bots are Dice-only (no GameId on BotConfig)
 
 			long tsMs = new DateTimeOffset(tsUtc).ToUnixTimeMilliseconds();
+			Scripts.Diagnostics.FrameCostProfiler.BeginAttempt();
 			Block? block = RouteNonceAttempt(runner.NodeId, tsMs);
 			if (block != null)
 			{
 				CaptureCheckpoint();
 				StopPlayerOnExternalBlockMined();
+				Scripts.Diagnostics.FrameCostProfiler.EndBlockWork();
 			}
 			SaveBotFinancialState(runner);
 		}
@@ -1527,6 +1584,16 @@ public partial class SimulationService : Node
 
 	private void SaveBotFinancialState(BotRunner runner)
 	{
+		// Mini-plan 11 D-11.3 — the bot's twin of PersistFinancialState's fast path, for the same per-bet double copy
+		// of the transfer records (GetOrCreateNodeFinancialState clones, SetNodeFinancialState clones again). A bot
+		// bet moves only its bankroll. Its principal, dose and records change in TryAutoRechargeBot, which writes the
+		// whole state itself, and in company dividends, which credit the principal in place — so the principal is
+		// left alone here, exactly as the full path below preserves it by cloning the current mirror.
+		if (_networkRoot.TryUpdateNodeFinancialBalances(runner.NodeId, null, runner.Wallet.Balance))
+		{
+			return;
+		}
+
 		NodeFinancialState state = _networkRoot.GetOrCreateNodeFinancialState(
 			runner.NodeId,
 			BankrollProgramService.InitialPrincipalBalanceBaseline - BankrollProgramService.DefaultAutoRechargeAmount,

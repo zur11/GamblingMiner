@@ -39,6 +39,11 @@ public partial class BankrollProgramService : Node
 	public bool AutoRechargeEnabled { get; private set; } = true;
 	public int AutoRechargeCount => _records.Count(r => r.Direction == "balance_to_bankroll" && r.Reason == "auto_recharge");
 
+	// Mini-plan 11 D-11.3 — bumped on EVERY change to the dose or the transfer records, the two things a per-node
+	// NodeFinancialState mirror copies from this service. SimulationService compares it once per settled bet, so
+	// the mirror is rebuilt only when one of them changed, not on every bet. In-memory only: a counter, not state.
+	public int StateVersion { get; private set; }
+
 	public event Action TransfersChanged;
 	public event Action AutoRechargeAmountChanged;
 
@@ -68,6 +73,7 @@ public partial class BankrollProgramService : Node
 		}
 
 		AutoRechargeAmount = amount;
+		StateVersion++;
 		AutoRechargeAmountChanged?.Invoke();
 		SaveState();
 	}
@@ -167,6 +173,7 @@ public partial class BankrollProgramService : Node
 			Direction = direction,
 			Reason = reason
 		});
+		StateVersion++;
 		SaveState();
 		TransfersChanged?.Invoke();
 	}
@@ -203,6 +210,7 @@ public partial class BankrollProgramService : Node
 			}
 		}
 
+		StateVersion++;
 		SaveState();
 		AutoRechargeAmountChanged?.Invoke();
 		TransfersChanged?.Invoke();
@@ -246,6 +254,7 @@ public partial class BankrollProgramService : Node
 					Reason = record.Reason ?? string.Empty
 				});
 			}
+			StateVersion++;
 		}
 		catch (Exception ex)
 		{
