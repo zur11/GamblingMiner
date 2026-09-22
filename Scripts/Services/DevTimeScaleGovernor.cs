@@ -39,7 +39,9 @@ public static class DevTimeScaleGovernor
 	/// <para><b>One budget for every engine type, priced on the dearest.</b> A bot bet costs 0.0062 ms, a player
 	/// bet 0.0286 ms (mini-plan 11 B). Weighting engines would let bots run faster; it is a design change nothing
 	/// here needs, because the budget binds only at the configuration above. <b>Measured in August 2009</b>, when
-	/// the historical network mines almost nothing; mini-plan 11 Part C measures later eras.</para>
+	/// the historical network mines almost nothing — and C2 then verified that the network still costs the frame
+	/// almost nothing through Market Birth (see <see cref="Govern"/>'s parameter note). <b>Eras after 2010-07-18
+	/// remain unmeasured.</b></para>
 	///
 	/// <para>The history below is kept because it is what the number used to mean.</para>
 	///
@@ -122,6 +124,12 @@ public static class DevTimeScaleGovernor
 	/// bot runner. Each credit is one bet per simulated second, so demand is this × the scale. Founder and
 	/// scheduled-network attempts are not a term: they are drained in proportion to these attempts and cost
 	/// under 0.05 ms per frame in 2009 (P1, H3).
+	///
+	/// <para><b>Verified from 2009-09-11 to Market Birth, 2010-07-18</b> (mini-plan 11 C2, 26.4 M bets, chain
+	/// height 362 → 819): the scheduled network's drain cost <b>0.002–0.54 ms per frame</b>, at most 3.2% of a
+	/// frame, and never reached its own per-frame attempt cap. It peaked at ~15 bets/s of power against the
+	/// player's 99, because the 1:100 replica of the real 2010 network is still tiny. <b>Later eras are not
+	/// measured</b>, and that is where the network grows.</para>
 	/// </param>
 	public static (int Effective, DevTimeScaleLimit Limit) Govern(int requested, double runningCredits)
 	{

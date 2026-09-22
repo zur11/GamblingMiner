@@ -13,7 +13,11 @@ cap binds first. **§5 step 3 done** (A2, §2): the slower session delivered 44,
 player's bet is 72% player-only work, 41% of it one per-bet copy of every transfer record.
 **§5 step 4 decided** (end of §4): D-11.1 budget 44,000, D-11.2 cap 180, D-11.3 fix the per-bet record copy
 before C2. **D-11.3 built and verified** (end of §4): 88X delivered in full, a player bet 28.5 → 15.7 µs, the
-three stores of the transfer records identical. **Next: §5 step 5, C2** — the long unattended run.
+three stores of the transfer records identical. **§5 steps 5–6 done** (C2, §3): the historical network costs the
+frame nothing through Market Birth (peak 0.54 ms a frame, its cap never reached), so §4 C's first branch applies
+and the governor keeps its formula with the verified era range in its comment. **C2 found what the plan did not
+predict: the session's RAM grows without bound with the number of bets** — 6.77 GB after 26.4 M bets, 13 of the
+run's 65 minutes frozen. **Next: close-out**, plus a mini-plan for the in-memory journal bound.
 
 **Three questions, one per part:**
 
@@ -347,6 +351,61 @@ advanced or reset freely, so C2 runs on it as it stands.
   the clock, so reaching Market Birth could take well over the estimated 50 minutes. That would be the data,
   not a failure of the run.
 - **No board vote can pause it for now:** the world has no founded company yet (`CompanyFoundings` is empty).
+
+### C2 — results (2026-09-22, 20:05–21:11 UTC, ~65 real minutes)
+
+Player alone, flat 0.001, defaults, 9000X. The world ran **2009-09-11 → 2010-07-18**, chain height **362 → 819**,
+**26.4 M bets**. 291 full reports. No error in the editor's Errors tab.
+
+**The two network predictions are refuted, and not narrowly.**
+
+| | predicted | measured, at Market Birth |
+|---|---|---|
+| scheduled power | grows until it dominates | **14.6** bets/s, against the player's 99 |
+| scheduled attempts per frame | at the 5,000 cap | **26** |
+| `scheduledCapShare` | rises towards 1 | **0.0000 in every report** |
+| `ScheduledDrive` | several ms, flattening at the cap | **0.002 → 0.095 ms**, peak 0.54 ms |
+
+`ScheduledDrive`'s peak is **3.2% of a 16.7 ms frame**. §4 C's first branch therefore applies as registered: the
+governor is unchanged, and its comment records the era actually verified. The 1:100 replica of a network that
+was itself tiny in 2010 costs the frame nothing; the eras where it grows are **after** this run's range, and
+remain unmeasured.
+
+**Block work grew mildly with the chain, as predicted** — 24 ms at height 376, 33 ms at 747 — until the fault
+below made the late figures meaningless (53–343 ms). **`PersistStateToDisk` rewriting the whole chain is not yet
+the dominant per-block cost**, which also answers where the chain's whole-file rewrite sits today: measurable,
+not urgent.
+
+#### The finding C2 did produce: the session's RAM grows without bound, and it ends the run
+
+Nothing in the plan predicted this, and it is the most important result of Part C.
+
+- **The player's bet cost was flat at 16–20 µs for 23 M bets, then rose to 55 µs, 81 µs, 145 µs.** The rise
+  tracks **cumulative bets**, not the date, the chain height or the network's size.
+- **The app froze outright**: 19 gaps between reports hold **791 s — 13 of the 65 minutes — with no frames at
+  all**, growing from ~10 s early to 142 s at the end. The profiler could not see them: a period over
+  `DiscontinuityMs` (1 s) is discarded as "not a frame", so the percentiles stayed plausible while the game was
+  frozen. **A blind spot worth naming: the instrument is built to ignore exactly the event that matters here.**
+- **Measured after the run, with the game still open: 6.77 GB of private memory**, on a machine with **7.9 GB**.
+  The knee at ~23 M bets is where the heap filled physical RAM and Windows began paging.
+- **Cause, in the code:** `BetHistoryRepository` caps the journal *on disk* (20 segments, ~57 MB) and **never
+  trims it in memory**. `Add` appends to `_records` and to the `_recordIds` set, and only `RollbackToUtc` and
+  `ClearAll` ever remove anything. `EnforceRetentionCap` deletes *files*.
+- **Consistency check:** 6.77 GB ÷ 26.4 M ≈ **257 bytes per bet**, which is about what one `BetRecord` plus its
+  32-character Id string plus a hash-set entry should occupy. The arithmetic and the measurement agree, so the
+  journal in RAM is the whole of it rather than a suspect among many.
+- **What it means for a player, not a DEV run:** the limit is in bets, not in hours. At 99 credits and normal
+  speed (99 bets/s) 26 M bets is ~74 hours of continuous play; at 1 credit, ~300 days. **The same fault, reached
+  slowly.**
+
+**Not filed as an incident:** nothing was lost or corrupted, and no persisted figure was wrong. It belongs to
+scale, not durability — `ProjectDesignManual` Ch. 40's second half, and its own mini-plan.
+
+**The fix is not in this plan's scope** (it measures; building is its own plan). Its shape: bound the in-memory
+journal to the window the disk already keeps, trimming `_records` and `_recordIds` as segments rotate. Lifetime
+figures already come from the unpruned rollup, so they are unaffected. What needs care is every consumer that
+iterates `_records` for a "since deposit / since recharge" figure, and the duplicate-Id guard from INC-002,
+which only needs a recent window.
 
 ---
 
