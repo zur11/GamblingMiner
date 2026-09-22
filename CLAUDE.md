@@ -385,6 +385,18 @@ Case, with the measurement that caught it: `ProjectDesignManual.md` **§38.7**.
 
 **Project goal, tracked in `Documentation/PRIVATE_ROADMAP.md` §6:** before Basic Mode v0.1 is considered complete, audit every `_Process` override in the project against this principle and migrate what's feasible to event-driven design. Not a hard blocker on other work — but do not add a NEW poll-shaped `_Process` to the backlog above without first checking whether an event already exists (or should) for the state you're reading.
 
+**Two more, from one 65-minute run** (mini-plan 11 C2 — `ProjectDesignManual.md` **§40.11**):
+
+- **A store bounded on disk is not bounded in memory.** The bet journal's retention cap was written, reviewed and
+  verified — on FILES. The same records in RAM had no cap at all, so a session's cost per bet stayed flat for
+  23 M bets and then tripled as the heap filled (6.77 GB on a 7.9 GB machine). **When a retention policy is
+  written, say in the same place what happens to the in-memory copy.** And note the limit is in EVENTS, not
+  hours: the same fault reaches a player at 99 credits after ~74 hours of play.
+- **An instrument that discards outliers cannot see a freeze.** `FrameCostProfiler` drops any period over a
+  second as "not a frame" — correct for scene loads, and the reason its percentiles stayed plausible through
+  **791 seconds of frozen game**. The only witness was the wall-clock gap between its own reports, and nothing
+  was reading it. **When a profiler filters, something must still watch the clock.**
+
 **Closing rule — a cost note is a MEASUREMENT or it is a guess wearing a measurement's clothes.** Every judgement on this page is a performance judgement. **Time it, or say plainly that you did not** — a figure that merely *looks* measured is the one nobody re-checks, and one such note was five orders of magnitude out. And **when a documented cost comes true, re-read the note for the mitigation it already named.** Case: `ProjectDesignManual.md` **§40.7**.
 
 ### 7. Standing Conventions — rules that outlived the phase that produced them

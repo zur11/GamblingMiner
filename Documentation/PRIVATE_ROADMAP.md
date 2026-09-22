@@ -459,7 +459,7 @@ are in the plan's D-09.6 entry.
 > drawing nothing: rows never move and only the ~14 visible ones are painted, once per frame. 99 credits run
 > at the clock's ceiling, 9000X, against 1700X before — `DefaultMaxBetsPerFrame` 40 → 160 and
 > `BetBudgetPerSecond` 1,700 → 9,000, the latter **derived** as the clock's demand at the hardware cap rather
-> than measured. A player-facing Bet View button (Detailed / OFF) shows or hides the list; once the list got
+> than measured. **Both superseded by mini-plan 11 (2026-09-22): 180 and 44,000.** A player-facing Bet View button (Detailed / OFF) shows or hides the list; once the list got
 > cheap it became a view preference rather than a speed setting.
 > **(B)** The overspend is **0.000000% at full retention** and rises only with saturation, so P2 closed by its
 > pre-registered rule. **Withdrawn, as an option for a later version:** the Numbers view, see "Post-Basic
@@ -475,10 +475,21 @@ Mini-plan 09's two remaining open items, at the developer's request.
 - **(B) R2-C1's overspend.** Measured directly by `FrameCostProfiler`, under the governor and in one forced-
   saturation leg. Closed for good below 0.05%; otherwise fixed with the lag-free design D-09.2 described.
 
-### The frame's real capacity, bots betting alongside, and later eras — IN PROGRESS (mini-plan 11, 2026-09-21)
+### The frame's real capacity, bots betting alongside, and later eras — ✅ DONE (mini-plan 11, 2026-09-22)
 
-**Status: `AIHelperFiles/mini11-frame-capacity-bots-and-later-eras-plan.md`, on branch
-`mini11-frame-capacity-bots-and-eras`; the plan's own Status line says what is next.** The three
+> **All three answered, and a fourth found.** **(A)** The player and all four bots at the hardware cap —
+> 44,545 bets/s, the most the game can demand — ran at 56–57 fps delivering 99.2–99.5%, so the frame's limit was
+> never reached. `BetBudgetPerSecond` 9,000 → **44,000**, measured again rather than derived (D-11.1), and
+> `DefaultMaxBetsPerFrame` 160 → **180** (D-11.2), because the per-engine cap bound before the frame did.
+> **(B)** A bot bet costs **0.0062 ms against the player's 0.0286** — 22%, not the ±30% predicted. The gap was
+> player-only work, 41% of it one call copying every transfer record twice per bet; now 0.40 µs, and a player bet
+> **15.7 µs** (D-11.3). One budget still covers every engine. **(C)** The historical network costs the frame
+> **nothing** through Market Birth: 0.54 ms a frame at its peak, 26 attempts against its 5,000 cap. Neither
+> candidate fix is needed or built, and the governor's comment now records the era verified. **The fourth:**
+> a session's RAM grows without bound with the number of bets — 6.77 GB after 26.4 M, 13 of 65 minutes frozen —
+> which is **mini-plan 12**, below. The text that follows is the original specification.
+
+**Status: `AIHelperFiles/mini11-frame-capacity-bots-and-later-eras-plan.md`, own branch off `main`.** The three
 limits mini-plan 10 stated about its own result, at the developer's request.
 
 - **(A) The frame's capacity.** Never observed: the clock's ceiling binds first with the player alone. Bots

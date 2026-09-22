@@ -4,8 +4,9 @@
 `mini10-dicegame-per-bet-ui-cost-and-clock-overspend-plan.md`, whose close-out stated three limits of its own
 result. This plan measures them.
 
-**Status:** 🚧 **IN PROGRESS** on `mini11-frame-capacity-bots-and-eras` (branch created 2026-09-21, plan
-committed). **§5 step 1 done** (2026-09-21): C1's trace columns, two A1 columns §2 needed and did not list,
+**Status:** ✅ **DONE 2026-09-22**, merged to `main` from `mini11-frame-capacity-bots-and-eras`. **Read §7 first**
+— it is the close-out, and it names what this plan changed and the one fault it found but did not fix
+(mini-plan 12). The step trail below is kept as the record of how it ran. **§5 step 1 done** (2026-09-21): C1's trace columns, two A1 columns §2 needed and did not list,
 and the §0 governor-comment correction — one build, no behaviour change (§3 C1 records what was built).
 **§5 step 2 done** (A1/B1, session 1, results in §2): the frame delivered the largest demand the game can
 produce (44,331 of 44,545 bets/s) at 57 fps without breaking; a bot bet costs 22% of a player bet; the per-engine
@@ -17,7 +18,7 @@ three stores of the transfer records identical. **§5 steps 5–6 done** (C2, §
 frame nothing through Market Birth (peak 0.54 ms a frame, its cap never reached), so §4 C's first branch applies
 and the governor keeps its formula with the verified era range in its comment. **C2 found what the plan did not
 predict: the session's RAM grows without bound with the number of bets** — 6.77 GB after 26.4 M bets, 13 of the
-run's 65 minutes frozen. **Next: close-out**, plus a mini-plan for the in-memory journal bound.
+run's 65 minutes frozen; it is mini-plan 12's subject, and `ProjectDesignManual` §40.11 is its write-up.
 
 **Three questions, one per part:**
 
@@ -529,3 +530,48 @@ height 348 → 353, budget 44,000 and cap 180 in force (trace columns). No error
 - **An adaptive budget** — a Basic Mode refinement option, unchanged.
 - **Building either C candidate.** This plan measures and decides whether one is needed; building it is its own
   plan.
+
+---
+
+## 7. Close-out (2026-09-22)
+
+**All three questions answered, one of them by refuting its own premise, and a fourth found by accident.**
+
+**A — how far does the frame go?** Still not to its limit, but the question stopped mattering. With the budget
+lifted, the player and all four bots at the hardware cap — **44,545 bets/s, the largest demand the game can
+produce** — ran at 57 fps in session 1 and 56 fps in session 2, delivering 99.2–99.5%. The frame never broke
+because nothing can ask it for more. `BetBudgetPerSecond` is therefore **44,000** (D-11.1), the slower session's
+figure rounded down, and it means "measured capacity" again rather than D-10.4's derivation.
+
+**B — what does a bot bet cost?** **0.0062 ms against the player's 0.0286 ms — 22%, not the ±30% predicted.**
+The difference is all player-only work, 72% of the bet, and 41% of it was one call copying every transfer record
+twice per bet. That call is now **0.40 µs** and a player bet **15.7 µs** (D-11.3). One budget still covers every
+engine type: bots are the cheap side, and weighting them would be a design change nothing needs.
+
+**C — what do later eras cost?** **Nothing, through Market Birth.** The scheduled network peaked at 0.54 ms a
+frame, 3.2%, with 26 attempts against its 5,000 cap and `scheduledCapShare` 0.0000 in every report. Neither
+candidate fix is needed, and neither is built. Eras after 2010-07-18 remain unmeasured, and the governor's
+comment now says exactly that instead of "2009".
+
+**The per-engine cap bound before the frame did**, as the pre-run arithmetic said it would, so
+`DefaultMaxBetsPerFrame` is **180** (D-11.2): one engine at the cap served down to the 50 fps floor.
+
+**The fourth answer, unasked:** a session's RAM grows without bound with the number of bets, and it is what ends
+a long run — 6.77 GB after 26.4 M bets, 13 of 65 minutes frozen, cost per bet 16 µs → 145 µs. The journal caps
+itself on disk and never in memory. **It gets its own plan** (mini-plan 12); §3's write-up is the evidence.
+
+**Predictions, as registered:** 3 held (frame capacity well above 9,000 bets/s; `PersistFinancial` under 1 µs;
+block work grows slowly with height), 5 refuted (the bot bet's ±30%; per-engine caps not binding first;
+retention ≥ 0.999 in verification; the drain reaching its cap; `ScheduledDrive` at several ms), 1 refuted on the
+good side (the player's bet came out cheaper than predicted).
+
+**What this plan leaves behind:** nine trace columns that read cost against the era, two DEV buttons in the
+hardware shop, three measured constants, and a per-bet cost cut by 45%.
+
+**Two lessons worth keeping (CLAUDE.md, ProjectDesignManual §40.11):**
+1. **A store bounded on disk is not bounded in memory.** The journal's retention cap was written, reviewed and
+   verified — on files. The same records in RAM had no cap at all, and nothing in the design said they should.
+2. **An instrument that discards outliers cannot see a freeze.** `FrameCostProfiler` drops any period over one
+   second as "not a frame", which is correct for scene loads and made it blind to 791 seconds of frozen game.
+   Its percentiles stayed plausible throughout. **The gap between reports was the only witness**, and nothing was
+   reading it.

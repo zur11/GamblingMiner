@@ -5127,6 +5127,56 @@ Two details decide whether it is right:
 
 ---
 
+### 40.11 — Bounded on disk, unbounded in RAM: the journal that ends a long session (mini-plan 11 C2, 2026-09-22)
+
+**What happened.** A 65-minute unattended run at 9000X carried the world from 2009-09-11 to Market Birth
+(2010-07-18), chain height 362 → 819, **26.4 million bets**. It was measuring the historical network's cost,
+which turned out to be nothing (0.54 ms a frame at its peak). What it actually found was the session eating
+itself:
+
+- the player's bet cost **16–20 µs for the first 23 M bets**, then 55, then 81, then 145 µs;
+- **791 seconds — 13 of the 65 minutes — passed with no frames at all**, in 19 episodes growing from ~10 s to
+  142 s, during which the application was frozen;
+- measured with the game still open afterwards: **6.77 GB of private memory on a 7.9 GB machine.**
+
+The rise tracks **cumulative bets**, not the game date, the chain height or the network's size. The knee sits
+where the heap filled physical memory and Windows began paging.
+
+**The defect.** `BetHistoryRepository` caps the journal **on disk** — 20 segments of 10,000 entries,
+`EnforceRetentionCap` deleting the oldest — and **never trims the same records in memory**. `Add` appends to
+`_records` and to the `_recordIds` duplicate guard; only `RollbackToUtc` and `ClearAll` remove anything, and
+neither runs during play. `6.77 GB ÷ 26.4 M ≈ 257 bytes a bet`, which one `BetRecord` plus its 32-character Id
+string plus a hash-set entry accounts for — arithmetic and measurement agree, so this is the whole of it rather
+than one suspect among several.
+
+**Why it took this long to see.** Three reasons, each worth keeping:
+
+1. **The instrument is built to discard exactly this event.** `FrameCostProfiler` drops any period over
+   `DiscontinuityMs` (1 s) as "not a frame" — correct for scene loads and pauses, and the reason its percentiles
+   stayed plausible while the game was frozen for two minutes at a time. **The only witness was the wall-clock
+   gap between reports**, which nothing was reading. A profiler that filters outliers cannot report a stall;
+   something must compare its own report cadence against the clock.
+2. **The cap that exists reads as the cap that was needed.** INC-001 produced a retention policy, it was
+   reviewed, and it is correct — for files. Nothing in the design or its documentation said whether the same
+   records in RAM were bounded, so the question never came up.
+3. **Nothing had run long enough.** Every previous measurement was minutes. 23 M bets is ~45 minutes at 9000X,
+   and no earlier plan had a reason to stay past that.
+
+**The standing rules.**
+
+- **A store bounded on disk is not bounded in memory.** When a retention policy is written, state explicitly what
+  happens to the in-memory copy, in the same place.
+- **The limit is in events, not in hours.** At 99 credits and normal speed, 26 M bets is ~74 hours of continuous
+  play; at 1 credit, ~300 days. A DEV acceleration does not create this class of fault — it reaches it sooner.
+- **A long run is its own kind of test.** Cost per bet was flat and honest for 23 M bets. Nothing shorter than
+  the knee could have found it, and nothing about the first 23 M hinted at it.
+
+**Not an incident.** Nothing was lost or corrupted, and no persisted figure was wrong: this is scale, not
+durability. The fix — bounding the in-memory journal to the window the disk already keeps, with the lifetime
+rollup continuing to serve every lifetime figure — is **mini-plan 12**.
+
+---
+
 ## Chapter 41 — Player Participation in Company Governance: Pause, Policy, Abstention (Step 16 P16.5/P16.8)
 
 Three controls in `CompanyDetails` decide how the player takes part in a company's board votes, and they
