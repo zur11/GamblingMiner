@@ -32,6 +32,10 @@ namespace Scripts.Diagnostics
 	/// in (game date, chain height, the scheduled network's size), how often the network's drain hit its
 	/// per-frame cap, and the work of the attempts that produced a block.</para>
 	///
+	/// <para><b>Mini-plan 12 adds the stalls</b> — the periods too long to be frames. They stay out of every
+	/// figure above, as they must, but they are now counted and reported instead of dropped: see
+	/// <see cref="DiscontinuityMs"/> for what that silence cost.</para>
+	///
 	/// <para><b>Off by default, DEBUG only</b>, armed from the toggle beside the DEV time selector — the same
 	/// contract as <see cref="BetCostProfiler"/>, and for the same reasons. Its own overhead is a handful of
 	/// <see cref="Stopwatch.GetTimestamp"/> calls and GC counter reads per frame; that has <b>not been
@@ -81,6 +85,13 @@ namespace Scripts.Diagnostics
 
 		// A period longer than this is a discontinuity — the sim stopped, the game paused, a scene loaded — not a
 		// frame. Recording it would put one enormous "frame" into the percentiles.
+		//
+		// ⚠ Mini-plan 12 B — it is still kept out of the percentiles, but it is no longer DISCARDED. Dropping
+		// these silently is why this profiler reported healthy percentiles through 791 seconds of frozen game
+		// in mini-plan 11's C2 run: the freezes were each one period of 10–142 s, every one of them filtered
+		// out here, and the only witness left was the wall-clock gap between two reports, which nothing read
+		// (ProjectDesignManual §40.11). A filter that hides the worst thing that can happen to a frame is not
+		// a filter, so the stalls are now counted, summed and reported beside the percentiles they are not in.
 		private const double DiscontinuityMs = 1000.0;
 
 		private const string Header =
@@ -90,7 +101,7 @@ namespace Scripts.Diagnostics
 			"deliveredBetsPerSec,demandBetsPerSec,retentionMean,checkpoints,over50WithCheckpointOrGc,gcFrames,capPerFrame," +
 			"calendarAdvanceGameSec,retainedGameSec,overspend,betUiMode,budgetInForce," +
 			"gameDateUtc,chainHeight,castPowered,scheduledPower,scheduledCapShare,blockWorkMsPerBlock,blockWorkMaxMs," +
-			"botEnginesPerFrame,botCapBoundShare";
+			"botEnginesPerFrame,botCapBoundShare,stalls,stallTotalMs,stallMaxMs";
 
 		// ── Committed frames of the current report window (flat arrays: no allocation per frame) ──────────
 		private static readonly double[] _periodMs = new double[ReportEveryFrames];
@@ -125,6 +136,12 @@ namespace Scripts.Diagnostics
 		private static DateTime _eraGameUtc;
 		private static int _eraChainHeight, _eraCastPowered;
 		private static double _eraScheduledPower;
+
+		// ── Stalls: the periods too long to be frames (mini-plan 12 B) ────────────────────────────────────
+		// Window-scoped, like everything else in a report. They are NOT in the percentiles, the fps or the
+		// segment means — a stall has no segment breakdown, because the frame it belongs to never ran.
+		private static int _stalls;
+		private static double _stallTotalMs, _stallMaxMs;
 
 		// ── The frame in progress ─────────────────────────────────────────────────────────────────────────
 		private static bool _inFrame;
@@ -209,6 +226,9 @@ namespace Scripts.Diagnostics
 		private static void ResetWindow()
 		{
 			_count = 0;
+			_stalls = 0;
+			_stallTotalMs = 0d;
+			_stallMaxMs = 0d;
 		}
 
 		/// <summary>Top of a simulated frame. Commits the previous frame now that its period is known.</summary>
@@ -226,6 +246,13 @@ namespace Scripts.Diagnostics
 				if (periodMs <= DiscontinuityMs)
 				{
 					Commit(periodMs, gc0 != _pendingGc0);
+				}
+				else
+				{
+					// Mini-plan 12 B — kept out of the percentiles, counted instead of discarded.
+					_stalls++;
+					_stallTotalMs += periodMs;
+					if (periodMs > _stallMaxMs) _stallMaxMs = periodMs;
 				}
 
 				_pendingValid = false;
@@ -588,6 +615,11 @@ namespace Scripts.Diagnostics
 				$"           R2-C1 overspend: {overspend * 100.0:N3}%  (clock advanced {sumCalendarAdvance:N1} game-s vs {sumRetainedGame:N1} retained) · Bet view {Scripts.Diagnostics.BetUiDiagnostics.View}\n"));
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           A1 bot engines {botEngines:N2} per frame · a bot loop was cut by MaxBetsPerFrame on {botCapShare * 100.0:N1}% of frames\n"));
+			sb.Append(_stalls > 0
+				? string.Create(CultureInfo.InvariantCulture,
+					$"           ⚠ STALLS (periods over {DiscontinuityMs / 1000.0:N0} s, NOT in any figure above): {_stalls:N0} totalling " +
+					$"{_stallTotalMs / 1000.0:N1} s, worst {_stallMaxMs / 1000.0:N1} s — the game was frozen for that long\n")
+				: "           stalls: none (no period over 1 s)\n");
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           C1 era {_eraGameUtc:yyyy-MM-dd} (game UTC) · chain height {_eraChainHeight:N0} · cast powered {_eraCastPowered} · scheduled power {_eraScheduledPower:N1} · " +
 				$"drain at its {NetworkPopulationScheduler.MaxScheduledAttemptsPerFrame:N0}-attempt cap on {scheduledCapShare * 100.0:N1}% of frames · " +
@@ -601,7 +633,7 @@ namespace Scripts.Diagnostics
 			ReportPublished?.Invoke();
 
 			WriteTraceRow(string.Format(CultureInfo.InvariantCulture,
-				"{0:O},{1},{2},{3:F2},{4:F3},{5:F3},{6:F3},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F4},{14:F4},{15:F4},{16:F4},{17:F4},{18:F4},{19:F4},{20:F4},{21:F3},{22:F4},{23:F3},{24:F3},{25:F3},{26:F1},{27:F1},{28:F4},{29},{30},{31},{32},{33:F3},{34:F3},{35:F6},{36},{37:F0},{38:O},{39},{40},{41:F1},{42:F4},{43:F3},{44:F3},{45:F3},{46:F4}",
+				"{0:O},{1},{2},{3:F2},{4:F3},{5:F3},{6:F3},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F4},{14:F4},{15:F4},{16:F4},{17:F4},{18:F4},{19:F4},{20:F4},{21:F3},{22:F4},{23:F3},{24:F3},{25:F3},{26:F1},{27:F1},{28:F4},{29},{30},{31},{32},{33:F3},{34:F3},{35:F6},{36},{37:F0},{38:O},{39},{40},{41:F1},{42:F4},{43:F3},{44:F3},{45:F3},{46:F4},{47},{48:F1},{49:F1}",
 				DateTime.UtcNow, n, partial ? 1 : 0, fps, p50Period, p95Period, maxPeriod, over16, over33, over50,
 				p50Sim, p95Sim, maxSim, simShare,
 				segSum[0] / n, segSum[1] / n, segSum[2] / n, segSum[3] / n, segSum[4] / n, segSum[5] / n, sumUnaccounted / n,
@@ -614,7 +646,9 @@ namespace Scripts.Diagnostics
 				DevTimeScaleGovernor.BudgetInForce,
 				// The era of the window's LAST frame. A window is ~10 real seconds, about one game-day at 9000X.
 				_eraGameUtc, _eraChainHeight, _eraCastPowered, _eraScheduledPower, scheduledCapShare,
-				blockWorkPerBlock, maxBlockWork, botEngines, botCapShare));
+				blockWorkPerBlock, maxBlockWork, botEngines, botCapShare,
+				// Mini-plan 12 B — the periods this window refused to call frames.
+				_stalls, _stallTotalMs, _stallMaxMs));
 		}
 
 		private static void WriteTraceRow(string row)

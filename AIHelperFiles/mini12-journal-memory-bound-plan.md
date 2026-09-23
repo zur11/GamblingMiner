@@ -4,7 +4,11 @@
 `mini11-frame-capacity-bots-and-later-eras-plan.md`, whose C2 run found this fault while measuring something
 else. Evidence and the general lessons: `ProjectDesignManual.md` **§40.11**.
 
-**Status:** 📋 **SPECIFIED 2026-09-22**, not started. Proposed branch `mini12-journal-memory-bound`.
+**Status:** 🚧 **IN PROGRESS** on `mini12-journal-memory-bound`. **§5 step 1 done** (2026-09-23): the live cap
+(A) and the stall counters (B), one build. **Next: §5 step 2** — the repeat of C2, on a world reset to the start
+date first (the developer's call, 2026-09-23; done by making `world_format_version.txt` disagree with
+`WorldFormatVersion`, which runs the game's own wipe at the next launch — no code change, the sanctioned delete
+list, the exempt identity files kept).
 
 **The fault, in one line:** `BetHistoryRepository` caps the bet journal **on disk** (20 segments × 10,000
 entries, ~57 MB) and **never trims the same records in memory**, so a session's footprint grows with every bet

@@ -20,6 +20,18 @@ namespace Scripts.History
 		// by construction. The segment currently being filled is not yet on disk when the cap is enforced,
 		// so the true ceiling is cap + 1 in-progress file. `0` disables the cap.
 		private const int MaxRetainedJournalChunks = 20;
+
+		// Mini-plan 12 A (2026-09-23) — THE LIVE CAP, the twin of the retention cap above and the answer to
+		// what that one left unsaid: retention bounded what the journal writes to DISK, and nothing ever
+		// bounded the same records in RAM. A session grew by one BetRecord plus its Id string per bet — ~257
+		// bytes measured — so 26.4 M bets held 6.77 GB on a 7.9 GB machine, the cost of a bet went from 16 µs
+		// to 145, and 13 of a 65-minute run were spent frozen (ProjectDesignManual §40.11). The live set now
+		// mirrors what the files keep, so memory and disk share ONE boundary.
+		//
+		// Enforced at segment rotation, so the overshoot between trims is at most one segment. NOT enforced
+		// after a load: a load reads what the files hold, and trimming that would show the explorer less
+		// history than the journal actually keeps. `0` disables it, exactly as the retention cap's `0` does.
+		private const int MaxInMemoryRecords = MaxRetainedJournalChunks * MaxJournalEntriesPerChunkFile;
 		private const int ChunkIndexDigits = 6;
 		private const int MaxPendingJournalEntriesWhileSuspended = 2000;
 		private static readonly TimeSpan SuspendedFlushMinInterval = TimeSpan.FromSeconds(0.5);
@@ -45,6 +57,9 @@ namespace Scripts.History
 		private DateTime _lastSuspendedFlushUtc = DateTime.MinValue;
 		private bool _saveSuspended;
 		private bool _loadedAllChunks;
+		// Mini-plan 12 A — true once the live cap has dropped a record in this session. The in-memory head is
+		// then NEWER than the journal's, so every "oldest record" question has to go to the files instead.
+		private bool _inMemoryTrimmed;
 
 		public BetHistoryRepository(string filePath)
 		{
@@ -169,12 +184,46 @@ namespace Scripts.History
 			_deposits.Clear();
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
+			_inMemoryTrimmed = false; // a fresh load is whatever the files hold, trimmed by nothing
+		}
+
+		// Mini-plan 12 A — drops the oldest live records once the set passes MaxInMemoryRecords, keeping the
+		// id guard in lockstep (the guard's own note above requires every truncation to go through a helper).
+		// Called from segment rotation, which is the only moment the live set can have grown past the cap.
+		private void EnforceInMemoryCap()
+		{
+			// The ternary carries the disabled case (cap 0 ⇒ never trim), for the same reason EnforceRetentionCap
+			// spells its own out: a separate `if (cap <= 0) return;` is const-folded and only earns a CS0162.
+			int excess = MaxInMemoryRecords > 0 ? _records.Count - MaxInMemoryRecords : 0;
+			if (excess <= 0)
+			{
+				return;
+			}
+
+			for (int i = 0; i < excess; i++)
+			{
+				string id = _records[i]?.Id;
+				if (!string.IsNullOrEmpty(id))
+				{
+					_recordIds.Remove(id);
+				}
+			}
+
+			_records.RemoveRange(0, excess);
+			_inMemoryTrimmed = true;
 		}
 
 		// INC-002 — claims `record.Id` for the in-memory list, returning false if that exact record is
 		// already loaded. A record whose journal line carried no "Id" cannot be deduplicated: the property
 		// initializer mints a FRESH Guid per deserialization, so two copies of such a row look distinct.
 		// That only affects pre-journal legacy snapshots; every line the current writer emits carries one.
+		//
+		// ⚠ Mini-plan 12 A NARROWED THIS PROMISE, deliberately: the guard can only refuse a duplicate it still
+		// remembers, and the live cap drops ids with their records. It now covers re-registration WITHIN the
+		// live window (MaxInMemoryRecords) rather than for all time. Every shape INC-002 actually produced —
+		// a load or a rebuild re-adding what was already there, a live double-register of one settled bet —
+		// happens within a few thousand bets of the original, so the guard keeps its purpose; but a duplicate
+		// of a bet older than the window would now pass, and that is a stated limit rather than an oversight.
 		private bool TryClaimRecordId(BetRecord record)
 		{
 			string id = record?.Id;
@@ -320,9 +369,15 @@ namespace Scripts.History
 		{
 			timestampUtc = default;
 
-			// Prefer memory when the journal happens to be loaded: it is already trimmed by any rollback,
+			// Prefer memory ONLY when it holds the whole journal: it is already trimmed by any rollback,
 			// whereas the file's first line is only as current as the last rewrite.
-			if (_records.Count > 0)
+			//
+			// Mini-plan 12 A — the two conditions are new and both matter. The live cap makes the in-memory
+			// head NEWER than the journal's, and `LoadLatestChunkOnly` (which `GetRecentBets` uses for
+			// DiceGame's list) always did: either way the first live record is not the oldest recorded bet,
+			// and answering from it reports a replay-window floor that is too recent. The file read below is
+			// one line of one file, so preferring it costs nothing worth saving.
+			if (_records.Count > 0 && _loadedAllChunks && !_inMemoryTrimmed)
 			{
 				timestampUtc = _records[0].TimestampUtc;
 				return true;
@@ -429,6 +484,9 @@ namespace Scripts.History
 
 			// The new segment does not exist on disk yet, so it can never be the one trimmed away here.
 			EnforceRetentionCap();
+			// Mini-plan 12 A — and the same boundary in memory. Rotation is the one moment the live set can
+			// have grown by a whole segment, which makes it the natural place to enforce the live cap.
+			EnforceInMemoryCap();
 		}
 
 		// INC-001 / D-15.28 — deletes the OLDEST segments beyond MaxRetainedJournalChunks. Ordering comes
@@ -783,6 +841,10 @@ namespace Scripts.History
 			}
 		}
 
+		// Mini-plan 12 A — this rewrites the FILES from the live set (see RebuildJournalFromCurrentState), so
+		// with the live cap in force a restore writes back at most MaxInMemoryRecords. The steady state is
+		// unchanged, because retention caps the files at the same number anyway; what moves is the boundary
+		// after a restore on a session that had already trimmed. Verified on a real restore, not assumed.
 		public void RollbackToUtc(DateTime checkpointUtc)
 		{
 			DateTime checkpoint = checkpointUtc.Kind == DateTimeKind.Utc
