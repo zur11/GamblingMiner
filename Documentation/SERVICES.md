@@ -87,6 +87,15 @@ individual bets, and it is **pruned**.
   `:16`), index-numbered `bet_history.jsonl`, `bet_history_000001.jsonl`, … Nothing in the repository is
   month-aware. *(Corrected 2026-08-22 — "chunked by month" was stated here and in three other docs, and
   was never true.)*
+- **The same window is now held in MEMORY too** (`MaxInMemoryRecords`, mini-plan 12 A, 2026-09-23). Retention
+  had always bounded the FILES and nothing bounded `_records`/`_recordIds`, so a session grew by ~257 bytes a
+  bet: 26.4 M bets held 6.77 GB on a 7.9 GB machine and spent 13 of 65 minutes paging. The live set is trimmed
+  at segment rotation, which also means a restore (`RollbackToUtc`, which rewrites the files from memory)
+  writes back at most that window. Case: `ProjectDesignManual.md` §40.11.
+- **One flat JSON line per entry, money in whole satoshis** (`JournalLine`, mini-plan 12 D-12.1). Short keys, no
+  wrapper, defaults omitted: `"a":230000` is `0.00230000` and `"m":19804` is the ×1.9804 multiplier. **Read the
+  field map at `JournalLine` before auditing a journal by hand.** It stays JSON on purpose — `node`/`awk` audits
+  are how every playtest in this project has been checked.
 - **Retention is a cap on SEGMENTS, not on records**: 20 segments (`:22`), oldest deleted first
   (`:434-461`). Because the newest segment is partly filled, **the retained record count oscillates —
   roughly 190,000–210,000 depending on where the active segment sits. Never quote it as a flat 200,000.**

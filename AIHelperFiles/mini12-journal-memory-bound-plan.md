@@ -4,11 +4,11 @@
 `mini11-frame-capacity-bots-and-later-eras-plan.md`, whose C2 run found this fault while measuring something
 else. Evidence and the general lessons: `ProjectDesignManual.md` **§40.11**.
 
-**Status:** 🚧 **IN PROGRESS** on `mini12-journal-memory-bound`. **§5 step 1 done** (2026-09-23): the live cap
-(A) and the stall counters (B), one build. **Next: §5 step 2** — the repeat of C2, on a world reset to the start
-date first (the developer's call, 2026-09-23; done by making `world_format_version.txt` disagree with
-`WorldFormatVersion`, which runs the game's own wipe at the next launch — no code change, the sanctioned delete
-list, the exempt identity files kept).
+**Status:** 🚧 **IN PROGRESS** on `mini12-journal-memory-bound`. **Steps 1–4 done** — the live cap and the stall
+counters (§5.1), the long run (§7 step 2: memory 6.77 GB → 1.51 GB, zero stalls, cost per bet flat over 41 M
+bets), the `JournalAdd` split (§7 step 3: 5.09 µs, 29.7% of a bet) and **D-12.1, the slim journal line**, built
+(§8). **Next: the delta run** — one Bet cost leg on the new format, against the registered before-figure. The
+world resets at the next launch (format 7 → 8).
 
 **The fault, in one line:** `BetHistoryRepository` caps the bet journal **on disk** (20 segments × 10,000
 entries, ~57 MB) and **never trims the same records in memory**, so a session's footprint grows with every bet
@@ -145,3 +145,82 @@ player bet at the time) into journal serialization and statistics bookkeeping.**
 - **A budget that adapts to the machine.** Every figure this project has is from one PC; a Basic Mode item.
 - **The bet journal's purpose or contents.** This plan bounds where the records live, and changes nothing about
   which records exist.
+
+---
+
+## 7. Results
+
+### Step 2 — the repeat of C2 (2026-09-24, 83 real minutes, fresh world)
+
+Player alone, flat 0.001, defaults, 9000X, on a world reset to the bootstrap date first. **2009-03-21 →
+2010-07-18, chain height 0 → 807, 41.1 M bets, 429 reports.**
+
+| | C2 (before the bound) | this run |
+|---|---|---|
+| bets | 26.4 M | **41.1 M** |
+| process memory | 6.77 GB | **1.51 GB** |
+| frozen time | 791 s in 19 stalls | **none — 0 stalls in 429 reports** |
+| cost per bet, start → end | 16 → 145 µs | **16.9 µs → 16.7 µs at 29 M** |
+| game-days per real minute | 4.78 | **5.82** |
+
+- **P1 memory under 1.5 GB — met in substance, formally missed:** 1.51 GB, on a run with 55% more bets.
+- **P3 zero stalls — held.** The counters built in step 1 are what made that a measurement rather than an
+  impression.
+- **P5 trimming is free — held.** A bet cost 15.38 µs in the same session's Bet cost leg, against 15.68 µs in
+  mini-plan 11's verification *before* the cap existed.
+- **P2 cost per bet within ±20% — refuted as stated, but not by growth.** It is flat against cumulative bets
+  (16.9 µs at 0.1 M, 16.7 µs at 29 M) and noisy within the run (16–70 µs by window). The noise is machine-level:
+  in those windows the time OUTSIDE the simulation doubles or triples too, it happens in windows where no block
+  was mined, and it comes in episodes with no drift across buckets. The session as a whole ran ~50% slower
+  outside the sim than mini-plan 11's, with 1 GB of free RAM on the machine.
+- **P4 "1.5× further" — refuted, and it was never reachable.** At 9000X the clock advances at most 6.25
+  game-days a real minute, so the ceiling against C2 was 1.31×. The run made 5.82, **93% of the clock's
+  ceiling**, against C2's 76%. *The prediction was registered without checking its own arithmetic — the same
+  mistake the plan catches elsewhere, made while writing the plan that catches it.*
+
+**The restore hazard, verified rather than argued.** After a restart from DiceGame: the journal was rewritten
+from the live set to **15 segments / 147,370 records**, and the checkpoint boundary lands on the newest
+surviving record to the tick (2010-08-13T00:45:34.435). Nothing later survived. Worth stating: without the cap
+that same restore would have rewritten **41 million** records to disk. The lifetime rollup read 43.3 M bets and
+`IsComplete: true` throughout, so the two-layer design held exactly as intended — the pruned journal lost
+history, the rollup did not.
+
+### Step 3 — the split (2026-09-28, 36 reports, 179,716 bets)
+
+| segment | µs per bet | share |
+|---|---|---|
+| **JournalAdd** (`BetHistory.Add` + amortised flush) | **5.09** | **29.7%** |
+| NonceAttempt (the real PoW hash) | 6.28 | 36.7% |
+| RegisterBet (rollup + session stats) | 1.42 | 8.3% |
+| ExecuteNext | 1.44 | 8.4% |
+| everything else | 2.87 | 16.9% |
+| **total** | **17.10** | |
+
+**P6 refuted:** the journal is **78%** of the old combined step, not under half. §4 C's rule — 3 µs or more
+ceases to be noise — therefore fires on 5.09 µs, and it chose the slim JSON form.
+
+*Protocol note, recorded because it cost a run:* the first attempt measured the pre-split build. The app had
+been open since before that commit, and Godot only picks up a new assembly on a fresh launch. **The trace file
+settles it without anyone watching a panel — the header carries the column set the running build writes.**
+
+## 8. D-12.1 — the slim journal line (2026-09-28)
+
+**Decided by §4 C's registered rule, and built the same day.** One flat JSON line per entry: short keys, no
+wrapper and no null sibling, money as **whole satoshis**, the multiplier ×10,000, and every field at its
+default omitted. `JournalLine` in `BetHistoryRepository` holds the canonical example and the units; CLAUDE.md's
+JSON rule and `SERVICES.md` both carry the exception now, because an audit that reads `"a":230000` as SC is off
+by 10⁸.
+
+**It stays JSON deliberately.** Binary would save perhaps another 2× and would end the `node`/`awk` audits that
+every playtest in this project has relied on. §4 C keeps it available if the slim form's remaining cost is still
+≥ 3 µs.
+
+**World format 7 → 8**, because the loader cannot read the old shape and, per project policy, is not taught to.
+
+**What the measurement must answer, registered before the run:**
+- the before-figure is **`JournalAdd` 5.09 µs of a 17.10 µs bet (29.7%)**, in the same session shape;
+- **a bet line falls from ~285 bytes to ~150**, which halves the journal's write volume and doubles the bets a
+  segment file holds in bytes terms;
+- **the part of `JournalAdd` that is NOT serialization** — the duplicate-guard hash of a 32-character id and two
+  list appends — is untouched by this change and sets the floor the new figure cannot go below. Nothing measured
+  it separately, so the delta is what will say how large it was.

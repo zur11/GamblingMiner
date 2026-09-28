@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Scripts.Finance;
 
 namespace Scripts.History
@@ -50,8 +51,14 @@ namespace Scripts.History
 		// or truncates the list must go through the helpers below. See ProjectDesignManual §40.8.
 		private readonly HashSet<string> _recordIds = new(StringComparer.Ordinal);
 		private int _duplicateRecordsSkipped;
-		private readonly List<HistoryJournalEntry> _pendingJournalEntries = new();
-		private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = false };
+		private readonly List<JournalLine> _pendingJournalEntries = new();
+		private readonly JsonSerializerOptions _jsonOptions = new()
+		{
+			WriteIndented = false,
+			// Mini-plan 12 C — a field at its default is not written at all, which is most of what makes a
+			// deposit line short and drops "o":0 / "h":0 / "r":0 from a bet. Reading gives the same value back.
+			DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault
+		};
 		private int _mutationsSinceLastSave;
 		private DateTime _lastSaveUtc = DateTime.UtcNow;
 		private DateTime _lastSuspendedFlushUtc = DateTime.MinValue;
@@ -396,13 +403,13 @@ namespace Scripts.History
 							continue;
 						}
 
-						HistoryJournalEntry entry = JsonSerializer.Deserialize<HistoryJournalEntry>(line, _jsonOptions);
-						if (entry?.Bet == null)
+						JournalLine entry = JsonSerializer.Deserialize<JournalLine>(line, _jsonOptions);
+						if (entry == null || entry.Type != EntryTypeBet)
 						{
 							continue; // a deposit-only line: keep looking for the first BET
 						}
 
-						timestampUtc = DateTime.SpecifyKind(entry.Bet.TimestampUtc, DateTimeKind.Utc);
+						timestampUtc = DateTime.SpecifyKind(entry.TimestampUtc, DateTimeKind.Utc);
 						return true;
 					}
 				}
@@ -556,10 +563,10 @@ namespace Scripts.History
 					continue;
 				}
 
-				HistoryJournalEntry entry;
+				JournalLine entry;
 				try
 				{
-					entry = JsonSerializer.Deserialize<HistoryJournalEntry>(rawLine, _jsonOptions);
+					entry = JsonSerializer.Deserialize<JournalLine>(rawLine, _jsonOptions);
 				}
 				catch
 				{
@@ -623,7 +630,7 @@ namespace Scripts.History
 			}
 
 			_records.Add(record);
-			_pendingJournalEntries.Add(HistoryJournalEntry.FromBet(record));
+			_pendingJournalEntries.Add(JournalLine.FromBet(record));
 			MarkDirtyAndSaveIfNeeded();
 		}
 
@@ -635,7 +642,7 @@ namespace Scripts.History
 			}
 
 			_deposits.Add(record);
-			_pendingJournalEntries.Add(HistoryJournalEntry.FromDeposit(record));
+			_pendingJournalEntries.Add(JournalLine.FromDeposit(record));
 			MarkDirtyAndSaveIfNeeded();
 		}
 
@@ -798,7 +805,7 @@ namespace Scripts.History
 		// not to whichever function grew it first. Previously only Flush rotated; the rebuild wrote the
 		// entire in-memory history into the base file uncapped, which silently defeated the chunking policy
 		// and produced a 1.13 GB monolith sitting beside the 114 chunks it had just duplicated.
-		private void WriteEntriesRotating(IReadOnlyList<HistoryJournalEntry> entries)
+		private void WriteEntriesRotating(IReadOnlyList<JournalLine> entries)
 		{
 			int index = 0;
 			while (index < entries.Count)
@@ -926,16 +933,16 @@ namespace Scripts.History
 			_activeJournalLineCount = 0;
 			EnsureJournalFolderExists();
 
-			var entries = new List<HistoryJournalEntry>(_deposits.Count + _records.Count);
+			var entries = new List<JournalLine>(_deposits.Count + _records.Count);
 
 			foreach (DepositRecord deposit in _deposits.OrderBy(d => d.TimestampUtc))
 			{
-				entries.Add(HistoryJournalEntry.FromDeposit(deposit));
+				entries.Add(JournalLine.FromDeposit(deposit));
 			}
 
 			foreach (BetRecord record in _records.OrderBy(r => r.TimestampUtc))
 			{
-				entries.Add(HistoryJournalEntry.FromBet(record));
+				entries.Add(JournalLine.FromBet(record));
 			}
 
 			// NOT chronological in file order, despite what this comment used to claim: every deposit is written
@@ -948,23 +955,24 @@ namespace Scripts.History
 			EnforceRetentionCap();
 		}
 
-		private void ApplyJournalEntry(HistoryJournalEntry entry)
+		private void ApplyJournalEntry(JournalLine entry)
 		{
-			if (entry.Type == EntryTypeBet && entry.Bet != null)
+			if (entry.Type == EntryTypeBet)
 			{
-				if (!TryClaimRecordId(entry.Bet))
+				BetRecord record = entry.ToBet();
+				if (!TryClaimRecordId(record))
 				{
 					_duplicateRecordsSkipped++;
 					return;
 				}
 
-				_records.Add(entry.Bet);
+				_records.Add(record);
 				return;
 			}
 
-			if (entry.Type == EntryTypeDeposit && entry.Deposit != null)
+			if (entry.Type == EntryTypeDeposit)
 			{
-				_deposits.Add(entry.Deposit);
+				_deposits.Add(entry.ToDeposit());
 			}
 		}
 
@@ -1059,29 +1067,103 @@ namespace Scripts.History
 			return currentPath + ".json";
 		}
 
-		private sealed class HistoryJournalEntry
+		// Mini-plan 12 C (D-12.1, 2026-09-28) — ONE FLAT LINE PER ENTRY: short keys, money as whole satoshis,
+		// no wrapper and no null sibling.
+		//
+		// The shape it replaces wrapped every record in {"Type":…,"Bet":{…},"Deposit":null} and wrote four
+		// decimals as full-precision text: 285 bytes a bet, measured, against ~150 here. It is still JSON, and
+		// that is the point — every playtest audit in this project reads the journal with `node`/`awk`, and a
+		// binary format would end that for a saving the measurement did not justify (§4 C's rule chose the
+		// slim form; the journal append was 5.09 µs of a 17.10 µs bet, 29.7%).
+		//
+		// One bet line, as written:
+		//   {"t":"b","i":"f207897dc94142fca05b859db862e448","g":"Dice","ts":"2009-09-11T14:07:09.8856277Z",
+		//    "o":1,"a":230000,"n":-230000,"b":449815636641,"r":50,"c":50,"m":19804}
+		//
+		// **The units are the part to know before reading a journal by hand:** `a`, `n` and `b` are SATOSHIS
+		// (the 8-decimal integer model `Money` already uses, so 230000 = 0.00230000), and `m` is the
+		// multiplier ×10,000 (`DiceEngine` rounds it to 4 dp, so 19804 = 1.9804). `o` and `h` are 0/1, and
+		// every field at its default is omitted — `"o":0` is a win, and an absent `"h"` is a LOW bet.
+		private sealed class JournalLine
 		{
-			public string Type { get; set; } = string.Empty;
-			public BetRecord Bet { get; set; }
-			public DepositRecord Deposit { get; set; }
+			[JsonPropertyName("t")] public string Type { get; set; } = string.Empty;
+			[JsonPropertyName("i")] public string Id { get; set; }
+			[JsonPropertyName("g")] public string GameId { get; set; }
+			[JsonPropertyName("ts")] public DateTime TimestampUtc { get; set; }
+			[JsonPropertyName("o")] public int Outcome { get; set; }
+			[JsonPropertyName("a")] public long AmountSat { get; set; }
+			[JsonPropertyName("n")] public long NetAmountSat { get; set; }
+			[JsonPropertyName("b")] public long BalanceAfterSat { get; set; }
+			[JsonPropertyName("r")] public int Roll { get; set; }
+			[JsonPropertyName("c")] public int Chance { get; set; }
+			[JsonPropertyName("m")] public int MultiplierTenThousandths { get; set; }
+			[JsonPropertyName("h")] public int IsHigh { get; set; }
 
-			public static HistoryJournalEntry FromBet(BetRecord record)
+			public static JournalLine FromBet(BetRecord record)
 			{
-				return new HistoryJournalEntry
+				return new JournalLine
 				{
 					Type = EntryTypeBet,
-					Bet = record
+					Id = record.Id,
+					GameId = record.GameId,
+					TimestampUtc = record.TimestampUtc,
+					Outcome = (int)record.Outcome,
+					AmountSat = ToSatoshis(record.BetAmount),
+					NetAmountSat = ToSatoshis(record.NetAmount),
+					BalanceAfterSat = ToSatoshis(record.BalanceAfter),
+					Roll = record.Roll,
+					Chance = record.Chance,
+					MultiplierTenThousandths = (int)decimal.Round(record.Multiplier * 10000m, 0, MidpointRounding.AwayFromZero),
+					IsHigh = record.IsHigh ? 1 : 0
 				};
 			}
 
-			public static HistoryJournalEntry FromDeposit(DepositRecord deposit)
+			public static JournalLine FromDeposit(DepositRecord deposit)
 			{
-				return new HistoryJournalEntry
+				return new JournalLine
 				{
 					Type = EntryTypeDeposit,
-					Deposit = deposit
+					Id = deposit.Id,
+					TimestampUtc = deposit.TimestampUtc,
+					AmountSat = ToSatoshis(deposit.Amount),
+					BalanceAfterSat = ToSatoshis(deposit.BalanceAfter)
 				};
 			}
+
+			public BetRecord ToBet()
+			{
+				return new BetRecord
+				{
+					Id = string.IsNullOrEmpty(Id) ? Guid.NewGuid().ToString("N") : Id,
+					GameId = GameId ?? string.Empty,
+					TimestampUtc = DateTime.SpecifyKind(TimestampUtc, DateTimeKind.Utc),
+					Outcome = (BetOutcome)Outcome,
+					BetAmount = FromSatoshis(AmountSat),
+					NetAmount = FromSatoshis(NetAmountSat),
+					BalanceAfter = FromSatoshis(BalanceAfterSat),
+					Roll = Roll,
+					Chance = Chance,
+					Multiplier = MultiplierTenThousandths / 10000m,
+					IsHigh = IsHigh != 0
+				};
+			}
+
+			public DepositRecord ToDeposit()
+			{
+				return new DepositRecord
+				{
+					Id = string.IsNullOrEmpty(Id) ? Guid.NewGuid().ToString("N") : Id,
+					TimestampUtc = DateTime.SpecifyKind(TimestampUtc, DateTimeKind.Utc),
+					Amount = FromSatoshis(AmountSat),
+					BalanceAfter = FromSatoshis(BalanceAfterSat)
+				};
+			}
+
+			// Money is already normalised to 8 dp before it reaches a record, so this is exact rather than a
+			// rounding decision: the multiply lands on an integer-valued decimal and the cast takes it.
+			private static long ToSatoshis(decimal value) => (long)(Money.Normalize(value) * 100000000m);
+
+			private static decimal FromSatoshis(long satoshis) => satoshis / 100000000m;
 		}
 	}
 }

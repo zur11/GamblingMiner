@@ -160,7 +160,11 @@ Hard-won rules (a scroll bug once cost a full session — full write-up + diagno
 
 ### JSON Persistence
 
-- All `user://` files use JSON with **CamelCase** naming policy
+- All `user://` files use JSON with **CamelCase** naming policy — **one documented exception: the bet journal**
+  (`bet_history_*.jsonl`, mini-plan 12 D-12.1). Its lines are flat, short-keyed and carry money as **whole
+  satoshis** (`"a":230000` is `0.00230000`) with the multiplier ×10,000, because it is the only file written at
+  bet rate. It is still JSON so that `node`/`awk` audits keep working; **read `JournalLine` in
+  `BetHistoryRepository` for the field map before reading a journal by hand**, or an audit will be off by 10⁸
 - History files are segmented by **10,000 entries per file**, never by date, and retention caps the journal at **20 segments** (~190,000–210,000 records — it oscillates with the active segment; never quote a flat 200,000). The **lifetime rollup** beside it is unpruned and is the only record of pruned bets: `Documentation/SERVICES.md` → `UserStatsService`
 - Always use `FileAccess` (Godot API) for `user://` paths
 
