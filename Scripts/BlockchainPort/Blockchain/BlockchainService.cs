@@ -12,6 +12,11 @@ public sealed class BlockchainService
 {
 	public const string CoinbaseSender = "00";
 
+	// Mini-plan 13 A — DIAGNOSTIC ONLY: which node owns this service, so the block-cost trace can report how
+	// many DISTINCT nodes replayed the chain after a block. Set by NodeAgent; never read by game logic. The
+	// answer is what separates T4.1 (make the rebuild incremental) from T4.2 (stop keeping ~62 copies of it).
+	public string OwnerNodeIdForDiagnostics { get; set; } = string.Empty;
+
 	// ── Difficulty (Difficulty Regulator, D.1) ────────────────────────────────────────────────────
 	// Difficulty is a CONTINUOUS value = expected nonce attempts per block (probability 1/Difficulty that
 	// a block-header hash meets the target). A hash meets target when, read as a 256-bit integer H,
@@ -335,6 +340,10 @@ public sealed class BlockchainService
 			return _utxoCache;
 		}
 
+		// Mini-plan 13 A — this replay is the plan's leading suspect for per-block cost: it is O(all
+		// transactions ever), and a block invalidates the cache of every node that holds one of these.
+		long rebuildStart = System.Diagnostics.Stopwatch.GetTimestamp();
+
 		var utxos = new Dictionary<string, UtxoEntry>();
 		foreach (Block block in Chain)
 		{
@@ -361,6 +370,9 @@ public sealed class BlockchainService
 
 		_utxoCache = utxos;
 		_utxoCacheVersion = _chainVersion;
+		Scripts.Diagnostics.BlockCostProfiler.NoteUtxoRebuild(
+			OwnerNodeIdForDiagnostics,
+			(System.Diagnostics.Stopwatch.GetTimestamp() - rebuildStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
 		return utxos;
 	}
 

@@ -1212,11 +1212,15 @@ public partial class SimulationService : Node
 	/// </param>
 	private void CaptureCheckpoint(double settlingBackdateGameSeconds = 0d)
 	{
+		// Mini-plan 13 A — the block's last phase, and the call that closes its row. Every path that reaches
+		// here has just mined a block (the player's bet, a bot's, a founder's, the scheduled network's).
+		Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Checkpoint);
 		_checkpointInstantLocal = null;
 		Scripts.Diagnostics.FrameCostProfiler.CountCheckpoint();
 		PersistFinancialState(true);
 		if (_principal == null || _bankroll == null || _bankrollProgram == null || _checkpoint == null)
 		{
+			Scripts.Diagnostics.BlockCostProfiler.EndBlock(); // the block still happened; close its row
 			return;
 		}
 
@@ -1260,6 +1264,8 @@ public partial class SimulationService : Node
 			_bankroll.SetBalance(botState.BankrollBalance);
 			_bankrollProgram.ReplaceState(botState.AutoRechargeAmount, botState.TransferRecords);
 		}
+
+		Scripts.Diagnostics.BlockCostProfiler.EndBlock();
 	}
 
 	// ── Bots (Phase 2) ──────────────────────────────────────────────────────────

@@ -2611,6 +2611,9 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void CaptureBlockCheckpoint()
 	{
+		// Mini-plan 13 A — the manual-bet twin of SimulationService.CaptureCheckpoint: the block's last phase,
+		// and the call that closes its row in the block-cost trace.
+		Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Checkpoint);
 		SaveActiveNodeFinancialState(true);
 
 		if (_blockCheckpointService == null ||
@@ -2618,6 +2621,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_bankrollStateService == null ||
 			_bankrollProgramService == null)
 		{
+			Scripts.Diagnostics.BlockCostProfiler.EndBlock(); // the block still happened; close its row
 			return;
 		}
 
@@ -2648,5 +2652,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_activeNodeId = activeBotId;
 			LoadActiveNodeFinancialState();
 		}
+
+		Scripts.Diagnostics.BlockCostProfiler.EndBlock();
 	}
 }
