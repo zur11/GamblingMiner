@@ -258,6 +258,13 @@ public partial class UserStatsService : Node
 			BetHistory.Add(record);
 		}
 
+		// Mini-plan 12 C — splits this method's cost in two at the only place that can: the journal append
+		// (and, amortised into it, the JSON serialization plus segment write its flush performs) above, the
+		// rollup and session stats below. Which side carries the weight is what decides whether a compact
+		// record format is worth building; the threshold was registered in the plan before this was measured.
+		// A mark outside a bet is ignored by the profiler, so the manual-bet path is unaffected.
+		Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.JournalAdd);
+
 		// Maintained on EVERY settled bet, in every mode — a rollup that only starts counting once
 		// pruning begins has already lost the pruned bets (§6.2).
 		Rollup.RegisterBet(gameId, bet.Chance, bet.IsWin, bet.BetAmount, bet.CreditedProfit);

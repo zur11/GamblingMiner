@@ -76,7 +76,11 @@ public partial class NetworkRoot : Node
 	// after a restart is in a different scale from the lifetime counter it is subtracted from. Which ones
 	// cannot be told from the entries, and a later recharge only overwrites the latest. Per project policy the
 	// world is reset rather than repaired. Same note as v6: BotWalletRegistry's RegistryFormatVersion stays.
-	private const int WorldFormatVersion = 7;
+	// v8 (mini-plan 12, D-12.1 — 2026-09-28): the bet journal's line format changed — one flat line with short
+	// keys and money as whole satoshis, replacing the wrapped record that wrote 285 bytes a bet. The loader
+	// cannot read the old shape and, per project policy, is not taught to: the world is reset instead. The
+	// canonical example line and the units live with `JournalLine` in BetHistoryRepository.
+	private const int WorldFormatVersion = 8;
 	private const string WorldVersionPath = "user://world_format_version.txt";
 	// Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
 	// A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009

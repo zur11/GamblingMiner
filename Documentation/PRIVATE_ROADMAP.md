@@ -503,6 +503,55 @@ limits mini-plan 10 stated about its own result, at the developer's request.
   or one probability draw instead of *k* hashes for the invisible mass. It advances the world permanently, which
   the developer accepted (no archive).
 
+### The journal's memory — bounding a store capped only on disk — ✅ DONE (mini-plan 12, 2026-09-28)
+
+> **Fixed, and the instrument that missed it can now see it.** The live set is bounded by the same window the
+> files keep, so a 41.1 M-bet run held **1.51 GB instead of 6.77**, with **zero stalls** against 791 s of frozen
+> game, and cost per bet flat across the whole run (16.9 → 16.7 µs, against C2's 16 → 145). `FrameCostProfiler`
+> counts the periods it refuses to call frames instead of discarding them. The restore path was verified on a
+> real restart. **D-12.1** then made a journal line flat, short-keyed and satoshi-integer — 285 → **163 bytes**,
+> the append 5.09 → **4.20 µs**, a bet **16.07 µs** — verified by 183,055 records with zero balance-continuity
+> breaks. **D-12.2 rejected binary on the measurement:** 43% fewer bytes bought 0.89 µs, so binary's further
+> ~60% is worth ~1 µs of a 16 µs bet and would end the `node`/`awk` audits. The remaining cost is the 32-char
+> GUID id's hash and the appends, which is **mini-plan 13's** lever, not a format's. Text below is the
+> original specification.
+
+**Status: `AIHelperFiles/mini12-journal-memory-bound-plan.md`, own branch off `main`.** Found by mini-plan 11's
+C2 run while it was measuring something else; evidence and lessons in `ProjectDesignManual.md` §40.11.
+
+`BetHistoryRepository` caps the journal on disk (20 segments, ~57 MB) and never trims the same records in
+memory. A session therefore grows with every bet: **6.77 GB after 26.4 M bets on a 7.9 GB machine**, 13 of a
+65-minute run spent frozen, cost per bet 16 µs → 145 µs. The limit is in **events, not hours** — at 99 credits
+and normal speed it is ~74 hours of continuous play.
+
+- **(A) The boundary.** Trim the live set to the window the disk already keeps, and re-read every consumer
+  against that: the explorer and the stats rebuild already load from disk on demand, the duplicate guard's
+  promise narrows to the window, and `RollbackToUtc` rewrites the files from memory, so the restore boundary
+  moves and must be verified.
+- **(B) The instrument.** `FrameCostProfiler` discards any period over a second as "not a frame", which is how
+  791 s of frozen game left healthy percentiles. Count the stalls instead of dropping them.
+- **(C) The compact record**, decided by one measurement rather than preference: split `RegisterBet` into
+  serialization and bookkeeping. The rule is registered in the plan; a bounded store needs a small record far
+  less than an unbounded one did.
+
+### Chain persistence — the whole file rewritten at every block (measured mild, not urgent)
+
+**Status: open, no plan.** `NetworkRoot.PersistStateToDisk` serializes the **entire chain** on every mined
+block. Mini-plan 11 C2 measured the per-block work at **24 ms at height 376 and 33 ms at 747** — real growth,
+comfortably affordable today, and the reason the plan's "binary format" discussion concluded the encoding is
+not the issue: the rewrite is. The standard fix is to append blocks once and never rewrite them, with the
+mutable remainder in a small file of its own. **Re-measure before building**: `blockWorkMsPerBlock` in
+`frame_cost_trace.csv` reads it directly, and the figure above was taken below height 800.
+
+### A budget that adapts to the machine (BASIC MODE refinement)
+
+**Status: open, named in mini-plan 09 (D-09.6 option (c)) and unchanged since.** Every performance figure this
+project holds — `BetBudgetPerSecond` 44,000, `DefaultMaxBetsPerFrame` 180, a player bet at 15.7 µs — was
+measured on **one** PC (7.9 GB RAM, ~59 fps at vsync in DiceGame). A slower machine would be governed to a
+speed its frame cannot hold, and the readout would again promise what does not run. A budget that follows
+measured delivery instead of a constant is the known answer; it needs a second machine, or a deliberate
+throttle to stand in for one.
+
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 
 **Status: deferred 2026-08-13 (developer's call), targeted at Basic Mode.** Split out of mini-plan 02's Part D so the storage work there can proceed without waiting on a new screen. Full write-up: `AIHelperFiles/mini02-panel-state-and-100k-audit-plan.md` §D.6.

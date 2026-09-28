@@ -43,7 +43,14 @@ namespace Scripts.Diagnostics
 			/// if this reads far from 1.77 µs, the two measurements disagree and the harness is not
 			/// modelling what the engine runs.</summary>
 			ExecuteNext = 0,
-			/// <summary>UserStatsService.OnBetExecutedRegisterBet — the bet journal append + the rollup.</summary>
+			/// <summary>Mini-plan 12 C — BetHistory.Add ALONE: the in-memory append plus, amortised, the JSON
+			/// serialization and segment write its flush performs. This is the number that decides whether a
+			/// compact record format pays for itself; the plan registered the threshold before measuring it.
+			/// Marked from UserStatsService, which is legal for the same reason BetHistoryFeed is: the call runs
+			/// synchronously inside the bet.</summary>
+			JournalAdd,
+			/// <summary>UserStatsService.OnBetExecutedRegisterBet MINUS the journal append above: the lifetime
+			/// rollup, the session stats and the throttled StatsChanged emit.</summary>
 			RegisterBet,
 			/// <summary>PersistFinancialState(false) — builds a NodeFinancialState and hands it to NetworkRoot.</summary>
 			PersistFinancial,
@@ -86,12 +93,13 @@ namespace Scripts.Diagnostics
 			BetSettledSignal,
 		}
 
-		private const int SegmentCount = 11;
+		private const int SegmentCount = 12;
 
 		private static readonly string[] SegmentNames =
 		{
 			"ExecuteNext (dice+wallet+progression)",
-			"RegisterBet (journal + rollup)",
+			"JournalAdd (BetHistory.Add + amortised flush)",
+			"RegisterBet (rollup + session stats)",
 			"PersistFinancialState",
 			"BankrollSetBalance (SYNC DISK WRITE)",
 			"CasinoApplyBetResult (BalanceChanged)",
@@ -107,7 +115,7 @@ namespace Scripts.Diagnostics
 
 		private const string Header =
 			"reportUtc,bets,totalUsPerBet,accountedUsPerBet,unaccountedUsPerBet," +
-			"executeNextUs,registerBetUs,persistFinancialUs,bankrollSetBalanceUs,casinoApplyBetResultUs," +
+			"executeNextUs,journalAddUs,registerBetUs,persistFinancialUs,bankrollSetBalanceUs,casinoApplyBetResultUs," +
 			"clientLedgerUs,nonceAttemptUs,blockCommitUs,clientBetSettledUs,betHistoryFeedUs,betSettledSignalUs," +
 			"maxTotalUs,betsPerFrameAt60";
 

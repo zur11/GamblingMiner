@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Scripts.Finance;
 
 namespace Scripts.History
@@ -20,6 +21,18 @@ namespace Scripts.History
 		// by construction. The segment currently being filled is not yet on disk when the cap is enforced,
 		// so the true ceiling is cap + 1 in-progress file. `0` disables the cap.
 		private const int MaxRetainedJournalChunks = 20;
+
+		// Mini-plan 12 A (2026-09-23) — THE LIVE CAP, the twin of the retention cap above and the answer to
+		// what that one left unsaid: retention bounded what the journal writes to DISK, and nothing ever
+		// bounded the same records in RAM. A session grew by one BetRecord plus its Id string per bet — ~257
+		// bytes measured — so 26.4 M bets held 6.77 GB on a 7.9 GB machine, the cost of a bet went from 16 µs
+		// to 145, and 13 of a 65-minute run were spent frozen (ProjectDesignManual §40.11). The live set now
+		// mirrors what the files keep, so memory and disk share ONE boundary.
+		//
+		// Enforced at segment rotation, so the overshoot between trims is at most one segment. NOT enforced
+		// after a load: a load reads what the files hold, and trimming that would show the explorer less
+		// history than the journal actually keeps. `0` disables it, exactly as the retention cap's `0` does.
+		private const int MaxInMemoryRecords = MaxRetainedJournalChunks * MaxJournalEntriesPerChunkFile;
 		private const int ChunkIndexDigits = 6;
 		private const int MaxPendingJournalEntriesWhileSuspended = 2000;
 		private static readonly TimeSpan SuspendedFlushMinInterval = TimeSpan.FromSeconds(0.5);
@@ -38,13 +51,22 @@ namespace Scripts.History
 		// or truncates the list must go through the helpers below. See ProjectDesignManual §40.8.
 		private readonly HashSet<string> _recordIds = new(StringComparer.Ordinal);
 		private int _duplicateRecordsSkipped;
-		private readonly List<HistoryJournalEntry> _pendingJournalEntries = new();
-		private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = false };
+		private readonly List<JournalLine> _pendingJournalEntries = new();
+		private readonly JsonSerializerOptions _jsonOptions = new()
+		{
+			WriteIndented = false,
+			// Mini-plan 12 C — a field at its default is not written at all, which is most of what makes a
+			// deposit line short and drops "o":0 / "h":0 / "r":0 from a bet. Reading gives the same value back.
+			DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault
+		};
 		private int _mutationsSinceLastSave;
 		private DateTime _lastSaveUtc = DateTime.UtcNow;
 		private DateTime _lastSuspendedFlushUtc = DateTime.MinValue;
 		private bool _saveSuspended;
 		private bool _loadedAllChunks;
+		// Mini-plan 12 A — true once the live cap has dropped a record in this session. The in-memory head is
+		// then NEWER than the journal's, so every "oldest record" question has to go to the files instead.
+		private bool _inMemoryTrimmed;
 
 		public BetHistoryRepository(string filePath)
 		{
@@ -169,12 +191,46 @@ namespace Scripts.History
 			_deposits.Clear();
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
+			_inMemoryTrimmed = false; // a fresh load is whatever the files hold, trimmed by nothing
+		}
+
+		// Mini-plan 12 A — drops the oldest live records once the set passes MaxInMemoryRecords, keeping the
+		// id guard in lockstep (the guard's own note above requires every truncation to go through a helper).
+		// Called from segment rotation, which is the only moment the live set can have grown past the cap.
+		private void EnforceInMemoryCap()
+		{
+			// The ternary carries the disabled case (cap 0 ⇒ never trim), for the same reason EnforceRetentionCap
+			// spells its own out: a separate `if (cap <= 0) return;` is const-folded and only earns a CS0162.
+			int excess = MaxInMemoryRecords > 0 ? _records.Count - MaxInMemoryRecords : 0;
+			if (excess <= 0)
+			{
+				return;
+			}
+
+			for (int i = 0; i < excess; i++)
+			{
+				string id = _records[i]?.Id;
+				if (!string.IsNullOrEmpty(id))
+				{
+					_recordIds.Remove(id);
+				}
+			}
+
+			_records.RemoveRange(0, excess);
+			_inMemoryTrimmed = true;
 		}
 
 		// INC-002 — claims `record.Id` for the in-memory list, returning false if that exact record is
 		// already loaded. A record whose journal line carried no "Id" cannot be deduplicated: the property
 		// initializer mints a FRESH Guid per deserialization, so two copies of such a row look distinct.
 		// That only affects pre-journal legacy snapshots; every line the current writer emits carries one.
+		//
+		// ⚠ Mini-plan 12 A NARROWED THIS PROMISE, deliberately: the guard can only refuse a duplicate it still
+		// remembers, and the live cap drops ids with their records. It now covers re-registration WITHIN the
+		// live window (MaxInMemoryRecords) rather than for all time. Every shape INC-002 actually produced —
+		// a load or a rebuild re-adding what was already there, a live double-register of one settled bet —
+		// happens within a few thousand bets of the original, so the guard keeps its purpose; but a duplicate
+		// of a bet older than the window would now pass, and that is a stated limit rather than an oversight.
 		private bool TryClaimRecordId(BetRecord record)
 		{
 			string id = record?.Id;
@@ -320,9 +376,15 @@ namespace Scripts.History
 		{
 			timestampUtc = default;
 
-			// Prefer memory when the journal happens to be loaded: it is already trimmed by any rollback,
+			// Prefer memory ONLY when it holds the whole journal: it is already trimmed by any rollback,
 			// whereas the file's first line is only as current as the last rewrite.
-			if (_records.Count > 0)
+			//
+			// Mini-plan 12 A — the two conditions are new and both matter. The live cap makes the in-memory
+			// head NEWER than the journal's, and `LoadLatestChunkOnly` (which `GetRecentBets` uses for
+			// DiceGame's list) always did: either way the first live record is not the oldest recorded bet,
+			// and answering from it reports a replay-window floor that is too recent. The file read below is
+			// one line of one file, so preferring it costs nothing worth saving.
+			if (_records.Count > 0 && _loadedAllChunks && !_inMemoryTrimmed)
 			{
 				timestampUtc = _records[0].TimestampUtc;
 				return true;
@@ -341,13 +403,13 @@ namespace Scripts.History
 							continue;
 						}
 
-						HistoryJournalEntry entry = JsonSerializer.Deserialize<HistoryJournalEntry>(line, _jsonOptions);
-						if (entry?.Bet == null)
+						JournalLine entry = JsonSerializer.Deserialize<JournalLine>(line, _jsonOptions);
+						if (entry == null || entry.Type != EntryTypeBet)
 						{
 							continue; // a deposit-only line: keep looking for the first BET
 						}
 
-						timestampUtc = DateTime.SpecifyKind(entry.Bet.TimestampUtc, DateTimeKind.Utc);
+						timestampUtc = DateTime.SpecifyKind(entry.TimestampUtc, DateTimeKind.Utc);
 						return true;
 					}
 				}
@@ -429,6 +491,9 @@ namespace Scripts.History
 
 			// The new segment does not exist on disk yet, so it can never be the one trimmed away here.
 			EnforceRetentionCap();
+			// Mini-plan 12 A — and the same boundary in memory. Rotation is the one moment the live set can
+			// have grown by a whole segment, which makes it the natural place to enforce the live cap.
+			EnforceInMemoryCap();
 		}
 
 		// INC-001 / D-15.28 — deletes the OLDEST segments beyond MaxRetainedJournalChunks. Ordering comes
@@ -498,10 +563,10 @@ namespace Scripts.History
 					continue;
 				}
 
-				HistoryJournalEntry entry;
+				JournalLine entry;
 				try
 				{
-					entry = JsonSerializer.Deserialize<HistoryJournalEntry>(rawLine, _jsonOptions);
+					entry = JsonSerializer.Deserialize<JournalLine>(rawLine, _jsonOptions);
 				}
 				catch
 				{
@@ -565,7 +630,7 @@ namespace Scripts.History
 			}
 
 			_records.Add(record);
-			_pendingJournalEntries.Add(HistoryJournalEntry.FromBet(record));
+			_pendingJournalEntries.Add(JournalLine.FromBet(record));
 			MarkDirtyAndSaveIfNeeded();
 		}
 
@@ -577,7 +642,7 @@ namespace Scripts.History
 			}
 
 			_deposits.Add(record);
-			_pendingJournalEntries.Add(HistoryJournalEntry.FromDeposit(record));
+			_pendingJournalEntries.Add(JournalLine.FromDeposit(record));
 			MarkDirtyAndSaveIfNeeded();
 		}
 
@@ -740,7 +805,7 @@ namespace Scripts.History
 		// not to whichever function grew it first. Previously only Flush rotated; the rebuild wrote the
 		// entire in-memory history into the base file uncapped, which silently defeated the chunking policy
 		// and produced a 1.13 GB monolith sitting beside the 114 chunks it had just duplicated.
-		private void WriteEntriesRotating(IReadOnlyList<HistoryJournalEntry> entries)
+		private void WriteEntriesRotating(IReadOnlyList<JournalLine> entries)
 		{
 			int index = 0;
 			while (index < entries.Count)
@@ -783,6 +848,10 @@ namespace Scripts.History
 			}
 		}
 
+		// Mini-plan 12 A — this rewrites the FILES from the live set (see RebuildJournalFromCurrentState), so
+		// with the live cap in force a restore writes back at most MaxInMemoryRecords. The steady state is
+		// unchanged, because retention caps the files at the same number anyway; what moves is the boundary
+		// after a restore on a session that had already trimmed. Verified on a real restore, not assumed.
 		public void RollbackToUtc(DateTime checkpointUtc)
 		{
 			DateTime checkpoint = checkpointUtc.Kind == DateTimeKind.Utc
@@ -864,16 +933,16 @@ namespace Scripts.History
 			_activeJournalLineCount = 0;
 			EnsureJournalFolderExists();
 
-			var entries = new List<HistoryJournalEntry>(_deposits.Count + _records.Count);
+			var entries = new List<JournalLine>(_deposits.Count + _records.Count);
 
 			foreach (DepositRecord deposit in _deposits.OrderBy(d => d.TimestampUtc))
 			{
-				entries.Add(HistoryJournalEntry.FromDeposit(deposit));
+				entries.Add(JournalLine.FromDeposit(deposit));
 			}
 
 			foreach (BetRecord record in _records.OrderBy(r => r.TimestampUtc))
 			{
-				entries.Add(HistoryJournalEntry.FromBet(record));
+				entries.Add(JournalLine.FromBet(record));
 			}
 
 			// NOT chronological in file order, despite what this comment used to claim: every deposit is written
@@ -886,23 +955,24 @@ namespace Scripts.History
 			EnforceRetentionCap();
 		}
 
-		private void ApplyJournalEntry(HistoryJournalEntry entry)
+		private void ApplyJournalEntry(JournalLine entry)
 		{
-			if (entry.Type == EntryTypeBet && entry.Bet != null)
+			if (entry.Type == EntryTypeBet)
 			{
-				if (!TryClaimRecordId(entry.Bet))
+				BetRecord record = entry.ToBet();
+				if (!TryClaimRecordId(record))
 				{
 					_duplicateRecordsSkipped++;
 					return;
 				}
 
-				_records.Add(entry.Bet);
+				_records.Add(record);
 				return;
 			}
 
-			if (entry.Type == EntryTypeDeposit && entry.Deposit != null)
+			if (entry.Type == EntryTypeDeposit)
 			{
-				_deposits.Add(entry.Deposit);
+				_deposits.Add(entry.ToDeposit());
 			}
 		}
 
@@ -997,29 +1067,103 @@ namespace Scripts.History
 			return currentPath + ".json";
 		}
 
-		private sealed class HistoryJournalEntry
+		// Mini-plan 12 C (D-12.1, 2026-09-28) — ONE FLAT LINE PER ENTRY: short keys, money as whole satoshis,
+		// no wrapper and no null sibling.
+		//
+		// The shape it replaces wrapped every record in {"Type":…,"Bet":{…},"Deposit":null} and wrote four
+		// decimals as full-precision text: 285 bytes a bet, measured, against ~150 here. It is still JSON, and
+		// that is the point — every playtest audit in this project reads the journal with `node`/`awk`, and a
+		// binary format would end that for a saving the measurement did not justify (§4 C's rule chose the
+		// slim form; the journal append was 5.09 µs of a 17.10 µs bet, 29.7%).
+		//
+		// One bet line, as written:
+		//   {"t":"b","i":"f207897dc94142fca05b859db862e448","g":"Dice","ts":"2009-09-11T14:07:09.8856277Z",
+		//    "o":1,"a":230000,"n":-230000,"b":449815636641,"r":50,"c":50,"m":19804}
+		//
+		// **The units are the part to know before reading a journal by hand:** `a`, `n` and `b` are SATOSHIS
+		// (the 8-decimal integer model `Money` already uses, so 230000 = 0.00230000), and `m` is the
+		// multiplier ×10,000 (`DiceEngine` rounds it to 4 dp, so 19804 = 1.9804). `o` and `h` are 0/1, and
+		// every field at its default is omitted — `"o":0` is a win, and an absent `"h"` is a LOW bet.
+		private sealed class JournalLine
 		{
-			public string Type { get; set; } = string.Empty;
-			public BetRecord Bet { get; set; }
-			public DepositRecord Deposit { get; set; }
+			[JsonPropertyName("t")] public string Type { get; set; } = string.Empty;
+			[JsonPropertyName("i")] public string Id { get; set; }
+			[JsonPropertyName("g")] public string GameId { get; set; }
+			[JsonPropertyName("ts")] public DateTime TimestampUtc { get; set; }
+			[JsonPropertyName("o")] public int Outcome { get; set; }
+			[JsonPropertyName("a")] public long AmountSat { get; set; }
+			[JsonPropertyName("n")] public long NetAmountSat { get; set; }
+			[JsonPropertyName("b")] public long BalanceAfterSat { get; set; }
+			[JsonPropertyName("r")] public int Roll { get; set; }
+			[JsonPropertyName("c")] public int Chance { get; set; }
+			[JsonPropertyName("m")] public int MultiplierTenThousandths { get; set; }
+			[JsonPropertyName("h")] public int IsHigh { get; set; }
 
-			public static HistoryJournalEntry FromBet(BetRecord record)
+			public static JournalLine FromBet(BetRecord record)
 			{
-				return new HistoryJournalEntry
+				return new JournalLine
 				{
 					Type = EntryTypeBet,
-					Bet = record
+					Id = record.Id,
+					GameId = record.GameId,
+					TimestampUtc = record.TimestampUtc,
+					Outcome = (int)record.Outcome,
+					AmountSat = ToSatoshis(record.BetAmount),
+					NetAmountSat = ToSatoshis(record.NetAmount),
+					BalanceAfterSat = ToSatoshis(record.BalanceAfter),
+					Roll = record.Roll,
+					Chance = record.Chance,
+					MultiplierTenThousandths = (int)decimal.Round(record.Multiplier * 10000m, 0, MidpointRounding.AwayFromZero),
+					IsHigh = record.IsHigh ? 1 : 0
 				};
 			}
 
-			public static HistoryJournalEntry FromDeposit(DepositRecord deposit)
+			public static JournalLine FromDeposit(DepositRecord deposit)
 			{
-				return new HistoryJournalEntry
+				return new JournalLine
 				{
 					Type = EntryTypeDeposit,
-					Deposit = deposit
+					Id = deposit.Id,
+					TimestampUtc = deposit.TimestampUtc,
+					AmountSat = ToSatoshis(deposit.Amount),
+					BalanceAfterSat = ToSatoshis(deposit.BalanceAfter)
 				};
 			}
+
+			public BetRecord ToBet()
+			{
+				return new BetRecord
+				{
+					Id = string.IsNullOrEmpty(Id) ? Guid.NewGuid().ToString("N") : Id,
+					GameId = GameId ?? string.Empty,
+					TimestampUtc = DateTime.SpecifyKind(TimestampUtc, DateTimeKind.Utc),
+					Outcome = (BetOutcome)Outcome,
+					BetAmount = FromSatoshis(AmountSat),
+					NetAmount = FromSatoshis(NetAmountSat),
+					BalanceAfter = FromSatoshis(BalanceAfterSat),
+					Roll = Roll,
+					Chance = Chance,
+					Multiplier = MultiplierTenThousandths / 10000m,
+					IsHigh = IsHigh != 0
+				};
+			}
+
+			public DepositRecord ToDeposit()
+			{
+				return new DepositRecord
+				{
+					Id = string.IsNullOrEmpty(Id) ? Guid.NewGuid().ToString("N") : Id,
+					TimestampUtc = DateTime.SpecifyKind(TimestampUtc, DateTimeKind.Utc),
+					Amount = FromSatoshis(AmountSat),
+					BalanceAfter = FromSatoshis(BalanceAfterSat)
+				};
+			}
+
+			// Money is already normalised to 8 dp before it reaches a record, so this is exact rather than a
+			// rounding decision: the multiply lands on an integer-valued decimal and the cast takes it.
+			private static long ToSatoshis(decimal value) => (long)(Money.Normalize(value) * 100000000m);
+
+			private static decimal FromSatoshis(long satoshis) => satoshis / 100000000m;
 		}
 	}
 }
