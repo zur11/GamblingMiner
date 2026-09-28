@@ -534,6 +534,22 @@ and normal speed it is ~74 hours of continuous play.
   serialization and bookkeeping. The rule is registered in the plan; a bounded store needs a small record far
   less than an unbounded one did.
 
+### What a block costs, and the last field in a bet — SPECIFIED (mini-plan 13, 2026-09-28)
+
+**Status: `AIHelperFiles/mini13-block-cost-budget-and-bet-id-plan.md`, not started; proposed branch
+`mini13-block-cost-budget-and-bet-id`.** **This is T4.6**, which T4 itself says to do first because T4.1, T4.2,
+T4.3 and T4.5 are all gated on it — see the entry below and T4's own suggested order.
+
+- **(A) The per-block budget.** Mini-plan 11 measured the total only (24 ms at height 376, 33 ms at 747, growing
+  with the chain). This decomposes it: broadcast, bot transactions, auctions, governance, historical events, the
+  snapshot write, the checkpoint, the five trace appends — and **`GetUtxoSet()`'s replay, counted as well as
+  timed**, since it rebuilds from genesis on every chain change and ~62 nodes each hold their own. The decision
+  rules name which of T4.1 / T4.2 / T4.5 comes next, by share; the plan builds none of them.
+- **(B) The bet's last field.** `BetRecord.Id` is a 32-character GUID whose only reader is the journal's INC-002
+  duplicate guard. A per-world counter removes a string allocation, replaces a 32-character hash with an 8-byte
+  one and drops ~30 bytes a line. Its risk is the rewind: the counter must roll back with the world, and the
+  plan verifies that on a real restart rather than arguing it.
+
 ### Chain persistence — the whole file rewritten at every block (measured mild, not urgent)
 
 **Status: open, no plan.** `NetworkRoot.PersistStateToDisk` serializes the **entire chain** on every mined
