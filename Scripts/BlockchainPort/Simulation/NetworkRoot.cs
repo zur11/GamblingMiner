@@ -7654,11 +7654,12 @@ public partial class NetworkRoot : Node
 		//
 		// GOTCHA: the `using` must be an explicit BLOCK, not a using-declaration. A declaration lives until
 		// the method returns, which would leave the handle open across the rename below.
+		// Mini-plan 13 A — this whole write times ITSELF and reports where it happens, because a block reaches
+		// here more than once: HandleMinedBlock persists, and the checkpoint capture that follows persists
+		// again through PersistFinancialState(true). Counting the writes settles that by measurement.
+		long snapshotStart = System.Diagnostics.Stopwatch.GetTimestamp();
+
 		string serialized = JsonSerializer.Serialize(snapshot, JsonOptions);
-		// Mini-plan 13 A — what the Snapshot phase actually wrote, so its cost can be read against its size
-		// rather than against the block count. It is the figure T4.5 (append the chain instead of rewriting
-		// it) would change, and the atomic write doubles it (P15.11b: .tmp then rename).
-		Scripts.Diagnostics.BlockCostProfiler.NoteSnapshotBytes(serialized.Length);
 		using (FileAccess file = FileAccess.Open(StateTempPath, FileAccess.ModeFlags.Write))
 		{
 			if (file is null)
@@ -7685,6 +7686,10 @@ public partial class NetworkRoot : Node
 			GD.PrintErr($"[NetworkRoot] Snapshot rename failed — the previous world state is still on disk " +
 						$"and this block was NOT committed: {e.Message}");
 		}
+
+		Scripts.Diagnostics.BlockCostProfiler.NoteSnapshotWrite(
+			serialized.Length,
+			(System.Diagnostics.Stopwatch.GetTimestamp() - snapshotStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
 	}
 
 	// Step 8 (clean reset) + Step 13 (TL.1, D-13.7) — the persisted world is wiped whenever EITHER the

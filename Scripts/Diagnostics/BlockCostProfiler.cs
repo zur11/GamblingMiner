@@ -72,7 +72,7 @@ namespace Scripts.Diagnostics
 		private const string Header =
 			"reportUtc,chainHeight,gameDateUtc,minerNodeId,totalMs,broadcastMs,difficultyTraceMs,botTransactionsMs," +
 			"auctionsMs,governanceMs,historicalEventsMs,snapshotMs,casinoRewardsMs,subscribersMs,checkpointMs," +
-			"unaccountedMs,snapshotBytes,utxoRebuildsSincePrev,utxoMsSincePrev,utxoNodesSincePrev";
+			"unaccountedMs,snapshotBytes,snapshotWrites,snapshotWriteMs,utxoRebuildsSincePrev,utxoMsSincePrev,utxoNodesSincePrev";
 
 		private static readonly long[] _phaseTicks = new long[PhaseCount];
 		private static int _openPhase = -1;
@@ -83,6 +83,8 @@ namespace Scripts.Diagnostics
 		private static DateTime _gameUtc;
 		private static string _minerNodeId = string.Empty;
 		private static long _snapshotBytes;
+		private static int _snapshotWrites;
+		private static double _snapshotWriteMs;
 
 		// Accumulated between blocks, because the rebuild they cause happens lazily after the block returns.
 		private static int _utxoRebuilds;
@@ -154,6 +156,8 @@ namespace Scripts.Diagnostics
 			_gameUtc = gameUtc;
 			_minerNodeId = minerNodeId ?? string.Empty;
 			_snapshotBytes = 0;
+			_snapshotWrites = 0;
+			_snapshotWriteMs = 0d;
 		}
 
 		/// <summary>Closes the open phase (if any) and opens <paramref name="phase"/>.</summary>
@@ -176,12 +180,22 @@ namespace Scripts.Diagnostics
 			}
 		}
 
-		/// <summary>How many bytes the snapshot wrote, so the Snapshot phase can be read against what it wrote.</summary>
+		/// <summary>
+		/// One completed world-snapshot write: its bytes and its own time, counted wherever it happens.
+		///
+		/// <para><b>Why counted rather than phase-timed</b> (mini-plan 13 A, second pass): the first run put 36%
+		/// of a block in the Snapshot phase and 46% in Checkpoint — and the checkpoint's own path calls
+		/// <c>PersistFinancialState(true)</c>, which reaches <c>PersistStateToDisk</c> again. That makes the whole
+		/// chain serialized and atomically rewritten <b>twice per block</b>, which is a claim worth measuring
+		/// instead of inferring from two phase totals. This counts the writes and sums their time directly.</para>
+		/// </summary>
 		[Conditional("DEBUG")]
-		public static void NoteSnapshotBytes(long bytes)
+		public static void NoteSnapshotWrite(long bytes, double milliseconds)
 		{
 			if (!Enabled || !_inBlock) return;
 			_snapshotBytes = bytes;
+			_snapshotWrites++;
+			_snapshotWriteMs += milliseconds;
 		}
 
 		/// <summary>
@@ -222,7 +236,7 @@ namespace Scripts.Diagnostics
 			var sb = new StringBuilder();
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"[BlockCost] h={_chainHeight:N0} {_gameUtc:yyyy-MM-dd} by {_minerNodeId} · total {totalMs:N1} ms" +
-				$" · snapshot {Ms(Phase.Snapshot):N1} ({_snapshotBytes / 1024.0:N0} KB)" +
+				$" · snapshot {_snapshotWriteMs:N1} ms in {_snapshotWrites} write(s) of {_snapshotBytes / 1024.0:N0} KB" +
 				$" · utxo {_utxoMs:N1} ({_utxoRebuilds} rebuild(s), {_utxoNodes.Count} node(s)) since previous block" +
 				$" · broadcast {Ms(Phase.Broadcast):N1} · governance {Ms(Phase.Governance):N1}" +
 				$" · auctions {Ms(Phase.Auctions):N1} · botTx {Ms(Phase.BotTransactions):N1}" +
@@ -230,11 +244,11 @@ namespace Scripts.Diagnostics
 			GD.Print(sb.ToString());
 
 			WriteTraceRow(string.Format(CultureInfo.InvariantCulture,
-				"{0:O},{1},{2:O},{3},{4:F3},{5:F3},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F3},{12:F3},{13:F3},{14:F3},{15:F3},{16},{17},{18:F3},{19}",
+				"{0:O},{1},{2:O},{3},{4:F3},{5:F3},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F3},{12:F3},{13:F3},{14:F3},{15:F3},{16},{17},{18:F3},{19},{20:F3},{21}",
 				DateTime.UtcNow, _chainHeight, _gameUtc, _minerNodeId, totalMs,
 				Ms(Phase.Broadcast), Ms(Phase.DifficultyTrace), Ms(Phase.BotTransactions), Ms(Phase.Auctions),
 				Ms(Phase.Governance), Ms(Phase.HistoricalEvents), Ms(Phase.Snapshot), Ms(Phase.CasinoRewards),
-				Ms(Phase.Subscribers), Ms(Phase.Checkpoint), totalMs - accounted, _snapshotBytes,
+				Ms(Phase.Subscribers), Ms(Phase.Checkpoint), totalMs - accounted, _snapshotBytes, _snapshotWrites, _snapshotWriteMs,
 				_utxoRebuilds, _utxoMs, _utxoNodes.Count));
 
 			ResetIntervalCounters();

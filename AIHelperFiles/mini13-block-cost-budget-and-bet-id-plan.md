@@ -120,3 +120,59 @@ taught to.
 - **The Betting Statistics scene, the adaptive budget, PowerShell 7** — unrelated roadmap items.
 - **T4.4** is already substantially done: mini-plan 12 bounded the journal in memory, and the lifetime rollup has
   been the counter source since mini-plan 03.
+
+---
+
+## 7. Results — A, first pass (2026-09-28, 30 minutes, 275 blocks, height 121 → 395)
+
+Player alone at 9000X, Block cost armed, the other two profilers off. The world is early-era, so **no company
+exists yet** and the governance and auction phases are near zero by construction — a fact about the era, not a
+gap in the instrument, and it means this run cannot price the mature-world per-block work T4.0b describes.
+
+| phase | ms per block | share |
+|---|---|---|
+| **Checkpoint** | **9.87** | **45.7%** |
+| **Snapshot** (`PersistStateToDisk`) | **7.80** | **36.1%** |
+| UTXO replay (since previous block) | 1.60 | 7.4% |
+| Traces (the difficulty CSV) | 1.41 | 6.5% |
+| Bot transactions | 1.07 | 5.0% |
+| Historical events | 0.96 | 4.5% |
+| Subscribers · Auctions · Broadcast · Governance · Casino | 0.23 · 0.21 · 0.04 · 0.002 · 0.008 | under 2% |
+| **total** | **21.61** | |
+
+**Growth against height**, five buckets of 55 blocks:
+
+| mean height | total | snapshot | checkpoint | UTXO ms | rebuilds | per rebuild | snapshot KB |
+|---|---|---|---|---|---|---|---|
+| 148 | 23.15 | 6.76 | 9.01 | 0.81 | 11.4 | 0.071 | 213 |
+| 203 | 19.62 | 7.47 | 9.54 | 0.99 | 8.0 | 0.124 | 274 |
+| 258 | 19.34 | 7.26 | 9.13 | 1.64 | 8.0 | 0.206 | 332 |
+| 313 | 22.36 | 8.09 | 11.06 | 2.10 | 8.0 | 0.262 | 390 |
+| 368 | 23.55 | 9.39 | 10.62 | 2.46 | 8.0 | 0.310 | 447 |
+
+**Verdicts.**
+- **P1 refuted on its share, confirmed on its shape.** The UTXO replay is **7.4%**, not ≥ 40%. But **8.7
+  distinct nodes rebuild per block**, exactly as suspected, and the cost *per rebuild* grew **4.4× while the
+  chain grew 2.5×** (0.071 → 0.310 ms). It is the fastest-growing line in the table and the cheapest today:
+  T4.1/T4.2 are real, and they are not yet the priority.
+- **P2 held:** the snapshot is **36.1%**, and its growth tracks the bytes it writes (213 → 447 KB).
+- **P3 refuted, narrowly:** the trace append is **6.5%**, not under 5% — one CSV append per block, flat in height.
+- **P4 not measurable in range:** the run reached height 395. Extrapolating the fitted growth to 1,500 gives
+  roughly 75 ms a block, which is **an extrapolation and is labelled as one.**
+
+### The finding: the world snapshot appears to be written TWICE per block
+
+The checkpoint phase costs *more* than the snapshot phase, and the code path says why:
+`CaptureCheckpoint → PersistFinancialState(true) → SetNodeFinancialState(…, persist: true) → PersistStateToDisk`.
+The block has already persisted once inside `HandleMinedBlock`; committing the bet's balances then serializes
+and atomically rewrites **the entire chain again**.
+
+**It is not redundant in content** — the second write is the only path that commits the post-bet financial
+mirrors, including the bots' — **but the chain half of it is identical both times.** That is precisely the
+condition T4.5 describes: the mutable state cannot be committed without rewriting an immutable, ever-growing
+chain beside it.
+
+**Being measured rather than inferred, per this plan's own standard.** `PersistStateToDisk` now times itself and
+reports each completed write, so the next run's trace carries `snapshotWrites` and `snapshotWriteMs` per block.
+If it reads 2 writes and ~16 ms, then **snapshot work is ~73% of a block** and §4's rule selects T4.5 — with the
+duplicate itself as a cheaper first move that no rule anticipated.
