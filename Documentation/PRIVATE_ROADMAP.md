@@ -503,11 +503,21 @@ limits mini-plan 10 stated about its own result, at the developer's request.
   or one probability draw instead of *k* hashes for the invisible mass. It advances the world permanently, which
   the developer accepted (no archive).
 
-### The journal's memory — bounding a store capped only on disk — SPECIFIED (mini-plan 12, 2026-09-22)
+### The journal's memory — bounding a store capped only on disk — ✅ DONE (mini-plan 12, 2026-09-28)
 
-**Status: `AIHelperFiles/mini12-journal-memory-bound-plan.md`, not started; proposed branch
-`mini12-journal-memory-bound`.** Found by mini-plan 11's C2 run while it was measuring something else;
-evidence and lessons in `ProjectDesignManual.md` §40.11.
+> **Fixed, and the instrument that missed it can now see it.** The live set is bounded by the same window the
+> files keep, so a 41.1 M-bet run held **1.51 GB instead of 6.77**, with **zero stalls** against 791 s of frozen
+> game, and cost per bet flat across the whole run (16.9 → 16.7 µs, against C2's 16 → 145). `FrameCostProfiler`
+> counts the periods it refuses to call frames instead of discarding them. The restore path was verified on a
+> real restart. **D-12.1** then made a journal line flat, short-keyed and satoshi-integer — 285 → **163 bytes**,
+> the append 5.09 → **4.20 µs**, a bet **16.07 µs** — verified by 183,055 records with zero balance-continuity
+> breaks. **D-12.2 rejected binary on the measurement:** 43% fewer bytes bought 0.89 µs, so binary's further
+> ~60% is worth ~1 µs of a 16 µs bet and would end the `node`/`awk` audits. The remaining cost is the 32-char
+> GUID id's hash and the appends, which is **mini-plan 13's** lever, not a format's. Text below is the
+> original specification.
+
+**Status: `AIHelperFiles/mini12-journal-memory-bound-plan.md`, own branch off `main`.** Found by mini-plan 11's
+C2 run while it was measuring something else; evidence and lessons in `ProjectDesignManual.md` §40.11.
 
 `BetHistoryRepository` caps the journal on disk (20 segments, ~57 MB) and never trims the same records in
 memory. A session therefore grows with every bet: **6.77 GB after 26.4 M bets on a 7.9 GB machine**, 13 of a

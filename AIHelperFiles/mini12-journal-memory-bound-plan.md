@@ -4,11 +4,11 @@
 `mini11-frame-capacity-bots-and-later-eras-plan.md`, whose C2 run found this fault while measuring something
 else. Evidence and the general lessons: `ProjectDesignManual.md` **§40.11**.
 
-**Status:** 🚧 **IN PROGRESS** on `mini12-journal-memory-bound`. **Steps 1–4 done** — the live cap and the stall
+**Status:** ✅ **DONE 2026-09-28**, merged to `main` from `mini12-journal-memory-bound`. **Read §9 first** — it
+is the close-out. The trail below is the record of how it ran. *(Was: steps 1–4 done* — the live cap and the stall
 counters (§5.1), the long run (§7 step 2: memory 6.77 GB → 1.51 GB, zero stalls, cost per bet flat over 41 M
 bets), the `JournalAdd` split (§7 step 3: 5.09 µs, 29.7% of a bet) and **D-12.1, the slim journal line**, built
-(§8). **Next: the delta run** — one Bet cost leg on the new format, against the registered before-figure. The
-world resets at the next launch (format 7 → 8).
+(§8), then the delta run measured it.*)
 
 **The fault, in one line:** `BetHistoryRepository` caps the bet journal **on disk** (20 segments × 10,000
 entries, ~57 MB) and **never trims the same records in memory**, so a session's footprint grows with every bet
@@ -224,3 +224,66 @@ every playtest in this project has relied on. §4 C keeps it available if the sl
 - **the part of `JournalAdd` that is NOT serialization** — the duplicate-guard hash of a 32-character id and two
   list appends — is untouched by this change and sets the floor the new figure cannot go below. Nothing measured
   it separately, so the delta is what will say how large it was.
+
+### The delta, and D-12.2 — binary is rejected on the measurement (2026-09-28)
+
+| | before (fat line) | after (slim line) |
+|---|---|---|
+| `JournalAdd` | 5.09 µs | **4.20 µs** (−17.5%) |
+| whole bet | 17.10 µs | **16.07 µs** (−6%) |
+| bytes per journal line | 285.3 | **162.7** (−43%) |
+
+**Correctness, checked over the whole journal rather than a sample:** 183,055 records, **zero**
+balance-continuity breaks — `previous balance + net == balance after` holds exactly, in integer satoshis, for
+every consecutive pair. The decimal→satoshi round-trip loses nothing. The multiplier decodes to 1.9804, and
+defaults really are absent: a winning LOW bet carries neither `"o"` nor `"h"`.
+
+**D-12.2 — the binary format is rejected, and the rule that would have allowed it is superseded by its own
+measurement.** §4 C said binary could be considered if the slim form still cost ≥ 3 µs; it costs 4.20, so by the
+letter it qualifies. But the delta measured the thing the threshold was only a proxy for: **43% fewer bytes
+bought 0.89 µs.** Binary's further ~60% therefore extrapolates to **~1 µs on a 16 µs bet**, in exchange for
+ending the `node`/`awk` audits — the same audits that just verified 183,055 records in one command.
+
+> **The lesson to carry, because the rule was mine and it was the wrong shape:** a threshold on a total is a
+> proxy for a *derivative*. "Is the step big?" is not the question; "how much does the step move when the input
+> moves?" is. Once one build can measure the derivative, the threshold stops being evidence.
+
+**What is left, and where it goes.** The remaining 4.20 µs is the duplicate guard's hash of a **32-character
+GUID string**, two list appends, and the write itself — none of which a line format can touch. Replacing that id
+with a compact counter shrinks the line *and* the hashing, which is a bigger lever than the format had. It
+changes `BetRecord`, so it is **mini-plan 13**, not a late addition here.
+
+---
+
+## 9. Close-out (2026-09-28)
+
+**The fault is fixed, and the plan's own instrument now sees the failure mode it was blind to.**
+
+- **Memory:** 6.77 GB → **1.51 GB**, on a run with 55% more bets (41.1 M). The live set is bounded by the same
+  window the files keep.
+- **Freezes:** 791 s in 19 stalls → **none**, and the profiler counts stalls now instead of discarding them, so
+  "none" is a measurement rather than an impression.
+- **Cost per bet:** flat across 41 M bets (16.9 → 16.7 µs), where C2 had reached 145 µs by 26 M. With the slim
+  line it is **16.07 µs**, of which the biggest single part is now the real proof-of-work hash (6.13 µs, 38%).
+- **Journal on disk:** 285 → 163 bytes a line, ~43% less written at bet rate, with the audits intact.
+- **The restore hazard was verified, not argued:** after a restart the journal was rewritten from the live set
+  (15 segments, 147,370 records) with the checkpoint boundary on the newest surviving record, to the tick.
+
+**Predictions: 2 held, 4 refuted.** P3 (zero stalls) and P5 (trimming is free) held. P1 missed by 1% (1.51 GB
+against "under 1.5"). P2, P4 and P6 were refuted — and two of them were badly formed rather than merely wrong:
+
+1. **P4 asked for something arithmetically impossible.** At 9000X the clock cannot advance more than 6.25
+   game-days a real minute, so "1.5× further than C2" was unreachable before the run started. *Check a
+   prediction against its own ceiling while registering it.*
+2. **P2 measured the machine as much as the code.** Cost per bet was flat against cumulative bets — which is
+   what the plan was actually testing — but noisy within the run, because the session itself ran ~50% slower
+   outside the simulation than mini-plan 11's did. *A per-bet figure is only comparable inside one session;
+   across sessions, compare shares.*
+3. **P6 was simply wrong**, and usefully so: the journal was 78% of the step it shared with the statistics, not
+   under half, which is what sent the format change ahead.
+
+**One protocol lesson, which cost a run.** The first split attempt measured the pre-split build: the app had
+stayed open since before that commit, and Godot only loads a new assembly on a fresh launch. **The check is the
+trace header** — it carries the column set the running build writes, so the file settles the question without
+anyone reading a panel mid-run. Asking the developer to spot a line in the Output panel while reports scroll at
+9000X is not a check.
