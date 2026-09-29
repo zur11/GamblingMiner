@@ -601,9 +601,25 @@ TWICE** — 503 KB each, growing with the chain (213 KB at height 148). Two move
 **Premise stated on purpose:** append-only assumes no reorgs, which is the current design (forks are
 post-Basic-Mode). A future fork plan inherits that premise explicitly rather than discovering it.
 
-### Fail closed everywhere on a failed world load (open, found by mini-plan 14's P5)
+### Fail closed everywhere, and readouts that strobe — SPECIFIED (mini-plan 15, 2026-09-29)
 
-**Status: open, no plan.** `NetworkRoot.WorldLoadFailed` now stops three things: persisting the world, running
+**Status: `AIHelperFiles/mini15-fail-closed-and-readouts-that-strobe-plan.md`, not started; proposed branch
+`mini15-fail-closed-and-readouts`.** Takes the open safety item below, plus a UI bug the developer reported
+while watching mini-plan 14's runs, plus the measurement that decides whether T4.1 comes next.
+
+- **(A)** Every eager writer consults `NetworkRoot.WorldLoadFailed`, so a session that could not load its world
+  writes **nothing world-shaped** — today only three places check it.
+- **(B) The clock and the nonce counter freeze a digit at speed, and it is arithmetic.** Both refresh **every
+  frame**, and the clock advances `100 × DevTimeScale ÷ fps` game-seconds per frame — at 9000X that is ~150 s,
+  and `150 mod 60 = 30`, so the seconds alternate between two values while the units digit sits still. The
+  counter gains ~148 per frame, a near-constant step, which does the same to its last digits. The fix is a
+  fixed ~10 Hz sample plus a displayed precision that matches it — never an animated counter, which would show
+  values the world never had. It also removes a per-frame rebuild of DiceGame's whole mining-status block.
+- **(C)** The UTXO replay's share at a taller chain; mini-plan 14's 40% rule then decides whether T4.1 follows.
+
+### Fail closed everywhere on a failed world load (open, found by mini-plan 14's P5 — now mini-plan 15 A)
+
+**Status: scheduled as mini-plan 15's part A.** `NetworkRoot.WorldLoadFailed` now stops three things: persisting the world, running
 the historical bootstrap, and capturing a checkpoint. **Everything else still writes.** Measured during the
 torn-chain test: with the world load aborted, `calendar_state.json`, `bankroll_state.json`,
 `principal_balance_state.json`, the lifetime rollup and two journal segments were all rewritten. They carried
