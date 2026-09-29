@@ -2666,6 +2666,9 @@ public partial class DiceGame : Control, IBetEventSource
 
 		DateTime historyUtc = _calendarTimeService?.CurrentUtcDateTime ?? DateTime.UtcNow;
 		DateTime calendarLocal = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
+		// Mini-plan 14 A — the manual-bet twin of SimulationService's flush: the world write lands before the
+		// checkpoint that refers to it, so the chain on disk is never older than the checkpoint.
+		NetworkRoot.FlushWorldIfDirty();
 		_blockCheckpointService.CaptureCheckpoint(
 			_principalBalanceService,
 			_bankrollStateService,

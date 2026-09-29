@@ -55,6 +55,9 @@ public partial class BlockSessionCheckpointService : Node
 
 	public Snapshot CurrentSnapshot { get; private set; }
 
+	// Mini-plan 14 B — says the refusal once rather than at every block of a broken session.
+	private bool _warnedCheckpointRefused;
+
 	public override void _Ready()
 	{
 		LoadState();
@@ -198,6 +201,24 @@ public partial class BlockSessionCheckpointService : Node
 	{
 		if (principal == null || bankroll == null || program == null)
 		{
+			return;
+		}
+
+		// Mini-plan 14 B (P5's gate) — a checkpoint describes the world at a block. If the world could not be
+		// loaded, the chain this block belongs to cannot be written (NetworkRoot refuses), so writing the
+		// checkpoint would leave a record pointing at a chain that exists only in this session's memory. The
+		// pair must fail together: that mismatch is what the tip stamp was added to detect, and creating one
+		// deliberately would be worse than any block lost.
+		if (NetworkRoot.WorldLoadFailed)
+		{
+			if (!_warnedCheckpointRefused)
+			{
+				_warnedCheckpointRefused = true;
+				GD.Print("[Checkpoint] REFUSING to capture — the world failed to load this session, so its " +
+						 "chain cannot be persisted and a checkpoint would describe a world that is not on disk.");
+				GD.PrintErr("[Checkpoint] REFUSING to capture — the world failed to load this session.");
+			}
+
 			return;
 		}
 

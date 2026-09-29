@@ -489,6 +489,9 @@ public partial class SimulationService : Node
 
 	public override void _ExitTree()
 	{
+		// Mini-plan 14 A — the last frame may have dirtied the world without a frame following it to flush.
+		// This autoload leaves the tree when the app does, which makes it the right place for the final write.
+		NetworkRoot.FlushWorldIfDirty();
 		if (_calendar != null)
 		{
 			_calendar.RequestedDevTimeScaleChanged -= OnGovernorInputChanged;
@@ -612,6 +615,12 @@ public partial class SimulationService : Node
 
 	public override void _Process(double delta)
 	{
+		// Mini-plan 14 A — the world's single write per frame, BEFORE the early return below. It has to run
+		// whether or not a run is active: something can dirty the world while nothing is betting (a manual
+		// transfer, a node switch), and that change must not sit unwritten until the next autobet. Costs one
+		// bool check per frame when clean.
+		NetworkRoot.FlushWorldIfDirty();
+
 		if (!IsRunning || _config == null || _session == null || _wallet == null)
 		{
 			return;
@@ -1253,6 +1262,11 @@ public partial class SimulationService : Node
 		// player's loop has bets still to come in the same frame, and only it passes its back-date.
 		DateTime historyUtc = (_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow).AddSeconds(-settlingBackdateGameSeconds);
 		DateTime calendarLocal = (_calendar?.CurrentLocalDateTime ?? DateTime.Now).AddSeconds(-settlingBackdateGameSeconds);
+		// Mini-plan 14 A — the block's one world write lands HERE, before the checkpoint that refers to it.
+		// Ordering is the point: the mirrors updated above are in it, and the chain on disk is never older than
+		// the checkpoint pointing at it. Under the old code that held by accident, because the block wrote
+		// first and the checkpoint's own write followed; coalescing would have inverted it.
+		NetworkRoot.FlushWorldIfDirty();
 		_checkpoint.CaptureCheckpoint(_principal, _bankroll, _bankrollProgram, historyUtc, calendarLocal);
 		_checkpointInstantLocal = calendarLocal;
 

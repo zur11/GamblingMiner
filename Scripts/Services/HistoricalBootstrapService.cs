@@ -57,6 +57,23 @@ public static class HistoricalBootstrapService
 		}
 
 		NetworkRoot.EnsureReady();
+
+		// Mini-plan 14 B (P5's gate, 2026-09-29) — A WORLD THAT FAILED TO LOAD IS NOT A FIRST LAUNCH.
+		//
+		// The torn-tail test found this: the load aborted correctly, refused to persist the chain — and then
+		// this ran, because an empty in-memory chain looks exactly like a new player. It mined a fresh genesis,
+		// drew new bot stances, and handed back a world that looked real. Nothing could be written for it, so
+		// playing on would have produced checkpoints describing a chain that can never reach disk: INC-001's
+		// shape, arriving through the recovery path rather than the writer.
+		if (NetworkRoot.WorldLoadFailed)
+		{
+			GD.Print("[HistoricalBootstrap] SKIPPED — the world failed to load this session (see the error " +
+					 "above). A broken world is left visibly broken rather than replaced by a fresh one; " +
+					 "restore or delete the files named above, then restart.");
+			GD.PrintErr("[HistoricalBootstrap] SKIPPED — the world failed to load; not fabricating a new one.");
+			return;
+		}
+
 		if (NetworkRoot.GetPlayerChainLengthStatic() > 1)
 		{
 			// Chain already has mined history → returning player, not a first launch.

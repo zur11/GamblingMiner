@@ -564,14 +564,55 @@ which T4 itself says to do first because T4.1, T4.2, T4.3 and T4.5 are all gated
   one and drops ~30 bytes a line. Its risk is the rewind: the counter must roll back with the world, and the
   plan verifies that on a real restart rather than arguing it.
 
-### Chain persistence — the whole file rewritten at every block (measured mild, not urgent)
+### Write the chain once, then stop rewriting it — ✅ DONE (mini-plan 14, 2026-09-29)
 
-**Status: open, no plan.** `NetworkRoot.PersistStateToDisk` serializes the **entire chain** on every mined
-block. Mini-plan 11 C2 measured the per-block work at **24 ms at height 376 and 33 ms at 747** — real growth,
-comfortably affordable today, and the reason the plan's "binary format" discussion concluded the encoding is
-not the issue: the rewrite is. The standard fix is to append blocks once and never rewrite them, with the
-mutable remainder in a small file of its own. **Re-measure before building**: `blockWorkMsPerBlock` in
-`frame_cost_trace.csv` reads it directly, and the figure above was taken below height 800.
+> **T4.5 is done, and per-block cost stopped growing with the world.** A block went from **27.55 ms and rising**
+> to **~8.4 ms and flat**; the world write went from **two per block to one**, and from **503 KB at height 400
+> (growing) to 57.8 KB at every height**. The chain now lives in an appended `chain.jsonl`; `state.json` keeps
+> the mutable remainder and a tip stamp naming the chain it belongs to. This also answers mini-plan 13's P4.
+>
+> **The durability gate found more than the performance work did.** A torn chain file was detected and refused
+> correctly — and then the game **fabricated a replacement world**, because an empty in-memory chain is
+> indistinguishable from a first launch. Fixed: the bootstrap and the checkpoint both refuse on
+> `NetworkRoot.WorldLoadFailed`. Also fixed: an indented-JSON bug that made the first chain file unreadable by
+> its own loader, caught by reading the artefact rather than by the run (world format 9 → 10 → 11).
+>
+> **Next, by §4's own rule:** the UTXO replay is the only cost still growing — 0.97 → 2.37 ms over 300 blocks at
+> a constant 8 rebuilds a block, ~28% of a block against the 40% that makes **T4.1** the next plan.
+> Text below is the original specification.
+
+**Status: `AIHelperFiles/mini14-write-the-chain-once-plan.md`, own branch off `main`.** **This is T4.5**,
+selected by mini-plan 13's measurement, and it **absorbs the former "Chain persistence" entry**, which described
+the same work from a weaker measurement.
+
+Measured at height ~400: a block costs **27.55 ms**, of which **18.39 ms (66.7%) writes the world snapshot
+TWICE** — 503 KB each, growing with the chain (213 KB at height 148). Two moves, in order of size:
+
+- **(A) One write per block instead of two.** Pure coalescing, no format change: `PersistStateToDisk` marks the
+  world dirty and a single flush runs at most one write per frame, at the top of `SimulationService._Process`
+  so it happens whether or not a run is active. The commit still happens per block, milliseconds later — a
+  widened durability window, stated rather than discovered.
+- **(B) The chain leaves the snapshot.** `chain.jsonl` appended one block per line, never rewritten;
+  `state.json` keeps the small mutable remainder; a tip stamp ties them, and a mismatch or a torn last line
+  fails **loudly and refuses to persist**, as INC-001 requires. **Its success criterion is that per-block cost
+  stops growing with height** — which also closes mini-plan 13's P4, the prediction that ran out of range.
+- **(C) The traces**, only if they exceed 15% of a block once A and B land.
+
+**Premise stated on purpose:** append-only assumes no reorgs, which is the current design (forks are
+post-Basic-Mode). A future fork plan inherits that premise explicitly rather than discovering it.
+
+### Fail closed everywhere on a failed world load (open, found by mini-plan 14's P5)
+
+**Status: open, no plan.** `NetworkRoot.WorldLoadFailed` now stops three things: persisting the world, running
+the historical bootstrap, and capturing a checkpoint. **Everything else still writes.** Measured during the
+torn-chain test: with the world load aborted, `calendar_state.json`, `bankroll_state.json`,
+`principal_balance_state.json`, the lifetime rollup and two journal segments were all rewritten. They carried
+the REAL checkpoint's values that time, so nothing was corrupted — but the refusal covered one store and no
+others, and that is luck rather than design.
+
+**The rule it wants:** a session that could not load its world should decline to write *anything* world-shaped,
+not merely the file that failed. Each eager writer consults the flag, says so once, and stays quiet. Small,
+mechanical, and worth doing before any plan that makes loading more complicated than it is today.
 
 ### A budget that adapts to the machine (BASIC MODE refinement)
 
