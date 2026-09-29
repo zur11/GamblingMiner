@@ -201,3 +201,33 @@ A double-click on STOP restarted the run immediately, which during a measurement
 did not ask for. A start is now ignored for `AutobetRestartGuardMsec` after any stop, manual or self-inflicted,
 with the button reverted so it never shows a run that is not running. **STOP is never guarded, in either
 direction** — a guard that could swallow a stop would be worse than the accident it prevents.
+
+## 8. Results — B, the bet id (2026-09-29)
+
+| | before (mini-plan 12's slim line) | after (D-13.2) |
+|---|---|---|
+| `JournalAdd` | 4.20 µs | **2.96 µs** (−30%) |
+| whole bet | 16.07 µs | **12.63 µs** (−21%) |
+| bytes per journal line | 162.7 | **134.4** |
+
+**P5 held on both terms** — it asked for ≥ 1 µs and ≥ 25 bytes, and got **1.24 µs and 28.3 bytes**. Across the
+two format changes together a line went **285.3 → 134.4 bytes** and a bet **28.5 → 12.63 µs**; the real
+proof-of-work hash (4.72 µs) is now the largest single item in a bet by a wide margin, which is the shape a bet
+should have.
+
+**Correctness, over the whole retained journal (190,379 records), not a sample:**
+- **zero duplicate ids and zero non-consecutive steps** — the sequence runs unbroken from 30,001 to 220,379,
+  which is exactly 190,379 records, the 30,000 below it being three pruned segments;
+- **zero balance-continuity breaks**, so the satoshi arithmetic still reconciles bet by bet;
+- the rollup reads 220,378 bets against a top id of 220,379 — off by exactly one because **deposits share the
+  id space** and this world's first auto-recharge took id 1. The design accounting for itself.
+
+**P6 held, and it took a second run to actually test it.** The first attempt restarted the app and reloaded the
+journal — but placed no bets afterwards, so the counter was never asked to issue anything: what that verified
+was that nothing had been corrupted, not the path the design exists for. Ten seconds of betting after the
+restart then issued **2,729 ids, every one above the pre-restart maximum of 220,379**, with **zero duplicates,
+zero backward steps and zero balance-continuity breaks** across 193,108 records.
+
+> **The lesson, and it is the same shape as mini-plan 11's "1.5× further":** a verification step has to name
+> the state it puts the system INTO, not only the action it performs. "Restart and reopen" exercises a load;
+> only "restart, then bet" exercises a rewind.
