@@ -201,3 +201,56 @@ Two things are worth keeping from it:
 
 Fixed with compact options for the chain's lines, and **world format 10 → 11**, because an unreadable v10 chain
 file must be removed rather than met by every future load.
+
+## 9. P5 — the durability gate, and what it caught (2026-09-29)
+
+Two damage cases were staged by hand with the game closed, both backed up outside `user://` first.
+
+**Case 1 — the chain one block ahead of its state** (a crash between the append and the state write).
+**Passed functionally:** the extra block was truncated, the file rewritten, and the world loaded and played
+normally. **But the developer saw nothing** — not in the Output panel, not in the Debugger's Errors tab. A
+`GD.PrintErr` describing damage to a saved world is read once, days later, by someone asking what happened to
+their world; landing where nobody looks makes it silence. Fixed: world-integrity findings now print to **both**
+panels (`ReportWorldIntegrity`). *CLAUDE.md's "NAME THE PANEL" rule, arriving from the other direction — not
+"which panel do I tell the developer to read", but "which panel does this message need to reach".*
+
+**Case 2 — a torn last line** (a crash mid-append). **The detection is exactly right:**
+
+> `The last line of user://blockchain/chain.jsonl is incomplete — a crash during an append. Dropping it; the
+> 148 blocks before it are intact.`
+> `WORLD LOAD ABORTED — the state says height 148 but the chain file only has 147. Blocks are missing, and
+> nothing will be persisted this session so the remaining files are left as they are.`
+
+`chain.jsonl` and `state.json` were untouched afterwards — the refusal held.
+
+### And then the gate failed, one line later
+
+```
+[HistoricalBootstrap] First launch — mined genesis → 2009-03-21. Satoshi 109 blocks, Hal 3 blocks.
+[Governance] Casino miner-bot stances (drawn for this world)
+```
+
+**An empty in-memory chain looks exactly like a new player.** The load aborted, refused to persist — and the
+game then fabricated a whole world and handed it over as if it were the player's: a fresh genesis, 112 mined
+blocks, new bot stances. Nothing could be written for that chain, so playing on would have produced checkpoints
+describing a chain that can never reach disk. **That is INC-001's shape arriving through the RECOVERY path
+rather than through a writer**, which is why "refuse to persist" was only ever half a guard.
+
+The session's file timestamps show the split exactly: `chain.jsonl` and `state.json` untouched, while
+`calendar_state.json`, `bankroll_state.json`, `principal_balance_state.json`, the rollup and two journal
+segments were all rewritten. Those carry the REAL checkpoint's values, so they are not corrupt — but they prove
+the refusal covered one store and nothing else.
+
+**Fixed, and the fix is the rule:**
+- `NetworkRoot.WorldLoadFailed` is public now, because a failed load is a fact the whole session needs.
+- **`HistoricalBootstrapService` refuses to run** on a failed load — a broken world is left visibly broken
+  rather than replaced by a plausible one.
+- **`BlockSessionCheckpointService` refuses to capture** — the checkpoint and the chain must fail together, or
+  the next launch meets exactly the mismatch the tip stamp exists to detect.
+
+**Still open, recorded rather than fixed here:** the remaining eager writers (clock, balances, rollup, journal)
+do not consult `WorldLoadFailed`. They wrote real values this time, but "fail closed everywhere" is a pass of
+its own and belongs to the roadmap, not to the end of this plan.
+
+**P5's verdict: refuted as a gate, then satisfied after the fix** — and it earned its place. The performance
+result (§8) would have shipped a world that replaces itself when damaged.

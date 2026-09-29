@@ -8016,6 +8016,19 @@ public partial class NetworkRoot : Node
 		timelineStamp?.StoreString(TimelineConfig.Tag);
 	}
 
+	// Mini-plan 14 B — world-integrity findings go to BOTH panels, deliberately.
+	//
+	// The case-1 test (a chain one block ahead of its state) passed on 2026-09-29 — the extra block was
+	// truncated and the world loaded — but **the developer saw nothing**, in the Output panel or the Debugger's
+	// Errors tab. These messages describe damage to a saved world and are read once, days later, by someone
+	// asking "what happened to my world"; a `GD.PrintErr` that lands where nobody looks is the same as silence
+	// (CLAUDE.md, "NAME THE PANEL"). So they are printed as well as raised.
+	private static void ReportWorldIntegrity(string message)
+	{
+		GD.Print(message);    // the Output panel: where the developer actually reads
+		GD.PrintErr(message); // and the Errors tab, so it is still an error in the editor's eyes
+	}
+
 	// Mini-plan 14 B — appends whatever the chain has gained since the last write. One line per block, in order.
 	//
 	// It also guards the premise the whole design rests on: blocks are only ever ADDED. If the chain in memory
@@ -8032,7 +8045,7 @@ public partial class NetworkRoot : Node
 
 		if (diverged)
 		{
-			GD.PrintErr($"[NetworkRoot] The chain diverged from what is on disk at height {_chainLinesOnDisk - 1} " +
+			ReportWorldIntegrity($"[NetworkRoot] The chain diverged from what is on disk at height {_chainLinesOnDisk - 1} " +
 						"(a reorg, which this design does not expect). Rewriting the whole chain file.");
 			RewriteWholeChainFile(chain);
 			return;
@@ -8144,12 +8157,12 @@ public partial class NetworkRoot : Node
 					continue;
 				}
 
-				GD.PrintErr($"[NetworkRoot] {ChainPath} line {i + 1} deserialized to nothing — dropped.");
+				ReportWorldIntegrity($"[NetworkRoot] {ChainPath} line {i + 1} deserialized to nothing — dropped.");
 			}
 			catch (Exception e)
 			{
 				// Only the LAST line can legitimately be torn; anything earlier means real damage.
-				GD.PrintErr(i == lines.Length - 1
+				ReportWorldIntegrity(i == lines.Length - 1
 					? $"[NetworkRoot] The last line of {ChainPath} is incomplete — a crash during an append. " +
 					  $"Dropping it; the {chain.Count} blocks before it are intact. ({e.Message})"
 					: $"[NetworkRoot] {ChainPath} line {i + 1} of {lines.Length} is CORRUPT, and it is not the " +
@@ -8169,6 +8182,13 @@ public partial class NetworkRoot : Node
 	// INC-001 / D-15.26 — set when the world snapshot exists but cannot be read. Guards PersistStateToDisk
 	// so a session that failed to load can never write over the file it failed to read.
 	private static bool _snapshotLoadFailed;
+
+	/// <summary>
+	/// True when this session could not load the saved world. Mini-plan 14 B made it public because the
+	/// refusal to PERSIST is only half a guard: everything else must also decline to act as though the world
+	/// were new or usable, or the session quietly builds a second world beside the one on disk.
+	/// </summary>
+	public static bool WorldLoadFailed => _snapshotLoadFailed;
 
 	// The `Try` prefix is a PROMISE that this function handles its own failure — and for two whole steps it
 	// did not: a raw Deserialize threw straight out of EnsureInitialized, which aborted before registering a
@@ -8278,7 +8298,7 @@ public partial class NetworkRoot : Node
 		{
 			// SAFE direction: a crash between the append and the state write. The extra blocks' effects are not
 			// in the balances that were saved, so the world keeps the state it committed to.
-			GD.PrintErr($"[NetworkRoot] The chain file holds {loadedHeight - stampedHeight} block(s) past the " +
+			ReportWorldIntegrity($"[NetworkRoot] The chain file holds {loadedHeight - stampedHeight} block(s) past the " +
 						$"state it was saved with (height {loadedHeight} against {stampedHeight}) — a crash " +
 						"between the two writes. Truncating to the committed height.");
 			snapshot.PlayerChain.RemoveRange(stampedHeight + 1, loadedHeight - stampedHeight);
@@ -8289,7 +8309,7 @@ public partial class NetworkRoot : Node
 		if (loadedHeight < stampedHeight)
 		{
 			// DANGEROUS direction: the state claims blocks that do not exist. Nothing here can invent them.
-			GD.PrintErr($"[NetworkRoot] WORLD LOAD ABORTED — the state says height {stampedHeight} but the " +
+			ReportWorldIntegrity($"[NetworkRoot] WORLD LOAD ABORTED — the state says height {stampedHeight} but the " +
 						$"chain file only has {loadedHeight}. Blocks are missing, and nothing will be " +
 						"persisted this session so the remaining files are left as they are.");
 			_snapshotLoadFailed = true;
@@ -8299,7 +8319,7 @@ public partial class NetworkRoot : Node
 		if (loadedHeight >= 0 && stampedHeight >= 0
 			&& !string.Equals(snapshot.PlayerChain[^1].Hash, snapshot.ChainTipHash, StringComparison.Ordinal))
 		{
-			GD.PrintErr($"[NetworkRoot] WORLD LOAD ABORTED — the chain's tip at height {loadedHeight} is not " +
+			ReportWorldIntegrity($"[NetworkRoot] WORLD LOAD ABORTED — the chain's tip at height {loadedHeight} is not " +
 						"the one the state was saved against. These two files describe different worlds.");
 			_snapshotLoadFailed = true;
 			return;
