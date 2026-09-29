@@ -122,3 +122,38 @@ land. Buffering it is small work; §4 decides whether it is worth doing at all.
 - **Fork / reorg support.** Append-only assumes no reorgs, which is the current design; a future fork plan
   inherits that premise explicitly.
 - **The bet journal.** Mini-plans 12 and 13 finished it: 134.4 bytes a line, bounded in memory, 12.63 µs a bet.
+
+---
+
+## 7. Results — A, one write per block (2026-09-29, 91 blocks, height 120 → 210)
+
+**P1 held on the count, exactly: 1 write in every block, 91 of 91, zero exceptions.** Write time halved,
+**18.39 → 9.30 ms**.
+
+| phase | ms | share |
+|---|---|---|
+| **world write** (one, 230 KB) | **9.30** | 48.2% |
+| checkpoint JSON | 4.39 | 22.8% |
+| historical events | 2.74 | 14.2% |
+| the difficulty trace | 1.55 | 8.0% |
+| UTXO replay (10.0 rebuilds over 10.0 nodes, 0.095 ms each) | 0.95 | 4.9% |
+| bot transactions | 0.78 | 4.0% |
+| **total** | **19.29** | |
+
+**P1's millisecond target is NOT held: 19.29 against "≤ 19".** Missed by 1.5%, and stated as missed. It is also
+not a like-for-like comparison — the format-9 bump wiped the world between the two measurements, so this run
+sits at height ~163 against mini-plan 13's ~400, where the write was 503 KB rather than 230 KB. **The
+comparison that is honest is the one the count gives: the same work, done once instead of twice.**
+
+**Two errors in the first reading of this run, recorded because both were mine and both were caught by the
+data rather than by care:**
+1. **The trace still held the pre-fix run**, and aggregating "the last 100 rows" mixed the two builds, producing
+   a nonsense 1.09 writes per block. Runs must be separated by their timestamp gap before anything is averaged.
+2. **A column index was off by one**, turning `utxoRebuildsSincePrev` (10 rebuilds) into "10 ms" and briefly
+   making the UTXO replay look like half a block. **A trace's header is the schema; read the position, never
+   the position you remember.**
+
+**What A leaves for B, and one thing nobody had measured.** The world write is still **48% of a block and grows
+with the chain** — 230 KB here, 503 KB at height 400 — which is exactly B's target. But the **checkpoint JSON is
+now the second cost at 22.8%**, and the **historical-events phase reads 14.2%**, both of which were invisible
+under the double write. Neither is B's subject; both are recorded so the next ranking starts from measurement.

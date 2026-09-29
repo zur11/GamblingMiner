@@ -38,6 +38,30 @@ public partial class NetworkRoot : Node
 	private const int HalvingIntervalBlocks = 2100;
 	private const string BlockchainDir = "user://blockchain";
 	private const string StatePath = "user://blockchain/state.json";
+
+	// Mini-plan 14 B (D-14.2, 2026-09-29) — THE CHAIN LEAVES THE SNAPSHOT.
+	//
+	// A block is immutable once mined, but it was being rewritten with every later block: mini-plan 13 measured
+	// the snapshot at 503 KB and growing, and unit A's single write still cost 9.30 ms of a 19.29 ms block.
+	// Blocks now live one per line in their own file and are only ever APPENDED; `state.json` keeps the small
+	// mutable remainder and is still written whole and atomically.
+	//
+	// The two files are tied by a TIP STAMP in the state file (height + hash). The pairing has one safe
+	// direction and one dangerous one, and they are handled differently on purpose:
+	//   · chain LONGER than the stamp — a crash between the append and the state write. The extra block's
+	//     effects are not in the balances that were saved, so it is truncated away, loudly. Same outcome as
+	//     crashing before the write under the old design.
+	//   · chain SHORTER than the stamp — the world claims blocks that do not exist. That is unrecoverable
+	//     here, so it fails loudly and latches `_snapshotLoadFailed`, which stops anything being written back.
+	// A torn last line (a crash mid-append) is dropped before either check runs.
+	private const string ChainPath = "user://blockchain/chain.jsonl";
+	private const string ChainTempPath = "user://blockchain/chain.jsonl.tmp";
+
+	// How much of the chain is already on disk, and the tip we appended, so an append can be an append rather
+	// than a rewrite — and so a chain that DIVERGED from what we wrote (a reorg, which Basic Mode does not
+	// have) is detected instead of silently producing a file that is half one history and half another.
+	private static int _chainLinesOnDisk;
+	private static string _chainTipHashOnDisk = string.Empty;
 	// INC-001 / D-15.26 — the staging file for the atomic snapshot write (write here, close, rename over
 	// StatePath). Never read as world state except as the corrupt-main fallback in TryLoadSnapshot.
 	private const string StateTempPath = "user://blockchain/state.json.tmp";
@@ -82,7 +106,11 @@ public partial class NetworkRoot : Node
 	// canonical example line and the units live with `JournalLine` in BetHistoryRepository.
 	// v9 (mini-plan 13, D-13.2 — 2026-09-29): a journal line's `i` is a per-world sequence number, not a 32-hex
 	// Guid. Same reason as v8: the loader cannot read the old shape and is not taught to.
-	private const int WorldFormatVersion = 9;
+	// v10 (mini-plan 14, D-14.2 — 2026-09-29): the chain lives in `chain.jsonl`, and `state.json` carries a tip
+	// stamp instead of the blocks. A v9 file would deserialize with no stamp and no chain file beside it, which
+	// the load path would read as an EMPTY world rather than a broken one — the bump is what stops that being
+	// possible at all.
+	private const int WorldFormatVersion = 10;
 	private const string WorldVersionPath = "user://world_format_version.txt";
 	// Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
 	// A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
@@ -7660,7 +7688,8 @@ public partial class NetworkRoot : Node
 
 		BlockchainStateSnapshot snapshot = new()
 		{
-			PlayerChain = player.Blockchain.Chain,
+			ChainHeight = player.Blockchain.Chain.Count - 1,
+			ChainTipHash = player.Blockchain.Chain.Count > 0 ? player.Blockchain.Chain[^1].Hash : string.Empty,
 			PlayerPendingTransactions = player.Blockchain.PendingTransactions,
 			NodeFinancialStates = SharedNodesById
 				.Where(pair => pair.Value.FinancialState is not null)
@@ -7695,10 +7724,13 @@ public partial class NetworkRoot : Node
 		//
 		// GOTCHA: the `using` must be an explicit BLOCK, not a using-declaration. A declaration lives until
 		// the method returns, which would leave the handle open across the rename below.
-		// Mini-plan 13 A — this whole write times ITSELF and reports where it happens, because a block reaches
-		// here more than once: HandleMinedBlock persists, and the checkpoint capture that follows persists
-		// again through PersistFinancialState(true). Counting the writes settles that by measurement.
+		// Mini-plan 13 A — this whole write times ITSELF and reports where it happens. Mini-plan 14 A made it
+		// one write per block; the count is kept because it is what proved the duplicate in the first place.
 		long snapshotStart = System.Diagnostics.Stopwatch.GetTimestamp();
+
+		// Mini-plan 14 B — the chain goes first, so the file on disk is never BEHIND the state that names it.
+		// Its cost is proportional to the blocks appended (normally one), not to the chain's length.
+		AppendNewBlocksToChainFile(SharedNodesById[PlayerNodeId].Blockchain.Chain);
 
 		string serialized = JsonSerializer.Serialize(snapshot, JsonOptions);
 		using (FileAccess file = FileAccess.Open(StateTempPath, FileAccess.ModeFlags.Write))
@@ -7809,6 +7841,10 @@ public partial class NetworkRoot : Node
 				 "): resetting chain + clock + financial state (clean reset).");
 
 		DeleteIfExists(StatePath);
+		// Mini-plan 14 B — the chain is world state in its own file now, so it is wiped with everything else
+		// (CLAUDE.md Pattern 2's third question). Its counters are reset below with the dirty flag.
+		DeleteIfExists(ChainPath);
+		DeleteIfExists(ChainTempPath);
 		DeleteIfExists(StateTempPath); // INC-001 — a stale staged write must not survive a world wipe
 		DeleteIfExists("user://block_session_checkpoint.json");
 		DeleteIfExists("user://calendar_state.json");
@@ -7959,12 +7995,160 @@ public partial class NetworkRoot : Node
 		// Mini-plan 14 A — a write requested before the wipe must not survive it and recreate what was just
 		// deleted. The wipe is the one place where "dirty" means "about to be wrong", not "about to be saved".
 		_worldDirty = false;
+		// Mini-plan 14 B — and the chain file is gone, so what we believe is on disk must go with it, or the
+		// next append would start from a line count that no longer exists.
+		_chainLinesOnDisk = 0;
+		_chainTipHashOnDisk = string.Empty;
 
 		using FileAccess versionStamp = FileAccess.Open(WorldVersionPath, FileAccess.ModeFlags.Write);
 		versionStamp?.StoreString(WorldFormatVersion.ToString());
 
 		using FileAccess timelineStamp = FileAccess.Open(WorldTimelinePath, FileAccess.ModeFlags.Write);
 		timelineStamp?.StoreString(TimelineConfig.Tag);
+	}
+
+	// Mini-plan 14 B — appends whatever the chain has gained since the last write. One line per block, in order.
+	//
+	// It also guards the premise the whole design rests on: blocks are only ever ADDED. If the chain in memory
+	// no longer matches what was appended — a reorg, which Basic Mode does not have — the file is rewritten
+	// from scratch rather than continued, because continuing would produce a file that is half one history and
+	// half another. That path should never run; if it ever does, it says so.
+	private static void AppendNewBlocksToChainFile(List<Block> chain)
+	{
+		EnsureDirectory(BlockchainDir);
+
+		bool diverged = _chainLinesOnDisk > 0
+			&& (chain.Count < _chainLinesOnDisk
+				|| !string.Equals(chain[_chainLinesOnDisk - 1].Hash, _chainTipHashOnDisk, StringComparison.Ordinal));
+
+		if (diverged)
+		{
+			GD.PrintErr($"[NetworkRoot] The chain diverged from what is on disk at height {_chainLinesOnDisk - 1} " +
+						"(a reorg, which this design does not expect). Rewriting the whole chain file.");
+			RewriteWholeChainFile(chain);
+			return;
+		}
+
+		if (chain.Count == _chainLinesOnDisk)
+		{
+			return; // nothing new — a state-only write (a balance, a governance change)
+		}
+
+		try
+		{
+			using FileAccess file = FileAccess.Open(ChainPath, FileAccess.FileExists(ChainPath)
+				? FileAccess.ModeFlags.ReadWrite
+				: FileAccess.ModeFlags.Write);
+			if (file == null)
+			{
+				GD.PrintErr($"[NetworkRoot] Could not open {ChainPath} ({FileAccess.GetOpenError()}) — " +
+							"the world was NOT persisted this block.");
+				return;
+			}
+
+			file.SeekEnd();
+			for (int i = _chainLinesOnDisk; i < chain.Count; i++)
+			{
+				file.StoreString(JsonSerializer.Serialize(chain[i], JsonOptions) + "\n");
+			}
+
+			file.Flush();
+			_chainLinesOnDisk = chain.Count;
+			_chainTipHashOnDisk = chain[^1].Hash;
+		}
+		catch (Exception e)
+		{
+			GD.PrintErr($"[NetworkRoot] Appending to {ChainPath} failed — the world was NOT persisted this " +
+						$"block: {e.Message}");
+		}
+	}
+
+	// The reorg path above, and the one place a chain file is written whole: staged then renamed, like the
+	// state file, so a failure cannot leave a half-written history behind.
+	private static void RewriteWholeChainFile(List<Block> chain)
+	{
+		try
+		{
+			using (FileAccess file = FileAccess.Open(ChainTempPath, FileAccess.ModeFlags.Write))
+			{
+				if (file == null)
+				{
+					GD.PrintErr($"[NetworkRoot] Could not open {ChainTempPath} ({FileAccess.GetOpenError()}).");
+					return;
+				}
+
+				foreach (Block block in chain)
+				{
+					file.StoreString(JsonSerializer.Serialize(block, JsonOptions) + "\n");
+				}
+
+				file.Flush();
+			}
+
+			System.IO.File.Move(ProjectSettings.GlobalizePath(ChainTempPath),
+								ProjectSettings.GlobalizePath(ChainPath),
+								overwrite: true);
+			_chainLinesOnDisk = chain.Count;
+			_chainTipHashOnDisk = chain.Count > 0 ? chain[^1].Hash : string.Empty;
+		}
+		catch (Exception e)
+		{
+			GD.PrintErr($"[NetworkRoot] Rewriting {ChainPath} failed: {e.Message}");
+		}
+	}
+
+	// Reads the chain back, one block per line. A torn last line — a crash mid-append — is dropped loudly;
+	// everything before it is intact by construction, because a line is only ever appended whole.
+	private static List<Block> LoadChainFromFile()
+	{
+		var chain = new List<Block>();
+		if (!FileAccess.FileExists(ChainPath))
+		{
+			return chain;
+		}
+
+		string[] lines;
+		try
+		{
+			lines = System.IO.File.ReadAllLines(ProjectSettings.GlobalizePath(ChainPath));
+		}
+		catch (Exception e)
+		{
+			GD.PrintErr($"[NetworkRoot] Could not read {ChainPath}: {e.Message}");
+			return chain;
+		}
+
+		for (int i = 0; i < lines.Length; i++)
+		{
+			string line = lines[i];
+			if (string.IsNullOrWhiteSpace(line))
+			{
+				continue;
+			}
+
+			try
+			{
+				Block? block = JsonSerializer.Deserialize<Block>(line, JsonOptions);
+				if (block != null)
+				{
+					chain.Add(block);
+					continue;
+				}
+
+				GD.PrintErr($"[NetworkRoot] {ChainPath} line {i + 1} deserialized to nothing — dropped.");
+			}
+			catch (Exception e)
+			{
+				// Only the LAST line can legitimately be torn; anything earlier means real damage.
+				GD.PrintErr(i == lines.Length - 1
+					? $"[NetworkRoot] The last line of {ChainPath} is incomplete — a crash during an append. " +
+					  $"Dropping it; the {chain.Count} blocks before it are intact. ({e.Message})"
+					: $"[NetworkRoot] {ChainPath} line {i + 1} of {lines.Length} is CORRUPT, and it is not the " +
+					  $"last line, so this is damage rather than a torn append: {e.Message}");
+			}
+		}
+
+		return chain;
 	}
 
 	private static void DeleteIfExists(string userPath)
@@ -8072,7 +8256,50 @@ public partial class NetworkRoot : Node
 
 	private static void ApplyStateFromSnapshot(BlockchainStateSnapshot? snapshot)
 	{
-		if (snapshot is null || snapshot.PlayerChain.Count == 0) return;
+		if (snapshot is null) return;
+
+		// Mini-plan 14 B — the chain comes from its own file now, and the state file says which chain it
+		// belongs to. Both mismatch directions are handled here, and they are not symmetric.
+		snapshot.PlayerChain = LoadChainFromFile();
+
+		int stampedHeight = snapshot.ChainHeight;
+		int loadedHeight = snapshot.PlayerChain.Count - 1;
+
+		if (loadedHeight > stampedHeight && stampedHeight >= 0)
+		{
+			// SAFE direction: a crash between the append and the state write. The extra blocks' effects are not
+			// in the balances that were saved, so the world keeps the state it committed to.
+			GD.PrintErr($"[NetworkRoot] The chain file holds {loadedHeight - stampedHeight} block(s) past the " +
+						$"state it was saved with (height {loadedHeight} against {stampedHeight}) — a crash " +
+						"between the two writes. Truncating to the committed height.");
+			snapshot.PlayerChain.RemoveRange(stampedHeight + 1, loadedHeight - stampedHeight);
+			loadedHeight = stampedHeight;
+			RewriteWholeChainFile(snapshot.PlayerChain);
+		}
+
+		if (loadedHeight < stampedHeight)
+		{
+			// DANGEROUS direction: the state claims blocks that do not exist. Nothing here can invent them.
+			GD.PrintErr($"[NetworkRoot] WORLD LOAD ABORTED — the state says height {stampedHeight} but the " +
+						$"chain file only has {loadedHeight}. Blocks are missing, and nothing will be " +
+						"persisted this session so the remaining files are left as they are.");
+			_snapshotLoadFailed = true;
+			return;
+		}
+
+		if (loadedHeight >= 0 && stampedHeight >= 0
+			&& !string.Equals(snapshot.PlayerChain[^1].Hash, snapshot.ChainTipHash, StringComparison.Ordinal))
+		{
+			GD.PrintErr($"[NetworkRoot] WORLD LOAD ABORTED — the chain's tip at height {loadedHeight} is not " +
+						"the one the state was saved against. These two files describe different worlds.");
+			_snapshotLoadFailed = true;
+			return;
+		}
+
+		_chainLinesOnDisk = snapshot.PlayerChain.Count;
+		_chainTipHashOnDisk = snapshot.PlayerChain.Count > 0 ? snapshot.PlayerChain[^1].Hash : string.Empty;
+
+		if (snapshot.PlayerChain.Count == 0) return;
 
 		foreach (NodeAgent node in SharedNodesById.Values)
 			node.Blockchain.TryReplaceChain(snapshot.PlayerChain, snapshot.PlayerPendingTransactions);
@@ -8257,6 +8484,11 @@ public partial class NetworkRoot : Node
 
 	private sealed class BlockchainStateSnapshot
 	{
+		// Mini-plan 14 B — the chain is no longer here; these two say which chain this state belongs to.
+		// `ChainHeight` is the tip's index (-1 when no chain exists yet).
+		public int ChainHeight { get; set; } = -1;
+		public string ChainTipHash { get; set; } = string.Empty;
+		[System.Text.Json.Serialization.JsonIgnore]
 		public List<Block> PlayerChain { get; set; } = new();
 		public List<Transaction> PlayerPendingTransactions { get; set; } = new();
 		public Dictionary<string, NodeFinancialState> NodeFinancialStates { get; set; } = new();
