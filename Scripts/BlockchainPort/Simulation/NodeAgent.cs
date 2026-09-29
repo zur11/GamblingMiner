@@ -45,12 +45,14 @@ public sealed class NodeAgent
 	public NodeAgent(string nodeId)
 	{
 		NodeId = nodeId;
+		Blockchain.OwnerNodeIdForDiagnostics = nodeId; // mini-plan 13 A — names the owner in the block-cost trace
 		(WalletAddress, WalletPublicKey, WalletPrivateKey, WalletSecp256k1PublicKey) = CryptoUtils.GenerateWallet();
 	}
 
 	public NodeAgent(string nodeId, string address, string signingPublicKey, string signingPrivateKey, string secp256k1PublicKey)
 	{
 		NodeId = nodeId;
+		Blockchain.OwnerNodeIdForDiagnostics = nodeId;
 		WalletAddress = address;
 		WalletPublicKey = signingPublicKey;
 		WalletPrivateKey = signingPrivateKey;

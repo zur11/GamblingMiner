@@ -85,6 +85,7 @@ namespace UI.DevTimeScaleSelector
 
 			AddBetCostToggle();
 			AddFrameCostToggle();
+			AddBlockCostToggle();
 			AddFrameCapSelector();
 			AddBudgetSelector();
 			AddFrameReportCounter();
@@ -313,6 +314,31 @@ namespace UI.DevTimeScaleSelector
 			GD.Print(string.Create(System.Globalization.CultureInfo.InvariantCulture,
 				$"[FrameCost] toggle built in this scene — tick '{toggle.Text}' beside the DEV time selector to arm " +
 				$"whole-frame timing (reports every {Scripts.Diagnostics.FrameCostProfiler.ReportEveryFrames:N0} simulated frames)."));
+		}
+
+		// Mini-plan 13 A — arms Scripts/Diagnostics/BlockCostProfiler, the third instrument of the set. The bet
+		// toggle prices an event that costs the same every time and the frame toggle prices the loop around it;
+		// this one prices the event whose cost GROWS with the world, which is why it reports per BLOCK against
+		// the chain height rather than per window.
+		//
+		// Unlike the other two it is safe to arm mid-run: a block arrives every several seconds at most, so the
+		// toggle is not competing with a saturated frame for the click.
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void AddBlockCostToggle()
+		{
+			var toggle = new CheckButton
+			{
+				Text = "⏱ Block cost",
+				ButtonPressed = Scripts.Diagnostics.BlockCostProfiler.Enabled, // the static state outlives the scene
+				TooltipText =
+					"DEV — time each MINED BLOCK phase by phase: broadcast, bot transactions, auctions, governance, "
+					+ "the snapshot write, the checkpoint, and the UTXO replays the block causes. One line per block "
+					+ "in the Godot editor's Output panel and one row in user://logs/block_cost_trace.csv, each "
+					+ "carrying the chain height so cost can be read against the size of the world.",
+			};
+			toggle.AddThemeFontSizeOverride("font_size", 16);
+			toggle.Toggled += pressed => Scripts.Diagnostics.BlockCostProfiler.Arm(pressed);
+			DiagnosticColumn().AddChild(toggle);
 		}
 
 		// Mini-plan 08 P1 — arms Scripts/Diagnostics/BetCostProfiler, which times one bet segment by segment.

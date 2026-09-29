@@ -1185,12 +1185,36 @@ public partial class DiceGame : Control, IBetEventSource
 	}
 
 	// --- Autobet Session
+	// Developer's request, 2026-09-29: a second click landing on AUTO right after a stop restarted the run
+	// immediately — a double-click on STOP is enough to do it, and during a measurement that silently starts a
+	// new session where the protocol expected none. So a start is ignored for a moment after a stop.
+	//
+	// ONE DIRECTION ONLY, and that asymmetry is the whole point: STOP is never blocked, at any time, by
+	// anything here. A guard that could swallow a stop would be worse than the accident it prevents — stopping
+	// is how a player ends a run that is losing money.
+	private const ulong AutobetRestartGuardMsec = 1000;
+	private ulong _autobetStoppedAtMsec;
+
+	// Called from both stop paths: the player's own STOP, and a session that stopped itself.
+	private void NoteAutobetStopped() => _autobetStoppedAtMsec = Godot.Time.GetTicksMsec();
+
 	private void OnAutoBetToggled(bool running)
 	{
 		// Only the player may run an autobet; bots are configured but never bet directly.
 		if (running && !IsPlayerActive())
 		{
 			_strategyPanel.SetAutoRunning(false);
+			return;
+		}
+
+		// The restart guard. `_autobetStoppedAtMsec > 0` keeps it from firing on the first start of a process,
+		// where the clock itself is still inside the window.
+		if (running && _autobetStoppedAtMsec > 0
+			&& Godot.Time.GetTicksMsec() - _autobetStoppedAtMsec < AutobetRestartGuardMsec)
+		{
+			_strategyPanel.SetAutoRunning(false); // keep the button honest about what is actually running
+			GD.Print($"[AutoBet] Start ignored — it arrived within {AutobetRestartGuardMsec} ms of the last stop " +
+					 "(the double-click guard). Press AUTO again.");
 			return;
 		}
 
@@ -1217,6 +1241,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 		if (!running)
 		{
+			NoteAutobetStopped(); // starts the restart guard's window; stopping itself is never guarded
 			// Stop the background player autobet (owned by SimulationService) and re-sync DiceGame's
 			// own wallet from the bankroll source of truth so manual betting resumes correctly.
 			_simulationService?.Stop();
@@ -1559,6 +1584,7 @@ public partial class DiceGame : Control, IBetEventSource
 	// Fired by SimulationService when the background autobet stops on its own (stop condition).
 	private void OnSimAutobetStopped()
 	{
+		NoteAutobetStopped(); // a self-stop (a stop condition, insufficient funds) arms the same guard
 		_autobetDelegated = false;
 		SetActiveNodeSelectorLocked(false);
 		ApplyRunLock(false);
@@ -2611,6 +2637,9 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void CaptureBlockCheckpoint()
 	{
+		// Mini-plan 13 A — the manual-bet twin of SimulationService.CaptureCheckpoint: the block's last phase,
+		// and the call that closes its row in the block-cost trace.
+		Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Checkpoint);
 		SaveActiveNodeFinancialState(true);
 
 		if (_blockCheckpointService == null ||
@@ -2618,6 +2647,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_bankrollStateService == null ||
 			_bankrollProgramService == null)
 		{
+			Scripts.Diagnostics.BlockCostProfiler.EndBlock(); // the block still happened; close its row
 			return;
 		}
 
@@ -2648,5 +2678,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_activeNodeId = activeBotId;
 			LoadActiveNodeFinancialState();
 		}
+
+		Scripts.Diagnostics.BlockCostProfiler.EndBlock();
 	}
 }

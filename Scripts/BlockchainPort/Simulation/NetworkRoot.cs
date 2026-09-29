@@ -80,7 +80,9 @@ public partial class NetworkRoot : Node
 	// keys and money as whole satoshis, replacing the wrapped record that wrote 285 bytes a bet. The loader
 	// cannot read the old shape and, per project policy, is not taught to: the world is reset instead. The
 	// canonical example line and the units live with `JournalLine` in BetHistoryRepository.
-	private const int WorldFormatVersion = 8;
+	// v9 (mini-plan 13, D-13.2 — 2026-09-29): a journal line's `i` is a per-world sequence number, not a 32-hex
+	// Guid. Same reason as v8: the loader cannot read the old shape and is not taught to.
+	private const int WorldFormatVersion = 9;
 	private const string WorldVersionPath = "user://world_format_version.txt";
 	// Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
 	// A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
@@ -2018,6 +2020,13 @@ public partial class NetworkRoot : Node
 
 	private static void HandleMinedBlock(NodeAgent miner, Block block)
 	{
+		// Mini-plan 13 A — per-block phase timing (Scripts/Diagnostics/BlockCostProfiler.cs), DEBUG-only and
+		// disarmed by default. The phases below are contiguous: each Enter closes the previous one. Opened here
+		// rather than at the caller so every miner's block is timed by the same boundaries.
+		Scripts.Diagnostics.BlockCostProfiler.BeginBlock(miner.NodeId, block.Index,
+			DateTimeOffset.FromUnixTimeMilliseconds(block.Timestamp).UtcDateTime);
+		Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Broadcast);
+
 		// Step 4b: the coinbase now lives inside the block (BlockTemplateBuilder), so it propagates
 		// with BroadcastBlock — no separate coinbase-transaction broadcast is needed.
 		SharedNetwork.BroadcastBlock(miner.NodeId, block);
@@ -2040,16 +2049,31 @@ public partial class NetworkRoot : Node
 
 		if (!_bulkMining)
 		{
+			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.DifficultyTrace);
 			AppendDifficultyTrace(miner, block); // F0: per-block difficulty/throughput telemetry (live blocks only)
+			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.BotTransactions);
 			ScheduleBotTransactionsAfterBlock(block);
+			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Auctions);
 			TrySettleResolvedAuctions(block); // Step 14 (ND.5, D-ND5.10): settle any non-miner that just resolved this block
 			CancelAndRefundStaleAuctionBids(block); // Step 14 (ND.8d, D-ND8d.7): cancel pending / refund confirmed bids to auctions that already closed
+			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Governance);
 			TickCompanyGovernance(block); // Step 14 (ND.8b.3): votes + dividends, committed in this block's snapshot write below
+			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.HistoricalEvents);
 			HistoricalEventScheduler.OnBlockMined(block); // Step 7.4: inject scripted player-era txs at their date
+			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Snapshot);
 			PersistStateToDisk();
 			// After every block (any miner), retry casino-pool payouts whose coinbase has now matured.
+			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.CasinoRewards);
 			TryDistributePendingCasinoRewards(block.Timestamp);
+			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Subscribers);
 			BlockAccepted?.Invoke(block); // last — subscribers see the post-payout spendable state
+		}
+
+		// The checkpoint capture follows, from SimulationService/DiceGame, and closes the block there. A bulk
+		// -mined block never reaches that path, so it is closed here instead: a block that opened must close.
+		if (_bulkMining)
+		{
+			Scripts.Diagnostics.BlockCostProfiler.EndBlock();
 		}
 	}
 
@@ -7632,6 +7656,11 @@ public partial class NetworkRoot : Node
 		//
 		// GOTCHA: the `using` must be an explicit BLOCK, not a using-declaration. A declaration lives until
 		// the method returns, which would leave the handle open across the rename below.
+		// Mini-plan 13 A — this whole write times ITSELF and reports where it happens, because a block reaches
+		// here more than once: HandleMinedBlock persists, and the checkpoint capture that follows persists
+		// again through PersistFinancialState(true). Counting the writes settles that by measurement.
+		long snapshotStart = System.Diagnostics.Stopwatch.GetTimestamp();
+
 		string serialized = JsonSerializer.Serialize(snapshot, JsonOptions);
 		using (FileAccess file = FileAccess.Open(StateTempPath, FileAccess.ModeFlags.Write))
 		{
@@ -7659,6 +7688,10 @@ public partial class NetworkRoot : Node
 			GD.PrintErr($"[NetworkRoot] Snapshot rename failed — the previous world state is still on disk " +
 						$"and this block was NOT committed: {e.Message}");
 		}
+
+		Scripts.Diagnostics.BlockCostProfiler.NoteSnapshotWrite(
+			serialized.Length,
+			(System.Diagnostics.Stopwatch.GetTimestamp() - snapshotStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
 	}
 
 	// Step 8 (clean reset) + Step 13 (TL.1, D-13.7) — the persisted world is wiped whenever EITHER the
