@@ -1244,7 +1244,7 @@ public partial class NetworkRoot : Node
 		// lands in a snapshot write (the PersistStateToDisk immediately below), which is the property the
 		// original lazy call site was protecting; the vote path keeps calling it as an idempotent safety net.
 		EnsureBotGovernancePreferences();
-		PersistStateToDisk();
+		PersistWorldNow(); // boot path: nothing will flush this for us
 		_isInitialized = true;
 	}
 
@@ -1596,7 +1596,7 @@ public partial class NetworkRoot : Node
 	public static void EndBulkMiningAndPersist()
 	{
 		_bulkMining = false;
-		PersistStateToDisk();
+		PersistWorldNow(); // the bootstrap ends outside the frame loop
 	}
 
 	// ── Step 2: weighted block lottery ─────────────────────────────────────────
@@ -2061,7 +2061,7 @@ public partial class NetworkRoot : Node
 			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.HistoricalEvents);
 			HistoricalEventScheduler.OnBlockMined(block); // Step 7.4: inject scripted player-era txs at their date
 			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Snapshot);
-			PersistStateToDisk();
+			RequestWorldPersist(); // one write per block, flushed by the checkpoint or the frame (mini-plan 14 A)
 			// After every block (any miner), retry casino-pool payouts whose coinbase has now matured.
 			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.CasinoRewards);
 			TryDistributePendingCasinoRewards(block.Timestamp);
@@ -7459,7 +7459,7 @@ public partial class NetworkRoot : Node
 				BankrollBalance = Scripts.Finance.Money.Normalize(Math.Max(0m, defaultBankrollBalance)),
 				UpdatedAtUtc = DateTime.UtcNow
 			};
-			PersistStateToDisk();
+			RequestWorldPersist();
 		}
 
 		return node.FinancialState.Clone();
@@ -7500,7 +7500,7 @@ public partial class NetworkRoot : Node
 
 		if (changed && persist)
 		{
-			PersistStateToDisk();
+			RequestWorldPersist();
 		}
 	}
 
@@ -7516,7 +7516,7 @@ public partial class NetworkRoot : Node
 		node.FinancialState.UpdatedAtUtc = DateTime.UtcNow;
 		if (persist)
 		{
-			PersistStateToDisk();
+			RequestWorldPersist();
 		}
 	}
 
@@ -7602,6 +7602,45 @@ public partial class NetworkRoot : Node
 	// chain, not the mempool, not financial state — so an app restart reverts the whole world (clock, balances
 	// AND pending transactions) to the last mined block. A tx broadcast or consensus round only mutates the
 	// in-memory state; it becomes durable when the next block is mined.
+	// Mini-plan 14 A (D-14.1, 2026-09-29) — THE WRITE IS NOW REQUESTED, NOT PERFORMED, and this is why.
+	//
+	// Mini-plan 13 measured one block writing this whole snapshot TWICE: once here from HandleMinedBlock, once
+	// from the checkpoint's PersistFinancialState(true), 503 KB each, 18.39 ms of a 27.55 ms block. The second
+	// write is not redundant in content — it alone commits the post-bet financial mirrors, the bots' included —
+	// but the chain half of it is identical, so the pair collapses into one write with no loss.
+	//
+	// `RequestWorldPersist` marks the world dirty; `FlushWorldIfDirty` performs at most one write. The flush
+	// runs at the top of SimulationService._Process, BEFORE its early return, so an idle-time mutation is not
+	// left unwritten merely because nothing is betting, and again just before each checkpoint capture, which
+	// keeps an invariant that used to hold by accident of ordering: **the chain on disk is never older than the
+	// checkpoint that refers to it.**
+	//
+	// ⚠ What this costs, stated rather than discovered: a commit now lands milliseconds later than the block
+	// that caused it, inside the same frame. "A block is the only commit" still holds; the window between the
+	// block and its durability widened from zero to one frame.
+	private static bool _worldDirty;
+
+	public static void RequestWorldPersist() => _worldDirty = true;
+
+	/// <summary>Writes the world snapshot if anything asked for it since the last write. Cheap when clean.</summary>
+	public static void FlushWorldIfDirty()
+	{
+		if (!_worldDirty)
+		{
+			return;
+		}
+
+		_worldDirty = false;
+		PersistStateToDisk();
+	}
+
+	/// <summary>Request + flush, for the paths that run outside the frame loop and cannot wait for it.</summary>
+	private static void PersistWorldNow()
+	{
+		RequestWorldPersist();
+		FlushWorldIfDirty();
+	}
+
 	private static void PersistStateToDisk()
 	{
 		// INC-001 / D-15.26 — a session whose snapshot FAILED to load must never write back over the file it
@@ -7916,6 +7955,10 @@ public partial class NetworkRoot : Node
 		//     describing the old world cannot mislead any code — only a human, who has the timestamps.
 		// If that balance ever changes — logs consulted by code, or retention made unbounded — revisit it
 		// here, and say so, rather than quietly adding them to the sweep above.
+
+		// Mini-plan 14 A — a write requested before the wipe must not survive it and recreate what was just
+		// deleted. The wipe is the one place where "dirty" means "about to be wrong", not "about to be saved".
+		_worldDirty = false;
 
 		using FileAccess versionStamp = FileAccess.Open(WorldVersionPath, FileAccess.ModeFlags.Write);
 		versionStamp?.StoreString(WorldFormatVersion.ToString());
