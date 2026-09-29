@@ -80,7 +80,9 @@ public partial class NetworkRoot : Node
 	// keys and money as whole satoshis, replacing the wrapped record that wrote 285 bytes a bet. The loader
 	// cannot read the old shape and, per project policy, is not taught to: the world is reset instead. The
 	// canonical example line and the units live with `JournalLine` in BetHistoryRepository.
-	private const int WorldFormatVersion = 8;
+	// v9 (mini-plan 13, D-13.2 — 2026-09-29): a journal line's `i` is a per-world sequence number, not a 32-hex
+	// Guid. Same reason as v8: the loader cannot read the old shape and is not taught to.
+	private const int WorldFormatVersion = 9;
 	private const string WorldVersionPath = "user://world_format_version.txt";
 	// Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
 	// A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009

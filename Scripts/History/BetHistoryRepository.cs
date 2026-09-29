@@ -49,7 +49,7 @@ namespace Scripts.History
 		// in _records" structurally impossible, which is the whole class of bug INC-001 produced and that no
 		// READER ever defended against. Kept in lockstep with _records — every site that clears, bulk-loads
 		// or truncates the list must go through the helpers below. See ProjectDesignManual §40.8.
-		private readonly HashSet<string> _recordIds = new(StringComparer.Ordinal);
+		private readonly HashSet<long> _recordIds = new();
 		private int _duplicateRecordsSkipped;
 		private readonly List<JournalLine> _pendingJournalEntries = new();
 		private readonly JsonSerializerOptions _jsonOptions = new()
@@ -157,6 +157,7 @@ namespace Scripts.History
 
 			InitializeJournalPathsAndLoadLatestChunk();
 			ReportDuplicatesSkipped();
+			ResetNextRecordIdFromRecords();
 			if (_records.Count > 0 || _deposits.Count > 0)
 			{
 				return;
@@ -180,6 +181,7 @@ namespace Scripts.History
 			ResetInMemoryState();
 			InitializeJournalPathsAndLoadAllChunks();
 			ReportDuplicatesSkipped();
+			ResetNextRecordIdFromRecords();
 			_loadedAllChunks = true;
 		}
 
@@ -209,8 +211,8 @@ namespace Scripts.History
 
 			for (int i = 0; i < excess; i++)
 			{
-				string id = _records[i]?.Id;
-				if (!string.IsNullOrEmpty(id))
+				long id = _records[i]?.Id ?? 0;
+				if (id > 0)
 				{
 					_recordIds.Remove(id);
 				}
@@ -233,13 +235,46 @@ namespace Scripts.History
 		// of a bet older than the window would now pass, and that is a stated limit rather than an oversight.
 		private bool TryClaimRecordId(BetRecord record)
 		{
-			string id = record?.Id;
-			if (string.IsNullOrEmpty(id))
+			long id = record?.Id ?? 0;
+			if (id <= 0)
 			{
-				return true;
+				return true; // unassigned: nothing to deduplicate against, same as an id-less legacy line
 			}
 
 			return _recordIds.Add(id);
+		}
+
+		// Mini-plan 13 B (D-13.2) — the next id this world will hand out. Ids are assigned HERE rather than by
+		// the record's own initializer, because this class is the one that knows what the journal holds after a
+		// rollback: a restart rewinds the world to the last block, records after it are dropped, and the counter
+		// has to rewind with them or a reissued number could collide with a record that survived.
+		//
+		// It needs no persisted field. Every path that changes what is held re-derives it from the records
+		// themselves (loads, rollback, clear), which is the only source that cannot disagree with them.
+		private long _nextRecordId;
+
+		private long NextRecordId() => ++_nextRecordId;
+
+		// Re-derives the counter from what is actually held. Called after every load, rollback and clear.
+		//
+		// NOTE the interaction with pruning, stated rather than discovered later: the journal keeps the newest
+		// segments, which hold the HIGHEST ids, so the maximum survives trimming. A world whose journal is
+		// emptied entirely restarts the sequence at 1 and may reuse numbers that pruned records once carried —
+		// harmless, because those records exist nowhere any more, and the guard only ever compares what is held.
+		private void ResetNextRecordIdFromRecords()
+		{
+			long max = 0;
+			foreach (BetRecord record in _records)
+			{
+				if (record != null && record.Id > max) max = record.Id;
+			}
+
+			foreach (DepositRecord deposit in _deposits)
+			{
+				if (deposit != null && deposit.Id > max) max = deposit.Id;
+			}
+
+			_nextRecordId = max;
 		}
 
 		// Loud on purpose. A duplicate reaching the loader means a writer produced one (INC-001's shape) or a
@@ -620,6 +655,14 @@ namespace Scripts.History
 				throw new ArgumentNullException(nameof(record));
 			}
 
+			// Mini-plan 13 B — a live record arrives unassigned and gets the next number here. One that already
+			// carries an id is being re-added (a rebuild, a restore), and keeps it, so the guard below still
+			// sees the repeat for what it is.
+			if (record.Id <= 0)
+			{
+				record.Id = NextRecordId();
+			}
+
 			if (!TryClaimRecordId(record))
 			{
 				// A live re-registration of an already-stored bet — the double-counting shape, at its source
@@ -639,6 +682,11 @@ namespace Scripts.History
 			if (record == null)
 			{
 				throw new ArgumentNullException(nameof(record));
+			}
+
+			if (record.Id <= 0)
+			{
+				record.Id = NextRecordId(); // deposits share the bets' sequence: one journal, one id space
 			}
 
 			_deposits.Add(record);
@@ -861,6 +909,7 @@ namespace Scripts.History
 			_records.RemoveAll(r => r != null && r.TimestampUtc > checkpoint);
 			_deposits.RemoveAll(d => d != null && d.TimestampUtc > checkpoint);
 			RebuildRecordIdIndex();
+			ResetNextRecordIdFromRecords(); // the rewind the counter must follow (mini-plan 13 B)
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
 			RebuildJournalFromCurrentState();
@@ -873,7 +922,7 @@ namespace Scripts.History
 			_recordIds.Clear();
 			foreach (BetRecord record in _records)
 			{
-				if (record != null && !string.IsNullOrEmpty(record.Id))
+				if (record != null && record.Id > 0)
 				{
 					_recordIds.Add(record.Id);
 				}
@@ -887,6 +936,7 @@ namespace Scripts.History
 			_deposits.Clear();
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
+			_nextRecordId = 0;
 			RebuildJournalFromCurrentState();
 		}
 
@@ -1076,8 +1126,10 @@ namespace Scripts.History
 		// binary format would end that for a saving the measurement did not justify (§4 C's rule chose the
 		// slim form; the journal append was 5.09 µs of a 17.10 µs bet, 29.7%).
 		//
-		// One bet line, as written:
-		//   {"t":"b","i":"f207897dc94142fca05b859db862e448","g":"Dice","ts":"2009-09-11T14:07:09.8856277Z",
+		// One bet line, as written (mini-plan 13 D-13.2 made `i` a per-world sequence number rather than a
+		// 32-character Guid — one less string allocation a bet, an 8-byte hash in the duplicate guard instead
+		// of a 32-character one, and ~30 fewer bytes here):
+		//   {"t":"bet","i":417,"g":"Dice","ts":"2009-09-11T14:07:09.8856277Z",
 		//    "o":1,"a":230000,"n":-230000,"b":449815636641,"r":50,"c":50,"m":19804}
 		//
 		// **The units are the part to know before reading a journal by hand:** `a`, `n` and `b` are SATOSHIS
@@ -1087,7 +1139,7 @@ namespace Scripts.History
 		private sealed class JournalLine
 		{
 			[JsonPropertyName("t")] public string Type { get; set; } = string.Empty;
-			[JsonPropertyName("i")] public string Id { get; set; }
+			[JsonPropertyName("i")] public long Id { get; set; }
 			[JsonPropertyName("g")] public string GameId { get; set; }
 			[JsonPropertyName("ts")] public DateTime TimestampUtc { get; set; }
 			[JsonPropertyName("o")] public int Outcome { get; set; }
@@ -1134,7 +1186,7 @@ namespace Scripts.History
 			{
 				return new BetRecord
 				{
-					Id = string.IsNullOrEmpty(Id) ? Guid.NewGuid().ToString("N") : Id,
+					Id = Id,
 					GameId = GameId ?? string.Empty,
 					TimestampUtc = DateTime.SpecifyKind(TimestampUtc, DateTimeKind.Utc),
 					Outcome = (BetOutcome)Outcome,
@@ -1152,7 +1204,7 @@ namespace Scripts.History
 			{
 				return new DepositRecord
 				{
-					Id = string.IsNullOrEmpty(Id) ? Guid.NewGuid().ToString("N") : Id,
+					Id = Id,
 					TimestampUtc = DateTime.SpecifyKind(TimestampUtc, DateTimeKind.Utc),
 					Amount = FromSatoshis(AmountSat),
 					BalanceAfter = FromSatoshis(BalanceAfterSat)
