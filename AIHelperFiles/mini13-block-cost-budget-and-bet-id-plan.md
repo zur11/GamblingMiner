@@ -4,7 +4,8 @@
 12 left two things behind: a per-bet cost whose remainder is one field, and a per-block cost that mini-plan 11
 measured only as a single number. This plan takes both, and the second is the one that matters.
 
-**Status:** 📋 **SPECIFIED 2026-09-28**, not started. Proposed branch `mini13-block-cost-budget-and-bet-id`.
+**Status:** ✅ **DONE 2026-09-29**, merged to `main` from `mini13-block-cost-budget-and-bet-id`. **Read §9
+first** — it is the close-out, and it names what the next plan inherits.
 
 **Why these two together.** They share one instrument session and nothing else. **A** is the roadmap's **T4.6**,
 which T4 itself says to do first because four other items (T4.1, T4.2, T4.3, T4.5) are gated on it. **B** is the
@@ -231,3 +232,49 @@ zero backward steps and zero balance-continuity breaks** across 193,108 records.
 > **The lesson, and it is the same shape as mini-plan 11's "1.5× further":** a verification step has to name
 > the state it puts the system INTO, not only the action it performs. "Restart and reopen" exercises a load;
 > only "restart, then bet" exercises a rewind.
+
+---
+
+## 9. Close-out (2026-09-29)
+
+**Both questions answered, one of them by finding something no rule had anticipated.**
+
+**A — what a block costs.** 27.55 ms at height ~400, and **two thirds of it writes the world snapshot twice**:
+exactly 2 writes in 51 of 51 blocks, 18.39 ms, 503 KB each. The phases hid it by splitting it (10.72 Snapshot,
+12.33 Checkpoint), which is why the instrument had to count the writes rather than time two phases. §4 A's rule
+fires on `Snapshot ≥ 50%` and selects **T4.5**. The UTXO replay — this plan's own leading suspect, and the
+reason T4.1/T4.2 exist — is **7.4%**, with **8.7 distinct nodes rebuilding per block** and a per-rebuild cost
+growing **4.4× while the chain grew 2.5×**: real, structural, and not yet the priority.
+
+**B — the bet's last field.** A journal line is **134.4 bytes** and a bet **12.63 µs**, against 162.7 and 16.07.
+The id is a per-world sequence whose rewind was exercised, not argued: 2,729 ids issued after a restart, all
+above the pre-restart maximum, zero duplicates across 193,108 records.
+
+**Where a bet's cost now sits:** the **real proof-of-work hash is the largest single item** (4.72 µs of 12.63).
+Across mini-plans 12 and 13 a bet went 28.5 → 12.63 µs and a journal line 285.3 → 134.4 bytes, and what remains
+is mostly work the game exists to do.
+
+**Predictions: 2 held, 3 refuted, 1 out of range.** P2 (snapshot ≥ 20%) and P5 (the id's saving) held. P1 was
+refuted on its share and confirmed on its shape. P3 missed narrowly (traces 6.5%, not under 5%). P6 held but
+**needed a second run to be tested at all**. P4 could not be reached at height 395 and is left as an
+extrapolation rather than a result.
+
+**Three lessons, each earned here:**
+
+1. **A cost split across two phases can hide a duplicate.** Neither 36% nor 46% looked like an answer; "the same
+   write, twice" only appeared when the writes were **counted**. When two adjacent phases both look plausible,
+   count the operation instead of timing the phases.
+2. **A verification step must name the state it puts the system INTO**, not only the action it performs.
+   "Restart and reopen" exercises a load; only "restart, then bet" exercises a rewind.
+3. **The check belongs in the artefact, not in the developer's eyes.** Asking someone to spot a line in a
+   scrolling Output panel was rejected outright by the developer, correctly: the running build was instead
+   settled by comparing the assembly's build time against the process start time, and the trace header confirms
+   which column set a build wrote. *Mini-plan 12 wrote this rule down and this plan still asked; the rule only
+   works when the protocol is written against it.*
+
+**What the next plan inherits, and the part worth saying plainly:** §4 selected T4.5 (append the chain instead
+of rewriting it), but the **first move inside it is smaller and better understood — stop writing the chain
+twice.** The second write is the only path that commits the post-bet financial mirrors, the bots' included, so
+it cannot simply be deleted; separating the immutable chain from the mutable state is what makes one write
+enough. T4.1 and T4.2 stay on the roadmap with a measured share (7.4%) and a measured growth rate, which is a
+better starting point than the estimate they had.

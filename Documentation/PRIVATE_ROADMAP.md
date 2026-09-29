@@ -534,11 +534,25 @@ and normal speed it is ~74 hours of continuous play.
   serialization and bookkeeping. The rule is registered in the plan; a bounded store needs a small record far
   less than an unbounded one did.
 
-### What a block costs, and the last field in a bet — SPECIFIED (mini-plan 13, 2026-09-28)
+### What a block costs, and the last field in a bet — ✅ DONE (mini-plan 13, 2026-09-29)
 
-**Status: `AIHelperFiles/mini13-block-cost-budget-and-bet-id-plan.md`, not started; proposed branch
-`mini13-block-cost-budget-and-bet-id`.** **This is T4.6**, which T4 itself says to do first because T4.1, T4.2,
-T4.3 and T4.5 are all gated on it — see the entry below and T4's own suggested order.
+> **T4.6 is answered, and it selects T4.5.** A block costs **27.55 ms** at height ~400, of which **66.7% writes
+> the world snapshot TWICE** — exactly 2 writes in 51 of 51 blocks, 18.39 ms, 503 KB each. Two phases split the
+> cost (Snapshot 10.72, Checkpoint 12.33), which is why it only appeared once the writes were *counted*. **The
+> UTXO replay is 7.4%** — 8.7 distinct nodes rebuild per block and the per-rebuild cost grew 4.4× while the
+> chain grew 2.5×, so T4.1/T4.2 are real, structural and not yet the priority. **The first move inside T4.5 is
+> smaller than T4.5 itself: stop writing the chain twice.** The second write is the only path committing the
+> post-bet financial mirrors (the bots' included), so it cannot be deleted — separating the immutable chain from
+> the mutable state is what makes one write enough.
+>
+> **B shipped too (D-13.2):** the bet id is a per-world sequence rather than a 32-character Guid — a bet
+> **16.07 → 12.63 µs**, a journal line **162.7 → 134.4 bytes**, the rewind exercised by 2,729 ids issued after a
+> restart with zero duplicates over 193,108 records. Across mini-plans 12–13 a bet went **28.5 → 12.63 µs** and
+> a line **285.3 → 134.4 bytes**, leaving the real proof-of-work hash as the largest single item in a bet.
+> Text below is the original specification.
+
+**Status: `AIHelperFiles/mini13-block-cost-budget-and-bet-id-plan.md`, own branch off `main`.** **This is T4.6**,
+which T4 itself says to do first because T4.1, T4.2, T4.3 and T4.5 are all gated on it.
 
 - **(A) The per-block budget.** Mini-plan 11 measured the total only (24 ms at height 376, 33 ms at 747, growing
   with the chain). This decomposes it: broadcast, bot transactions, auctions, governance, historical events, the
@@ -822,6 +836,17 @@ Generalize `ClientBetStats` to **all five clients including the player**, so lif
 #### T4.5 — Bounded / incremental world persistence
 
 The snapshot rewrites the full chain per block. Options, cheapest first: (a) **split the chain out** of `state.json` and append only new blocks (the mutable governance/financial state stays a small whole-file atomic write); (b) write the chain in **immutable sealed segments** (the deleted `blocks-*.json` had the right *idea* and the wrong *lifecycle* — it rewrote all of them every block and nothing ever read them); (c) leave it and accept the cost, which is defensible below a few thousand blocks. Whatever is chosen must keep P15.11b's atomicity and the "a block is the only commit" contract intact.
+
+> **✅ T4.6 IS DONE (mini-plan 13, 2026-09-29), and it re-orders what follows.** Measured at height ~400, one
+> block costs **27.55 ms**: **snapshot writes 18.39 ms (66.7%), and there are exactly TWO of them per block**
+> (51 of 51, 503 KB each) · UTXO replay **7.4%** across **8.7 distinct nodes**, its per-rebuild cost growing
+> **4.4× while the chain grew 2.5×** · the difficulty trace **6.5%** · bot transactions **5.0%** · governance and
+> auctions ~**0** in this era, because no company exists yet. **The suggested order below is superseded: T4.5
+> first, and its first move is smaller than T4.5 itself — stop writing the chain twice.** The second write is
+> the only path that commits the post-bet financial mirrors (the bots' included), so it cannot be deleted;
+> splitting the immutable chain from the mutable state is what makes one write enough. T4.1/T4.2 keep a measured
+> share and a measured growth rate instead of an estimate. **T4.4 is also largely done** — mini-plan 12 bounded
+> the journal in memory, and the lifetime rollup has been the counter source since mini-plan 03.
 
 #### T4.6 — A per-block cost budget (DO THIS FIRST)
 
