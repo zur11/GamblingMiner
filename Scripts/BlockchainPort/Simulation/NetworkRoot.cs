@@ -16,6 +16,12 @@ public partial class NetworkRoot : Node
 	private static readonly NetworkSimulator SharedNetwork = new();
 	private static readonly Dictionary<string, NodeAgent> SharedNodesById = new();
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
+	// Mini-plan 14 B — the chain file's lines MUST be compact, because the file is line-delimited: one block,
+	// one line. `JsonOptions` above is indented for human reading of `state.json`, and using it here wrote each
+	// block across dozens of lines — a file that still looked plausible, appended without error, and would have
+	// failed every parse on the next load. Caught by reading the artefact before the world was reopened.
+	private static readonly JsonSerializerOptions ChainLineJsonOptions = new() { WriteIndented = false };
 	private static bool _isInitialized;
 	// When true (during the historical bootstrap), per-block persistence and bot recirculation are
 	// suppressed so ~114 blocks can be mined in one pass; the bootstrap persists once at the end.
@@ -110,7 +116,10 @@ public partial class NetworkRoot : Node
 	// stamp instead of the blocks. A v9 file would deserialize with no stamp and no chain file beside it, which
 	// the load path would read as an EMPTY world rather than a broken one — the bump is what stops that being
 	// possible at all.
-	private const int WorldFormatVersion = 10;
+	// v11 (mini-plan 14 B, same day): v10's chain file was written with the INDENTED options, so each block
+	// spanned dozens of lines in a file whose whole contract is one block per line. Nothing could read it back.
+	// The bump is what makes that unreadable file go away instead of failing every load that finds it.
+	private const int WorldFormatVersion = 11;
 	private const string WorldVersionPath = "user://world_format_version.txt";
 	// Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
 	// A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
@@ -8049,7 +8058,7 @@ public partial class NetworkRoot : Node
 			file.SeekEnd();
 			for (int i = _chainLinesOnDisk; i < chain.Count; i++)
 			{
-				file.StoreString(JsonSerializer.Serialize(chain[i], JsonOptions) + "\n");
+				file.StoreString(JsonSerializer.Serialize(chain[i], ChainLineJsonOptions) + "\n");
 			}
 
 			file.Flush();
@@ -8079,7 +8088,7 @@ public partial class NetworkRoot : Node
 
 				foreach (Block block in chain)
 				{
-					file.StoreString(JsonSerializer.Serialize(block, JsonOptions) + "\n");
+					file.StoreString(JsonSerializer.Serialize(block, ChainLineJsonOptions) + "\n");
 				}
 
 				file.Flush();
@@ -8128,7 +8137,7 @@ public partial class NetworkRoot : Node
 
 			try
 			{
-				Block? block = JsonSerializer.Deserialize<Block>(line, JsonOptions);
+				Block? block = JsonSerializer.Deserialize<Block>(line, ChainLineJsonOptions);
 				if (block != null)
 				{
 					chain.Add(block);

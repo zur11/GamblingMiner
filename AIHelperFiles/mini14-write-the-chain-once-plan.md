@@ -157,3 +157,47 @@ data rather than by care:**
 with the chain** — 230 KB here, 503 KB at height 400 — which is exactly B's target. But the **checkpoint JSON is
 now the second cost at 22.8%**, and the **historical-events phase reads 14.2%**, both of which were invisible
 under the double write. Neither is B's subject; both are recorded so the next ranking starts from measurement.
+
+## 8. Results — B, the chain leaves the snapshot (2026-09-29, 297 blocks, height 119 → 415)
+
+| mean height | total ms | write ms | write KB | checkpoint | UTXO ms | rebuilds |
+|---|---|---|---|---|---|---|
+| 144 | 14.46 | 3.36 | 57.8 | 6.31 | 0.97 | 11.8 |
+| 194 | 8.12 | 2.85 | 57.7 | 5.53 | 0.98 | 8.0 |
+| 244 | 8.45 | 3.12 | 57.7 | 5.58 | 1.34 | 8.0 |
+| 294 | 8.80 | 2.95 | 57.7 | 5.35 | 1.95 | 8.0 |
+| 344 | 8.04 | 2.68 | 57.9 | 1.85 → see note | 1.85 | 8.0 |
+| 392 | 8.48 | 2.75 | 57.9 | 5.14 | 2.37 | 7.9 |
+
+*(The first bucket's 14.46 ms carries the early-2009 scripted historical events — 4.74 ms — which fall to
+0.03 ms once they are past.)*
+
+**P3 held, and it is the result that matters: the curve is flat.** A block costs **~8.4 ms and stops growing
+with height**, against 27.55 ms and rising before this plan. The write is **57.8 KB at every height**, where it
+was 230 KB at height 163 and 503 KB at 400. **Mini-plan 13's P4 — unmeasurable then — is answered here: per-block
+cost no longer tracks the size of the world.**
+
+**P2 refuted on its thresholds, held in intent:** 2.75 ms and 57.8 KB against "under 2 ms and under 50 KB". What
+remains in `state.json` is real content — wallets, financial states, governance, pending transactions — not chain.
+
+**P4 not yet:** the UTXO replay is not the largest phase (write 2.75, checkpoint JSON ~2.4, UTXO 2.37), **but it
+is the only one still growing** — 0.97 → 2.37 ms across the run at a constant 8 rebuilds a block, so it is the
+per-rebuild cost climbing with the chain. At ~28% of a block it is close to the 40% that §4 set as T4.1's trigger.
+
+### The bug this run's own artefact caught, before the world was reopened
+
+`JsonOptions` carries `WriteIndented = true` — correct for `state.json`, and **wrong for a line-delimited file**.
+Every block was therefore written across dozens of lines into a file whose entire contract is one block per
+line. The append never failed, the run measured fine, and the file looked plausible; **the next launch would have
+parsed every line as garbage, loaded an empty chain, and hit the "state claims blocks that do not exist" path.**
+
+Two things are worth keeping from it:
+
+1. **The guard worked.** That path fails loudly and refuses to persist, so the outcome would have been an
+   unusable session and an intact world on disk — not a destroyed one. INC-001's rule paid for itself again.
+2. **A writer without a reader is untested, and a format change must be round-tripped inside the unit that makes
+   it.** This unit shipped a writer, measured it, and only then looked at what it had written. The measurement
+   run exercised nothing but the write path.
+
+Fixed with compact options for the chain's lines, and **world format 10 → 11**, because an unreadable v10 chain
+file must be removed rather than met by every future load.
