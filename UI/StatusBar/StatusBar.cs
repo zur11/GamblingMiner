@@ -4,6 +4,7 @@ using System.Globalization;
 using GodotBlockchainPort.Blockchain;
 using GodotBlockchainPort.Simulation;
 using Scripts.Finance;
+using UI.Readouts;
 
 namespace UI.StatusBar
 {
@@ -33,9 +34,15 @@ namespace UI.StatusBar
 		private Label _clockLabel;
 		private Label _btcTickerLabel;
 
+		// Mini-plan 15 B — money may not sit still for the second the clock's own cadence can stretch to, so the
+		// balances keep a fixed cadence of their own. 10 Hz: faster than a player can read a changing figure.
+		private const double BalanceRefreshInterval = 0.1;
+
 		private bool _btcBalanceDirty = true;
 		private double _btcBalanceTimer;
-		// Repaint the clock's colour only on the edge — Refresh runs every frame.
+		private double _balanceTimer;
+		private readonly AdaptiveReadoutSampler _clockSampler = new();
+		// Repaint the clock's colour only on the edge — RefreshClock runs on every clock repaint.
 		private bool _clockShowsReplay;
 		private bool _clockColorApplied;
 
@@ -100,7 +107,8 @@ namespace UI.StatusBar
 
 			NetworkRoot.BlockAccepted += OnBlockAccepted;
 
-			Refresh();
+			RefreshBalances();
+			RefreshClock();
 			RefreshBtcBalance();
 			RefreshBtcTicker();
 		}
@@ -117,7 +125,23 @@ namespace UI.StatusBar
 
 		public override void _Process(double delta)
 		{
-			Refresh();
+			// Mini-plan 15 B — the clock and the SC balances were one per-frame Refresh(), and the clock had
+			// DiceGame's strobe for the same reason: a near-constant game-time step per frame freezes its
+			// smallest field. They are separated here because they want different cadences. The clock's is
+			// MEASURED (see AdaptiveReadoutSampler) and can stretch to a second at 9000X; money may not sit
+			// that long, so the balances keep a fixed 10 Hz — still 6x cheaper than per-frame, and at any speed
+			// where a balance changes thousands of times a second no cadence is more "correct" than another.
+			_balanceTimer += delta;
+			if (_balanceTimer >= BalanceRefreshInterval)
+			{
+				_balanceTimer = 0.0;
+				RefreshBalances();
+			}
+
+			if (_clockSampler.ShouldRepaint(delta))
+			{
+				RefreshClock();
+			}
 
 			_btcBalanceTimer += delta;
 			if (_btcBalanceTimer >= BtcBalanceFallbackInterval)
@@ -141,7 +165,7 @@ namespace UI.StatusBar
 			return label;
 		}
 
-		private void Refresh()
+		private void RefreshBalances()
 		{
 			if (_mainBalanceLabel == null) return;
 
@@ -150,10 +174,26 @@ namespace UI.StatusBar
 
 			_mainBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Main Balance: {mainBalance:F2} SC");
 			_bankrollLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Bankroll: {bankroll:F2} SC");
-			_clockLabel.Text = _calendar?.CurrentLocalDateTime.ToString("MMM d, yyyy  HH:mm:ss", CultureInfo.InvariantCulture) ?? "--";
+		}
 
-			// One DateTime comparison per frame; the theme override is written only when the state flips.
-			bool replay = _calendar != null && _calendar.CurrentLocalDateTime < _calendar.GamePresentLocalDateTime;
+		private void RefreshClock()
+		{
+			if (_clockLabel == null) return;
+
+			if (_calendar == null)
+			{
+				_clockLabel.Text = "--";
+				return;
+			}
+
+			DateTime local = _calendar.CurrentLocalDateTime;
+			_clockSampler.NoteRepaint(local);
+			// The date style stays exactly as it was; only the time half narrows when the sample cannot honestly
+			// carry it — at 9000X this bar reads "Jul 18, 2010  14h" rather than a frozen seconds field.
+			_clockLabel.Text = _clockSampler.FormatGameTime(local, "MMM d, yyyy ");
+
+			// One DateTime comparison per repaint; the theme override is written only when the state flips.
+			bool replay = local < _calendar.GamePresentLocalDateTime;
 			if (replay != _clockShowsReplay || !_clockColorApplied)
 			{
 				_clockShowsReplay = replay;

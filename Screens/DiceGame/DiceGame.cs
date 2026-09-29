@@ -15,6 +15,7 @@ using Scripts.History;
 using Scripts.Hardware;
 using UI.StrategyControlPanel;
 using UI.StatusBar;
+using UI.Readouts;
 using GodotBlockchainPort.Simulation;
 using GodotBlockchainPort.Blockchain;
 
@@ -658,9 +659,21 @@ public partial class DiceGame : Control, IBetEventSource
 			.ToList() ?? new List<BankrollProgramService.TransferRecord>()
 	};
 
+	// Mini-plan 15 B — the clock and the mining-status block are the two fastest-moving readouts in the game,
+	// and they were rebuilt EVERY frame, which is both why a digit froze (a near-constant step per sample) and
+	// per-frame string work of exactly the shape Pattern 6 warns about. One sampler drives both, on a cadence
+	// measured from the clock itself; the quantizers decide how many digits of each nonce count are real.
+	private readonly AdaptiveReadoutSampler _readoutSampler = new();
+	private readonly CounterQuantizer _ownNonceQuantizer = new();
+	private readonly CounterQuantizer _casinoNonceQuantizer = new();
+
 	public override void _Process(double delta)
 	{
-		UpdateCurrentAppTimeUI();
+		if (_readoutSampler.ShouldRepaint(delta))
+		{
+			UpdateCurrentAppTimeUI(cadenceSample: true);
+		}
+
 		UpdateBoardVotePauseUi();
 		ApplyNavShiftIfDirty();
 		TickManualBurst(delta);
@@ -1574,7 +1587,11 @@ public partial class DiceGame : Control, IBetEventSource
 		ReseedWalletFromBankrollSource();
 		_strategyPanel.SetNumberOfBets(_simulationService.SessionInfinite ? 0 : _simulationService.SessionRemainingBets);
 		_strategyPanel.SetBetAmount(_simulationService.SessionCurrentBet);
-		UpdateBlockchainStatusUI();
+		// Mini-plan 15 B — the mining-status rebuild that used to happen here is GONE, not moved. It made the
+		// block a second per-frame rebuild during an autobet (the sampler-gated call in _Process being the
+		// first), which is half the per-frame cost this part removes and half the reason a digit froze. Nothing
+		// in that block needs to be fresher than one sampler repaint, and the roll animation below still runs
+		// every frame, so the "a frame-late readout at 9000X would be visible" note above does not apply to it.
 		if (_simulationService.LastSettledBetEvent is BetTransactionEvent lastSettled)
 		{
 			ShowRoll(lastSettled.Roll, lastSettled.IsWin);
@@ -2258,11 +2275,20 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateCurrentAppTimeUI();
 	}
 
-	private void UpdateCurrentAppTimeUI()
+	// cadenceSample: true only from the sampler-gated call in _Process. The other callers (scene entry, a node
+	// switch, a settled manual bet) are one-off repaints that must paint immediately, and feeding them into the
+	// sampler would pollute the very measurement that decides the cadence — so they render at whatever
+	// resolution is currently chosen and measure nothing.
+	private void UpdateCurrentAppTimeUI(bool cadenceSample = false)
 	{
 		DateTime local = _calendarTimeService?.CurrentLocalDateTime ?? DateTime.Now;
-		_currentAppTimeValue.Text = local.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-		UpdateBlockchainStatusUI();
+		if (cadenceSample)
+		{
+			_readoutSampler.NoteRepaint(local);
+		}
+
+		_currentAppTimeValue.Text = _readoutSampler.FormatGameTime(local, "yyyy-MM-dd");
+		UpdateBlockchainStatusUI(cadenceSample);
 	}
 
 	private void AdvanceClockForBet()
@@ -2349,12 +2375,20 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.SetManualEnabled(true);
 	}
 
-	private void UpdateBlockchainStatusUI()
+	private void UpdateBlockchainStatusUI(bool cadenceSample = false)
 	{
 		if (_blockchainStatusValue == null || _blockchainNetworkRoot == null)
 		{
 			return;
 		}
+
+		// Both nonce counters gain hundreds to thousands between repaints at speed. Sample the step only on a
+		// cadence repaint (the one whose spacing the quantum is a statement about); a one-off repaint reuses the
+		// quantum already established, so it shows the same number of digits as the repaint before it.
+		long ownNonce = _blockchainNetworkRoot.GetCandidateNonce(_activeNodeId);
+		long casinoNonce = _blockchainNetworkRoot.GetCasinoPoolCandidateNonce();
+		long ownQuantum = cadenceSample ? _ownNonceQuantizer.NoteSample(ownNonce) : _ownNonceQuantizer.Quantum;
+		long casinoQuantum = cadenceSample ? _casinoNonceQuantizer.NoteSample(casinoNonce) : _casinoNonceQuantizer.Quantum;
 
 		BlockchainMiningAnnouncement announcement = _blockchainNetworkRoot.GetLatestMiningAnnouncement();
 		string minedDetails = announcement.BlockIndex <= 0
@@ -2368,9 +2402,10 @@ public partial class DiceGame : Control, IBetEventSource
 		decimal privatePct = totalCredits > 0 ? 100m * hw.IndividualPoolCredits / totalCredits : 0m;
 		decimal casinoPct = totalCredits > 0 ? 100m * hw.CasinoPoolCredits / totalCredits : 0m;
 		string poolLines = string.Create(CultureInfo.InvariantCulture,
-			$"Current casino pool nonce attempt: {_blockchainNetworkRoot.GetCasinoPoolCandidateNonce()}\n" +
+			$"Current casino pool nonce attempt: {CounterQuantizer.Format(casinoNonce, casinoQuantum)}\n" +
 			$"Hardware split: private {hw.IndividualPoolCredits} ({privatePct:0.0}%) | casino pool {hw.CasinoPoolCredits} ({casinoPct:0.0}%) of {totalCredits} credits");
-		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(_activeNodeId)}\n{poolLines}\n{minedDetails}";
+		string ownNonceText = CounterQuantizer.Format(ownNonce, ownQuantum);
+		_blockchainStatusValue.Text = $"{_blockchainNetworkRoot.BuildMiningStatusLine(_activeNodeId, ownNonceText)}\n{poolLines}\n{minedDetails}";
 	}
 
 

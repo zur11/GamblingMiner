@@ -4,8 +4,10 @@
 one safety item open and whose runs exposed the readout problem this plan fixes.
 
 **Status:** 🔄 **IN PROGRESS** on branch `mini15-fail-closed-and-readouts`. **A built 2026-09-29** (15 writers
-guarded, build clean, locale detector at baseline 10/0 — the artefact check for A is P1's torn-chain re-run, not a
-console line). **Next: B** — the readouts.
+guarded). **B built 2026-09-29** — and it refuted its own spec before any run: the prescribed fixed 10 Hz cadence
+would have moved the freeze to the minutes digit rather than removing it (§2 B). Both builds clean, locale
+detector at baseline (10 / 0 / 0 / 0). **Next: the run** — P2 by eye, P3 and P4 from the traces, then the
+torn-chain re-run for P1.
 
 **Three parts, two of them small:**
 
@@ -101,6 +103,53 @@ worth most.** `UserStatsService`'s `.corrupt` preservation of a damaged rollup i
 
 **What this must not do:** invent intermediate values to animate. A rolling counter that shows numbers between
 two samples is a smoother lie, and every figure this project displays is meant to be the real one.
+
+**✅ Built 2026-09-29 — and B.1/B.2 above are WRONG, in a way worth keeping on the page.** The spec treated the
+cadence and the precision as two levers. They are **one**: a fixed cadence turns a fixed rate into a fixed step,
+one unit up. At the prescribed ~10 Hz and 9000X the clock advances **~15 minutes per sample**, and `15 mod 10 = 5`
+puts the identical freeze on the minutes' units digit. *The fix as specified would have moved the bug, not
+removed it* — caught by doing the arithmetic before writing the code, not by a run.
+
+**What shipped instead** (`UI/Readouts/ReadoutSampling.cs`, shared by both screens): repaint on a cadence chosen
+so **the finest displayed field advances by ~2 of its own steps**, and do not display the fields below it. The
+rate is **measured from the clock itself** (game-seconds advanced ÷ real seconds elapsed, EMA-smoothed) rather
+than derived from `DevTimeScale`, so it follows the simulation throttle, a paused sim and a rewound calendar for
+free. Verified numerically over the whole speed range before building — every rate lands at exactly 2.0 steps per
+repaint:
+
+| measured rate (game-s per real s) | field shown | repaints/s | steps/repaint |
+|---|---|---|---|
+| 100 (**100X**) | seconds | 50 | 2.0 |
+| 1,000 | minutes | 8.3 | 2.0 |
+| 7,200 | minutes | 60 | 2.0 |
+| **9,000 (9000X)** | **hours** (`2010-07-18 14h`) | **1.3** | 2.0 |
+
+So the ladder is **four rungs (seconds → minutes → hours → days), not the spec's two, and 9000X lands on hours**,
+not minutes. That is the honest reading of the same rule: minutes at 9000X is either a strobe (at 10 Hz) or a
+per-frame repaint (at 60 Hz, which forfeits P3). **The developer judges the look; the arithmetic only rules out
+the options that cannot work.**
+
+**The flap protection was got wrong once, in the obvious way.** The first draft used a 1.6× deadband on the unit
+threshold. That band spans 75–120 game-seconds per real second — and **100X sits inside it**, so once a session
+had visited a high speed the clock would never show seconds again at the game's normal speed. Replaced by a
+**6-repaint confirmation streak** plus a **narrow 1.15× margin** (needed because at a boundary the streak's dwell
+is asymmetric, and a 9000X run throttled to 0.8 sits exactly on the minutes/hours boundary). Verified: 100X is
+seconds from every direction, and 9000X stays on hours down to a throttle of ~0.7. **A deadband on a threshold
+must be checked against the values the system actually takes** — the bands are 104–110 and 6,260–7,500, and no
+game speed is in either.
+
+**The nonce counters** use the same measured step: each is floored to the largest power of ten at or below its
+step per repaint and marked `~` (`~148,000`), decade bands being wide enough that jitter cannot make digits
+appear and disappear. It floors and never rounds up — an attempt that has not happened must not be on screen.
+`BuildMiningStatusLine` takes the finished text rather than a quantum, so the display policy stays in the UI and
+the engine gains no dependency on it; `NetworkRoot.GetCandidateNonce(nodeId)` was added so the readout can
+*sample* the counter it renders.
+
+**One rebuild was deleted, not moved:** `FlushSettledBetUiIfDirty` rebuilt the whole mining-status block a second
+time every frame during an autobet. Its comment argued a frame-late readout at 9000X would be visible — true of
+the roll animation beside it, which still runs per frame, and not true of a block whose fastest figure is now
+quantized anyway. **StatusBar** was split: the clock takes the adaptive cadence, the SC balances keep a fixed
+10 Hz, because money may not sit still for the second the clock's cadence can stretch to.
 
 ### C — the UTXO replay
 
