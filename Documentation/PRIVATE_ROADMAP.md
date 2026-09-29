@@ -564,14 +564,27 @@ which T4 itself says to do first because T4.1, T4.2, T4.3 and T4.5 are all gated
   one and drops ~30 bytes a line. Its risk is the rewind: the counter must roll back with the world, and the
   plan verifies that on a real restart rather than arguing it.
 
-### Chain persistence — the whole file rewritten at every block (measured mild, not urgent)
+### Write the chain once, then stop rewriting it — SPECIFIED (mini-plan 14, 2026-09-29)
 
-**Status: open, no plan.** `NetworkRoot.PersistStateToDisk` serializes the **entire chain** on every mined
-block. Mini-plan 11 C2 measured the per-block work at **24 ms at height 376 and 33 ms at 747** — real growth,
-comfortably affordable today, and the reason the plan's "binary format" discussion concluded the encoding is
-not the issue: the rewrite is. The standard fix is to append blocks once and never rewrite them, with the
-mutable remainder in a small file of its own. **Re-measure before building**: `blockWorkMsPerBlock` in
-`frame_cost_trace.csv` reads it directly, and the figure above was taken below height 800.
+**Status: `AIHelperFiles/mini14-write-the-chain-once-plan.md`, not started; proposed branch
+`mini14-write-the-chain-once`.** **This is T4.5**, selected by mini-plan 13's measurement, and it **absorbs the
+former "Chain persistence" entry**, which described the same work from a weaker measurement.
+
+Measured at height ~400: a block costs **27.55 ms**, of which **18.39 ms (66.7%) writes the world snapshot
+TWICE** — 503 KB each, growing with the chain (213 KB at height 148). Two moves, in order of size:
+
+- **(A) One write per block instead of two.** Pure coalescing, no format change: `PersistStateToDisk` marks the
+  world dirty and a single flush runs at most one write per frame, at the top of `SimulationService._Process`
+  so it happens whether or not a run is active. The commit still happens per block, milliseconds later — a
+  widened durability window, stated rather than discovered.
+- **(B) The chain leaves the snapshot.** `chain.jsonl` appended one block per line, never rewritten;
+  `state.json` keeps the small mutable remainder; a tip stamp ties them, and a mismatch or a torn last line
+  fails **loudly and refuses to persist**, as INC-001 requires. **Its success criterion is that per-block cost
+  stops growing with height** — which also closes mini-plan 13's P4, the prediction that ran out of range.
+- **(C) The traces**, only if they exceed 15% of a block once A and B land.
+
+**Premise stated on purpose:** append-only assumes no reorgs, which is the current design (forks are
+post-Basic-Mode). A future fork plan inherits that premise explicitly rather than discovering it.
 
 ### A budget that adapts to the machine (BASIC MODE refinement)
 
