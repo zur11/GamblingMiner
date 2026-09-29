@@ -3,7 +3,9 @@
 **Series note:** fifteenth of the *mini-plan* series, following `mini14-write-the-chain-once-plan.md`, which left
 one safety item open and whose runs exposed the readout problem this plan fixes.
 
-**Status:** 📋 **SPECIFIED 2026-09-29**, not started. Proposed branch `mini15-fail-closed-and-readouts`.
+**Status:** 🔄 **IN PROGRESS** on branch `mini15-fail-closed-and-readouts`. **A built 2026-09-29** (15 writers
+guarded, build clean, locale detector at baseline 10/0 — the artefact check for A is P1's torn-chain re-run, not a
+console line). **Next: B** — the readouts.
 
 **Three parts, two of them small:**
 
@@ -61,6 +63,29 @@ Bankroll and Main balances, the lifetime rollup, the bet journal, and the remain
 (`CasinoScBalanceService`, `PlayerBankAccountService`, `CasinoCoinSwapService`, `ScMonetaryLedgerService`,
 `CentralBankService`, `BankrollProgramService`, `CasinoClientLedgerService`, `HardwareAllocationRepository`,
 `CasinoPoolRepository`). A session that could not load its world writes **nothing world-shaped**.
+
+**✅ Built 2026-09-29.** `Scripts/Services/WorldWriteGuard.cs` asks the one question and announces a refusal
+**once per writer**, to *both* the Output panel and the Errors tab (CLAUDE.md "NAME THE PANEL" — a refusal nobody
+reads is a refusal that did not happen). **15 writers** call it, derived by sweeping every disk-writing file in
+`Scripts/`+`Screens/` rather than from the list above — which was two short:
+
+- **13 money/state services** — the nine named above plus `BankrollStateService`, `PrincipalBalanceService`,
+  `CalendarTimeService` (`PersistCurrentTime`), `BlockSessionCheckpointService` (whose `CaptureCheckpoint` already
+  refused; now its `SaveState` does too).
+- **`UserStatsService.SaveRollupIfDirty`** — the same reflex as its INC-004 guard, one level up: that one asks
+  *did MY file load*, this one asks *did the WORLD load*. A rollup that loaded fine is the wrong rollup for a
+  world that did not.
+- **`BetHistoryRepository`**, guarded at its **three disk-mutating primitives** (`WriteEntriesRotating`,
+  `EnforceRetentionCap`, `DeleteAllJournalFiles`) and deliberately **not** at `Flush`: Flush still runs and still
+  clears `_pendingJournalEntries`, so the session stays memory-bounded (mini-plan 12) while writing nothing.
+  Guarding `Flush` would have traded a disk fault for an unbounded pending list.
+
+**Exempt, by class, stated so the next sweep does not re-litigate it:** identity + dev conveniences (the wallet
+seeds via `WalletInitializationService`, `BotWalletRegistry`, `WordlistBootstrapper`, `SavedBettingStrategyRepository`,
+`NotepadService`) — not world state, and exempt from a world wipe for the same reason; and every
+`user://logs/*.csv` trace (`BetCostProfiler`, `BlockCostProfiler`, `FrameCostProfiler`, `SessionLifecycleTrace`,
+`FoundersMiningService`, `NetworkPopulationScheduler`) — **evidence, and a broken session is exactly when it is
+worth most.** `UserStatsService`'s `.corrupt` preservation of a damaged rollup is exempt on the same ground.
 
 ### B — the readouts
 

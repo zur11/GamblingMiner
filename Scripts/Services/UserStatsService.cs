@@ -410,6 +410,12 @@ public partial class UserStatsService : Node
 			return;
 		}
 
+		// Mini-plan 15 A — a session that could not load its world writes nothing world-shaped. This is the
+		// same reflex as the INC-004 guard below, one level up: that one asks "did MY file load?", this one
+		// asks "did the WORLD load?". A rollup that loaded fine is still the wrong rollup for a world that
+		// did not, and it was one of the files measured as rewritten during mini-plan 14's gate.
+		if (WorldWriteGuard.RefuseWrite(nameof(UserStatsService))) return;
+
 		// INC-004 A-F2 — the guard that belongs on the WRITER. In memory the rollup is zeroed and claims
 		// to be complete; writing it would replace a recoverable file with an authoritative-looking lie.
 		// Reported once: this runs at every block, and an error repeated every block is an error nobody

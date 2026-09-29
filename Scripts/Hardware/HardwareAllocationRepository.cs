@@ -166,6 +166,9 @@ public static class HardwareAllocationRepository
 
 	private static void Save()
 	{
+		// Mini-plan 15 A — a session that could not load its world writes nothing world-shaped.
+		if (WorldWriteGuard.RefuseWrite(nameof(HardwareAllocationRepository))) return;
+
 		using FileAccess file = FileAccess.Open(SavePath, FileAccess.ModeFlags.Write);
 		file.StoreString(JsonSerializer.Serialize(_snapshot, JsonOptions));
 	}

@@ -538,6 +538,8 @@ namespace Scripts.History
 		// "chunked" store ends up with one un-trimmable monolith at its head.
 		private void EnforceRetentionCap()
 		{
+			if (WorldWriteGuard.RefuseWrite(nameof(BetHistoryRepository))) return;
+
 			// `excess <= 0` covers the disabled case (cap 0 or negative ⇒ nothing is ever trimmed), so no
 			// separate early-return guard is needed — and a `const`-folded one only earns a CS0162.
 			List<string> segments = GetJournalChunkPaths(includeLegacyBaseFile: true);
@@ -567,6 +569,10 @@ namespace Scripts.History
 		// reads, never a looser glob: this method deletes files, so its notion of "mine" must be exact.
 		private void DeleteAllJournalFiles()
 		{
+			// The most destructive path in the file, and the one a failed load must never reach: a rebuild
+			// deletes every segment before rewriting them from an in-memory set the world never vouched for.
+			if (WorldWriteGuard.RefuseWrite(nameof(BetHistoryRepository))) return;
+
 			foreach (string path in GetJournalChunkPaths(includeLegacyBaseFile: true))
 			{
 				try
@@ -855,6 +861,13 @@ namespace Scripts.History
 		// and produced a 1.13 GB monolith sitting beside the 114 chunks it had just duplicated.
 		private void WriteEntriesRotating(IReadOnlyList<JournalLine> entries)
 		{
+			// Mini-plan 15 A — guarded at the three disk-mutating PRIMITIVES of this file (here,
+			// EnforceRetentionCap, DeleteAllJournalFiles) rather than at Flush, deliberately: Flush still runs
+			// and still clears _pendingJournalEntries, so a failed-load session stays memory-bounded
+			// (mini-plan 12) while writing nothing. Guarding Flush instead would trade a disk fault for an
+			// unbounded pending list.
+			if (WorldWriteGuard.RefuseWrite(nameof(BetHistoryRepository))) return;
+
 			int index = 0;
 			while (index < entries.Count)
 			{
