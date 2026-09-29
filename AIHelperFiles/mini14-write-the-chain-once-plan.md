@@ -3,7 +3,8 @@
 **Series note:** fourteenth of the *mini-plan* series, following `mini13-block-cost-budget-and-bet-id-plan.md`,
 whose T4.6 measurement selected this work and named its first move.
 
-**Status:** 📋 **SPECIFIED 2026-09-29**, not started. Proposed branch `mini14-write-the-chain-once`.
+**Status:** ✅ **DONE 2026-09-29**, merged to `main` from `mini14-write-the-chain-once`. **Read §10 first** — it
+is the close-out, and it names what the next plan inherits.
 
 **This is the roadmap's T4.5**, and it absorbs the separate "Chain persistence" entry, which described the same
 thing. What mini-plan 13 measured, at height ~400:
@@ -254,3 +255,49 @@ its own and belongs to the roadmap, not to the end of this plan.
 
 **P5's verdict: refuted as a gate, then satisfied after the fix** — and it earned its place. The performance
 result (§8) would have shipped a world that replaces itself when damaged.
+
+**P5, re-tested after the fix (2026-09-29):** the same torn file now produces the two detection messages and
+then **`[HistoricalBootstrap] SKIPPED — the world failed to load this session`**. No genesis is mined, no world
+is fabricated, `state.json` and the checkpoint are untouched. **The gate passes.** (`[Governance] … drawn for
+this world` still prints, because the init path draws stances before the bootstrap is reached — nothing is
+persisted and the world stays empty, so it is noise rather than a second world.)
+
+---
+
+## 10. Close-out (2026-09-29)
+
+**A block costs 8.4 ms instead of 27.55, and — the part that matters — it no longer grows with the world.**
+
+| | before mini-plan 14 | after |
+|---|---|---|
+| per block | 27.55 ms, rising with height | **~8.4 ms, flat** |
+| world writes per block | 2 | **1** |
+| bytes written per block | 503 KB at height 400, growing | **57.8 KB at every height** |
+
+**A** collapsed the double write: `PersistStateToDisk` became a request, one flush per frame performs it, and
+the flush runs before each checkpoint so the chain on disk is never older than the checkpoint naming it — an
+invariant that used to hold only by accident of ordering. **B** moved the chain into an appended `chain.jsonl`
+with a tip stamp in `state.json`, which is what made the cost flat and what answers mini-plan 13's P4.
+
+**Predictions: 2 held, 3 refuted, 1 refuted-then-satisfied.** P1's count held exactly (1 write in 91 of 91) and
+its millisecond target missed by 1.5%. P2 missed its thresholds (2.75 ms, 57.8 KB against under 2 and under 50)
+and held in intent. **P3 held, and it was the real test.** P4 has not happened yet: the UTXO replay is not the
+largest phase but is the only one still growing. **P5 failed as a gate, was fixed, and passed on re-test.**
+
+**Three lessons, each paid for in this plan:**
+
+1. **A writer without a reader is untested.** B shipped a writer, measured it, and only afterwards looked at
+   what it had written — which was indented JSON in a line-delimited file, unreadable by its own loader. The
+   measurement run exercised the write path and nothing else. **A format change must be round-tripped inside
+   the unit that makes it.**
+2. **"Refuse to persist" is half a guard.** The other half is refusing to *act as though the world were new*.
+   An empty in-memory chain is indistinguishable from a first launch, so the recovery path rebuilt the world
+   the writer had just protected. INC-001's shape, arriving from the opposite direction.
+3. **A diagnostic about a damaged world has to reach the panel a human reads.** Case 1 passed silently in both
+   panels; the finding was real and invisible. CLAUDE.md's "NAME THE PANEL" rule, applied to the message rather
+   than to the instruction.
+
+**What the next plan inherits:** the UTXO replay is now the growth that remains — 0.97 → 2.37 ms across 300
+blocks at a constant 8 rebuilds, ~28% of a block against §4's 40% trigger for **T4.1**. And **fail-closed
+everywhere** (the clock, balances, rollup and journal still write on a failed load) is a roadmap item rather
+than a loose end here.
