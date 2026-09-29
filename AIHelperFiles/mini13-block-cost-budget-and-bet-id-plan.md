@@ -176,3 +176,28 @@ chain beside it.
 reports each completed write, so the next run's trace carries `snapshotWrites` and `snapshotWriteMs` per block.
 If it reads 2 writes and ~16 ms, then **snapshot work is ~73% of a block** and §4's rule selects T4.5 — with the
 duplicate itself as a cheaper first move that no rule anticipated.
+
+### The double write, confirmed — and D-13.1
+
+**Measured (2026-09-29, 51 blocks, height ~395–446):** every block reports **exactly 2 snapshot writes — 51 of
+51, no exceptions** — costing **18.39 ms of a 27.55 ms block: 66.7%**, at 503 KB a write. The phases split it
+10.72 ms (Snapshot) and 12.33 ms (Checkpoint), which is why neither phase alone looked like the answer.
+
+The prediction stated before the run — 2 writes, ~16 ms, ~73% — **held**.
+
+**D-13.1 — §4 A's rule fires on `Snapshot ≥ 50%`, so the follow-up is T4.5** (append the chain instead of
+rewriting it), not T4.1 or T4.2. The UTXO replay, the plan's own leading suspect, is 7.4% and stays open as a
+growth risk rather than a target. **And the rule's own branch understates what was found:** two thirds of a
+block is spent writing the same immutable chain **twice**, which makes "write it once" a cheaper first move
+than anything T4.5 proposes, and neither the plan nor the roadmap had anticipated a duplicate.
+
+**What the next plan must not assume.** The second write is not removable on its own: it is the only path that
+commits the post-bet financial mirrors, the bots' included. The chain half is what is redundant, so the fix is
+to separate the two — which is exactly T4.5's shape, now with a second, independent reason to build it.
+
+### Aside — the restart guard (developer's request, 2026-09-29)
+
+A double-click on STOP restarted the run immediately, which during a measurement starts a session the protocol
+did not ask for. A start is now ignored for `AutobetRestartGuardMsec` after any stop, manual or self-inflicted,
+with the button reverted so it never shows a run that is not running. **STOP is never guarded, in either
+direction** — a guard that could swallow a stop would be worse than the accident it prevents.
