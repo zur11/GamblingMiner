@@ -250,7 +250,78 @@ evidence — no console reading required. **`state.json` stayed flat at 59.7 KB 
 which is mini-plan 14's split still holding two and a half times higher than it was verified at. **Zero stalls in
 351 reports.** The torn-chain half of P1 is still outstanding (§5 step 4).
 
-### P2 — the developer's eye (pending)
+### P2 — ✅ confirmed by the developer
+
+"No hubo ningún freeze" — nothing freezes in the clock or in either nonce line — and the hours format at 9000X is
+"totalmente aceptable". Since P3 turned out to be unmeasurable, the argument for preferring hours over minutes at
+9000X is now *only* the strobe argument; the developer was offered minutes at the cost of a per-frame repaint and
+**chose to keep hours.** Recorded because the trade changed after the prediction failed, and the choice was made
+with that known.
+
+### P1's second half — the torn-chain case, staged 2026-09-30, prediction registered BEFORE the run
+
+**Staging.** The height-697 world was copied whole to
+`%APPDATA%\Godot\app_userdata\GamblingMiner_archive_mini15_height697_2026-09-30` (94 files, 31.3 MB) **before
+anything was touched** — the convention that a file with a repair suffix is never the only copy of anything,
+applied to a world being damaged deliberately. `chain.jsonl` was then truncated from 698 to **688 lines** while
+`state.json` was left at `ChainHeight` 697 with its original tip hash: the chain is now **10 lines shorter than
+its own stamp**, which is the shape mini-plan 14's gate aborts on. A full `path + bytes + mtime + SHA-256`
+snapshot of all 94 files was taken **after** the damage, so the baseline is the staged state rather than the
+healthy one.
+
+**The prediction, as a partition of the 94 files rather than a sentiment.** This is the point of registering it:
+"nothing was written" is unfalsifiable if the exempt set is decided after seeing what changed.
+
+- **MAY change (6 files at most), exempt by class and named in A's own exemption list:** `logs/godot*.log`
+  (Godot's engine log — evidence) and `logs/session_lifecycle_trace.csv` if the session records itself. The other
+  `logs/*.csv` traces need an armed profiler or a running sim to write a row, and the profilers' static state does
+  not survive a process restart.
+- **MUST be byte-identical (the remaining 88+):** every world-state JSON, all journal segments, the lifetime
+  rollup, the checkpoint, both world stamps, and the five wallet seeds.
+
+**Result: ✅ P1 CONFIRMED, under the strongest available conditions.** The session aborted the load
+(`the state says height 697 but the chain file only has 687`), skipped the bootstrap, and the developer then
+entered DiceGame and **ran an autobet that mined several blocks** — so the guards were exercised by bets, by
+balance mutations, and by block-mined events, not merely by boot. Full 94-file hash diff afterwards:
+
+| | files |
+|---|---|
+| **world-state files changed** | **0** — no JSON, no journal segment, no rollup, no checkpoint, no stamp, no seed |
+| changed, all under `logs/` | `difficulty_trace.csv`, `founders_trace.csv`, `network_population_trace.csv`, `session_lifecycle_trace.csv`, `godot.log` |
+| new / deleted | one rotated `godot*.log` in, one out — the engine's own five-log cap |
+
+**12 distinct writers announced their refusal**, once each, in the Output panel — `PrincipalBalanceService`,
+`BankrollProgramService`, `CentralBankService`, `PlayerBankAccountService`, `CasinoClientLedgerService`,
+`CasinoCoinSwapService`, `ScMonetaryLedgerService`, `UserStatsService`, `CalendarTimeService`,
+`BankrollStateService`, `BetHistoryRepository`, `CasinoScBalanceService` — plus
+`[Checkpoint] REFUSING to capture`, which is `BlockSessionCheckpointService`'s **existing** mini-plan 14 guard
+firing ahead of its new one (so its `WorldWriteGuard` line correctly never printed). The remaining two,
+`CasinoPoolRepository` and `HardwareAllocationRepository`, had no reason to write in a 15-second session. All 15
+accounted for. **Nothing appeared in the Debugger → Errors tab, and that is fine** — the lines go to both by
+design, and Output is where the developer reads.
+
+**The behaviour worth naming: the services RESTORED and did not write back.** `[CentralBank] RESTORED from
+checkpoint`, `[CasinoSC] RESTORED`, `[PlayerBankAccountService] RESTORED`, `[ScMonetaryLedger] RESTORED` all
+appear *after* their refusal lines. Reading the checkpoint is fine; writing is not. And `[CasinoSC] bet#100
+delta=-0.00098040 Bankroll=440.57776600` shows balances moving in memory while nothing reached disk — which is
+precisely INC-004's lesson applied one level up.
+
+**Where my registered prediction was wrong, stated as a miss.** I predicted "at most 6 files, `godot*.log` and
+possibly `session_lifecycle_trace.csv`", reasoning that the other traces "need an armed profiler or a running sim
+to write a row". Three more traces changed, because **the protocol I wrote in the same breath asked the developer
+to run an autobet**, which is exactly what makes the per-block and per-frame trace writers fire. The **class** was
+right — everything that moved is `logs/`, evidence by A's own exemption rule — and the **enumeration inside the
+class** was wrong. That is CLAUDE.md's "repair and diagnostic siblings are swept by SUFFIX, not enumerated" found
+a third time, on a third kind of content: *the class holds, the list never does.*
+
+**One contamination to remember:** `difficulty_trace.csv`, `founders_trace.csv` and
+`network_population_trace.csv` now carry rows from a **torn-world session at 2026-09-30T15:46Z** whose blocks were
+never persisted. They were deliberately NOT restored from the archive, because a trace is evidence and this test is
+part of the record — but **exclude that timestamp from any future aggregation over those three files.**
+
+**World restored.** Only `blockchain/chain.jsonl` had been damaged; it was copied back from the archive and all 88
+non-log files verified byte-identical to it. 698 lines, `ChainHeight` 697, tip hash matching, zero unparseable
+lines. Archive kept at `GamblingMiner_archive_mini15_height697_2026-09-30`.
 
 ### P3 — ❌ **REFUTED**
 
@@ -325,3 +396,45 @@ under.
   never had at that instant.
 - **The other scenes' timer-driven panels** (`ProjectDesignManual.md` Ch. 38's backlog). Same family, different
   plan.
+
+---
+
+## 8. Close-out (2026-09-30)
+
+**All four parts landed; two predictions were refuted and one of them could never have been measured.**
+
+| | verdict |
+|---|---|
+| **A — fail closed everywhere** | ✅ 15 writers guarded. P1 confirmed twice: silent in normal play (698 blocks written), and on a torn chain **zero of 88 world-state files changed** while 12 writers announced their refusal, through bets and mined blocks. |
+| **B — the readouts** | ✅ P2 confirmed by the developer: no freeze anywhere, hours at 9000X accepted. **P3 refuted** — no detectable cost change, and the instrument is a residual that cannot see one. |
+| **C — the UTXO measurement** | ✅ measured to height 698. **The 40% threshold fires (42.7%) but its premise is refuted:** the UTXO term plateaus at ~4 ms from height 500. |
+
+### What this plan is actually worth, beyond the two features
+
+1. **The strongest result is an absence.** 88 files unchanged, verified by hash, while the game mined blocks on a
+   world it had refused to load. An absence is only evidence if the expected presence was written down first,
+   which is why the file partition was registered before the run — and why the *class* (`logs/` is evidence) held
+   while my *enumeration* inside it did not.
+2. **Two instruments were found to be answering the wrong question.** P3's `period − sim` residual cannot see a
+   saving smaller than a vsync wait. P4's `share of a block` cannot see a plateau, because its denominator swings
+   2.7× on the same world inside one run. **Both predictions were arithmetically doomed at the moment they were
+   written, and neither run was needed to know it** — the P3 one was caught only afterwards, the B.1/B.2 one
+   (§2 B) was caught before the code. That is the difference worth keeping.
+3. **A headline figure did not reproduce.** Mini-plan 14's "a block costs 8.4 ms and flat" measured 1.3–2.3× higher
+   on a later day at the same heights, uniformly across unrelated phases. Not attributed, and flagged in the
+   roadmap rather than quietly restated.
+
+### What follows, and why it is NOT T4.1 by default
+
+Mini-plan 14's rule says the 40% crossing makes T4.1 the next plan. **The rule fired on a shrinking denominator,
+not a growing numerator**, so applying it mechanically would be Standing Convention 8's error — reproducing a
+verdict's arithmetic without its premise. Recorded for the next planner:
+
+- **Restate T4.1's trigger in absolute milliseconds**, which reproduce (1.26 → ~4.0 ms, height 150 → 500), and
+  drop the share.
+- **T4.1's prize is a stable ~4 ms**, not an unbounded growth curve — real, bounded, and no longer urgent on
+  growth grounds. Its growth may resume after Market Birth, which this run could not see.
+- **The larger and more corrosive term is the checkpoint + snapshot write path** (checkpoint alone 9.46 ms at
+  height 350–449). Its 2.7× variance is what makes every other per-block figure in this project unmeasurable, so
+  fixing it buys measurement as well as time. **That is my recommendation for the next plan; the choice is the
+  developer's.**
