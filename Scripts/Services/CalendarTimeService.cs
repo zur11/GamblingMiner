@@ -229,6 +229,9 @@ public partial class CalendarTimeService : Node
 
 	public void PersistCurrentTime()
 	{
+		// Mini-plan 15 A — a session that could not load its world writes nothing world-shaped.
+		if (WorldWriteGuard.RefuseWrite(nameof(CalendarTimeService))) return;
+
 		_gamePresent = CurrentLocalDateTime;
 		const string statePath = "user://calendar_state.json";
 		using FileAccess file = FileAccess.Open(statePath, FileAccess.ModeFlags.Write);

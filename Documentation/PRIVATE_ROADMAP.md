@@ -579,7 +579,12 @@ which T4 itself says to do first because T4.1, T4.2, T4.3 and T4.5 are all gated
 >
 > **Next, by §4's own rule:** the UTXO replay is the only cost still growing — 0.97 → 2.37 ms over 300 blocks at
 > a constant 8 rebuilds a block, ~28% of a block against the 40% that makes **T4.1** the next plan.
-> Text below is the original specification.
+>
+> **⚠ SUPERSEDED by mini-plan 15's measurement to height 698, in two places.** (1) The UTXO replay is **not** the
+> only cost still growing: it **plateaus at ~4 ms from height 500**. (2) **"~8.4 ms and flat" did not reproduce** —
+> every phase measured 1.3–2.3× higher at equal heights on a later day, uniformly, so a per-block cost is a
+> distribution rather than a figure. The 40% rule does fire, but on a shrinking denominator. See the mini-plan 15
+> entry. Text below is the original specification.
 
 **Status: `AIHelperFiles/mini14-write-the-chain-once-plan.md`, own branch off `main`.** **This is T4.5**,
 selected by mini-plan 13's measurement, and it **absorbs the former "Chain persistence" entry**, which described
@@ -601,18 +606,50 @@ TWICE** — 503 KB each, growing with the chain (213 KB at height 148). Two move
 **Premise stated on purpose:** append-only assumes no reorgs, which is the current design (forks are
 post-Basic-Mode). A future fork plan inherits that premise explicitly rather than discovering it.
 
-### Fail closed everywhere on a failed world load (open, found by mini-plan 14's P5)
+### Fail closed everywhere, and readouts that strobe — ✅ DONE (mini-plan 15, 2026-09-30)
 
-**Status: open, no plan.** `NetworkRoot.WorldLoadFailed` now stops three things: persisting the world, running
-the historical bootstrap, and capturing a checkpoint. **Everything else still writes.** Measured during the
-torn-chain test: with the world load aborted, `calendar_state.json`, `bankroll_state.json`,
-`principal_balance_state.json`, the lifetime rollup and two journal segments were all rewritten. They carried
-the REAL checkpoint's values that time, so nothing was corrupted — but the refusal covered one store and no
-others, and that is luck rather than design.
+> **A session that cannot read its world now writes nothing world-shaped, and the fast readouts stopped
+> strobing.** 15 eager writers consult `NetworkRoot.WorldLoadFailed`. Verified on a torn chain while the game
+> mined blocks: **zero of 88 world-state files changed**, 12 writers each announced their refusal once, and the
+> services restored from the checkpoint *without writing back*. The clock and both nonce counters now repaint on
+> a **measured** cadence chosen so the finest displayed field advances ~2 of its own steps — seconds at 100X,
+> hours at 9000X — and the developer reports no freeze anywhere.
+>
+> **Two predictions refuted, and both were unmeasurable rather than merely wrong.** **P3** (a ≥0.5 ms frame
+> saving) showed no change: outside-sim is `period − sim`, a **residual containing the vsync wait**, so removing
+> CPU work from a vsync-bound frame just makes it wait longer. B's cost benefit is unmeasured, not disproven.
+> **The plan's own B.1/B.2 spec was refuted before any code was written** — a fixed 10 Hz sample at 9000X
+> advances the clock ~15 minutes per sample and `15 mod 10 = 5`, relocating the freeze to the minutes digit.
+>
+> **⚠ Two figures from mini-plan 14 are superseded below.** The UTXO replay is **not** "the only cost still
+> growing" — it **plateaus at ~4 ms from height 500** (measured to height 698). And "a block costs 8.4 ms and
+> flat" **did not reproduce**: at equal heights every phase measured **1.3–2.3× higher** on a later day,
+> uniformly across unrelated phases including pure-CPU ones, so the cause is environmental rather than a code
+> change — but a per-block cost is a **distribution, not a figure**.
+>
+> **Next, and it is NOT T4.1 by default.** The 40% rule fires (42.7% at height 674–698) but **on a shrinking
+> denominator, not a growing numerator**: non-UTXO block cost swings 5.9 → 15.8 ms on the same world inside one
+> run. Restate T4.1's trigger in absolute milliseconds and drop the share. T4.1's prize is a stable ~4 ms.
+> **The recommended next plan is the checkpoint + snapshot write path** (checkpoint alone 9.46 ms at height
+> 350–449), whose 2.7× variance is what makes every other per-block figure here unmeasurable — fixing it buys
+> measurement as well as time. Developer's choice.
+>
+> This entry **absorbs the former "Fail closed everywhere on a failed world load" open item**, which specified
+> part A from mini-plan 14's finding. Text below is the original specification.
 
-**The rule it wants:** a session that could not load its world should decline to write *anything* world-shaped,
-not merely the file that failed. Each eager writer consults the flag, says so once, and stays quiet. Small,
-mechanical, and worth doing before any plan that makes loading more complicated than it is today.
+**Status: `AIHelperFiles/mini15-fail-closed-and-readouts-that-strobe-plan.md` (close-out §8), merged from branch
+`mini15-fail-closed-and-readouts`.** Took the open safety item, plus a UI bug the developer reported
+while watching mini-plan 14's runs, plus the measurement that decides whether T4.1 comes next.
+
+- **(A)** Every eager writer consults `NetworkRoot.WorldLoadFailed`, so a session that could not load its world
+  writes **nothing world-shaped** — today only three places check it.
+- **(B) The clock and the nonce counter freeze a digit at speed, and it is arithmetic.** Both refresh **every
+  frame**, and the clock advances `100 × DevTimeScale ÷ fps` game-seconds per frame — at 9000X that is ~150 s,
+  and `150 mod 60 = 30`, so the seconds alternate between two values while the units digit sits still. The
+  counter gains ~148 per frame, a near-constant step, which does the same to its last digits. The fix is a
+  fixed ~10 Hz sample plus a displayed precision that matches it — never an animated counter, which would show
+  values the world never had. It also removes a per-frame rebuild of DiceGame's whole mining-status block.
+- **(C)** The UTXO replay's share at a taller chain; mini-plan 14's 40% rule then decides whether T4.1 follows.
 
 ### A budget that adapts to the machine (BASIC MODE refinement)
 
@@ -858,7 +895,24 @@ The P15.8 world was played on to **~Oct 2014 / block 2699** after the P15.11 rep
 
 **Instrument these five together** in T4.6 — UTXO rebuilds, snapshot serialize+rename, governance tick, the bot/company sweeps, and claim-transaction construction — plus managed heap and block index. That set now covers every hypothesis on the table.
 
-#### T4.1 — Incremental UTXO maintenance (highest leverage, lowest risk)
+#### T4.1 — Incremental UTXO maintenance (real and bounded — **no longer "highest leverage"**)
+
+> **⚠ Measured to height 698 by mini-plan 15, which changes this item's case in two ways.**
+>
+> 1. **The trigger must be restated in absolute milliseconds, not as a share of a block.** Mini-plan 14's rule
+>    ("T4.1 becomes the next plan at 40% of a block") *does* fire — 42.7% at height 674–698 — but the non-UTXO
+>    denominator swings **5.9 → 15.8 ms (2.7×) on the same world inside one run**, so the share crossed 40%
+>    because the remainder collapsed, not because the replay grew. A threshold on that ratio is a threshold on
+>    disk-write noise (Standing Convention 9's shape). The UTXO term itself reproduces cleanly: **1.26 ms at
+>    height 150 → ~4.0 ms at height 500.**
+> 2. **It plateaus.** 4.66 · 3.92 · 3.88 · 3.99 ms across the last four 50-block buckets to height 698. The prize
+>    is a **stable ~4 ms**, not an unbounded curve — still worth taking, and no longer urgent on growth grounds.
+>    **Caveat: measured only to game date 2010-04, before Market Birth (2010-07-18)** — real market volume may
+>    restart the UTXO set's growth, and nothing has looked past that date.
+>
+> **Recommended ahead of it: the checkpoint + snapshot write path** (checkpoint alone **9.46 ms** at height
+> 350–449, against the UTXO replay's 3.37 ms at the same heights). It is the larger term, and its variance is what
+> makes every other per-block figure in this project unmeasurable — so fixing it buys measurement as well as time.
 
 Applying a newly-accepted block's transactions to the cached UTXO set costs **O(txs in that block)**; replaying the chain costs **O(all txs ever)**. `TryAcceptMinedBlock` / `MineBlock` already know exactly which block arrived, so the incremental update is a few lines beside the existing `_chainVersion++`. Keep the full replay for `TryReplaceChain` (a genuine chain swap) and as a DEBUG-only cross-check — *assert the incremental set equals the replayed set* every N blocks, which is the §39.16-rule-1 shape: the cheap path must be provably identical to the truthful one.
 

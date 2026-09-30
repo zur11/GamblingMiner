@@ -1756,6 +1756,15 @@ public partial class NetworkRoot : Node
 		return SharedNodesById.TryGetValue(CasinoNodeId, out NodeAgent? casino) ? casino.GetCurrentCandidateNonce() : 0L;
 	}
 
+	// The same figure for any node's OWN candidate. Added by mini-plan 15 B so a readout can MEASURE how fast
+	// this counter is moving before deciding how many of its digits are worth showing — BuildMiningStatusLine
+	// renders it, but a caller that only reads the rendered line cannot sample it.
+	public long GetCandidateNonce(string nodeId)
+	{
+		EnsureInitialized();
+		return SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) ? node.GetCurrentCandidateNonce() : 0L;
+	}
+
 	// One casino-pool nonce attempt: mines on the casino node's behalf. On a hit, the block goes
 	// through the normal broadcast/bookkeeping path and its reward is queued for distribution.
 	public void TryCasinoNonceAttempt(out Block? minedBlock, long? minedAtUnixMs = null)
@@ -7582,7 +7591,11 @@ public partial class NetworkRoot : Node
 		return true;
 	}
 
-	public string BuildMiningStatusLine(string nodeId)
+	// nonceDisplayText: mini-plan 15 B — an optional rendering of the candidate nonce supplied by the caller.
+	// At speed this counter gains thousands between repaints, so its low digits are noise and the UI floors it
+	// to its own measured step. The POLICY for that belongs to the readout, not to the engine, so the caller
+	// hands the finished text down rather than the engine reaching up into UI code. Null ⇒ the exact value.
+	public string BuildMiningStatusLine(string nodeId, string? nonceDisplayText = null)
 	{
 		EnsureInitialized();
 		if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node))
@@ -7592,7 +7605,7 @@ public partial class NetworkRoot : Node
 
 		int nextBlock = node.Blockchain.GetLastBlock().Index + 1;
 		int pending = node.Blockchain.PendingTransactions.Count;
-		long nonce = node.GetCurrentCandidateNonce();
+		string nonce = nonceDisplayText ?? node.GetCurrentCandidateNonce().ToString(CultureInfo.InvariantCulture);
 		// The difficulty of the block being mined NOW (live, power-aware) — matches the Block Explorer readout.
 		double difficulty = GetNextOrCandidateDifficulty(node);
 		decimal reward = GetBlockRewardForNextCandidate(node);

@@ -273,6 +273,9 @@ public partial class CentralBankService : Node
 
 	private void SaveState()
 	{
+		// Mini-plan 15 A — a session that could not load its world writes nothing world-shaped.
+		if (WorldWriteGuard.RefuseWrite(nameof(CentralBankService))) return;
+
 		try
 		{
 			var snapshot = new Snapshot

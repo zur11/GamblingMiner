@@ -296,6 +296,9 @@ public partial class BlockSessionCheckpointService : Node
 
 	private void SaveState()
 	{
+		// Mini-plan 15 A — a session that could not load its world writes nothing world-shaped.
+		if (WorldWriteGuard.RefuseWrite(nameof(BlockSessionCheckpointService))) return;
+
 		try
 		{
 			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);

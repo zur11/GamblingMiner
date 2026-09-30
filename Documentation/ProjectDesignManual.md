@@ -3415,6 +3415,71 @@ The footer nodes are **siblings of `ContentScroll`, not children of it**, so the
 
 **⚠️ The bulk-regex trap, recorded because it nearly shipped.** Fixing the last ~24 diagnostic lines by hand looked wasteful, so a batch `perl -pi -e` pass was used instead. Its statement matched the target with capture groups, then applied two *further* regexes as guards — and **a later match resets `$1`/`$2`/`$3`**, so every replacement wrote the empty string: `GD.Print(string.Create(CultureInfo.InvariantCulture, $""));`. Twenty-four log lines were silently blanked. It was caught by reading the diff and restored line-for-line from `HEAD`, but note what would **not** have caught it: `$""` is valid C#, so the build stayed green, and the affected lines are diagnostics nobody reads until they matter. **General rule: a mechanical edit across many files is only as safe as the diff you actually read afterwards — and in Perl, capture into lexical variables on the same line as the match that produced them.**
 
+### 29.13 — A readout may not claim precision its sampling cannot carry (mini-plan 15 B, 2026-09-30)
+
+**The symptom, as the developer reported it.** At high DEV speeds the clock in DiceGame and the nonce-attempt
+counter "freeze" a digit — usually the fastest-moving one — for a short period, then jump. It looked like a glitch.
+It is arithmetic, and the same arithmetic in two places.
+
+**Why a digit freezes.** Both readouts were rebuilt **every frame**. The game clock advances
+`100 × DevTimeScale ÷ fps` game-seconds per frame, so at 9000X it gains ~150 game-seconds each time — and
+`150 mod 60 = 30`, so the seconds field alternates between exactly two values while its units digit sits perfectly
+still. **A frozen digit is what a near-constant step per sample looks like.** Frame jitter is why it unfreezes for
+a moment and then re-locks. The nonce counter did the same from the other side, gaining ~148 per frame.
+
+**The trap, and it caught the plan's own specification.** The obvious fix — sample on a fixed cadence instead of
+per frame — *moves the bug one unit up*. **A fixed cadence turns a fixed rate into a fixed step.** At the
+specified 10 Hz and 9000X the clock advances ~15 minutes per sample, and `15 mod 10 = 5` freezes the minutes'
+units digit exactly as before. The specification was refuted by doing the arithmetic before writing the code, not
+by a run. **The sampling interval and the displayed precision are ONE decision, not two.**
+
+**The rule.** Repaint on a cadence chosen so the **finest displayed field advances by about two of its own
+steps**, and **do not display the fields below it**. Every digit on screen then visibly moves, none of them looks
+random, and nothing claims precision the sample cannot support. `UI/Readouts/ReadoutSampling.cs` owns this for the
+whole project; DiceGame and the StatusBar share it.
+
+**The rate is MEASURED, never derived.** `AdaptiveReadoutSampler` divides the game-seconds advanced since the last
+repaint by the real seconds elapsed, smoothed by an EMA. Reading `DevTimeScale` instead would have been wrong
+whenever the simulation throttle was below 1, whenever the sim was paused, and whenever the calendar navigator had
+wound the clock back — all three come free from measuring. Verified numerically across the speed range before
+building; every rate lands at ~2.0 steps per repaint:
+
+| measured rate (game-s per real s) | field shown | repaints/s |
+|---|---|---|
+| 100 (**100X**) | seconds (`2009-04-09 14:23:45`) | 50 |
+| 1,000 | minutes (`… 14:23`) | 8.3 |
+| **9,000 (9000X)** | **hours** (`… 14h`) | **1.3** |
+
+**Flap protection: a confirmation streak, NOT a deadband — and here is why that distinction cost a rewrite.** The
+first draft used a 1.6× deadband on the unit threshold. That band spans **75–120 game-seconds per real second, and
+100X sits inside it**, so once a session had visited a high speed the clock would never show seconds again at the
+game's normal speed. Replaced by a **6-repaint confirmation streak** plus a **narrow 1.15× margin** (needed because
+at a boundary the streak's dwell is asymmetric, and a 9000X run throttled to 0.8 lands exactly on the
+minutes/hours boundary). The resulting bands are 104–110 and 6,260–7,500 — **no game speed is inside either.**
+*General rule: a deadband on a threshold must be checked against the values the system actually takes.*
+
+**Counters get the same treatment, floored and marked.** `CounterQuantizer` measures a counter's step per repaint
+and floors the display to the largest power of ten at or below it, prefixing `~` (`~148000`). Decade bands are
+wide enough that jitter cannot make digits appear and disappear between repaints. **It floors and never rounds
+up** — an attempt that has not happened must not appear on screen.
+
+**Rejected on the record: animated or interpolated counters.** A rolling counter that shows values between two
+samples is a smoother lie, and every figure this project displays is meant to be the real one.
+
+**Layering note.** `NetworkRoot.BuildMiningStatusLine` takes the **finished nonce text** rather than a quantum, so
+the display policy stays in the UI and the engine gains no dependency on it; `NetworkRoot.GetCandidateNonce(nodeId)`
+was added so a readout can *sample* the counter it renders.
+
+**⚠ The cost saving is UNMEASURED, and the instrument is the reason.** This also removed two per-frame rebuilds of
+DiceGame's whole mining-status block (the second one, in `FlushSettledBetUiIfDirty`, was **deleted** rather than
+moved). The prediction was ≥0.5 ms off the frame; the measurement showed **15.05 → 15.15 ms, i.e. nothing** — and
+could not have shown otherwise. `FrameCostProfiler`'s "outside-sim" figure is `period − sim`, **a residual that
+contains the presentation wait**, and the frame is vsync-bound (16.6–20.6 ms at 46–59 fps). Take CPU work out of a
+vsync-bound frame and the frame simply waits longer; the residual does not move. **A residual is not a measurement
+of the work inside it** — the sibling of §40.11's "an instrument that discards outliers cannot see a freeze". The
+change is kept on the bug it fixes, which the developer confirmed by eye, and the cost claim is recorded as
+unmeasured rather than as a win.
+
 ---
 
 ## Chapter 30 — UTXO Realism & Address Non-Reuse (Step 8)
