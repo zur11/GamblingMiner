@@ -301,8 +301,16 @@ public partial class BlockSessionCheckpointService : Node
 
 		try
 		{
-			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
-			file.StoreString(JsonSerializer.Serialize(CurrentSnapshot, JsonOptions));
+			// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the close.
+			// The largest of the small files (~7.5 KB) and the one that IS the commit, so it is the write whose
+			// count must never fall below one per block however the others are coalesced.
+			string payload = JsonSerializer.Serialize(CurrentSnapshot, JsonOptions);
+			long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+			using (FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write))
+			{
+				file.StoreString(payload);
+			}
+			Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(StatePath, payload.Length, writeBegin);
 		}
 		catch (Exception ex)
 		{

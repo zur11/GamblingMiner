@@ -147,3 +147,43 @@ vary 2.7× between adjacent samples on one world. A count either reproduces or i
   revisiting it, and P2 is the prediction that would have to fail first.
 - **The bot-mined block one-frame clock offset** and **"a budget that adapts to the machine"** — both open, both
   unrelated to write cost.
+
+---
+
+## 7. Part A as built (2026-09-30)
+
+**No behaviour change. One instrument, fifteen call sites, and a cross-check that the set is complete.**
+
+`BlockCostProfiler.NoteStateWrite(path, bytes, startTicks)` joins `NoteSnapshotWrite` as a **counter rather than a
+phase**, for the reason mini-plan 13 gave when it made that choice: two phase totals cannot tell you whether one
+file was written twice or two files once each.
+
+**Three decisions inside it worth stating:**
+
+1. **The timer brackets the CLOSE, not the `StoreString`.** On Windows the close and its metadata flush are most of
+   a small file's cost, so every writer's statement-scoped `using FileAccess file = …;` (which disposes at method
+   exit, outside any measurement placed after the write) was converted to a **block-scoped** `using`. Timing the
+   `StoreString` alone would have measured the cheap part and concluded the writes are free — the exact failure
+   mini-plan 15's P3 produced, one layer down.
+2. **`UserStatsService`'s timer spans the temp write AND the rename.** The atomic shape is two filesystem
+   operations; measuring only the first would make the safest writer in the project look like the cheapest.
+   (P15.11b had already noted the atomic write doubles the volume and that it belonged in a budget — this is that
+   budget.)
+3. **Writes are counted even between blocks**, and only the per-block columns require an open block. A writer
+   firing outside a block is itself a finding.
+
+**The set is 15, and it is the same 15 `WorldWriteGuard` marks — verified 1:1, not asserted.** That list exists
+because mini-plan 15 A had to enumerate every world-state writer, which makes it a ready-made census of exactly the
+writers whose cost this plan is about. Two things it does *not* count, deliberately: the journal's **deletes**
+(retention trim, rebuild wipe — they are not writes and part B will not coalesce them), and `blockchain/state.json`,
+which keeps its existing `NoteSnapshotWrite` columns so mini-plan 14's figures stay comparable.
+
+**What the run will show, and where.** Four new CSV columns (`stateWrites`, `stateFiles`, `stateBytes`,
+`stateWriteMs`) plus a fragment on each block's line in the **Godot editor's Output panel**; and every 50 blocks a
+**ranked table** of writes per path, sorted by **writes per block** — the quantity §3 predicts, not milliseconds.
+A file above 1.0 writes/block is a coalescing target for part B; a file at exactly 1.0 is already at its floor and
+part B must leave it alone. `block_session_checkpoint.json` can never go below 1.0: it *is* the commit.
+
+**Locale detector: baseline moved 10 → 12**, both new hits being continuation lines of the block report's
+`+`-chain, whose `InvariantCulture` wrapper now sits seven lines above — the documented benign shape. Updated in
+`CLAUDE.md` in this same commit, which is what that rule requires and what it went a week without last time.

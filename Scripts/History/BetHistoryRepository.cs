@@ -880,15 +880,26 @@ namespace Scripts.History
 				int remainingCapacity = Math.Max(1, MaxJournalEntriesPerChunkFile - _activeJournalLineCount);
 				int toWrite = Math.Min(remainingCapacity, entries.Count - index);
 
+				// Mini-plan 16 A — counted like every other world-state write, and this one is the odd member of
+				// the set: it APPENDS at bet rate behind a flush cadence (FlushEveryMutations / FlushInterval)
+				// rather than rewriting a small file per mutation. Whether that makes it cheap or the single
+				// largest writer is exactly what the instrument is for, so it is measured rather than assumed
+				// to be fine. Bytes are the appended payload, not the file.
+				long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+				long appendedBytes = 0;
+
 				using (var stream = new FileStream(_activeJournalPath, FileMode.Append, System.IO.FileAccess.Write, FileShare.Read))
 				using (var writer = new StreamWriter(stream))
 				{
 					for (int i = 0; i < toWrite; i++)
 					{
 						string line = JsonSerializer.Serialize(entries[index + i], _jsonOptions);
+						appendedBytes += line.Length + 1;
 						writer.WriteLine(line);
 					}
 				}
+
+				Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(_activeJournalPath, appendedBytes, writeBegin);
 
 				index += toWrite;
 				_activeJournalLineCount += toWrite;

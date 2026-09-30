@@ -145,8 +145,16 @@ public partial class BankrollStateService : Node
 				CurrentBalance = CurrentBalance,
 				UpdatedAtUtc = DateTime.UtcNow
 			};
-			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
-			file.StoreString(JsonSerializer.Serialize(snapshot, JsonOptions));
+			// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the
+			// close. This is the ONE service already throttled (SaveFlushInterval above), so its measured
+			// writes/block is the floor the other fourteen are being compared against.
+			string payload = JsonSerializer.Serialize(snapshot, JsonOptions);
+			long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+			using (FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write))
+			{
+				file.StoreString(payload);
+			}
+			Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(StatePath, payload.Length, writeBegin);
 		}
 		catch (Exception ex)
 		{

@@ -234,7 +234,15 @@ public partial class CalendarTimeService : Node
 
 		_gamePresent = CurrentLocalDateTime;
 		const string statePath = "user://calendar_state.json";
-		using FileAccess file = FileAccess.Open(statePath, FileAccess.ModeFlags.Write);
-		file.StoreString(CurrentLocalDateTime.Ticks.ToString());
+		// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the close.
+		// This is the plan's emblematic case: an 18-BYTE file with 20 call sites. If a write of 18 bytes costs
+		// the same as one of 7 KB, the cost is overhead and the fix is fewer writes, not a smaller format.
+		string payload = CurrentLocalDateTime.Ticks.ToString();
+		long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+		using (FileAccess file = FileAccess.Open(statePath, FileAccess.ModeFlags.Write))
+		{
+			file.StoreString(payload);
+		}
+		Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(statePath, payload.Length, writeBegin);
 	}
 }
