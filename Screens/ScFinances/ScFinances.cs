@@ -52,6 +52,8 @@ public partial class ScFinances : Control
 
 	private double _fallbackTimer;
 	private const double FallbackInterval = 2.0;
+	// Mini-plan 15b — the shared readout sampler; see UI/Readouts/ReadoutSampling.cs and §29.13.
+	private readonly UI.Readouts.AdaptiveReadoutSampler _clockSampler = new();
 
 	public override void _Ready()
 	{
@@ -150,10 +152,14 @@ public partial class ScFinances : Control
 
 	public override void _Process(double delta)
 	{
-		if (_gameDateLabel != null && _calendarTime != null)
+		// Mini-plan 15b — this label is the live world clock, and it was repainted every frame at seconds
+		// resolution, so at speed it froze its low digits exactly as DiceGame's did (ProjectDesignManual §29.13).
+		// The background sim survives scene changes, so this screen is reachable mid-autobet at 9000X.
+		if (_gameDateLabel != null && _calendarTime != null && _clockSampler.ShouldRepaint(delta))
 		{
-			_gameDateLabel.Text = string.Create(CultureInfo.InvariantCulture,
-				$"Game date: {_calendarTime.CurrentLocalDateTime:yyyy-MM-dd HH:mm:ss}");
+			DateTime local = _calendarTime.CurrentLocalDateTime;
+			_clockSampler.NoteRepaint(local);
+			_gameDateLabel.Text = "Game date: " + _clockSampler.FormatGameTime(local, "yyyy-MM-dd");
 		}
 
 		_fallbackTimer += delta;

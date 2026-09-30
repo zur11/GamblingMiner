@@ -438,3 +438,40 @@ verdict's arithmetic without its premise. Recorded for the next planner:
   height 350–449). Its 2.7× variance is what makes every other per-block figure in this project unmeasurable, so
   fixing it buys measurement as well as time. **That is my recommendation for the next plan; the choice is the
   developer's.**
+
+---
+
+## 9. Addendum — mini-plan 15b: the sweep this plan should have contained (2026-09-30)
+
+**Branch `mini15b-remaining-live-clocks`, off `main` after the merge.** Asked to certify that nothing about the
+clock readouts was pending, a grep found **three more live clocks with the identical bug** — so the honest answer
+was "no", and this is the completion.
+
+| file | what it was doing |
+|---|---|
+| `Screens/CasinoGamblingFinances/CasinoGamblingFinances.cs` | `Game date: … HH:mm:ss` **every frame**, under a comment calling it "a cheap string format" |
+| `Screens/ScFinances/ScFinances.cs` | the same label, the same per-frame paint |
+| `Screens/BetsHistoryExplorer/BetsHistoryExplorer.cs` | `Selected timeline: … HH:mm:ss` every frame — the replay cursor, `delta × _cursorSpeed` at **100–1000** game-s per real second, and the world clock's own rate while live-following |
+
+All three now use `AdaptiveReadoutSampler`. In the explorer the **cursor still advances every frame** (it drives
+bet emission); only its rendering takes the cadence, and the two suffixes ride along since nothing else reads them.
+
+**Why §2 B's scope was short.** It was copied from the bug report — DiceGame's clock and the nonce counter — and
+the fix stopped at those plus the obvious neighbour. **Standing Convention 13, and this plan had just finished
+writing that rule into its own close-out:** grep for the *retired premise*, not the code you were told about. The
+retired premise was "a per-frame clock render is fine, it's only a string format" — and it was sitting in a
+comment inside one of the files that still had the bug.
+
+**Detectors with baselines are now in `ProjectDesignManual.md` §29.13.1**, because the next instance will arrive
+the same way: a new scene that renders the clock, written by hand, correct-looking on a dev machine at 100X.
+The complete set of live-clock renderers is **five**, each holding a sampler; a sixth without one is a regression.
+
+**Verified not affected, recorded so nobody re-audits them:** `CalendarsNavigator`'s time presenter reads
+`ExplorerSelectedLocalDateTime`, which `AdvanceSeconds` never touches — a frozen selection cannot alias.
+`SimRetentionReadout` is already edge-triggered on its rounded percent. Every other time render in those scenes is
+a *record's* timestamp.
+
+**Still open on the clock↔bet coupling, and NOT part of this addendum** — both pre-existing and documented: the
+**bot-mined block one-frame clock offset** (mini-plan 08 D4, noted in CLAUDE.md's *Player start* row) and
+**"a budget that adapts to the machine"** (`PRIVATE_ROADMAP.md`, open since mini-plan 09 — every performance
+constant was measured on one PC).

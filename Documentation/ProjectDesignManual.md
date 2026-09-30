@@ -3480,6 +3480,50 @@ of the work inside it** — the sibling of §40.11's "an instrument that discard
 change is kept on the bug it fixes, which the developer confirmed by eye, and the cost claim is recorded as
 unmeasured rather than as a win.
 
+#### 29.13.1 — The sweep that should have come with the fix (mini-plan 15b, 2026-09-30)
+
+**Mini-plan 15 fixed the two readouts the developer had reported and stopped there.** Asked afterwards to certify
+that nothing was pending, a grep found **three more live clocks with the identical bug**:
+
+| | what it renders |
+|---|---|
+| `CasinoGamblingFinances.cs` | `Game date: … HH:mm:ss`, **every frame**, under a comment calling it "a cheap string format" — cheap was never the problem |
+| `ScFinances.cs` | the same label, the same per-frame paint |
+| `BetsHistoryExplorer.cs` | `Selected timeline: … HH:mm:ss`, every frame. Not the world clock but it moves the same **way**: `delta × _cursorSpeed` at **100–1000** game-seconds per real second in replay, and the world clock's own rate (up to 9000) while live-following |
+
+All three now take the shared sampler. In the explorer the **cursor still advances every frame** — it drives bet
+emission — and only its *rendering* takes the cadence.
+
+**Why they were missed, which is the reusable part.** The plan's scope was copied from the bug report (DiceGame's
+clock and the nonce counter) and the fix stopped at the reported instances plus the one obvious neighbour. This is
+**Standing Convention 13** — *grep for the retired premise, not just the code implementing it.* The retired premise
+here was "a per-frame clock render is fine because it is only a string format", and it was written down in a
+comment in one of the files that still had the bug.
+
+**Two detectors, with baselines, so the next reader does not have to re-derive the sweep:**
+
+```bash
+# 1 — a Label.Text assigned DIRECTLY from the live clock. BASELINE: 0.
+#     A live clock must go through AdaptiveReadoutSampler, which takes the DateTime as a variable.
+grep -rnE '\.Text\s*=.*(CurrentLocalDateTime|CurrentUtcDateTime)' --include=*.cs Screens/ UI/
+
+# 2 — any live clock formatted at time-of-day resolution. BASELINE: exactly 1,
+#     CasinoGamblingFinances' loan-confirmation message — a one-off EVENT stamp, not a ticking readout.
+grep -rn "CurrentLocalDateTime\|CurrentUtcDateTime" --include=*.cs Screens/ UI/ | grep -E "HH:mm|H:mm"
+```
+
+**The complete set of live-clock renderers is five** — `DiceGame`, `StatusBar`, `ScFinances`,
+`CasinoGamblingFinances`, `BetsHistoryExplorer` — and each holds an `AdaptiveReadoutSampler`.
+`grep -rln AdaptiveReadoutSampler --include=*.cs Screens/ UI/` returning a **sixth scene without one is a
+regression**; returning a *new* one with a sampler is fine.
+
+**Verified NOT affected, so nobody re-audits them:** `CalendarsNavigator`'s time presenter reads
+`ExplorerSelectedLocalDateTime`, which `AdvanceSeconds` never touches — it shows a **frozen selection**, so it
+cannot alias (it does repaint per frame needlessly, which belongs to Ch. 38's poll backlog, not here).
+`SimRetentionReadout` is already edge-triggered on its rounded integer percent. Every other time render in the
+clock-reading scenes is a **record's** timestamp (`r.GameDateLocal`, a block's unix ms), which does not tick and is
+correct at seconds.
+
 ---
 
 ## Chapter 30 — UTXO Realism & Address Non-Reuse (Step 8)
