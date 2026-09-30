@@ -55,6 +55,8 @@ public partial class CasinoGamblingFinances : Control
 
 	private double _fallbackTimer;
 	private const double FallbackInterval = 2.0;
+	// Mini-plan 15b — the shared readout sampler; see UI/Readouts/ReadoutSampling.cs and §29.13.
+	private readonly UI.Readouts.AdaptiveReadoutSampler _clockSampler = new();
 
 	public override void _Ready()
 	{
@@ -153,11 +155,15 @@ public partial class CasinoGamblingFinances : Control
 
 	public override void _Process(double delta)
 	{
-		// Game-date label ticks forward while autobet advances the clock (cheap string format).
-		if (_gameDateLabel != null && _calendarTime != null)
+		// Mini-plan 15b — this label is the live world clock. It used to be repainted every frame at seconds
+		// resolution, under a comment calling that "a cheap string format": cheap was never the problem. A
+		// near-constant game-time step per repaint freezes the low digits (ProjectDesignManual §29.13), and the
+		// background sim survives scene changes, so this screen is reachable mid-autobet at 9000X.
+		if (_gameDateLabel != null && _calendarTime != null && _clockSampler.ShouldRepaint(delta))
 		{
-			_gameDateLabel.Text = string.Create(CultureInfo.InvariantCulture,
-				$"Game date: {_calendarTime.CurrentLocalDateTime:yyyy-MM-dd HH:mm:ss}");
+			DateTime local = _calendarTime.CurrentLocalDateTime;
+			_clockSampler.NoteRepaint(local);
+			_gameDateLabel.Text = "Game date: " + _clockSampler.FormatGameTime(local, "yyyy-MM-dd");
 		}
 
 		_fallbackTimer += delta;

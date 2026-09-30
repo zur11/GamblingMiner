@@ -74,6 +74,8 @@ public partial class BetsHistoryExplorer : Control
 	private static readonly Color ReplayCursorColor = new(0.72f, 0.45f, 0.95f);
 	private bool _labelShowsReplay;
 	private bool _labelColorApplied;
+	// Mini-plan 15b — the shared readout sampler; see UI/Readouts/ReadoutSampling.cs and §29.13.
+	private readonly UI.Readouts.AdaptiveReadoutSampler _clockSampler = new();
 
 	private DateTime _selectedLocal;   // THE CURSOR: the instant being replayed — where it ACTUALLY is
 	private bool _cursorRunning;       // Play/Pause, driving the cursor rather than the clock
@@ -527,8 +529,21 @@ public partial class BetsHistoryExplorer : Control
 		RefreshTransportAvailability();
 
 		DateTime current = GetCurrentLocal();
-		_selectedTimeLabel.Text =
-			$"Selected timeline: {current:yyyy-MM-dd HH:mm:ss}{BuildBehindNowSuffix(current)}{BuildWindowSuffix()}";
+
+		// Mini-plan 15b — the cursor is not the world clock, but it moves the same WAY: `delta × _cursorSpeed`
+		// per frame at 100–1000 game-seconds per real second in replay, and the world clock's own rate while
+		// live-following (up to 9000). Either way it is a near-constant step per repaint, which freezes the low
+		// digits of a seconds-resolution readout — ProjectDesignManual §29.13. The CURSOR still advances every
+		// frame (it drives bet emission); only its rendering takes the cadence, and the two suffixes ride along
+		// because nothing else reads them.
+		if (_clockSampler.ShouldRepaint(delta))
+		{
+			_clockSampler.NoteRepaint(current);
+			_selectedTimeLabel.Text = "Selected timeline: "
+				+ _clockSampler.FormatGameTime(current, "yyyy-MM-dd")
+				+ BuildBehindNowSuffix(current)
+				+ BuildWindowSuffix();
+		}
 
 		// §9.2 step 6 — the violet moves HERE, to the cursor that is actually in the past. The StatusBar
 		// clock keeps its own tint as a TRIPWIRE: after this phase the world clock is never rewound, so if
