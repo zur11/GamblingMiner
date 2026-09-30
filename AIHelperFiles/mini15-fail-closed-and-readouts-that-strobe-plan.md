@@ -6,8 +6,11 @@ one safety item open and whose runs exposed the readout problem this plan fixes.
 **Status:** 🔄 **IN PROGRESS** on branch `mini15-fail-closed-and-readouts`. **A built 2026-09-29** (15 writers
 guarded). **B built 2026-09-29** — and it refuted its own spec before any run: the prescribed fixed 10 Hz cadence
 would have moved the freeze to the minutes digit rather than removing it (§2 B). Both builds clean, locale
-detector at baseline (10 / 0 / 0 / 0). **Next: the run** — P2 by eye, P3 and P4 from the traces, then the
-torn-chain re-run for P1.
+detector at baseline (10 / 0 / 0 / 0). **Run done 2026-09-30** (~65 min at 9000X, heights 148 → 697): P1's
+normal-play half ✅, **P3 refuted** (no detectable change — and its instrument is a residual that cannot see one),
+**P4's threshold fires but its premise is refuted** (the UTXO term plateaus at ~4 ms from height 500; the share
+rose because the denominator collapsed). Results in §6. **Next: P2's verdict from the developer, then the
+torn-chain re-run for P1, then close-out.**
 
 **Three parts, two of them small:**
 
@@ -170,6 +173,46 @@ that made them. The plan records the share at the tallest height reached.
 - **P4 — the UTXO replay passes 40% of a block by height ~800**, on the growth measured in mini-plan 14
   (0.97 → 2.37 ms from height 144 → 392, at a constant 8 rebuilds).
 
+### 3.1 The baselines, read from the existing traces BEFORE the run (2026-09-29)
+
+Registered here rather than quoted afterwards, because **P3 is a difference and a baseline recovered after the
+fact is a baseline chosen after the fact.**
+
+**P3's "before" — `frame_cost_trace.csv`, the 2026-09-24 run**, one contiguous 429-report session, every report at
+`demandBetsPerSec` ≈ 8,000–9,000 (9000X), mean `chainHeight` 473, mean retention 0.96:
+
+| periodP50 | simP50 | **outside-sim (period − sim)** |
+|---|---|---|
+| 18.26 ms | 3.22 ms | **15.05 ms** |
+
+**Outside-sim is 82% of the frame**, which is the part B touches. The baseline predates mini-plans 13 and 14, and
+that is acceptable *for this figure specifically*: 13 changed per-bet cost and 14 changed block cost and the world
+write, all of which land inside the sim segment or at a block, not in the outside figure. **P3's ≥ 0.5 ms stands
+as written, and I expect the drop to be substantially larger** — the two per-frame rebuilds now happen ~1.3 times
+a second instead of ~120. **I am deliberately not putting a second number on it:** I have never timed one
+`BuildMiningStatusLine` call, and a figure that merely looks measured is the one nobody re-checks.
+
+**P4's curve — `block_cost_trace.csv`, the 2026-09-29 30-minute run** (height 119 → 415, ~10 blocks/minute).
+Schema verified name-against-value on a real row before aggregating, which is the check that was missing when
+mini-plan 14 first read column 20 as milliseconds:
+
+| height | totalMs | utxoMs | utxo share | rebuilds/block |
+|---|---|---|---|---|
+| 100–149 | 10.87 | 0.74 | 6.8% | 8.0 |
+| 200–249 | 8.47 | 1.22 | 14.5% | 8.0 |
+| 300–349 | 8.58 | 1.96 | 22.8% | 8.0 |
+| 350–399 | 8.10 | 2.24 | 27.7% | 7.9 |
+| 400–449 | 9.16 | 2.40 | 26.1% | 8.0 |
+
+The replay grows **linearly in height at a constant 8 rebuilds per block** (≈ 0.0055 ms per block of height) while
+everything else in the block stays flat at ~6 ms. Extrapolated, the 40% line falls at **height ≈ 715** — so P4
+should pass, slightly *earlier* than its stated ~800.
+
+**Starting height for this run: 148** (`state.json` `ChainHeight` = 148, 149 chain lines, tip hash matching,
+game date 2009-04-09) — **not the 415 the last run reached**, so the world was reset or rebootstrapped between
+them. At ~10 blocks/minute, height 800 is ~65 minutes away and the 40% line at ~715 is ~57 minutes away. **Only
+P4 needs that length; P2 and P3 are settled in the first five minutes.**
+
 ## 4. Decision rules, registered before the data
 
 - **A ships when the torn-chain session writes nothing.** If any file is still modified, the writer that did it
@@ -189,7 +232,93 @@ that made them. The plan records the share at the tallest height reached.
 4. **Re-run the torn-chain case** (staged by hand, game closed) → P1.
 5. **Close out**, and let C's rule choose what follows.
 
-## 6. Out of scope
+## 6. Results of the run (2026-09-30, ~65 minutes at 9000X, heights 148 → 697)
+
+Read from `frame_cost_trace.csv` (351 new reports) and `block_cost_trace.csv` (549 new blocks). All figures are
+**medians** per height bucket unless stated; the schema was verified name-against-value on a real row first.
+
+**A correction to §3.1 before anything else.** I recorded the 2026-09-24 baseline as reaching "mean `chainHeight`
+473". 473 was its *mean*; **that run spanned heights ~100 → 899**, so it covers this run's whole range and the two
+are comparable bucket by bucket — at equal height they sit at the same game date with the same powered cast. The
+number was right and the word "mean" was doing work I then forgot it was doing.
+
+### P1 — ✅ confirmed (normal-play half)
+
+The world was written normally throughout: **698 chain lines, `ChainHeight` 697, tip hash matching the stamp, zero
+unparseable lines.** A fired guard would have stopped every one of those writes, so the artefact *is* the
+evidence — no console reading required. **`state.json` stayed flat at 59.7 KB while `chain.jsonl` grew to 520 KB**,
+which is mini-plan 14's split still holding two and a half times higher than it was verified at. **Zero stalls in
+351 reports.** The torn-chain half of P1 is still outstanding (§5 step 4).
+
+### P2 — the developer's eye (pending)
+
+### P3 — ❌ **REFUTED**
+
+Outside-sim time per frame at 9000X, matched buckets, baseline → this run:
+
+| height | 2026-09-24 | this run | delta |
+|---|---|---|---|
+| 100–199 | 15.80 | 15.37 | −0.43 |
+| 200–299 | 15.77 | 14.24 | −1.53 |
+| 300–399 | 15.35 | 15.08 | −0.27 |
+| 400–499 | 14.67 | 16.55 | **+1.88** |
+| 500–599 | 14.43 | 15.56 | **+1.13** |
+| 600–699 | 14.81 | 14.35 | −0.46 |
+
+Whole-run: **15.05 → 15.15 ms.** The deltas are both signs, up to ±1.9 ms, and average +0.05. **There is no
+detectable change.** Prediction was ≥ 0.5 ms saved.
+
+**And the instrument could not have answered the question.** `periodP50` is 16.6–20.6 ms with fps 46–59 — the
+frame sits at the 60 Hz vsync budget, and "outside-sim" is defined as `period − sim`, a **residual that contains
+the presentation wait**. Remove CPU work from a vsync-bound frame and the frame waits longer; the residual does
+not move. **A residual is not a measurement of the work inside it.** This is the sibling of §40.11's "an
+instrument that discards outliers cannot see a freeze": that one could not see a stall, this one cannot see a
+saving smaller than its own idle. B's cost benefit is therefore **unmeasured, not disproven** — and measuring it
+would need a segment timer around the readout itself, which is not worth building for a bonus prediction.
+
+Per §4, B is kept on P2's verdict; P3's figure is recorded as refuted.
+
+### P4 — ✅ the threshold fires, ❌ **its premise is refuted**
+
+| height | utxoMs | non-utxoMs | totalMs | utxo share |
+|---|---|---|---|---|
+| 150–199 | 1.258 | 14.209 | 15.820 | 8.0% |
+| 250–299 | 2.066 | 7.407 | 9.601 | 21.5% |
+| 350–399 | 2.723 | 8.549 | 12.006 | 22.7% |
+| 450–499 | 3.520 | 14.375 | 18.020 | 19.5% |
+| 500–549 | **4.659** | 15.761 | 20.641 | 22.6% |
+| 550–599 | 3.918 | 10.972 | 16.958 | 23.1% |
+| 600–649 | 3.878 | 8.593 | 14.291 | 27.1% |
+| 650–699 | 3.993 | 5.853 | 10.727 | **37.2%** |
+
+At the tallest 25-block window (674–698) the share is **42.7%**, so **by the letter of mini-plan 14's rule T4.1
+fires — about 100 blocks earlier than predicted.** But read the columns rather than the rule:
+
+- **The UTXO term PLATEAUS.** It climbs 1.26 → ~4.0 ms to height ~500 and then stops: 4.66, 3.92, 3.88, 3.99
+  across the last four buckets. It is **not** "the only cost still growing" — it stopped growing at height 500.
+- **The denominator is noise.** Non-UTXO block cost swings **5.9 → 15.8 ms (2.7×)** between buckets *on the same
+  world inside one run*, driven by `checkpointMs` and `snapshotWriteMs` — disk writes. The share's final jump
+  (27.1% → 37.2%) is the remainder collapsing 8.6 → 5.9, **not** the numerator moving (3.88 → 3.99).
+
+**So the 40% rule fired on a shrinking denominator, not a growing numerator.** Standing Convention 9's shape:
+a threshold on a ratio whose denominator varies 2.7× between adjacent samples is a threshold on disk-write noise.
+**Restate the rule in absolute terms for T4.1's plan — UTXO milliseconds per block, which grows cleanly and
+reproduces — and drop the share.**
+
+**One caveat on the plateau, stated rather than buried:** it is measured only to game date **2010-04**, before
+Market Birth (2010-07-18). Fees, swaps and the volume that arrives with a real market may restart the UTXO set's
+growth, and this run cannot see that.
+
+**A second finding, unattributed and flagged as such.** At equal heights every block phase is **1.3–2.3× more
+expensive than mini-plan 14's post-fix leg** (checkpoint 4.12 → 9.46 ms, snapshot write 2.27 → 4.65, difficulty
+trace 1.17 → 1.85, auctions 0.158 → 0.319, UTXO 2.16 → 3.37). Nothing in mini-plan 15 touches any of those
+phases, and a *uniform* multiplier across unrelated phases — including pure-CPU ones — points at the machine or
+the day, not the code. **But it means mini-plan 14's headline "a block costs 8.4 ms" did not reproduce**, and any
+future per-block budget stated as a single number will not either. **A cost that varies 2× between runs is a
+distribution, not a figure** — the roadmap's T4 budget should carry a range and the conditions it was measured
+under.
+
+## 7. Out of scope
 
 - **T4.1 itself** — measured here, built only if the rule fires.
 - **Animated or interpolated counters.** Stated as rejected, not forgotten: they would show values the world
