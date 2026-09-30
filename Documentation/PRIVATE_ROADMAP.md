@@ -651,6 +651,33 @@ while watching mini-plan 14's runs, plus the measurement that decides whether T4
   values the world never had. It also removes a per-frame rebuild of DiceGame's whole mining-status block.
 - **(C)** The UTXO replay's share at a taller chain; mini-plan 14's 40% rule then decides whether T4.1 follows.
 
+### Fewer writes per block, and a success criterion that reproduces — SPECIFIED (mini-plan 16, 2026-09-30)
+
+**Status: `AIHelperFiles/mini16-fewer-writes-per-block-plan.md`, not started; proposed branch
+`mini16-fewer-writes-per-block`.** Chosen over T4.1 on mini-plan 15's measurement, and the reasoning is recorded
+under T4.1 itself: the UTXO replay plateaus at ~4 ms while the write path is both larger (checkpoint **9.46 ms** at
+height 350–449) and the reason every other per-block figure here varies 2.7×.
+
+**The premise, measured.** The block path writes ~14 files totalling **~75 KB** and takes **~14 ms** — about
+**5 MB/s**, three orders of magnitude below the disk. So the cost is **per-write overhead, not volume**:
+`calendar_state.json` is **18 bytes** and `PersistCurrentTime()` has **20 call sites**;
+`PrincipalBalanceService.SaveState()` fires from four unthrottled mutation paths. The one service already throttled
+is `BankrollStateService` (mini-plan 08 P1, where its unthrottled per-bet write was **66% of a bet**) — **that fix
+was applied to one service and never generalized**, which is this whole plan in one sentence. The coalescing
+pattern also already exists and is used for exactly one thing: mini-plan 14's `RequestWorldPersist` /
+`FlushWorldIfDirty`.
+
+**The plan's own discipline, inherited from mini-plan 15's failures.** Its success criterion is a **write count**,
+not a millisecond figure and not a share — a count reproduces or it is a bug, whereas a single per-block cost
+demonstrably does not reproduce across days. The instrument (generalizing `BlockCostProfiler.NoteSnapshotWrite`
+to every writer `WorldWriteGuard` already marks) ships **before** any fix, and **P5 — that the 2.7× variance falls
+with the count — is the prediction that matters for the project**, because it is what would make future per-block
+figures trustworthy at all.
+
+**Hard constraint:** coalescing within a frame preserves "a block is the only commit to disk"; deferring past the
+block does not. Anything that moves a commit past the end of the frame that mined the block is out of scope
+whatever it saves.
+
 ### A budget that adapts to the machine (BASIC MODE refinement)
 
 **Status: open, named in mini-plan 09 (D-09.6 option (c)) and unchanged since.** Every performance figure this
