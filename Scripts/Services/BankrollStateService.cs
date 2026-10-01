@@ -37,9 +37,26 @@ public partial class BankrollStateService : Node
 	// INC-001 — executed hundreds of times a second. Writing ~2×/second shrinks that exposure window by the
 	// same factor it shrinks the cost. Making it atomic is a separate, still-open question, deliberately
 	// not bundled into a performance fix.
+	// ⬆ MINI-PLAN 16 B1 (2026-10-01) finishes the thought the note above started. That note says the file's
+	// content "is thrown away when it is loaded" — and then kept writing it on a REAL-TIME interval, which is
+	// a cadence for something durable. Measured at 9000X: 2,686 writes in 200 blocks, 13.43 per block, 0.994 ms
+	// each for 88 BYTES — 13.4 ms per block spent on a file nothing ever reads. The 0.5 s interval was doing
+	// exactly what it promised; the promise was the wrong one.
+	//
+	// The cadence is now THE BLOCK, which is what Pattern 2 says a commit is. BlockSessionCheckpointService
+	// calls FlushPendingSave() as it captures, so the file lands once per block beside the checkpoint that
+	// supersedes it, and _Notification still lands the last value on quit. 13.43 writes/block → 1.
+	//
+	// Durability is unchanged, for the same reason it was unchanged in mini-plan 08: this was never a
+	// durability mechanism. Nothing reads the file back within a session, and at boot it is either overwritten
+	// by ApplyCheckpointToServices or reset by ResetToPreGenesisDefaults. **A file whose only reader is the
+	// checkpoint should be written when the checkpoint is, not on a clock.**
+	//
+	// One behaviour change, stated rather than discovered: during a BOT session SimulationService swaps the
+	// player's balance in for the capture and swaps the bot's back afterwards, so the file now holds the
+	// PLAYER's value between blocks where the timer would have written the bot's. Both are discarded at boot,
+	// so neither is more correct — but the file's content did change shape, and that belongs in writing.
 	private bool _saveDirty;
-	private double _saveFlushTimer;
-	private const double SaveFlushInterval = 0.5;
 
 	public decimal CurrentBalance { get; private set; } = DefaultInitialBalance;
 
@@ -48,15 +65,9 @@ public partial class BankrollStateService : Node
 		LoadState();
 	}
 
-	public override void _Process(double delta)
-	{
-		if (!_saveDirty) return;
-		_saveFlushTimer += delta;
-		if (_saveFlushTimer < SaveFlushInterval) return;
-		_saveFlushTimer = 0;
-		_saveDirty = false;
-		SaveState();
-	}
+	// NO _Process OVERRIDE, deliberately (mini-plan 16 B1). The flush is driven by the block capture and by
+	// quit; there is nothing left for a per-frame poll to decide, and Pattern 6 says not to keep one that only
+	// re-reads a flag. This removes an autoload's per-frame call as a side effect.
 
 	// Godot delivers this before the process exits, so a quit inside the flush window still lands the last
 	// value. Without it the throttle would trade a cost nobody wanted for a loss somebody would notice.
@@ -76,7 +87,6 @@ public partial class BankrollStateService : Node
 	{
 		if (!_saveDirty) return;
 		_saveDirty = false;
-		_saveFlushTimer = 0;
 		SaveState();
 	}
 
@@ -146,8 +156,8 @@ public partial class BankrollStateService : Node
 				UpdatedAtUtc = DateTime.UtcNow
 			};
 			// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the
-			// close. This is the ONE service already throttled (SaveFlushInterval above), so its measured
-			// writes/block is the floor the other fourteen are being compared against.
+			// close. Run 1 measured this writer at 13.43 per block and 0.994 ms each for 88 bytes, which is what
+			// B1 above answered: it now writes once per block, at the capture.
 			string payload = JsonSerializer.Serialize(snapshot, JsonOptions);
 			long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
 			using (FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write))

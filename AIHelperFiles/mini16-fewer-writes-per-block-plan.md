@@ -287,3 +287,44 @@ so it was recoverable only because `user://logs/godot.log` captures `GD.Print` a
 (Pattern 2's exempt set). That was luck, not design. **A measurement whose only channel is a console is a
 measurement that depends on someone pasting it.** If part B needs a second ranked comparison, the table goes to its
 own CSV first.
+
+---
+
+## 9. Part B1 as built (2026-10-01)
+
+**The two balance files now commit at the block instead of on a 0.5 s clock.** `BankrollStateService` and
+`CasinoScBalanceService` each lose their time-interval `_Process` flush; `BlockSessionCheckpointService.CaptureCheckpoint`
+calls `FlushPendingSave()` on both as it captures. Predicted effect: **13.43 writes/block each → 1.00**, i.e.
+**26.9 → 2 writes per block** and ~26 ms/block of disk work removed.
+
+**Why this is a correctness improvement and not only a saving.** Mini-plan 08's own note says the file's content
+"is thrown away when it is loaded" — and then wrote it on a **real-time interval**, which is a cadence for
+something durable. Pattern 2 says a block is the commit. **A file whose only reader is the checkpoint should be
+written when the checkpoint is, not on a clock.** The code now says what the design already meant.
+
+**Verified before changing it, not assumed:** nothing outside the owning services reads either file. The only other
+references anywhere are `NetworkRoot`'s wipe delete-list and comments.
+
+**One behaviour change, written down rather than discovered.** During a **bot session**, `SimulationService` swaps
+the player's balance in for the capture and the bot's back afterwards, so the file now holds the **player's** value
+between blocks where the timer would have written the bot's. Both are discarded at boot, so neither is more
+correct — but the content changed shape and that belongs in writing.
+
+**The flush lives in `CaptureCheckpoint`, not at the call sites.** Both capture paths (`SimulationService`'s and
+`DiceGame`'s) funnel through it; putting it at the call sites would have been two edits and a standing invitation
+for a third caller to forget one.
+
+**A gap closed on the way past.** `CasinoScBalanceService` — the service where this 0.5 s dirty-flag shape was
+*invented* (ND.8f), and which `BankrollStateService` copied — had **no quit flush at all**. Mini-plan 08 wrote, of
+bankroll's, "without it the throttle would trade a cost nobody wanted for a loss somebody would notice", and never
+carried it back to the original. It has one now. **A fix applied to the copy and not the original is the same
+omission as a fix applied to the original and not the copy** — the third time this plan family has met that shape
+(mini-plan 15's five writers, 15b's three clocks, this).
+
+**Noted, not changed:** `CasinoClientLedgerService` carries a third instance of the same time-throttle
+(`StatsSaveFlushInterval = 1.0`). Run 1 measured it at **1 write in 200 blocks**, so it costs nothing and there is
+no measurement justifying a change. Recorded so the next reader knows it was seen and left.
+
+**Still open for run 2:** P4 (writes/block down ≥50% — now predicted to land at 48.84 → ~22), P5 (the 2.7× variance
+in non-UTXO block cost falls below 2×), P6 (milliseconds as a distribution). The journal's 19.96 writes/block and
+108 ms/block are untouched and remain the largest term by far.
