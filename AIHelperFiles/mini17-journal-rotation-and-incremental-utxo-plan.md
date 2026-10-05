@@ -147,3 +147,39 @@ Counts and complexity, per the rule above.
   plan's subject — A2 changes *how* the policy is enforced, never *what* it is.
 - **The bot-mined block one-frame clock offset** and **"a budget that adapts to the machine"** — both open, both
   unrelated. The latter still needs a second machine.
+
+---
+
+## 7. Part A1 as built (2026-10-05)
+
+**No behaviour change. The journal's single write counter is split into the operations it actually performs.**
+
+`BlockCostProfiler` gains `NoteJournalOp(JournalOp, startTicks)` for **Append**, **DirectoryScan** and **Delete**,
+plus `NoteJournalRotation()`. Three decisions inside it:
+
+1. **A rotation is COUNTED, never timed.** It is an envelope around the scans and deletes already timed inside it,
+   so timing it as well would double-count every millisecond it contains. The count is what P1 predicts; the
+   milliseconds belong to the operations within.
+2. **There is deliberately no `Create` op.** A new segment is created implicitly by the first append's
+   `FileMode.Append`, so its cost is already inside that append — a separate counter would be a line that never
+   fires, which is worse than no counter at all.
+3. **The append is double-instrumented, on purpose.** It is still counted as a world-state write (keeping
+   mini-plan 16's figures comparable) *and* as a journal op (answering this plan's question). **The two must never
+   be summed**, and both call sites say so.
+
+**Where the counters sit:** the scan inside `GetJournalChunkPaths` (in a `finally`, so the `catch`'s early return
+is still counted), the delete loop in `EnforceRetentionCap`, the rotation at the top of `RotateToNextChunkFile`,
+and the append beside the existing `NoteStateWrite`.
+
+**The ranked table now leads with the journal**, and prints the number P1 is about:
+`METADATA share of journal time: NN.N% (P1 predicts >= 50%)`, with scans and deletes also shown **per rotation**
+(predicted 2.00 and ~1.00). Seven new CSV columns carry the same per-block figures.
+
+**Verified before staging, because this is the error class that bit mini-plan 14:** the trace's **header column
+count was checked against its format string's placeholder indices programmatically** — 33 columns, 33 unique
+placeholders, max index 32. A trace whose header and row disagree is how a profiler reports the wrong quantity
+with total confidence, and reading column 20 as milliseconds once cost a wrong conclusion.
+
+**Locale detector: baseline 12 → 17**, all ten hits now in `BlockCostProfiler.cs` — five in the per-block report
+line, five in the new journal block — each a continuation line below its `InvariantCulture` wrapper (at lines 371
+and 434). Updated in `CLAUDE.md` in this same commit, which is what that rule requires.

@@ -364,6 +364,10 @@ namespace Scripts.History
 
 			string pattern = $"{baseName}_*{ext}";
 			string[] files;
+			// Mini-plan 17 A1 — THE scan this plan is about. Two of these run on every rotation (one here via
+			// RotateToNextChunkFile to parse the highest index off a filename, one via EnforceRetentionCap),
+			// at ~49 rotations a minute, and both are derivable from state this class already owns.
+			long scanBegin = System.Diagnostics.Stopwatch.GetTimestamp();
 			try
 			{
 				files = Directory.GetFiles(folder, pattern);
@@ -371,6 +375,11 @@ namespace Scripts.History
 			catch
 			{
 				return result;
+			}
+			finally
+			{
+				Scripts.Diagnostics.BlockCostProfiler.NoteJournalOp(
+					Scripts.Diagnostics.BlockCostProfiler.JournalOp.DirectoryScan, scanBegin);
 			}
 
 			var parsed = new List<(int Index, string Path)>();
@@ -504,6 +513,8 @@ namespace Scripts.History
 
 		private void RotateToNextChunkFile()
 		{
+			Scripts.Diagnostics.BlockCostProfiler.NoteJournalRotation();
+
 			// Determine next index from existing chunk files.
 			var paths = GetJournalChunkPaths(includeLegacyBaseFile: false);
 			int nextIndex = 1;
@@ -553,6 +564,8 @@ namespace Scripts.History
 					continue;
 				}
 
+				// Mini-plan 17 A1 — counted and timed: the other half of a rotation's metadata work.
+				long deleteBegin = System.Diagnostics.Stopwatch.GetTimestamp();
 				try
 				{
 					File.Delete(path);
@@ -560,6 +573,11 @@ namespace Scripts.History
 				catch
 				{
 					// Best-effort: a locked segment simply survives until the next rotation.
+				}
+				finally
+				{
+					Scripts.Diagnostics.BlockCostProfiler.NoteJournalOp(
+						Scripts.Diagnostics.BlockCostProfiler.JournalOp.Delete, deleteBegin);
 				}
 			}
 		}
@@ -900,6 +918,11 @@ namespace Scripts.History
 				}
 
 				Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(_activeJournalPath, appendedBytes, writeBegin);
+				// Mini-plan 17 A1 — the SAME append, counted again as a journal op so it can be weighed against
+				// the rotation's metadata work. Deliberately double-instrumented: the state-write counter keeps
+				// mini-plan 16's figures comparable, this one answers this plan's question. Never sum the two.
+				Scripts.Diagnostics.BlockCostProfiler.NoteJournalOp(
+					Scripts.Diagnostics.BlockCostProfiler.JournalOp.Append, writeBegin);
 
 				index += toWrite;
 				_activeJournalLineCount += toWrite;
