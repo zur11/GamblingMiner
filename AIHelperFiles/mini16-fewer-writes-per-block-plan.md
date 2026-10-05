@@ -3,12 +3,23 @@
 **Series note:** sixteenth of the *mini-plan* series, following `mini15-fail-closed-and-readouts-that-strobe-plan.md`,
 whose close-out recommended this over T4.1 and whose refuted predictions dictate how this plan states its own.
 
+**Status:** ✅ **DONE 2026-10-02** (close-out §11), branch `mini16-fewer-writes-per-block`. **A** instrumented every
+world-state writer; **B1** moved the two hot balance files from a 0.5 s clock to the block commit — **13.43 → 1.00
+writes/block each, 25.99 → 0.93 ms/block, −96%**; **B2 (the journal) suspended** with its precondition named;
+**C and D dropped** by their own gates. **P4 confirmed (48.84 → 23.36 writes/block, −52.2%). P5's threshold passed
+but its premise is refuted**, and its failure clause now governs the project: **per-block millisecond figures do not
+reproduce across sessions and are not evidence of a code change — state cost criteria as counts.**
+
+<details><summary>Earlier status lines (kept: the plan's own predictions were registered against these)</summary>
+
 **Status:** 🔄 **IN PROGRESS** on branch `mini16-fewer-writes-per-block`. **A built 2026-09-30** (§7).
 **Run 1 done 2026-10-01** (§8): **P1 and P3 refuted, P2 confirmed.** Only **2** writes land inside the block
 bracket; the real cost is **48.8 writes / 136.8 ms per block = 2.0% of wall-clock time**, almost all of it between
 blocks at bet rate. The journal dominates (108 ms/block, not waste); the two balance files are **26.9 writes/block
 of files nothing ever reads**. **Next: B1** — commit those two at the block instead of on a 0.5 s timer. Part D is
 dropped by its own gate; part C is demoted.
+
+</details>
 
 **Why this and not T4.1.** Mini-plan 14's rule says the UTXO replay becomes the next plan at 40% of a block, and
 mini-plan 15 measured it crossing (42.7% at height 674–698). **The rule fired on a shrinking denominator, not a
@@ -328,3 +339,113 @@ no measurement justifying a change. Recorded so the next reader knows it was see
 **Still open for run 2:** P4 (writes/block down ≥50% — now predicted to land at 48.84 → ~22), P5 (the 2.7× variance
 in non-UTXO block cost falls below 2×), P6 (milliseconds as a distribution). The journal's 19.96 writes/block and
 108 ms/block are untouched and remain the largest term by far.
+
+---
+
+## 10. Run 2 results (2026-10-02, 30.6 min at 9000X, 275 blocks, heights 946 → 1220)
+
+### P4 — ✅ CONFIRMED, and the targeted change landed exactly as predicted
+
+| | run 1 (pre-B1) | run 2 (post-B1) |
+|---|---|---|
+| **writes / block** | **48.84** | **23.36** (−52.2%) |
+| write ms / block | 136.8 | 104.3 |
+| write share of wall-clock | 2.01% | 1.56% |
+| `bankroll_state.json` | 13.43/block | **1.00/block** |
+| `casino_sc_balance_state.json` | 13.43/block | **1.00/block** |
+| those two, combined | 25.99 ms/block | **0.93 ms/block (−96%)** |
+
+Predicted ≥50%; measured 52.2%, against an estimate of ~22 writes/block. **A count predicted, a count measured, and
+they agree** — which is the whole reason the plan's criterion was a count.
+
+Note `stateWrites` *inside* the block bracket rose 2 → 4: B1 moved those two flushes to the capture, so they now
+land inside the block instead of between blocks. Fewer writes overall, at the commit. That is the intended shape.
+
+### P5 — ✅ threshold met, ❌ **premise refuted, and this is the run's most important result**
+
+Within-run spread of non-UTXO block cost, median per 50-block bucket:
+
+| | buckets | spread |
+|---|---|---|
+| run 1 (heights 700–949), **before B1** | 7.21 · 6.29 · 7.14 · 6.27 · 6.06 ms | **1.19×** |
+| run 2 (heights 950–1199), after B1 | 13.51 · 14.22 · 12.29 · 15.84 · 16.08 ms | **1.31×** |
+
+Both are far under the predicted 2× — **but run 1 was already at 1.19×, before B1 changed anything.** So B1 did not
+cause it, and **the 2.7× that justified choosing this plan over T4.1 does not reproduce.**
+
+### ⚠ The finding that is bigger than the plan's own subject
+
+**Total block cost nearly DOUBLED between the two runs — median 10.54 → 19.67 ms — while this plan was removing
+26 ms/block of disk writes.** Phase medians:
+
+| phase | run 1 | run 2 |
+|---|---|---|
+| `totalMs` | 10.54 | **19.67** |
+| `checkpointMs` | 5.45 | **13.56** |
+| `botTransactionsMs` | 2.40 | 3.87 |
+| `utxoMsSincePrev` | 3.88 | 5.13 |
+| `snapshotWriteMs` | 2.81 | 2.91 |
+| `stateWriteMs` (in-bracket) | 1.85 | 2.73 |
+
+Of `checkpointMs`'s +8.1 ms, about **2.4 ms is attributable** (+0.9 the two flushes moving inside the bracket,
++1.5 the rollup write becoming dearer at 2.18 → 3.69 ms each). **The remaining ~5.7 ms is unattributed.** Run 2 sits
+later in game time with a larger cast, which plausibly explains part of it; nothing in the data separates "bigger
+world" from "different day".
+
+**The structure is now clear across three runs: variance is BETWEEN sessions, not within them.** Mini-plan 15's run
+varied 2.7× internally; these two vary 1.19× and 1.31× internally but sit at levels a factor of two apart. **That
+between-session shift is large enough to swallow any millisecond-level improvement whole.**
+
+### Invoking P5's failure clause, as it was written
+
+The rule registered in §4 said: *"P5 fails while P4 holds ⇒ the variance is not the write count, and the honest
+conclusion is that per-block cost in this project is environmental. Say so, and stop attributing block-cost changes
+to code."* P5's threshold passed on a technicality while its premise failed, and the clause applies in full:
+
+> **Per-block millisecond figures in this project do not reproduce across sessions and are not evidence of a code
+> change. Counts reproduce. State cost criteria as counts.**
+
+This is the plan's most valuable output, and it retroactively settles two earlier figures already flagged:
+mini-plan 14's "a block costs 8.4 ms" and mini-plan 15's 40%-of-a-block T4.1 trigger.
+
+### P6 — reported as a distribution, with no threshold, as specified
+
+Write cost **136.8 → 104.3 ms/block**; wall-clock share **2.01% → 1.56%**. The journal is now **94.9% of all
+remaining write cost** (99.0 of 104.3 ms/block; 19.33 of 23.36 writes/block; 1,494 distinct segment files in
+30.6 minutes at 5.12 ms per append).
+
+---
+
+## 11. Close-out (2026-10-02)
+
+| part | outcome |
+|---|---|
+| **A — the instrument** | ✅ Shipped. The only reason any of this was visible: counting writes **outside** the block bracket is what exposed 48.8 writes/block where the bracket itself showed 2. |
+| **B1 — the two balance files** | ✅ Shipped and verified as a count: **13.43 → 1.00 writes/block each**, 25.99 → 0.93 ms/block. |
+| **B2 — the journal** | ⏸ **Not attempted, deliberately.** 95% of the remaining write cost, and it is the record rather than waste. Needs its own measurement, which §6 said from the start. |
+| **C — skip unchanged** | ❌ Dropped. Every one of those 2,686 bankroll writes carried a genuinely new value. |
+| **D — one money file** | ❌ Dropped by its own gate: the other money services write ~0.01×/block. Nothing to merge. |
+
+### What this plan is worth, beyond the 26 ms
+
+1. **A measurement discipline that paid off on its first use.** The criterion was a **count**, chosen because
+   mini-plan 15 had just shown a per-block millisecond figure failing to reproduce. The count predicted 52% and
+   measured 52.2%; the milliseconds moved by a factor of two for reasons nothing in the data can name. **Had this
+   plan stated its success as "block cost falls below X ms", it would have reported a catastrophic regression while
+   actually removing 96% of the cost it targeted.**
+2. **Three findings, all of the same shape — a fix applied narrowly.** `BankrollStateService` was throttled in
+   mini-plan 08 and the other fourteen writers were not; `CasinoScBalanceService` invented the throttle shape and
+   never received the quit flush its own copy got; and this plan's own part B had to be re-scoped because its
+   premise assumed all fifteen behaved alike. **The project's recurring defect is not bad fixes, it is correct
+   fixes that stop at the instance in front of them.**
+3. **A cost that was pure waste, named by the code that created it.** Mini-plan 08 wrote that the file's content
+   "is thrown away when it is loaded" and then kept writing it on a real-time clock. **The note describing the
+   waste and the code performing it sat eight lines apart for a month.**
+
+### What follows
+
+- **The journal (B2)** is the only remaining write-cost target of any size, and it is doing real work. Any plan
+  touching it needs a measurement of whether 5.12 ms per append is reducible — not an assumption that it is.
+- **T4.1 (incremental UTXO)** remains queued with its trigger already restated in absolute milliseconds by
+  mini-plan 15. Run 2 measured `utxoMsSincePrev` at 5.13 ms median — still growing slowly, still bounded.
+- **Nothing in the T4 family should be validated by a per-block millisecond comparison across sessions again.**
