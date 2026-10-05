@@ -714,6 +714,34 @@ figures trustworthy at all.
 block does not. Anything that moves a commit past the end of the frame that mined the block is out of scope
 whatever it saves.
 
+### The journal's rotation, and a UTXO set that is updated instead of rebuilt — SPECIFIED (mini-plan 17, 2026-10-05)
+
+**Status: `AIHelperFiles/mini17-journal-rotation-and-incremental-utxo-plan.md`, not started; proposed branch
+`mini17-journal-rotation-and-utxo`.** Takes mini-plan 16's two leftovers — the bet journal (94.9% of remaining write
+cost) and **T4.1**, whose trigger mini-plan 15 restated in absolute milliseconds. **T4.3 is folded in**, because
+this roadmap already says its index is "maintained alongside T4.1's incremental update": the hook T4.1 adds is the
+only place T4.3's index can be kept correct, so building them apart means building the hook twice.
+
+**The journal's premise, read from the code rather than assumed.** Mini-plan 16 measured 19.33 writes/block and
+5.12 ms per append, which made the appends look like the target. `BetHistoryRepository` says the cost is more likely
+the **rotation**: `MaxJournalEntriesPerChunkFile` is 10,000 and the run rotated **~49 times a minute**, and *each*
+rotation runs **`Directory.GetFiles` twice** — once in `RotateToNextChunkFile` to parse the highest index off a
+filename, once again inside `EnforceRetentionCap` — plus a create and a delete. **Four metadata operations where
+there could be one**, and both scans are derivable from state the repository already owns (`_activeJournalPath`, and
+a retained-segment list it mutates on rotation).
+
+**The UTXO side.** `GetUtxoSet()` caches on `_chainVersion` and **replays the entire chain** when it moves —
+`O(all transactions ever)`, ~4 ms × 8 rebuilds per block. `GetSpendableUtxos` then **walks the whole set** and
+filters by owned address, so every wallet panel and affordability check is `O(whole set)` across **12 call sites**.
+
+**⚠ The rule it inherits, and the reason its predictions look the way they do.** Mini-plan 16 established that a
+per-block millisecond figure **does not reproduce across sessions here**. So every criterion in this plan is a
+**count or a complexity claim, verified within one session**; milliseconds are recorded as distributions and decide
+nothing. **The cross-check is built BEFORE either fast path**, so it cannot be written to fit a result — and it
+covers both: the in-memory segment list against a fresh scan, and the incremental UTXO set against a full replay.
+**The full replay is never deleted; it is the oracle.** A single assert failure stops the plan, because a wrong UTXO
+set is a wrong balance.
+
 ### A budget that adapts to the machine (BASIC MODE refinement)
 
 **Status: open, named in mini-plan 09 (D-09.6 option (c)) and unchanged since.** Every performance figure this
