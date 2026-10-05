@@ -376,6 +376,108 @@ public sealed class BlockchainService
 		return utxos;
 	}
 
+	/// <summary>
+	/// Mini-plan 17 A3 — THE ORACLE. Replays the whole chain into a fresh set and compares it, entry by entry,
+	/// against whatever <see cref="GetUtxoSet"/> currently holds. Returns null when they agree, or a description
+	/// of the first disagreements when they do not.
+	///
+	/// <para><b>Written BEFORE the incremental update (B1) exists, deliberately.</b> Today the cache is itself
+	/// produced by a replay, so this passes trivially — and that is the point: the comparison is in place and
+	/// proven to run before there is any result it could be shaped to fit. Once B1 maintains the set
+	/// incrementally, this is the only thing that can prove the fast path right.</para>
+	///
+	/// <para><b>The full replay is never deleted</b> (plan §4). It is not dead code once B1 lands — it is what
+	/// <c>TryReplaceChain</c> needs and what this method needs. A wrong UTXO set is a wrong balance, which this
+	/// project treats as unrecoverable (INC-001/INC-004).</para>
+	/// </summary>
+	public string? DescribeUtxoCacheMismatch()
+	{
+		if (_utxoCache == null)
+		{
+			return null; // nothing cached yet — nothing to disagree with.
+		}
+
+		Dictionary<string, UtxoEntry> cached = _utxoCache;
+		var replayed = new Dictionary<string, UtxoEntry>();
+
+		foreach (Block block in Chain)
+		{
+			foreach (Transaction tx in block.Transactions)
+			{
+				foreach (TxInput input in tx.Inputs)
+					replayed.Remove(OutPointKey(input.Source.PrevTxId, input.Source.Vout));
+
+				for (int v = 0; v < tx.Outputs.Count; v++)
+				{
+					replayed[OutPointKey(tx.TransactionId, v)] = new UtxoEntry
+					{
+						TxId = tx.TransactionId,
+						Vout = v,
+						Output = tx.Outputs[v],
+						BlockIndex = block.Index,
+						IsCoinbase = tx.IsCoinbase,
+						IsSpendable = tx.IsSpendable
+					};
+				}
+			}
+		}
+
+		if (cached.Count == replayed.Count)
+		{
+			bool identical = true;
+			foreach (KeyValuePair<string, UtxoEntry> pair in replayed)
+			{
+				if (!cached.TryGetValue(pair.Key, out UtxoEntry? mine) || mine == null || !SameUtxo(mine, pair.Value))
+				{
+					identical = false;
+					break;
+				}
+			}
+
+			if (identical)
+			{
+				return null;
+			}
+		}
+
+		// Report the SHAPE of the disagreement, not just that there is one: which side holds what, and a few
+		// example keys. "The sets differ" is an alarm; this is a diagnosis.
+		var missing = new List<string>();
+		var extra = new List<string>();
+		var differing = new List<string>();
+
+		foreach (KeyValuePair<string, UtxoEntry> pair in replayed)
+		{
+			if (!cached.TryGetValue(pair.Key, out UtxoEntry? mine) || mine == null)
+			{
+				if (missing.Count < 3) missing.Add(pair.Key);
+			}
+			else if (!SameUtxo(mine, pair.Value) && differing.Count < 3)
+			{
+				differing.Add(pair.Key);
+			}
+		}
+
+		foreach (string key in cached.Keys)
+		{
+			if (!replayed.ContainsKey(key) && extra.Count < 3) extra.Add(key);
+		}
+
+		return $"cached={cached.Count} replayed={replayed.Count}"
+			+ $" · missing-from-cache={missing.Count switch { 0 => "none", _ => string.Join(",", missing) }}"
+			+ $" · extra-in-cache={extra.Count switch { 0 => "none", _ => string.Join(",", extra) }}"
+			+ $" · differing={differing.Count switch { 0 => "none", _ => string.Join(",", differing) }}";
+	}
+
+	private static bool SameUtxo(UtxoEntry a, UtxoEntry b) =>
+		a.TxId == b.TxId
+		&& a.Vout == b.Vout
+		&& a.BlockIndex == b.BlockIndex
+		&& a.IsCoinbase == b.IsCoinbase
+		&& a.IsSpendable == b.IsSpendable
+		&& a.Output.Amount == b.Output.Amount
+		&& a.Output.Address == b.Output.Address;
+
 	public bool ContainsTransactionId(string transactionId)
 	{
 		if (PendingTransactions.Any(t => t.TransactionId == transactionId))

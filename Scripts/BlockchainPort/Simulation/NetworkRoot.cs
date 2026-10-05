@@ -2064,6 +2064,56 @@ public partial class NetworkRoot : Node
 	// consumers (CasinoCoinSwapService availability) recompute here instead of polling per-frame (§1.1).
 	public static event Action<Block>? BlockAccepted;
 
+	// ── Mini-plan 17 A3 — the UTXO oracle's driver ──────────────────────────────────────────────────────
+	// Built BEFORE the incremental update (B1), so it cannot be written to fit a result. Today the cache is
+	// itself produced by a replay and this passes trivially; once B1 lands it is the only thing that can prove
+	// the fast path right, and plan §4 makes a single failure stop the plan.
+	//
+	// ROUND-ROBIN, one node per interval, because asserting every node would mean ~62 full chain replays per
+	// interval — an instrument that costs more than the thing it watches gets disarmed, and a disarmed check is
+	// no check. One replay every AssertEveryBlocks blocks covers every node over time at a cost nobody notices.
+	private const int UtxoAssertEveryBlocks = 25;
+	private static int _utxoAssertBlockCounter;
+	private static int _utxoAssertNodeCursor;
+	private static bool _utxoAssertAnnounced;
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	private static void AssertUtxoIntegrityPeriodically()
+	{
+		if (++_utxoAssertBlockCounter < UtxoAssertEveryBlocks) return;
+		_utxoAssertBlockCounter = 0;
+
+		if (SharedNodesById.Count == 0) return;
+
+		// Take the nodes in a stable order so the cursor really does walk all of them.
+		var ids = new List<string>(SharedNodesById.Keys);
+		ids.Sort(StringComparer.Ordinal);
+		string nodeId = ids[_utxoAssertNodeCursor % ids.Count];
+		_utxoAssertNodeCursor = (_utxoAssertNodeCursor + 1) % ids.Count;
+
+		if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) || node?.Blockchain == null) return;
+
+		string? mismatch = node.Blockchain.DescribeUtxoCacheMismatch();
+
+		// The DEBUG-canary rule: a check whose passing state is SILENCE must prove, once, that it runs at all.
+		// Otherwise "no mismatch reported" and "the assert never executed" look identical in the Output panel.
+		if (!_utxoAssertAnnounced)
+		{
+			_utxoAssertAnnounced = true;
+			GD.Print(string.Create(CultureInfo.InvariantCulture,
+				$"[UtxoAssert] ARMED — comparing one node's cached UTXO set against a full chain replay every " +
+				$"{UtxoAssertEveryBlocks} blocks, round-robin over {ids.Count} node(s). Silence from here on means " +
+				$"they agree; a mismatch prints to the Output panel AND the Errors tab."));
+		}
+
+		if (mismatch == null) return;
+
+		string message = string.Create(CultureInfo.InvariantCulture,
+			$"[UtxoAssert] MISMATCH on '{nodeId}' at height {node.Blockchain.Chain.Count - 1}: {mismatch}");
+		GD.Print(message);
+		GD.PrintErr(message);
+	}
+
 	private static void HandleMinedBlock(NodeAgent miner, Block block)
 	{
 		// Mini-plan 13 A — per-block phase timing (Scripts/Diagnostics/BlockCostProfiler.cs), DEBUG-only and
@@ -2072,6 +2122,9 @@ public partial class NetworkRoot : Node
 		Scripts.Diagnostics.BlockCostProfiler.BeginBlock(miner.NodeId, block.Index,
 			DateTimeOffset.FromUnixTimeMilliseconds(block.Timestamp).UtcDateTime);
 		Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Broadcast);
+
+		// Mini-plan 17 A3 — the oracle, driven from the one hook every miner's block passes through.
+		AssertUtxoIntegrityPeriodically();
 
 		// Step 4b: the coinbase now lives inside the block (BlockTemplateBuilder), so it propagates
 		// with BroadcastBlock — no separate coinbase-transaction broadcast is needed.

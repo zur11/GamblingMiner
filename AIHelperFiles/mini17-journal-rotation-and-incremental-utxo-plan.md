@@ -183,3 +183,38 @@ with total confidence, and reading column 20 as milliseconds once cost a wrong c
 **Locale detector: baseline 12 → 17**, all ten hits now in `BlockCostProfiler.cs` — five in the per-block report
 line, five in the new journal block — each a continuation line below its `InvariantCulture` wrapper (at lines 371
 and 434). Updated in `CLAUDE.md` in this same commit, which is what that rule requires.
+
+---
+
+## 8. Part A3 as built (2026-10-05) — the oracle, before either fast path
+
+**`BlockchainService.DescribeUtxoCacheMismatch()`** replays the whole chain into a fresh dictionary and compares it
+entry by entry — `TxId`, `Vout`, `BlockIndex`, `IsCoinbase`, `IsSpendable`, amount and address — against whatever
+`GetUtxoSet()` currently holds. Returns `null` on agreement, or a **diagnosis** rather than an alarm: the two
+counts, plus up to three example keys each for *missing from cache*, *extra in cache* and *differing*. "The sets
+disagree" tells the next reader nothing about which direction the bug runs.
+
+**Today it passes trivially, and that is the point.** The cache is still produced by a replay, so cache and oracle
+are the same arithmetic. Writing the comparison now means it exists and is proven to run **before there is any
+result it could be shaped to fit** — which is the whole reason §5 put A3 ahead of A2 and B1.
+
+**The driver is round-robin, one node per 25 blocks** (`NetworkRoot.AssertUtxoIntegrityPeriodically`, called from
+`HandleMinedBlock` — the one hook every miner's block passes through). Asserting all ~62 nodes per interval would
+mean ~62 full chain replays, and **an instrument that costs more than the thing it watches gets disarmed, which
+makes it no instrument at all.** One replay per 25 blocks covers every node over time at a cost nobody notices.
+
+**It announces itself once** (`[UtxoAssert] ARMED …`, to the Output panel). This is the DEBUG-canary rule: a check
+whose passing state is silence must prove once that it runs, or "no mismatch reported" and "the assert never
+executed" are indistinguishable. A mismatch prints to **both** the Output panel and the Errors tab.
+
+**Not built here, and why:** the segment-list half of A3 **cannot exist before A2**, because there is no in-memory
+list to compare against a directory scan yet. It lands in A2's own commit, with its assert written before the list
+is first *used* — the same ordering principle, applied to the only shape the dependency allows. Recorded rather
+than quietly dropped.
+
+**Four nullable-reference warnings were introduced and fixed before staging.** `BlockchainService.cs` has nullable
+annotations enabled; the new method returned `null` from a non-nullable `string` and used `out UtxoEntry` where the
+dictionary yields a nullable. Caught only by reading the build output rather than its summary line — **an
+incremental `dotnet build` that recompiles nothing prints `0 Warning(s)` and means nothing**, which is how four
+warnings nearly shipped past a check that has been clean for the whole plan family. Verified with
+`dotnet build --no-incremental`.
