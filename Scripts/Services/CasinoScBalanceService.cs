@@ -84,9 +84,16 @@ public partial class CasinoScBalanceService : Node
 	public event Action BalanceChanged;
 
 	// ND.8f: throttled flush for the bet-driven saves (see ApplyBetResult's perf note).
+	// Mini-plan 16 B1 (2026-10-01) — same change as BankrollStateService, whose note carries the full reasoning.
+	// This service is where that 0.5 s dirty-flag shape was INVENTED (ND.8f) and bankroll copied it; measured at
+	// 9000X both were writing 13.43 times per block, 0.941 ms each for 344 bytes, on files that are overwritten
+	// by the checkpoint at boot. The cadence is now the block.
+	//
+	// It also gains the quit flush bankroll already had. Mini-plan 08 wrote, of that one, "without it the
+	// throttle would trade a cost nobody wanted for a loss somebody would notice" — and never carried it back to
+	// the service it had copied the shape from. **A fix applied to the copy and not the original is the same
+	// omission as a fix applied to the original and not the copy.**
 	private bool _saveDirty;
-	private double _saveFlushTimer;
-	private const double SaveFlushInterval = 0.5;
 
 	public override void _Ready()
 	{
@@ -102,14 +109,25 @@ public partial class CasinoScBalanceService : Node
 	private CentralBankService Fed =>
 		_centralBank ??= GetNodeOrNull<CentralBankService>("/root/CentralBankService");
 
-	public override void _Process(double delta)
+	// NO _Process OVERRIDE, deliberately (mini-plan 16 B1) — see BankrollStateService for why.
+
+	/// <summary>
+	/// Write now if anything is pending. Called by the block checkpoint capture and on quit.
+	/// </summary>
+	public void FlushPendingSave()
 	{
 		if (!_saveDirty) return;
-		_saveFlushTimer += delta;
-		if (_saveFlushTimer < SaveFlushInterval) return;
-		_saveFlushTimer = 0;
 		_saveDirty = false;
 		SaveState();
+	}
+
+	// Godot delivers this before the process exits, so a quit between blocks still lands the last value.
+	public override void _Notification(int what)
+	{
+		if (what == NotificationWMCloseRequest || what == NotificationPredelete)
+		{
+			FlushPendingSave();
+		}
 	}
 
 	// THE casino's single loan-draw funnel. P15.1c (D-15.3/D-15.23) re-points it at the Central Bank: the
@@ -480,8 +498,14 @@ public partial class CasinoScBalanceService : Node
 					.ToList(),
 				UpdatedAtUtc   = DateTime.UtcNow
 			};
-			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
-			file.StoreString(JsonSerializer.Serialize(snapshot, JsonOptions));
+			// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the close.
+			string payload = JsonSerializer.Serialize(snapshot, JsonOptions);
+			long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+			using (FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write))
+			{
+				file.StoreString(payload);
+			}
+			Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(StatePath, payload.Length, writeBegin);
 		}
 		catch (Exception ex)
 		{

@@ -113,8 +113,18 @@ public partial class PrincipalBalanceService : Node
 				CurrentBalance = CurrentBalance,
 				UpdatedAtUtc = DateTime.UtcNow
 			};
-			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
-			file.StoreString(JsonSerializer.Serialize(snapshot, JsonOptions));
+			// Mini-plan 16 A — every world-state write is counted. The timer starts BEFORE the open and the
+			// report happens AFTER the close, because on Windows the close and its metadata flush are most of a
+			// small file's cost: timing only the StoreString would measure the cheap part and conclude the
+			// write is free. Hence the block-scoped `using` — a statement-scoped one closes at method exit,
+			// outside the measurement. Same shape in all 15 writers.
+			string payload = JsonSerializer.Serialize(snapshot, JsonOptions);
+			long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+			using (FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write))
+			{
+				file.StoreString(payload);
+			}
+			Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(StatePath, payload.Length, writeBegin);
 		}
 		catch (Exception ex)
 		{

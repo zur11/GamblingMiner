@@ -440,6 +440,12 @@ public partial class UserStatsService : Node
 			// point leaves either the old file or the new one, never half of either.
 			string payload = JsonSerializer.Serialize(Rollup, RollupJsonOptions);
 
+			// Mini-plan 16 A — counted, and the timer deliberately spans the temp write AND the rename below,
+			// because the atomic shape is TWO filesystem operations and measuring only the first would make the
+			// safest writer in the project look like the cheapest. (P15.11b already noted the atomic write
+			// doubles the volume and that it belongs in the budget rather than being reverted — this measures it.)
+			long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+
 			using (FileAccess file = FileAccess.Open(RollupTempPath, FileAccess.ModeFlags.Write))
 			{
 				if (file == null)
@@ -459,6 +465,8 @@ public partial class UserStatsService : Node
 				ProjectSettings.GlobalizePath(RollupTempPath),
 				ProjectSettings.GlobalizePath(RollupPath),
 				overwrite: true);
+
+			Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(RollupPath, payload.Length, writeBegin);
 
 			// Cleared only on success. Previously it was cleared BEFORE the write, so a failed save was
 			// never retried — the in-memory total simply ran ahead of the file until the next mutation.

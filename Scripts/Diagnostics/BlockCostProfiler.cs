@@ -72,7 +72,8 @@ namespace Scripts.Diagnostics
 		private const string Header =
 			"reportUtc,chainHeight,gameDateUtc,minerNodeId,totalMs,broadcastMs,difficultyTraceMs,botTransactionsMs," +
 			"auctionsMs,governanceMs,historicalEventsMs,snapshotMs,casinoRewardsMs,subscribersMs,checkpointMs," +
-			"unaccountedMs,snapshotBytes,snapshotWrites,snapshotWriteMs,utxoRebuildsSincePrev,utxoMsSincePrev,utxoNodesSincePrev";
+			"unaccountedMs,snapshotBytes,snapshotWrites,snapshotWriteMs,utxoRebuildsSincePrev,utxoMsSincePrev,utxoNodesSincePrev," +
+			"stateWrites,stateFiles,stateBytes,stateWriteMs";
 
 		private static readonly long[] _phaseTicks = new long[PhaseCount];
 		private static int _openPhase = -1;
@@ -90,6 +91,31 @@ namespace Scripts.Diagnostics
 		private static int _utxoRebuilds;
 		private static double _utxoMs;
 		private static readonly HashSet<string> _utxoNodes = new(StringComparer.Ordinal);
+
+		// ── Mini-plan 16 A — every world-state file write, counted ──────────────────────────────────────
+		// Measured before this plan: the block path writes ~14 files totalling ~75 KB in ~14 ms, which is
+		// ~5 MB/s — three orders of magnitude below the disk. That says the cost is per-write OVERHEAD, not
+		// volume, and `calendar_state.json` is 18 bytes with 20 call sites. This counts the writes so the
+		// claim is measured rather than inferred from two phase totals — the same reasoning that made
+		// NoteSnapshotWrite a counter instead of a phase.
+		//
+		// The per-block figures are what the plan's predictions are stated in (a COUNT reproduces; a
+		// per-block millisecond figure demonstrably does not — mini-plan 15). The per-path totals are
+		// session-cumulative and ranked, because part B needs to know WHICH writers write more than once.
+		private static int _stateWrites;
+		private static double _stateWriteMs;
+		private static long _stateBytes;
+		private static readonly HashSet<string> _stateFilesThisBlock = new(StringComparer.Ordinal);
+
+		private sealed class StateWriteStat
+		{
+			public int Writes;
+			public double Ms;
+			public long Bytes;
+		}
+
+		private static readonly Dictionary<string, StateWriteStat> _stateWritesByPath = new(StringComparer.Ordinal);
+		private const int PerPathReportEveryBlocks = 50;
 
 		private static bool _headerChecked;
 
@@ -158,6 +184,10 @@ namespace Scripts.Diagnostics
 			_snapshotBytes = 0;
 			_snapshotWrites = 0;
 			_snapshotWriteMs = 0d;
+			_stateWrites = 0;
+			_stateWriteMs = 0d;
+			_stateBytes = 0;
+			_stateFilesThisBlock.Clear();
 		}
 
 		/// <summary>Closes the open phase (if any) and opens <paramref name="phase"/>.</summary>
@@ -202,6 +232,45 @@ namespace Scripts.Diagnostics
 		/// One UTXO-set replay, by the node that owns it. Called from the rebuild path itself, which runs
 		/// whenever a query follows a chain change — so this lands between blocks, not inside one.
 		/// </summary>
+		/// <summary>
+		/// Mini-plan 16 A — one world-state file write. Called by every writer `WorldWriteGuard` already marks,
+		/// which is the ready-made list of exactly the writers that matter.
+		///
+		/// <para><paramref name="startTicks"/> is a <see cref="Stopwatch.GetTimestamp"/> taken <b>before the
+		/// file was opened</b>, and the caller must report <b>after it is closed</b> — on Windows the close and
+		/// its metadata flush are most of a small file's cost, so timing only the `StoreString` would measure
+		/// the cheap part and conclude the writes are free.</para>
+		///
+		/// <para>Counted even outside a block (`_inBlock` is not required): a writer firing between blocks is
+		/// itself a finding, and the per-path totals are what part B ranks. Only the per-BLOCK columns need a
+		/// block to be open.</para>
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void NoteStateWrite(string path, long bytes, long startTicks)
+		{
+			if (!Enabled) return;
+
+			double ms = TicksToMs(Stopwatch.GetTimestamp() - startTicks);
+			string key = path ?? "unknown";
+
+			if (!_stateWritesByPath.TryGetValue(key, out StateWriteStat stat))
+			{
+				stat = new StateWriteStat();
+				_stateWritesByPath[key] = stat;
+			}
+
+			stat.Writes++;
+			stat.Ms += ms;
+			stat.Bytes = bytes;
+
+			if (!_inBlock) return;
+
+			_stateWrites++;
+			_stateWriteMs += ms;
+			_stateBytes += bytes;
+			_stateFilesThisBlock.Add(key);
+		}
+
 		[Conditional("DEBUG")]
 		public static void NoteUtxoRebuild(string nodeId, double milliseconds)
 		{
@@ -240,20 +309,60 @@ namespace Scripts.Diagnostics
 				$" · utxo {_utxoMs:N1} ({_utxoRebuilds} rebuild(s), {_utxoNodes.Count} node(s)) since previous block" +
 				$" · broadcast {Ms(Phase.Broadcast):N1} · governance {Ms(Phase.Governance):N1}" +
 				$" · auctions {Ms(Phase.Auctions):N1} · botTx {Ms(Phase.BotTransactions):N1}" +
-				$" · checkpoint {Ms(Phase.Checkpoint):N1} · other {totalMs - accounted:N1}"));
+				$" · checkpoint {Ms(Phase.Checkpoint):N1} · other {totalMs - accounted:N1}" +
+				$" · state {_stateWriteMs:N1} ms in {_stateWrites} write(s) across {_stateFilesThisBlock.Count}" +
+				$" file(s) of {_stateBytes / 1024.0:N1} KB"));
 			GD.Print(sb.ToString());
 
 			WriteTraceRow(string.Format(CultureInfo.InvariantCulture,
-				"{0:O},{1},{2:O},{3},{4:F3},{5:F3},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F3},{12:F3},{13:F3},{14:F3},{15:F3},{16},{17},{18:F3},{19},{20:F3},{21}",
+				"{0:O},{1},{2:O},{3},{4:F3},{5:F3},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F3},{12:F3},{13:F3},{14:F3},{15:F3},{16},{17},{18:F3},{19},{20:F3},{21},{22},{23},{24},{25:F3}",
 				DateTime.UtcNow, _chainHeight, _gameUtc, _minerNodeId, totalMs,
 				Ms(Phase.Broadcast), Ms(Phase.DifficultyTrace), Ms(Phase.BotTransactions), Ms(Phase.Auctions),
 				Ms(Phase.Governance), Ms(Phase.HistoricalEvents), Ms(Phase.Snapshot), Ms(Phase.CasinoRewards),
 				Ms(Phase.Subscribers), Ms(Phase.Checkpoint), totalMs - accounted, _snapshotBytes, _snapshotWrites, _snapshotWriteMs,
-				_utxoRebuilds, _utxoMs, _utxoNodes.Count));
+				_utxoRebuilds, _utxoMs, _utxoNodes.Count,
+				_stateWrites, _stateFilesThisBlock.Count, _stateBytes, _stateWriteMs));
 
 			ResetIntervalCounters();
 			++BlockCount;
+			if (BlockCount % PerPathReportEveryBlocks == 0)
+			{
+				ReportStateWritesByPath();
+			}
+
 			BlockPublished?.Invoke();
+		}
+
+		/// <summary>
+		/// Mini-plan 16 A — the ranked table part B works from: which world-state files are written, how often
+		/// per block, and what each one costs. Printed to the Godot editor's <b>Output panel</b> (GD.Print —
+		/// the panel the developer actually reads) every <see cref="PerPathReportEveryBlocks"/> blocks.
+		///
+		/// <para>Ranked by <b>writes per block</b>, not by milliseconds, because that is the quantity the plan
+		/// predicts and the one that reproduces. A file at more than 1.0 writes/block is a coalescing target;
+		/// a file at exactly 1.0 is already at its floor and part B must leave it alone.</para>
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void ReportStateWritesByPath()
+		{
+			if (!Enabled || _stateWritesByPath.Count == 0 || BlockCount <= 0) return;
+
+			var rows = new List<KeyValuePair<string, StateWriteStat>>(_stateWritesByPath);
+			rows.Sort((a, b) => b.Value.Writes.CompareTo(a.Value.Writes));
+
+			var sb = new StringBuilder();
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"[BlockCost] world-state writes over {BlockCount:N0} block(s), ranked by writes per block:"));
+
+			foreach (KeyValuePair<string, StateWriteStat> row in rows)
+			{
+				sb.Append(string.Create(CultureInfo.InvariantCulture,
+					$"\n    {row.Value.Writes / (double)BlockCount,6:N2}/block · {row.Value.Writes,7:N0} write(s)" +
+					$" · {row.Value.Ms,9:N1} ms total · {row.Value.Ms / Math.Max(1, row.Value.Writes),6:N3} ms each" +
+					$" · {row.Value.Bytes,8:N0} B · {row.Key}"));
+			}
+
+			GD.Print(sb.ToString());
 		}
 
 		private static double TicksToMs(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;

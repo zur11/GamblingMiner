@@ -651,6 +651,69 @@ while watching mini-plan 14's runs, plus the measurement that decides whether T4
   values the world never had. It also removes a per-frame rebuild of DiceGame's whole mining-status block.
 - **(C)** The UTXO replay's share at a taller chain; mini-plan 14's 40% rule then decides whether T4.1 follows.
 
+### Fewer writes per block, and a success criterion that reproduces — ✅ DONE (mini-plan 16, 2026-10-02)
+
+> **The write path lost half its writes, and the project lost a unit of measurement.**
+>
+> **What shipped.** Every world-state writer is instrumented (`BlockCostProfiler.NoteStateWrite`), and the two
+> hottest — `bankroll_state.json` (88 B) and `casino_sc_balance_state.json` (344 B) — moved from a 0.5 s real-time
+> flush to the **block commit**: **13.43 → 1.00 writes/block each, 25.99 → 0.93 ms/block, −96%.** Total writes per
+> block **48.84 → 23.36 (−52.2%)**, write share of wall-clock **2.01% → 1.56%**. `CasinoScBalanceService` also
+> gained the quit flush that `BankrollStateService` got in mini-plan 08 and never received back.
+>
+> **Only visible because the instrument counted OUTSIDE the block.** Inside the bracket a block performs 2 writes;
+> the real figure was 48.8, almost all of it between blocks at bet rate. **P1 (≥20 writes per block) was refuted by
+> looking in the wrong window**, and had the counter required an open block the plan would have closed on a
+> measurement that was true and useless. **P3 was refuted too:** `calendar_state.json` — 20 call sites, 18 bytes,
+> the "emblematic case" — is written **zero** times during a run. A count of call sites is not a rate.
+>
+> **P2 confirmed, emphatically:** an **88-byte** file costs **0.994 ms** per write while the **7,922-byte**
+> checkpoint costs **0.643 ms**. Cost is per-write overhead, not volume. The atomic rollup (974 B, `.tmp` + rename)
+> is the dearest small write in the set at **2.18 ms**, exactly as two filesystem operations implies.
+>
+> **⚠ THE RULE THIS ESTABLISHES, and it governs every T4 item.** Block cost nearly **doubled between the two runs
+> (median 10.54 → 19.67 ms) while the plan was removing 26 ms/block of writes** — concentrated in `checkpointMs`
+> (5.45 → 13.56), of which only ~2.4 ms is attributable. Within-run spread was **1.19×** (run 1, *before* B1) and
+> **1.31×** (run 2), so the **2.7× that justified choosing this plan over T4.1 does not reproduce**: the variance is
+> **between sessions, not within them**, and it is large enough to swallow any millisecond-level improvement whole.
+> **Per-block millisecond figures do not reproduce across sessions and are not evidence of a code change. State cost
+> criteria as COUNTS.** The count predicted 52% and measured 52.2%. Had this plan stated success in milliseconds it
+> would have reported a catastrophic regression while removing 96% of what it targeted. This retroactively settles
+> mini-plan 14's "a block costs 8.4 ms" and mini-plan 15's 40%-of-a-block T4.1 trigger, both already flagged.
+>
+> **What remains.** The **bet journal is 94.9% of all remaining write cost** (99.0 of 104.3 ms/block, 19.33 writes,
+> 5.12 ms per append) and it is **the record, not waste** — suspended (§6/§11) with its precondition named: a
+> measurement of whether that per-append cost is reducible, never an assumption. **C and D dropped by their own
+> gates** (every bankroll write carried a new value; the other money services write ~0.01×/block, so there is
+> nothing to merge).
+>
+> Text below is the original specification.
+
+**Status: `AIHelperFiles/mini16-fewer-writes-per-block-plan.md` (close-out §11), merged from branch
+`mini16-fewer-writes-per-block`.** Chosen over T4.1 on mini-plan 15's measurement, and the reasoning is recorded
+under T4.1 itself: the UTXO replay plateaus at ~4 ms while the write path is both larger (checkpoint **9.46 ms** at
+height 350–449) and the reason every other per-block figure here varies 2.7×.
+
+**The premise, measured.** The block path writes ~14 files totalling **~75 KB** and takes **~14 ms** — about
+**5 MB/s**, three orders of magnitude below the disk. So the cost is **per-write overhead, not volume**:
+`calendar_state.json` is **18 bytes** and `PersistCurrentTime()` has **20 call sites**;
+`PrincipalBalanceService.SaveState()` fires from four unthrottled mutation paths. The one service already throttled
+is `BankrollStateService` (mini-plan 08 P1, where its unthrottled per-bet write was **66% of a bet**) — **that fix
+was applied to one service and never generalized**, which is this whole plan in one sentence. The coalescing
+pattern also already exists and is used for exactly one thing: mini-plan 14's `RequestWorldPersist` /
+`FlushWorldIfDirty`.
+
+**The plan's own discipline, inherited from mini-plan 15's failures.** Its success criterion is a **write count**,
+not a millisecond figure and not a share — a count reproduces or it is a bug, whereas a single per-block cost
+demonstrably does not reproduce across days. The instrument (generalizing `BlockCostProfiler.NoteSnapshotWrite`
+to every writer `WorldWriteGuard` already marks) ships **before** any fix, and **P5 — that the 2.7× variance falls
+with the count — is the prediction that matters for the project**, because it is what would make future per-block
+figures trustworthy at all.
+
+**Hard constraint:** coalescing within a frame preserves "a block is the only commit to disk"; deferring past the
+block does not. Anything that moves a commit past the end of the frame that mined the block is out of scope
+whatever it saves.
+
 ### A budget that adapts to the machine (BASIC MODE refinement)
 
 **Status: open, named in mini-plan 09 (D-09.6 option (c)) and unchanged since.** Every performance figure this

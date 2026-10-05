@@ -1160,8 +1160,14 @@ public partial class CasinoCoinSwapService : Node
 				SwapHistory       = _swapHistory.Select(CloneRecord).ToList(),
 				UpdatedAtUtc      = DateTime.UtcNow
 			};
-			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
-			file.StoreString(JsonSerializer.Serialize(snapshot, JsonOptions));
+			// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the close.
+			string payload = JsonSerializer.Serialize(snapshot, JsonOptions);
+			long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+			using (FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write))
+			{
+				file.StoreString(payload);
+			}
+			Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(StatePath, payload.Length, writeBegin);
 		}
 		catch (Exception ex)
 		{

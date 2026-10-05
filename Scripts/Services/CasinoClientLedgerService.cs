@@ -342,8 +342,14 @@ public partial class CasinoClientLedgerService : Node
 				Entries  = new List<LedgerEntry>(_entries),
 				BetStats = _betStats.ToDictionary(kv => kv.Key, kv => CloneStats(kv.Value))
 			};
-			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
-			file.StoreString(JsonSerializer.Serialize(snapshot, JsonOptions));
+			// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the close.
+			string payload = JsonSerializer.Serialize(snapshot, JsonOptions);
+			long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+			using (FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write))
+			{
+				file.StoreString(payload);
+			}
+			Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(StatePath, payload.Length, writeBegin);
 		}
 		catch (Exception ex)
 		{

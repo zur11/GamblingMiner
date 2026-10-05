@@ -79,7 +79,13 @@ public static class CasinoPoolRepository
 		// Mini-plan 15 A — a session that could not load its world writes nothing world-shaped.
 		if (WorldWriteGuard.RefuseWrite(nameof(CasinoPoolRepository))) return;
 
-		using FileAccess file = FileAccess.Open(SavePath, FileAccess.ModeFlags.Write);
-		file.StoreString(JsonSerializer.Serialize(_state, JsonOptions));
+		// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the close.
+		string payload = JsonSerializer.Serialize(_state, JsonOptions);
+		long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+		using (FileAccess file = FileAccess.Open(SavePath, FileAccess.ModeFlags.Write))
+		{
+			file.StoreString(payload);
+		}
+		Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(SavePath, payload.Length, writeBegin);
 	}
 }

@@ -224,6 +224,16 @@ public partial class BlockSessionCheckpointService : Node
 
 		CasinoScBalanceService casinoSc = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 
+		// Mini-plan 16 B1 — the two balance files are flushed HERE, and here only. Both used to write on a 0.5 s
+		// real-time timer: 13.43 writes per block each, ~1 ms apiece, on files that boot either overwrites from
+		// this checkpoint or resets pre-genesis. The block is the commit (Pattern 2), so the block is the cadence.
+		//
+		// It sits in THIS method rather than at the two call sites because both of them — SimulationService's
+		// capture and DiceGame's — funnel through here. Putting it at the call sites would have been two edits
+		// and the standing invitation for a third caller to forget it.
+		bankroll.FlushPendingSave();
+		casinoSc?.FlushPendingSave();
+
 		// INC-004 — the last rollup this checkpoint knew about, carried across the rebuild below.
 		// CaptureRollupSnapshot() returns null when UserStatsService could not read its file, and the whole
 		// snapshot is rewritten to disk at every block: without this, the FIRST block after a failed load
@@ -301,8 +311,16 @@ public partial class BlockSessionCheckpointService : Node
 
 		try
 		{
-			using FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write);
-			file.StoreString(JsonSerializer.Serialize(CurrentSnapshot, JsonOptions));
+			// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the close.
+			// The largest of the small files (~7.5 KB) and the one that IS the commit, so it is the write whose
+			// count must never fall below one per block however the others are coalesced.
+			string payload = JsonSerializer.Serialize(CurrentSnapshot, JsonOptions);
+			long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+			using (FileAccess file = FileAccess.Open(StatePath, FileAccess.ModeFlags.Write))
+			{
+				file.StoreString(payload);
+			}
+			Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(StatePath, payload.Length, writeBegin);
 		}
 		catch (Exception ex)
 		{
