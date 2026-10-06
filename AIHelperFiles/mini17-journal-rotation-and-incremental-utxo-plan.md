@@ -3,7 +3,13 @@
 **Series note:** seventeenth of the *mini-plan* series, following `mini16-fewer-writes-per-block-plan.md`, which
 measured both of this plan's targets and whose measurement rule this plan inherits in full.
 
-**Status:** 📋 **SPECIFIED 2026-10-05**, not started. Proposed branch `mini17-journal-rotation-and-utxo`.
+**Status:** 🔄 **IN PROGRESS** on branch `mini17-journal-rotation-and-utxo`. **A1, A3, B1 and B2 built.**
+**Run 1 done 2026-10-06** (§10, 195 blocks, heights 1221→1415, game dates 2011-04/08 — a fully-populated era
+mini-plan 16 never reached): **P3 and P4 confirmed** (UTXO rebuilds 8 → 0.313 per block; the oracle silent across
+61 nodes with its ARMED line proving it ran). **P1 refuted** — 2.00 scans and 0.99 deletes per rotation exactly as
+read from the code, but metadata is **4.4%** of journal time against ≥50% predicted, so **A2 is DROPPED by its own
+rule**. The run also exposed a mistake in B2 (a sort in the hottest reader, whose dominant consumer only sums) —
+fixed by moving the tie-break into `SelectUtxos`, where a sort already happens. **Next: close-out.**
 
 **Two parts, and they bundle for a reason beyond convenience.** Mini-plan 16 left the journal as 94.9% of all
 remaining write cost, and T4.1 has been queued since mini-plan 13 with its trigger restated in absolute
@@ -218,3 +224,151 @@ dictionary yields a nullable. Caught only by reading the build output rather tha
 incremental `dotnet build` that recompiles nothing prints `0 Warning(s)` and means nothing**, which is how four
 warnings nearly shipped past a check that has been clean for the whole plan family. Verified with
 `dotnet build --no-incremental`.
+
+---
+
+## 9. Parts B1 and B2 as built (2026-10-05)
+
+**Built without a run, because neither is gated on P1** — only A2 is ("P1 fails ⇒ A2 is dropped"). Their gate is
+**P4, the oracle never firing**, which is continuous and already armed.
+
+### B1 — incremental UTXO maintenance (T4.1)
+
+`AdvanceUtxoCacheWithAppendedBlock(block)` applies one appended block's transactions to the cached set, called
+immediately after **all three** `Chain.Add` + `_chainVersion++` pairs — genesis (`CreateNewBlock`), the mined
+template (`CommitMinedBlock`) and the received block (`TryAcceptMinedBlock`). Verified by listing every
+`Chain.Add`/`Chain.Clear` in the file and checking each append has the call: **3 of 3**, and
+`TryReplaceChain`'s wholesale swap deliberately has none.
+
+**Fail-safe by construction, not by care.** It advances the cache only when `_utxoCacheVersion == _chainVersion - 1`
+— i.e. the cache was *exactly* current before this append. Any other state does nothing, and `GetUtxoSet`'s version
+check then rebuilds by replay, which is always correct. **So the only route to a wrong set is an arithmetic bug in
+one loop**, and that loop is what the oracle compares. Inputs are removed before outputs are added, transactions in
+list order — identical to the replay, which is what makes a transaction spending an output created earlier in the
+*same block* come out right.
+
+### B2 — the address → outpoint index (T4.3)
+
+`_addressIndex` is built from the finished set in one extra pass after the replay (not maintained inside the replay
+loop: that loop removes spent outputs as it goes, so keeping the index in step there would duplicate remove-logic in
+the one place that does not need it, and a single pass over the final set cannot disagree with the set it came
+from). The incremental path maintains both, reading a spent entry's address **before** removing it — an index that
+keeps a key whose UTXO is gone reports money that has been spent.
+
+`GetSpendableUtxos` now walks **only the requested addresses' outpoints** instead of the whole set. Its
+`_addressIndex ??= BuildAddressIndex(utxos)` is self-healing rather than silently slow: a permanent fallback to the
+full walk would still return the right answer, which is exactly the kind of regression nothing ever notices.
+
+**The oracle covers the index too**, and only *after* the set agrees — so a reported index fault is never an echo of
+a set fault. It reports **missing** and **stale** keys separately, because they mean opposite things: a missing key
+hides money the node owns; a stale key reports money it has already spent, and only the second can make a bot bid
+coins it does not have.
+
+### ⚠ A behaviour change found by reading the consumers, not by a run
+
+`NetworkRoot.SelectUtxos` is **order-dependent twice**: it returns the **first** exact-amount match, and its
+`OrderByDescending` is a *stable* sort, so equal amounts are broken by the order it receives. `GetSpendableUtxos`
+used to hand back whatever order the UTXO dictionary happened to enumerate — **an implementation detail nobody
+chose** — and walking an index instead changes it.
+
+**Resolution: the order is now specified.** The result is sorted by outpoint key, which makes the tie-break defined
+and reproducible rather than swapping one arbitrary order for another, and makes "why was that coin spent?"
+answerable. It **cannot** change the amount gathered — the selector keeps taking until `gathered >= need` — only
+which equal-valued coins are taken. Sorting a per-address slice is cheap in a way sorting the whole set never was,
+which is itself the point of the index.
+
+**This is the kind of thing the plan's discipline is for:** nothing would have failed, no assert would have fired,
+and the only symptom would have been different coins in a transaction for reasons no one could reconstruct.
+
+### What still needs a run
+
+- **P4** — the oracle silent across a real session. It announces `[UtxoAssert] ARMED` once to the Output panel.
+- **P3** — `utxoRebuildsSincePrev` falling from ~8 per block to ~0, readable from the existing trace column; no new
+  instrument was needed for it.
+- **P1** — and therefore whether **A2 is built at all**.
+
+---
+
+## 10. Run 1 results (2026-10-06, 195 blocks, heights 1221 → 1415, game dates 2011-04-27 → 2011-08-30)
+
+**Note the era first, because it governs how everything below reads.** This run sits entirely **after** Market
+Birth, after the median-fee start and after Satoshi's retirement, with **13 powered cast miners** against ~5 at
+height 800. Mini-plan 16's runs ended at game date ~2010-04. **No figure here is comparable to one from those runs**
+— which is the rule this plan inherited, met on its first run.
+
+### P1 — ❌ REFUTED. The mechanism was right and the magnitude was wrong.
+
+Read from the code before the run: two `Directory.GetFiles` per rotation, plus a delete. **Measured: exactly
+2.00 scans and 0.99 deletes per rotation, at 5.49 rotations/block.** The structural prediction was precisely right.
+
+Then the cost:
+
+| op | count | total ms | ms each | share |
+|---|---|---|---|---|
+| **appends** | 2,750 | **20,800.7** | **7.56** | **95.6%** |
+| scans | 1,646 | 421.9 | 0.256 | 1.9% |
+| deletes | 813 | 545.5 | 0.671 | 2.5% |
+
+**Metadata share: 4.4%, against the ≥50% predicted.** A directory enumeration of a ~43-entry folder costs
+**0.256 ms** — about **30× cheaper than one append**. The whole premise was that metadata operations are
+expensive; they are not, at this folder size.
+
+**⇒ A2 is DROPPED, by the rule registered in §4:** *"P1 fails (appends dominate, not rotation) ⇒ A2 is dropped and
+the journal's cost is recorded as inherent to recording 8,300 bets/second."* Removing two scans per rotation would
+save ~1.9% of the journal's time. **The journal is the record, and recording it is what it costs.**
+
+### P3 — ✅ CONFIRMED
+
+UTXO rebuilds fell from **~8 per block to 0.313** — only **5 of 195 blocks** triggered any, and the one block with
+51 is the cold-start burst where every node's cache is built once. `utxoMsSincePrev` is **0.483 ms/block mean,
+0.000 median**, against ~4 ms before. No new instrument was needed: it is the existing trace column.
+
+### P4 — ✅ CONFIRMED, and the silence is evidence
+
+`[UtxoAssert] ARMED — … round-robin over 61 node(s)` appears **once** in the Output panel, and
+**`MISMATCH` appears zero times** across 195 blocks. The developer reported no errors; **that only counts because
+the ARMED line proves the check ran** — this is the DEBUG-canary rule paying for itself, since "no mismatch" and
+"the assert never executed" would otherwise be the same observation.
+
+### P5 — ✅ demonstrated as specified
+
+The index is the only path `GetSpendableUtxos` now walks, and the oracle verifies it against a freshly derived
+index on every check — so it returns identical results with the full-set walk gone.
+
+### ⚠ The run's real finding, and it is a mistake of mine
+
+**`botTransactionsMs` is now the dominant per-block term: median 0.957 ms, mean 76.899, max 469.256.** It is not
+transaction *volume* — `txTargetPerBlock` is ~0.5 in this era. It is **per-participant decision work**, and that is
+exactly where `AggregateSpendable` lives, which is called for every auction bidder, bot affordability check,
+company treasury read and dead-node sweep — dozens of times per block with 13 cast miners and 40 companies.
+
+**And `AggregateSpendable` calls `GetSpendableUtxos` only to SUM the amounts.** B2's first draft sorted that
+method's result by outpoint key to make coin-selection tie-breaking deterministic. The determinism reasoning was
+right; **the placement was wrong — I put a sort in the hottest reader the UTXO set has, for a guarantee only one of
+its consumers needs.**
+
+**Fixed by moving the tie-break to where the order matters and a sort already happens.** `NetworkRoot.SelectUtxos`
+now tie-breaks its existing `OrderByDescending(amount)` with `ThenBy(outpoint key)` — free — and its exact-match
+pass picks the smallest key among all exact matches in one O(n) scan with no allocation. Same guarantee, zero cost
+on the summing path.
+
+**Explicitly NOT attributed:** I cannot claim the sort caused the 76.9 ms. There is no pre-B2 measurement in this
+era, and **this plan's own rule says a per-block millisecond comparison across sessions is not evidence** — so the
+one question I would most like answered is precisely the kind this project has established it cannot answer that
+way. Settling it would need a within-session A/B behind a toggle, which is out of scope. **The sort was waste
+regardless of whether it was expensive**, and that is sufficient reason to remove it.
+
+### A design flaw in A1, recorded because it is the second instance of the same shape
+
+**The seven per-block journal CSV columns are structurally always zero** — `jRotations`, `jAppends`, `jScans` and
+the rest read 0 on every one of the 195 rows, because the journal does its work **between** blocks at bet rate and
+those columns only accumulate while a block is open. This is **exactly** mini-plan 16's P1 failure, one plan later:
+I built a per-block view of something that is not a per-block event. P1 was answerable only because
+`NoteJournalOp` also accumulates **outside** the bracket into the session totals the ranked table prints — a
+decision made for a different reason that happened to save the measurement. **The per-block columns should be
+dropped or re-scoped; a column that can only ever be zero is worse than no column, because it reads as a result.**
+
+### On `totalMs`
+
+Median **25.7 ms**, mean **95.1 ms** — a distribution, as P6 requires, with no threshold attached and no comparison
+drawn to any earlier run. The gap between median and mean is `botTransactionsMs` above, nothing else.

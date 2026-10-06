@@ -1576,13 +1576,42 @@ public partial class NetworkRoot : Node
 	private static List<(OutPoint outpoint, string address, decimal amount)>? SelectUtxos(
 		IReadOnlyList<(OutPoint outpoint, string address, decimal amount)> available, decimal need)
 	{
+		// Mini-plan 17 B2 — DETERMINISTIC TIE-BREAKING LIVES HERE, because this is the only consumer of
+		// GetSpendableUtxos whose result depends on order, and it is already paying for a sort.
+		//
+		// Both passes below were order-dependent on whatever order they were handed: the exact-match pass takes
+		// the FIRST match, and OrderByDescending is a STABLE sort, so equal amounts keep their input order. That
+		// input order used to be however the UTXO dictionary enumerated — an implementation detail nobody chose
+		// — so which of two identical coins got spent was arbitrary and unreproducible. Neither pass can change
+		// the AMOUNT gathered; only which equal-valued coins are taken.
+		//
+		// The exact-match pass now takes the smallest outpoint key among ALL exact matches, in one O(n) scan
+		// with no allocation and no sort. The greedy pass adds the key as a secondary sort term, which is free:
+		// the sort already existed.
+		(OutPoint outpoint, string address, decimal amount)? exact = null;
+		string exactKey = string.Empty;
 		foreach ((OutPoint outpoint, string address, decimal amount) u in available)
-			if (u.amount == need)
-				return new List<(OutPoint, string, decimal)> { u };
+		{
+			if (u.amount != need) continue;
+
+			string key = UtxoSelectionKey(u.outpoint);
+			if (exact == null || string.CompareOrdinal(key, exactKey) < 0)
+			{
+				exact = u;
+				exactKey = key;
+			}
+		}
+
+		if (exact != null)
+		{
+			return new List<(OutPoint, string, decimal)> { exact.Value };
+		}
 
 		var chosen = new List<(OutPoint, string, decimal)>();
 		decimal gathered = 0m;
-		foreach ((OutPoint outpoint, string address, decimal amount) u in available.OrderByDescending(x => x.amount))
+		foreach ((OutPoint outpoint, string address, decimal amount) u in available
+			.OrderByDescending(x => x.amount)
+			.ThenBy(x => UtxoSelectionKey(x.outpoint), StringComparer.Ordinal))
 		{
 			chosen.Add(u);
 			gathered += u.amount;
@@ -1590,6 +1619,11 @@ public partial class NetworkRoot : Node
 		}
 		return null;
 	}
+
+	// The same "txid:vout" shape BlockchainService keys its UTXO set by — defined here because coin selection
+	// is the only thing outside that class that needs a stable identity for an outpoint.
+	private static string UtxoSelectionKey(OutPoint outpoint) =>
+		string.Create(CultureInfo.InvariantCulture, $"{outpoint.PrevTxId}:{outpoint.Vout}");
 
 	// The signing keys for an owned address: the node's base keypair for WalletAddress, else the per-address
 	// derived context from the ReceiveWallet (Step 8.1 TryFindSpendingContext). Lets one spend pull keys for
