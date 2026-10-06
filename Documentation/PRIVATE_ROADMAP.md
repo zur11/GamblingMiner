@@ -714,6 +714,74 @@ figures trustworthy at all.
 block does not. Anything that moves a commit past the end of the frame that mined the block is out of scope
 whatever it saves.
 
+### The journal's rotation, and a UTXO set that is updated instead of rebuilt — ✅ DONE (mini-plan 17, 2026-10-06)
+
+> **T4.1 and T4.3 are DONE. The journal is closed as a performance subject. A2 was dropped by its own rule.**
+>
+> **T4.1 (incremental UTXO):** a newly-appended block's transactions are applied to the cached set instead of
+> replaying the chain — called after all three `Chain.Add` + `_chainVersion++` pairs, with `TryReplaceChain`'s
+> wholesale swap deliberately left to the replay. **Rebuilds fell from ~8 per block to 0.313**, and
+> `utxoMsSincePrev` is **0.000 median** against ~4 ms before. Fail-safe by construction: it advances only when the
+> cache was exactly current before the append, so every other state falls back to the replay.
+>
+> **T4.3 (address → outpoint index):** maintained by that same hook, so `GetSpendableUtxos` walks only the
+> requested addresses' outpoints instead of the whole set — `O(owned)`, the follow-on §38.7's R3 fix pointed at.
+>
+> **The oracle is the reason either shipped.** `DescribeUtxoCacheMismatch` replays the chain and compares entry by
+> entry — built **before** either fast path so it could not be shaped to fit a result — driven round-robin at one
+> node per 25 blocks. **Silent across 195 blocks and 61 nodes, with an `ARMED` line proving it ran.** The full
+> replay is now load-bearing twice (this and `TryReplaceChain`) and must never be deleted.
+>
+> **⚠ P1 REFUTED, and A2 dropped by the rule registered before the data.** The code reading was exact — **2.00
+> `Directory.GetFiles` scans and 0.99 deletes per rotation**, at 5.49 rotations/block. The cost reading was not: a
+> scan of that folder costs **0.256 ms, about 30× less than one append**. Journal time is **95.6% appends**
+> (2,750 × 7.56 ms) and **4.4% metadata**. Removing both scans would have saved 1.9%. **A structural reading tells
+> you what happens; only a measurement tells you what it costs.** The bet journal is therefore **closed as a
+> performance subject** — the appends are the record, and a smaller line or fewer recorded bets were both already
+> rejected on measurement (mini-plan 12).
+>
+> **A misplaced sort in T4.3, found by reading the run rather than by any failure.** The first draft sorted
+> `GetSpendableUtxos`' result to make coin-selection tie-breaking deterministic. Right reasoning, wrong place:
+> `AggregateSpendable` calls that method **only to sum it**, for every auction bidder, bot affordability check,
+> company treasury read and dead-node sweep — dozens of times per block. The tie-break now lives in
+> `NetworkRoot.SelectUtxos`, where a sort already happens and it is therefore free.
+>
+> **Next candidate, and it is UNMEASURED: `botTransactionsMs`** — median 0.96 ms, mean **76.9**, max 469, in a
+> populated era (13 cast miners, 40 companies, game dates 2011-04→08) that no earlier plan reached. It is
+> per-participant decision work, not transaction volume (`txTargetPerBlock` ≈ 0.5). **Whatever measures it must be
+> a within-session instrument** — a phase split inside `ScheduleBotTransactionsAfterBlock`, or a count of
+> `AggregateSpendable` calls per block — because comparing per-block milliseconds across sessions proves nothing
+> here. Also pending: **drop or re-scope mini-plan 17's seven per-block journal trace columns**, which are
+> structurally always zero because the journal works between blocks, and would read as a result to the next reader.
+>
+> Text below is the original specification.
+
+**Status: `AIHelperFiles/mini17-journal-rotation-and-incremental-utxo-plan.md` (close-out §11), merged from branch
+`mini17-journal-rotation-and-utxo`.** Takes mini-plan 16's two leftovers — the bet journal (94.9% of remaining write
+cost) and **T4.1**, whose trigger mini-plan 15 restated in absolute milliseconds. **T4.3 is folded in**, because
+this roadmap already says its index is "maintained alongside T4.1's incremental update": the hook T4.1 adds is the
+only place T4.3's index can be kept correct, so building them apart means building the hook twice.
+
+**The journal's premise, read from the code rather than assumed.** Mini-plan 16 measured 19.33 writes/block and
+5.12 ms per append, which made the appends look like the target. `BetHistoryRepository` says the cost is more likely
+the **rotation**: `MaxJournalEntriesPerChunkFile` is 10,000 and the run rotated **~49 times a minute**, and *each*
+rotation runs **`Directory.GetFiles` twice** — once in `RotateToNextChunkFile` to parse the highest index off a
+filename, once again inside `EnforceRetentionCap` — plus a create and a delete. **Four metadata operations where
+there could be one**, and both scans are derivable from state the repository already owns (`_activeJournalPath`, and
+a retained-segment list it mutates on rotation).
+
+**The UTXO side.** `GetUtxoSet()` caches on `_chainVersion` and **replays the entire chain** when it moves —
+`O(all transactions ever)`, ~4 ms × 8 rebuilds per block. `GetSpendableUtxos` then **walks the whole set** and
+filters by owned address, so every wallet panel and affordability check is `O(whole set)` across **12 call sites**.
+
+**⚠ The rule it inherits, and the reason its predictions look the way they do.** Mini-plan 16 established that a
+per-block millisecond figure **does not reproduce across sessions here**. So every criterion in this plan is a
+**count or a complexity claim, verified within one session**; milliseconds are recorded as distributions and decide
+nothing. **The cross-check is built BEFORE either fast path**, so it cannot be written to fit a result — and it
+covers both: the in-memory segment list against a fresh scan, and the incremental UTXO set against a full replay.
+**The full replay is never deleted; it is the oracle.** A single assert failure stops the plan, because a wrong UTXO
+set is a wrong balance.
+
 ### A budget that adapts to the machine (BASIC MODE refinement)
 
 **Status: open, named in mini-plan 09 (D-09.6 option (c)) and unchanged since.** Every performance figure this
@@ -958,7 +1026,12 @@ The P15.8 world was played on to **~Oct 2014 / block 2699** after the P15.11 rep
 
 **Instrument these five together** in T4.6 — UTXO rebuilds, snapshot serialize+rename, governance tick, the bot/company sweeps, and claim-transaction construction — plus managed heap and block index. That set now covers every hypothesis on the table.
 
-#### T4.1 — Incremental UTXO maintenance (real and bounded — **no longer "highest leverage"**)
+#### T4.1 — Incremental UTXO maintenance — ✅ **DONE (mini-plan 17 B1, 2026-10-06)**
+
+> Shipped. Rebuilds **~8 per block → 0.313**, `utxoMsSincePrev` **0.000 median**. The full replay stays as the
+> oracle and for `TryReplaceChain`, and **`DescribeUtxoCacheMismatch` must never be deleted** — it is what proves
+> the fast path right, and it was silent across 195 blocks and 61 nodes. **T4.3 shipped with it** (below).
+> Text below is the original specification plus mini-plan 15's measurement note.
 
 > **⚠ Measured to height 698 by mini-plan 15, which changes this item's case in two ways.**
 >
@@ -983,7 +1056,13 @@ Applying a newly-accepted block's transactions to the cached UTXO set costs **O(
 
 The per-node `BlockchainService` is already acknowledged as vestigial — a comment in `NetworkRoot` says *"single-shared-chain design (every node already holds the same canonical chain via BroadcastBlock)"* (grep the phrase; this cited `~L5209` until 2026-08-23, by which point the line had moved ~900 lines — Standing Convention 15), and `RunConsensusRound` was deleted at T2 for the same reason. A single shared chain + one shared UTXO index, with `NodeAgent` reduced to identity + owned addresses, removes the 62× invalidation storm at its source and collapses `BroadcastBlock` to a no-op. **Blocked-by-design consideration:** per-node chains are the substrate the deferred **Divergent Chains / Fork Simulation** wants. The honest resolution is to make the shared chain the default and reintroduce per-node chains *deliberately* when forks ship, rather than paying for 62 unused copies for years.
 
-#### T4.3 — Address → outpoint index
+#### T4.3 — Address → outpoint index — ✅ **DONE (mini-plan 17 B2, 2026-10-06)**
+
+> Shipped alongside T4.1, maintained by the same incremental hook, and verified by the same oracle (which checks
+> the index only **after** the set agrees, so an index fault is never an echo of a set fault). ⚠ **Do not add a
+> sort to `GetSpendableUtxos`:** its dominant consumer, `AggregateSpendable`, calls it only to SUM, dozens of times
+> per block. Coin selection's deterministic tie-break lives in `NetworkRoot.SelectUtxos`, where a sort already
+> happens. Text below is the original specification.
 
 `GetSpendableUtxos(addresses)` walks the whole UTXO set. An `address → outpoints` dictionary maintained alongside T4.1's incremental update makes every wallet panel, bot affordability check and company treasury read **O(that node's outpoints)**. This is the natural follow-on to the R3 fix (§38.7) that already collapsed `AggregateSpendable` from `O(addresses × utxos)` to `O(utxos)` — T4.3 takes it to `O(owned)`.
 

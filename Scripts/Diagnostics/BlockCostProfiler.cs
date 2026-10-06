@@ -73,7 +73,8 @@ namespace Scripts.Diagnostics
 			"reportUtc,chainHeight,gameDateUtc,minerNodeId,totalMs,broadcastMs,difficultyTraceMs,botTransactionsMs," +
 			"auctionsMs,governanceMs,historicalEventsMs,snapshotMs,casinoRewardsMs,subscribersMs,checkpointMs," +
 			"unaccountedMs,snapshotBytes,snapshotWrites,snapshotWriteMs,utxoRebuildsSincePrev,utxoMsSincePrev,utxoNodesSincePrev," +
-			"stateWrites,stateFiles,stateBytes,stateWriteMs";
+			"stateWrites,stateFiles,stateBytes,stateWriteMs," +
+			"jRotations,jAppends,jScans,jDeletes,jAppendMs,jScanMs,jDeleteMs";
 
 		private static readonly long[] _phaseTicks = new long[PhaseCount];
 		private static int _openPhase = -1;
@@ -113,6 +114,32 @@ namespace Scripts.Diagnostics
 			public double Ms;
 			public long Bytes;
 		}
+
+		// ── Mini-plan 17 A1 — the journal, broken into the operations it actually performs ──────────────
+		// Mini-plan 16 measured the journal at 19.33 writes/block and 5.12 ms per append, which made the
+		// APPENDS look like the target. Reading the code suggests the rotation instead: segments hold 10,000
+		// entries, the run rotated ~49 times a minute, and each rotation runs Directory.GetFiles TWICE (once
+		// to parse the highest index off a filename, once inside EnforceRetentionCap) plus a delete. This
+		// splits them so the premise is measured rather than argued.
+		//
+		// ⚠ The journal's append is counted by BOTH instruments: here, and as a world-state write for
+		// mini-plan 16's comparability. **Do not sum the two.** There is deliberately no Create op — a new
+		// segment is created implicitly by the first append's FileMode.Append, so its cost is inside that
+		// append and a separate counter would be a line that never fires.
+		public enum JournalOp
+		{
+			Append,
+			DirectoryScan,
+			Delete
+		}
+
+		private const int JournalOpCount = 3;
+		private static readonly int[] _journalOps = new int[JournalOpCount];
+		private static readonly double[] _journalOpMs = new double[JournalOpCount];
+		private static readonly int[] _journalOpsTotal = new int[JournalOpCount];
+		private static readonly double[] _journalOpMsTotal = new double[JournalOpCount];
+		private static int _journalRotations;
+		private static int _journalRotationsTotal;
 
 		private static readonly Dictionary<string, StateWriteStat> _stateWritesByPath = new(StringComparer.Ordinal);
 		private const int PerPathReportEveryBlocks = 50;
@@ -188,6 +215,9 @@ namespace Scripts.Diagnostics
 			_stateWriteMs = 0d;
 			_stateBytes = 0;
 			_stateFilesThisBlock.Clear();
+			Array.Clear(_journalOps, 0, JournalOpCount);
+			Array.Clear(_journalOpMs, 0, JournalOpCount);
+			_journalRotations = 0;
 		}
 
 		/// <summary>Closes the open phase (if any) and opens <paramref name="phase"/>.</summary>
@@ -271,6 +301,41 @@ namespace Scripts.Diagnostics
 			_stateFilesThisBlock.Add(key);
 		}
 
+		/// <summary>
+		/// Mini-plan 17 A1 — one journal filesystem operation. <paramref name="startTicks"/> follows
+		/// <see cref="NoteStateWrite"/>'s contract: taken before the operation, reported after it completes.
+		/// Counted outside a block too, for the same reason state writes are — the journal's work happens at
+		/// bet rate, which is mostly between blocks.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void NoteJournalOp(JournalOp op, long startTicks)
+		{
+			if (!Enabled) return;
+
+			double ms = TicksToMs(Stopwatch.GetTimestamp() - startTicks);
+			int i = (int)op;
+
+			_journalOpsTotal[i]++;
+			_journalOpMsTotal[i] += ms;
+
+			if (!_inBlock) return;
+			_journalOps[i]++;
+			_journalOpMs[i] += ms;
+		}
+
+		/// <summary>
+		/// Mini-plan 17 A1 — one segment rotation. **Counted, never timed**: a rotation is an envelope around
+		/// the scans and deletes already counted above, so timing it too would double-count every millisecond
+		/// it contains. The count is what the plan predicts; the time belongs to the operations inside it.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void NoteJournalRotation()
+		{
+			if (!Enabled) return;
+			_journalRotationsTotal++;
+			if (_inBlock) _journalRotations++;
+		}
+
 		[Conditional("DEBUG")]
 		public static void NoteUtxoRebuild(string nodeId, double milliseconds)
 		{
@@ -315,13 +380,17 @@ namespace Scripts.Diagnostics
 			GD.Print(sb.ToString());
 
 			WriteTraceRow(string.Format(CultureInfo.InvariantCulture,
-				"{0:O},{1},{2:O},{3},{4:F3},{5:F3},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F3},{12:F3},{13:F3},{14:F3},{15:F3},{16},{17},{18:F3},{19},{20:F3},{21},{22},{23},{24},{25:F3}",
+				"{0:O},{1},{2:O},{3},{4:F3},{5:F3},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F3},{12:F3},{13:F3},{14:F3},{15:F3},{16},{17},{18:F3},{19},{20:F3},{21},{22},{23},{24},{25:F3}," +
+				"{26},{27},{28},{29},{30:F3},{31:F3},{32:F3}",
 				DateTime.UtcNow, _chainHeight, _gameUtc, _minerNodeId, totalMs,
 				Ms(Phase.Broadcast), Ms(Phase.DifficultyTrace), Ms(Phase.BotTransactions), Ms(Phase.Auctions),
 				Ms(Phase.Governance), Ms(Phase.HistoricalEvents), Ms(Phase.Snapshot), Ms(Phase.CasinoRewards),
 				Ms(Phase.Subscribers), Ms(Phase.Checkpoint), totalMs - accounted, _snapshotBytes, _snapshotWrites, _snapshotWriteMs,
 				_utxoRebuilds, _utxoMs, _utxoNodes.Count,
-				_stateWrites, _stateFilesThisBlock.Count, _stateBytes, _stateWriteMs));
+				_stateWrites, _stateFilesThisBlock.Count, _stateBytes, _stateWriteMs,
+				_journalRotations,
+				_journalOps[(int)JournalOp.Append], _journalOps[(int)JournalOp.DirectoryScan], _journalOps[(int)JournalOp.Delete],
+				_journalOpMs[(int)JournalOp.Append], _journalOpMs[(int)JournalOp.DirectoryScan], _journalOpMs[(int)JournalOp.Delete]));
 
 			ResetIntervalCounters();
 			++BlockCount;
@@ -351,8 +420,30 @@ namespace Scripts.Diagnostics
 			rows.Sort((a, b) => b.Value.Writes.CompareTo(a.Value.Writes));
 
 			var sb = new StringBuilder();
+
+			// Mini-plan 17 A1 — the journal's own breakdown leads, because it is 94.9% of the write cost and
+			// the question is WHICH of its operations that cost belongs to. Rotations are a count; the
+			// milliseconds sit in the scans, deletes and appends they contain.
+			double jAppendMs = _journalOpMsTotal[(int)JournalOp.Append];
+			double jScanMs = _journalOpMsTotal[(int)JournalOp.DirectoryScan];
+			double jDeleteMs = _journalOpMsTotal[(int)JournalOp.Delete];
+			double jMetaMs = jScanMs + jDeleteMs;
+			double jTotalMs = jAppendMs + jMetaMs;
+			double rot = Math.Max(1, _journalRotationsTotal);
+
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
-				$"[BlockCost] world-state writes over {BlockCount:N0} block(s), ranked by writes per block:"));
+				$"[BlockCost] JOURNAL over {BlockCount:N0} block(s) — {_journalRotationsTotal:N0} rotation(s)," +
+				$" {_journalRotationsTotal / (double)Math.Max(1, BlockCount):N2}/block:" +
+				$"\n    appends  {_journalOpsTotal[(int)JournalOp.Append],7:N0} · {jAppendMs,9:N1} ms" +
+				$"\n    scans    {_journalOpsTotal[(int)JournalOp.DirectoryScan],7:N0} · {jScanMs,9:N1} ms" +
+				$" · {_journalOpsTotal[(int)JournalOp.DirectoryScan] / rot,5:N2}/rotation" +
+				$"\n    deletes  {_journalOpsTotal[(int)JournalOp.Delete],7:N0} · {jDeleteMs,9:N1} ms" +
+				$" · {_journalOpsTotal[(int)JournalOp.Delete] / rot,5:N2}/rotation" +
+				$"\n    METADATA share of journal time: {(jTotalMs > 0 ? 100.0 * jMetaMs / jTotalMs : 0),5:N1}%" +
+				$"  (P1 predicts >= 50%)"));
+
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"\n[BlockCost] world-state writes over {BlockCount:N0} block(s), ranked by writes per block:"));
 
 			foreach (KeyValuePair<string, StateWriteStat> row in rows)
 			{

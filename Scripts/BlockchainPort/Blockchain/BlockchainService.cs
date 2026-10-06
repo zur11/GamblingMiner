@@ -91,9 +91,35 @@ public sealed class BlockchainService
 		public required bool IsSpendable;
 	}
 	private Dictionary<string, UtxoEntry>? _utxoCache;
+
+	// Mini-plan 17 B2 (T4.3) — address → the outpoint keys it owns. Maintained in lockstep with _utxoCache and
+	// sharing its version, so the two can never disagree about which version of the chain they describe.
+	// GetSpendableUtxos used to walk the WHOLE set and filter by owned address, making every wallet panel, bot
+	// affordability check and treasury read O(all UTXOs) no matter how little that node owns. This is the
+	// follow-on §38.7's R3 fix pointed at: that took AggregateSpendable from O(addresses × utxos) to O(utxos),
+	// and this takes it to O(owned).
+	private Dictionary<string, HashSet<string>>? _addressIndex;
 	private int _utxoCacheVersion = -1;
 	private int _chainVersion;
 	private static string OutPointKey(string txId, int vout) => $"{txId}:{vout}";
+
+	private static Dictionary<string, HashSet<string>> BuildAddressIndex(Dictionary<string, UtxoEntry> utxos)
+	{
+		var index = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+		foreach (KeyValuePair<string, UtxoEntry> pair in utxos)
+		{
+			string address = pair.Value.Output.Address ?? string.Empty;
+			if (!index.TryGetValue(address, out HashSet<string>? keys))
+			{
+				keys = new HashSet<string>(StringComparer.Ordinal);
+				index[address] = keys;
+			}
+
+			keys.Add(pair.Key);
+		}
+
+		return index;
+	}
 
 	public BlockchainService()
 	{
@@ -154,6 +180,7 @@ public sealed class BlockchainService
 		PendingTransactions.Clear();
 		Chain.Add(newBlock);
 		_chainVersion++;
+		AdvanceUtxoCacheWithAppendedBlock(newBlock); // mini-plan 17 B1
 		return newBlock;
 	}
 
@@ -181,6 +208,7 @@ public sealed class BlockchainService
 
 		Chain.Add(newBlock);
 		_chainVersion++;
+		AdvanceUtxoCacheWithAppendedBlock(newBlock); // mini-plan 17 B1
 		return newBlock;
 	}
 
@@ -369,12 +397,256 @@ public sealed class BlockchainService
 		}
 
 		_utxoCache = utxos;
+		// Mini-plan 17 B2 — derived from the FINISHED set in one extra pass rather than maintained inside the
+		// replay loop above. The loop removes spent outputs as it goes, so keeping the index in step with it
+		// would duplicate the remove-from-index logic in the one place that does not need it; a single pass
+		// over the final set cannot disagree with the set it was built from.
+		_addressIndex = BuildAddressIndex(utxos);
 		_utxoCacheVersion = _chainVersion;
 		Scripts.Diagnostics.BlockCostProfiler.NoteUtxoRebuild(
 			OwnerNodeIdForDiagnostics,
 			(System.Diagnostics.Stopwatch.GetTimestamp() - rebuildStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
 		return utxos;
 	}
+
+	/// <summary>
+	/// Mini-plan 17 B1 (T4.1) — advance the cached UTXO set by ONE appended block instead of replaying the
+	/// whole chain. Called immediately after every <c>Chain.Add</c> + <c>_chainVersion++</c> pair.
+	///
+	/// <para><b>Fail-safe by construction.</b> It advances the cache only when the cache was <i>exactly</i>
+	/// current as of the version before this append (<c>_utxoCacheVersion == _chainVersion - 1</c>). In every
+	/// other state — no cache yet, or a cache already stale for some other reason — it does nothing, and
+	/// <see cref="GetUtxoSet"/>'s version check then rebuilds by replay, which is always correct. So the only
+	/// way to end up with a wrong set is an arithmetic bug in the loop below, which is precisely what
+	/// <see cref="DescribeUtxoCacheMismatch"/> exists to catch.</para>
+	///
+	/// <para><b>The order inside matters and mirrors the replay exactly:</b> per transaction, inputs are
+	/// removed before outputs are added, and transactions are processed in list order. That is what makes a
+	/// transaction spending an output created earlier in the SAME block come out right.</para>
+	///
+	/// <para><c>TryReplaceChain</c> deliberately does NOT call this: a wholesale swap is not an append, and
+	/// its version bump leaves the cache stale so the next read replays. The replay stays for that case and
+	/// for the oracle.</para>
+	/// </summary>
+	private void AdvanceUtxoCacheWithAppendedBlock(Block appended)
+	{
+		if (_utxoCache == null || _utxoCacheVersion != _chainVersion - 1)
+		{
+			return;
+		}
+
+		foreach (Transaction tx in appended.Transactions)
+		{
+			foreach (TxInput input in tx.Inputs)
+			{
+				string spentKey = OutPointKey(input.Source.PrevTxId, input.Source.Vout);
+
+				// Mini-plan 17 B2 — the address must be read BEFORE the entry is removed, or there is nothing
+				// left to say which address's index entry to clean up. An index that keeps a key whose UTXO is
+				// gone reports money that has been spent.
+				if (_addressIndex != null && _utxoCache.TryGetValue(spentKey, out UtxoEntry? spent) && spent != null)
+				{
+					string spentAddress = spent.Output.Address ?? string.Empty;
+					if (_addressIndex.TryGetValue(spentAddress, out HashSet<string>? spentKeys))
+					{
+						spentKeys.Remove(spentKey);
+						if (spentKeys.Count == 0) _addressIndex.Remove(spentAddress);
+					}
+				}
+
+				_utxoCache.Remove(spentKey);
+			}
+
+			for (int v = 0; v < tx.Outputs.Count; v++)
+			{
+				string key = OutPointKey(tx.TransactionId, v);
+				_utxoCache[key] = new UtxoEntry
+				{
+					TxId = tx.TransactionId,
+					Vout = v,
+					Output = tx.Outputs[v],
+					BlockIndex = appended.Index,
+					IsCoinbase = tx.IsCoinbase,
+					IsSpendable = tx.IsSpendable
+				};
+
+				if (_addressIndex != null)
+				{
+					string address = tx.Outputs[v].Address ?? string.Empty;
+					if (!_addressIndex.TryGetValue(address, out HashSet<string>? keys))
+					{
+						keys = new HashSet<string>(StringComparer.Ordinal);
+						_addressIndex[address] = keys;
+					}
+
+					keys.Add(key);
+				}
+			}
+		}
+
+		_utxoCacheVersion = _chainVersion;
+	}
+
+	/// <summary>
+	/// Mini-plan 17 A3 — THE ORACLE. Replays the whole chain into a fresh set and compares it, entry by entry,
+	/// against whatever <see cref="GetUtxoSet"/> currently holds. Returns null when they agree, or a description
+	/// of the first disagreements when they do not.
+	///
+	/// <para><b>Written BEFORE the incremental update (B1) exists, deliberately.</b> Today the cache is itself
+	/// produced by a replay, so this passes trivially — and that is the point: the comparison is in place and
+	/// proven to run before there is any result it could be shaped to fit. Once B1 maintains the set
+	/// incrementally, this is the only thing that can prove the fast path right.</para>
+	///
+	/// <para><b>The full replay is never deleted</b> (plan §4). It is not dead code once B1 lands — it is what
+	/// <c>TryReplaceChain</c> needs and what this method needs. A wrong UTXO set is a wrong balance, which this
+	/// project treats as unrecoverable (INC-001/INC-004).</para>
+	/// </summary>
+	public string? DescribeUtxoCacheMismatch()
+	{
+		if (_utxoCache == null)
+		{
+			return null; // nothing cached yet — nothing to disagree with.
+		}
+
+		Dictionary<string, UtxoEntry> cached = _utxoCache;
+		var replayed = new Dictionary<string, UtxoEntry>();
+
+		foreach (Block block in Chain)
+		{
+			foreach (Transaction tx in block.Transactions)
+			{
+				foreach (TxInput input in tx.Inputs)
+					replayed.Remove(OutPointKey(input.Source.PrevTxId, input.Source.Vout));
+
+				for (int v = 0; v < tx.Outputs.Count; v++)
+				{
+					replayed[OutPointKey(tx.TransactionId, v)] = new UtxoEntry
+					{
+						TxId = tx.TransactionId,
+						Vout = v,
+						Output = tx.Outputs[v],
+						BlockIndex = block.Index,
+						IsCoinbase = tx.IsCoinbase,
+						IsSpendable = tx.IsSpendable
+					};
+				}
+			}
+		}
+
+		if (cached.Count == replayed.Count)
+		{
+			bool identical = true;
+			foreach (KeyValuePair<string, UtxoEntry> pair in replayed)
+			{
+				if (!cached.TryGetValue(pair.Key, out UtxoEntry? mine) || mine == null || !SameUtxo(mine, pair.Value))
+				{
+					identical = false;
+					break;
+				}
+			}
+
+			if (identical)
+			{
+				// Mini-plan 17 B2 — the index is checked too, and only once the SET agrees, so a reported
+				// index fault is never just an echo of a set fault. Derived from the cached set rather than
+				// from the replay: the question is whether the index describes the set it is paired with.
+				return DescribeAddressIndexMismatch(cached);
+			}
+		}
+
+		// Report the SHAPE of the disagreement, not just that there is one: which side holds what, and a few
+		// example keys. "The sets differ" is an alarm; this is a diagnosis.
+		var missing = new List<string>();
+		var extra = new List<string>();
+		var differing = new List<string>();
+
+		foreach (KeyValuePair<string, UtxoEntry> pair in replayed)
+		{
+			if (!cached.TryGetValue(pair.Key, out UtxoEntry? mine) || mine == null)
+			{
+				if (missing.Count < 3) missing.Add(pair.Key);
+			}
+			else if (!SameUtxo(mine, pair.Value) && differing.Count < 3)
+			{
+				differing.Add(pair.Key);
+			}
+		}
+
+		foreach (string key in cached.Keys)
+		{
+			if (!replayed.ContainsKey(key) && extra.Count < 3) extra.Add(key);
+		}
+
+		return $"cached={cached.Count} replayed={replayed.Count}"
+			+ $" · missing-from-cache={missing.Count switch { 0 => "none", _ => string.Join(",", missing) }}"
+			+ $" · extra-in-cache={extra.Count switch { 0 => "none", _ => string.Join(",", extra) }}"
+			+ $" · differing={differing.Count switch { 0 => "none", _ => string.Join(",", differing) }}";
+	}
+
+	/// <summary>
+	/// Mini-plan 17 B2's half of the oracle: does <see cref="_addressIndex"/> describe exactly the set it is
+	/// paired with? Returns null when it does. The two failure directions are reported separately because they
+	/// mean opposite things: a **missing** key hides money the node owns, a **stale** key reports money it has
+	/// already spent — and only the second one can make a bot bid coins it does not have.
+	/// </summary>
+	private string? DescribeAddressIndexMismatch(Dictionary<string, UtxoEntry> set)
+	{
+		if (_addressIndex == null)
+		{
+			return set.Count == 0 ? null : $"address index absent while the set holds {set.Count} entry(ies)";
+		}
+
+		Dictionary<string, HashSet<string>> expected = BuildAddressIndex(set);
+
+		int missingKeys = 0;
+		int staleKeys = 0;
+		string firstMissing = string.Empty;
+		string firstStale = string.Empty;
+
+		foreach (KeyValuePair<string, HashSet<string>> pair in expected)
+		{
+			_addressIndex.TryGetValue(pair.Key, out HashSet<string>? actual);
+			foreach (string key in pair.Value)
+			{
+				if (actual == null || !actual.Contains(key))
+				{
+					if (missingKeys++ == 0) firstMissing = $"{pair.Key}→{key}";
+				}
+			}
+		}
+
+		foreach (KeyValuePair<string, HashSet<string>> pair in _addressIndex)
+		{
+			expected.TryGetValue(pair.Key, out HashSet<string>? want);
+			foreach (string key in pair.Value)
+			{
+				if (want == null || !want.Contains(key))
+				{
+					if (staleKeys++ == 0) firstStale = $"{pair.Key}→{key}";
+				}
+			}
+		}
+
+		if (missingKeys == 0 && staleKeys == 0)
+		{
+			return null;
+		}
+
+		return $"address index disagrees with its own set: missing={missingKeys}"
+			+ (missingKeys > 0 ? $" (first {firstMissing})" : string.Empty)
+			+ $" · stale={staleKeys}"
+			+ (staleKeys > 0 ? $" (first {firstStale})" : string.Empty)
+			+ $" · addresses indexed={_addressIndex.Count} expected={expected.Count}";
+	}
+
+	private static bool SameUtxo(UtxoEntry a, UtxoEntry b) =>
+		a.TxId == b.TxId
+		&& a.Vout == b.Vout
+		&& a.BlockIndex == b.BlockIndex
+		&& a.IsCoinbase == b.IsCoinbase
+		&& a.IsSpendable == b.IsSpendable
+		&& a.Output.Amount == b.Output.Amount
+		&& a.Output.Address == b.Output.Address;
 
 	public bool ContainsTransactionId(string transactionId)
 	{
@@ -540,6 +812,7 @@ public sealed class BlockchainService
 		Chain.Add(newBlock);
 		PendingTransactions.Clear();
 		_chainVersion++;
+		AdvanceUtxoCacheWithAppendedBlock(newBlock); // mini-plan 17 B1
 		return true;
 	}
 
@@ -614,14 +887,51 @@ public sealed class BlockchainService
 		Dictionary<string, UtxoEntry> utxos = GetUtxoSet();
 		HashSet<string> spentByPending = CollectPendingSpentOutpoints();
 
-		var result = new List<(OutPoint, string, decimal)>();
-		foreach (UtxoEntry utxo in utxos.Values)
+		// Mini-plan 17 B2 — self-healing rather than silently slow. GetUtxoSet sets both together, so this is
+		// unreachable in practice; building the index here if it is somehow absent keeps the method correct
+		// AND fast from the next call, instead of quietly falling back to a full walk forever. A permanent
+		// slow path that still returns the right answer is the kind of regression nothing ever notices.
+		_addressIndex ??= BuildAddressIndex(utxos);
+
+		var matched = new List<(string key, UtxoEntry utxo)>();
+		foreach (string address in owned)
 		{
-			if (!owned.Contains(utxo.Output.Address) || !utxo.IsSpendable) continue;
-			if (utxo.IsCoinbase && (tipIndex - utxo.BlockIndex) < CoinbaseMaturity) continue;
-			if (spentByPending.Contains(OutPointKey(utxo.TxId, utxo.Vout))) continue;
+			if (!_addressIndex.TryGetValue(address, out HashSet<string>? keys)) continue;
+
+			foreach (string key in keys)
+			{
+				if (!utxos.TryGetValue(key, out UtxoEntry? utxo) || utxo == null) continue;
+				if (!utxo.IsSpendable) continue;
+				if (utxo.IsCoinbase && (tipIndex - utxo.BlockIndex) < CoinbaseMaturity) continue;
+				if (spentByPending.Contains(key)) continue;
+				matched.Add((key, utxo));
+			}
+		}
+
+		// ⚠ Mini-plan 17 B2, CORRECTED after run 1 — NO SORT HERE, deliberately, and this is the second
+		// version of this comment.
+		//
+		// The first draft sorted by outpoint key, reasoning that `NetworkRoot.SelectUtxos` is order-dependent
+		// (it returns the FIRST exact-amount match, and its `OrderByDescending` is a stable sort) so the order
+		// this method returns should be *defined* rather than "whatever the dictionary enumerated". The
+		// reasoning about determinism was right; putting the sort HERE was wrong.
+		//
+		// **The dominant consumer of this method discards the order entirely.**
+		// `NetworkRoot.AggregateSpendable` calls it only to SUM the amounts, and it runs for every auction
+		// bidder, every bot affordability check, every company treasury read and every dead-node sweep — dozens
+		// of times per block in a populated era. Sorting for them is pure waste, in the hottest reader the UTXO
+		// set has.
+		//
+		// The determinism now lives in `SelectUtxos`, where the order actually matters and where a sort
+		// **already happens**, so it costs nothing: its greedy pass tie-breaks `OrderByDescending(amount)` with
+		// the outpoint key, and its exact-match pass picks the smallest key among exact matches in one O(n)
+		// scan. Same guarantee, no cost on the path that does not need it.
+		var result = new List<(OutPoint, string, decimal)>(matched.Count);
+		foreach ((string _, UtxoEntry utxo) in matched)
+		{
 			result.Add((new OutPoint { PrevTxId = utxo.TxId, Vout = utxo.Vout }, utxo.Output.Address, utxo.Output.Amount));
 		}
+
 		return result;
 	}
 
