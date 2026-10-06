@@ -782,6 +782,70 @@ covers both: the in-memory segment list against a fresh scan, and the incrementa
 **The full replay is never deleted; it is the oracle.** A single assert failure stops the plan, because a wrong UTXO
 set is a wrong balance.
 
+### What a bot transaction costs, the zero columns retired, and CLAUDE.md back under budget — SPECIFIED (mini-plan 18, 2026-10-06)
+
+**Status: `AIHelperFiles/mini18-bot-transaction-cost-and-claude-md-plan.md`, not started; proposed branch
+`mini18-bot-transaction-cost`.** Takes both items mini-plan 17's close-out left behind, plus the CLAUDE.md
+extraction the developer approved.
+
+**(A)** Delete mini-plan 17's seven per-block journal trace columns — structurally always zero, because the journal
+flushes at bet rate *between* blocks. The session-total breakdown in the ranked table stays; it is what answered
+that plan's P1. **(B)** Instrument `ScheduleBotTransactionsAfterBlock`, now the dominant per-block term
+(**median 0.957 ms, mean 76.899, max 469.256**) and never once looked inside. It is **not** transaction volume —
+`txTargetPerBlock` ≈ 0.5 in that era — so it is decision work, and that work runs through `AggregateSpendable` →
+`GetSpendableUtxos` for every auction bid cap, bot affordability check, company treasury read and dead-node sweep,
+with **13 powered cast miners and 40 companies** live. Nothing counts those calls. **(C)** Extract the locale-sweep
+block to `ProjectDesignManual.md` §29.12 and Pattern 6's cost-note narratives to Ch. 38/40 + §29.13, keeping each
+rule and its pointer. Target **≤ 88,000 characters** from **96,707** today.
+
+**The discipline, inherited twice over:** counts first, no cross-session millisecond comparison, and **B builds no
+fix** — it measures, and whatever it points at is the next plan's subject. Mini-plan 17 read a mechanism exactly and
+got its cost completely wrong; acting on a plausible mechanism is the error this plan is shaped to avoid.
+
+### The bet-history row's timestamp strobes — DIAGNOSED, not scheduled (developer's report, 2026-10-06)
+
+**Status: open, deliberately NOT bundled into mini-plan 18 (developer's call).** The timestamp column of the bet
+rows in `BetHistoryContainer` shows the same kind of frozen-digit behaviour the DiceGame clock and nonce counter had
+before mini-plan 15 B fixed them.
+
+**Diagnosed from the code, not yet measured — and it is NOT the same fix.** `BetHistoryItem.cs` renders
+`local.ToString("HH:mm:ss", …)` for each row's own bet timestamp. There is **no resampling here**: every row shows a
+distinct, real recorded value, so `AdaptiveReadoutSampler` is the wrong tool. The aliasing is **spatial, down the
+list, and it is permanent at every speed**: the game clock advances **exactly 100 game-seconds per bet tick**
+(`1 bet tick = 100 in-game seconds`), and **100 mod 60 = 40**, so the seconds field of consecutive rows steps
++40 and cycles through only **three residues** forever. It is the identical arithmetic to the clock's
+`150 mod 60 = 30` two-value alternation — one axis over.
+
+**Why it only *looks* like a bug at speed:** the pattern is always there; rows only scroll fast enough to see it
+when the autobet is running hard.
+
+**So the fix is about displayed PRECISION, not cadence.** At 100 s per bet, `HH:mm` makes adjacent rows differ by
+1–2 minutes and reads correctly; `HH:mm:ss` can only ever show a 3-cycle. Whether the right answer is coarser
+precision, a relative offset ("+1m40s"), or showing the bet's game date differently is a design question with a
+player-facing consequence, which is why it is an objective rather than a one-line change. **Verify the 3-residue
+claim against a running list before building anything** — it is arithmetic from the code, not a measurement.
+
+### A reproducible populated-era world — the entry-year bootstrap, and what it costs (noted 2026-10-06)
+
+**Status: available, unused, and not needed by mini-plan 18.** `TimelineConfig.DevEntryYear` (Step 14 EB.1) builds
+the chain from the canonical 21 Mar 2009 player start onward to 21 Mar of a chosen year, using **the same
+weighted-power model live play uses** — so an entry-year world is canon-*compatible*: genesis and the founders keep
+their true dates and the intervening history is really built, not faked. It also seeds the non-miner companies
+(`eb1_seed_*`). `DevEntryYear = 0` on `main` forever; the body is deliberate dead code under `#pragma warning
+disable CS0162`, kept for exactly this use (Ch. 35 precedent).
+
+**When it is the right tool:** when a measurement needs a **reproducible** starting era rather than whatever height
+the developer's world happens to have reached. Roughly **1,100 blocks to reach 2011** and **~1,600 to reach 2012**,
+at the regulated ~58,500 s target solvetime, built in one bootstrap instead of hours of play.
+
+**What it costs, stated plainly:** the timeline stamp gains an `+ENTRY-<year>` suffix, so
+`NetworkRoot.ResetWorldIfIncompatible()` **wipes the world** — in both directions, including on the way back to
+`main`. Any world worth keeping must be **archived out of `user://` first**. It also must be reverted to `0` before
+merging (the precedent exists: Step 14 and Step 15 each closed with exactly that commit).
+
+**Not needed for mini-plan 18** because the developer's current world already sits at game date **2011-08 with 13
+powered cast miners** — the era whose cost is in question.
+
 ### A budget that adapts to the machine (BASIC MODE refinement)
 
 **Status: open, named in mini-plan 09 (D-09.6 option (c)) and unchanged since.** Every performance figure this
