@@ -3,13 +3,14 @@
 **Series note:** seventeenth of the *mini-plan* series, following `mini16-fewer-writes-per-block-plan.md`, which
 measured both of this plan's targets and whose measurement rule this plan inherits in full.
 
-**Status:** 🔄 **IN PROGRESS** on branch `mini17-journal-rotation-and-utxo`. **A1, A3, B1 and B2 built.**
-**Run 1 done 2026-10-06** (§10, 195 blocks, heights 1221→1415, game dates 2011-04/08 — a fully-populated era
-mini-plan 16 never reached): **P3 and P4 confirmed** (UTXO rebuilds 8 → 0.313 per block; the oracle silent across
-61 nodes with its ARMED line proving it ran). **P1 refuted** — 2.00 scans and 0.99 deletes per rotation exactly as
-read from the code, but metadata is **4.4%** of journal time against ≥50% predicted, so **A2 is DROPPED by its own
-rule**. The run also exposed a mistake in B2 (a sort in the hottest reader, whose dominant consumer only sums) —
-fixed by moving the tie-break into `SelectUtxos`, where a sort already happens. **Next: close-out.**
+**Status:** ✅ **DONE 2026-10-06** (close-out §11), branch `mini17-journal-rotation-and-utxo`.
+**T4.1 and T4.3 shipped:** UTXO rebuilds **8 → 0.313 per block**, `GetSpendableUtxos` walks only owned outpoints,
+and the oracle was silent across 195 blocks and 61 nodes with its `ARMED` line proving it ran (**P3, P4, P5**).
+**A2 DROPPED by its own rule (P1 refuted):** 2.00 scans and 0.99 deletes per rotation exactly as read from the
+code, but metadata is **4.4%** of journal time against ≥50% predicted — a directory scan costs 0.256 ms, 30×
+less than an append. **The journal is closed as a performance subject: 95.6% appends, and the appends are the
+record.** Run 1 also exposed a misplaced sort in B2 (hottest reader, summing consumer), corrected in the same
+commit. Next candidate, unmeasured: `botTransactionsMs`.
 
 **Two parts, and they bundle for a reason beyond convenience.** Mini-plan 16 left the journal as 94.9% of all
 remaining write cost, and T4.1 has been queued since mini-plan 13 with its trigger restated in absolute
@@ -372,3 +373,47 @@ dropped or re-scoped; a column that can only ever be zero is worse than no colum
 
 Median **25.7 ms**, mean **95.1 ms** — a distribution, as P6 requires, with no threshold attached and no comparison
 drawn to any earlier run. The gap between median and mean is `botTransactionsMs` above, nothing else.
+
+---
+
+## 11. Close-out (2026-10-06)
+
+| part | outcome |
+|---|---|
+| **A1 — instrument the rotation** | ✅ Shipped, and it answered P1 — though only via its session totals, not its per-block columns (§10). |
+| **A3 — the oracle** | ✅ Shipped **before** either fast path. Silent across 195 blocks and 61 nodes, with its `ARMED` line proving it ran. |
+| **A2 — remove the scans** | ❌ **DROPPED by its registered rule.** Metadata is 4.4% of journal time, not the ≥50% predicted. |
+| **B1 — incremental UTXO (T4.1)** | ✅ Shipped. Rebuilds **8 → 0.313 per block**; `utxoMsSincePrev` 0.000 median. |
+| **B2 — address index (T4.3)** | ✅ Shipped, **and corrected** after run 1: the sort moved out of the hottest reader into the one consumer that needs it. |
+
+### What this plan is worth beyond T4.1 and T4.3 landing
+
+1. **Reading the code predicted the mechanism exactly and the cost not at all.** Two scans and one delete per
+   rotation, measured to the second decimal. And a scan costs **0.256 ms** — 30× less than an append — so the
+   premise that metadata operations are expensive was simply false at this folder size. **A structural reading tells
+   you what happens; only a measurement tells you what it costs.** The plan's gate caught it and dropped A2 without
+   argument, which is what registering a decision rule before the data is for.
+2. **The oracle justified its ordering.** Built before either fast path, so it could not be shaped to fit a result;
+   silent through 195 blocks of real play, with the canary line making that silence mean something. **P4 is the only
+   prediction here whose value lies in nothing happening**, and it is the one that made B1 safe to ship at all.
+3. **The run found a mistake no failure would have.** B2's sort was correct, deterministic, and in the wrong place —
+   in the one reader that `AggregateSpendable` calls dozens of times a block purely to sum. **Nothing would ever
+   have broken.** It was found by asking why an unrelated phase had become the dominant cost, and following that to
+   a method I had just touched.
+4. **The same instrument flaw appeared one plan after it was written down.** Mini-plan 16 learned that the journal's
+   work happens *between* blocks; mini-plan 17 then built seven per-block journal columns that are structurally
+   always zero. **A lesson recorded in a close-out is not the same as a lesson applied** — and the measurement
+   survived only because a different decision (counting outside the bracket) happened to cover it.
+
+### What follows
+
+- **The bet journal is closed as a performance subject.** Its cost is **95.6% appends** at 7.56 ms each, and the
+  appends are the record. Anything further would be a smaller line or fewer bets recorded, both of which were
+  already rejected on measurement (mini-plan 12).
+- **`botTransactionsMs` is the next candidate, and it is unmeasured.** Median 0.96 ms, mean 76.9, max 469, in a
+  populated era (13 cast miners, 40 companies) that no earlier plan reached. The work is per-participant decision
+  logic, not transaction volume. **Whatever measures it must be a within-session instrument** — a phase split inside
+  `ScheduleBotTransactionsAfterBlock`, or a counter of `AggregateSpendable` calls per block — because this project
+  has established that comparing per-block milliseconds across sessions proves nothing.
+- **Drop or re-scope the seven per-block journal columns** before the next plan reads that trace and mistakes seven
+  zeroes for a result.
