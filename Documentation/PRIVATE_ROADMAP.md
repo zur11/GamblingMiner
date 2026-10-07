@@ -782,6 +782,126 @@ covers both: the in-memory segment list against a fresh scan, and the incrementa
 **The full replay is never deleted; it is the oracle.** A single assert failure stops the plan, because a wrong UTXO
 set is a wrong balance.
 
+### What a bot transaction costs, the zero columns retired, and CLAUDE.md back under budget — ✅ DONE (mini-plan 18, 2026-10-07)
+
+> **The phase has one cause, and it is a full-chain scan.** `TryCastSellFlow` is **98.2%** of the bot-transaction
+> phase (9,990 of 10,178 ms over 192 blocks), runs on **41%** of blocks at **126.5 ms per invocation**, and
+> `TryNonMinerExchanges` **never ran at all** because sell-flow always filled the budget first. The every-block
+> path (`TryCasinoBotDonation`) is 1.8%; the budget arithmetic 0.0%. That asymmetry is why the phase read median
+> 1.067 ms against mean 53.009.
+>
+> **The cause, read from the code and therefore NOT yet measured:** `TrySellFlowSend` calls
+> `FirstBlockHeightMinedBy(nodeId, chain)` once per cast miner, and that method **linearly scans the entire
+> chain** — 13 cast miners × 1,607 blocks ≈ **20,900 block comparisons per invocation**, with a miner that has
+> never mined scanning the whole chain to return `null`. **It grows linearly with height**, which is why the phase
+> was invisible at height 400.
+>
+> **⚠ THE NEXT PLAN IS ONE METHOD, not an audit.** A grep for the *pattern* found **17** full-chain scan sites and
+> **cleared fifteen** of them: the oracle (by design), `GetUtxoSet` (cold since mini-plan 17 B1), `GetTransaction`
+> / `GetAddressData` (UI reads), `EnsureReserveGuardSeeded` (once per session), `IsHistoricalSaltPresent` (per
+> historical event, and the sell-flow path passes a null salt so it is skipped), `RewriteWholeChainFile` (tip
+> mismatch only). **Fix shape:** memoise first-mined height per node, or maintain it in the block hook exactly as
+> mini-plan 17 B1 maintains the UTXO set. **State its prediction as a COUNT** (chain blocks inspected per
+> invocation → ~0); `botSellFlowMs` then verifies it **within one session**.
+>
+> **P3 confirmed and it refuted this plan's own premise.** Part B was scoped around the UTXO reads;
+> `outpointsWalked` measured **median 0, max 42**, because mini-plan 17's address index had already made them
+> nearly free. The cost was somewhere nobody had proposed, and the sub-phase split found it because it measured
+> the *structure* rather than the suspicion.
+>
+> **P1 refuted** on its threshold (13.8 `AggregateSpendable` calls/block against ≥20 predicted; its second clause
+> held). **P2 UNTESTABLE, not refuted** — `castPowered` was constant at 13 across all 192 blocks, so the
+> correlation was undefined. **P5 refuted** — CLAUDE.md went **96,707 → 90,942 characters** against a ≤88,000
+> target. **P2 and P5 failed for the same root reason: a number chosen without checking the quantity it
+> constrains.**
+>
+> **CLAUDE.md's remaining bulk is RULES, not cases**, so reaching the stated 60,000 target is now a **structural**
+> call rather than more pruning — see the entry below. Extracted this plan: §29.12.1 (the fifth, TEXT-side locale
+> shape), §29.12.2 (the baseline's history), **§40.12 — "Measurement discipline: five ways an instrument lies"**.
+>
+> Text below is the original specification.
+
+**Status: `AIHelperFiles/mini18-bot-transaction-cost-and-claude-md-plan.md` (close-out §10), merged from branch
+`mini18-bot-transaction-cost`.** Takes both items mini-plan 17's close-out left behind, plus the CLAUDE.md
+extraction the developer approved.
+
+**(A)** Delete mini-plan 17's seven per-block journal trace columns — structurally always zero, because the journal
+flushes at bet rate *between* blocks. The session-total breakdown in the ranked table stays; it is what answered
+that plan's P1. **(B)** Instrument `ScheduleBotTransactionsAfterBlock`, now the dominant per-block term
+(**median 0.957 ms, mean 76.899, max 469.256**) and never once looked inside. It is **not** transaction volume —
+`txTargetPerBlock` ≈ 0.5 in that era — so it is decision work, and that work runs through `AggregateSpendable` →
+`GetSpendableUtxos` for every auction bid cap, bot affordability check, company treasury read and dead-node sweep,
+with **13 powered cast miners and 40 companies** live. Nothing counts those calls. **(C)** Extract the locale-sweep
+block to `ProjectDesignManual.md` §29.12 and Pattern 6's cost-note narratives to Ch. 38/40 + §29.13, keeping each
+rule and its pointer. Target **≤ 88,000 characters** from **96,707** today.
+
+**The discipline, inherited twice over:** counts first, no cross-session millisecond comparison, and **B builds no
+fix** — it measures, and whatever it points at is the next plan's subject. Mini-plan 17 read a mechanism exactly and
+got its cost completely wrong; acting on a plausible mechanism is the error this plan is shaped to avoid.
+
+### CLAUDE.md below target needs a STRUCTURAL carve, not more pruning (open, measured 2026-10-07)
+
+**Status: open, developer's call.** Mini-plan 18 C extracted every *case narrative* it could place in an existing
+section and landed at **90,942 characters** against the stated **60,000** target (warning 100,000, hard limit
+150,000). **What remains is rules**, in order of size: Pattern 2's canonical checkpoint/commit rule (12.9k),
+Pattern 6 after compression (9.6k), **Pattern 7's fifteen standing conventions (6.4k)**, the UI-layout rules
+(6.1k), the scripting-tools section (5.5k). Every one is "permanent instructions that govern future work", which
+the Document Policy says belongs in the file.
+
+**So the remaining move is a carve, with precedent.** `SERVICES.md` (48.5k), `ARCHITECTURE.md` (16.7k) and
+`SCENES.md` (7.5k) were each extracted wholesale from this file and replaced by a one-line index. **Pattern 7's
+fifteen conventions are the obvious next candidate** — they are already numbered, already self-contained, and
+already say where each case lives. A `Documentation/STANDING_CONVENTIONS.md` with a one-line index here would cut
+~6k without losing a rule.
+
+**Why it is not done unasked:** an index is only as good as the habit of following it, and Pattern 7's whole
+premise is that *"a rule nobody can find is a rule nobody applies"* — it was moved INTO this file for exactly that
+reason (2026-08-20). Moving it back out reverses a deliberate decision, so it is the developer's to make.
+
+### The bet-history row's timestamp strobes — DIAGNOSED, not scheduled (developer's report, 2026-10-06)
+
+**Status: open, deliberately NOT bundled into mini-plan 18 (developer's call).** The timestamp column of the bet
+rows in `BetHistoryContainer` shows the same kind of frozen-digit behaviour the DiceGame clock and nonce counter had
+before mini-plan 15 B fixed them.
+
+**Diagnosed from the code, not yet measured — and it is NOT the same fix.** `BetHistoryItem.cs` renders
+`local.ToString("HH:mm:ss", …)` for each row's own bet timestamp. There is **no resampling here**: every row shows a
+distinct, real recorded value, so `AdaptiveReadoutSampler` is the wrong tool. The aliasing is **spatial, down the
+list, and it is permanent at every speed**: the game clock advances **exactly 100 game-seconds per bet tick**
+(`1 bet tick = 100 in-game seconds`), and **100 mod 60 = 40**, so the seconds field of consecutive rows steps
++40 and cycles through only **three residues** forever. It is the identical arithmetic to the clock's
+`150 mod 60 = 30` two-value alternation — one axis over.
+
+**Why it only *looks* like a bug at speed:** the pattern is always there; rows only scroll fast enough to see it
+when the autobet is running hard.
+
+**So the fix is about displayed PRECISION, not cadence.** At 100 s per bet, `HH:mm` makes adjacent rows differ by
+1–2 minutes and reads correctly; `HH:mm:ss` can only ever show a 3-cycle. Whether the right answer is coarser
+precision, a relative offset ("+1m40s"), or showing the bet's game date differently is a design question with a
+player-facing consequence, which is why it is an objective rather than a one-line change. **Verify the 3-residue
+claim against a running list before building anything** — it is arithmetic from the code, not a measurement.
+
+### A reproducible populated-era world — the entry-year bootstrap, and what it costs (noted 2026-10-06)
+
+**Status: available, unused, and not needed by mini-plan 18.** `TimelineConfig.DevEntryYear` (Step 14 EB.1) builds
+the chain from the canonical 21 Mar 2009 player start onward to 21 Mar of a chosen year, using **the same
+weighted-power model live play uses** — so an entry-year world is canon-*compatible*: genesis and the founders keep
+their true dates and the intervening history is really built, not faked. It also seeds the non-miner companies
+(`eb1_seed_*`). `DevEntryYear = 0` on `main` forever; the body is deliberate dead code under `#pragma warning
+disable CS0162`, kept for exactly this use (Ch. 35 precedent).
+
+**When it is the right tool:** when a measurement needs a **reproducible** starting era rather than whatever height
+the developer's world happens to have reached. Roughly **1,100 blocks to reach 2011** and **~1,600 to reach 2012**,
+at the regulated ~58,500 s target solvetime, built in one bootstrap instead of hours of play.
+
+**What it costs, stated plainly:** the timeline stamp gains an `+ENTRY-<year>` suffix, so
+`NetworkRoot.ResetWorldIfIncompatible()` **wipes the world** — in both directions, including on the way back to
+`main`. Any world worth keeping must be **archived out of `user://` first**. It also must be reverted to `0` before
+merging (the precedent exists: Step 14 and Step 15 each closed with exactly that commit).
+
+**Not needed for mini-plan 18** because the developer's current world already sits at game date **2011-08 with 13
+powered cast miners** — the era whose cost is in question.
+
 ### A budget that adapts to the machine (BASIC MODE refinement)
 
 **Status: open, named in mini-plan 09 (D-09.6 option (c)) and unchanged since.** Every performance figure this
