@@ -839,9 +839,59 @@ rule and its pointer. Target **≤ 88,000 characters** from **96,707** today.
 fix** — it measures, and whatever it points at is the next plan's subject. Mini-plan 17 read a mechanism exactly and
 got its cost completely wrong; acting on a plausible mechanism is the error this plan is shaped to avoid.
 
-### CLAUDE.md below target needs a STRUCTURAL carve, not more pruning (open, measured 2026-10-07)
+### CLAUDE.md depuration — ✅ DONE (mini-plan 19, 2026-10-07)
 
-**Status: open, developer's call.** Mini-plan 18 C extracted every *case narrative* it could place in an existing
+> **91,594 → 83,776 characters (−8.5%), and the target is re-set from 60,000 to 84,000 with its reasoning.**
+>
+> **Most of the saving was DUPLICATION, not relocation.** The locale block was a second copy of §29.12; the fee
+> row's detail a second copy of the step-14 plan; the Player-start row restated Pattern 2's own rule. **The file's
+> "if the subject already exists, EDIT it — never append a second version" rule had been broken repeatedly, and
+> the budget was the symptom.** Every carve was mandated by a rule already in the file — the ~500-character row
+> limit, the no-second-version rule, and a section whose own first line says to go read Chapter 29. **None of it
+> required taste.**
+>
+> **Carved:** seven over-long Canonical Decisions rows (the worst **1,916 → 849**) · Pattern 6's instrument
+> narratives (already in §40.12) · UI Layout down to its eleven DON'Ts, each grep-verified present in Ch. 29
+> before removal · the scripting-tools section → new **`Documentation/DEV_ENVIRONMENT.md`**, CLAUDE.md keeping the
+> three facts that are traps *before* you would think to open a doc (no Python, PowerShell 5.1, `node -e` makes
+> path permissions advisory).
+>
+> **Declined, with reasons, so they are not re-litigated:** Pattern 7's fifteen conventions (moved *into* the file
+> in August precisely so they would be found), Pattern 2's checkpoint contract, and the Canonical Decisions table
+> itself. **60,000 was unreachable without moving architecture rules out, and a target that cannot be met trains
+> the reader to ignore it** — the same mechanism the file's own warning-suspension note describes.
+>
+> **One invariant failed and the failure is the lesson. I1** — a mechanical differ over every bolded statement —
+> was abandoned as unworkable: it reported **28 lost rules, every one a false positive**, first because the regex
+> captured fragments and then because my fix's word filter produced probes that could never match. **A one-off
+> verifier written in the same session as the edit it checks is as likely to be the thing that is wrong** — the
+> third instance of that shape in two plans. What worked was the boring check: **one distinctive token per removed
+> passage, grepped across the corpus, 13 of 13 found.**
+>
+> Text below is the original specification.
+
+**Status: `AIHelperFiles/mini19-claude-md-depuration-plan.md` (close-out §7), merged from branch
+`mini19-claude-md-depuration`.** Documentation only — no code, no runs. **Scope decided by the developer: Tier 1 +
+Tier 2.** Four carves, each either mandated by the file's own policy or reversing no prior decision: the **seven
+Canonical Decisions rows over 500 characters** (6,269 chars, every one already naming its full doc, so trimming
+removes a *second copy*), **Pattern 6's five instrument rules** (cases now in §40.12), **UI Layout & Scrolling**
+down to its trigger and its what-not-to-write bullets (the rest to Ch. 29, which the section already tells the
+reader to open), and the **scripting-tools section** to a new `Documentation/DEV_ENVIRONMENT.md` keeping three
+lines — no Python, PowerShell is 5.1, `node -e` is the only open-tail rule.
+
+**Its discipline is INVARIANTS, not predictions**, since nothing is being measured. The load-bearing one: **no rule
+is lost, verified by diffing every bolded statement before and after** — anything that disappears must be present
+at a named destination. Plus: the stored detector must still return 17 when extracted from the document and run
+(the check that caught mini-plan 18 C's corruption), and **every edit to text carrying `$`, backticks or quotes
+uses the file tool** — Standing Convention 14, violated twice by this plan family.
+
+**And it re-sets the 60,000 target to the landed figure**, because the measurement below says nothing can reach it
+without carving architecture rules. *A target nothing can reach trains the reader to ignore it* — the same failure
+the 100k-warning note already describes.
+
+### Why 60,000 was unreachable, and what was declined (measured 2026-10-07)
+
+**Status: the measurement behind mini-plan 19, kept because the next reader will otherwise re-litigate it.** Mini-plan 18 C extracted every *case narrative* it could place in an existing
 section and landed at **90,942 characters** against the stated **60,000** target (warning 100,000, hard limit
 150,000). **What remains is rules**, in order of size: Pattern 2's canonical checkpoint/commit rule (12.9k),
 Pattern 6 after compression (9.6k), **Pattern 7's fifteen standing conventions (6.4k)**, the UI-layout rules
