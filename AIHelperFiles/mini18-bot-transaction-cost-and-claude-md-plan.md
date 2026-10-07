@@ -183,3 +183,75 @@ independently and may be entered zero or one time per block.
 (4 of 4). Build clean on `--no-incremental`; locale detector at baseline (17).
 
 **Still measurement-only.** No behaviour changed in either part. B builds no fix, by §4.
+
+---
+
+## 8. Run 1 results (2026-10-07, 192 blocks, heights ~1416 → 1607)
+
+Fresh build confirmed from the artefact: the trace carries all 34 columns including the eight new ones.
+`[UtxoAssert] ARMED` present, **`MISMATCH` zero** — mini-plan 17's oracle still silent over another 192 blocks.
+
+### The split names it in one line: `TryCastSellFlow` is 98.2% of the phase
+
+| sub-phase | total over 192 blocks | share | blocks it ran on |
+|---|---|---|---|
+| **`TryCastSellFlow`** | **9,990.2 ms** | **98.2%** | **79 (41%)** |
+| `TryCasinoBotDonation` | 185.8 ms | 1.8% | 192 (100%) |
+| budget arithmetic | 0.5 ms | 0.0% | 192 (100%) |
+| `TryNonMinerExchanges` | 0.0 ms | 0.0% | **0 (0%)** |
+| unaccounted | 1.3 ms | 0.0% | — |
+
+**The asymmetry hypothesis was exactly right.** `botTransactionsMs` has median **1.067** and mean **53.009** because
+the every-block path (donation, median 0.677 ms) is cheap and the conditional path costs **126.5 ms per invocation**
+on 41% of blocks. `TryNonMinerExchanges` never ran at all — `TryCastSellFlow` always filled the budget first.
+
+### P1 — ❌ refuted on its threshold, right in magnitude
+
+`aggSpendableCalls`: median **13**, mean **13.786**, max 22. Predicted **≥ 20**. The second clause holds:
+`spendableReads` (mean 14.198) ≥ `aggSpendableCalls` (13.786), and that ~0.4/block gap is exactly what counting
+both layers was for — a few calls reach `GetSpendableUtxos` from outside `AggregateSpendable`.
+
+### P3 — ✅ confirmed, and it REFUTES this plan's own premise for this phase
+
+`outpointsWalked`: median **0**, mean 7.3, max **42**. Mini-plan 17's address index means a typical spendable read
+walks **nothing**, and the worst case touches 42 outpoints. **So the UTXO reads are not where the cost is** — which
+is the reasoning that put them in part B's scope. Good: that is what measuring first is for.
+
+### P2 — ⚠ UNTESTABLE in this window, and that is a flaw in the prediction, not a result
+
+`castPowered` is **constant at 13 across all 192 blocks**, so the correlation with it is undefined (NaN).
+**A correlation needs variance in its predictor, and this one had none.** `corr(sellFlowMs, txTargetPerBlock)` =
+**−0.135**, but that predictor barely moves either, so it is weak support at best. **P2 was written without checking
+that the quantity it correlates against actually varies inside a 192-block window** — the next version needs either
+a run spanning a cast-size change (the entry-year bootstrap would give one) or a direct per-participant count.
+
+### ⚠ The cause, READ FROM THE CODE and therefore not yet measured
+
+`TrySellFlowSend` — called once per cast miner per invocation — begins with
+`FirstBlockHeightMinedBy(record.NodeId, chain)`, which is **a linear scan of the entire chain**:
+
+```
+foreach (Block b in chain) if (b.MinedByNodeId == nodeId) return b.Index;
+```
+
+With **13 cast miners** and the chain at **1,607 blocks**, that is up to **~20,900 block comparisons per
+invocation** — and a miner that has **never mined** scans the whole chain to return `null`. 126.5 ms ÷ 13 ≈ **9.7 ms
+per miner**, which is the right order for a 1,600-element scan with a string compare each.
+
+**It grows linearly with chain height**, which is precisely why this phase was invisible at height 400 and dominant
+at 1,600 — and why mini-plan 16's and 17's runs never saw it.
+
+**Stated as a code reading, not a measurement**, because mini-plan 17's lesson applies verbatim: *a structural
+reading tells you what happens; only a measurement tells you what it costs.* What **is** measured is that
+`TryCastSellFlow` is 98.2% of the phase. The attribution *inside* it needs its own instrument to confirm.
+
+**And it is the same shape mini-plan 17 just removed from the UTXO path** — an `O(chain)` scan on per-block code.
+That is now twice in two plans, in two different places, which suggests looking for the pattern rather than the
+instance: **`grep` for anything that iterates `Chain` inside per-block or per-participant code.**
+
+### Decision-rule outcome
+
+Per §4, **B builds no fix** and this run's numbers specify the next plan rather than authorising a change here. The
+fix shape is obvious and cheap (memoise first-mined height per node, or maintain it in the block hook exactly as
+mini-plan 17 B1 maintains the UTXO set) — which is an argument for doing it deliberately, with its own prediction
+and its own verification, not as an aside.
