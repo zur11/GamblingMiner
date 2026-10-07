@@ -839,9 +839,30 @@ rule and its pointer. Target **≤ 88,000 characters** from **96,707** today.
 fix** — it measures, and whatever it points at is the next plan's subject. Mini-plan 17 read a mechanism exactly and
 got its cost completely wrong; acting on a plausible mechanism is the error this plan is shaped to avoid.
 
-### CLAUDE.md below target needs a STRUCTURAL carve, not more pruning (open, measured 2026-10-07)
+### CLAUDE.md depuration — SPECIFIED (mini-plan 19, 2026-10-07)
 
-**Status: open, developer's call.** Mini-plan 18 C extracted every *case narrative* it could place in an existing
+**Status: `AIHelperFiles/mini19-claude-md-depuration-plan.md`, not started; proposed branch
+`mini19-claude-md-depuration`.** Documentation only — no code, no runs. **Scope decided by the developer: Tier 1 +
+Tier 2.** Four carves, each either mandated by the file's own policy or reversing no prior decision: the **seven
+Canonical Decisions rows over 500 characters** (6,269 chars, every one already naming its full doc, so trimming
+removes a *second copy*), **Pattern 6's five instrument rules** (cases now in §40.12), **UI Layout & Scrolling**
+down to its trigger and its what-not-to-write bullets (the rest to Ch. 29, which the section already tells the
+reader to open), and the **scripting-tools section** to a new `Documentation/DEV_ENVIRONMENT.md` keeping three
+lines — no Python, PowerShell is 5.1, `node -e` is the only open-tail rule.
+
+**Its discipline is INVARIANTS, not predictions**, since nothing is being measured. The load-bearing one: **no rule
+is lost, verified by diffing every bolded statement before and after** — anything that disappears must be present
+at a named destination. Plus: the stored detector must still return 17 when extracted from the document and run
+(the check that caught mini-plan 18 C's corruption), and **every edit to text carrying `$`, backticks or quotes
+uses the file tool** — Standing Convention 14, violated twice by this plan family.
+
+**And it re-sets the 60,000 target to the landed figure**, because the measurement below says nothing can reach it
+without carving architecture rules. *A target nothing can reach trains the reader to ignore it* — the same failure
+the 100k-warning note already describes.
+
+### Why 60,000 was unreachable, and what was declined (measured 2026-10-07)
+
+**Status: the measurement behind mini-plan 19, kept because the next reader will otherwise re-litigate it.** Mini-plan 18 C extracted every *case narrative* it could place in an existing
 section and landed at **90,942 characters** against the stated **60,000** target (warning 100,000, hard limit
 150,000). **What remains is rules**, in order of size: Pattern 2's canonical checkpoint/commit rule (12.9k),
 Pattern 6 after compression (9.6k), **Pattern 7's fifteen standing conventions (6.4k)**, the UI-layout rules
