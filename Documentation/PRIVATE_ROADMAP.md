@@ -782,9 +782,46 @@ covers both: the in-memory segment list against a fresh scan, and the incrementa
 **The full replay is never deleted; it is the oracle.** A single assert failure stops the plan, because a wrong UTXO
 set is a wrong balance.
 
-### What a bot transaction costs, the zero columns retired, and CLAUDE.md back under budget — SPECIFIED (mini-plan 18, 2026-10-06)
+### What a bot transaction costs, the zero columns retired, and CLAUDE.md back under budget — ✅ DONE (mini-plan 18, 2026-10-07)
 
-**Status: `AIHelperFiles/mini18-bot-transaction-cost-and-claude-md-plan.md`, not started; proposed branch
+> **The phase has one cause, and it is a full-chain scan.** `TryCastSellFlow` is **98.2%** of the bot-transaction
+> phase (9,990 of 10,178 ms over 192 blocks), runs on **41%** of blocks at **126.5 ms per invocation**, and
+> `TryNonMinerExchanges` **never ran at all** because sell-flow always filled the budget first. The every-block
+> path (`TryCasinoBotDonation`) is 1.8%; the budget arithmetic 0.0%. That asymmetry is why the phase read median
+> 1.067 ms against mean 53.009.
+>
+> **The cause, read from the code and therefore NOT yet measured:** `TrySellFlowSend` calls
+> `FirstBlockHeightMinedBy(nodeId, chain)` once per cast miner, and that method **linearly scans the entire
+> chain** — 13 cast miners × 1,607 blocks ≈ **20,900 block comparisons per invocation**, with a miner that has
+> never mined scanning the whole chain to return `null`. **It grows linearly with height**, which is why the phase
+> was invisible at height 400.
+>
+> **⚠ THE NEXT PLAN IS ONE METHOD, not an audit.** A grep for the *pattern* found **17** full-chain scan sites and
+> **cleared fifteen** of them: the oracle (by design), `GetUtxoSet` (cold since mini-plan 17 B1), `GetTransaction`
+> / `GetAddressData` (UI reads), `EnsureReserveGuardSeeded` (once per session), `IsHistoricalSaltPresent` (per
+> historical event, and the sell-flow path passes a null salt so it is skipped), `RewriteWholeChainFile` (tip
+> mismatch only). **Fix shape:** memoise first-mined height per node, or maintain it in the block hook exactly as
+> mini-plan 17 B1 maintains the UTXO set. **State its prediction as a COUNT** (chain blocks inspected per
+> invocation → ~0); `botSellFlowMs` then verifies it **within one session**.
+>
+> **P3 confirmed and it refuted this plan's own premise.** Part B was scoped around the UTXO reads;
+> `outpointsWalked` measured **median 0, max 42**, because mini-plan 17's address index had already made them
+> nearly free. The cost was somewhere nobody had proposed, and the sub-phase split found it because it measured
+> the *structure* rather than the suspicion.
+>
+> **P1 refuted** on its threshold (13.8 `AggregateSpendable` calls/block against ≥20 predicted; its second clause
+> held). **P2 UNTESTABLE, not refuted** — `castPowered` was constant at 13 across all 192 blocks, so the
+> correlation was undefined. **P5 refuted** — CLAUDE.md went **96,707 → 90,942 characters** against a ≤88,000
+> target. **P2 and P5 failed for the same root reason: a number chosen without checking the quantity it
+> constrains.**
+>
+> **CLAUDE.md's remaining bulk is RULES, not cases**, so reaching the stated 60,000 target is now a **structural**
+> call rather than more pruning — see the entry below. Extracted this plan: §29.12.1 (the fifth, TEXT-side locale
+> shape), §29.12.2 (the baseline's history), **§40.12 — "Measurement discipline: five ways an instrument lies"**.
+>
+> Text below is the original specification.
+
+**Status: `AIHelperFiles/mini18-bot-transaction-cost-and-claude-md-plan.md` (close-out §10), merged from branch
 `mini18-bot-transaction-cost`.** Takes both items mini-plan 17's close-out left behind, plus the CLAUDE.md
 extraction the developer approved.
 
@@ -801,6 +838,25 @@ rule and its pointer. Target **≤ 88,000 characters** from **96,707** today.
 **The discipline, inherited twice over:** counts first, no cross-session millisecond comparison, and **B builds no
 fix** — it measures, and whatever it points at is the next plan's subject. Mini-plan 17 read a mechanism exactly and
 got its cost completely wrong; acting on a plausible mechanism is the error this plan is shaped to avoid.
+
+### CLAUDE.md below target needs a STRUCTURAL carve, not more pruning (open, measured 2026-10-07)
+
+**Status: open, developer's call.** Mini-plan 18 C extracted every *case narrative* it could place in an existing
+section and landed at **90,942 characters** against the stated **60,000** target (warning 100,000, hard limit
+150,000). **What remains is rules**, in order of size: Pattern 2's canonical checkpoint/commit rule (12.9k),
+Pattern 6 after compression (9.6k), **Pattern 7's fifteen standing conventions (6.4k)**, the UI-layout rules
+(6.1k), the scripting-tools section (5.5k). Every one is "permanent instructions that govern future work", which
+the Document Policy says belongs in the file.
+
+**So the remaining move is a carve, with precedent.** `SERVICES.md` (48.5k), `ARCHITECTURE.md` (16.7k) and
+`SCENES.md` (7.5k) were each extracted wholesale from this file and replaced by a one-line index. **Pattern 7's
+fifteen conventions are the obvious next candidate** — they are already numbered, already self-contained, and
+already say where each case lives. A `Documentation/STANDING_CONVENTIONS.md` with a one-line index here would cut
+~6k without losing a rule.
+
+**Why it is not done unasked:** an index is only as good as the habit of following it, and Pattern 7's whole
+premise is that *"a rule nobody can find is a rule nobody applies"* — it was moved INTO this file for exactly that
+reason (2026-08-20). Moving it back out reverses a deliberate decision, so it is the developer's to make.
 
 ### The bet-history row's timestamp strobes — DIAGNOSED, not scheduled (developer's report, 2026-10-06)
 

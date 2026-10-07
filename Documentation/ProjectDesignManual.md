@@ -3415,6 +3415,46 @@ The footer nodes are **siblings of `ContentScroll`, not children of it**, so the
 
 **⚠️ The bulk-regex trap, recorded because it nearly shipped.** Fixing the last ~24 diagnostic lines by hand looked wasteful, so a batch `perl -pi -e` pass was used instead. Its statement matched the target with capture groups, then applied two *further* regexes as guards — and **a later match resets `$1`/`$2`/`$3`**, so every replacement wrote the empty string: `GD.Print(string.Create(CultureInfo.InvariantCulture, $""));`. Twenty-four log lines were silently blanked. It was caught by reading the diff and restored line-for-line from `HEAD`, but note what would **not** have caught it: `$""` is valid C#, so the build stayed green, and the affected lines are diagnostics nobody reads until they matter. **General rule: a mechanical edit across many files is only as safe as the diff you actually read afterwards — and in Perl, capture into lexical variables on the same line as the match that produced them.**
 
+#### 29.12.1 — A FIFTH shape, on the TEXT side, that neither numeric detector can see (2026-08-14)
+
+**Culture-sensitive date names.** `CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(...)` rendered the
+Calendar Navigator's month as `Month: mayo (31 days)` — half a sentence in each language, and invisible on an
+English dev box exactly like the numeric cases. Both detectors in `CLAUDE.md` scan for **numeric** format
+specifiers, so they were *structurally incapable* of finding it. Two extra passes exist for it, with their
+baselines kept beside the others in `CLAUDE.md`:
+
+```bash
+grep -rn "CultureInfo.CurrentCulture" --include=*.cs .
+grep -rnE '\.ToString\("(ddd|dddd|MMM|MMMM)[^"]*"\)' --include=*.cs . | grep -v InvariantCulture
+```
+
+**A locale audit scoped to numbers will pass a project whose month names are in the wrong language.**
+
+#### 29.12.2 — The baseline's history, and the week the tripwire lied in silence
+
+The pass-1 count is a **tripwire**, and its value depends entirely on being re-verified rather than consulted.
+Its history, kept here so `CLAUDE.md` carries only the current number:
+
+| date | baseline | what moved |
+|---|---|---|
+| 2026-08-23 | 5 | after the original sweep |
+| 2026-08-30 | **7** | a routine run returned 7. Both extras were the known-benign shape — an `[ExplorerPerf]` block from mini-plan 06, correctly wrapped — so nothing was broken |
+| 2026-09-28 | 10 | mini-plan 13 A's `BlockCostProfiler` per-block report line |
+| 2026-09-30 | 12 | mini-plan 16 A extended that same chain |
+| 2026-10-05 | **17** | mini-plan 17 A1's journal-breakdown block; all ten now live in `BlockCostProfiler.cs` |
+
+**What was actually broken in 2026-08-30 was not the code.** A wrapped block had landed without its two
+continuation lines being counted in `CLAUDE.md`, so for a week the tripwire read "regression" and nobody acted —
+**a tripwire that cries wolf is the same as one that never fires.** Hence the standing rule: when you add a
+`+`-chained wrapped block whose chain runs more than three lines past its wrapper, **update the count in the same
+commit.**
+
+**Where the current 17 live, by shape and never by line number** (line numbers were given in `CLAUDE.md` until
+2026-08-23, when all nine were found to have drifted +10 — Standing Convention 15): two in `FoundersWallets.cs`
+(the Hal and Mike Hearn rows), three in `NetworkRoot.cs` (one address-details, two mining-status), two in
+`BetsHistoryExplorer.cs` (the `[ExplorerPerf]` block), and ten in `BlockCostProfiler.cs` (five in the per-block
+report line, five in the journal-breakdown block).
+
 ### 29.13 — A readout may not claim precision its sampling cannot carry (mini-plan 15 B, 2026-09-30)
 
 **The symptom, as the developer reported it.** At high DEV speeds the clock in DiceGame and the nonce-attempt
@@ -5283,6 +5323,67 @@ than one suspect among several.
 **Not an incident.** Nothing was lost or corrupted, and no persisted figure was wrong: this is scale, not
 durability. The fix — bounding the in-memory journal to the window the disk already keeps, with the lifetime
 rollup continuing to serve every lifetime figure — is **mini-plan 12**.
+
+### 40.12 — Measurement discipline: five ways an instrument lies (mini-plans 11–18, 2026-09-22 → 2026-10-07)
+
+**Why this section exists.** Six consecutive mini-plans were performance work, and in every one the *instrument*
+or the *unit* turned out to be as much the subject as the code. `CLAUDE.md` → Pattern 6 keeps each as a one-line
+rule; the cases live here, because a rule whose case has vanished stops being persuasive and becomes folklore.
+
+**1. An instrument that filters cannot see what it filters out** (mini-plan 11 C2 — §40.11 has the full case).
+`FrameCostProfiler` discards any period over a second as "not a frame", which is correct for scene loads and is
+why its percentiles stayed plausible through **791 seconds of frozen game**. The only witness was the wall-clock
+gap between its own reports, and nothing read that. *When a profiler filters, something must still watch the
+clock.*
+
+**2. A residual is not a measurement of the work inside it** (mini-plan 15 B — §29.13). A prediction that a UI
+change would save ≥0.5 ms per frame measured **15.05 → 15.15 ms: nothing**, and could not have measured anything
+else. "Outside-sim" is `period − sim`, a **residual containing the vsync wait**, on a vsync-bound frame: remove CPU
+work and the frame waits longer, so the residual does not move. *Before predicting a saving, check that the
+instrument measures the work rather than the leftover.*
+
+**3. A per-block millisecond figure does not reproduce across sessions here** (mini-plan 16). Block cost nearly
+**doubled between two runs a day apart (median 10.54 → 19.67 ms) while that plan was removing 26 ms/block of disk
+writes** — concentrated in a phase whose rise was only ~30% attributable. Within a run the spread is tight (1.19×
+and 1.31×); between runs the *level* shifts by a factor of two.
+- **State a cost criterion as a COUNT.** Mini-plan 16 predicted a 50% fall in writes per block and measured
+  **52.2%**. Had it stated success in milliseconds it would have reported a catastrophic regression while removing
+  96% of the cost it targeted.
+- **Compare within a session, never across two.** This retired mini-plan 14's "a block costs 8.4 ms and flat" and
+  mini-plan 15's 40%-of-a-block T4.1 trigger.
+- **Count where the work happens, not where you expect it.** The same plan predicted ≥20 writes inside the block
+  bracket and found exactly **2** — the real 48.8 were *between* blocks, at bet rate. The counter saw them only
+  because counting outside the bracket had been a deliberate decision.
+- **A threshold on a share is a threshold on its denominator too.** The 40%-of-a-block rule fired while the UTXO
+  replay was **flat**, because the rest of the block collapsed. *State a cost threshold in absolute units when the
+  denominator is noisier than the term you are watching.*
+
+**4. A structural reading tells you what HAPPENS; only a measurement tells you what it COSTS** (mini-plan 17).
+Reading the code predicted the bet journal's rotation metadata dominated its cost: two `Directory.GetFiles` per
+rotation plus a delete. The mechanism measured **exactly** — 2.00 scans and 0.99 deletes per rotation — and the
+premise was still false: a scan of that folder costs **0.256 ms, ~30× less than one append**, so metadata is
+**4.4%** of journal time against the ≥50% predicted. *Counting the operations in a path is not knowing which one
+is expensive, and a confident reading of the code is the easiest way to skip the measurement.*
+- **Check who CONSUMES a reader before adding work to it.** The same plan added a sort to `GetSpendableUtxos` for a
+  determinism guarantee — in the one method `AggregateSpendable` calls dozens of times a block **purely to sum**.
+  Nothing broke; nothing would have. The ordering belongs where the order matters, which was a sort that already
+  existed in `NetworkRoot.SelectUtxos`.
+- **A lesson recorded in a close-out is not a lesson applied.** Mini-plan 16 established that the journal works
+  *between* blocks; mini-plan 17 then built seven **per-block** journal trace columns that are structurally always
+  zero. Its measurement survived only because an unrelated decision counted outside the bracket too. Mini-plan 18
+  deleted the columns.
+
+**5. A correlation needs variance in its predictor** (mini-plan 18 B). A prediction that the bot-transaction
+phase's cost "tracks the participant count, not the transaction count" was **untestable**, not refuted:
+`castPowered` was **constant at 13 across all 192 blocks**, so the correlation was undefined. *Before registering a
+prediction shaped as a correlation, check that the quantity it correlates against actually moves inside the window
+the run will cover.*
+
+**And the one positive result of the set, because it is the method that worked.** Mini-plan 17's UTXO oracle was
+written **before** either fast path existed, so it could not be shaped to fit a result; it announced itself once
+(`ARMED`) so its silence meant something; and it stayed silent across 387 blocks and 61 nodes over two plans. *The
+only prediction in six plans whose value lay in nothing happening is also the one that made an incremental rewrite
+of the UTXO set safe to ship.*
 
 ---
 

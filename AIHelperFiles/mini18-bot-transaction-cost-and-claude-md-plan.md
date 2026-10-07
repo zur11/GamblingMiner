@@ -3,7 +3,12 @@
 **Series note:** eighteenth of the *mini-plan* series, following `mini17-journal-rotation-and-incremental-utxo-plan.md`,
 whose close-out named both technical items here as the work it left behind.
 
-**Status:** 📋 **SPECIFIED 2026-10-06**, not started. Proposed branch `mini18-bot-transaction-cost`.
+**Status:** ✅ **DONE 2026-10-07** (close-out §10), branch `mini18-bot-transaction-cost`.
+**A** deleted the seven structurally-zero journal columns. **B** opened the bot-transaction phase and answered in
+one run: **`TryCastSellFlow` is 98.2%** of it, caused by a **full-chain scan per cast miner**
+(`FirstBlockHeightMinedBy`) — no fix built, by the plan's own rule. **C** extracted CLAUDE.md to §29.12/.1/.2 and
+§40.12: **96,707 → 90,942 characters**. **P3 confirmed, and it refuted B's own premise** (outpoints walked: median
+0); **P1 and P5 refuted**; **P2 untestable** — its predictor never varied. Next plan: one method.
 
 **Three parts, one of them documentation.**
 
@@ -255,3 +260,123 @@ Per §4, **B builds no fix** and this run's numbers specify the next plan rather
 fix shape is obvious and cheap (memoise first-mined height per node, or maintain it in the block hook exactly as
 mini-plan 17 B1 maintains the UTXO set) — which is an argument for doing it deliberately, with its own prediction
 and its own verification, not as an aside.
+
+### The pattern grep, run because the instance suggested it — and it CLEARS the rest
+
+Acting on the recommendation above rather than leaving it as advice: **17 sites iterate a full chain.** Exactly
+**one** is on a per-block hot path.
+
+| site | verdict |
+|---|---|
+| `FirstBlockHeightMinedBy` | ⚠ **the hot one** — per cast miner, per sell-flow invocation |
+| `BlockchainService.DescribeUtxoCacheMismatch` | by design — the oracle, one node per 25 blocks |
+| `BlockchainService.GetUtxoSet` | cold since mini-plan 17 B1 — the fallback and oracle path only |
+| `GetTransaction`, `GetAddressData` | UI / explorer reads, not per-block |
+| `EnsureReserveGuardSeeded` | once per session (the cold-start re-derivation) |
+| `IsHistoricalSaltPresent` | per historical event, and the sell-flow path passes a null salt so it is skipped |
+| `RewriteWholeChainFile` | only on a tip-stamp mismatch, by design |
+| the remaining `player.Blockchain.Chain` loops | explorer / wallet / dev-readout reads |
+
+**So the next plan's scope is one method, not an audit.** That is what grepping for the pattern bought: it found the
+instance *and* cleared fifteen others, which a list written from suspicion could not have done.
+
+---
+
+## 9. Part C as built, and P5 refuted (2026-10-07)
+
+**96,707 → 90,942 characters (−5,765, −6.0%). The target was ≤ 88,000. P5 is REFUTED, missed by 2,942**, and the
+reason is worth more than the number: **what remains is rules, not cases.**
+
+### What moved, and where
+
+| extracted | destination |
+|---|---|
+| the locale block's four bug shapes, fix shape, confirmed-clean scope, residual risk, bulk-regex trap | **§29.12** — which **already held all of it**, so this removed a *duplicate*, not a reference |
+| the fifth, TEXT-side shape (culture-sensitive date names) with its two greps | **§29.12.1** (new) |
+| the baseline's history — 5 → 7 → 10 → 12 → 17, the week the tripwire read "regression" in silence, and where the current 17 live by file | **§29.12.2** (new) |
+| Pattern 6's five instrument/unit narratives (mini-plans 11, 15, 16, 17, 18) | **§40.12** (new) — "Measurement discipline: five ways an instrument lies" |
+| Pattern 2's three durability-instalment narratives | already in **`INCIDENT_LOG.md` INC-002/003/004** and **§40.8**; CLAUDE.md keeps every *rule* and points there |
+
+**Kept in CLAUDE.md deliberately:** the detector commands verbatim (§29.12 itself says CLAUDE.md is their canonical
+home, so they can be re-run without opening the manual), all four baselines, the tripwire rule, and every
+behavioural rule from all four instalments. **Nothing was deleted outright** — §4's invariant held.
+
+### Why P5 missed, stated as the finding rather than as a shortfall
+
+Compressing Pattern 2's instalments saved only ~700 characters, because **the rules themselves are the text**. The
+blocks that remain are, in order of size: Pattern 2's canonical checkpoint/commit rule (12.9k), Pattern 6 after
+compression (9.6k), Pattern 7's fifteen standing conventions (6.4k), the UI-layout rules (6.1k) and the
+scripting-tools section (5.5k). **Every one is "permanent instructions that govern future work", which the Document
+Policy says belongs here.**
+
+**So the ≤88,000 target was set from a character count rather than from an assessment of what is actually
+extractable** — the same error shape as P2's correlation: a number chosen without checking the quantity it
+constrains. Reaching the stated 60,000 target would now require a **structural** decision, not more pruning: e.g.
+moving Pattern 7's fifteen conventions into their own `Documentation/` file with a one-line index here, the way
+`SERVICES.md`, `SCENES.md` and `ARCHITECTURE.md` were already carved out. **That is the developer's call, not a
+tidy-up**, and it is recorded in `PRIVATE_ROADMAP.md` rather than done unasked.
+
+### ⚠ And a corruption, caught by the project's own rule
+
+The first attempt at this extraction used a `node -e` one-liner to rewrite the locale block. **The shell ate every
+backslash in the detector commands** — `\$"` became `$"`, `/\.godot/` became `/.godot/`, and `\n` became a literal
+newline that broke the `printf`. The command reported success. **A mangled detector returns 0 hits and reads as
+"the project is clean"**, which is the most dangerous possible failure for a tripwire.
+
+This is **Standing Convention 14 verbatim**, including its explicit instruction to *prefer the file-editing tool
+when the content carries backticks, `$`, or quotes* — which is exactly what this content carries. Restored from
+`HEAD` and redone with the file tool.
+
+**The check that caught it is now the standing one for any stored command:** extract the detector **from the
+document** and run it. It returns **17**, its stated baseline. *A recipe kept as documentation is verified by
+running the document's copy, never by trusting that the document matches what you ran.*
+
+---
+
+## 10. Close-out (2026-10-07)
+
+| part | outcome |
+|---|---|
+| **A — the seven zero columns** | ✅ Deleted, with the dead accumulators and the `_inBlock` branch that could only take the useless side. Alignment re-verified at 33 → 26. |
+| **B — the bot-transaction instrument** | ✅ Shipped and it answered in one run: **`TryCastSellFlow` is 98.2%** of the phase. The cause is a full-chain scan per cast miner. **No fix built**, by §4. |
+| **C — CLAUDE.md** | ✅ Extracted to §29.12/.1/.2 and §40.12. **96,707 → 90,942 chars. P5 refuted** (target ≤88,000). |
+
+| prediction | verdict |
+|---|---|
+| **P1** — ≥20 `AggregateSpendable` calls/block | ❌ refuted on the threshold (median 13, mean 13.8, max 22); its second clause held |
+| **P2** — cost tracks participants, not transactions | ⚠️ **untestable** — the predictor was constant at 13 all run |
+| **P3** — outpoints walked far below the set size | ✅ confirmed (median **0**, max 42) — **and it refuted part B's own premise** |
+| **P4** — A changes no measurement | ✅ confirmed |
+| **P5** — CLAUDE.md ≤ 88,000 chars | ❌ refuted (90,942) |
+
+**Two of five confirmed, two refuted, one untestable — and the plan's value is in the three that failed.**
+
+### What this plan is worth
+
+1. **The instrument answered in one run, and refuted the reason it was built.** Part B was scoped around the UTXO
+   reads, because `AggregateSpendable` → `GetSpendableUtxos` runs dozens of times a block. P3 measured
+   **outpointsWalked median 0** — mini-plan 17's index had already made those reads nearly free. **The cost was
+   somewhere nobody had proposed**, and the sub-phase split found it anyway because it measured the *structure*
+   rather than the suspicion.
+2. **Two predictions failed for the same root reason: a number chosen without checking the quantity it
+   constrains.** P2 correlated against a predictor that never moved. P5 set a character target without asking what
+   was extractable. **Both are the arithmetic error this plan family keeps rediscovering in new clothing** —
+   registered before the data, which is the only reason they are legible as failures rather than as noise.
+3. **The pattern grep paid off by CLEARING fifteen sites.** One of 17 full-chain scans is on a hot path; the rest
+   are the oracle, cold fallbacks, UI reads, once-per-session seeding, or by-design rewrites. **The next plan's
+   scope is one method, not an audit** — which a list written from suspicion could never have established.
+4. **The project's own rule caught my corruption.** A `node -e` rewrite silently ate every backslash in the stored
+   detector commands, which would have left a tripwire that returns 0 and reads as "clean". Standing Convention 14
+   names that exact failure *and* the tool to avoid it.
+
+### What follows
+
+- **The next plan is one method: `FirstBlockHeightMinedBy`.** Memoise first-mined height per node, or maintain it
+  in the block hook exactly as mini-plan 17 B1 maintains the UTXO set. It needs its own prediction — stated as a
+  **count** (chain blocks inspected per invocation, which should fall to ~0) rather than milliseconds — and the
+  existing `botSellFlowMs` column verifies it **within one session**.
+- **P2 needs a predictor that moves.** Either a run spanning a cast-size change (the entry-year bootstrap gives
+  one) or a per-participant count rather than a correlation.
+- **CLAUDE.md's remaining bulk is rules.** Reaching the 60,000 target is a structural call — carving Pattern 7's
+  fifteen conventions into their own doc, as `SERVICES.md` and `ARCHITECTURE.md` already were — recorded in the
+  roadmap rather than done unasked.
