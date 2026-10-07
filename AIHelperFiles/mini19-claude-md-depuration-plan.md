@@ -4,7 +4,12 @@
 finishes what mini-plan 18 C started and stopped: that part extracted every *case narrative* it could place and
 landed at 91,594 characters against a ≤88,000 target it refuted.
 
-**Status:** 📋 **SPECIFIED 2026-10-07**, not started. Proposed branch `mini19-claude-md-depuration`.
+**Status:** ✅ **DONE 2026-10-07** (close-out §7), branch `mini19-claude-md-depuration`.
+**91,594 → 83,776 characters (−8.5%)**, target re-set 60,000 → **84,000** with its reasoning and the three declined
+carves named. Most of the saving was **duplication, not relocation** — the file's own "never append a second
+version" rule had been broken repeatedly, and the budget was the symptom. **I1's bolded-span differ was abandoned
+as unworkable** (28 reported losses, all false positives); the check that worked was a distinctive token per
+removed passage, 13 of 13 found. No code touched.
 
 **Scope: Tier 1 + Tier 2, decided by the developer 2026-10-07.** Pattern 7's conventions stay (that carve would
 reverse an August decision); the architecture blocks stay (they are the file's core).
@@ -129,3 +134,33 @@ that cutting them was considered and declined, so the next reader does not re-li
   core. Row-level trimming only (part A).
 - **The two queued code items** (`FirstBlockHeightMinedBy`, `BetHistoryItem`'s timestamp) — unrelated to this
   file's size, and each needs its own plan.
+
+---
+
+## 7. Results and close-out (2026-10-07)
+
+**91,594 → 83,776 characters (−7,818, −8.5%).** Target re-set to **84,000**. No code touched; build clean.
+
+| part | saved | what moved, and where |
+|---|---|---|
+| **A** — seven over-long table rows | **2,339** | Band derivation, the swap formula and cap, the timeline mechanics, the trading-unlock justification → the step-13/14 plans, `SERVICES.md`, Ch. 35. The worst row went **1,916 → 849**. |
+| **B** — Pattern 6's instrument rules | **1,466** | Narratives already in §40.12; six one-line rules kept. |
+| **C** — UI Layout & Scrolling | **2,037** | The bounding walkthrough, the two patterns, the wheel mechanics → Ch. 29, **verified present there before removal**. **Every DON'T kept** — eleven of them, each grep-checked after. |
+| **D** — scripting tools | **~2,000** | → new **`Documentation/DEV_ENVIRONMENT.md`** (6,048 chars, moved verbatim). CLAUDE.md keeps three facts, chosen because each is a trap you hit *before* you would think to open a doc: no Python, PowerShell is 5.1, `node -e` makes path permissions advisory. |
+| **E** — the target | — | 60,000 → 84,000, with the reasoning and the three declined carves named so they are not re-litigated. |
+
+### Invariants
+
+- **I2 ✅** — every removed detail verified present at a named destination by **distinctive token** (`MaxFeeMeanMultiplier`, `D-SW.12`, `FirstDataDateLocal`, `Blockchair`, …): 13 of 13 found. Ch. 29 checked for all seven moved UI topics before anything was cut.
+- **I3 ✅** — the detector, extracted **from the document** and executed, returns **17**. Run again after the final edits: still 17. Pass 2 / `CurrentCulture` / date-names all 0.
+- **I4 ✅** — every edit to text carrying `$`, backticks or quotes used the file tool. The two shell rewrites used were on *generated* content (a line-range splice and a heredoc), not on literal rule text.
+- **I5 ✅** — zero `.cs` files changed; `dotnet build --no-incremental` clean.
+- **I1 ⚠ ABANDONED, and this is the finding.** The bolded-span differ was supposed to be the mechanical net under I2. It does not work: the regex captures **fragments**, so reworded bolding reads as "gone" (37 of 394 spans), and my attempt to fix it with a content-presence probe was itself broken — the probe's word filter dropped words under three characters, producing sequences that could never match the haystack. It reported **28 losses, every one a false positive.**
+  **The lesson, which is this plan's third instance of the same shape:** a one-off verifier written in the same session as the edit it checks is as likely to be the thing that is wrong. Mini-plan 18 had the same experience twice (a trace column read as milliseconds, a correlation against a constant). **What actually worked was the boring check: a distinctive single token per removed passage, grepped across the corpus** — immune to rewording, trivially auditable, and already run as I2's pre-check before each edit. **I1 should have been specified as that, not as a differ.**
+- **A small self-referential trap, recorded because it is funny and real:** part E set the target to the measured figure, and writing the explanation of the target then pushed the file past it. The number now accounts for the paragraph that states it.
+
+### What this plan is worth
+
+1. **Most of the saving was DUPLICATION, not relocation.** The locale block (mini-plan 18 C) was a second copy of §29.12; the fee row's detail was a second copy of the step-14 plan; the Player-start row restated Pattern 2's own rule. **The file's "never append a second version" rule had been broken repeatedly, and the budget was the symptom.**
+2. **The policy did the work once it was measured.** Every part of A, B and C was mandated by a rule already in the file — the ~500-character row limit, "if the subject already exists, EDIT it", and a section whose own first line says to go read a chapter. **Nothing here required taste.**
+3. **The target was wrong, and saying so is the result.** 60,000 was unreachable without moving architecture rules out. Three carves were considered and declined with reasons. **A target that cannot be met trains the reader to ignore it** — which is the same mechanism the file's own warning-suspension note already describes.
