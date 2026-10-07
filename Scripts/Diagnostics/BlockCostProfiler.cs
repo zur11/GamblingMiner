@@ -74,7 +74,8 @@ namespace Scripts.Diagnostics
 			"auctionsMs,governanceMs,historicalEventsMs,snapshotMs,casinoRewardsMs,subscribersMs,checkpointMs," +
 			"unaccountedMs,snapshotBytes,snapshotWrites,snapshotWriteMs,utxoRebuildsSincePrev,utxoMsSincePrev,utxoNodesSincePrev," +
 			"stateWrites,stateFiles,stateBytes,stateWriteMs," +
-			"jRotations,jAppends,jScans,jDeletes,jAppendMs,jScanMs,jDeleteMs";
+			"botDonationMs,botBudgetMs,botSellFlowMs,botExchangeMs," +
+			"aggSpendableCalls,spendableReads,outpointsWalked,outpointsMax";
 
 		private static readonly long[] _phaseTicks = new long[PhaseCount];
 		private static int _openPhase = -1;
@@ -133,16 +134,48 @@ namespace Scripts.Diagnostics
 			Delete
 		}
 
+		// ⚠ Mini-plan 18 A — SESSION TOTALS ONLY. The per-block counterparts of these four existed for one plan
+		// and were deleted: the journal flushes at **bet rate, between blocks**, so a per-block column for it
+		// can only ever read zero. All 195 rows of mini-plan 17's run did, and seven zeroes in a trace read as
+		// a result rather than as an absence. Mini-plan 16 had already established where the journal does its
+		// work; mini-plan 17 built the per-block view anyway, which is why "a lesson recorded is not a lesson
+		// applied" is now a rule in CLAUDE.md. **Do not add per-block journal columns back.**
 		private const int JournalOpCount = 3;
-		private static readonly int[] _journalOps = new int[JournalOpCount];
-		private static readonly double[] _journalOpMs = new double[JournalOpCount];
 		private static readonly int[] _journalOpsTotal = new int[JournalOpCount];
 		private static readonly double[] _journalOpMsTotal = new double[JournalOpCount];
-		private static int _journalRotations;
 		private static int _journalRotationsTotal;
 
 		private static readonly Dictionary<string, StateWriteStat> _stateWritesByPath = new(StringComparer.Ordinal);
 		private const int PerPathReportEveryBlocks = 50;
+
+		// ── Mini-plan 18 B — inside the bot-transaction phase, which became the dominant per-block term ─────
+		// Mini-plan 17 measured the whole phase at median 0.957 ms / mean 76.899 / max 469.256 in a populated
+		// era, as ONE opaque number. The split below follows the method's real structure, and the asymmetry is
+		// the point: TryCasinoBotDonation runs on EVERY block, while CastSellFlow and NonMinerExchanges run only
+		// when the budget is positive (≈ half the blocks at a 0.5 tx/block target). A median/mean gap that large
+		// has to come from a path that does not run every time — this says which.
+		//
+		// These ARE per-block events (unlike the journal's, deleted above): the phase runs inside the block.
+		public enum BotPhase
+		{
+			CasinoDonation,
+			Budget,
+			CastSellFlow,
+			NonMinerExchanges
+		}
+
+		private const int BotPhaseCount = 4;
+		private static readonly double[] _botPhaseMs = new double[BotPhaseCount];
+		private static readonly double[] _botPhaseMsTotal = new double[BotPhaseCount];
+		private static readonly int[] _botPhaseHits = new int[BotPhaseCount];
+
+		// The UTXO reads the phase performs. AggregateSpendable is the wrapper every bidder / affordability
+		// check / treasury read goes through; GetSpendableUtxos is the layer under it and is also reachable
+		// from elsewhere, so counting BOTH says how much of the lower layer belongs to this phase.
+		private static int _aggregateSpendableCalls;
+		private static int _spendableReads;
+		private static long _outpointsWalked;
+		private static int _outpointsWalkedMax;
 
 		private static bool _headerChecked;
 
@@ -215,9 +248,11 @@ namespace Scripts.Diagnostics
 			_stateWriteMs = 0d;
 			_stateBytes = 0;
 			_stateFilesThisBlock.Clear();
-			Array.Clear(_journalOps, 0, JournalOpCount);
-			Array.Clear(_journalOpMs, 0, JournalOpCount);
-			_journalRotations = 0;
+			Array.Clear(_botPhaseMs, 0, BotPhaseCount);
+			_aggregateSpendableCalls = 0;
+			_spendableReads = 0;
+			_outpointsWalked = 0;
+			_outpointsWalkedMax = 0;
 		}
 
 		/// <summary>Closes the open phase (if any) and opens <paramref name="phase"/>.</summary>
@@ -315,12 +350,10 @@ namespace Scripts.Diagnostics
 			double ms = TicksToMs(Stopwatch.GetTimestamp() - startTicks);
 			int i = (int)op;
 
+			// No `_inBlock` branch: the journal's work happens between blocks, so a per-block split of it is
+			// structurally empty (see the field comment above).
 			_journalOpsTotal[i]++;
 			_journalOpMsTotal[i] += ms;
-
-			if (!_inBlock) return;
-			_journalOps[i]++;
-			_journalOpMs[i] += ms;
 		}
 
 		/// <summary>
@@ -333,7 +366,47 @@ namespace Scripts.Diagnostics
 		{
 			if (!Enabled) return;
 			_journalRotationsTotal++;
-			if (_inBlock) _journalRotations++;
+		}
+
+		/// <summary>
+		/// Mini-plan 18 B — one sub-phase of the bot-transaction phase. Separate from <see cref="Phase"/> on
+		/// purpose: that enum's phases are **contiguous** (each <see cref="Enter"/> closes the previous one), and
+		/// slotting sub-phases into it would break that contract for the outer phases. These are timed
+		/// independently and may be entered zero or one time per block.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void NoteBotPhase(BotPhase phase, long startTicks)
+		{
+			if (!Enabled) return;
+
+			double ms = TicksToMs(Stopwatch.GetTimestamp() - startTicks);
+			int i = (int)phase;
+			_botPhaseMs[i] += ms;
+			_botPhaseMsTotal[i] += ms;
+			_botPhaseHits[i]++;
+		}
+
+		/// <summary>Mini-plan 18 B — one <c>AggregateSpendable</c> call: the wrapper every bid cap, affordability
+		/// check and treasury read goes through.</summary>
+		[Conditional("DEBUG")]
+		public static void NoteAggregateSpendable()
+		{
+			if (!Enabled || !_inBlock) return;
+			_aggregateSpendableCalls++;
+		}
+
+		/// <summary>
+		/// Mini-plan 18 B — one <c>GetSpendableUtxos</c> call and the number of outpoints it actually walked.
+		/// <paramref name="outpointsWalked"/> is the quantity mini-plan 17's address index was built to shrink,
+		/// so this verifies that as a COUNT rather than as a timing.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void NoteSpendableRead(int outpointsWalked)
+		{
+			if (!Enabled || !_inBlock) return;
+			_spendableReads++;
+			_outpointsWalked += outpointsWalked;
+			if (outpointsWalked > _outpointsWalkedMax) _outpointsWalkedMax = outpointsWalked;
 		}
 
 		[Conditional("DEBUG")]
@@ -381,16 +454,16 @@ namespace Scripts.Diagnostics
 
 			WriteTraceRow(string.Format(CultureInfo.InvariantCulture,
 				"{0:O},{1},{2:O},{3},{4:F3},{5:F3},{6:F3},{7:F3},{8:F3},{9:F3},{10:F3},{11:F3},{12:F3},{13:F3},{14:F3},{15:F3},{16},{17},{18:F3},{19},{20:F3},{21},{22},{23},{24},{25:F3}," +
-				"{26},{27},{28},{29},{30:F3},{31:F3},{32:F3}",
+				"{26:F3},{27:F3},{28:F3},{29:F3},{30},{31},{32},{33}",
 				DateTime.UtcNow, _chainHeight, _gameUtc, _minerNodeId, totalMs,
 				Ms(Phase.Broadcast), Ms(Phase.DifficultyTrace), Ms(Phase.BotTransactions), Ms(Phase.Auctions),
 				Ms(Phase.Governance), Ms(Phase.HistoricalEvents), Ms(Phase.Snapshot), Ms(Phase.CasinoRewards),
 				Ms(Phase.Subscribers), Ms(Phase.Checkpoint), totalMs - accounted, _snapshotBytes, _snapshotWrites, _snapshotWriteMs,
 				_utxoRebuilds, _utxoMs, _utxoNodes.Count,
 				_stateWrites, _stateFilesThisBlock.Count, _stateBytes, _stateWriteMs,
-				_journalRotations,
-				_journalOps[(int)JournalOp.Append], _journalOps[(int)JournalOp.DirectoryScan], _journalOps[(int)JournalOp.Delete],
-				_journalOpMs[(int)JournalOp.Append], _journalOpMs[(int)JournalOp.DirectoryScan], _journalOpMs[(int)JournalOp.Delete]));
+				_botPhaseMs[(int)BotPhase.CasinoDonation], _botPhaseMs[(int)BotPhase.Budget],
+				_botPhaseMs[(int)BotPhase.CastSellFlow], _botPhaseMs[(int)BotPhase.NonMinerExchanges],
+				_aggregateSpendableCalls, _spendableReads, _outpointsWalked, _outpointsWalkedMax));
 
 			ResetIntervalCounters();
 			++BlockCount;

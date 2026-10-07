@@ -138,3 +138,48 @@ being folklore.
 - **The `BetHistoryItem` timestamp strobe** — a separate roadmap objective, diagnosed but deliberately not bundled
   (the developer's call).
 - **T4.2** (one canonical chain instead of ~62 copies), still gated on a post-Basic-Mode fork decision.
+
+---
+
+## 7. Parts A and B as built (2026-10-06)
+
+### A — the seven zero columns are gone
+
+Removed from the header, the format string and the argument list, and the dead per-block accumulators
+(`_journalOps`, `_journalOpMs`, `_journalRotations`) deleted with them. `NoteJournalOp` and
+`NoteJournalRotation` no longer branch on `_inBlock` at all — the journal's work happens between blocks, so the
+branch could only ever take the useless side.
+
+**Verified programmatically: 33 → 26 columns, 26 unique placeholders, max index 25 — aligned**, and no `j*` column
+or dead field remains. That is the check that caught this error class in mini-plan 17 A1, re-run because removing
+seven columns is exactly when an off-by-one lands.
+
+The field comment now says **do not add per-block journal columns back**, with the reason, because the next reader
+will otherwise notice the session totals and wonder why there is no per-block view.
+
+### B — four sub-phases and two counters
+
+**The split follows the method's real structure, and its asymmetry is the hypothesis.**
+`TryCasinoBotDonation` runs on **every** block; `TryCastSellFlow` and `TryNonMinerExchanges` run **only when the
+budget is positive** — about half the blocks at a ≈0.5 tx/block target, since `if (budget <= 0) return;` sits
+between them. **A median of 0.957 ms against a mean of 76.899 has to come from a path that does not run every
+time**, and this says which one.
+
+- **`botDonationMs`** — the every-block path.
+- **`botBudgetMs`** — closed **whether or not the method returns**, so a zero-budget block still reports what the
+  decision itself cost. Timing it only on the expensive path would have made the cheap path look like no path.
+- **`botSellFlowMs`**, **`botExchangeMs`** — the two conditional paths.
+- **`aggSpendableCalls`** / **`spendableReads`** — `AggregateSpendable` is the wrapper every bid cap, affordability
+  check and treasury read goes through; `GetSpendableUtxos` is the layer beneath and is reachable from elsewhere
+  too, so **counting both says how much of the lower layer belongs to this phase.**
+- **`outpointsWalked`** / **`outpointsMax`** — the quantity mini-plan 17's address index was built to shrink,
+  verified as a **count**, which is what P3 asks for.
+
+`BotPhase` is deliberately **separate from `Phase`**: that enum's phases are contiguous (each `Enter` closes the
+previous), and slotting sub-phases into it would break that contract for the outer phases. These are timed
+independently and may be entered zero or one time per block.
+
+**Verified: 26 → 34 columns, 34 unique placeholders, max index 33 — aligned.** All four sub-phases instrumented
+(4 of 4). Build clean on `--no-incremental`; locale detector at baseline (17).
+
+**Still measurement-only.** No behaviour changed in either part. B builds no fix, by §4.

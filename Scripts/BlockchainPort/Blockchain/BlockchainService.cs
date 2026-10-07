@@ -894,12 +894,14 @@ public sealed class BlockchainService
 		_addressIndex ??= BuildAddressIndex(utxos);
 
 		var matched = new List<(string key, UtxoEntry utxo)>();
+		int walked = 0; // mini-plan 18 B — the quantity mini-plan 17's index was built to shrink
 		foreach (string address in owned)
 		{
 			if (!_addressIndex.TryGetValue(address, out HashSet<string>? keys)) continue;
 
 			foreach (string key in keys)
 			{
+				walked++;
 				if (!utxos.TryGetValue(key, out UtxoEntry? utxo) || utxo == null) continue;
 				if (!utxo.IsSpendable) continue;
 				if (utxo.IsCoinbase && (tipIndex - utxo.BlockIndex) < CoinbaseMaturity) continue;
@@ -926,6 +928,8 @@ public sealed class BlockchainService
 		// **already happens**, so it costs nothing: its greedy pass tie-breaks `OrderByDescending(amount)` with
 		// the outpoint key, and its exact-match pass picks the smallest key among exact matches in one O(n)
 		// scan. Same guarantee, no cost on the path that does not need it.
+		Scripts.Diagnostics.BlockCostProfiler.NoteSpendableRead(walked); // mini-plan 18 B
+
 		var result = new List<(OutPoint, string, decimal)>(matched.Count);
 		foreach ((string _, UtxoEntry utxo) in matched)
 		{

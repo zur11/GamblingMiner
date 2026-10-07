@@ -5632,7 +5632,15 @@ public partial class NetworkRoot : Node
 
 		// ND.4a — the casino-bots' own cycle runs first and OUTSIDE the budget (its txids are exempted
 		// from the organic-pending count below).
+		// Mini-plan 18 B — this one runs on EVERY block; the two below only when the budget is positive. That
+		// asymmetry is what the split is for: a median of 0.957 ms against a mean of 76.899 has to come from a
+		// path that does not run every time.
+		long botDonationBegin = System.Diagnostics.Stopwatch.GetTimestamp();
 		TryCasinoBotDonation(block);
+		Scripts.Diagnostics.BlockCostProfiler.NoteBotPhase(
+			Scripts.Diagnostics.BlockCostProfiler.BotPhase.CasinoDonation, botDonationBegin);
+
+		long botBudgetBegin = System.Diagnostics.Stopwatch.GetTimestamp();
 
 		// The mempool is primed to hover AT the target level, so the next block template (which takes up
 		// to MaxBlockTransactions − 1 pending txs by fee) carries ≈ target non-coinbase txs. ORGANIC
@@ -5650,11 +5658,26 @@ public partial class NetworkRoot : Node
 		double owed = Math.Max(0d, (double)_scheduledTxTargetPerBlock + _scheduledTxCarry - pending);
 		int budget = (int)Math.Floor(owed);
 		_scheduledTxCarry = owed - budget;
+
+		// The budget arithmetic is closed here whether or not it returns, so a zero-budget block still reports
+		// what the decision itself cost — otherwise the cheap path would look like no path at all.
+		Scripts.Diagnostics.BlockCostProfiler.NoteBotPhase(
+			Scripts.Diagnostics.BlockCostProfiler.BotPhase.Budget, botBudgetBegin);
+
 		if (budget <= 0) return;
 
+		long sellFlowBegin = System.Diagnostics.Stopwatch.GetTimestamp();
 		int created = TryCastSellFlow(block, chain, budget);
+		Scripts.Diagnostics.BlockCostProfiler.NoteBotPhase(
+			Scripts.Diagnostics.BlockCostProfiler.BotPhase.CastSellFlow, sellFlowBegin);
+
 		if (created < budget)
+		{
+			long exchangeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
 			TryNonMinerExchanges(block, budget - created);
+			Scripts.Diagnostics.BlockCostProfiler.NoteBotPhase(
+				Scripts.Diagnostics.BlockCostProfiler.BotPhase.NonMinerExchanges, exchangeBegin);
+		}
 	}
 
 	// ND.4b/ND.4c — the casino-miner-bots' (bot_1..4) fast-cycle competitive donation/bid cycle
@@ -7329,6 +7352,7 @@ public partial class NetworkRoot : Node
 		// for on every settled bet. GetSpendableUtxos already accepts the whole set and applies the same
 		// spendable/maturity/pending filters, so the result is identical by construction (an outpoint has
 		// exactly one address, so no double counting is possible).
+		Scripts.Diagnostics.BlockCostProfiler.NoteAggregateSpendable(); // mini-plan 18 B
 		HashSet<string> addresses = OwnedAddressSet(node);
 		decimal total = 0m;
 		foreach (var utxo in node.Blockchain.GetSpendableUtxos(addresses))
