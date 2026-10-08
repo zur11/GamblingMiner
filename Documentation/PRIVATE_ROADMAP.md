@@ -908,9 +908,24 @@ already say where each case lives. A `Documentation/STANDING_CONVENTIONS.md` wit
 premise is that *"a rule nobody can find is a rule nobody applies"* — it was moved INTO this file for exactly that
 reason (2026-08-20). Moving it back out reverses a deliberate decision, so it is the developer's to make.
 
-### The bet-history row's timestamp strobes — DIAGNOSED, not scheduled (developer's report, 2026-10-06)
+### Pending UI objectives, an Exit button, and month names — 📝 SPECIFIED (mini-plan 20, 2026-10-08)
 
-**Status: open, deliberately NOT bundled into mini-plan 18 (developer's call).** The timestamp column of the bet
+**Status: `AIHelperFiles/mini20-ui-pending-and-exit-button-plan.md`, branch `mini20-ui-pending-and-exit-button`.
+Nothing built; next is A.** Four parts. **A**: an **Exit** button on `MainMenu`. It is no weaker than the window's
+X because it propagates `NotificationWMCloseRequest` before `Quit()`. It sits in a fixed footer with a ≥50 px
+bottom margin, and it shows a confirmation that names the block the world will resume from (D-20.1). **B**: the
+Calendar snapshot on arrival (the objective below). **C**: the bet-row timestamp strobe (the objective below),
+**measured from the journal before any format is chosen** (P-C1: Δt = 100 s and three residues, or the diagnosis
+is refuted). **D**: found while specifying. Five `MMM` renders in `ClientsBetsHistory`/`ClientsTransactions` with
+no culture, which the locale detector's pass 4 cannot see because it only matches a format that **starts** with a
+name token. The stored tripwire read 0 against 5 real hits. It gets widened, **shown to fire**, and then the
+sites are fixed. **Out of scope by design:** the Holdings Hub and the Betting Statistics scene, each a new screen
+needing its own plan.
+
+### The bet-history row's timestamp strobes — DIAGNOSED, taken by mini-plan 20 C (developer's report, 2026-10-06)
+
+**Status: SPECIFIED in mini-plan 20 part C (2026-10-08); before that, open and deliberately NOT bundled into
+mini-plan 18 (developer's call).** The timestamp column of the bet
 rows in `BetHistoryContainer` shows the same kind of frozen-digit behaviour the DiceGame clock and nonce counter had
 before mini-plan 15 B fixed them.
 
@@ -971,9 +986,10 @@ throttle to stand in for one.
 
 **Already available to build on:** `BetsHistoryExplorer`'s chance-to-win selector (mini-plan 02) is the same idea one axis smaller — filter the history by a strategy dimension, drive the summary figures from the filtered view, and offer an option only from the moment its first bet exists. Its time-aware option list is the pattern to copy. And **max martingale level** is free at settle time from `BaseBetSession.ProgressionTriggerStreak` (D-M2.10) — it is not the same quantity as INC-002's "max consecutive losses" and must not be conflated with it.
 
-### Calendar entry date — snapshot on arrival, except from the Explorer (requirement stated, NOT implemented)
+### Calendar entry date — snapshot on arrival, except from the Explorer (requirement stated, taken by mini-plan 20 B)
 
-**Status: the developer's requirement, recorded 2026-08-24. Not built.** Full write-up, with the run that
+**Status: the developer's requirement, recorded 2026-08-24. Not built — SPECIFIED in mini-plan 20 part B
+(2026-10-08).** Full write-up, with the run that
 exposed it and the two defects it settles: `AIHelperFiles/mini06-clock-rewind-reproduction-plan.md` **§9.7e**.
 
 **The requirement.** Arriving at `CalendarsNavigator` **from any scene except `BetsHistoryExplorer`**, the
