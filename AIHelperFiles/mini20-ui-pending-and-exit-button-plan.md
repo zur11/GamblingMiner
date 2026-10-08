@@ -9,7 +9,9 @@ month-name renders that the locale detector's pass 4 cannot see.
 **D-20.1 approved** (confirmation dialog). **D-20.2 approved as HH:mm + tooltip, then reopened by Part 0's code
 reading**: the column strobes along two axes, down the list (credits) and frame to frame (DevTimeScale), so a
 fixed `HH:mm` is wrong above 1 credit (§2 Part 0).
-**Next:** Part 0 (visual diagnostic), then A.
+**Part 0 run 2026-10-08**: the clock and counter hold. The clock's slow return to seconds is fixed in the sampler,
+and C is implemented (see Part 0 results). **Next:** the developer re-tests the clock recovery and the bet rows,
+then A.
 
 ---
 
@@ -108,6 +110,63 @@ the developer's eyes can confirm it. **This measurement replaces C1**: the same 
 **Decision rule.** If P-0.1 and P-0.2 hold, the clock and counter are signed off with a visual check they never had.
 If either fails, it becomes a part of this plan, diagnosed with numbers before anything is changed. P-0.3a and
 P-0.3b feed D-20.2 below.
+
+#### Part 0 — results (run by the developer, 2026-10-08)
+
+- **P-0.1 Clock: holds, with one defect.** The format coarsens and recovers as predicted, but **returning from
+  9000X to 100X took well over ten seconds** to show seconds again, longer at 99 credits. **Cause, from the
+  code:** the rate estimate is smoothed 20% per repaint, and while the readout shows hours or minutes it repaints
+  about once a second. The estimate has to fall from 9000 to the finer-unit bar of `120 / 1.15 ≈ 104`, and 100X
+  sits only 4% under that bar, so `8,900 × 0.8ⁿ ≤ 4` takes ~35 repaints, plus a 6-repaint confirmation streak.
+  **Fixed rather than labelled** (the developer asked for faster recovery first, a "recalibrating" label only if
+  it could not be made faster):
+  1. a measurement more than **2×** away from the estimate replaces it (`RateSnapRatio`), because that is a dial
+     change, not jitter. The confirmation streak still guards the format.
+  2. while a **finer** unit waits out its streak, the sampler repaints at the finer unit's cadence. That is safe in
+     that direction only: a coarse format painted more often moves less than one of its own steps per repaint.
+
+  Expected recovery: about one repaint in flight (≤ 1 s) plus ~6 × 0.02 s. A DEBUG trace now prints every unit
+  change to the **Godot editor's Output panel** (`[Readout] DiceGame clock: Hours -> Seconds …, N s after the last
+  rate step`), so the next run measures the recovery instead of us estimating it.
+- **P-0.2 Attempts counter: holds, and it is where the 99-credit slowdown was** (developer's clarification). The
+  counter has no cadence of its own: `CounterQuantizer.NoteSample` runs only on the clock sampler's repaints
+  [V: `DiceGame`, `cadenceSample`], and its quantum is the step **per sample = credits × time between repaints**.
+  While the clock was stuck at ~1 repaint/s, 99 credits gained ~100 attempts per sample, forcing `~` and dropped
+  digits. At 1 credit it gained ~1 per sample, so it showed every digit even during the slow phase. **Same cause
+  as the clock, and the same fix covers it.** A first draft of this entry called the 99-credit effect
+  "unexplained" because it looked only at the clock.
+- **P-0.3a / P-0.3b Bet rows: not confirmed.** The developer saw no change, as expected before C. **The journal
+  read did not find the 1- and 10-credit phases**: the last ~50,000 player bets are all `Δt ≈ 1.00–1.01 s` (99
+  credits), with throttled stretches down to ~0.43 s. There are 2,333 isolated 100 s gaps and 11 isolated 10 s
+  gaps across the retained journal, but **no run of 20 or more** at either spacing. **Asked rather than inferred,
+  and the answer is retention.** The developer did bet at 1 credit first. At 9000X × 99 credits the player places
+  ~8,900 bets per real second, and the journal keeps ~190,000–210,000, so **about 22 seconds at that rate prunes
+  everything before it.** The protocol ran its fastest phase last, and that phase erased the evidence for the
+  earlier ones. **Re-run with the order reversed** (99 credits first, 1 credit last, 9000X kept short at high
+  credits); see the re-test protocol below.
+
+  **Lesson for any journal-read protocol here: order the phases slowest-LAST, and size the fastest phase against
+  retention**, or the run destroys its own evidence.
+
+**C implemented on the developer's instruction ("apply what you deduce best") ahead of a confirmed P-0.3a**, as
+designed above: the column shows the coarser of the spacing unit (minutes at a ≥ 60 s average gap, read from the
+ring's newest and oldest rows) and the DiceGame clock sampler's unit (`SetMotionUnit`). The full instant is in
+every row's tooltip. `BetsHistoryExplorer` does not pass a motion unit, so it uses the spacing axis only.
+
+**Re-test protocol (round 2) — fastest phase FIRST, so the journal keeps every phase.** Bet rates per real second:
+99 credits = 99 at 100X and ~8,900 at 9000X; 10 credits = 10 / 900; 1 credit = 1 / 90.
+
+1. **99 credits.** 100X ~15 s → **9000X at most ~10 s** (≈ 89,000 bets, under half the retention) → back to 100X
+   ~15 s. Note how long the clock and the counter take to show full precision again.
+2. **10 credits** (Mining Pools & Hardware, then back to DiceGame). 100X ~20 s → 9000X ~15 s → 100X ~20 s.
+3. **1 credit.** 100X ~30 s → 9000X ~15 s → 100X ~30 s. **Ends at 100X × 1 credit**, the slowest phase.
+4. Watch the bet rows' time column in each phase, and hover a row for the tooltip.
+5. Copy every `[Readout]` line from the **Godot editor's Output panel**. Do not restart before Claude has read
+   the journal.
+
+**Predictions for Claude's journal read:** contiguous runs at `Δt ≈ 1.01 s`, then `≈ 10 s`, then `≈ 100 s`,
+each flat across its own 9000X stretch (P-0.3a). Each `[Readout]` recovery line after a 9000X → 100X switch
+reads **≤ ~1.2 s**, at every credit count.
 
 ### A — Exit button on `MainMenu`
 

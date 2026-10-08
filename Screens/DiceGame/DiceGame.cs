@@ -663,7 +663,7 @@ public partial class DiceGame : Control, IBetEventSource
 	// and they were rebuilt EVERY frame, which is both why a digit froze (a near-constant step per sample) and
 	// per-frame string work of exactly the shape Pattern 6 warns about. One sampler drives both, on a cadence
 	// measured from the clock itself; the quantizers decide how many digits of each nonce count are real.
-	private readonly AdaptiveReadoutSampler _readoutSampler = new();
+	private readonly AdaptiveReadoutSampler _readoutSampler = new() { TraceName = "DiceGame clock" };
 	private readonly CounterQuantizer _ownNonceQuantizer = new();
 	private readonly CounterQuantizer _casinoNonceQuantizer = new();
 
@@ -2285,6 +2285,8 @@ public partial class DiceGame : Control, IBetEventSource
 		if (cadenceSample)
 		{
 			_readoutSampler.NoteRepaint(local);
+			// Mini-plan 20 C — the bet list never shows a finer time field than this clock can.
+			_betHistoryContainer?.SetMotionUnit(_readoutSampler.Unit);
 		}
 
 		_currentAppTimeValue.Text = _readoutSampler.FormatGameTime(local, "yyyy-MM-dd");

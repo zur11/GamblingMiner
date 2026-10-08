@@ -3,6 +3,7 @@ using Scripts.Finance;
 using Scripts.History;
 using System.Collections.Generic;
 using System.Linq;
+using UI.Readouts;
 
 public partial class BetHistoryContainer : VBoxContainer
 {
@@ -43,6 +44,25 @@ public partial class BetHistoryContainer : VBoxContainer
 	private int _contentVersion;
 	private readonly int[] _rowVersion = new int[MaxRecentEntries];
 	private int _visibleRowCount;
+
+	// --- Mini-plan 20 C — the timestamp column's precision, one decision for the whole column ---
+	//
+	// The column can strobe along two axes, and the displayed unit is the COARSER of the two answers:
+	//
+	//   - DOWN THE LIST. Adjacent bets are `100 ÷ credits` game-seconds apart, whatever the DevTimeScale. At 1
+	//     credit that is 100 s, and `100 mod 60 = 40` makes the seconds field cycle through three values forever
+	//     — so at a gap of a minute or more the column shows minutes. The gap is read from the ROWS THEMSELVES
+	//     (newest vs oldest in the ring), never from the credits value: the throttle can compress it below the
+	//     nominal figure, and a readout shares its source with what it describes (Standing Convention 6).
+	//   - FRAME TO FRAME. The list repaints once per frame, so at 9000X the top row jumps ~150 game-s per repaint
+	//     — the exact shape that froze the clock before mini-plan 15 B. DiceGame passes its clock sampler's unit
+	//     here (SetMotionUnit), which is already measured and already flap-protected; the column never shows a
+	//     field finer than the clock beside it. BetsHistoryExplorer replays at its own pace and does not call it.
+	//
+	// Nothing is lost by coarsening: every row carries the full instant in its tooltip.
+	private const double MinuteColumnGapSeconds = 60.0;
+	private AdaptiveReadoutSampler.ClockUnit _motionUnit = AdaptiveReadoutSampler.ClockUnit.Seconds;
+	private AdaptiveReadoutSampler.ClockUnit _paintedUnit = AdaptiveReadoutSampler.ClockUnit.Seconds;
 
 	private DiceGame _game;
 	private BetHistoryItem[] _pool;
@@ -88,6 +108,19 @@ public partial class BetHistoryContainer : VBoxContainer
 	{
 		_game = game;
 		game.BetExecuted += OnBetExecuted;
+	}
+
+	/// <summary>The finest unit the live clock beside this list can honestly show. Called on the clock's own
+	/// sampling cadence; does work only when the unit actually changes.</summary>
+	public void SetMotionUnit(AdaptiveReadoutSampler.ClockUnit unit)
+	{
+		if (unit == _motionUnit)
+		{
+			return;
+		}
+
+		_motionUnit = unit;
+		RequestFlush();
 	}
 
 	private void OnBetExecuted(string _, BetTransactionEvent betEvent)
@@ -195,6 +228,15 @@ public partial class BetHistoryContainer : VBoxContainer
 			return;
 		}
 
+		AdaptiveReadoutSampler.ClockUnit unit = ColumnUnit();
+		if (unit != _paintedUnit)
+		{
+			// A new precision is a new rendering of every row, not just the ones whose bet changed.
+			_paintedUnit = unit;
+			_contentVersion++;
+		}
+
+		string timePattern = ColumnTimePattern(unit);
 		(int first, int last) = VisibleRowRange();
 		for (int row = first; row <= last; row++)
 		{
@@ -205,10 +247,32 @@ public partial class BetHistoryContainer : VBoxContainer
 
 			// Row 0 is the newest bet: the one just behind the ring's write head.
 			int slot = (_ringHead - 1 - row + MaxRecentEntries * 2) % MaxRecentEntries;
-			_pool[row].Setup(_ring[slot]);
+			_pool[row].Setup(_ring[slot], timePattern);
 			_rowVersion[row] = _contentVersion;
 		}
 	}
+
+	private AdaptiveReadoutSampler.ClockUnit ColumnUnit()
+	{
+		var spacingUnit = AdaptiveReadoutSampler.ClockUnit.Seconds;
+		if (_ringCount >= 2)
+		{
+			int newest = (_ringHead - 1 + MaxRecentEntries) % MaxRecentEntries;
+			int oldest = (_ringHead - _ringCount + MaxRecentEntries) % MaxRecentEntries;
+			double averageGap = (_ring[newest].Timestamp - _ring[oldest].Timestamp).TotalSeconds / (_ringCount - 1);
+			if (averageGap >= MinuteColumnGapSeconds)
+			{
+				spacingUnit = AdaptiveReadoutSampler.ClockUnit.Minutes;
+			}
+		}
+
+		return spacingUnit > _motionUnit ? spacingUnit : _motionUnit;
+	}
+
+	// The clock's own patterns, except that the coarsest unit keeps a short date: a row needs SOME time label,
+	// and at a day per repaint the day is the finest thing that is true.
+	private static string ColumnTimePattern(AdaptiveReadoutSampler.ClockUnit unit) =>
+		unit == AdaptiveReadoutSampler.ClockUnit.Days ? "MM-dd" : AdaptiveReadoutSampler.TimePatternFor(unit);
 
 	// Rows [first, last] that intersect the scroll's viewport, one row of margin each side so a row partly in
 	// view is never drawn stale. Rows are uniform (a fixed font in a fixed panel), so the pitch of row 0 is the
