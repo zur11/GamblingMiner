@@ -9,9 +9,9 @@ month-name renders that the locale detector's pass 4 cannot see.
 **D-20.1 approved** (confirmation dialog). **D-20.2 approved as HH:mm + tooltip, then reopened by Part 0's code
 reading**: the column strobes along two axes, down the list (credits) and frame to frame (DevTimeScale), so a
 fixed `HH:mm` is wrong above 1 credit (§2 Part 0).
-**Part 0 run 2026-10-08**: the clock and counter hold. The clock's slow return to seconds is fixed in the sampler,
-and C is implemented (see Part 0 results). **Next:** the developer re-tests the clock recovery and the bet rows,
-then A.
+**Part 0 DONE 2026-10-08 (two rounds)**: the clock and counter hold, and their slow return to full precision is fixed (≤ 1.05 s measured),
+and C is implemented (see Part 0 results). **Next:** the developer's verdict on how the bet column LOOKS (C2,
+D-20.2), then A.
 
 ---
 
@@ -24,6 +24,7 @@ then A.
 | **B** | `CalendarsNavigator` **snapshots the present on arrival**, except when arriving from `BetsHistoryExplorer` | roadmap "Calendar entry date", requirement recorded 2026-08-24 (`mini06-…-plan.md` §9.7e) |
 | **C** | The bet-history row's **timestamp strobe** | roadmap "The bet-history row's timestamp strobes", developer's report 2026-10-06 |
 | **D** | Five **month-name renders without `InvariantCulture`**, and the pass-4 regex that misses them | found while specifying C |
+| **E** | DiceGame's disabled **"Auto bets per second" dropdown → a plain label** stating the credits in use | the developer, 2026-10-08 |
 
 **Out of scope, with the reason.** These are also open UI objectives on the roadmap, but each is a full design and
 not a pending fix:
@@ -152,6 +153,36 @@ P-0.3b feed D-20.2 below.
 designed above: the column shows the coarser of the spacing unit (minutes at a ≥ 60 s average gap, read from the
 ring's newest and oldest rows) and the DiceGame clock sampler's unit (`SetMotionUnit`). The full instant is in
 every row's tooltip. `BetsHistoryExplorer` does not pass a motion unit, so it uses the spacing axis only.
+
+#### Part 0 — round 2 results (run by the developer, 2026-10-08)
+
+**The clock and counter recovery is fixed, confirmed by the trace in the Godot editor's Output panel.** Each
+9000X → 100X return reached `Seconds` after **1.05 s** (99 credits), **0.37 s** (10) and **0.25 s** (1). The
+prediction was ≤ ~1.2 s at every credit count, and it holds. The developer described the recalibration as
+instantaneous. Each 100X → 9000X switch coarsened to `Hours` within 0.12–0.19 s.
+
+**P-0.3a, read from the journal by Claude. The fastest-first order kept every phase:**
+
+| phase | gap between consecutive player bets | verdict |
+|---|---|---|
+| 99 cr | 6,690 gaps < 2 s (the ~1.01 s phase) | ✅ |
+| 10 cr, 100X | **10.000 s** flat | ✅ |
+| 10 cr, 9000X | mean **10.0 s**, max 14.2 s | ✅ on average |
+| 1 cr, 100X | **99.97 s** | ✅ |
+| 1 cr, 9000X | mean **100.6 s**, but per bet **100 / 50 / 150 s** (470 / 405 / 404 of 1,341) | ⚠️ **holds on average, refuted per bet** |
+
+**The refutation is frame quantization, and it is mini-plan 08's rule working as designed.** At 9000X the clock
+advances ~150 game-s per frame, and ~1.5 bets fall into each frame. The **last** bet of a frame takes the
+clock's exact value (deliberately load-bearing: the calendar equals the timestamp of the event that defines the
+world), and the others are back-dated by `interval × SpeedMultiplier` = 100 s. A one-bet frame therefore
+stamps at the frame's end, not where its interval expired. Frames alternate 2, 1, 2, 1 bets, which gives the
+`100, 150, 50` cycle. **The mean is right and individual gaps are not.** P-0.3a assumed per-bet precision that
+the stamping never promised above ~1 bet per frame.
+
+**Not changed by this plan:** it touches mini-plan 08's back-dating contract, which is out of a UI plan's scope.
+For the bet column it does not matter: at 1 credit and 9000X the column shows minutes by spacing and hours by
+motion, so the 50/150 jitter is below the displayed precision. **Recorded as a candidate objective**:
+*per-bet timestamp fidelity when there is ≤ ~1 bet per frame*.
 
 **A DEV control for the test, added at the developer's request (2026-10-08).** Round 1 changed credits by
 leaving DiceGame for Mining Pools & Hardware at every step. `UI/DevPlayerCreditsSelector` is a ladder (1–5, 10–90,
@@ -295,6 +326,24 @@ any **per-bet** list that renders seconds. The only other one found is `ClientsB
 lists that are not per-bet (transfers, loans, swaps) are **not** in scope: their spacing is not a fixed tick, so
 the 3-cycle cannot occur there.
 
+### E — The disabled APS dropdown becomes a label (developer, 2026-10-08)
+
+**The requirement:** in DiceGame, the node that shows the credits in use ("Auto bets per second: [99X ▾]",
+`%ApsSelector`) keeps **no dropdown**. The dropdown has been disabled since betting speed was locked to hardware,
+so it looks like a control and does nothing. It becomes **a label that states how many credits DiceGame is
+using**. Changing credits stays in Mining Pools & Hardware (and, for DEV tests, the Part 0 ladder beside it).
+
+**Before removing it, enumerate its readers** (Standing Convention 13). `_apsSelector` has **12 references** in
+`DiceGame.cs` at specify time. At least `InitializeApsSelector`, `RefreshHardwareDrivenSpeed` and the
+`ItemSelected → OnBetsPerSecondChanged` hook may read the **selected item** as the bet rate. If any path takes its
+rate from the widget rather than from `HardwareAllocationRepository`, the label must not inherit that: **the rate
+comes from the hardware, and the label only displays it** (Convention 6, one source). The
+`DevPlayerCreditsSelector` is positioned against this node's right edge (x 1741), so check its placement after
+the swap.
+
+**Wording to settle at implementation:** "credits" versus "bets per second". At base speed they are the same
+number, but at 9000X the node bets 90× faster, so "N credits" is true at any speed and "N bets/s" is not.
+
 ### D — Month names in the developer's language, and a detector that could not see them
 
 **Found while specifying C.** Five renders use `MMM` with no culture, so on the developer's Spanish locale they
@@ -332,6 +381,7 @@ The edit to the stored command in CLAUDE.md and §29.12 is made **with the file 
    commit relies on the baseline.
 3. **B** — one code path, verified by the developer opening the explorer from the Calendar.
 4. **C2/C3** (C1 is answered by Part 0's journal).
+5. **E** — after Part 0's round 2, so the dropdown being replaced is not mid-test.
 
 Each part is one stage → ask → commit unit on the plan branch.
 
