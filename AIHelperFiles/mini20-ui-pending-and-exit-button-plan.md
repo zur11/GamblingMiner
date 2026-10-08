@@ -6,12 +6,11 @@ the two open UI objectives most recently written into `PRIVATE_ROADMAP.md` §5, 
 month-name renders that the locale detector's pass 4 cannot see.
 
 **Status:** 📝 **SPECIFIED 2026-10-08**, branch `mini20-ui-pending-and-exit-button`. Nothing built.
-**D-20.1 approved** (confirmation dialog). **D-20.2 approved as HH:mm + tooltip, then reopened by Part 0's code
-reading**: the column strobes along two axes, down the list (credits) and frame to frame (DevTimeScale), so a
-fixed `HH:mm` is wrong above 1 credit (§2 Part 0).
-**Part 0 DONE 2026-10-08 (two rounds)**: the clock and counter hold, and their slow return to full precision is fixed (≤ 1.05 s measured),
-and C is implemented (see Part 0 results). **Next:** the developer's verdict on how the bet column LOOKS (C2,
-D-20.2), then A.
+**D-20.1 approved** (confirmation dialog). **D-20.2 SUPERSEDED**: approved as `HH:mm` + tooltip, then
+reworked as a spacing rule, then dropped when the developer asked why 1 credit at 100X should show less than 99
+credits at the same speed. **The column follows motion only** (the clock's unit), and the tooltip stays (§2 C2).
+**Part 0 DONE 2026-10-08 (two rounds)**: the clock and counter hold, and their slow return to full precision is
+fixed (≤ 1.05 s measured). **Next:** the round-3 visual check of the bet column, then A.
 
 ---
 
@@ -153,6 +152,7 @@ P-0.3b feed D-20.2 below.
 designed above: the column shows the coarser of the spacing unit (minutes at a ≥ 60 s average gap, read from the
 ring's newest and oldest rows) and the DiceGame clock sampler's unit (`SetMotionUnit`). The full instant is in
 every row's tooltip. `BetsHistoryExplorer` does not pass a motion unit, so it uses the spacing axis only.
+*(Superseded before round 3: the spacing axis was removed. See "Part C — the visual check" below.)*
 
 #### Part 0 — round 2 results (run by the developer, 2026-10-08)
 
@@ -180,9 +180,36 @@ stamps at the frame's end, not where its interval expired. Frames alternate 2, 1
 the stamping never promised above ~1 bet per frame.
 
 **Not changed by this plan:** it touches mini-plan 08's back-dating contract, which is out of a UI plan's scope.
-For the bet column it does not matter: at 1 credit and 9000X the column shows minutes by spacing and hours by
-motion, so the 50/150 jitter is below the displayed precision. **Recorded as a candidate objective**:
+For the bet column it does not matter: at 1 credit and 9000X the column shows hours (it follows the clock), so
+the 50/150 jitter is below the displayed precision. **Recorded as a candidate objective**:
 *per-bet timestamp fidelity when there is ≤ ~1 bet per frame*.
+
+#### Part C — the visual check of the bet column (round 3)
+
+Round 2 measured the spacing but not how the column LOOKS. The developer had not understood the column was meant
+to change.
+
+**The spacing axis was REMOVED before the check, on the developer's question.** Writing the predictions put
+`HH:mm` at 1 credit/100X beside `HH:mm:ss` at 10 and 99 credits at the same speed. The developer asked why the
+slowest, most readable case should show the least, and there is no good answer. Those seconds are true values, and
+at 100X × 1 credit the list grows one row per real second. **A value that repeats down a still list is not a
+strobe; only motion makes one.** The original report already said so ("rows only scroll fast enough to see it
+when the autobet is running hard"), and the diagnosis read it as arithmetic down the list. So the column now
+follows the clock sampler's unit alone, the tooltip stays, and the spacing code (including a 10-gap window added
+an hour earlier to fix its own slow switch-back) is deleted, not flagged (Convention 3).
+
+**Predictions: the column shows the unit the DiceGame clock shows:**
+
+| phase | column shows | e.g. |
+|---|---|---|
+| 99 cr, 100X | `HH:mm:ss`, consecutive seconds | `02:31:06 02:31:05 02:31:04` |
+| 10 cr, 100X | `HH:mm:ss`, stepping by 10 s | `02:31:40 02:31:30 02:31:20` |
+| 1 cr, 100X | `HH:mm:ss`, stepping by 1 min 40 s | `02:35:26 02:33:46 02:32:06` |
+| any credits, 9000X | `HH'h'`, within ~0.2 s of the switch, same moment as the clock | `02h` |
+| back to 100X | `HH:mm:ss` again within ~1 s, same moment as the clock | |
+| autobet stopped | `HH:mm:ss` | |
+| any row, hovered | tooltip `yyyy-MM-dd HH:mm:ss` | `2012-01-12 02:31:06` |
+| `BetsHistoryExplorer` | `HH:mm:ss` always (not motion-driven) | |
 
 **A DEV control for the test, added at the developer's request (2026-10-08).** Round 1 changed credits by
 leaving DiceGame for Mining Pools & Hardware at every step. `UI/DevPlayerCreditsSelector` is a ladder (1–5, 10–90,
@@ -291,6 +318,10 @@ top row (P-0.3b) is a second, DevTimeScale-driven strobe that the diagnosis neve
 **C1 — measured by Part 0.** The journal read after Part 0's run answers P-C1 at 1 credit:
 `Δt` = 100 s and `seconds mod 60` takes exactly 3 values. If it does not, the 3-cycle diagnosis is refuted. Stop
 and re-diagnose before choosing a format, and record the refutation.
+
+> **⚠ SUPERSEDED 2026-10-08 (round 3).** The spacing rule below was implemented and then removed on the
+> developer's question. The column follows motion only; see §2 Part 0 → "Part C — the visual check". This text is
+> kept as the record of how the decision moved.
 
 **C2 — D-20.2, the format.** The seconds are true recorded values, so they are not false precision. They are
 spatial aliasing down the list. **Approved (2026-10-08): `HH:mm` in the row, and the full `yyyy-MM-dd HH:mm:ss`

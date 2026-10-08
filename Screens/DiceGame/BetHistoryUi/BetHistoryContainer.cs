@@ -47,20 +47,19 @@ public partial class BetHistoryContainer : VBoxContainer
 
 	// --- Mini-plan 20 C — the timestamp column's precision, one decision for the whole column ---
 	//
-	// The column can strobe along two axes, and the displayed unit is the COARSER of the two answers:
+	// The column follows MOTION only. The list repaints once per frame, so at 9000X the top row jumps ~150 game-s
+	// per repaint — the exact shape that froze the clock before mini-plan 15 B. DiceGame passes its clock sampler's
+	// unit here (SetMotionUnit), which is already measured and already flap-protected, so the column never shows a
+	// field finer than the clock beside it. BetsHistoryExplorer replays at its own pace and does not call it.
 	//
-	//   - DOWN THE LIST. Adjacent bets are `100 ÷ credits` game-seconds apart, whatever the DevTimeScale. At 1
-	//     credit that is 100 s, and `100 mod 60 = 40` makes the seconds field cycle through three values forever
-	//     — so at a gap of a minute or more the column shows minutes. The gap is read from the ROWS THEMSELVES
-	//     (newest vs oldest in the ring), never from the credits value: the throttle can compress it below the
-	//     nominal figure, and a readout shares its source with what it describes (Standing Convention 6).
-	//   - FRAME TO FRAME. The list repaints once per frame, so at 9000X the top row jumps ~150 game-s per repaint
-	//     — the exact shape that froze the clock before mini-plan 15 B. DiceGame passes its clock sampler's unit
-	//     here (SetMotionUnit), which is already measured and already flap-protected; the column never shows a
-	//     field finer than the clock beside it. BetsHistoryExplorer replays at its own pace and does not call it.
+	// DELIBERATELY NOT a second axis on the spacing DOWN the list. A first version also coarsened to minutes when
+	// adjacent bets were ≥ 60 game-s apart (1 credit: 100 s, whose seconds field cycles through three values). The
+	// developer asked why 1 credit at 100X should show LESS than 10 or 99 credits at the same speed, and there is no
+	// good answer: those seconds are true, and at 100X × 1 credit the list grows one row per real second, the most
+	// readable it ever is. A value that repeats down a still list is not a strobe; only motion makes one. D-20.2's
+	// spacing rule is superseded (mini-plan 20 C).
 	//
 	// Nothing is lost by coarsening: every row carries the full instant in its tooltip.
-	private const double MinuteColumnGapSeconds = 60.0;
 	private AdaptiveReadoutSampler.ClockUnit _motionUnit = AdaptiveReadoutSampler.ClockUnit.Seconds;
 	private AdaptiveReadoutSampler.ClockUnit _paintedUnit = AdaptiveReadoutSampler.ClockUnit.Seconds;
 
@@ -228,7 +227,7 @@ public partial class BetHistoryContainer : VBoxContainer
 			return;
 		}
 
-		AdaptiveReadoutSampler.ClockUnit unit = ColumnUnit();
+		AdaptiveReadoutSampler.ClockUnit unit = _motionUnit;
 		if (unit != _paintedUnit)
 		{
 			// A new precision is a new rendering of every row, not just the ones whose bet changed.
@@ -250,23 +249,6 @@ public partial class BetHistoryContainer : VBoxContainer
 			_pool[row].Setup(_ring[slot], timePattern);
 			_rowVersion[row] = _contentVersion;
 		}
-	}
-
-	private AdaptiveReadoutSampler.ClockUnit ColumnUnit()
-	{
-		var spacingUnit = AdaptiveReadoutSampler.ClockUnit.Seconds;
-		if (_ringCount >= 2)
-		{
-			int newest = (_ringHead - 1 + MaxRecentEntries) % MaxRecentEntries;
-			int oldest = (_ringHead - _ringCount + MaxRecentEntries) % MaxRecentEntries;
-			double averageGap = (_ring[newest].Timestamp - _ring[oldest].Timestamp).TotalSeconds / (_ringCount - 1);
-			if (averageGap >= MinuteColumnGapSeconds)
-			{
-				spacingUnit = AdaptiveReadoutSampler.ClockUnit.Minutes;
-			}
-		}
-
-		return spacingUnit > _motionUnit ? spacingUnit : _motionUnit;
 	}
 
 	// The clock's own patterns, except that the coarsest unit keeps a short date: a row needs SOME time label,
