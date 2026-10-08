@@ -153,12 +153,19 @@ designed above: the column shows the coarser of the spacing unit (minutes at a �
 ring's newest and oldest rows) and the DiceGame clock sampler's unit (`SetMotionUnit`). The full instant is in
 every row's tooltip. `BetsHistoryExplorer` does not pass a motion unit, so it uses the spacing axis only.
 
+**A DEV control for the test, added at the developer's request (2026-10-08).** Round 1 changed credits by
+leaving DiceGame for Mining Pools & Hardware at every step. `UI/DevPlayerCreditsSelector` is a ladder (1–5, 10–90,
+99) beside DiceGame's APS selector that sets the **player node's** total credits directly. It writes through the
+shop's own calls (`AddCredits` → individual pool, `RemoveCredits` → casino pool first, floor 1), so it cannot
+produce a state the shop could not. It shows an off-ladder total as its own item, so it never displays a nearest
+rung instead of the truth. **Player only, and DEV only**: the shipping control remains Mining Pools & Hardware.
+
 **Re-test protocol (round 2) — fastest phase FIRST, so the journal keeps every phase.** Bet rates per real second:
 99 credits = 99 at 100X and ~8,900 at 9000X; 10 credits = 10 / 900; 1 credit = 1 / 90.
 
 1. **99 credits.** 100X ~15 s → **9000X at most ~10 s** (≈ 89,000 bets, under half the retention) → back to 100X
    ~15 s. Note how long the clock and the counter take to show full precision again.
-2. **10 credits** (Mining Pools & Hardware, then back to DiceGame). 100X ~20 s → 9000X ~15 s → 100X ~20 s.
+2. **10 credits** (set with the DEV credits control beside DiceGame's APS selector, below). 100X ~20 s → 9000X ~15 s → 100X ~20 s.
 3. **1 credit.** 100X ~30 s → 9000X ~15 s → 100X ~30 s. **Ends at 100X × 1 credit**, the slowest phase.
 4. Watch the bet rows' time column in each phase, and hover a row for the tooltip.
 5. Copy every `[Readout]` line from the **Godot editor's Output panel**. Do not restart before Claude has read

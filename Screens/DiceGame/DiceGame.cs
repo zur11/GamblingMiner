@@ -339,6 +339,12 @@ public partial class DiceGame : Control, IBetEventSource
 		devTimeScale.DiagnosticsHost = devDiagnostics;
 		_apsSelector.GetParent().AddChild(devTimeScale);
 		_apsSelector.GetParent().MoveChild(devTimeScale, _apsSelector.GetIndex() + 1);
+
+		// Mini-plan 20 Part 0 — DEV: the player's credits, set directly. Beside the APS selector because credits are
+		// what lock it; the scene's free space there runs from the selector's right edge (x 1741) to the canvas
+		// edge. The shipping control remains Mining Pools & Hardware.
+		var devCredits = new UI.DevPlayerCreditsSelector.DevPlayerCreditsSelector { Position = new Vector2(1752f, 563f) };
+		AddChild(devCredits);
 		_session.OnStopped += OnSessionStopped;
 
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>
