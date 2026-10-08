@@ -911,7 +911,13 @@ reason (2026-08-20). Moving it back out reverses a deliberate decision, so it is
 ### Pending UI objectives, an Exit button, and month names — 📝 SPECIFIED (mini-plan 20, 2026-10-08)
 
 **Status: `AIHelperFiles/mini20-ui-pending-and-exit-button-plan.md`, branch `mini20-ui-pending-and-exit-button`.
-Nothing built; next is A.** Four parts. **A**: an **Exit** button on `MainMenu`. It is no weaker than the window's
+Nothing built; next is Part 0.** **Part 0** (added at approval, the developer's request) is a visual diagnostic
+of the clock, the attempts counter and the bet rows while DevTimeScale and hardware credits change. Its code
+reading found that the timestamp column can strobe along **two axes**. **Down the list**, the gap between
+adjacent rows is `100 ÷ credits` game-seconds and independent of DevTimeScale. **Frame to frame**, the top row
+jumps by the clock's per-frame advance, which DevTimeScale drives. CLAUDE.md's "1 bet **tick** = 100 s" is
+correct, but "1 **bet** = 100 s" (part C's diagnosis, `ProjectDesignManual.md` ~l.5057) holds only at 1 credit,
+so D-20.2's approved fixed `HH:mm` is reopened. Then four parts. **A**: an **Exit** button on `MainMenu`. It is no weaker than the window's
 X because it propagates `NotificationWMCloseRequest` before `Quit()`. It sits in a fixed footer with a ≥50 px
 bottom margin, and it shows a confirmation that names the block the world will resume from (D-20.1). **B**: the
 Calendar snapshot on arrival (the objective below). **C**: the bet-row timestamp strobe (the objective below),
