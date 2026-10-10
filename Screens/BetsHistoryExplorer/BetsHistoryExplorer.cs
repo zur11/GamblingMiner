@@ -1194,6 +1194,14 @@ public partial class BetsHistoryExplorer : Control
 		}
 
 		double secs = _perfWindowSeconds;
+
+		// Mini-plan 20 F — the field that tells the two kinds of "rows frozen while the clock moves" apart: a
+		// POSITIVE value is the cursor crossing a stretch with no bets (correct, and in As Played it lasts
+		// value ÷ (100 × speed) real seconds); ZERO or NEGATIVE with emitted/s = 0 means bets are due and not shown.
+		string nextBet = _renderedEndExclusive >= 0 && _renderedEndExclusive < _sortedRecords.Count
+			? ((_sortedRecords[_renderedEndExclusive].TimestampUtc.ToLocalTime() - _selectedLocal).TotalSeconds)
+				.ToString("0.0", CultureInfo.InvariantCulture)
+			: "none";
 		GD.Print(string.Create(
 			CultureInfo.InvariantCulture,
 			$"[ExplorerPerf] records={_allRecords.Count} sorted={_sortedRecords.Count} " +
@@ -1201,7 +1209,8 @@ public partial class BetsHistoryExplorer : Control
 			$"rebuilds/s={_perfRebuilds / secs:0.0} emitted/s={_perfEmitted / secs:0.0} " +
 			$"fps={_perfFrames / secs:0.0} pace={_pace} speed={RequestedSpeed():0.##} requested / " +
 			$"{(_throttleActualSpeedX >= 0d ? _throttleActualSpeedX : 0d):0.##} actual " +
-			$"behind={(PresentLocal() - _selectedLocal).TotalSeconds:0} game-s"));
+			$"behind={(PresentLocal() - _selectedLocal).TotalSeconds:0} game-s nextBetIn={nextBet} game-s " +
+			$"rendered={_renderedEndExclusive} cursor={_selectedLocal:yyyy-MM-dd HH:mm:ss}"));
 
 		_perfWindowSeconds = 0d;
 		_perfFallbacks = 0;
