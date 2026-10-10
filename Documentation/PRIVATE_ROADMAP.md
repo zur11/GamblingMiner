@@ -954,6 +954,27 @@ precision, a relative offset ("+1m40s"), or showing the bet's game date differen
 player-facing consequence, which is why it is an objective rather than a one-line change. **Verify the 3-residue
 claim against a running list before building anything** — it is arithmetic from the code, not a measurement.
 
+### The explorer held 10,000 more bets than the journal — NOT investigated (noted 2026-10-10)
+
+**Status: open, found by mini-plan 20 F round 4 and deliberately not chased inside a UI plan.**
+`BetsHistoryExplorer`'s `[ExplorerPerf]` reported `records=200100` on one entry and `records=136958` on the next,
+over the same date range. The journal on disk held **126,958** bets in 13 segments: the second load is exactly
+**10,000** above the disk, and before the cursor the first load held ~63,000 more than the second. One segment is
+10,000 entries, so the leading suspect is a segment counted twice by the in-memory history (`EnsureFullHistoryLoaded`
+plus the active buffer, or a rotated segment kept in memory). That is INC-002's shape, and **§40.8 applies:
+any figure computed off `BetHistory` (the explorer's summary, streaks, max level) is suspect until this is
+understood.** First step: count duplicate `BetRecord.Id`s in the explorer's `_allRecords` against the journal
+files, on the same world, in the same session.
+
+### Per-bet timestamp fidelity when a frame holds about one bet — candidate (noted 2026-10-08)
+
+**Status: candidate, from mini-plan 20 Part 0 round 2.** At 1 credit × 9000X the journal's gaps between player
+bets average 100.6 s but come as **100 / 50 / 150 s**. Mini-plan 08's rule gives a frame's LAST bet the clock's
+exact value, so with ~1.5 bets per 150 s frame a one-bet frame stamps at the frame's end, not where its interval
+expired. **Right on average, wrong per bet.** Invisible in DiceGame's column, which shows hours at that speed. Any
+fix touches mini-plan 08's load-bearing contract (the calendar equals the timestamp of the event that defines the
+world), so it needs its own plan.
+
 ### A reproducible populated-era world — the entry-year bootstrap, and what it costs (noted 2026-10-06)
 
 **Status: available, unused, and not needed by mini-plan 18.** `TimelineConfig.DevEntryYear` (Step 14 EB.1) builds

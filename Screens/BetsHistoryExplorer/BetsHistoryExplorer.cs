@@ -521,7 +521,16 @@ public partial class BetsHistoryExplorer : Control
 		return true;
 	}
 
+	// Mini-plan 20 F — the whole explorer frame is timed here, so [ExplorerPerf] can split it into stages. In a
+	// release build the probe calls compile away and this is one extra call.
 	public override void _Process(double delta)
+	{
+		long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+		ProcessFrame(delta);
+		AddPerfTicks(ref _perfExplorerTicks, probeStart);
+	}
+
+	private void ProcessFrame(double delta)
 	{
 		if (!Visible) return;
 
@@ -1098,6 +1107,7 @@ public partial class BetsHistoryExplorer : Control
 
 		int index = _renderedEndExclusive;
 		int budget = MaxAppendRowsPerFrame;
+		long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
 		while (index < target && budget > 0)
 		{
 			BetRecord record = _sortedRecords[index];
@@ -1108,9 +1118,13 @@ public partial class BetsHistoryExplorer : Control
 			budget--;
 		}
 
+		AddPerfTicks(ref _perfAppendTicks, probeStart);
+		probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+
 		// The summary walks to the SAME index the rows did, so the figures can never describe a window
 		// different from the one on screen — the two used to be driven by separate binary searches.
 		AdvanceSummaryTo(index, forceRebuild: false);
+		AddPerfTicks(ref _perfSummaryTicks, probeStart);
 		_renderedEndExclusive = index;
 
 		if (index >= target)
@@ -1180,14 +1194,31 @@ public partial class BetsHistoryExplorer : Control
 	private int _perfEmitted;
 	private int _perfFrames;
 
+	// Mini-plan 20 F — stage timing, so "what eats the frame" is a number. Explorer = this scene's whole _Process;
+	// append = the per-bet row/grid pushes; summary = the summary walk; rows/grid = the two lists' own flushes
+	// (ExplorerFrameProbe). engineProcess is Godot's own TimeProcess monitor — every node's _Process this frame,
+	// the check that the stages above are not missing a script — and frame is the real frame time. What frame
+	// has that engineProcess does not is layout and drawing, which no script timer can see (§40.12 rule 1).
+	private long _perfExplorerTicks;
+	private long _perfAppendTicks;
+	private long _perfSummaryTicks;
+	private double _perfEngineProcessSeconds;
+	private double _perfMaxFrameSeconds;
+
 	[System.Diagnostics.Conditional("DEBUG")]
 	private void CountPerf(ref int counter) => counter++;
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	private static void AddPerfTicks(ref long accumulator, long startTimestamp) =>
+		accumulator += System.Diagnostics.Stopwatch.GetTimestamp() - startTimestamp;
 
 	[System.Diagnostics.Conditional("DEBUG")]
 	private void ReportExplorerPerf(double delta)
 	{
 		_perfFrames++;
 		_perfWindowSeconds += delta;
+		_perfEngineProcessSeconds += Performance.GetMonitor(Performance.Monitor.TimeProcess);
+		_perfMaxFrameSeconds = Math.Max(_perfMaxFrameSeconds, delta);
 		if (_perfWindowSeconds < 1.0d || !_cursorRunning)
 		{
 			return;
@@ -1212,12 +1243,33 @@ public partial class BetsHistoryExplorer : Control
 			$"behind={(PresentLocal() - _selectedLocal).TotalSeconds:0} game-s nextBetIn={nextBet} game-s " +
 			$"rendered={_renderedEndExclusive} cursor={_selectedLocal:yyyy-MM-dd HH:mm:ss}"));
 
+		// Per-frame averages in ms, so the stages compare directly against the frame they live in.
+		// One formatted value per statement, each carrying its own culture: a long `+`-chain here would put its
+		// tail outside the locale detector's 3-line window and move the tripwire's baseline for a DEBUG print.
+		double frames = Math.Max(1, _perfFrames);
+		string Ms(double ms) => ms.ToString("0.000", CultureInfo.InvariantCulture);
+		GD.Print("[ExplorerPerf] ms/frame:"
+			+ " explorer=" + Ms(ExplorerFrameProbe.TicksToMs(_perfExplorerTicks) / frames)
+			+ " (append=" + Ms(ExplorerFrameProbe.TicksToMs(_perfAppendTicks) / frames)
+			+ " summary=" + Ms(ExplorerFrameProbe.TicksToMs(_perfSummaryTicks) / frames) + ")"
+			+ " rowsFlush=" + Ms(ExplorerFrameProbe.TicksToMs(ExplorerFrameProbe.RowFlushTicks) / frames)
+			+ " gridFlush=" + Ms(ExplorerFrameProbe.TicksToMs(ExplorerFrameProbe.GridFlushTicks) / frames)
+			+ " engineProcess=" + Ms(_perfEngineProcessSeconds * 1000.0 / frames)
+			+ " frame=" + Ms(secs * 1000.0 / frames)
+			+ " maxFrame=" + Ms(_perfMaxFrameSeconds * 1000.0));
+
 		_perfWindowSeconds = 0d;
 		_perfFallbacks = 0;
 		_perfRebuilds = 0;
 		_perfAppends = 0;
 		_perfEmitted = 0;
 		_perfFrames = 0;
+		_perfExplorerTicks = 0;
+		_perfAppendTicks = 0;
+		_perfSummaryTicks = 0;
+		_perfEngineProcessSeconds = 0d;
+		_perfMaxFrameSeconds = 0d;
+		ExplorerFrameProbe.Reset();
 	}
 
 	private void JumpCursorTo(DateTime targetLocal)

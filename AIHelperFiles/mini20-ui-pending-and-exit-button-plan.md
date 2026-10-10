@@ -412,6 +412,43 @@ and the panel either follows a live run or stops.
 - **Not persisted.** Every entry opens As Played at its base speed. It is listed in the roadmap's
   user-settings-persistence table, which exists so a setting with no home is a recorded decision.
 
+#### F — round 4: the reported freeze, measured (developer's run, 2026-10-10)
+
+**The freeze was not reproduced, and the protocol is why.** The gap times were given from the journal, which
+stores **UTC**, but the explorer shows **local time (UTC−5)**. The cursor started five hours after the 17-minute
+gap, and `nextBetIn` stayed in 0.0–1.0 throughout. **Lesson: a time read from the journal and typed into a
+screen must be converted first, and the protocol must say which zone it is in.** The gap question is re-asked
+with local times (2012-01-13 16:38 and 2012-01-14 11:04).
+
+**What the run did measure: the frame rate falls as soon as rows stream, in both paces.**
+
+| rows shown per second | fps |
+|---|---|
+| 0 (paused, or a window straddling a switch) | ~59 |
+| 10 (Per Bet, 1 cr × 10x) | ~41 |
+| ~99 (either pace) | ~27–30 |
+| ~700 (10x, either pace) | ~27 |
+
+**The cost is per frame that shows a row, not per bet**: 10 rows/s already costs a third of the frame. DiceGame
+holds ~60 fps at the same row rate with the same list. That sets the 10x ceiling: 25 rows per frame × ~28 fps ≈
+**700 rows/s**, which is the "10x requested / 6–7x actual" (As Played) and ~690 of 990 (Per Bet) that were seen.
+The emit budget bound for the first time and said so (`[BetsHistory] Emit budget bound for the first time`).
+**Per §38.7 the budget is not the fix; what eats the frame is.**
+
+**Next measurement: stage timing (built, DEBUG-only).** A second `[ExplorerPerf] ms/frame:` line splits the
+frame into: the explorer's own `_Process` (with the per-bet append loop and the summary walk inside it), the bet
+list's and the winning-numbers grid's flushes (`ExplorerFrameProbe`, since those run in their own nodes), Godot's
+`TimeProcess` monitor (every script this frame, so a stage missed by the timers shows as a gap), the real frame
+time, and the worst frame in the window. **Frame minus engineProcess is layout and drawing**, which no script
+timer can see (§40.12 rule 1). That residual is the prime suspect if the stages are small.
+
+**Found in the same run, NOT this plan's subject — recorded, not chased.** The explorer reported `records=200100`
+on its first entry and `records=136958` on the second, for the same date range. The journal on disk holds
+**126,958** bets in 13 segments, so the second load holds exactly **10,000 more than the disk**. Before the cursor,
+the first load held ~63,000 more than the second. That is the shape of INC-002 (duplicated records in the
+in-memory history), and §40.8 says any figure computed off `BetHistory` is suspect until it is understood.
+Carried to the roadmap as an open objective.
+
 ### E — The disabled APS dropdown becomes a label (developer, 2026-10-08)
 
 **The requirement:** in DiceGame, the node that shows the credits in use ("Auto bets per second: [99X ▾]",
