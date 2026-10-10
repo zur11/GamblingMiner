@@ -18,9 +18,9 @@ namespace UI.DevPlayerCreditsSelector
 		// The shop's own node id for the player (the same literal SimulationService and NetworkRoot hold privately).
 		private const string PlayerNodeId = "player";
 
-		// A ladder rather than a SpinBox: one pick per test phase, and no write per arrow click. Fine at the low end,
-		// where each credit changes the bet spacing a lot (100 / credits), coarse above. The top is the rate cap.
-		private static readonly int[] Ladder = { 1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, SimulationService.MaxAutoBetBaseAps };
+		// A ladder rather than a SpinBox: one pick per test phase, and no write per arrow click. Shared with the
+		// bets explorer's Per Bet pace, so the two never offer different rungs.
+		private static readonly int[] Ladder = HardwareCreditLadder.Steps;
 
 		private OptionButton _selector;
 		private readonly List<int> _items = new();

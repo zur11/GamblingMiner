@@ -925,7 +925,9 @@ Calendar snapshot on arrival (the objective below). **C**: the bet-row timestamp
 is refuted). **D**: found while specifying. Five `MMM` renders in `ClientsBetsHistory`/`ClientsTransactions` with
 no culture, which the locale detector's pass 4 cannot see because it only matches a format that **starts** with a
 name token. The stored tripwire read 0 against 5 real hits. It gets widened, **shown to fire**, and then the
-sites are fixed. **Out of scope by design:** the Holdings Hub and the Betting Statistics scene, each a new screen
+sites are fixed. **Added during the plan, at the developer's request:** **E**, DiceGame's disabled APS dropdown
+becomes a label; **F**, `BetsHistoryExplorer` gains a pace toggle, **As Played** (default, game time) and **Per
+Bet** (a chosen hardware credit count × the same 1x–10x speed, whatever hardware recorded the bets). **Out of scope by design:** the Holdings Hub and the Betting Statistics scene, each a new screen
 needing its own plan.
 
 ### The bet-history row's timestamp strobes — DIAGNOSED, taken by mini-plan 20 C (developer's report, 2026-10-06)
@@ -1111,6 +1113,8 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   | Saved betting strategies | `saved_betting_strategies.json`, exempt from the wipe — survives, which surprised the developer | the player, probably — but the surprise says the rule was never stated, not that the file is wrong |
   | **Bet View: Detailed / OFF** (mini-plan 10) | not persisted; resets to Detailed on every DiceGame entry | the player. A **view preference only**: after mini-plan 10 both states cost the same (~0.025 ms per bet) and both reach the clock's ceiling, so forgetting it changes nothing but what is on screen. *(Until 2026-09-21 this row called it a speed choice with a higher hidden budget. That was the design before the list got cheap, and the two-budget plan was never built.)* |
   | DEV time scale (the requested one) | not persisted | DEV, but the same mechanism |
+  | **Bets explorer replay pace, speed and Per Bet credits** (mini-plan 20 F) | not persisted; every entry opens **As Played** at 1x (Per Bet at 1 credit when toggled) | the player. A **view preference**, like Bet View |
+  | DEV player credits ladder (mini-plan 20 Part 0) | writes the real hardware state (`hardware_allocation.json`), so it persists as a shop purchase does | **world**, deliberately: it is a shortcut to the shop, not a setting of its own |
   | The strategy panel's last-used values | not persisted; distinct from a *saved* strategy | the player |
   | Anything a future options menu holds | does not exist | the player |
 

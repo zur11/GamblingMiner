@@ -10,7 +10,8 @@ month-name renders that the locale detector's pass 4 cannot see.
 reworked as a spacing rule, then dropped when the developer asked why 1 credit at 100X should show less than 99
 credits at the same speed. **The column follows motion only** (the clock's unit), and the tooltip stays (§2 C2).
 **Part 0 DONE 2026-10-08 (two rounds)**: the clock and counter hold, and their slow return to full precision is
-fixed (≤ 1.05 s measured). **Next:** the round-3 visual check of the bet column, then A.
+fixed (≤ 1.05 s measured). **Round 3 passed** (the bet column follows motion). **F built**: the explorer's two
+replay paces. **Next:** the developer tests F in both paces, then A.
 
 ---
 
@@ -24,6 +25,7 @@ fixed (≤ 1.05 s measured). **Next:** the round-3 visual check of the bet colum
 | **C** | The bet-history row's **timestamp strobe** | roadmap "The bet-history row's timestamp strobes", developer's report 2026-10-06 |
 | **D** | Five **month-name renders without `InvariantCulture`**, and the pass-4 regex that misses them | found while specifying C |
 | **E** | DiceGame's disabled **"Auto bets per second" dropdown → a plain label** stating the credits in use | the developer, 2026-10-08 |
+| **F** | `BetsHistoryExplorer` gains a **pace toggle**: As Played (default, game time) and Per Bet (a chosen credit count × the 1x–10x speed, whatever hardware recorded the bets) | the developer, 2026-10-09, after round 3 |
 
 **Out of scope, with the reason.** These are also open UI objectives on the roadmap, but each is a full design and
 not a pending fix:
@@ -356,6 +358,59 @@ any **per-bet** list that renders seconds. The only other one found is `ClientsB
 (`dd MMM yyyy HH:mm:ss`, DEV scene, ~l.112). It gets the same treatment as C2, or a written reason why not. Event
 lists that are not per-bet (transfers, loans, swaps) are **not** in scope: their spacing is not a fixed tick, so
 the 3-cycle cannot occur there.
+
+### F — Two replay paces in the explorer, As Played and Per Bet (developer, 2026-10-09)
+
+**Round 3 (the bet column) passed: "everything looked fluid".** Its optional step found this. After a test run
+mostly at 99 credits, pressing Play hours or a day back always looked like fast-forward, even at 1X.
+
+**Cause: a deliberate design, not a bug.** Mini-plan 04 paced the replay in GAME time: the cursor walked 100
+game-s per real second at 1X and rendered every bet it crossed, so the recorded hardware rate (the spacing
+between bets) set the pace. A 99-credit stretch replayed at 99 bets/s, and no speed step could slow it.
+
+**How the decision moved, in one day.** The developer first asked for the pace to be **replaced** by one bet per
+second at 1X (built and staged, never committed). On reflection they asked for **both**, behind a toggle, with
+the original as the default, because each answers a different question and they want to test in both. A third
+step gave Per Bet a **hardware credits selector**, multiplied by the shared 1x–10x speed. The developer's framing:
+a session played at 99 credits can be read at 99 × 10x in As Played, and Per Bet must be able to say the same
+thing, or anything below it.
+
+| | **As Played** (default) | **Per Bet** |
+|---|---|---|
+| what it replays | game time, 100 game-s per real second at 1x | `credits × speed` bets per real second |
+| a 1-credit stretch at 1x | 1 bet/s | `credits` bets/s (1 at 1 cr) |
+| a 99-credit stretch at 1x | 99 bets/s | `credits` bets/s (99 at 99 cr) |
+| controls | speed 1x / 2x / 4x / 10x (`_speedSteps`, unchanged) | **Credits** selector (`HardwareCreditLadder`, the same ladder as DiceGame's DEV control, shown only in Per Bet) × the same speed |
+| range | as recorded × 1–10 | 1 to 990 bets/s (99 cr × 10x) |
+| empty stretches (stopped run, closed app) | walked at the chosen speed | crossed at once |
+| the "Selected timeline" label | moves continuously | moves bet by bet, resting on the last bet shown |
+| question it answers | *how did it happen?* | *let me read it at the hardware rate I choose* |
+
+**They line up by construction:** As Played over a stretch recorded at N credits and Per Bet at N credits show
+the same rate at the same multiplier. Per Bet only removes the gaps and makes N the viewer's choice.
+
+**Neither depends on DevTimeScale.** **Live-follow is identical in both:** at the present, bets appear as the run
+settles them. Implemented in `BetsHistoryExplorer`: `ComputeAsPlayedDemand` (the mini-plan 04 demand, restored
+unchanged) and `EmitOwedBetsAndSettleCursor` (accrues `PerBetRate()` = credits × multiplier bets per real second
+and emits the whole ones). Both go through the same emit step, which still owns rendering and the summary walk.
+Reaching the present (`ReachThePresent`) is shared: the multiplier drops to 1x there, the credit count is kept,
+and the panel either follows a live run or stops.
+
+**Details, stated so they are not mistaken for bugs:**
+
+- The toggle reads **"Pace: As Played"** / **"Pace: Per Bet"**, naming the pace in effect. In Per Bet the speed
+  button shows the resulting rate too, `Speed 2x (198 bets/s)`, so the multiplication is never left to the viewer.
+- Switching pace keeps the cursor, the play state, the rows and the multiplier. The credit count is kept while
+  hidden.
+- The "requested / actual" readout measures in the current pace's unit: game time As Played, bets Per Bet. At the
+  top (990 bets/s ≈ 16.5 rows a frame at 60 fps) the 25-row emit budget still holds; a slower frame makes it bind,
+  and the readout says so (§6.2).
+- The ladder moved to `Scripts/Hardware/HardwareCreditLadder.cs`, read by both selectors, so they cannot offer
+  different rungs.
+- In Per Bet, a pause banks no bets: Play resumes at the chosen rate, not with a burst. A live run faster than the
+  chosen rate is never caught up with; **Go to Now** is the way to the present.
+- **Not persisted.** Every entry opens As Played at its base speed. It is listed in the roadmap's
+  user-settings-persistence table, which exists so a setting with no home is a recorded decision.
 
 ### E — The disabled APS dropdown becomes a label (developer, 2026-10-08)
 
