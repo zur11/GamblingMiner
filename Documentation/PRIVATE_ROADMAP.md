@@ -982,9 +982,21 @@ any figure computed off `BetHistory` (the explorer's summary, streaks, max level
 understood.** First step: count duplicate `BetRecord.Id`s in the explorer's `_allRecords` against the journal
 files, on the same world, in the same session.
 
+### The 100-second rule — 📝 SPECIFIED (mini-plan 21, 2026-10-10)
+
+**Status: `AIHelperFiles/mini21-hundred-second-rule-plan.md`, branch `mini21-hundred-second-rule`. Nothing built;
+next is Part A, a baseline run on today's code.** It takes the two objectives below as one plan, because the
+developer's rule (*at most 100 in-game seconds between one bet and the next*; `100 ÷ credits` at a known credit
+count) is broken by both. **A** measures the baseline with instruments that already exist (the journal, and the
+Frame cost CSV's overspend columns). **B** caps the clock's per-frame advance at the bet engines' backlog window,
+so a stall makes the game slower, never emptier. **C** stamps each bet at the instant its interval expired, not at
+its frame's end, and verifies every checkpoint capture still reads the mining bet's own instant. **D** is the count:
+zero violations, with the cost in blocks per real minute measured within one session. **No world wipe; journals
+already written keep their holes**, and the explorer's one-second trim stays for them.
+
 ### A long frame advances the clock past the bets — the holes in the journal (noted 2026-10-10)
 
-**Status: open objective, found by mini-plan 20 F round 5; needs its own plan.** The journal holds stretches of
+**Status: taken by mini-plan 21 (M1), above. Found by mini-plan 20 F round 5.** The journal holds stretches of
 **6–17 game-minutes with no player bet** inside a single continuous session: bet ids consecutive, balance continuous,
 nothing missing. **Game time passed with no mining attempt.** In this game a pause in betting stops the clock, so
 these stretches are not history; they are lost simulation.
@@ -1018,7 +1030,7 @@ from the world.
 
 ### Per-bet timestamp fidelity when a frame holds about one bet — candidate (noted 2026-10-08)
 
-**Status: candidate, from mini-plan 20 Part 0 round 2.** At 1 credit × 9000X the journal's gaps between player
+**Status: taken by mini-plan 21 (M2), above. From mini-plan 20 Part 0 round 2.** At 1 credit × 9000X the journal's gaps between player
 bets average 100.6 s but come as **100 / 50 / 150 s**. Mini-plan 08's rule gives a frame's LAST bet the clock's
 exact value, so with ~1.5 bets per 150 s frame a one-bet frame stamps at the frame's end, not where its interval
 expired. **Right on average, wrong per bet.** Invisible in DiceGame's column, which shows hours at that speed. Any
