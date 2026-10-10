@@ -908,10 +908,26 @@ already say where each case lives. A `Documentation/STANDING_CONVENTIONS.md` wit
 premise is that *"a rule nobody can find is a rule nobody applies"* — it was moved INTO this file for exactly that
 reason (2026-08-20). Moving it back out reverses a deliberate decision, so it is the developer's to make.
 
-### Pending UI objectives, an Exit button, and month names — 📝 SPECIFIED (mini-plan 20, 2026-10-08)
+### Pending UI objectives, an Exit button, and month names — ✅ CLOSED PARTIAL (mini-plan 20, 2026-10-10), parts CARRIED
 
-**Status: `AIHelperFiles/mini20-ui-pending-and-exit-button-plan.md`, branch `mini20-ui-pending-and-exit-button`.
-Nothing built; next is Part 0.** **Part 0** (added at approval, the developer's request) is a visual diagnostic
+> **Done:** Part 0 (clock and counter recover in ≤ 1.05 s after 9000X; DEV credits ladder), **C** (the bet column
+> follows motion only, with a full-instant tooltip), **F** (the explorer's As Played / Per Bet paces, and a
+> one-second cap on empty stretches). **Closed here by the developer's call to merge and start a new plan.**
+>
+> **⚠ CARRIED, still open, each specified in the plan's §2 — this list is their home until a plan takes them:**
+> - **A — the Exit button on MainMenu** (D-20.1 approved: a confirmation naming the block the world resumes from).
+>   The developer called it small but very important.
+> - **B** — the Calendar snapshot on arrival (the objective "Calendar entry date" below).
+> - **D** — five culture-less `MMM` renders; widen locale pass 4 and show it fires before fixing them.
+> - **E** — DiceGame's disabled APS dropdown becomes a label of the credits in use.
+> - **C2b** — clarify CLAUDE.md's "1 bet tick" and Manual ~l.5057 (a tick holds one bet per credit).
+> - **C3** — `ClientsBetsHistory`'s per-bet seconds: the same treatment as C, or a written reason.
+> - **The explorer's frame cost** — 59 → ~28 fps while rows stream; the per-stage timer is built and not yet run.
+>
+> Close-out: the plan's §5. Text below is the original specification and its running record.
+
+**Status at specification: `AIHelperFiles/mini20-ui-pending-and-exit-button-plan.md`, branch
+`mini20-ui-pending-and-exit-button`. Nothing built; next is Part 0.** **Part 0** (added at approval, the developer's request) is a visual diagnostic
 of the clock, the attempts counter and the bet rows while DevTimeScale and hardware credits change. Its code
 reading found that the timestamp column can strobe along **two axes**. **Down the list**, the gap between
 adjacent rows is `100 ÷ credits` game-seconds and independent of DevTimeScale. **Frame to frame**, the top row

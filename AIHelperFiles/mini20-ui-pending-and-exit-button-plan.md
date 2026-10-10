@@ -5,7 +5,9 @@ the two open UI objectives most recently written into `PRIVATE_ROADMAP.md` §5, 
 **Exit button on `MainMenu`**, and adds one defect found **while specifying this plan**: five culture-sensitive
 month-name renders that the locale detector's pass 4 cannot see.
 
-**Status:** 📝 **SPECIFIED 2026-10-08**, branch `mini20-ui-pending-and-exit-button`. Nothing built.
+**Status:** ✅ **CLOSED PARTIAL 2026-10-10** (close-out §5), merged from `mini20-ui-pending-and-exit-button`.
+**Done:** Part 0, C, F. **Carried, specified below and listed in the roadmap:** A (Exit button), B, D, E, C2b, C3,
+and the explorer's frame-cost measurement. *(History of this line:)* specified 2026-10-08.
 **D-20.1 approved** (confirmation dialog). **D-20.2 SUPERSEDED**: approved as `HH:mm` + tooltip, then
 reworked as a spacing rule, then dropped when the developer asked why 1 credit at 100X should show less than 99
 credits at the same speed. **The column follows motion only** (the clock's unit), and the tooltip stays (§2 C2).
@@ -546,6 +548,50 @@ Each part is one stage → ask → commit unit on the plan branch.
 - **I6** Docs move with the code. Roadmap objectives B and C are marked DONE (or refuted) in their own entries. If
   D changes the stored detector, CLAUDE.md's Money Handling block and §29.12/§29.12.1 change in the same commit.
 
-## 5. Close-out
+## 5. Close-out (2026-10-10) — closed PARTIAL by the developer's call, with the rest carried
 
-*(Written at close-out.)*
+**The developer chose to merge here and start a new plan.** What the plan set out to do is half done; what it found
+along the way is larger than what it set out to do. Both are stated, so nothing carried is lost.
+
+### Done
+
+| part | result |
+|---|---|
+| **Part 0** — readouts under DevTimeScale and credits | Clock and counter follow both dials. Their **10+ s return to full precision** after 9000X → 100X was arithmetic in `AdaptiveReadoutSampler` (20% smoothing per ~1 s repaint against a 90× step), fixed with a rate snap (> 2× replaces the estimate) and a finer-unit cadence while confirming. **Measured: 1.05 / 0.37 / 0.25 s** at 99 / 10 / 1 credits. The counter's worse case at 99 credits had the same cause. |
+| **Part 0 DEV tool** | `DevPlayerCreditsSelector` in DiceGame: the player's credits set directly, through the shop's own calls. |
+| **C** — the bet column | Follows **motion only** (the DiceGame clock sampler's unit), with the full instant in every row's tooltip. D-20.2's spacing rule was built and **removed on the developer's question**: a value repeating down a still list is not a strobe. |
+| **F** — the explorer's two paces | **As Played** (default, game time, mini-plan 04 restored) and **Per Bet** (a credits selector × the shared 1x–10x speed, up to 990 bets/s). As Played gives an empty stretch **at most one real second**, because in this game time does not pass without bets. |
+| **Instruments** | `[Readout]` unit-change trace; `[ExplorerPerf]` with `nextBetIn` and a per-stage ms/frame split (`ExplorerFrameProbe`). |
+
+### Carried — not done, and where they now live
+
+| part | what | home |
+|---|---|---|
+| **A** | **Exit button on MainMenu** (D-20.1 approved: a confirmation naming the block the world resumes from) | roadmap, mini-plan 20 entry → "carried" |
+| **B** | Calendar snapshot on arrival, except from the explorer | same |
+| **D** | Five culture-less `MMM` renders; widen locale pass 4 and show it fires first | same |
+| **E** | DiceGame's disabled APS dropdown → a label of the credits in use | same |
+| **C2b** | Clarify CLAUDE.md's "1 bet tick" (a tick holds one bet per credit) and Manual ~l.5057 | same |
+| **C3** | `ClientsBetsHistory`'s per-bet seconds: same treatment as C, or a written reason | same |
+| **round 4** | The explorer's frame halves while rows stream (59 → ~28 fps); the stage timer is built and **not yet run** | same |
+
+The sections above (§2) remain the specification for each carried part. Nothing in them is superseded except D-20.2.
+
+### Found, and given their own roadmap objectives
+
+1. **The journal's holes** (6–17 game-minutes with no bet, ids and balance continuous): a long frame at 9000X advances
+   the clock past what the bet engine keeps. Together with the **frame quantization** (100 / 150 / 50 s at 1 credit),
+   it breaks the developer's rule, **"at most 100 in-game seconds between one bet and the next"**, which is now that
+   objective's success criterion.
+2. **The explorer held exactly 10,000 more bets than the journal on disk**, INC-002's shape.
+
+### Lessons
+
+- **A one-sentence user question beat a design.** "Why would 1 credit show less than 99 at the same speed?" retired a
+  rule I had built, staged and twice patched. And "time doesn't run without bets" retired mini-plan 04's premise for
+  walking empty stretches.
+- **Order a journal-read protocol slowest-LAST, and size its fastest phase against retention.** Round 1's 99-credit ×
+  9000X phase pruned the evidence for the phases before it in ~22 s.
+- **A time copied from the journal is UTC; the screens are local.** Round 4 sent the cursor five hours past the gap
+  it was meant to test.
+- **The decision moved three times in a day on F, all before a commit.** Staging first is what made that cheap.
