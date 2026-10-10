@@ -87,7 +87,8 @@ public partial class BetsHistoryExplorer : Control
 	//
 	//   AS PLAYED (default) — the cursor walks GAME time, 100 game-s per real second at 1x, and renders every bet
 	//     it crosses (mini-plan 04). The recorded hardware rate IS the pace: a 1-credit stretch shows one bet per
-	//     second, a 99-credit stretch 99, and empty stretches are walked through. Speeds 1x–10x (_speedSteps).
+	//     second, a 99-credit stretch 99, and an empty stretch holds the rows for at most one real second
+	//     (TrimEmptyStretch). Speeds 1x–10x (_speedSteps).
 	//   PER BET — the viewer picks a hardware credit count, and the replay shows `credits × speed` bets per real
 	//     second, whatever hardware recorded them. 1 credit at 1x is DiceGame at 100X and 1 credit. The cursor
 	//     moves bet by bet and crosses empty stretches at once.
@@ -967,11 +968,44 @@ public partial class BetsHistoryExplorer : Control
 		DateTime next = _selectedLocal.AddSeconds(delta * _cursorSpeed);
 		if (next < present)
 		{
-			return next;
+			return TrimEmptyStretch(next, present);
 		}
 
 		ReachThePresent();
 		return present;
+	}
+
+	// ── An empty stretch is an artifact, so it may hold the rows at most this long (mini-plan 20 F) ───────────
+	//
+	// Mini-plan 04 walked empty stretches on the premise that "a pause in betting looks like a pause". In this
+	// game that premise is false: the clock runs only while the player's autobet runs, and it STOPS on Pause, on a
+	// board vote and on stop-on-block, so a pause in betting creates no game time at all. A stretch of game time
+	// with no bets is therefore not history, and the developer read it correctly: "time does not run without
+	// bets, so it should not freeze that long".
+	//
+	// Where the stretches come from (measured 2026-10-10): consecutive bet ids and a continuous balance across
+	// every gap, so nothing is missing — the CLOCK advanced 6–17 game-minutes while the engine placed no bet. A
+	// long frame at 9000X advances the calendar by the whole frame while the bet engine keeps only its backlog
+	// window and drops the rest; the clock's throttle (R2-C1) uses the PREVIOUS frame's retained fraction, so it
+	// cannot give way in time. That is the simulation's fault, recorded as a roadmap objective; this trim keeps
+	// the replay honest about the bets in the meantime, on existing journals too.
+	//
+	// One real second is the base rhythm (one bet per second at 1 credit and 1x), so a stretch the hardware rate
+	// genuinely spaces — 100 game-s at 1 credit, 150 under frame quantization — still reads as spacing, and
+	// anything longer is crossed after a one-second beat rather than walked.
+	private const double MaxEmptyWaitRealSeconds = 1.0;
+
+	private DateTime TrimEmptyStretch(DateTime demand, DateTime present)
+	{
+		if (_renderedEndExclusive < 0 || _renderedEndExclusive >= _sortedRecords.Count)
+		{
+			return demand;
+		}
+
+		DateTime nextBetLocal = _sortedRecords[_renderedEndExclusive].TimestampUtc.ToLocalTime();
+		DateTime latestWait = nextBetLocal.AddSeconds(-MaxEmptyWaitRealSeconds * _cursorSpeed);
+		// Never past the next bet (the emit step must still cross it), never past the present, never backwards.
+		return latestWait > demand && latestWait < present ? latestWait : demand;
 	}
 
 	// ── PER BET: the replay counts bets (mini-plan 20 F) ────────────────────────────────────────────
@@ -982,7 +1016,7 @@ public partial class BetsHistoryExplorer : Control
 	// "how did it happen" and useless for "let me read it". Consequences, accepted with the pace:
 	//   - the cursor moves BET BY BET and rests on the timestamp of the last bet shown, so the timeline label
 	//     moves in steps of `100 ÷ credits` game-seconds, and never shows an instant between two bets;
-	//   - an empty stretch of the journal (a stopped run, a closed app) is crossed at once rather than walked;
+	//   - an empty stretch of the journal is crossed at once (As Played gives it a one-second beat instead);
 	//   - a live run producing more than the chosen rate is never caught up with: Go to Now exists for that.
 	private double _betsOwed;
 

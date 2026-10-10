@@ -382,7 +382,7 @@ thing, or anything below it.
 | a 99-credit stretch at 1x | 99 bets/s | `credits` bets/s (99 at 99 cr) |
 | controls | speed 1x / 2x / 4x / 10x (`_speedSteps`, unchanged) | **Credits** selector (`HardwareCreditLadder`, the same ladder as DiceGame's DEV control, shown only in Per Bet) × the same speed |
 | range | as recorded × 1–10 | 1 to 990 bets/s (99 cr × 10x) |
-| empty stretches (stopped run, closed app) | walked at the chosen speed | crossed at once |
+| empty stretches (an artifact here, see round 5) | hold the rows **at most one real second**, then crossed (`TrimEmptyStretch`) | crossed at once |
 | the "Selected timeline" label | moves continuously | moves bet by bet, resting on the last bet shown |
 | question it answers | *how did it happen?* | *let me read it at the hardware rate I choose* |
 
@@ -448,6 +448,34 @@ on its first entry and `records=136958` on the second, for the same date range. 
 the first load held ~63,000 more than the second. That is the shape of INC-002 (duplicated records in the
 in-memory history), and §40.8 says any figure computed off `BetHistory` is suspect until it is understood.
 Carried to the roadmap as an open objective.
+
+#### F — round 5: the freeze reproduced, and why the empty stretches exist (developer's run, 2026-10-10)
+
+**Reproduced with local times.** As Played at 1x from 2012-01-13 16:38 froze clearly; Per Bet did not. The
+developer's objection was the right one: *time does not run without bets, so the rows should slow when credits
+drop, never stop that long.*
+
+**Their premise is the code's.** The clock runs only while the player's autobet runs (`SimulationService` sets
+`CalendarTimeService.IsRunning`), and stops on Pause, on a board vote and on stop-on-block. A manual click spans
+one 100 s tick. **So a pause in betting creates no game time**, and mini-plan 04's premise for walking empty
+stretches ("a pause in betting looks like a pause") does not hold in this game.
+
+**So where do the stretches come from? From the simulation, measured from the journal.** Across every gap of 6–17
+game-minutes the bet ids are consecutive and the balance continues exactly (e.g. `3317402240 + 98040 =
+3317500280`). **No bet is missing; the clock advanced while the engine placed none.** The mechanism is documented
+in `SimulationService`: on a long frame at 9000X the calendar advances by the whole frame, while the bet engine keeps
+only its backlog window and drops the rest. R2-C1's throttle uses the **previous** frame's retained fraction, so it
+cannot give way on the frame that needs it. The arithmetic fits: a ~110 ms stall at 9000X is ~1,000 game-s.
+Mini-plan 10 B1 measured this overspend as 0.62% on average; **As Played is what made it visible**, as holes.
+
+**(a) Done here: As Played trims empty stretches** (`TrimEmptyStretch`). The cursor never waits more than **one
+real second** for the next bet. If the next bet is further away at the current speed, the demand jumps to one
+second before it. One second is the base rhythm (1 bet/s at 1 credit and 1x), so spacing the hardware genuinely
+produces (100 s at 1 credit, 150 s under frame quantization) still reads as spacing. It works on existing journals,
+never passes the next bet or the present, and Per Bet is unaffected.
+
+**(b) Recorded as a roadmap objective, not done here:** stop the simulation creating the holes. It changes game
+time and therefore difficulty, so it needs its own measurements.
 
 ### E — The disabled APS dropdown becomes a label (developer, 2026-10-08)
 

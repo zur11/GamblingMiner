@@ -966,6 +966,29 @@ any figure computed off `BetHistory` (the explorer's summary, streaks, max level
 understood.** First step: count duplicate `BetRecord.Id`s in the explorer's `_allRecords` against the journal
 files, on the same world, in the same session.
 
+### A long frame advances the clock past the bets — the holes in the journal (noted 2026-10-10)
+
+**Status: open objective, found by mini-plan 20 F round 5; needs its own plan.** The journal holds stretches of
+**6–17 game-minutes with no player bet** inside a single continuous session: bet ids consecutive, balance continuous,
+nothing missing. **Game time passed with no mining attempt.** In this game a pause in betting stops the clock, so
+these stretches are not history; they are lost simulation.
+
+**Mechanism, from the code** (`SimulationService`, the R2-C1 and mini-plan 10 B1 notes): on a long frame at a high
+DevTimeScale, `CalendarTimeService` advances by `delta × rate × the PREVIOUS frame's retained fraction`, while the bet
+engine keeps only `BacklogWindowSimSeconds()` and drops the rest. A stall of ~110 ms at 9000X is ~1,000 game-s. Mini-
+plan 10 B1 measured the average overspend at 0.62%; the holes are where it concentrates.
+
+**Why it matters beyond the explorer:** every running engine drops the same backlog, so the network loses attempts
+while the clock runs. The difficulty regulator then reads a slower network than existed. The intent stated at R2-C1
+— *a simulation that runs slower is honest; one that silently drops simulated work is not* — is violated exactly on
+the frames that matter.
+
+**Direction (to be measured, not assumed):** let a frame's clock advance be capped by what the engines can retain
+THIS frame (the same backlog window), so a stall makes the game slower, never emptier. **Success criterion as a
+count:** zero player-journal gaps longer than `~2 × 100 ÷ credits` game-seconds inside a continuous session, in a
+9000X run with deliberate scene changes. The explorer's As Played trim (mini-plan 20 F) hides the holes in
+replay meanwhile; it does not remove them from the world.
+
 ### Per-bet timestamp fidelity when a frame holds about one bet — candidate (noted 2026-10-08)
 
 **Status: candidate, from mini-plan 20 Part 0 round 2.** At 1 credit × 9000X the journal's gaps between player
