@@ -984,10 +984,21 @@ while the clock runs. The difficulty regulator then reads a slower network than 
 the frames that matter.
 
 **Direction (to be measured, not assumed):** let a frame's clock advance be capped by what the engines can retain
-THIS frame (the same backlog window), so a stall makes the game slower, never emptier. **Success criterion as a
-count:** zero player-journal gaps longer than `~2 × 100 ÷ credits` game-seconds inside a continuous session, in a
-9000X run with deliberate scene changes. The explorer's As Played trim (mini-plan 20 F) hides the holes in
-replay meanwhile; it does not remove them from the world.
+THIS frame (the same backlog window), so a stall makes the game slower, never emptier.
+
+**The developer's rule, which is the success criterion (2026-10-10):** *"the most time there should ever be between
+one bet and the next is 100 in-game seconds"* — one tick, at 1 credit; in general **`100 ÷ credits` game-seconds**.
+Measured as a count: **zero** consecutive player bets inside a continuous session further apart than that (plus a
+float tolerance), in a 9000X run with deliberate scene changes and credit changes.
+
+**That rule is violated by TWO mechanisms, so it closes both objectives or neither:** these holes (6–17 minutes),
+and the frame quantization recorded just below (100 / **150** / 50 s at 1 credit × 9000X, where 150 already
+exceeds one tick). A plan that fixes only the holes would still fail the count. **Plan them together.**
+
+**What it does NOT do: repair journals already written.** Their timestamps are the record of what the
+simulation did; this project does not rewrite history in place (mini-plan 08 §5), and the next world wipe clears
+them. The explorer's As Played trim (mini-plan 20 F) hides the holes in replay meanwhile; it does not remove them
+from the world.
 
 ### Per-bet timestamp fidelity when a frame holds about one bet — candidate (noted 2026-10-08)
 
