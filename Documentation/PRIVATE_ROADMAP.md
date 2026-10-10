@@ -908,9 +908,48 @@ already say where each case lives. A `Documentation/STANDING_CONVENTIONS.md` wit
 premise is that *"a rule nobody can find is a rule nobody applies"* — it was moved INTO this file for exactly that
 reason (2026-08-20). Moving it back out reverses a deliberate decision, so it is the developer's to make.
 
-### The bet-history row's timestamp strobes — DIAGNOSED, not scheduled (developer's report, 2026-10-06)
+### Pending UI objectives, an Exit button, and month names — ✅ CLOSED PARTIAL (mini-plan 20, 2026-10-10), parts CARRIED
 
-**Status: open, deliberately NOT bundled into mini-plan 18 (developer's call).** The timestamp column of the bet
+> **Done:** Part 0 (clock and counter recover in ≤ 1.05 s after 9000X; DEV credits ladder), **C** (the bet column
+> follows motion only, with a full-instant tooltip), **F** (the explorer's As Played / Per Bet paces, and a
+> one-second cap on empty stretches). **Closed here by the developer's call to merge and start a new plan.**
+>
+> **⚠ CARRIED, still open, each specified in the plan's §2 — this list is their home until a plan takes them:**
+> - **A — the Exit button on MainMenu** (D-20.1 approved: a confirmation naming the block the world resumes from).
+>   The developer called it small but very important.
+> - **B** — the Calendar snapshot on arrival (the objective "Calendar entry date" below).
+> - **D** — five culture-less `MMM` renders; widen locale pass 4 and show it fires before fixing them.
+> - **E** — DiceGame's disabled APS dropdown becomes a label of the credits in use.
+> - **C2b** — clarify CLAUDE.md's "1 bet tick" and Manual ~l.5057 (a tick holds one bet per credit).
+> - **C3** — `ClientsBetsHistory`'s per-bet seconds: the same treatment as C, or a written reason.
+> - **The explorer's frame cost** — 59 → ~28 fps while rows stream; the per-stage timer is built and not yet run.
+>
+> Close-out: the plan's §5. Text below is the original specification and its running record.
+
+**Status at specification: `AIHelperFiles/mini20-ui-pending-and-exit-button-plan.md`, branch
+`mini20-ui-pending-and-exit-button`. Nothing built; next is Part 0.** **Part 0** (added at approval, the developer's request) is a visual diagnostic
+of the clock, the attempts counter and the bet rows while DevTimeScale and hardware credits change. Its code
+reading found that the timestamp column can strobe along **two axes**. **Down the list**, the gap between
+adjacent rows is `100 ÷ credits` game-seconds and independent of DevTimeScale. **Frame to frame**, the top row
+jumps by the clock's per-frame advance, which DevTimeScale drives. CLAUDE.md's "1 bet **tick** = 100 s" is
+correct, but "1 **bet** = 100 s" (part C's diagnosis, `ProjectDesignManual.md` ~l.5057) holds only at 1 credit,
+so D-20.2's approved fixed `HH:mm` is reopened. Then four parts. **A**: an **Exit** button on `MainMenu`. It is no weaker than the window's
+X because it propagates `NotificationWMCloseRequest` before `Quit()`. It sits in a fixed footer with a ≥50 px
+bottom margin, and it shows a confirmation that names the block the world will resume from (D-20.1). **B**: the
+Calendar snapshot on arrival (the objective below). **C**: the bet-row timestamp strobe (the objective below),
+**measured from the journal before any format is chosen** (P-C1: Δt = 100 s and three residues, or the diagnosis
+is refuted). **D**: found while specifying. Five `MMM` renders in `ClientsBetsHistory`/`ClientsTransactions` with
+no culture, which the locale detector's pass 4 cannot see because it only matches a format that **starts** with a
+name token. The stored tripwire read 0 against 5 real hits. It gets widened, **shown to fire**, and then the
+sites are fixed. **Added during the plan, at the developer's request:** **E**, DiceGame's disabled APS dropdown
+becomes a label; **F**, `BetsHistoryExplorer` gains a pace toggle, **As Played** (default, game time) and **Per
+Bet** (a chosen hardware credit count × the same 1x–10x speed, whatever hardware recorded the bets). **Out of scope by design:** the Holdings Hub and the Betting Statistics scene, each a new screen
+needing its own plan.
+
+### The bet-history row's timestamp strobes — DIAGNOSED, taken by mini-plan 20 C (developer's report, 2026-10-06)
+
+**Status: SPECIFIED in mini-plan 20 part C (2026-10-08); before that, open and deliberately NOT bundled into
+mini-plan 18 (developer's call).** The timestamp column of the bet
 rows in `BetHistoryContainer` shows the same kind of frozen-digit behaviour the DiceGame clock and nonce counter had
 before mini-plan 15 B fixed them.
 
@@ -930,6 +969,61 @@ when the autobet is running hard.
 precision, a relative offset ("+1m40s"), or showing the bet's game date differently is a design question with a
 player-facing consequence, which is why it is an objective rather than a one-line change. **Verify the 3-residue
 claim against a running list before building anything** — it is arithmetic from the code, not a measurement.
+
+### The explorer held 10,000 more bets than the journal — NOT investigated (noted 2026-10-10)
+
+**Status: open, found by mini-plan 20 F round 4 and deliberately not chased inside a UI plan.**
+`BetsHistoryExplorer`'s `[ExplorerPerf]` reported `records=200100` on one entry and `records=136958` on the next,
+over the same date range. The journal on disk held **126,958** bets in 13 segments: the second load is exactly
+**10,000** above the disk, and before the cursor the first load held ~63,000 more than the second. One segment is
+10,000 entries, so the leading suspect is a segment counted twice by the in-memory history (`EnsureFullHistoryLoaded`
+plus the active buffer, or a rotated segment kept in memory). That is INC-002's shape, and **§40.8 applies:
+any figure computed off `BetHistory` (the explorer's summary, streaks, max level) is suspect until this is
+understood.** First step: count duplicate `BetRecord.Id`s in the explorer's `_allRecords` against the journal
+files, on the same world, in the same session.
+
+### A long frame advances the clock past the bets — the holes in the journal (noted 2026-10-10)
+
+**Status: open objective, found by mini-plan 20 F round 5; needs its own plan.** The journal holds stretches of
+**6–17 game-minutes with no player bet** inside a single continuous session: bet ids consecutive, balance continuous,
+nothing missing. **Game time passed with no mining attempt.** In this game a pause in betting stops the clock, so
+these stretches are not history; they are lost simulation.
+
+**Mechanism, from the code** (`SimulationService`, the R2-C1 and mini-plan 10 B1 notes): on a long frame at a high
+DevTimeScale, `CalendarTimeService` advances by `delta × rate × the PREVIOUS frame's retained fraction`, while the bet
+engine keeps only `BacklogWindowSimSeconds()` and drops the rest. A stall of ~110 ms at 9000X is ~1,000 game-s. Mini-
+plan 10 B1 measured the average overspend at 0.62%; the holes are where it concentrates.
+
+**Why it matters beyond the explorer:** every running engine drops the same backlog, so the network loses attempts
+while the clock runs. The difficulty regulator then reads a slower network than existed. The intent stated at R2-C1
+— *a simulation that runs slower is honest; one that silently drops simulated work is not* — is violated exactly on
+the frames that matter.
+
+**Direction (to be measured, not assumed):** let a frame's clock advance be capped by what the engines can retain
+THIS frame (the same backlog window), so a stall makes the game slower, never emptier.
+
+**The developer's rule, which is the success criterion (2026-10-10):** *"the most time there should ever be between
+one bet and the next is 100 in-game seconds"* — one tick, at 1 credit; in general **`100 ÷ credits` game-seconds**.
+Measured as a count: **zero** consecutive player bets inside a continuous session further apart than that (plus a
+float tolerance), in a 9000X run with deliberate scene changes and credit changes.
+
+**That rule is violated by TWO mechanisms, so it closes both objectives or neither:** these holes (6–17 minutes),
+and the frame quantization recorded just below (100 / **150** / 50 s at 1 credit × 9000X, where 150 already
+exceeds one tick). A plan that fixes only the holes would still fail the count. **Plan them together.**
+
+**What it does NOT do: repair journals already written.** Their timestamps are the record of what the
+simulation did; this project does not rewrite history in place (mini-plan 08 §5), and the next world wipe clears
+them. The explorer's As Played trim (mini-plan 20 F) hides the holes in replay meanwhile; it does not remove them
+from the world.
+
+### Per-bet timestamp fidelity when a frame holds about one bet — candidate (noted 2026-10-08)
+
+**Status: candidate, from mini-plan 20 Part 0 round 2.** At 1 credit × 9000X the journal's gaps between player
+bets average 100.6 s but come as **100 / 50 / 150 s**. Mini-plan 08's rule gives a frame's LAST bet the clock's
+exact value, so with ~1.5 bets per 150 s frame a one-bet frame stamps at the frame's end, not where its interval
+expired. **Right on average, wrong per bet.** Invisible in DiceGame's column, which shows hours at that speed. Any
+fix touches mini-plan 08's load-bearing contract (the calendar equals the timestamp of the event that defines the
+world), so it needs its own plan.
 
 ### A reproducible populated-era world — the entry-year bootstrap, and what it costs (noted 2026-10-06)
 
@@ -971,9 +1065,10 @@ throttle to stand in for one.
 
 **Already available to build on:** `BetsHistoryExplorer`'s chance-to-win selector (mini-plan 02) is the same idea one axis smaller — filter the history by a strategy dimension, drive the summary figures from the filtered view, and offer an option only from the moment its first bet exists. Its time-aware option list is the pattern to copy. And **max martingale level** is free at settle time from `BaseBetSession.ProgressionTriggerStreak` (D-M2.10) — it is not the same quantity as INC-002's "max consecutive losses" and must not be conflated with it.
 
-### Calendar entry date — snapshot on arrival, except from the Explorer (requirement stated, NOT implemented)
+### Calendar entry date — snapshot on arrival, except from the Explorer (requirement stated, taken by mini-plan 20 B)
 
-**Status: the developer's requirement, recorded 2026-08-24. Not built.** Full write-up, with the run that
+**Status: the developer's requirement, recorded 2026-08-24. Not built — SPECIFIED in mini-plan 20 part B
+(2026-10-08).** Full write-up, with the run that
 exposed it and the two defects it settles: `AIHelperFiles/mini06-clock-rewind-reproduction-plan.md` **§9.7e**.
 
 **The requirement.** Arriving at `CalendarsNavigator` **from any scene except `BetsHistoryExplorer`**, the
@@ -1089,6 +1184,8 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   | Saved betting strategies | `saved_betting_strategies.json`, exempt from the wipe — survives, which surprised the developer | the player, probably — but the surprise says the rule was never stated, not that the file is wrong |
   | **Bet View: Detailed / OFF** (mini-plan 10) | not persisted; resets to Detailed on every DiceGame entry | the player. A **view preference only**: after mini-plan 10 both states cost the same (~0.025 ms per bet) and both reach the clock's ceiling, so forgetting it changes nothing but what is on screen. *(Until 2026-09-21 this row called it a speed choice with a higher hidden budget. That was the design before the list got cheap, and the two-budget plan was never built.)* |
   | DEV time scale (the requested one) | not persisted | DEV, but the same mechanism |
+  | **Bets explorer replay pace, speed and Per Bet credits** (mini-plan 20 F) | not persisted; every entry opens **As Played** at 1x (Per Bet at 1 credit when toggled) | the player. A **view preference**, like Bet View |
+  | DEV player credits ladder (mini-plan 20 Part 0) | writes the real hardware state (`hardware_allocation.json`), so it persists as a shop purchase does | **world**, deliberately: it is a shortcut to the shop, not a setting of its own |
   | The strategy panel's last-used values | not persisted; distinct from a *saved* strategy | the player |
   | Anything a future options menu holds | does not exist | the player |
 

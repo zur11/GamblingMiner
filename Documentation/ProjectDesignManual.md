@@ -3529,7 +3529,7 @@ that nothing was pending, a grep found **three more live clocks with the identic
 |---|---|
 | `CasinoGamblingFinances.cs` | `Game date: … HH:mm:ss`, **every frame**, under a comment calling it "a cheap string format" — cheap was never the problem |
 | `ScFinances.cs` | the same label, the same per-frame paint |
-| `BetsHistoryExplorer.cs` | `Selected timeline: … HH:mm:ss`, every frame. Not the world clock but it moves the same **way**: `delta × _cursorSpeed` at **100–1000** game-seconds per real second in replay, and the world clock's own rate (up to 9000) while live-following |
+| `BetsHistoryExplorer.cs` | `Selected timeline: … HH:mm:ss`, every frame. Not the world clock but it moves the same **way**: `delta × _cursorSpeed` at **100–1000** game-seconds per real second in the **As Played** replay pace, and the world clock's own rate (up to 9000) while live-following. *(Mini-plan 20 F added a **Per Bet** pace, a chosen credit count × the same 1x–10x speed (up to 990 bets/s), in which the cursor moves bet by bet instead; the sampler measures whatever rate results.)* |
 
 All three now take the shared sampler. In the explorer the **cursor still advances every frame** — it drives bet
 emission — and only its *rendering* takes the cadence.

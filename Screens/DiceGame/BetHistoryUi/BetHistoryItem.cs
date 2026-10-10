@@ -13,14 +13,17 @@ public partial class BetHistoryItem : PanelContainer
 	[Export] private Color _winColor = Colors.Green;
 	[Export] private Color _lossColor = Colors.Red;
 
-	public void Setup(BetTransactionEvent data)
+	// timePattern is chosen by BetHistoryContainer for the whole column (mini-plan 20 C), so every row in view
+	// shows the same precision. The full instant is always in the tooltip: a coarser column hides nothing.
+	public void Setup(BetTransactionEvent data, string timePattern)
 	{
 		Visible = true;
 		DateTime local = data.Timestamp.Kind == DateTimeKind.Utc
 			? data.Timestamp.ToLocalTime()
 			: data.Timestamp;
 
-		_timestampLabel.Text = local.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+		_timestampLabel.Text = local.ToString(timePattern, CultureInfo.InvariantCulture);
+		TooltipText = local.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
 		// InvariantCulture is load-bearing: `"X " + decimal` calls the culture-sensitive ToString(), which is
 		// the fourth shape of the locale bug (CLAUDE.md, Money Handling) — neither detector pass can see it, and it

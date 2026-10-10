@@ -339,6 +339,12 @@ public partial class DiceGame : Control, IBetEventSource
 		devTimeScale.DiagnosticsHost = devDiagnostics;
 		_apsSelector.GetParent().AddChild(devTimeScale);
 		_apsSelector.GetParent().MoveChild(devTimeScale, _apsSelector.GetIndex() + 1);
+
+		// Mini-plan 20 Part 0 — DEV: the player's credits, set directly. Beside the APS selector because credits are
+		// what lock it; the scene's free space there runs from the selector's right edge (x 1741) to the canvas
+		// edge. The shipping control remains Mining Pools & Hardware.
+		var devCredits = new UI.DevPlayerCreditsSelector.DevPlayerCreditsSelector { Position = new Vector2(1752f, 563f) };
+		AddChild(devCredits);
 		_session.OnStopped += OnSessionStopped;
 
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>
@@ -663,7 +669,7 @@ public partial class DiceGame : Control, IBetEventSource
 	// and they were rebuilt EVERY frame, which is both why a digit froze (a near-constant step per sample) and
 	// per-frame string work of exactly the shape Pattern 6 warns about. One sampler drives both, on a cadence
 	// measured from the clock itself; the quantizers decide how many digits of each nonce count are real.
-	private readonly AdaptiveReadoutSampler _readoutSampler = new();
+	private readonly AdaptiveReadoutSampler _readoutSampler = new() { TraceName = "DiceGame clock" };
 	private readonly CounterQuantizer _ownNonceQuantizer = new();
 	private readonly CounterQuantizer _casinoNonceQuantizer = new();
 
@@ -2285,6 +2291,8 @@ public partial class DiceGame : Control, IBetEventSource
 		if (cadenceSample)
 		{
 			_readoutSampler.NoteRepaint(local);
+			// Mini-plan 20 C — the bet list never shows a finer time field than this clock can.
+			_betHistoryContainer?.SetMotionUnit(_readoutSampler.Unit);
 		}
 
 		_currentAppTimeValue.Text = _readoutSampler.FormatGameTime(local, "yyyy-MM-dd");

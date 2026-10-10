@@ -72,6 +72,21 @@ namespace UI.Readouts
 		// How much of each new rate measurement is folded in. Low enough that one hitched frame moves nothing.
 		private const double RateSmoothing = 0.2;
 
+		// Mini-plan 20 Part 0 — a measurement this far from the estimate is a DIAL CHANGE (DevTimeScale moved, the
+		// autobet stopped or started), not jitter, so it replaces the estimate instead of being averaged in.
+		//
+		// MEASURED IN THE EDITOR (developer, 2026-10-08): returning from 9000X to 100X took well over ten seconds
+		// to show seconds again, longer at 99 credits. The arithmetic: the smoothed estimate must fall from 9000
+		// to the finer-unit bar of 104 (100X sits only 4% under it), so 8,900 × 0.8ⁿ ≤ 4 takes ~35 repaints —
+		// and while the readout still shows hours or minutes it repaints about once a second. Smoothing was
+		// sized for jitter and was being asked to absorb a step change 90× its size.
+		//
+		// 2× is above any jitter this sampler has seen and below the smallest step that moves a unit boundary
+		// far; the 1.11× steps at the top of the DevTimeScale ladder (90 → 80) are still averaged, which is fine
+		// because they never cross more than one boundary. The unit still needs its confirmation streak, so a
+		// single odd sample can replace the estimate but cannot flip the format.
+		private const double RateSnapRatio = 2.0;
+
 		private static readonly double[] UnitSeconds = { 1.0, 60.0, 3600.0, 86400.0 };
 
 		private double _accumulator;
@@ -116,16 +131,50 @@ namespace UI.Readouts
 				if (advancedGame >= 0.0)
 				{
 					double rate = advancedGame / elapsedReal;
-					_gameSecondsPerRealSecond = _hasRate
+					bool isStep = _hasRate
+						&& (rate > _gameSecondsPerRealSecond * RateSnapRatio
+							|| rate * RateSnapRatio < _gameSecondsPerRealSecond);
+					_gameSecondsPerRealSecond = _hasRate && !isStep
 						? (_gameSecondsPerRealSecond * (1.0 - RateSmoothing)) + (rate * RateSmoothing)
 						: rate;
 					_hasRate = true;
+					if (isStep)
+					{
+						_realSecondsSinceRateStep = 0.0;
+					}
 				}
 			}
 
+			_realSecondsSinceRateStep += elapsedReal;
 			_previousSampleGameTime = gameLocalNow;
 			_hasPreviousSample = true;
+			ClockUnit before = _unit;
 			ChooseUnitAndInterval();
+			if (_unit != before)
+			{
+				TraceUnitChange(before);
+			}
+		}
+
+		/// <summary>DEV diagnostic label. When set, every change of displayed unit is printed (DEBUG builds only)
+		/// with the time it took after the last rate step, so a recovery delay is a number, not an impression.</summary>
+		public string TraceName { get; init; }
+
+		// Real seconds since the last sample that replaced the estimate (a dial change). Diagnostic only.
+		private double _realSecondsSinceRateStep;
+
+		// GD.Print, not PrintErr: this lands in the Godot editor's OUTPUT panel, where the developer reads.
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void TraceUnitChange(ClockUnit before)
+		{
+			if (TraceName == null)
+			{
+				return;
+			}
+
+			Godot.GD.Print(string.Create(CultureInfo.InvariantCulture,
+				$"[Readout] {TraceName}: {before} -> {_unit} at {_gameSecondsPerRealSecond:0.0} game-s/s, " +
+				$"{_realSecondsSinceRateStep:0.00} s after the last rate step"));
 		}
 
 		private void ChooseUnitAndInterval()
@@ -180,12 +229,28 @@ namespace UI.Readouts
 				_pendingUnitStreak = 1;
 			}
 
-			// The cadence always follows the unit actually DISPLAYED, never the pending candidate — otherwise a
-			// format would be repainted at a spacing chosen for a different one, which is the original bug.
+			// The cadence follows the unit actually DISPLAYED — otherwise a fine format would be repainted at a
+			// spacing chosen for a coarser one, which is the original bug.
 			_intervalSeconds = Math.Clamp(
 				TargetStepsPerRepaint * UnitSeconds[(int)_unit] / _gameSecondsPerRealSecond,
 				MinIntervalSeconds,
 				MaxIntervalSeconds);
+
+			// ...with one exception, which is safe in only one direction (mini-plan 20 Part 0). While a FINER unit
+			// is waiting out its confirmation streak, repaint at the finer unit's cadence. A coarse format painted
+			// MORE often than it needs moves by less than one of its own steps per repaint, so it cannot freeze or
+			// strobe; it only reaches its confirmations sooner. Without this the six confirmations for "back to
+			// seconds" arrived at the coarse unit's one-second cadence: six seconds of a readout that was already
+			// right to change. The reverse (a fine format painted at a coarse cadence) is the bug, so a pending
+			// COARSER unit keeps the displayed unit's faster cadence, which the line above already gives it.
+			if (_pendingUnitStreak > 0 && _pendingUnit < _unit)
+			{
+				double pendingInterval = Math.Clamp(
+					TargetStepsPerRepaint * UnitSeconds[(int)_pendingUnit] / _gameSecondsPerRealSecond,
+					MinIntervalSeconds,
+					MaxIntervalSeconds);
+				_intervalSeconds = Math.Min(_intervalSeconds, pendingInterval);
+			}
 		}
 
 		/// <summary>The time half of a date-time pattern for <paramref name="unit"/> — empty at

@@ -3,6 +3,7 @@ using System;
 using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
+using Scripts.Hardware;
 using Scripts.History;
 using Scripts.User;
 using UI.StatusBar;
@@ -79,8 +80,32 @@ public partial class BetsHistoryExplorer : Control
 
 	private DateTime _selectedLocal;   // THE CURSOR: the instant being replayed — where it ACTUALLY is
 	private bool _cursorRunning;       // Play/Pause, driving the cursor rather than the clock
-	private double _cursorSpeed = 100d; // game-seconds per real second, the old _speedSteps scale
+	private double _cursorSpeed = 100d; // AS PLAYED: game-seconds per real second, the _speedSteps scale
 	private readonly double[] _speedSteps = { 100d, 200d, 400d, 1000d };
+
+	// ── The two replay paces (mini-plan 20 F, developer 2026-10-09) ─────────────
+	//
+	//   AS PLAYED (default) — the cursor walks GAME time, 100 game-s per real second at 1x, and renders every bet
+	//     it crosses (mini-plan 04). The recorded hardware rate IS the pace: a 1-credit stretch shows one bet per
+	//     second, a 99-credit stretch 99, and an empty stretch holds the rows for at most one real second
+	//     (TrimEmptyStretch). Speeds 1x–10x (_speedSteps).
+	//   PER BET — the viewer picks a hardware credit count, and the replay shows `credits × speed` bets per real
+	//     second, whatever hardware recorded them. 1 credit at 1x is DiceGame at 100X and 1 credit. The cursor
+	//     moves bet by bet and crosses empty stretches at once.
+	//
+	// The two share the 1x–10x speed multiplier, and they line up by construction: As Played over a stretch
+	// recorded at N credits and Per Bet at N credits show the same rate at the same multiplier. Per Bet only
+	// removes the gaps and lets the viewer choose N (the developer's framing, 2026-10-09: a session played at 99
+	// credits can be read at 99 × 10x either way, or at 1 credit × 1x in Per Bet).
+	//
+	// Neither depends on DevTimeScale. Pace and credits are VIEW choices, not persisted: every entry opens As Played
+	// at 1x, and the settings are listed in the roadmap's user-settings-persistence table.
+	private enum ReplayPace { AsPlayed, PerBet }
+	private ReplayPace _pace = ReplayPace.AsPlayed;
+	private Button _paceButton;
+	private HBoxContainer _perBetCreditsBox;
+	private OptionButton _perBetCreditsSelector;
+	private int _perBetCredits = 1;   // PER BET: the hardware credit count the replay imitates
 
 	// ── Demand vs. settled (mini-plan 04 §6.2 / §6.4a) ──────────────────────────
 	// Where the cursor was ASKED to be this frame, as opposed to `_selectedLocal`, where the frame's emit
@@ -279,6 +304,7 @@ public partial class BetsHistoryExplorer : Control
 	private Label _replayThrottleLabel;
 	private double _throttleWindowRealSeconds;
 	private double _throttleWindowGameSeconds;
+	private int _throttleWindowBets;
 	private double _throttleActualSpeedX = -1d;
 	private string _throttleLabelApplied;
 	private int _summaryCursor;
@@ -351,6 +377,38 @@ public partial class BetsHistoryExplorer : Control
 
 		_playPauseButton.Pressed += OnPlayPausePressed;
 		_speedButton.Pressed += OnSpeedButtonPressed;
+
+		// Mini-plan 20 F — the pace toggle, built here beside the speed button it changes the meaning of, so the
+		// .tscn stays untouched. TransportRow is a container, so it lays itself out.
+		_paceButton = new Button
+		{
+			TooltipText = "As Played: replays game time, so bets appear at the rate they were recorded (1x-10x).\n" +
+				"Per Bet: replays as if placed at the credits you choose, times the speed, whatever hardware recorded them."
+		};
+		_paceButton.Pressed += OnPacePressed;
+		_speedButton.GetParent().AddChild(_paceButton);
+		_speedButton.GetParent().MoveChild(_paceButton, _speedButton.GetIndex());
+
+		// The Per Bet credits selector — the same ladder DiceGame's DEV control offers (HardwareCreditLadder),
+		// between the pace toggle and the speed button it multiplies. Visible only in Per Bet.
+		_perBetCreditsBox = new HBoxContainer { Visible = false };
+		_perBetCreditsBox.AddThemeConstantOverride("separation", 6);
+		_perBetCreditsBox.AddChild(new Label { Text = "Credits:" });
+		_perBetCreditsSelector = new OptionButton
+		{
+			TooltipText = "Per Bet: replay as if the bets were placed at this many hardware credits.\n" +
+				"The speed button multiplies it (1x-10x)."
+		};
+		foreach (int credits in HardwareCreditLadder.Steps)
+		{
+			_perBetCreditsSelector.AddItem(credits.ToString(CultureInfo.InvariantCulture) + " cr");
+		}
+
+		_perBetCreditsSelector.Select(Array.IndexOf(HardwareCreditLadder.Steps, _perBetCredits));
+		_perBetCreditsSelector.ItemSelected += OnPerBetCreditsSelected;
+		_perBetCreditsBox.AddChild(_perBetCreditsSelector);
+		_speedButton.GetParent().AddChild(_perBetCreditsBox);
+		_speedButton.GetParent().MoveChild(_perBetCreditsBox, _speedButton.GetIndex());
 		_goToNowButton.Pressed += OnGoToNowPressed;
 		_stepModeButton.Pressed += OnStepModePressed;
 		_stepApplyButton.Pressed += OnStepApplyPressed;
@@ -464,7 +522,16 @@ public partial class BetsHistoryExplorer : Control
 		return true;
 	}
 
+	// Mini-plan 20 F — the whole explorer frame is timed here, so [ExplorerPerf] can split it into stages. In a
+	// release build the probe calls compile away and this is one extra call.
 	public override void _Process(double delta)
+	{
+		long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+		ProcessFrame(delta);
+		AddPerfTicks(ref _perfExplorerTicks, probeStart);
+	}
+
+	private void ProcessFrame(double delta)
 	{
 		if (!Visible) return;
 
@@ -510,20 +577,37 @@ public partial class BetsHistoryExplorer : Control
 			// true for more than one frame.
 			_cursorDemandLocal = NoRequestSentinel;
 			_lastPresentLocal = present;
+			_betsOwed = 0d;   // a pause does not bank bets to burst out on Play
 			ResetThrottleMeasurement();
 		}
 		else
 		{
 			DateTime previousCursor = _selectedLocal;
-			_cursorDemandLocal = ComputeCursorDemand(delta, present);
-			_lastPresentLocal = present;
+			int renderedBefore = _renderedEndExclusive;
+			if (IsLiveFollowing)
+			{
+				// Following the present: bets are shown as the run settles them, in BOTH paces — exactly as
+				// DiceGame shows them.
+				_cursorDemandLocal = present;
+				_betsOwed = 0d;
+				EmitCrossedBetsAndSettleCursor(_cursorDemandLocal);
+			}
+			else if (_pace == ReplayPace.AsPlayed)
+			{
+				// §6.2 — the emit step is what actually MOVES the cursor. It renders every bet between the last
+				// emit frontier and the demand, and if the frame's budget runs out first it leaves the cursor
+				// on the timestamp of the last bet emitted instead of where the demand wanted it. The replay
+				// falls behind wall-clock; it never falls behind the data.
+				_cursorDemandLocal = ComputeAsPlayedDemand(delta, present);
+				EmitCrossedBetsAndSettleCursor(_cursorDemandLocal);
+			}
+			else
+			{
+				EmitOwedBetsAndSettleCursor(delta, present);
+			}
 
-			// §6.2 — the emit step is what actually MOVES the cursor. It renders every bet between the last
-			// emit frontier and the demand, and if the frame's budget runs out first it leaves the cursor
-			// on the timestamp of the last bet emitted instead of where the demand wanted it. The replay
-			// falls behind wall-clock; it never falls behind the data.
-			EmitCrossedBetsAndSettleCursor(_cursorDemandLocal);
-			AccumulateThrottleMeasurement(delta, previousCursor);
+			_lastPresentLocal = present;
+			AccumulateThrottleMeasurement(delta, previousCursor, _renderedEndExclusive - renderedBefore);
 		}
 
 		RefreshTransportAvailability();
@@ -873,31 +957,140 @@ public partial class BetsHistoryExplorer : Control
 		return live > frontier ? live : frontier;
 	}
 
-	// The scene's whole time model, in one method — but only its DEMAND half. This says where the cursor
-	// is asked to be; EmitCrossedBetsAndSettleCursor says where it gets to. Nothing here writes to
-	// CalendarTimeService.
+	// ── AS PLAYED: the replay walks game time (mini-plan 04, the default pace) ───────────────────────
 	//
-	// Note the replay branch builds the demand from `_selectedLocal`, the SETTLED cursor, not from the
-	// previous demand: §6.2's rule is that a throttled frame leaves the cursor on the last bet emitted and
-	// "the next frame resumes from there". A demand that kept running ahead would open a gap that never
-	// closed. Only live-follow has a demand of its own — the present — which is why falling behind while
-	// following is a persistent, honest gap (§6.3) rather than a lost position.
-	// Called only while the panel is PLAYING — a paused panel has no demand at all (see
-	// RequestedThePresent), and _Process handles that case without asking this method.
-	private DateTime ComputeCursorDemand(double delta, DateTime present)
+	// The DEMAND half only: this says where the cursor is asked to be; EmitCrossedBetsAndSettleCursor says where
+	// it gets to. The demand is built from `_selectedLocal`, the SETTLED cursor, not from the previous demand:
+	// §6.2's rule is that a throttled frame leaves the cursor on the last bet emitted and "the next frame resumes
+	// from there". A demand that kept running ahead would open a gap that never closed.
+	private DateTime ComputeAsPlayedDemand(double delta, DateTime present)
 	{
-		if (IsLiveFollowing)
-		{
-			return present;
-		}
-
 		DateTime next = _selectedLocal.AddSeconds(delta * _cursorSpeed);
 		if (next < present)
 		{
-			return next;
+			return TrimEmptyStretch(next, present);
 		}
 
-		// §2.1 — on reaching the present the multiplier drops automatically to base × 1.
+		ReachThePresent();
+		return present;
+	}
+
+	// ── An empty stretch is an artifact, so it may hold the rows at most this long (mini-plan 20 F) ───────────
+	//
+	// Mini-plan 04 walked empty stretches on the premise that "a pause in betting looks like a pause". In this
+	// game that premise is false: the clock runs only while the player's autobet runs, and it STOPS on Pause, on a
+	// board vote and on stop-on-block, so a pause in betting creates no game time at all. A stretch of game time
+	// with no bets is therefore not history, and the developer read it correctly: "time does not run without
+	// bets, so it should not freeze that long".
+	//
+	// Where the stretches come from (measured 2026-10-10): consecutive bet ids and a continuous balance across
+	// every gap, so nothing is missing — the CLOCK advanced 6–17 game-minutes while the engine placed no bet. A
+	// long frame at 9000X advances the calendar by the whole frame while the bet engine keeps only its backlog
+	// window and drops the rest; the clock's throttle (R2-C1) uses the PREVIOUS frame's retained fraction, so it
+	// cannot give way in time. That is the simulation's fault, recorded as a roadmap objective; this trim keeps
+	// the replay honest about the bets in the meantime, on existing journals too.
+	//
+	// One real second is the base rhythm (one bet per second at 1 credit and 1x), so a stretch the hardware rate
+	// genuinely spaces — 100 game-s at 1 credit, 150 under frame quantization — still reads as spacing, and
+	// anything longer is crossed after a one-second beat rather than walked.
+	private const double MaxEmptyWaitRealSeconds = 1.0;
+
+	private DateTime TrimEmptyStretch(DateTime demand, DateTime present)
+	{
+		if (_renderedEndExclusive < 0 || _renderedEndExclusive >= _sortedRecords.Count)
+		{
+			return demand;
+		}
+
+		DateTime nextBetLocal = _sortedRecords[_renderedEndExclusive].TimestampUtc.ToLocalTime();
+		DateTime latestWait = nextBetLocal.AddSeconds(-MaxEmptyWaitRealSeconds * _cursorSpeed);
+		// Never past the next bet (the emit step must still cross it), never past the present, never backwards.
+		return latestWait > demand && latestWait < present ? latestWait : demand;
+	}
+
+	// ── PER BET: the replay counts bets (mini-plan 20 F) ────────────────────────────────────────────
+	//
+	// The developer's rule (2026-10-09): at 1 bet/s the explorer shows bets exactly as DiceGame does at 100X and
+	// 1 credit, whatever hardware recorded them. Added BESIDE As Played, not instead of it: after a test at 99
+	// credits As Played replayed everything at 99 bets/s and no speed step could slow it, which is correct for
+	// "how did it happen" and useless for "let me read it". Consequences, accepted with the pace:
+	//   - the cursor moves BET BY BET and rests on the timestamp of the last bet shown, so the timeline label
+	//     moves in steps of `100 ÷ credits` game-seconds, and never shows an instant between two bets;
+	//   - an empty stretch of the journal is crossed at once (As Played gives it a one-second beat instead);
+	//   - a live run producing more than the chosen rate is never caught up with: Go to Now exists for that.
+	private double _betsOwed;
+
+	// Called only while PLAYING, in Per Bet, and not live-following. Accrues `credits × speed` bets per real second,
+	// emits the whole ones through the same emit step as everything else, and settles the cursor on the last.
+	// At the top (99 credits × 10x = 990 bets/s) that is ~16.5 rows a frame at 60 fps, inside the 25-row emit
+	// budget; a slower frame makes the budget bind, and the requested/actual readout says so (§6.2).
+	private void EmitOwedBetsAndSettleCursor(double delta, DateTime present)
+	{
+		if (_sortedRecords.Count <= 0)
+		{
+			// Nothing to replay under this filter: arrive, exactly as walking an empty journal does As Played.
+			ArriveAtThePresent(present);
+			return;
+		}
+
+		if (_renderedEndExclusive < 0)
+		{
+			// Both resets that clear the frontier (JumpCursorTo, ApplyChanceFilter) also force or schedule
+			// the rebuild, so holding here lasts at most until the 1 Hz refresh runs.
+			_cursorDemandLocal = _selectedLocal;
+			return;
+		}
+
+		_betsOwed += delta * PerBetRate();
+		int available = UpperBound(_sortedRecords, present.ToUniversalTime());
+		if (_renderedEndExclusive >= available)
+		{
+			// Every bet up to the present is on screen. Wait for the next one to come due, then arrive at the
+			// present: the panel either follows a live run from the next frame or stops (ReachThePresent).
+			if (_betsOwed >= 1d)
+			{
+				_betsOwed = 0d;
+				ArriveAtThePresent(present);
+			}
+			else
+			{
+				_cursorDemandLocal = _selectedLocal;
+			}
+
+			return;
+		}
+
+		int owed = (int)Math.Floor(_betsOwed);
+		if (owed <= 0)
+		{
+			_cursorDemandLocal = _selectedLocal;
+			return;
+		}
+
+		int target = Math.Min(available, _renderedEndExclusive + owed);
+		DateTime lastLocal = _sortedRecords[target - 1].TimestampUtc.ToLocalTime();
+		int before = _renderedEndExclusive;
+		_cursorDemandLocal = lastLocal;
+		// Emits every bet up to that timestamp — normally exactly `owed`; a pre-mini-08 same-timestamp group
+		// is emitted whole, and the over-emission is repaid by subtracting what was actually shown.
+		EmitCrossedBetsAndSettleCursor(lastLocal);
+		_betsOwed -= _renderedEndExclusive - before;
+	}
+
+	// Per Bet's arrival: the demand becomes the present and the emit step settles the cursor there. Every bet up
+	// to the present is already on screen, so the walk emits nothing and cannot skip anything.
+	private void ArriveAtThePresent(DateTime present)
+	{
+		_cursorDemandLocal = present;
+		ReachThePresent();
+		EmitCrossedBetsAndSettleCursor(present);
+	}
+
+	// What reaching the present means, in BOTH paces.
+	private void ReachThePresent()
+	{
+		// §2.1 — on reaching the present the multiplier drops automatically to base × 1. Per Bet's credit count is
+		// kept: it is the hardware the viewer chose to imitate, not a speed-up to undo.
 		if (Math.Abs(_cursorSpeed - _speedSteps[0]) > 0.001d)
 		{
 			_cursorSpeed = _speedSteps[0];
@@ -914,8 +1107,6 @@ public partial class BetsHistoryExplorer : Control
 			_cursorRunning = false;
 			RefreshControlLabels();
 		}
-
-		return present;
 	}
 
 	// ── The emit step (§2.3 / §6.2) ─────────────────────────────────────────────
@@ -925,12 +1116,11 @@ public partial class BetsHistoryExplorer : Control
 	// The clumping this replaces was never a speed problem and never a timestamp-collision problem: the
 	// scene repainted a WINDOW where DiceGame emits an EVENT, so the number of "new" bets seen per repaint
 	// was (repaint rate) × (cursor rate) × (bet density) — three multipliers, none of which is "one bet".
-	// Rendering every crossed bet reproduces DiceGame's behaviour by construction, at any speed, and gets
-	// the plan's whole pacing specification for free: the hardware rate is already recorded in the data as
-	// the SPACING between bets, so a stretch played at 1 piece replays at 1X because its bets are spaced
-	// that way, and crossing into a 2X stretch speeds up at exactly the first faster bet — no hardware
-	// lookup, no detection step, no threshold. (Which matters, because hardware history is not persisted:
-	// a base derived from hardware STATE could not be computed for a past date at all.)
+	// Rendering every crossed bet reproduces DiceGame's behaviour by construction, at any speed. In the AS PLAYED
+	// pace it also gives the pacing for free: the hardware rate is recorded as the spacing between bets, so a
+	// stretch played at 1 piece replays at 1X and a 2X stretch speeds up at its first faster bet — no hardware
+	// lookup, which matters, because hardware history is not persisted. In the PER BET pace (mini-plan 20 F)
+	// EmitOwedBetsAndSettleCursor decides how many bets cross per frame and this step only renders them.
 	private void EmitCrossedBetsAndSettleCursor(DateTime demandLocal)
 	{
 		// No window rendered yet (fresh load, filter change, invalidated view): the wholesale path owns the
@@ -951,6 +1141,7 @@ public partial class BetsHistoryExplorer : Control
 
 		int index = _renderedEndExclusive;
 		int budget = MaxAppendRowsPerFrame;
+		long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
 		while (index < target && budget > 0)
 		{
 			BetRecord record = _sortedRecords[index];
@@ -961,9 +1152,13 @@ public partial class BetsHistoryExplorer : Control
 			budget--;
 		}
 
+		AddPerfTicks(ref _perfAppendTicks, probeStart);
+		probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+
 		// The summary walks to the SAME index the rows did, so the figures can never describe a window
 		// different from the one on screen — the two used to be driven by separate binary searches.
 		AdvanceSummaryTo(index, forceRebuild: false);
+		AddPerfTicks(ref _perfSummaryTicks, probeStart);
 		_renderedEndExclusive = index;
 
 		if (index >= target)
@@ -1033,28 +1228,69 @@ public partial class BetsHistoryExplorer : Control
 	private int _perfEmitted;
 	private int _perfFrames;
 
+	// Mini-plan 20 F — stage timing, so "what eats the frame" is a number. Explorer = this scene's whole _Process;
+	// append = the per-bet row/grid pushes; summary = the summary walk; rows/grid = the two lists' own flushes
+	// (ExplorerFrameProbe). engineProcess is Godot's own TimeProcess monitor — every node's _Process this frame,
+	// the check that the stages above are not missing a script — and frame is the real frame time. What frame
+	// has that engineProcess does not is layout and drawing, which no script timer can see (§40.12 rule 1).
+	private long _perfExplorerTicks;
+	private long _perfAppendTicks;
+	private long _perfSummaryTicks;
+	private double _perfEngineProcessSeconds;
+	private double _perfMaxFrameSeconds;
+
 	[System.Diagnostics.Conditional("DEBUG")]
 	private void CountPerf(ref int counter) => counter++;
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	private static void AddPerfTicks(ref long accumulator, long startTimestamp) =>
+		accumulator += System.Diagnostics.Stopwatch.GetTimestamp() - startTimestamp;
 
 	[System.Diagnostics.Conditional("DEBUG")]
 	private void ReportExplorerPerf(double delta)
 	{
 		_perfFrames++;
 		_perfWindowSeconds += delta;
+		_perfEngineProcessSeconds += Performance.GetMonitor(Performance.Monitor.TimeProcess);
+		_perfMaxFrameSeconds = Math.Max(_perfMaxFrameSeconds, delta);
 		if (_perfWindowSeconds < 1.0d || !_cursorRunning)
 		{
 			return;
 		}
 
 		double secs = _perfWindowSeconds;
+
+		// Mini-plan 20 F — the field that tells the two kinds of "rows frozen while the clock moves" apart: a
+		// POSITIVE value is the cursor crossing a stretch with no bets (correct, and in As Played it lasts
+		// value ÷ (100 × speed) real seconds); ZERO or NEGATIVE with emitted/s = 0 means bets are due and not shown.
+		string nextBet = _renderedEndExclusive >= 0 && _renderedEndExclusive < _sortedRecords.Count
+			? ((_sortedRecords[_renderedEndExclusive].TimestampUtc.ToLocalTime() - _selectedLocal).TotalSeconds)
+				.ToString("0.0", CultureInfo.InvariantCulture)
+			: "none";
 		GD.Print(string.Create(
 			CultureInfo.InvariantCulture,
 			$"[ExplorerPerf] records={_allRecords.Count} sorted={_sortedRecords.Count} " +
 			$"fallbacks/s={_perfFallbacks / secs:0.0} appends/s={_perfAppends / secs:0.0} " +
 			$"rebuilds/s={_perfRebuilds / secs:0.0} emitted/s={_perfEmitted / secs:0.0} " +
-			$"fps={_perfFrames / secs:0.0} speed={_cursorSpeed / GameBaseSpeed:0.##}x requested / " +
-			$"{(_throttleActualSpeedX >= 0d ? _throttleActualSpeedX : 0d):0.##}x actual " +
-			$"behind={(PresentLocal() - _selectedLocal).TotalSeconds:0} game-s"));
+			$"fps={_perfFrames / secs:0.0} pace={_pace} speed={RequestedSpeed():0.##} requested / " +
+			$"{(_throttleActualSpeedX >= 0d ? _throttleActualSpeedX : 0d):0.##} actual " +
+			$"behind={(PresentLocal() - _selectedLocal).TotalSeconds:0} game-s nextBetIn={nextBet} game-s " +
+			$"rendered={_renderedEndExclusive} cursor={_selectedLocal:yyyy-MM-dd HH:mm:ss}"));
+
+		// Per-frame averages in ms, so the stages compare directly against the frame they live in.
+		// One formatted value per statement, each carrying its own culture: a long `+`-chain here would put its
+		// tail outside the locale detector's 3-line window and move the tripwire's baseline for a DEBUG print.
+		double frames = Math.Max(1, _perfFrames);
+		string Ms(double ms) => ms.ToString("0.000", CultureInfo.InvariantCulture);
+		GD.Print("[ExplorerPerf] ms/frame:"
+			+ " explorer=" + Ms(ExplorerFrameProbe.TicksToMs(_perfExplorerTicks) / frames)
+			+ " (append=" + Ms(ExplorerFrameProbe.TicksToMs(_perfAppendTicks) / frames)
+			+ " summary=" + Ms(ExplorerFrameProbe.TicksToMs(_perfSummaryTicks) / frames) + ")"
+			+ " rowsFlush=" + Ms(ExplorerFrameProbe.TicksToMs(ExplorerFrameProbe.RowFlushTicks) / frames)
+			+ " gridFlush=" + Ms(ExplorerFrameProbe.TicksToMs(ExplorerFrameProbe.GridFlushTicks) / frames)
+			+ " engineProcess=" + Ms(_perfEngineProcessSeconds * 1000.0 / frames)
+			+ " frame=" + Ms(secs * 1000.0 / frames)
+			+ " maxFrame=" + Ms(_perfMaxFrameSeconds * 1000.0));
 
 		_perfWindowSeconds = 0d;
 		_perfFallbacks = 0;
@@ -1062,6 +1298,12 @@ public partial class BetsHistoryExplorer : Control
 		_perfAppends = 0;
 		_perfEmitted = 0;
 		_perfFrames = 0;
+		_perfExplorerTicks = 0;
+		_perfAppendTicks = 0;
+		_perfSummaryTicks = 0;
+		_perfEngineProcessSeconds = 0d;
+		_perfMaxFrameSeconds = 0d;
+		ExplorerFrameProbe.Reset();
 	}
 
 	private void JumpCursorTo(DateTime targetLocal)
@@ -1070,12 +1312,15 @@ public partial class BetsHistoryExplorer : Control
 		_cursorDemandLocal = targetLocal;
 		_renderedEndExclusive = -1;      // force the wholesale rebuild rather than an append from nowhere
 		_lastRenderedSecond = long.MinValue;
+		_betsOwed = 0d;
 		ResetThrottleMeasurement();
 		RefreshHistoricalViewForCurrentTime(targetLocal.ToUniversalTime(), forceRebuild: true);
 	}
 
 	// ── The requested-vs-actual readout (§6.2) ──────────────────────────────────
-	private void AccumulateThrottleMeasurement(double delta, DateTime previousCursor)
+	// Measured in the unit of the CURRENT pace: game-seconds As Played (the cursor's walk against its requested
+	// rate), bets Per Bet (rows shown against the bets/s requested). Mini-plan 20 F.
+	private void AccumulateThrottleMeasurement(double delta, DateTime previousCursor, int betsEmitted)
 	{
 		// Only a replay has a "requested speed" to fall short of. While following the present the demand is
 		// the world's own pace, so comparing it against the multiplier would report a shortfall that means
@@ -1088,22 +1333,41 @@ public partial class BetsHistoryExplorer : Control
 
 		_throttleWindowRealSeconds += delta;
 		_throttleWindowGameSeconds += (_selectedLocal - previousCursor).TotalSeconds;
+		_throttleWindowBets += Math.Max(0, betsEmitted);
 		if (_throttleWindowRealSeconds < ThrottleWindowSeconds)
 		{
 			return;
 		}
 
-		_throttleActualSpeedX = _throttleWindowGameSeconds / (_throttleWindowRealSeconds * GameBaseSpeed);
+		_throttleActualSpeedX = _pace == ReplayPace.AsPlayed
+			? _throttleWindowGameSeconds / (_throttleWindowRealSeconds * GameBaseSpeed)
+			: _throttleWindowBets / _throttleWindowRealSeconds;
 		_throttleWindowRealSeconds = 0d;
 		_throttleWindowGameSeconds = 0d;
+		_throttleWindowBets = 0;
 	}
 
 	private void ResetThrottleMeasurement()
 	{
 		_throttleWindowRealSeconds = 0d;
 		_throttleWindowGameSeconds = 0d;
+		_throttleWindowBets = 0;
 		_throttleActualSpeedX = -1d;
 	}
+
+	// The speed multiplier, shared by both paces: 1x–10x.
+	private double SpeedMultiplierX() => _cursorSpeed / GameBaseSpeed;
+
+	// Per Bet's rate: the chosen credits at the shared multiplier, in bets per real second.
+	private double PerBetRate() => _perBetCredits * SpeedMultiplierX();
+
+	// The requested rate in the unit the throttle readout compares: ×base As Played, bets/s Per Bet.
+	private double RequestedSpeed() =>
+		_pace == ReplayPace.AsPlayed ? SpeedMultiplierX() : PerBetRate();
+
+	private string SpeedText(double speed) => _pace == ReplayPace.AsPlayed
+		? string.Create(CultureInfo.InvariantCulture, $"{speed:0.##}x")
+		: string.Create(CultureInfo.InvariantCulture, $"{speed:0.##} bets/s");
 
 	// Shown ONLY while the two figures differ, so it reads as information rather than a permanent warning.
 	private void RefreshThrottleLabel()
@@ -1113,13 +1377,11 @@ public partial class BetsHistoryExplorer : Control
 			return;
 		}
 
-		double requested = _cursorSpeed / GameBaseSpeed;
+		double requested = RequestedSpeed();
 		string text = null;
 		if (_throttleActualSpeedX >= 0d && _throttleActualSpeedX < requested * 0.95d)
 		{
-			text = string.Create(
-				CultureInfo.InvariantCulture,
-				$"Speed: {requested:0.##}x requested / {_throttleActualSpeedX:0.##}x actual");
+			text = "Speed: " + SpeedText(requested) + " requested / " + SpeedText(_throttleActualSpeedX) + " actual";
 		}
 
 		if (string.Equals(text, _throttleLabelApplied, StringComparison.Ordinal))
@@ -1542,11 +1804,10 @@ public partial class BetsHistoryExplorer : Control
 		RefreshControlLabels();
 	}
 
-	// §6.1 — the ladder is left exactly as it was, and that is a RESULT, not an omission. The base is the
-	// hardware rate in bets per real second (~5 bets/s at 5 credits), so 100 game-seconds/s already means
-	// "as it happened" and the top step, 1000, is already the specified base × 10 ceiling. The premise for
-	// changing it came from a bad statistic — a rate divided by the part of the interval where something
-	// happened rather than by the whole of it, over-reporting density 32× (§1.2a).
+	// §6.1 — the ladder is left exactly as it was, and that is a RESULT, not an omission: 100 game-seconds/s
+	// already means "as it happened" at the recorded hardware rate, and 1000 is the specified base × 10 ceiling.
+	// Since mini-plan 20 F it is the multiplier of BOTH paces: As Played multiplies game time, Per Bet multiplies
+	// the chosen credit count.
 	private void OnSpeedButtonPressed()
 	{
 		int idx = Array.FindIndex(_speedSteps, s => Math.Abs(s - _cursorSpeed) < 0.001d);
@@ -1556,6 +1817,24 @@ public partial class BetsHistoryExplorer : Control
 		RefreshControlLabels();
 		// Raising the speed while parked at the present is how a paused viewer asks to replay again; the
 		// cursor itself is untouched, so nothing here needs to rebuild.
+	}
+
+	// Switching pace keeps the cursor, the play state, the rows on screen and the speed multiplier; only HOW the
+	// replay advances from here changes. The credit count is kept while hidden, so switching back finds it.
+	private void OnPacePressed()
+	{
+		_pace = _pace == ReplayPace.AsPlayed ? ReplayPace.PerBet : ReplayPace.AsPlayed;
+		_perBetCreditsBox.Visible = _pace == ReplayPace.PerBet;
+		_betsOwed = 0d;
+		ResetThrottleMeasurement();
+		RefreshControlLabels();
+	}
+
+	private void OnPerBetCreditsSelected(long index)
+	{
+		_perBetCredits = HardwareCreditLadder.Steps[(int)index];
+		ResetThrottleMeasurement();
+		RefreshControlLabels();
 	}
 
 	// ── "Go to Now" (developer, 2026-08-18 — supersedes mini-plan 03 §9.3's "Go Live") ──────────────────
@@ -1767,6 +2046,13 @@ public partial class BetsHistoryExplorer : Control
 			_goToNowButton.Text = IsLiveFollowing ? "Following Now" : "Go to Now";
 		}
 
+		if (_paceButton != null)
+		{
+			// The caption names the pace IN EFFECT, not the one a press would switch to: the two paces are both
+			// valid views, and the developer tests in both, so the button must say which one is on screen.
+			_paceButton.Text = _pace == ReplayPace.AsPlayed ? "Pace: As Played" : "Pace: Per Bet";
+		}
+
 		if (IsLiveFollowing)
 		{
 			// Still "Pause", not "Play": the panel IS playing — following the present is what playing means
@@ -1776,9 +2062,11 @@ public partial class BetsHistoryExplorer : Control
 			return;
 		}
 
-		double speedX = _cursorSpeed / GameBaseSpeed;
 		_playPauseButton.Text = _cursorRunning ? "Pause" : "Play";
-		_speedButton.Text = string.Create(CultureInfo.InvariantCulture, $"Speed {speedX:0.##}x");
+		// Per Bet shows the resulting rate beside the multiplier, so "2x" never has to be multiplied in the head.
+		_speedButton.Text = _pace == ReplayPace.AsPlayed
+			? string.Create(CultureInfo.InvariantCulture, $"Speed {SpeedMultiplierX():0.##}x")
+			: string.Create(CultureInfo.InvariantCulture, $"Speed {SpeedMultiplierX():0.##}x ({PerBetRate():0.##} bets/s)");
 	}
 
 	private DateTime GetCurrentLocal()
