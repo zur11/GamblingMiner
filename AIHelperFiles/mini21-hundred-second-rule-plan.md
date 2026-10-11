@@ -243,6 +243,22 @@ creates a hole, but it is still a visible freeze. **First a measurement, not a f
 (`_Ready`, the initial bet-list load, the first frames) with the existing DEBUG instruments plus a one-shot entry
 timer, and name the stage that costs the most. A fix is decided from that number.
 
+**E1 — the instrument (built 2026-10-11, DEBUG-only).** `Scripts/Diagnostics/SceneEntryProbe.cs` prints one
+`[SceneEntry]` line per entry to the Godot editor's **Output** panel:
+
+- `load .tscn`: `SceneManager.Go` now loads, then swaps (`GD.Load` + `ChangeSceneToPacked`, which is what
+  `ChangeSceneToFile` did inside), so the load is timed separately;
+- `toReady`: the deferred swap, the old scene's exit, instantiation, and **every child's `_Ready`**, which Godot runs
+  before the root's;
+- `_Ready`, split into DiceGame's stages: services, `networkRoot` (a `new NetworkRoot()` added on every entry),
+  nodes + signals + APS, DEV controls, `UpdateAllUI`, node selector, legacy restore, history bootstrap, the recent
+  100 bets, node state + calculator, sim binding;
+- `toFirstFrame`: from the end of `_Ready` to DiceGame's first `_Process`.
+
+**Prediction P-E1:** the ~1 s splits mostly between `load .tscn` + `toReady` (engine-side) and two `_Ready` stages
+(`networkRoot` and `recentBets`), not evenly. **The first entry after launch is cold** (JIT, resource cache) and
+is read separately from the repeated ones.
+
 ### Part D — the count, and close
 
 Part A's protocol again on the final code. **Success = R-global 0 and R-phase 0 violations** (1 ms tolerance),

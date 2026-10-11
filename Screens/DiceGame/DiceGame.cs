@@ -191,6 +191,7 @@ public partial class DiceGame : Control, IBetEventSource
 	// Inicialización
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.SceneEntryProbe.ReadyStarted();   // mini-plan 21 E, DEBUG-only
 		// Inicializar motor y servicios
 		_engine = new DiceEngine();
 		_bankrollStateService = GetNodeOrNull<BankrollStateService>("/root/BankrollStateService");
@@ -226,9 +227,11 @@ public partial class DiceGame : Control, IBetEventSource
 			_calendarTimeService.SpeedMultiplier = GameSecondsPerRealSecond;
 			_calendarTimeService.IsRunning = false;
 		}
+		Scripts.Diagnostics.SceneEntryProbe.Mark("services");
 		_blockchainNetworkRoot = new NetworkRoot();
 		_blockchainNetworkRoot.Name = "BlockchainNetworkRoot";
 		AddChild(_blockchainNetworkRoot);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("networkRoot");
 		_savedStrategyRepository = new SavedBettingStrategyRepository(SavedStrategiesPath);
 		var strategy = new ProgressiveBettingStrategy();
 
@@ -321,6 +324,7 @@ public partial class DiceGame : Control, IBetEventSource
 		RefreshHardwareDrivenSpeed();
 		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
 		_apsSelector.ItemSelected += _ => OnBetsPerSecondChanged(0d);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("nodes+signals+aps");
 
 		// DEV/TEST time-acceleration selector (the ladder is DevTimeScaleSelector's own), placed next to the
 		// APS selector — the two together are the `credits × DevTimeScale` throughput demand.
@@ -345,6 +349,7 @@ public partial class DiceGame : Control, IBetEventSource
 		// edge. The shipping control remains Mining Pools & Hardware.
 		var devCredits = new UI.DevPlayerCreditsSelector.DevPlayerCreditsSelector { Position = new Vector2(1752f, 563f) };
 		AddChild(devCredits);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("devControls");
 		_session.OnStopped += OnSessionStopped;
 
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>
@@ -356,26 +361,32 @@ public partial class DiceGame : Control, IBetEventSource
 		};
 
 		UpdateAllUI();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("UpdateAllUI");
 		UpdateStrategySaveLoadButtons();
 		InitializeActiveNodeSelector();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("nodeSelector");
 		bool hadAnyNodeFinancialState = _blockchainNetworkRoot?.HasAnyNodeFinancialState() ?? false;
 		RestoreLegacyCheckpointIfNeeded();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("legacyRestore");
 		// Must run AFTER the checkpoint restore above (it rolls bet history back to the last mined block):
 		// GetLoadedHistoryStats() below reads the currently-loaded history, so calling it before the rollback
 		// would compute "General P/L" / "last deposit P/L" from uncommitted bets the checkpoint just discarded.
 		ApplyRealtimeBootstrapFromLoadedHistory();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("historyBootstrap");
 		// SF.4B.6: seed the in-game bet-history list from the centralized persistent store so the most-recent
 		// history reproduces on entry (before, it started empty on re-entry). Runs AFTER the checkpoint rollback
 		// above so it reflects committed history; live BetExecuted events keep prepending after this.
 		IReadOnlyList<BetRecord> recentOnEntry = _userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries);
 		_betHistoryContainer?.LoadFromHistoricalRecords(recentOnEntry);
 		SeedRollFromRecentBets(recentOnEntry);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("recentBets");
 		BuildBetDisplayToggle();
 		LoadActiveNodeFinancialState();
 		LoadActiveNodeStrategySnapshot();
 		EnsureInitialBankrollFunded();
 		EnsureMissingNodeFinancialStates(hadAnyNodeFinancialState);
 		RefreshCalculatorFromGameSettings();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("nodeState+calculator");
 
 		// Background autobet (SimulationService): subscribe for live UI updates, and if a background
 		// autobet is already running (we navigated back into DiceGame), bind to it instead of starting fresh.
@@ -393,6 +404,9 @@ public partial class DiceGame : Control, IBetEventSource
 				_simulationService.ConsumeStopNotice();
 			}
 		}
+
+		Scripts.Diagnostics.SceneEntryProbe.Mark("simBind");
+		Scripts.Diagnostics.SceneEntryProbe.ReadyEnded();
 	}
 
 	private void InitializeApsSelector()
@@ -675,6 +689,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 	public override void _Process(double delta)
 	{
+		Scripts.Diagnostics.SceneEntryProbe.FirstProcess();   // mini-plan 21 E: reports once per entry, DEBUG-only
 		if (_readoutSampler.ShouldRepaint(delta))
 		{
 			UpdateCurrentAppTimeUI(cadenceSample: true);
