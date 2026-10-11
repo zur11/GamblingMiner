@@ -5,7 +5,7 @@ roadmap objective opened by mini-plan 20 F round 5, *"A long frame advances the 
 candidate it absorbed, *"Per-bet timestamp fidelity when a frame holds about one bet"*.
 
 **Status:** 📝 **SPECIFIED 2026-10-10**, branch `mini21-hundred-second-rule` (proposed). Nothing built.
-**Part A DONE 2026-10-11** (results below Part A). **Next:** the developer approves the revised B + C direction (stamps anchored on the engine frontier; the clock advances by what was executed) and the proposed Part E.
+**Part A DONE, B + C DONE 2026-10-11:** R-global 981 → **0**, overspend 1.21 % → **0**. **Next:** Part E (the ~1 s DiceGame load), then D (close).
 
 ---
 
@@ -121,6 +121,71 @@ stamp by less than one interval.
 **Also observed, by the developer:** a brief freeze when re-entering DiceGame at 9000X. The CSV puts the worst frame of
 those windows at **369 ms**, and at 9000X that is ~3,300 game-s, exactly the size of the larger holes. The stall is the
 holes' trigger, so it is worth measuring on its own (Part E, proposed below).
+
+#### Parts B + C — built (2026-10-11), approved as the revised direction
+
+**One span per frame, shared by every engine and by the clock** (`SimulationService._Process`):
+
+1. Real time owed accumulates in one shared backlog, `_simBacklogSeconds`, clamped to the same `BacklogWindowSimSeconds()`
+   as before. The excess is the only time ever dropped, and it is now dropped **from the game too**.
+2. Each frame takes a **span** from it: no more than any running engine can execute under `MaxBetsPerFrame` (player
+   and every bot), and no faster than `CalendarTimeService.MaxGameSecondsPerRealSecond`, a ceiling now held at the
+   line that spends the rate.
+3. **The clock advances by exactly the span, before the bets** (`CalendarTimeService.AdvanceGameSeconds`; the calendar's
+   own `_Process` stands down while `DrivenBySimulation` is set, from run start to run stop).
+4. Every engine's accumulator receives the same span. **After a bet's interval is subtracted, what remains in the
+   accumulator is how long before the frame's end that interval expired**, so the back-date is simply
+   `accumulator × SpeedMultiplier`. Spacing is `interval × SpeedMultiplier` exactly, within a frame and across frames.
+
+**Contract checked before the change, as C required.** The player's own block captures its bet's back-date
+(`CaptureCheckpoint(_settleBackdateGameSeconds)`, mini-plan 08 D4), the same value its stamp uses. Bot, founder and
+scheduled blocks capture at the frame's clock, which is at or after every player stamp of the frame. **Both still
+hold**, because the clock is advanced to the frame's end before any bet, exactly as the calendar did before.
+
+**Deleted, not flagged (Convention 3):** `ClampedStepGameSeconds` and `PlannedBetsThisFrame`, mini-plan 08 P3's
+clamp. It existed because the clock and the engines moved by different amounts; they no longer do.
+
+**Kept as a check:** the Frame cost CSV's `overspend` column now compares the clock's actual movement with the span.
+It must read **zero**; anything else is a second writer moving the clock during a run. R2-C1's retained fraction no
+longer moves the clock; it remains the `Sim:` readout and the difficulty trace's saturation figure.
+
+**Predictions for the re-run (Part A's protocol, unchanged):**
+- **P-BC1:** R-global **0** and R-phase **0** violations (1 ms tolerance), at every credit count and speed, including
+  across the scene changes.
+- **P-BC2:** the Frame cost CSV's overspend is **0.000 %** in every window.
+- **P-BC3:** no backwards stamps, no id or balance breaks (as in the baseline).
+- **P-BC4, the cost:** during a stall the clock advances less, so the game is slower in wall-clock terms around
+  scene changes. Game-days per real minute, baseline against this run, compared on the same machine. It is a
+  cross-session comparison, so it is stated as an observation and not as a pass condition (§40.12 rule 3).
+
+**Results (developer's run 2026-10-11, start game 2012-01-27 15:58:06 local = 20:58:06 UTC; read by Claude):**
+
+| | baseline (Part A) | B + C |
+|---|---|---|
+| bets | 87,100 | **148,407** |
+| **R-global** (gap > 100 s) | 981 | **0** |
+| holes ≥ 150 s | 41 | **0** |
+| distinct gap values | thousands | **five:** 1.0100 / 1.0110 (99 cr: 1.0101 s, split by the reading tool's millisecond rounding), 10.0000, 100.0000, and one 99.9990 (the same rounding) |
+| R-phase hits | 182 / 34 / 964 | 17 / 17 / 0 — **every one is the first gap after a credit change**, falling inside the previous phase's window. **0 genuine** |
+| Frame cost overspend | 1.21 % (2.4–3.0 % at 99 cr) | **−0.000000 in all 13 rows** |
+| id breaks / balance breaks / backwards stamps | 0 / 0 / 0 | **0 / 0 / 0** |
+
+- **P-BC1 ✅, P-BC2 ✅, P-BC3 ✅.**
+- **P-BC4, the cost, as an observation (cross-session, §40.12 rule 3):** game-seconds per real second from the CSV
+  rows. At 99 credits: 8,855–9,156 before, 8,652–8,933 after. At 1 credit × 9000X: 8,875–9,175 before, 8,885–9,019
+  after. **The "lost" speed is the overspend itself.** The baseline ran above the 9,000 ceiling in places, because the
+  clock was advancing time no engine simulated. That time is now simply not added.
+- **The developer's observation:** "the freeze when entering DiceGame was completely corrected, and no freeze in the
+  flow of bets at any speed." Remaining: **~1 real second of loading before DiceGame appears**, at any speed. That is
+  Part E's subject: a load time, no longer a simulation hole.
+
+**⚠ An incident while building it, recorded under Standing Convention 14.** A `sed -i` insertion whose line-number
+variable came back empty lost its address and **appended the new line after every line of `SimulationService.cs`**
+(1,746 copies), and reported nothing. Caught on the next read, before any build or stage. Repaired by removing the
+exact line (`grep -vxF`), then **verified against git**: line endings unchanged, every changed hunk inside the four
+intended regions, no duplicated consecutive lines, the intended line present once. The rest of the plan's edits used
+the file tool. **The trap is the one the convention describes: an address-less `sed` is a whole-file edit that looks
+like a one-line one.**
 
 ### Part B — M1: the clock may not outrun the engines on the frame that matters
 

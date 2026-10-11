@@ -127,9 +127,31 @@ public partial class CalendarTimeService : Node
 
 	private bool _rateCeilingWarned;
 
+	// ── Mini-plan 21 B — while the background simulation runs, IT advances this clock ─────────────────────────
+	//
+	// Before: this _Process advanced the clock by `delta × rate × the PREVIOUS frame's retained fraction`, and the
+	// bet engines (autoload #17, later in the same frame) kept only what their backlog window allowed. On a long
+	// frame at 9000X the clock passed time no engine simulated — 41 holes of 150–1,135 game-s in mini-plan 21's
+	// baseline — and every bet was stamped against this clock, not against the instant its interval expired.
+	//
+	// Now, while DrivenBySimulation is set, this method does not move the clock at all: SimulationService advances
+	// it once per frame, through AdvanceGameSeconds, by exactly the simulated time every running engine executed.
+	// The clock can no longer outrun the bets, and a stall makes the game slower, never emptier. Without a running
+	// simulation (manual play, idle scenes) nothing changes.
+	public bool DrivenBySimulation { get; set; }
+
+	/// <summary>Mini-plan 21 B — the one way the running simulation moves the clock. Called once per frame.</summary>
+	public void AdvanceGameSeconds(double gameSeconds)
+	{
+		if (gameSeconds > 0d)
+		{
+			CurrentLocalDateTime = CurrentLocalDateTime.AddSeconds(gameSeconds);
+		}
+	}
+
 	public override void _Process(double delta)
 	{
-		if (!IsRunning)
+		if (!IsRunning || DrivenBySimulation)
 		{
 			return;
 		}
