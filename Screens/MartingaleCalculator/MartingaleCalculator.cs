@@ -27,6 +27,14 @@ public partial class MartingaleCalculator : Control
 	private decimal _ctxSessionProfit;
 	private bool _ctxShowDoneRows;
 
+	// Mini-plan 21 E — the table is built only where someone can see it. CalculateFromGameContext instantiates up
+	// to 500 row scenes, and DiceGame refreshed it while the calculator was CLOSED: three times on every entry with
+	// a run going (strategy snapshot, explicit refresh, binding to the run), ~330 ms each — measured by the
+	// [SceneEntry] probe at 658–740 + 350–375 ms of a ~1.4 s entry — plus freeing 1,500 discarded rows in the next
+	// frame, and again on every throttled refresh during the run. The inputs are still recorded at once; only the
+	// rows wait for Open(). Mini-plan 10's rule for the bet list, applied here: a row nobody can see costs nothing.
+	private bool _tablePending;
+
 	public override void _Ready()
 	{
 		_totalBankrollInput = GetNode<LineEdit>("%TotalBankrollInput");
@@ -48,6 +56,12 @@ public partial class MartingaleCalculator : Control
 	public void Open()
 	{
 		Visible = true;
+		if (_tablePending && _hasGameContext)
+		{
+			_tablePending = false;
+			CalculateFromGameContext();
+		}
+
 		_totalBankrollInput.GrabFocus();
 	}
 
@@ -135,6 +149,13 @@ public partial class MartingaleCalculator : Control
 		_progressionStartingBalanceLabel.Text =
 			string.Create(CultureInfo.InvariantCulture, $"Progression starting balance: {bankroll:F8} SC");
 
+		if (!IsVisibleInTree())
+		{
+			_tablePending = true;   // built by Open(), from the context recorded above
+			return;
+		}
+
+		_tablePending = false;
 		CalculateFromGameContext();
 	}
 

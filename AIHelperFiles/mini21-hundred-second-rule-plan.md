@@ -285,6 +285,39 @@ cannot say which; E2 splits them further:**
 **A fix is chosen only from E2's numbers.** The one-time `rollbackHistory` touches Pattern 2's restore and the
 INC-003 history, so it gets the most caution of the three.
 
+**E2 results (developer's run 2026-10-11):**
+
+| entry | the stages that matter |
+|---|---|
+| 1st after launch | `restore:rollbackHistory` **1,319 ms**; every other stage is small |
+| with the run going | `strategySnapshot` 319–372 · `calculator` 328–331 · `bind:applyStrategy` 336–369 · `toFirstFrame` 261–276, of which the simulation frame is 2–17 ms |
+| without the run | the same three stages at **0.1–4 ms** |
+
+**Three different stages each costing the same ~330 ms pointed to one operation, and it was the martingale
+calculator.** `MartingaleCalculator.CalculateFromGameContext` frees every row and **instantiates up to 500 row
+scenes** (`maxRows = 500`) on each update, **while the calculator is hidden**. The developer's strategy (0.001 SC
+base, 0 % increase, ~31 SC bankroll) always reaches the cap. With the run going, DiceGame's entry updates it three
+times: `ApplyStrategySettings` twice, through the strategy snapshot and the run binding, plus the explicit refresh.
+That is 3 × ~330 ms, ~0.66 ms per row. The 1,500 discarded rows are freed after `_Ready`, which accounts for the extra
+~220 ms of `toFirstFrame`. Without a run the panel has no base bet yet, and the calculator stops at "Waiting for valid
+strategy values". **The same rebuild also ran on every throttled refresh during a run**, unseen.
+
+**E3 — fixed: the table is built only where someone can see it.** `UpdateFromGameSettings` still records every input
+at once. While the calculator is hidden it marks the table pending, and `Open()` builds it. `OnOpenCalculatorPressed`
+now refreshes **before** `Open()`, so opening builds the rows exactly once from fresh inputs; the old order would
+have built them twice under the lazy rule. `Open()` is the only way the calculator is shown (grep), so a pending
+table cannot be seen unbuilt. It is mini-plan 10's rule for the bet list, applied here.
+
+**Prediction P-E3:** with the run going, an entry falls from ~1.4 s to roughly what an entry without a run costs
+(~150–200 ms): `strategySnapshot`, `calculator` and `bind:applyStrategy` under 5 ms each, `toFirstFrame` near 45 ms.
+Opening the calculator still shows the full table. **The first entry after launch is unchanged**:
+`rollbackHistory` is a separate cost, left for a decision of its own.
+
+**Not fixed here, and why: the one-time `rollbackHistory` (1.3 s, first entry only).** It is the checkpoint
+restore's history rollback, Pattern 2's guarantee that a restart reverts to the last mined block. Making it cheaper
+means changing where or how the journal is loaded and rolled back, the area INC-003 and INC-004 were about. It is
+measured and recorded, with its own proposal to come, rather than changed in a UI-load pass.
+
 ### Part D — the count, and close
 
 Part A's protocol again on the final code. **Success = R-global 0 and R-phase 0 violations** (1 ms tolerance),

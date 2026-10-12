@@ -2175,8 +2175,11 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnOpenCalculatorPressed()
 	{
-		_martingaleCalculator.Open();
+		// Refresh first, while the calculator is still hidden: it records the inputs and marks its table pending,
+		// and Open() then builds the rows ONCE from that fresh context (mini-plan 21 E). In the old order the
+		// table was built by the refresh after Open, and the lazy build would have made it twice.
 		RefreshCalculatorFromGameSettings();
+		_martingaleCalculator.Open();
 	}
 
 	private void OnOpenBankrollProgrammerPressed()
