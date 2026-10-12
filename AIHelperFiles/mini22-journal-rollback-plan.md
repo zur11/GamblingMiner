@@ -5,7 +5,7 @@ roadmap objective opened by mini-plan 21 E, *"The first DiceGame entry after lau
 journal back"*, and a correctness question that reading the code raised while specifying it.
 
 **Status:** 📝 **SPECIFIED 2026-10-11**, branch `mini22-journal-rollback` (proposed). Nothing built.
-**Next:** Part A, measure inside the rollback on today's code.
+**Part A DONE 2026-10-11:** P-A3 confirmed (8,570 discarded bets visible before the first DiceGame entry, 0 after); the rewrite is ~⅔ of the cost. **Next:** C (targeted truncation + cross-check), then B (move to boot).
 
 ---
 
@@ -63,6 +63,36 @@ read-free). It states whether a checkpoint exists and its instant, so the run ca
 - **P-A3 (the correctness question):** in step 3 the explorer counts the uncommitted bets; in step 5 it does not. The
   difference equals Claude's count from step 2. **If it holds, mini-plan 20's mismatch is explained, and the
   rollback's place (DiceGame, not boot) is a defect, not only a cost.**
+
+#### Part A — results (developer's run 2026-10-11; disk read by Claude between steps 3 and 5)
+
+The autobet ran at 9000X and stopped at game 2012-02-06 20:38:51 local (01:38:51 UTC). The checkpoint's journal
+boundary is **2012-02-06 23:14:35.7365347 UTC** (`[BootCheckpoint]`, and the checkpoint file read directly).
+
+| | disk (Claude, before the rollback) | `[ExplorerLoad]` before DiceGame | after DiceGame |
+|---|---|---|---|
+| records | 209,160 in 21 files | **209,160** | **200,000** |
+| after the checkpoint / after the present | **8,570**, all in the last file | **8,570** | **0** |
+
+`[JournalRollback]`: removed **8,570 records + 0 deposits** from index 200,590 (**a contiguous tail**), in 13.7 ms in
+memory; **rewrote the journal in 829.9 ms: 20 files, 25,449 KB**. Its load read 0.0 ms only because the explorer had
+already loaded every segment. Mini-plan 21's runs, which entered DiceGame first, put the whole rollback at
+1,319–1,829 ms, so the load is ~490 ms. `[SceneEntry]`: `restore:rollbackHistory` **852 ms** of a 1,233 ms entry.
+
+| prediction | verdict |
+|---|---|
+| **P-A1** ⅔ load, ⅓ rewrite | ❌ **refuted, the reverse:** the rewrite is ~830 ms (~⅔), the load ~490 ms (~⅓), the removal 14 ms |
+| **P-A2** the removed records are a small tail in the last segments | ✅ 8,570, one contiguous suffix, entirely in the last segment |
+| **P-A3** the explorer counts the uncommitted bets before DiceGame, not after | ✅ **8,570 → 0**, matching the disk count exactly. **The rollback's place is a defect, not only a cost**, and it explains mini-plan 20's mismatch: an explorer visit before the first DiceGame entry counts the discarded tail |
+
+**Found too:** after the rollback the explorer holds **200,000**, not 200,590. The full rewrite also enforces the
+20-segment retention cap and pruned the oldest 590 records. That is retention working as designed (the journal
+oscillates between ~190,000 and ~210,000), not a loss caused by the rollback. **A targeted truncation will not prune
+there**, so the journal can sit one partial segment over the cap until the next rotation enforces it. That is the
+same state the journal is in between every rotation.
+
+**Consequence for C:** the tail is contiguous, so rewriting only the boundary segment is valid on this journal. The
+expected cost is about one segment's read and write (~1/20 of today's), **~40–50 ms**, against ~1.3 s.
 
 ### Part B — the rollback moves to boot, where Pattern 2 says it happens
 
