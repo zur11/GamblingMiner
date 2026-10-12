@@ -908,8 +908,14 @@ already say where each case lives. A `Documentation/STANDING_CONVENTIONS.md` wit
 premise is that *"a rule nobody can find is a rule nobody applies"* — it was moved INTO this file for exactly that
 reason (2026-08-20). Moving it back out reverses a deliberate decision, so it is the developer's to make.
 
-### Pending UI objectives, an Exit button, and month names — ✅ CLOSED PARTIAL (mini-plan 20, 2026-10-10), parts CARRIED
+### Pending UI objectives, an Exit button, and month names — ✅ DONE (mini-plan 20, 2026-10-10 + mini-plan 23, 2026-10-12)
 
+> **✅ Every carried part is DONE by mini-plan 23 (2026-10-12)**, close-out §5 of
+> `AIHelperFiles/mini23-carried-ui-plan.md`: the Exit button, month names (with locale pass 4 widened), the Calendar
+> snapshot, the "Hardware credits in use" label, and the explorer's frame cost. The explorer now shows the last 10
+> winning numbers, or only the latest one behind a toggle, at the 16.7 ms vsync floor at 99 bets/s. The carried list
+> below is kept as the record of what was handed over.
+>
 > **Done:** Part 0 (clock and counter recover in ≤ 1.05 s after 9000X; DEV credits ladder), **C** (the bet column
 > follows motion only, with a full-instant tooltip), **F** (the explorer's As Played / Per Bet paces, and a
 > one-second cap on empty stretches). **Closed here by the developer's call to merge and start a new plan.**
@@ -1124,9 +1130,10 @@ throttle to stand in for one.
 
 **Already available to build on:** `BetsHistoryExplorer`'s chance-to-win selector (mini-plan 02) is the same idea one axis smaller — filter the history by a strategy dimension, drive the summary figures from the filtered view, and offer an option only from the moment its first bet exists. Its time-aware option list is the pattern to copy. And **max martingale level** is free at settle time from `BaseBetSession.ProgressionTriggerStreak` (D-M2.10) — it is not the same quantity as INC-002's "max consecutive losses" and must not be conflated with it.
 
-### Calendar entry date — snapshot on arrival, except from the Explorer (requirement stated, taken by mini-plan 20 B)
+### Calendar entry date — snapshot on arrival, except from the Explorer — ✅ DONE (mini-plan 23 B, 2026-10-12)
 
-**Status: the developer's requirement, recorded 2026-08-24. Not built — SPECIFIED in mini-plan 20 part B
+**✅ Built and verified by mini-plan 23 part B.** It also fixed a stale "present" during a run, and made the explorer
+hand its date back to the Calendar. **Original status: the developer's requirement, recorded 2026-08-24. Not built — SPECIFIED in mini-plan 20 part B
 (2026-10-08).** Full write-up, with the run that
 exposed it and the two defects it settles: `AIHelperFiles/mini06-clock-rewind-reproduction-plan.md` **§9.7e**.
 

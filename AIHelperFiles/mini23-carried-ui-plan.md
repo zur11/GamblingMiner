@@ -5,7 +5,7 @@ takes the parts mini-plan 20 closed without building (its close-out §5, "Carrie
 specification is still mini-plan 20 §2 and is not repeated here.** This plan restates what changed since, the order,
 and the predictions.
 
-**Status:** 🔨 **IN PROGRESS** on branch `mini23-carried-ui` (specified 2026-10-11). **A, C, B, D and E done and verified**: E's measurement 2 (2026-10-12) confirmed P-E2/P-E3 with the explorer showing the 10-number row. A second view, latest number only, has been built behind a toggle. **Next:** the developer's run of P-E4, then close-out, including the Manual's "tick" note left over from C2b.
+**Status:** ✅ **COMPLETE (2026-10-12)**, branch `mini23-carried-ui`, merged to `main`. A, C, B, D and E are built and verified; close-out in §5.
 
 ---
 
@@ -240,4 +240,34 @@ built. Each part is one stage → ask → commit unit.
 
 ## 5. Close-out
 
-*(Written at close-out.)*
+**✅ COMPLETE (2026-10-12). Every part mini-plan 20 carried is built and verified by the developer, in the order A → C →
+B → D → E.**
+
+| part | shipped | verdict |
+|---|---|---|
+| **A** | MainMenu **Exit** in a fixed footer (`margin_bottom` 50), a confirmation naming the block the world resumes from, and `NotificationWMCloseRequest` propagated before `Quit()` | verified |
+| **C** | Locale pass 4 widened to see a name token anywhere in a format: **5 before, 0 after**, the stored command extracted from both documents and run | P-C1 holds |
+| **B** | The Calendar snapshots the present on arrival, except from the explorer, which now hands its date back. Found on the way: a stale "present" during a run, fixed in three readers | verified |
+| **D** | DiceGame's disabled APS dropdown became the **"Hardware credits in use"** label, fed by the value the rate uses | P-D1 holds |
+| **E** | The explorer's 100-cell grid became a **row of the last 10 numbers**, plus a **latest-only** view behind a toggle. The grid is kept as an inactive DEV node | P-E2–P-E4 hold; **P-E1 refuted** |
+
+**E, the numbers.** At 99 bets/s the frame went from 37–50 ms to the 16.7 ms vsync floor. The winning-numbers flush
+went from 3.1–4.4 ms (grid) to ~0.4–0.6 ms (row) to ~0.02 ms (latest only). **P-E1 was refuted:** it predicted that the
+bet list would dominate. Instead it was the winning-numbers grid, and most of its cost sat outside every timed script.
+
+**Folded in:** mini-20 **C3** was resolved by reason (§1). **C2b's remainder** — the "tick" note in
+`ProjectDesignManual.md` §40.2, where "1 bet = 100 in-game seconds" holds only at 1 credit — landed in this
+close-out.
+
+**Lessons.**
+- **A carried-over test condition is a claim nobody re-checked.** Measurement 3's protocol asked for "a date with
+  bets at 99 credits", which applies only to As Played. Under Per Bet it changed nothing, and the developer noticed
+  before Claude did.
+- **When the cost is outside every timed script, the instrument names the node, not the line.** Measurement 1 timed
+  the grid's script at 3–4 ms, yet the frame lost 20–30 ms. The fix was showing less, not writing faster code.
+- **`engineProcess` was removed:** it read 28 ms while paused against a 17 ms frame. An instrument that cannot be
+  smaller than what contains it is wrong, whatever it is measuring.
+
+**Not done, and where it lives:** the Holdings Hub and the Betting Statistics scene stay out of scope, as mini-plan 20
+said; each needs its own plan. CLAUDE.md is at ~86,200 characters (target 85,000, warning 95,000), the growth
+being C's stored tripwire. That is a rule, not a case, so nothing is proposed for extraction.

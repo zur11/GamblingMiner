@@ -5065,7 +5065,10 @@ what it contained, because the numbers are the argument:
 Compare that against the premise the persistence layer was designed under. The canonical loop is
 **1 bet = 1 nonce attempt = 100 in-game seconds**, and `TargetBlockSeconds = 58,500`, so the intended
 arithmetic is **~585 player bets per block** — a person clicking, or a modest autobet, generating a few
-hundred rows between commits. Under that premise, "load the entire bet history at boot and rebuild the
+hundred rows between commits. *(Clarified by mini-plan 23, 2026-10-12: "100 in-game seconds per bet" holds only at
+**1 hardware credit**. The unit is the **tick**: one tick is 100 in-game seconds and holds one bet per credit, so two
+consecutive bets of a node are `100 ÷ credits` game-seconds apart — CLAUDE.md, Time, "the 100-second rule". The ~585
+figure is the 1-credit case.)* Under that premise, "load the entire bet history at boot and rebuild the
 lifetime stats from it" is not merely acceptable, it is the *simplest correct thing*.
 
 What actually runs now is a **simulator**: `SimulationService` ticking a background autobet plus four bot
