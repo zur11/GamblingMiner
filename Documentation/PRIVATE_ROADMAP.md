@@ -914,6 +914,10 @@ reason (2026-08-20). Moving it back out reverses a deliberate decision, so it is
 > follows motion only, with a full-instant tooltip), **F** (the explorer's As Played / Per Bet paces, and a
 > one-second cap on empty stretches). **Closed here by the developer's call to merge and start a new plan.**
 >
+> **📝 Taken by mini-plan 23 (`AIHelperFiles/mini23-carried-ui-plan.md`, branch `mini23-carried-ui`, SPECIFIED
+> 2026-10-11)**, in the order Exit → month names → Calendar → APS label → explorer frame cost. C3 is resolved by reason
+> (a still list needs no motion rule). C2b's remainder (the Manual ~l.5057 note) is done at its close-out.
+>
 > **⚠ CARRIED, still open, each specified in the plan's §2 — this list is their home until a plan takes them:**
 > - **A — the Exit button on MainMenu** (D-20.1 approved: a confirmation naming the block the world resumes from).
 >   The developer called it small but very important.
