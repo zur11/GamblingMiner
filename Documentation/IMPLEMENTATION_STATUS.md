@@ -17,6 +17,10 @@ as rules but reachable only by reading a status entry. They now live in `CLAUDE.
 
 ### Implemented
 
+- **Mini-plan 24 — PRIVATE_ROADMAP depuration ✅ COMPLETE (2026-10-12).** Documentation only. Full record in `AIHelperFiles/mini24-roadmap-depuration-plan.md`.
+  - **Moved:** every finished or superseded entry went **verbatim** to the new `Documentation/ROADMAP_ARCHIVE.md`, checked line by line with 0 lost. The roadmap went **162,826 → ~63,000 characters** and now holds only open work.
+  - **New working order (developer):** Step 17.A + 17.C → user settings persistence → Holdings Hub → Betting Statistics and the Basic Mode economy.
+  - **Re-scoped:** the Casino Referral System moved to Post-Basic Mode. The Casino Rank System stays in Basic Mode, with a design plan before implementation. DiceGame's Numbers view became a small Basic Mode item.
 - **Mini-plan 23 — mini-plan 20's carried UI parts ✅ COMPLETE (2026-10-12).** Full record in `AIHelperFiles/mini23-carried-ui-plan.md` (close-out §5).
   - **A:** MainMenu gains an **Exit** button in a fixed footer. It confirms with the block the world resumes from, and is no weaker than the window's X.
   - **C:** locale pass 4 widened to see a month/day name token anywhere in a format. It read 5 real sites where the old one read 0; all five fixed.
