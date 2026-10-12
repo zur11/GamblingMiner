@@ -2034,6 +2034,17 @@ public partial class BetsHistoryExplorer : Control
 	private void OnBackToCalendarPressed()
 	{
 		SceneManager.SceneId target = _sceneManager?.PreviousScene ?? SceneManager.SceneId.MainMenu;
+
+		// Mini-plan 23 B — returning TO THE CALENDAR hands it the date this scene was showing, so the Calendar
+		// "adopts the date it arrived from" (mini-plan 06 §9.7e). This writes the explorer's SELECTION, never the
+		// world's clock: `ExplorerSelectedLocalDateTime` is exactly the date the calendar and this scene share, and
+		// the note above still holds — navigation does not touch the clock. Any other destination gets nothing,
+		// because only the Calendar reads the selection on arrival.
+		if (target == SceneManager.SceneId.CalendarsNavigator)
+		{
+			_calendarTimeService?.SetExplorerSelectedLocalDateTime(_selectedLocal);
+		}
+
 		_sceneManager?.Go(target);
 	}
 

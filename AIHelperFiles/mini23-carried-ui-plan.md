@@ -69,6 +69,25 @@ stored detector command changes in CLAUDE.md and §29.12, so the edit uses the f
 the command from the document and running it (Convention 14).
 - **P-C1:** widened pass 4 = 5 before, 0 after. Passes 1–3 unchanged (17 / 0 / 0).
 
+**B — built (2026-10-11), with two findings the specification did not have.**
+
+1. **"Set Now"'s present was stale during a run.** Mini-plan 20 specified reusing "Set Now"'s line,
+   `SetExplorerSelectedLocalDateTime(GamePresentLocalDateTime)`. But `_gamePresent` is only written by explicit calls,
+   and since mini-plan 21 a run moves the clock through `AdvanceGameSeconds`, which does not touch it. During a run the
+   frontier lags, and "Set Now" itself landed on a stale present. The explorer had already solved the same problem
+   (`PresentLocal`: the later of the live clock and the frontier). `CalendarsNavigator` now has the same `PresentLocal`,
+   used by the entry snapshot, by "Set Now", and by the apply clamp. Convention 13: the retired premise was "the
+   frontier is the present", and three readers held it.
+2. **"Adopts the date it arrived from" had no writer.** The explorer never handed its cursor back ("navigation does not
+   touch the clock"), so returning to the Calendar showed the Calendar's own earlier selection. `OnBackToCalendarPressed`
+   now writes `_selectedLocal` into `ExplorerSelectedLocalDateTime` **only when the destination is the Calendar**. That
+   is the shared selection, never the world clock, so the explorer's rule still holds. *Interpretation to confirm with
+   the developer: "the date it arrived from" = the date the explorer was showing.*
+
+The entry snapshot itself is as specified: in `_Ready`, if `PreviousScene != BetsHistoryExplorer`, the selection becomes
+`PresentLocal()`. No subscription, so the date does not move while the player chooses (§9.7e). It is documented in the
+code for whoever works the Ch. 38 backlog. Debug and ExportRelease builds clean; detector 17 / 0 / 0 / 0.
+
 **D — APS label.** As specified: enumerate the 12 references first. If any path takes the bet rate from the widget
 instead of `HardwareAllocationRepository`, it moves to the repository. The label displays the credits, and only
 displays them. Wording: "credits", not "bets per second" (true at every DevTimeScale). The DEV ladder's position is
