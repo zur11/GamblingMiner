@@ -21,7 +21,7 @@ grow_vertical = 2
 theme_override_constants/margin_left = 40
 theme_override_constants/margin_top = 30
 theme_override_constants/margin_right = 40
-theme_override_constants/margin_bottom = 30
+theme_override_constants/margin_bottom = 50
 
 [node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
 layout_mode = 2
@@ -194,3 +194,17 @@ layout_mode = 2
 size_flags_horizontal = 0
 theme_override_font_sizes/font_size = 26
 text = "Central Bank [DEV]"
+
+[node name="FooterSeparator" type="HSeparator" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="Footer" type="HBoxContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="ExitBtn" type="Button" parent="RootMargin/RootVBox/Footer"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 26
+text = "Exit Game"

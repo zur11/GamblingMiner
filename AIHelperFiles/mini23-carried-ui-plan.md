@@ -39,6 +39,13 @@ than the window's X. The confirmation names the block the world resumes from, re
 - **P-A1:** Exit closes the app, and the Output panel shows `[Exit] close request propagated`. The next launch restores
   exactly the block the dialog named.
 
+**A — built (2026-10-11).** `MainMenu.tscn`: an `HSeparator` and a `Footer` (`HBoxContainer`) holding `%ExitBtn`
+("Exit Game", the menu buttons' size and font), **siblings of `ButtonsScroll`**, and `RootMargin`'s `margin_bottom`
+30 → **50** (§29.10–29.11, read before the edit). `MainMenu.cs`: a `ConfirmationDialog` built on first press, its text
+rebuilt each time from `BlockSessionCheckpointService.CurrentSnapshot.CalendarLocalTicks`. On confirm it prints
+`[Exit] close request propagated`, propagates `NotificationWMCloseRequest` to the whole tree, then calls `Quit()`.
+Debug and ExportRelease builds clean; detector 17 / 0 / 0 / 0.
+
 **B — Calendar.** As specified: in `_Ready`, if `SceneManager.PreviousScene != BetsHistoryExplorer`, set the selection
 to `GamePresentLocalDateTime` (the line "Set Now" already runs). No subscription; the selection does not move while
 the player is choosing.
