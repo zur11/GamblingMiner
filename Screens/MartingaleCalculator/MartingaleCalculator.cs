@@ -46,6 +46,18 @@ public partial class MartingaleCalculator : Control
 		_progressionStartingBalanceLabel = GetNode<Label>("%ProgressionStartingBalanceLabel");
 		_rowScene = GD.Load<PackedScene>("res://Screens/MartingaleCalculator/BetRollRow/BetRollRow.tscn");
 
+		// Mini-plan 21 E (developer's screenshot, 2026-10-11): the panel used the default theme's semi-transparent
+		// style, so DiceGame's bet list showed through the table. The full-screen Background stays a translucent
+		// dim on purpose; the panel itself is made opaque here, without touching the .tscn layout.
+		GetNode<PanelContainer>("Panel").AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(0.16f, 0.16f, 0.17f, 1f),
+			CornerRadiusTopLeft = 6,
+			CornerRadiusTopRight = 6,
+			CornerRadiusBottomLeft = 6,
+			CornerRadiusBottomRight = 6
+		});
+
 		GetNode<Button>("%CalculateButton").Pressed += OnCalculatePressed;
 		GetNode<Button>("%ResetButton").Pressed += OnResetPressed;
 		GetNode<Button>("%CloseCalculatorButton").Pressed += OnClosePressed;
@@ -55,6 +67,10 @@ public partial class MartingaleCalculator : Control
 
 	public void Open()
 	{
+		// DiceGame builds several controls in code AFTER this node (the DEV block, the Bet View toggle, the DEV credits
+		// ladder), and Godot draws — and hands clicks to — later siblings on top. Becoming the last child on every
+		// open puts the calculator above all of them, for drawing and for input alike, whatever is added later.
+		MoveToFront();
 		Visible = true;
 		if (_tablePending && _hasGameContext)
 		{

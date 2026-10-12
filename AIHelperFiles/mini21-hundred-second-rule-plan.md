@@ -313,6 +313,17 @@ table cannot be seen unbuilt. It is mini-plan 10's rule for the bet list, applie
 Opening the calculator still shows the full table. **The first entry after launch is unchanged**:
 `rollbackHistory` is a separate cost, left for a decision of its own.
 
+**E3 results (developer's run 2026-10-11): every prediction held**, and with a run going an entry no longer
+loads visibly. The full table appears when the calculator is opened.
+
+**E4 — found by the same test: the calculator did not cover DiceGame.** Two causes, both in the screenshot. (1)
+DiceGame builds controls in code AFTER the calculator (the DEV block, the Bet View toggle, the DEV credits ladder),
+and Godot draws and routes input to later siblings first, so they sat on top of it. Fix: `Open()` calls
+`MoveToFront()`. Every one of those controls shares its parent (the DiceGame root, checked against each `AddChild`),
+so it is above all of them, for drawing and input. (2) The panel used the default theme's semi-transparent style, so
+the bet list showed through the table. Fix: an opaque `StyleBoxFlat` set in `_Ready`. The full-screen backdrop stays
+a deliberate 72 % dim, and the `.tscn` layout is untouched.
+
 **Not fixed here, and why: the one-time `rollbackHistory` (1.3 s, first entry only).** It is the checkpoint
 restore's history rollback, Pattern 2's guarantee that a restart reverts to the last mined block. Making it cheaper
 means changing where or how the journal is loaded and rolled back, the area INC-003 and INC-004 were about. It is
