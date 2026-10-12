@@ -3425,10 +3425,19 @@ baselines kept beside the others in `CLAUDE.md`:
 
 ```bash
 grep -rn "CultureInfo.CurrentCulture" --include=*.cs .
-grep -rnE '\.ToString\("(ddd|dddd|MMM|MMMM)[^"]*"\)' --include=*.cs . | grep -v InvariantCulture
+grep -rnE '(\.ToString\("[^"]*(ddd|MMM)[^"]*"|\{[^{}"]*:[^{}"]*(ddd|MMM)[^{}"]*\})' --include=*.cs . | grep -v InvariantCulture
 ```
 
 **A locale audit scoped to numbers will pass a project whose month names are in the wrong language.**
+
+**And a pass that only matches a format STARTING with a name token will pass a project whose month names are in
+the wrong language too** (mini-plan 23 C, 2026-10-11). Until then the second command was
+`\.ToString\("(ddd|dddd|MMM|MMMM)[^"]*"\)`: it saw `"MMMM"` and not `"dd MMM yyyy"`, and it could not see an
+interpolation hole like `{x:dd MMM yyyy}` at all. It read **0** while five DEV renders in `ClientsBetsHistory` and
+`ClientsTransactions` printed Spanish month abbreviations on the developer's machine. Found by mini-plan 20 while
+looking at timestamps, not by the detector. The widened pass above matches a name token **anywhere** in the format,
+in both forms. It was run **before** the fix and read **5**, then **0** after it: a tripwire is only trusted once
+it has been seen to fire.
 
 #### 29.12.2 — The baseline's history, and the week the tripwire lied in silence
 
@@ -5056,7 +5065,10 @@ what it contained, because the numbers are the argument:
 Compare that against the premise the persistence layer was designed under. The canonical loop is
 **1 bet = 1 nonce attempt = 100 in-game seconds**, and `TargetBlockSeconds = 58,500`, so the intended
 arithmetic is **~585 player bets per block** — a person clicking, or a modest autobet, generating a few
-hundred rows between commits. Under that premise, "load the entire bet history at boot and rebuild the
+hundred rows between commits. *(Clarified by mini-plan 23, 2026-10-12: "100 in-game seconds per bet" holds only at
+**1 hardware credit**. The unit is the **tick**: one tick is 100 in-game seconds and holds one bet per credit, so two
+consecutive bets of a node are `100 ÷ credits` game-seconds apart — CLAUDE.md, Time, "the 100-second rule". The ~585
+figure is the 1-credit case.)* Under that premise, "load the entire bet history at boot and rebuild the
 lifetime stats from it" is not merely acceptable, it is the *simplest correct thing*.
 
 What actually runs now is a **simulator**: `SimulationService` ticking a background autobet plus four bot

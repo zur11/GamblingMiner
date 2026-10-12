@@ -109,7 +109,7 @@ public partial class ClientsBetsHistory : Control
 
 	private void AddLiveFeedEntry(string displayName, BetTransactionEvent bet, string gameId)
 	{
-		string ts      = bet.Timestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm:ss");
+		string ts      = bet.Timestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm:ss", CultureInfo.InvariantCulture);
 		string outcome = bet.IsWin ? "WIN " : "LOSS";
 		decimal delta  = -bet.CreditedProfit;
 
@@ -177,7 +177,7 @@ public partial class ClientsBetsHistory : Control
 		CasinoClientLedgerService.LedgerEntry lastRecharge  = _ledger?.GetLastAutoRecharge(clientId);
 
 		string enrolledDate = lastDeposit != null
-			? lastDeposit.UtcTimestamp.ToLocalTime().ToString("dd MMM yyyy")
+			? lastDeposit.UtcTimestamp.ToLocalTime().ToString("dd MMM yyyy", CultureInfo.InvariantCulture)
 			: "—";
 
 		decimal wageredLifetime;
@@ -214,7 +214,7 @@ public partial class ClientsBetsHistory : Control
 		decimal winRate = totalBets > 0 ? (decimal)wins / totalBets * 100m : 0m;
 
 		string rechargeDate = lastRecharge != null
-			? lastRecharge.UtcTimestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+			? lastRecharge.UtcTimestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm", CultureInfo.InvariantCulture)
 			: "never";
 
 		AddRow(new HSeparator());

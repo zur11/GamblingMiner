@@ -101,7 +101,7 @@ namespace UI.DevPlayerCreditsSelector
 			{
 				HardwareAllocationRepository.RemoveCredits(PlayerNodeId, current - target);
 			}
-			// HardwareChanged then rebuilds this control and re-locks DiceGame's APS selector, exactly as a shop
+			// HardwareChanged then rebuilds this control and refreshes DiceGame's credits-in-use label, exactly as a shop
 			// purchase does, and SimulationService reads the new rate on its next frame (HardwareRate is read fresh).
 		}
 	}

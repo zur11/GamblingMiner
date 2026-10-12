@@ -80,6 +80,25 @@ public partial class CalendarsNavigator : Control
 		_yearInput.ValueChanged += _ => ValidateDayInput();
 		_monthInput.ValueChanged += _ => ValidateDayInput();
 
+		// Mini-plan 23 B (the developer's requirement, recorded at mini-plan 06 §9.7e): arriving from anywhere but the
+		// explorer, the selection becomes the present AT THE MOMENT OF ENTRY — an implicit "Set Now". Arriving from
+		// the explorer, it keeps the date the explorer was showing.
+		//
+		// Two deliberate properties:
+		//   - It does NOT auto-update afterwards, even while an autobet runs: a date the player is choosing must not
+		//     move underneath them. That is a refusal of the event-driven default (Pattern 6), not an omission —
+		//     whoever works the Ch. 38 poll/event backlog should read §9.7e before "fixing" it.
+		//   - It settles the explorer's "opens on the OLDEST bet" defect at its cause: the seed is no longer left
+		//     below the replay floor, so the floor snap below never fires on entry. (§9.7e: do not add a "snapped"
+		//     notice instead — that would keep the wrong default and only announce it.)
+		//
+		// `PreviousScene` is set by SceneManager.Go only. No overlay (PushScene) leads here today; one that did would
+		// not update it, and this would read the scene under the overlay.
+		if (_calendarTimeService != null && _sceneManager?.PreviousScene != SceneManager.SceneId.BetsHistoryExplorer)
+		{
+			_calendarTimeService.SetExplorerSelectedLocalDateTime(PresentLocal());
+		}
+
 		SyncInputsFromClock();
 		InitializeTimeSpeedSelector();
 		UpdatePresenters();
@@ -141,7 +160,7 @@ public partial class CalendarsNavigator : Control
 			DateTimeKind.Local
 		);
 
-		DateTime gamePresent = _calendarTimeService?.GamePresentLocalDateTime ?? selected;
+		DateTime gamePresent = _calendarTimeService != null ? PresentLocal() : selected;
 		// Replaces a hardcoded 2009-01-03 genesis floor. That constant let the clock be set into the
 		// FOUNDERS' era, months before the player's world exists — and with Replay Mode on it is further
 		// raised to the oldest stored bet, so every date the calendar accepts is one the explorer can
@@ -157,9 +176,21 @@ public partial class CalendarsNavigator : Control
 
 	private void OnSetNowPressed()
 	{
-		_calendarTimeService?.SetExplorerSelectedLocalDateTime(_calendarTimeService.GamePresentLocalDateTime);
+		_calendarTimeService?.SetExplorerSelectedLocalDateTime(PresentLocal());
 		SyncInputsFromClock();
 		UpdatePresenters();
+	}
+
+	// "Now", in the same sense BetsHistoryExplorer uses: the LATER of the live clock and the recorded frontier.
+	// `GamePresentLocalDateTime` alone is only written by explicit calls, and since mini-plan 21 a running autobet
+	// moves the clock through AdvanceGameSeconds, which does not touch it — so during a run it lags behind the
+	// clock, and "Set Now" (and the apply clamp) used to land on a stale present (mini-plan 23 B). The live clock
+	// alone would be wrong the other way after a checkpoint restore, where it can sit behind the frontier.
+	private DateTime PresentLocal()
+	{
+		DateTime live = _calendarTimeService.CurrentLocalDateTime;
+		DateTime frontier = _calendarTimeService.GamePresentLocalDateTime;
+		return live > frontier ? live : frontier;
 	}
 
 	// This button goes to the Main Menu. The background sim is an autoload and survives scene changes, so

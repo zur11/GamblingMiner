@@ -57,7 +57,7 @@ public partial class PreviousWinnerNumbersGrid : GridContainer
 		SetProcess(false);
 		long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
 		Flush();
-		ExplorerFrameProbe.AddGridFlush(probeStart);   // DEBUG-only, mini-plan 20 F
+		ExplorerFrameProbe.AddWinnersFlush(probeStart);   // DEBUG-only, mini-plan 20 F
 	}
 
 	public void SubscribeTo(DiceGame game)

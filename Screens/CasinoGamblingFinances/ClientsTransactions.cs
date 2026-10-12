@@ -121,7 +121,7 @@ public partial class ClientsTransactions : Control
 			.Sum(e => e.Amount);
 		decimal net = Money.Normalize(deposited - withdrawn);
 
-		_enrolledLabel.Text = $"Enrolled:         {enrolledLocal:dd MMM yyyy HH:mm:ss}";
+		_enrolledLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Enrolled:         {enrolledLocal:dd MMM yyyy HH:mm:ss}");
 		_totalDepositedLabel.Text = string.Create(CultureInfo.InvariantCulture,
 			$"Total deposited:  {deposited:N8} SC");
 		_totalWithdrawnLabel.Text = string.Create(CultureInfo.InvariantCulture,
@@ -149,7 +149,7 @@ public partial class ClientsTransactions : Control
 			// Bankroll dose) and bankroll_withdrawal (the re-kinded Bankroll→Main internal transfer).
 			if (e.Kind == "auto_recharge" || e.Kind == "bankroll_withdrawal") continue;
 
-			string ts = e.UtcTimestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm:ss");
+			string ts = e.UtcTimestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm:ss", CultureInfo.InvariantCulture);
 
 			string kindLabel;
 			Color color;

@@ -56,7 +56,18 @@ public partial class BetsHistoryExplorer : Control
 	private Button _backToCalendarButton;
 	private Button _backToDiceButton;
 	private BetHistoryContainer _betHistoryContainer;
-	private PreviousWinnerNumbersGrid _previousWinnerNumbersGrid;
+	// Mini-plan 23 E (developer's decision): the last 10 winning numbers in one row. The 100-cell grid this replaced
+	// stays in the .tscn as an inactive, invisible DEV node (`WinnersScroll`, visible = false, process disabled),
+	// ready for a later experiment: to try it again, point this field at %PreviousWinnerNumbersGrid (it has the same
+	// three methods) and make WinnersScroll visible and processing.
+	private PreviousWinnerNumbersRow _previousWinnerNumbersRow;
+	// The second view (developer's request, 2026-10-12): only the latest roll, like DiceGame's ResultValue. Both views
+	// are fed every roll and keep their state; only the visible one paints. The choice is static so it survives a
+	// scene round-trip within the process, and every launch starts on the row.
+	private LatestWinnerNumber _latestWinnerNumber;
+	private Label _winnersTitle;
+	private Button _winnersViewToggle;
+	private static bool _showLatestWinnerOnly;
 	private Control _loaderPanel;
 	private Control _contentPanel;
 
@@ -344,7 +355,10 @@ public partial class BetsHistoryExplorer : Control
 		_backToCalendarButton = GetNode<Button>("%BackToCalendarButton");
 		_backToDiceButton = GetNode<Button>("%BackToDiceButton");
 		_betHistoryContainer = GetNode<BetHistoryContainer>("%BetHistoryContainer");
-		_previousWinnerNumbersGrid = GetNode<PreviousWinnerNumbersGrid>("%PreviousWinnerNumbersGrid");
+		_previousWinnerNumbersRow = GetNode<PreviousWinnerNumbersRow>("%PreviousWinnerNumbersRow");
+		_latestWinnerNumber = GetNode<LatestWinnerNumber>("%LatestWinnerNumber");
+		_winnersTitle = GetNode<Label>("%WinnersTitle");
+		_winnersViewToggle = GetNode<Button>("%WinnersViewToggle");
 		_loaderPanel = GetNode<Control>("%LoaderPanel");
 		_contentPanel = GetNode<Control>("%ContentPanel");
 		_chanceFilterSelector = GetNode<OptionButton>("%ChanceFilterSelector");
@@ -415,6 +429,9 @@ public partial class BetsHistoryExplorer : Control
 		_chanceFilterSelector.ItemSelected += OnChanceFilterSelected;
 		_backToCalendarButton.Pressed += OnBackToCalendarPressed;
 		_backToDiceButton.Pressed += OnBackToDicePressed;
+		_winnersViewToggle.ButtonPressed = _showLatestWinnerOnly;
+		_winnersViewToggle.Toggled += OnWinnersViewToggled;
+		ApplyWinnersView();
 
 		RefreshControlLabels();
 		_ = LoadHistoricalDataAsync();
@@ -744,7 +761,8 @@ public partial class BetsHistoryExplorer : Control
 				: string.Format(CultureInfo.InvariantCulture,
 					"No bets at {0}% chance up to selected date.", _chanceFilter);
 			_betHistoryContainer.ClearEntries();
-			_previousWinnerNumbersGrid.ClearEntries();
+			_previousWinnerNumbersRow.ClearEntries();
+			_latestWinnerNumber.ClearEntries();
 			return;
 		}
 
@@ -766,7 +784,8 @@ public partial class BetsHistoryExplorer : Control
 			_renderedEndExclusive = endExclusive;
 			int start = Math.Max(0, endExclusive - MaxPreviewEntries);
 			List<BetRecord> preview = _sortedRecords.GetRange(start, endExclusive - start);
-			_previousWinnerNumbersGrid.LoadFromHistoricalRecords(preview);
+			_previousWinnerNumbersRow.LoadFromHistoricalRecords(preview);
+			_latestWinnerNumber.LoadFromHistoricalRecords(preview);
 			_betHistoryContainer.LoadFromHistoricalRecords(preview);
 
 			// `forceRebuild: false` even here, and it is load-bearing rather than an optimisation. A
@@ -1147,7 +1166,8 @@ public partial class BetsHistoryExplorer : Control
 		while (index < target && budget > 0)
 		{
 			BetRecord record = _sortedRecords[index];
-			_previousWinnerNumbersGrid.AddWinnerNumber(record.Roll, record.Outcome == BetOutcome.Win);
+			_previousWinnerNumbersRow.AddWinnerNumber(record.Roll, record.Outcome == BetOutcome.Win);
+			_latestWinnerNumber.AddWinnerNumber(record.Roll, record.Outcome == BetOutcome.Win);
 			_betHistoryContainer.AppendHistoricalRecord(record);
 			CountPerf(ref _perfEmitted);
 			index++;
@@ -1231,14 +1251,17 @@ public partial class BetsHistoryExplorer : Control
 	private int _perfFrames;
 
 	// Mini-plan 20 F — stage timing, so "what eats the frame" is a number. Explorer = this scene's whole _Process;
-	// append = the per-bet row/grid pushes; summary = the summary walk; rows/grid = the two lists' own flushes
-	// (ExplorerFrameProbe). engineProcess is Godot's own TimeProcess monitor — every node's _Process this frame,
-	// the check that the stages above are not missing a script — and frame is the real frame time. What frame
-	// has that engineProcess does not is layout and drawing, which no script timer can see (§40.12 rule 1).
+	// append = the per-bet row/winners pushes; summary = the summary walk; rowsFlush/winnersFlush = the two views' own
+	// flushes (ExplorerFrameProbe); frame = the real frame time. What frame has beyond the stages is layout, drawing
+	// and every untimed script, which no script timer can see (§40.12 rule 1).
+	//
+	// REMOVED (mini-plan 23 E): an `engineProcess` column read from Performance.Monitor.TimeProcess. Its first run read
+	// 28 ms per frame while PAUSED, against a measured 17 ms frame, so it was not the per-frame script time this code
+	// assumed. An instrument that reads more than the frame it is part of is not one to keep printing (Standing
+	// Convention 16: the one-off verifier was the thing that was wrong).
 	private long _perfExplorerTicks;
 	private long _perfAppendTicks;
 	private long _perfSummaryTicks;
-	private double _perfEngineProcessSeconds;
 	private double _perfMaxFrameSeconds;
 
 	[System.Diagnostics.Conditional("DEBUG")]
@@ -1253,7 +1276,6 @@ public partial class BetsHistoryExplorer : Control
 	{
 		_perfFrames++;
 		_perfWindowSeconds += delta;
-		_perfEngineProcessSeconds += Performance.GetMonitor(Performance.Monitor.TimeProcess);
 		_perfMaxFrameSeconds = Math.Max(_perfMaxFrameSeconds, delta);
 		if (_perfWindowSeconds < 1.0d || !_cursorRunning)
 		{
@@ -1289,8 +1311,7 @@ public partial class BetsHistoryExplorer : Control
 			+ " (append=" + Ms(ExplorerFrameProbe.TicksToMs(_perfAppendTicks) / frames)
 			+ " summary=" + Ms(ExplorerFrameProbe.TicksToMs(_perfSummaryTicks) / frames) + ")"
 			+ " rowsFlush=" + Ms(ExplorerFrameProbe.TicksToMs(ExplorerFrameProbe.RowFlushTicks) / frames)
-			+ " gridFlush=" + Ms(ExplorerFrameProbe.TicksToMs(ExplorerFrameProbe.GridFlushTicks) / frames)
-			+ " engineProcess=" + Ms(_perfEngineProcessSeconds * 1000.0 / frames)
+			+ " winnersFlush=" + Ms(ExplorerFrameProbe.TicksToMs(ExplorerFrameProbe.WinnersFlushTicks) / frames)
 			+ " frame=" + Ms(secs * 1000.0 / frames)
 			+ " maxFrame=" + Ms(_perfMaxFrameSeconds * 1000.0));
 
@@ -1303,7 +1324,6 @@ public partial class BetsHistoryExplorer : Control
 		_perfExplorerTicks = 0;
 		_perfAppendTicks = 0;
 		_perfSummaryTicks = 0;
-		_perfEngineProcessSeconds = 0d;
 		_perfMaxFrameSeconds = 0d;
 		ExplorerFrameProbe.Reset();
 	}
@@ -2034,12 +2054,38 @@ public partial class BetsHistoryExplorer : Control
 	private void OnBackToCalendarPressed()
 	{
 		SceneManager.SceneId target = _sceneManager?.PreviousScene ?? SceneManager.SceneId.MainMenu;
+
+		// Mini-plan 23 B — returning TO THE CALENDAR hands it the date this scene was showing, so the Calendar
+		// "adopts the date it arrived from" (mini-plan 06 §9.7e). This writes the explorer's SELECTION, never the
+		// world's clock: `ExplorerSelectedLocalDateTime` is exactly the date the calendar and this scene share, and
+		// the note above still holds — navigation does not touch the clock. Any other destination gets nothing,
+		// because only the Calendar reads the selection on arrival.
+		if (target == SceneManager.SceneId.CalendarsNavigator)
+		{
+			_calendarTimeService?.SetExplorerSelectedLocalDateTime(_selectedLocal);
+		}
+
 		_sceneManager?.Go(target);
 	}
 
 	private void OnBackToDicePressed()
 	{
 		_sceneManager?.Go(SceneManager.SceneId.DiceGame);
+	}
+
+	private void OnWinnersViewToggled(bool latestOnly)
+	{
+		_showLatestWinnerOnly = latestOnly;
+		ApplyWinnersView();
+	}
+
+	// The button names the view on screen. Showing a view paints it from the state it kept while hidden.
+	private void ApplyWinnersView()
+	{
+		_previousWinnerNumbersRow.Visible = !_showLatestWinnerOnly;
+		_latestWinnerNumber.Visible = _showLatestWinnerOnly;
+		_winnersTitle.Text = _showLatestWinnerOnly ? "Latest Winner Number" : "Last 10 Winner Numbers";
+		_winnersViewToggle.Text = _showLatestWinnerOnly ? "View: Latest only" : "View: Last 10";
 	}
 
 	private const double GameBaseSpeed = 100.0;

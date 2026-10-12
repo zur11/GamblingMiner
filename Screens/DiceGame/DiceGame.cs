@@ -170,7 +170,11 @@ public partial class DiceGame : Control, IBetEventSource
 	private Label _chanceToWinValue;
 	private Label _multiplierValue;
 	private Label _currentAppTimeValue;
-	private OptionButton _apsSelector;
+	// Mini-plan 23 D — the credits in use, as a LABEL. It was a disabled 1X–99X dropdown that looked like a control
+	// and did nothing: the rate has been read from HardwareAllocationRepository (GetAutoBetBaseAps) since Phase 3,
+	// and an enumeration of the dropdown's 12 references found nothing reading it back. "Credits", not "bets per
+	// second", because the credit count is true at every DevTimeScale and the bet rate is not.
+	private Label _creditsInUseValue;
 
 	private Slider _chanceSlider;
 	private Button _highLowToggleBtn;
@@ -258,7 +262,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_multiplierValue = GetNode<Label>("%MultiplierValue");
 		_currentAppTimeValue = GetNode<Label>("%CurrentAppTimeValue");
 		_blockchainStatusValue = GetNode<Label>("%BlockchainStatusValue");
-		_apsSelector = GetNode<OptionButton>("%ApsSelector");
+		_creditsInUseValue = GetNode<Label>("%CreditsInUseValue");
 		_chanceSlider = GetNode<Slider>("%ChanceSlider");
 		_highLowToggleBtn = GetNode<Button>("%HighLowToggleBtn");
 		_depositBtn = GetNode<Button>("%DepositBtn");
@@ -320,14 +324,12 @@ public partial class DiceGame : Control, IBetEventSource
 		_strategyPanel.StopOnBlockMinedDoubleClicked += OnStopOnBlockMinedDoubleClicked;
 		_strategyPanel.ProfitOrLossStopDoubleClicked += OnProfitOrLossStopDoubleClicked;
 		_strategyPanel.AutoRechargeToggled += OnAutoRechargeToggledFromPanel;
-		InitializeApsSelector();
 		RefreshHardwareDrivenSpeed();
 		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
-		_apsSelector.ItemSelected += _ => OnBetsPerSecondChanged(0d);
 		Scripts.Diagnostics.SceneEntryProbe.Mark("nodes+signals+aps");
 
 		// DEV/TEST time-acceleration selector (the ladder is DevTimeScaleSelector's own), placed next to the
-		// APS selector — the two together are the `credits × DevTimeScale` throughput demand.
+		// credits-in-use label — the two together are the `credits × DevTimeScale` throughput demand.
 		var devTimeScale = new UI.DevTimeScaleSelector.DevTimeScaleSelector();
 		// Its DEV test controls (the two profiler toggles, the Cap/frame picker, the governor readout) go in the
 		// empty block right of the LOW button and under Auto Recharge, instead of trailing the top row where they
@@ -341,12 +343,12 @@ public partial class DiceGame : Control, IBetEventSource
 		devDiagnostics.AddThemeConstantOverride("separation", 4);
 		AddChild(devDiagnostics);
 		devTimeScale.DiagnosticsHost = devDiagnostics;
-		_apsSelector.GetParent().AddChild(devTimeScale);
-		_apsSelector.GetParent().MoveChild(devTimeScale, _apsSelector.GetIndex() + 1);
+		_creditsInUseValue.GetParent().AddChild(devTimeScale);
+		_creditsInUseValue.GetParent().MoveChild(devTimeScale, _creditsInUseValue.GetIndex() + 1);
 
-		// Mini-plan 20 Part 0 — DEV: the player's credits, set directly. Beside the APS selector because credits are
-		// what lock it; the scene's free space there runs from the selector's right edge (x 1741) to the canvas
-		// edge. The shipping control remains Mining Pools & Hardware.
+		// Mini-plan 20 Part 0 — DEV: the player's credits, set directly. Beside the credits-in-use label (mini-plan 23 D,
+		// which kept the old APS selector's right edge at x 1741), since it changes the value the label shows; the free
+		// space runs from there to the canvas edge. The shipping control remains Mining Pools & Hardware.
 		var devCredits = new UI.DevPlayerCreditsSelector.DevPlayerCreditsSelector { Position = new Vector2(1752f, 563f) };
 		AddChild(devCredits);
 		Scripts.Diagnostics.SceneEntryProbe.Mark("devControls");
@@ -412,22 +414,6 @@ public partial class DiceGame : Control, IBetEventSource
 
 		Scripts.Diagnostics.SceneEntryProbe.Mark("simBind");
 		Scripts.Diagnostics.SceneEntryProbe.ReadyEnded();
-	}
-
-	private void InitializeApsSelector()
-	{
-		if (_apsSelector == null)
-		{
-			return;
-		}
-
-		_apsSelector.Clear();
-		for (int aps = 1; aps <= MaxAutoBetBaseAps; aps++)
-		{
-			_apsSelector.AddItem($"{aps}X");
-		}
-
-		_apsSelector.Select(0); // 1X default
 	}
 
 	private void InitializeActiveNodeSelector()
@@ -923,8 +909,8 @@ public partial class DiceGame : Control, IBetEventSource
 		// the current bet and the remaining count into them on every settled bet. Snapshotting the panel
 		// here therefore stored a mid-ladder rung as the BASE BET (observed: base 0.01 saved as 0.02110000
 		// after two losses at +111%), and re-entering the scene restored that corrupted value as the
-		// strategy. Reached from _ExitTree on every navigation away mid-run, and from the APS selector,
-		// which is deliberately left enabled during a run.
+		// strategy. Reached from _ExitTree on every navigation away mid-run. (It was also reached from the APS
+		// selector's ItemSelected; that dropdown is a label since mini-plan 23 D, and the path is gone.)
 		//
 		// So take the executing config from the SESSION, which is what actually governs the run. Only the
 		// player's autobet is delegated; a bot snapshot still comes from the panel that configured it.
@@ -1703,14 +1689,6 @@ public partial class DiceGame : Control, IBetEventSource
 		RefreshNodeSelectorReadyDots();
 		ReseedWalletAcrossTransition(); // scene rebound onto a running sim — a wholesale rebind, not steady state
 		Scripts.Diagnostics.SceneEntryProbe.Mark("bind:readyDots+reseed");
-	}
-
-	private void OnBetsPerSecondChanged(double _)
-	{
-		if (!_loadingNodeStrategy)
-		{
-			SaveActiveNodeStrategySnapshot();
-		}
 	}
 
 	private BaseBetSession CreateSession(bool isAuto)
@@ -2530,23 +2508,24 @@ public partial class DiceGame : Control, IBetEventSource
 	private int GetAutoBetBaseAps()
 	{
 		// Hardware-locked speed (Phase 3): the active node's betting rate = its total hardware credits,
-		// NOT a free selection. The ApsSelector is kept in sync + disabled (see RefreshHardwareDrivenSpeed)
-		// and is display-only — the actual rate is read here straight from the hardware allocation.
+		// NOT a free selection. The credits-in-use label only displays it (see RefreshHardwareDrivenSpeed);
+		// the actual rate is read here straight from the hardware allocation.
 		HardwareAllocationRepository.EnsureLoaded();
 		int total = HardwareAllocationRepository.GetNode(_activeNodeId).TotalCredits;
 		return Math.Clamp(total, 1, MaxAutoBetBaseAps);
 	}
 
-	// Syncs the (disabled, display-only) ApsSelector to the active node's hardware-locked betting speed.
+	// Shows the active node's hardware credits in use — the same clamped value the rate is read from, so the label
+	// and the betting speed cannot disagree (Standing Convention 6). Called on entry, on a node switch, and on
+	// every HardwareChanged (a shop purchase or the DEV ladder), so it follows a change without leaving DiceGame.
 	private void RefreshHardwareDrivenSpeed()
 	{
-		if (_apsSelector == null || _apsSelector.ItemCount <= 0)
+		if (_creditsInUseValue == null)
 		{
 			return;
 		}
 
-		_apsSelector.Select(GetAutoBetBaseAps() - 1);
-		_apsSelector.Disabled = true;
+		_creditsInUseValue.Text = GetAutoBetBaseAps().ToString(System.Globalization.CultureInfo.InvariantCulture);
 	}
 
 	// Raised by HardwareAllocationRepository after a credit change (e.g. from the Pools & Hardware shop).
