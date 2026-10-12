@@ -196,6 +196,34 @@ The developer asked for a toggle between two views:
 - **Toggling back to the row** shows the same ten numbers the latest-only view would have produced, with no gap.
 - **Refuted if:** the latest-only `winnersFlush` stays ≥ 0.2 ms, or the row is wrong or blank after toggling back.
 
+**E — measurement 3 results (developer's run, 2026-10-12; Per Bet, 99 cr, 1x, ~99 bets/s). P-E4's cost half holds:**
+
+| windows | view | `winnersFlush` | frame | maxFrame |
+|---|---|---|---|---|
+| 9 | row | 0.39–0.62 ms | 16.67–17.23 ms | 16.7–25.0 ms |
+| 1 | row → latest (switch window) | 0.100 ms | 17.38 ms | **50.0 ms** |
+| 3 | **latest only** | **0.014–0.022 ms** | **16.666 ms** | 16.666 ms |
+| 1 | latest → row (switch window) | 0.126 ms | 16.67 ms | 16.67 ms |
+| 1 | row | 0.428 ms | 16.67 ms | 16.67 ms |
+
+- **Latest only costs ~0.02 ms**, against the predicted < 0.1 ms. That is about 1/25 of the row.
+- **As predicted, it does not show in the frame.** The frame stays on the vsync floor in both views. The latest-only
+  windows show no dropped frames, but there are only three of them, and some row windows were flat too. So that is
+  not evidence of a frame-level gain.
+- **The row read 0.39–0.62 ms this run, against 0.39–0.51 in measurement 2.** The row code did not change apart from
+  its visibility gate, which is inactive while the row is visible. This is the cross-session spread that Pattern 6
+  rule 3 describes, not a regression.
+- **One 50 ms frame in the row → latest switch window.** It is a single frame at the moment of the click, plausibly
+  the panel re-laying out for the new view. It does not recur, and a once-per-click stall is not worth chasing.
+- **Not determinable from the trace:** whether the row showed the correct ten numbers immediately after switching
+  back. The window's 0.126 ms is consistent with the on-visible flush running, but only the screen can say whether
+  it painted the right numbers. Asked of the developer, who reported that **the row repainted instantly**. **P-E4
+  holds in full.**
+- *Protocol note:* the run asked for a date with bets placed at 99 credits, which was **unnecessary**. Per Bet sets
+  the rate from its own credits selector, whatever hardware recorded the bets. The condition was carried over from
+  measurement 1's As Played protocol, where the recorded credits do set the rate. The developer asked why it was
+  there.
+
 ## 3. Order
 
 **A → C → B → D → E.** A is the one the developer called important. C changes a stored detector, so it lands before
