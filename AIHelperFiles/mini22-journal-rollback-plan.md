@@ -94,6 +94,38 @@ same state the journal is in between every rotation.
 **Consequence for C:** the tail is contiguous, so rewriting only the boundary segment is valid on this journal. The
 expected cost is about one segment's read and write (~1/20 of today's), **~40–50 ms**, against ~1.3 s.
 
+#### Parts C + B — built (2026-10-11)
+
+**C, `BetHistoryRepository.RollbackToUtc`, new body.** It flushes what the session owes, then walks the segments
+newest first: a segment entirely after the checkpoint is deleted, a mixed one is rewritten atomically
+(`WriteSegmentAtomically`: `.tmp`, flush to the device, rename), and the first segment with nothing to drop stops the
+walk, so it and every older segment are neither read nor written. Unparsable lines are kept and counted. Whatever is in
+memory is trimmed by the same rule, without a second write. `WorldWriteGuard.RefuseWrite` comes first, and a failure is
+loud on both panels, leaving newer segments cut and older ones intact. **No load is needed any more**, so the old
+"this MUST load everything" comment in `UserStatsService` is rewritten to say why that rule belonged to the old design.
+
+**The cross-check, DEBUG-only** (`VerifyRollbackAgainstFullPath`). Before truncating, it reads every (type, id) at or
+before the checkpoint, which is the old full path's rule, computed independently. Afterwards it reads every (type, id)
+left, and reports missing and extra, timed apart from the truncation. Both must be 0. The release build compiles
+without it (checked with `-c ExportRelease`).
+
+**B, `BlockSessionCheckpointService.ApplyCheckpointToServices`** calls `RollbackHistoryToUtc` right after the rollup
+restore, at boot, like the clock. `UserStatsService` stays #2, so INC-004's recovery order is untouched. The rollback
+runs once per process (`_historyRolledBackThisProcess`), so DiceGame's first-entry call becomes a no-op and prints
+that it was one. It is left in place until a run shows that.
+
+**The guard is meaningful at boot, checked rather than assumed:** the world is loaded before #13 restores the
+checkpoint. The Output panel prints `[Governance] … (restored with the world)` before `[BootCheckpoint]`, so a failed
+load has already set `WorldLoadFailed` when the rollback asks `RefuseWrite`.
+
+**Predictions for the run:**
+- **P-C1:** the boot rollback reads **2 segments**, rewrites 1, deletes 0 (for a tail inside the last segment), in
+  **< 150 ms**. The first DiceGame entry falls to an ordinary entry's cost, with `restore:rollbackHistory` ≈ 0 and the
+  no-op line printed.
+- **P-C2:** cross-check **missing 0, extra 0**.
+- **P-C3:** the explorer opened first after the restart reports `afterPresent=0`.
+- The bets dropped equal Claude's count from the disk, taken before the game is reopened.
+
 ### Part B — the rollback moves to boot, where Pattern 2 says it happens
 
 The checkpoint restore already runs at boot. The journal's rollback joins it, so **no scene can ever read

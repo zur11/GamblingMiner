@@ -170,14 +170,26 @@ public partial class BlockSessionCheckpointService : Node
 			// (must run AFTER the CentralBankService restore above — the live-state init and the reconcile
 			//  both read the FED's casino account, P15.1c)
 
-		// Restored BEFORE the bet-history rollback, which DiceGame performs on scene entry: with nothing
-		// pruned that rollback re-seeds the rollup from the rolled-back journal and reaches the same value,
-		// and once pruning has begun it deliberately does not touch it — so this snapshot is the only
-		// source. Either way the rollup ends up describing exactly the world the checkpoint describes.
+		// Restored BEFORE the bet-history rollback just below (at boot since mini-plan 22 B; it used to wait for the
+		// first DiceGame entry). The rollback does not re-derive the rollup from the journal (mini-plan 08 D1), so
+		// this snapshot is the only source, and the rollup ends up describing exactly the world the checkpoint does.
 		if (CurrentSnapshot.BetStatsRollup != null)
 		{
 			GetNodeOrNull<UserStatsService>("/root/UserStatsService")
 				?.ApplyRollupSnapshot(CurrentSnapshot.BetStatsRollup);
+		}
+
+		// Mini-plan 22 B — THE JOURNAL IS ROLLED BACK HERE, AT BOOT, like the clock below and every balance above.
+		// It used to wait for the first DiceGame entry, and until then every reader saw bets the world had discarded:
+		// mini-plan 22 A measured 8,570 of them in BetsHistoryExplorer, opened first after a restart — the same
+		// mechanism behind mini-plan 20's "10,000 more bets than disk". Called FROM here, after the rollup above, so
+		// UserStatsService keeps its place at #2 and INC-004's recovery path (its rollup load, then this service's
+		// restore) is untouched (CLAUDE.md Pattern 5). Cheap since 22 C: it rewrites only the tail it removes.
+		// DiceGame's own call later in the process is a no-op (UserStatsService guards it once per process).
+		if (CurrentSnapshot.HistoryCheckpointUtcTicks.HasValue)
+		{
+			DateTime historyUtc = new DateTime(CurrentSnapshot.HistoryCheckpointUtcTicks.Value, DateTimeKind.Utc);
+			GetNodeOrNull<UserStatsService>("/root/UserStatsService")?.RollbackHistoryToUtc(historyUtc);
 		}
 
 		if (CurrentSnapshot.CalendarLocalTicks.HasValue)
@@ -296,7 +308,7 @@ public partial class BlockSessionCheckpointService : Node
 			? new DateTime(ticks, DateTimeKind.Utc).ToString("yyyy-MM-dd HH:mm:ss.fffffff", System.Globalization.CultureInfo.InvariantCulture) + " UTC"
 			: "none";
 		GD.Print("[BootCheckpoint] restoring the checkpoint at boot; the journal's boundary is " + history
-			+ " (the journal itself is rolled back only on the first DiceGame entry)");
+			+ " (since mini-plan 22 the journal is rolled back here too, at boot)");
 	}
 
 	private void LoadState()
