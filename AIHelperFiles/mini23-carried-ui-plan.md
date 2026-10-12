@@ -5,7 +5,7 @@ takes the parts mini-plan 20 closed without building (its close-out §5, "Carrie
 specification is still mini-plan 20 §2 and is not repeated here.** This plan restates what changed since, the order,
 and the predictions.
 
-**Status:** 📝 **SPECIFIED 2026-10-11**, branch `mini23-carried-ui` (proposed). Nothing built. **Next:** A.
+**Status:** 🔨 **IN PROGRESS** on branch `mini23-carried-ui` (specified 2026-10-11). **A, C, B, D and E done and verified**: E's measurement 2 (2026-10-12) confirmed P-E2/P-E3 with the explorer showing the 10-number row. A second view, latest number only, has been built behind a toggle. **Next:** the developer's run of P-E4, then close-out, including the Manual's "tick" note left over from C2b.
 
 ---
 
@@ -151,6 +151,50 @@ becomes an inactive DEV node.** Built:
 - **P-E3:** at 10 bets/s the frame is back at ~17 ms (it was 28–37).
 - **If P-E2 is refuted** (frame still > 30 ms), the grid was not the main cost and the next suspect is the bet list's own
   layout. That would be measured before anything else is changed.
+
+**E — measurement 2 results (developer's run 2026-10-12, row only). P-E2 and P-E3 hold:**
+
+| | grid (measurement 1) | **row** (measurement 2) |
+|---|---|---|
+| frame at 99 bets/s | 37–50 ms (~23 fps) | **16.7–18.3 ms (~59 fps)** |
+| frame at 10 bets/s | 28–37 ms (~31 fps) | **16.7–17.4 ms (~59 fps)** |
+| winning-numbers flush at 99/s | 3.1–4.4 ms | **0.39–0.51 ms** |
+| bet list flush at 99/s | 0.2–0.3 ms | 0.16–0.21 ms |
+| paused (reference) | 17 ms | 16.9 ms |
+
+The ~20–30 ms outside every timed script disappeared with the grid, which confirms what it was: re-shaping and
+redrawing 100 labels on every frame that showed a bet. At 99 bets/s the explorer now runs at the paused frame rate.
+*Precision note:* "winnersFlush < 0.5 ms" held in 12 of 14 windows; two read 0.508 and 0.514. That is a marginal miss
+of the stated bound, recorded as such, and it does not change the verdict.
+
+**E — the developer's reading, and a second view (2026-10-12).** The developer asked whether the row is still
+expensive. The answer was *partly*:
+- **On the frame, no.** 0.4–0.5 ms is ~3% of a 16.7 ms frame that stays on the vsync floor.
+- **Relative to the bet list, yes.** The row costs 2–3× the whole bet list (0.16–0.21 ms). Every bet shifts all ten
+  cells, so a frame that shows a bet rewrites ten label texts plus ten stylebox colours, and each colour emits
+  `changed` and a redraw.
+
+The developer asked for a toggle between two views:
+- the row as it is (**default**);
+- only the latest number, like DiceGame's `ResultValue`.
+
+**Built.**
+- **`LatestWinnerNumber`** (`Screens/BetsHistoryExplorer/`): a `Label` at font 50, tinted through `Modulate` with
+  ResultValue's colours. It has the row's interface, paints at most once per frame, and reports into the same
+  `winnersFlush` probe.
+- **Toggle:** `%WinnersViewToggle` sits in a new `WinnersHeader` beside the title, which follows the mode. The choice
+  is a static, so it survives scene changes within one launch, and each launch starts on the row.
+- **Both views get every roll;** only the visible one paints. The row gained the same gate: a hidden row keeps
+  writing its ring but does not flush, and becoming visible paints it on that frame. Switching views therefore never
+  shows stale numbers and never re-reads the journal.
+
+**Prediction P-E4, registered before the run.**
+- **Latest-only view at 99 bets/s:**
+  - `winnersFlush` < 0.1 ms: one text and one `Modulate` write per frame, against twenty writes for the row.
+  - Frame unchanged at ~16.7–17.5 ms, because the frame is already on the vsync floor.
+  - So the saving shows in the probe, not in fps.
+- **Toggling back to the row** shows the same ten numbers the latest-only view would have produced, with no gap.
+- **Refuted if:** the latest-only `winnersFlush` stays ≥ 0.2 ms, or the row is wrong or blank after toggling back.
 
 ## 3. Order
 

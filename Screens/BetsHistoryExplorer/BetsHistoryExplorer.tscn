@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://Screens/BetsHistoryExplorer/BetsHistoryExplorer.cs" id="1"]
 [ext_resource type="PackedScene" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/PreviousWinnerNumbersGrid.tscn" id="3"]
 [ext_resource type="PackedScene" path="res://Screens/DiceGame/PreviousWinnerNumbersRow/PreviousWinnerNumbersRow.tscn" id="4"]
+[ext_resource type="Script" path="res://Screens/BetsHistoryExplorer/LatestWinnerNumber.cs" id="5"]
 
 [node name="BetsHistoryExplorer" type="Control"]
 layout_mode = 3
@@ -161,13 +162,33 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="WinnersTitle" type="Label" parent="RootMargin/RootVBox/ContentPanel/Bodies/WinnersPanel"]
+[node name="WinnersHeader" type="HBoxContainer" parent="RootMargin/RootVBox/ContentPanel/Bodies/WinnersPanel"]
 layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="WinnersTitle" type="Label" parent="RootMargin/RootVBox/ContentPanel/Bodies/WinnersPanel/WinnersHeader"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
 text = "Last 10 Winner Numbers"
+
+[node name="WinnersViewToggle" type="Button" parent="RootMargin/RootVBox/ContentPanel/Bodies/WinnersPanel/WinnersHeader"]
+unique_name_in_owner = true
+layout_mode = 2
+toggle_mode = true
+text = "View: Last 10"
 
 [node name="PreviousWinnerNumbersRow" parent="RootMargin/RootVBox/ContentPanel/Bodies/WinnersPanel" instance=ExtResource("4")]
 unique_name_in_owner = true
 layout_mode = 2
+
+[node name="LatestWinnerNumber" type="Label" parent="RootMargin/RootVBox/ContentPanel/Bodies/WinnersPanel"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_font_sizes/font_size = 50
+text = "-"
+script = ExtResource("5")
 
 [node name="WinnersScroll" type="ScrollContainer" parent="RootMargin/RootVBox/ContentPanel/Bodies/WinnersPanel"]
 process_mode = 4

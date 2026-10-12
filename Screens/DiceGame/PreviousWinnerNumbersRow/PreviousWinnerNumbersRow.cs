@@ -35,6 +35,15 @@ public partial class PreviousWinnerNumbersRow : HBoxContainer
 		EnsurePool();
 		// Processing is switched on only while a flush is pending, so an idle row costs nothing per frame.
 		SetProcess(false);
+		// The explorer can switch to its single-number view (LatestWinnerNumber): a hidden row keeps taking rolls into
+		// its ring but paints nothing, and becoming visible paints it on that frame.
+		VisibilityChanged += () =>
+		{
+			if (IsVisibleInTree())
+			{
+				Flush();
+			}
+		};
 	}
 
 	public override void _Process(double delta)
@@ -91,7 +100,7 @@ public partial class PreviousWinnerNumbersRow : HBoxContainer
 
 	private void RequestFlush()
 	{
-		if (_flushPending)
+		if (_flushPending || !IsVisibleInTree())
 		{
 			return;
 		}

@@ -61,6 +61,13 @@ public partial class BetsHistoryExplorer : Control
 	// ready for a later experiment: to try it again, point this field at %PreviousWinnerNumbersGrid (it has the same
 	// three methods) and make WinnersScroll visible and processing.
 	private PreviousWinnerNumbersRow _previousWinnerNumbersRow;
+	// The second view (developer's request, 2026-10-12): only the latest roll, like DiceGame's ResultValue. Both views
+	// are fed every roll and keep their state; only the visible one paints. The choice is static so it survives a
+	// scene round-trip within the process, and every launch starts on the row.
+	private LatestWinnerNumber _latestWinnerNumber;
+	private Label _winnersTitle;
+	private Button _winnersViewToggle;
+	private static bool _showLatestWinnerOnly;
 	private Control _loaderPanel;
 	private Control _contentPanel;
 
@@ -349,6 +356,9 @@ public partial class BetsHistoryExplorer : Control
 		_backToDiceButton = GetNode<Button>("%BackToDiceButton");
 		_betHistoryContainer = GetNode<BetHistoryContainer>("%BetHistoryContainer");
 		_previousWinnerNumbersRow = GetNode<PreviousWinnerNumbersRow>("%PreviousWinnerNumbersRow");
+		_latestWinnerNumber = GetNode<LatestWinnerNumber>("%LatestWinnerNumber");
+		_winnersTitle = GetNode<Label>("%WinnersTitle");
+		_winnersViewToggle = GetNode<Button>("%WinnersViewToggle");
 		_loaderPanel = GetNode<Control>("%LoaderPanel");
 		_contentPanel = GetNode<Control>("%ContentPanel");
 		_chanceFilterSelector = GetNode<OptionButton>("%ChanceFilterSelector");
@@ -419,6 +429,9 @@ public partial class BetsHistoryExplorer : Control
 		_chanceFilterSelector.ItemSelected += OnChanceFilterSelected;
 		_backToCalendarButton.Pressed += OnBackToCalendarPressed;
 		_backToDiceButton.Pressed += OnBackToDicePressed;
+		_winnersViewToggle.ButtonPressed = _showLatestWinnerOnly;
+		_winnersViewToggle.Toggled += OnWinnersViewToggled;
+		ApplyWinnersView();
 
 		RefreshControlLabels();
 		_ = LoadHistoricalDataAsync();
@@ -749,6 +762,7 @@ public partial class BetsHistoryExplorer : Control
 					"No bets at {0}% chance up to selected date.", _chanceFilter);
 			_betHistoryContainer.ClearEntries();
 			_previousWinnerNumbersRow.ClearEntries();
+			_latestWinnerNumber.ClearEntries();
 			return;
 		}
 
@@ -771,6 +785,7 @@ public partial class BetsHistoryExplorer : Control
 			int start = Math.Max(0, endExclusive - MaxPreviewEntries);
 			List<BetRecord> preview = _sortedRecords.GetRange(start, endExclusive - start);
 			_previousWinnerNumbersRow.LoadFromHistoricalRecords(preview);
+			_latestWinnerNumber.LoadFromHistoricalRecords(preview);
 			_betHistoryContainer.LoadFromHistoricalRecords(preview);
 
 			// `forceRebuild: false` even here, and it is load-bearing rather than an optimisation. A
@@ -1152,6 +1167,7 @@ public partial class BetsHistoryExplorer : Control
 		{
 			BetRecord record = _sortedRecords[index];
 			_previousWinnerNumbersRow.AddWinnerNumber(record.Roll, record.Outcome == BetOutcome.Win);
+			_latestWinnerNumber.AddWinnerNumber(record.Roll, record.Outcome == BetOutcome.Win);
 			_betHistoryContainer.AppendHistoricalRecord(record);
 			CountPerf(ref _perfEmitted);
 			index++;
@@ -2055,6 +2071,21 @@ public partial class BetsHistoryExplorer : Control
 	private void OnBackToDicePressed()
 	{
 		_sceneManager?.Go(SceneManager.SceneId.DiceGame);
+	}
+
+	private void OnWinnersViewToggled(bool latestOnly)
+	{
+		_showLatestWinnerOnly = latestOnly;
+		ApplyWinnersView();
+	}
+
+	// The button names the view on screen. Showing a view paints it from the state it kept while hidden.
+	private void ApplyWinnersView()
+	{
+		_previousWinnerNumbersRow.Visible = !_showLatestWinnerOnly;
+		_latestWinnerNumber.Visible = _showLatestWinnerOnly;
+		_winnersTitle.Text = _showLatestWinnerOnly ? "Latest Winner Number" : "Last 10 Winner Numbers";
+		_winnersViewToggle.Text = _showLatestWinnerOnly ? "View: Latest only" : "View: Last 10";
 	}
 
 	private const double GameBaseSpeed = 100.0;
