@@ -259,6 +259,32 @@ timer, and name the stage that costs the most. A fix is decided from that number
 (`networkRoot` and `recentBets`), not evenly. **The first entry after launch is cold** (JIT, resource cache) and
 is read separately from the repeated ones.
 
+**E1 results (developer's run 2026-10-11, Output panel). P-E1 REFUTED:** the engine side is cheap (`load .tscn`
+14–17 ms warm, `toReady` 18–29 ms) and `networkRoot` costs 0.1 ms. There are **three separate costs**, none of
+them predicted:
+
+| entry | total | where |
+|---|---|---|
+| 1st after launch, no run | **2,301 ms** | `legacyRestore` **1,829 ms**, once per process (0.0 after). That is `RestoreLegacyCheckpointIfNeeded` → `RollbackHistoryToUtc`, the checkpoint's history rollback |
+| 2nd–4th, no run | **158–178 ms** | `recentBets` 62–68 ms; the developer saw these as instant |
+| **with the run going, 9000X × 99 cr** | **1,384–1,491 ms** | `nodeState+calculator` **658–740 ms**, `simBind` **350–375 ms**, `toFirstFrame` **265 ms** |
+
+The developer's observation matches: a load only on the first entry, and about one second on each entry **while the
+autobet runs**. Both `nodeState+calculator` and `simBind` mostly set UI values (the strategy panel, the chance
+slider), which fire signal handlers, so the cost is probably in a handler, not in the calls themselves. **The code
+cannot say which; E2 splits them further:**
+
+- `nodeState+calculator` → `betViewToggle`, `nodeFinancialState`, `strategySnapshot`, `bankrollFunded`,
+  `missingNodeStates`, `calculator`;
+- `BindToRunningBackgroundAutobet` → `slider+toggle`, `applyStrategy`, `saveSnapshot`, `panelState`, `runLock`,
+  `readyDots+reseed`;
+- the one-time restore → `rollbackHistory` and `clock`;
+- `toFirstFrame` → the simulation's own frame within it, and the real delta it was handed. After a ~1.2 s stall the
+  run's first frame catches up, bounded by `MaxBetsPerFrame` per engine.
+
+**A fix is chosen only from E2's numbers.** The one-time `rollbackHistory` touches Pattern 2's restore and the
+INC-003 history, so it gets the most caution of the three.
+
 ### Part D — the count, and close
 
 Part A's protocol again on the final code. **Success = R-global 0 and R-phase 0 violations** (1 ms tolerance),

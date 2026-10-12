@@ -540,7 +540,16 @@ public partial class SimulationService : Node
 		return total;
 	}
 
+	// Mini-plan 21 E — timed as a whole so a scene entry can see the simulation frame that follows its load
+	// (SceneEntryProbe, DEBUG-only; one extra call otherwise).
 	public override void _Process(double delta)
+	{
+		long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+		ProcessFrame(delta);
+		Scripts.Diagnostics.SceneEntryProbe.NoteSimFrame(probeStart, delta);
+	}
+
+	private void ProcessFrame(double delta)
 	{
 		// Mini-plan 14 A — the world's single write per frame, BEFORE the early return below. It has to run
 		// whether or not a run is active: something can dirty the world while nothing is betting (a manual

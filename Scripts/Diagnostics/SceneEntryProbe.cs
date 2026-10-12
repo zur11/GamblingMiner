@@ -42,6 +42,8 @@ namespace Scripts.Diagnostics
 			_readyStartTs = 0;
 			_readyEndTs = 0;
 			_marks.Clear();
+			_simFrameMs = 0d;
+			_simFrameDeltaMs = 0d;
 			_pending = true;
 		}
 
@@ -76,6 +78,19 @@ namespace Scripts.Diagnostics
 			if (_pending && _readyStartTs != 0) _readyEndTs = Stopwatch.GetTimestamp();
 		}
 
+		private static double _simFrameMs;
+		private static double _simFrameDeltaMs;
+
+		/// <summary>From SimulationService._Process: the simulation frame that runs between the new scene's _Ready
+		/// and its first _Process, with the real delta it was handed (the load's stall, if the run was going).</summary>
+		[Conditional("DEBUG")]
+		public static void NoteSimFrame(long startTimestamp, double delta)
+		{
+			if (!_pending || _readyEndTs == 0) return;
+			_simFrameMs += Ms(startTimestamp, Stopwatch.GetTimestamp());
+			_simFrameDeltaMs = delta * 1000.0;
+		}
+
 		/// <summary>Call from the scene root's _Process; reports once, on the first frame after _Ready.</summary>
 		[Conditional("DEBUG")]
 		public static void FirstProcess()
@@ -89,7 +104,10 @@ namespace Scripts.Diagnostics
 				+ " | load .tscn " + F(Ms(_requestTs, loaded))
 				+ " | toReady " + F(Ms(loaded, _readyStartTs)) + " (swap, instantiate, children's _Ready)"
 				+ " | _Ready " + F(Ms(_readyStartTs, _readyEndTs)) + " (" + _marks + ")"
-				+ " | toFirstFrame " + F(Ms(_readyEndTs, now)));
+				+ " | toFirstFrame " + F(Ms(_readyEndTs, now))
+				+ " (of which the simulation frame " + F(_simFrameMs) + ", handed a delta of " + F(_simFrameDeltaMs) + ")");
+			_simFrameMs = 0d;
+			_simFrameDeltaMs = 0d;
 		}
 	}
 }

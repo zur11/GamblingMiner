@@ -381,12 +381,17 @@ public partial class DiceGame : Control, IBetEventSource
 		SeedRollFromRecentBets(recentOnEntry);
 		Scripts.Diagnostics.SceneEntryProbe.Mark("recentBets");
 		BuildBetDisplayToggle();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("betViewToggle");
 		LoadActiveNodeFinancialState();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("nodeFinancialState");
 		LoadActiveNodeStrategySnapshot();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("strategySnapshot");
 		EnsureInitialBankrollFunded();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("bankrollFunded");
 		EnsureMissingNodeFinancialStates(hadAnyNodeFinancialState);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("missingNodeStates");
 		RefreshCalculatorFromGameSettings();
-		Scripts.Diagnostics.SceneEntryProbe.Mark("nodeState+calculator");
+		Scripts.Diagnostics.SceneEntryProbe.Mark("calculator");
 
 		// Background autobet (SimulationService): subscribe for live UI updates, and if a background
 		// autobet is already running (we navigated back into DiceGame), bind to it instead of starting fresh.
@@ -1655,6 +1660,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_chanceSlider.Value = cfg.Chance;
 			_highLowToggleBtn.ButtonPressed = cfg.BetHigh;
 			_highLowToggleBtn.Text = cfg.BetHigh ? "HIGH" : "LOW";
+			Scripts.Diagnostics.SceneEntryProbe.Mark("bind:slider+toggle");
 
 			// D-M2.2: while a session runs, the SESSION is the truthful source — the per-node snapshot
 			// is what was CONFIGURED, this is what is EXECUTING, and the two can already disagree.
@@ -1674,9 +1680,11 @@ public partial class DiceGame : Control, IBetEventSource
 					_loadingNodeStrategy = false;
 				}
 
+				Scripts.Diagnostics.SceneEntryProbe.Mark("bind:applyStrategy");
 				// Keep the per-node snapshot in step with what is executing, so stopping the run and
 				// re-reading the panel cannot show a third, older configuration.
 				SaveActiveNodeStrategySnapshot();
+				Scripts.Diagnostics.SceneEntryProbe.Mark("bind:saveSnapshot");
 			}
 		}
 		_strategyPanel.SetManualEnabled(false);
@@ -1687,11 +1695,14 @@ public partial class DiceGame : Control, IBetEventSource
 		bool paused = _simulationService?.IsPaused == true;
 		_isAutoPaused = paused;
 		_strategyPanel.SetAutoPaused(paused);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("bind:panelState");
 		// The scene was rebuilt on entry with every control back at its enabled default, so the run lock
 		// has to be re-asserted here — this is exactly where it was missing.
 		ApplyRunLock(true);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("bind:runLock");
 		RefreshNodeSelectorReadyDots();
 		ReseedWalletAcrossTransition(); // scene rebound onto a running sim — a wholesale rebind, not steady state
+		Scripts.Diagnostics.SceneEntryProbe.Mark("bind:readyDots+reseed");
 	}
 
 	private void OnBetsPerSecondChanged(double _)
@@ -2681,7 +2692,9 @@ public partial class DiceGame : Control, IBetEventSource
 		if (snapshot.HistoryCheckpointUtcTicks.HasValue)
 		{
 			DateTime checkpointUtc = new DateTime(snapshot.HistoryCheckpointUtcTicks.Value, DateTimeKind.Utc);
+			Scripts.Diagnostics.SceneEntryProbe.Mark("restore:before");
 			_userStatsService?.RollbackHistoryToUtc(checkpointUtc);
+			Scripts.Diagnostics.SceneEntryProbe.Mark("restore:rollbackHistory");
 		}
 
 		if (snapshot.CalendarLocalTicks.HasValue && _calendarTimeService != null)
@@ -2690,6 +2703,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_calendarTimeService.SetLocalDateTime(local);
 			_calendarTimeService.SetExplorerSelectedLocalDateTime(local);
 			_calendarTimeService.PersistCurrentTime();
+			Scripts.Diagnostics.SceneEntryProbe.Mark("restore:clock");
 		}
 	}
 
