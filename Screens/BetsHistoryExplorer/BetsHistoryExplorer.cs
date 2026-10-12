@@ -701,6 +701,7 @@ public partial class BetsHistoryExplorer : Control
 		_allRecords = _userStatsService.BetHistory.Records
 			.OrderBy(r => r.TimestampUtc)
 			.ToList();
+		ReportExplorerLoad();
 		_loaderProgress.Value = 35;
 
 		await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
@@ -1305,6 +1306,27 @@ public partial class BetsHistoryExplorer : Control
 		_perfEngineProcessSeconds = 0d;
 		_perfMaxFrameSeconds = 0d;
 		ExplorerFrameProbe.Reset();
+	}
+
+	// Mini-plan 22 A — what the explorer loaded, and how much of it lies AFTER the present: records the world has
+	// discarded (a restart reverts to the last mined block) but the journal still holds until its rollback runs.
+	// Printed once per load to the Godot editor's OUTPUT panel; P-A3 compares it before and after the first DiceGame
+	// entry of a process.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void ReportExplorerLoad()
+	{
+		DateTime presentUtc = PresentLocal().ToUniversalTime();
+		int afterPresent = 0;
+		foreach (BetRecord record in _allRecords)
+		{
+			if (record.TimestampUtc > presentUtc)
+			{
+				afterPresent++;
+			}
+		}
+
+		GD.Print("[ExplorerLoad] records=" + _allRecords.Count + " afterPresent=" + afterPresent
+			+ " present=" + presentUtc.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + " UTC");
 	}
 
 	private void JumpCursorTo(DateTime targetLocal)

@@ -947,19 +947,64 @@ namespace Scripts.History
 		// with the live cap in force a restore writes back at most MaxInMemoryRecords. The steady state is
 		// unchanged, because retention caps the files at the same number anyway; what moves is the boundary
 		// after a restore on a session that had already trimmed. Verified on a real restore, not assumed.
+		/// <summary>Mini-plan 22 A — what the last rollback did and where its records sat, for the [JournalRollback]
+		/// line. Shape, not just cost: whether the records after the checkpoint form a contiguous TAIL of the journal
+		/// (in write order) decides whether a targeted truncation can replace the full rewrite.</summary>
+		public readonly record struct RollbackDiagnostics(
+			int RecordsBefore,
+			int RecordsRemoved,
+			int DepositsRemoved,
+			int FirstRemovedIndex,
+			int KeptAfterFirstRemoved,
+			DateTime? LastRecordUtc,
+			double RemoveMs,
+			double RewriteMs);
+
+		public RollbackDiagnostics LastRollback { get; private set; }
+
 		public void RollbackToUtc(DateTime checkpointUtc)
 		{
 			DateTime checkpoint = checkpointUtc.Kind == DateTimeKind.Utc
 				? checkpointUtc
 				: checkpointUtc.ToUniversalTime();
 
-			_records.RemoveAll(r => r != null && r.TimestampUtc > checkpoint);
-			_deposits.RemoveAll(d => d != null && d.TimestampUtc > checkpoint);
+			// Mini-plan 22 A — one pass over the loaded records, BEFORE anything is removed: the first record (in
+			// write order) after the checkpoint, and how many records AT OR BEFORE the checkpoint come after it. Zero
+			// means the post-checkpoint records are exactly a suffix of the journal; anything else is an
+			// out-of-order stamp a targeted truncation would have to handle.
+			int recordsBefore = _records.Count;
+			int firstRemoved = -1;
+			int keptAfterFirst = 0;
+			for (int i = 0; i < _records.Count; i++)
+			{
+				BetRecord r = _records[i];
+				if (r == null) continue;
+				if (r.TimestampUtc > checkpoint)
+				{
+					if (firstRemoved < 0) firstRemoved = i;
+				}
+				else if (firstRemoved >= 0)
+				{
+					keptAfterFirst++;
+				}
+			}
+
+			DateTime? lastUtc = _records.Count > 0 ? _records[_records.Count - 1]?.TimestampUtc : null;
+			long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+
+			int removed = _records.RemoveAll(r => r != null && r.TimestampUtc > checkpoint);
+			int depositsRemoved = _deposits.RemoveAll(d => d != null && d.TimestampUtc > checkpoint);
 			RebuildRecordIdIndex();
 			ResetNextRecordIdFromRecords(); // the rewind the counter must follow (mini-plan 13 B)
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
+			long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
 			RebuildJournalFromCurrentState();
+			long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+
+			double toMs = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+			LastRollback = new RollbackDiagnostics(recordsBefore, removed, depositsRemoved, firstRemoved,
+				keptAfterFirst, lastUtc, (t1 - t0) * toMs, (t2 - t1) * toMs);
 		}
 
 		// The id index mirrors _records, so a truncation has to release the ids it dropped — otherwise a

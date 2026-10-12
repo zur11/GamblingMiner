@@ -141,6 +141,7 @@ public partial class BlockSessionCheckpointService : Node
 	// applies at startup regardless of which scene the app opens into.
 	private void ApplyCheckpointToServices()
 	{
+		ReportBootCheckpoint();
 		GetNodeOrNull<BankrollStateService>("/root/BankrollStateService")
 			?.SetBalance(CurrentSnapshot.BankrollBalance);
 		GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService")
@@ -284,6 +285,19 @@ public partial class BlockSessionCheckpointService : Node
 	}
 
 	public bool HasCheckpoint() => CurrentSnapshot != null;
+
+	// Mini-plan 22 A — the instant the journal SHOULD be rolled back to at boot, printed to the Godot editor's
+	// OUTPUT panel. Today the clock is reverted here and the journal is not (that waits for the first DiceGame entry);
+	// this line lets a run match the journal on disk against the boundary it will eventually be cut at.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void ReportBootCheckpoint()
+	{
+		string history = CurrentSnapshot?.HistoryCheckpointUtcTicks is long ticks
+			? new DateTime(ticks, DateTimeKind.Utc).ToString("yyyy-MM-dd HH:mm:ss.fffffff", System.Globalization.CultureInfo.InvariantCulture) + " UTC"
+			: "none";
+		GD.Print("[BootCheckpoint] restoring the checkpoint at boot; the journal's boundary is " + history
+			+ " (the journal itself is rolled back only on the first DiceGame entry)");
+	}
 
 	private void LoadState()
 	{

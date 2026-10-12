@@ -545,8 +545,11 @@ public partial class UserStatsService : Node
 		// the tail chunks would rewrite the journal from that tail alone and delete every older chunk —
 		// turning a rollback of a few bets into the loss of the entire retained history.
 		// Once per process (DiceGame's checkpoint restore is guarded), and only when a checkpoint exists.
+		long loadStart = System.Diagnostics.Stopwatch.GetTimestamp();
 		BetHistory.EnsureAllChunksLoaded();
+		double loadMs = (System.Diagnostics.Stopwatch.GetTimestamp() - loadStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 		BetHistory.RollbackToUtc(checkpointUtc);
+		ReportJournalRollback(checkpointUtc, loadMs);
 
 		// Mini-plan 08 D1 — NOT a replay of the journal. This was RebuildStatsFromLoadedHistory(), which
 		// re-derived Stats from the ~200,000 bets retention still holds: once anything had been pruned, every
@@ -556,6 +559,42 @@ public partial class UserStatsService : Node
 		// restore already put in place IS the committed lifetime total; the journal is only a window onto it.
 		Stats = UserBettingStats.FromRollup(Rollup);
 		EmitStatsChangedImmediate();
+	}
+
+	// Mini-plan 22 A — one line per rollback, to the Godot editor's OUTPUT panel (GD.Print). Its cost split (load
+	// vs in-memory removal vs rewrite), how much it removed, and WHERE: "tail" says whether the removed records
+	// are exactly a suffix of the journal in write order (keptAfterFirst = 0), which decides whether a targeted
+	// truncation can replace the full rewrite. The file count and bytes are read after the rewrite.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void ReportJournalRollback(DateTime checkpointUtc, double loadMs)
+	{
+		BetHistoryRepository.RollbackDiagnostics d = BetHistory.LastRollback;
+		int files = 0;
+		long bytes = 0;
+		try
+		{
+			string folder = System.IO.Path.GetDirectoryName(BetHistoryRepository.ResolveDefaultPath());
+			foreach (string file in System.IO.Directory.GetFiles(folder, "bet_history*.jsonl"))
+			{
+				files++;
+				bytes += new System.IO.FileInfo(file).Length;
+			}
+		}
+		catch (Exception)
+		{
+			files = -1; // a diagnostic must never throw into the restore it observes
+		}
+
+		string Ms(double ms) => ms.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+		string tail = d.FirstRemovedIndex < 0
+			? "nothing after the checkpoint"
+			: (d.KeptAfterFirstRemoved == 0 ? "a contiguous tail" : $"NOT a tail: {d.KeptAfterFirstRemoved} kept records after the first removed one");
+		GD.Print("[JournalRollback] checkpoint " + checkpointUtc.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)
+			+ " UTC, journal's last record " + (d.LastRecordUtc?.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) ?? "none")
+			+ " | loaded " + d.RecordsBefore + " records in " + Ms(loadMs) + " ms"
+			+ " | removed " + d.RecordsRemoved + " records + " + d.DepositsRemoved + " deposits in " + Ms(d.RemoveMs) + " ms"
+			+ ", from index " + d.FirstRemovedIndex + " (" + tail + ")"
+			+ " | rewrote the journal in " + Ms(d.RewriteMs) + " ms: " + files + " files, " + (bytes / 1024) + " KB");
 	}
 
 	// Used only for the pre-genesis reset (no block has ever been mined): unlike RollbackHistoryToUtc, there
