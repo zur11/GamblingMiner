@@ -130,7 +130,7 @@ offset_top = 563.0
 offset_right = 1636.0
 offset_bottom = 594.0
 theme_override_font_sizes/font_size = 22
-text = "Auto bets per second:"
+text = "Hardware credits in use:"
 
 [node name="ActiveNodeText" type="Label" parent="UiTextLabels"]
 layout_mode = 0
@@ -251,13 +251,15 @@ offset_right = 256.0
 offset_bottom = 517.0
 theme_override_font_sizes/font_size = 22
 
-[node name="ApsSelector" type="OptionButton" parent="."]
+[node name="CreditsInUseValue" type="Label" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
-offset_left = 1537.0
-offset_top = 565.0
+offset_left = 1570.0
+offset_top = 563.0
 offset_right = 1741.0
-offset_bottom = 597.0
+offset_bottom = 594.0
+theme_override_font_sizes/font_size = 22
+text = "1"
 
 [node name="ScrollContainer" type="ScrollContainer" parent="."]
 visible = false

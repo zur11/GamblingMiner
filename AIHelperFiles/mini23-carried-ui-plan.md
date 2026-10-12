@@ -95,6 +95,20 @@ re-checked after the swap.
 - **P-D1:** no code path reads the dropdown's selected item as a rate (to be confirmed by the enumeration). The label
   follows a credit change made in the shop or the DEV ladder without leaving DiceGame.
 
+**B — verified by the developer (2026-10-11):** every prediction held, and the interpretation was confirmed: "the date
+it arrived from" is the date the explorer was showing.
+
+**D — built (2026-10-11). P-D1 holds by enumeration.** Of the 12 references: the field and its lookup; the 1X–99X fill
+(`InitializeApsSelector`); `Select` + `Disabled` in `RefreshHardwareDrivenSpeed`; two that only used it as the DEV time
+selector's anchor; and `ItemSelected → OnBetsPerSecondChanged`, unreachable on a disabled control. **None reads the
+selected item as a rate.** The rate has come from `GetAutoBetBaseAps()` → `HardwareAllocationRepository` since Phase 3.
+- `.tscn`: `ApsSelector` (`OptionButton`) → `CreditsInUseValue` (`Label`, font 22, same right edge x 1741, so the DEV
+  ladder at x 1752 does not move); the caption "Auto bets per second:" → **"Hardware credits in use:"**.
+- Code: `RefreshHardwareDrivenSpeed` writes the value `GetAutoBetBaseAps()` returns, the same number the rate uses
+  (Convention 6), on entry, on a node switch and on every `HardwareChanged`. `InitializeApsSelector` and
+  `OnBetsPerSecondChanged` are **deleted** (Convention 3). The four comments that named the "APS selector" are rewritten.
+- Debug and ExportRelease builds clean; detector 17 / 0 / 0 / 0.
+
 **E — explorer frame cost.** Measure first: one run in Per Bet at 99 cr × 1x, copying the `[ExplorerPerf] ms/frame`
 line. Fix only the stage that dominates. If the frame is outside script time (`frame − engineProcess`), the next
 step is reducing what is laid out per row, not code.
