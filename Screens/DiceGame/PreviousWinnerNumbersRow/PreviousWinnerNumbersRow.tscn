@@ -1,0 +1,8 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Screens/DiceGame/PreviousWinnerNumbersRow/PreviousWinnerNumbersRow.cs" id="1_row"]
+[ext_resource type="PackedScene" uid="uid://tre0q6aulgw1" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/WinnerNumberPresenter/WinnerNumberPresenter.tscn" id="2_cell"]
+
+[node name="PreviousWinnerNumbersRow" type="HBoxContainer"]
+script = ExtResource("1_row")
+_winnerPresenterScene = ExtResource("2_cell")

@@ -114,6 +114,44 @@ line. Fix only the stage that dominates. If the frame is outside script time (`f
 step is reducing what is laid out per row, not code.
 - **P-E1:** one stage dominates, and it is the bet list's flush or layout, not the summary walk.
 
+**E — measurement 1 (developer's run, 2026-10-12; Per Bet 99 cr then 10 cr, 1x, then paused).** Averages per frame:
+
+| | paused | 10 bets/s | 99 bets/s |
+|---|---|---|---|
+| **frame** | **17 ms** (59 fps) | **28–37 ms** (~31 fps) | **37–50 ms** (~23 fps) |
+| explorer (append + summary) | 0.02 | 0.03–0.05 | 0.07–0.19 |
+| bet list (`rowsFlush`) | 0 | 0.1–0.2 | 0.2–0.3 |
+| **winning-numbers grid** | 0 | **2.0–2.8** | **3.1–4.4** |
+
+- **P-E1 refuted on its candidate.** Among the scripts the **grid** dominates, not the bet list (0.2 ms) or the summary
+  (0.005 ms).
+- **Most of the cost is outside every timed script:** the stages sum to ~4.5 ms against 20–33 ms of extra frame. The
+  cost also comes in **lumps**. At 10 bets/s only one frame in three shows a bet, yet the average frame rises 13 ms, so
+  each frame that shows a bet costs ~40 ms.
+- **The suspect, read from the code:** every bet shifts all 100 grid cells, so all 100 labels are rewritten,
+  re-shaped and redrawn. In DiceGame that grid is hidden (the "Numbers" view deferred at mini-plan 10), which is why
+  DiceGame held 60 fps at the same rate.
+- **Instrument note (Convention 16):** the `engineProcess` column (`Performance.Monitor.TimeProcess`) read 28 ms while
+  PAUSED against a 17 ms frame. It is not the per-frame script time it was taken for, and it is **removed** from the line.
+
+**E — the developer's decision (2026-10-12): the explorer shows a ROW of the last 10 winning numbers, and the grid
+becomes an inactive DEV node.** Built:
+- `Screens/DiceGame/PreviousWinnerNumbersRow/`: an `HBoxContainer` of **10** `WinnerNumberPresenter` cells, newest on the
+  left, with the grid's interface and ring-buffer design (cells never move, at most one rewrite per frame).
+- `BetsHistoryExplorer.tscn`: the row under the title (now "Last 10 Winner Numbers"). The grid's `WinnersScroll` keeps
+  its place with `visible = false` and `process_mode = disabled`. The field is renamed `_previousWinnerNumbersRow`,
+  and its comment says how to point it back at the grid for a later experiment.
+- The probe's `gridFlush` becomes **`winnersFlush`** (`AddWinnersFlush`): whichever winning-numbers view is live
+  reports there. DiceGame is untouched.
+- Debug and ExportRelease builds clean; detector 17 / 0 / 0 / 0.
+
+**E — measurement 2, with the row only (registered before the run):**
+- **P-E2:** at 99 bets/s the frame falls from 37–50 ms to **~17–22 ms** (near the paused frame). `winnersFlush` falls from
+  3.1–4.4 ms to **< 0.5 ms** (10 cells instead of 100). The residual outside the scripts largely disappears.
+- **P-E3:** at 10 bets/s the frame is back at ~17 ms (it was 28–37).
+- **If P-E2 is refuted** (frame still > 30 ms), the grid was not the main cost and the next suspect is the bet list's own
+  layout. That would be measured before anything else is changed.
+
 ## 3. Order
 
 **A → C → B → D → E.** A is the one the developer called important. C changes a stored detector, so it lands before
