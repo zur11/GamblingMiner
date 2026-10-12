@@ -987,8 +987,9 @@ public partial class BetsHistoryExplorer : Control
 	// every gap, so nothing is missing — the CLOCK advanced 6–17 game-minutes while the engine placed no bet. A
 	// long frame at 9000X advances the calendar by the whole frame while the bet engine keeps only its backlog
 	// window and drops the rest; the clock's throttle (R2-C1) uses the PREVIOUS frame's retained fraction, so it
-	// cannot give way in time. That is the simulation's fault, recorded as a roadmap objective; this trim keeps
-	// the replay honest about the bets in the meantime, on existing journals too.
+	// cannot give way in time. Mini-plan 21 fixed that at the source (the clock now advances by the span the
+	// engines executed, so a new journal has no such stretch), and this trim is KEPT for the journals written
+	// before it, which still hold their holes: history is not rewritten in place (mini-plan 08 §5).
 	//
 	// One real second is the base rhythm (one bet per second at 1 credit and 1x), so a stretch the hardware rate
 	// genuinely spaces — 100 game-s at 1 credit, 150 under frame quantization — still reads as spacing, and

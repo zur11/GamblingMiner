@@ -61,6 +61,7 @@ Manages game-time progression.
 - Game start: `2009-01-03 18:15:06 Local`
 - Advances via `_Process(delta)` when `IsRunning = true`
 - `SpeedMultiplier` allows adjustable time scaling
+- **⚠ Since mini-plan 21 (2026-10-11) the throttle no longer moves the clock.** While a run goes, `DrivenBySimulation` is set and this service's `_Process` stands down; `SimulationService` advances the clock once per frame through `AdvanceGameSeconds`, by exactly the span every engine executed. R2-C1's one-frame lag measured 1.21 % overspend and 41 holes in the journal; the new model reads 0. `SimulationThrottle` remains the `Sim:` readout and the difficulty trace's saturation figure. The original description follows.
 - **`SimulationThrottle` (R2-C1, 2026-07-27)** — the fraction of last frame's simulated time the bet engine actually retained; the clock advances `delta × SpeedMultiplier × DevTimeScale × throttle`. `1.0` (inert) whenever nothing is dropped, which is every frame that keeps up; below 1 only when `SimulationService`'s backlog clamp discarded simulated work, so **game time can never outrun the mining it represents**. Written by `SimulationService` each frame, reset to `1.0` when the sim stops. See the Round 2 entry under Blockchain / Mining below
 - **`DevTimeScale` is the EFFECTIVE DEV scale (mini-plan 09).** It has a private setter and changes only
   through `ApplyGovernedDevTimeScale`, called by `SimulationService` with `DevTimeScaleGovernor`'s result.

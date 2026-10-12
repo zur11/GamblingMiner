@@ -74,7 +74,11 @@ public partial class SceneManager : Node
 	{
 		PreviousScene = _currentScene;
 		_currentScene = scene;
-		GetTree().ChangeSceneToFile(Paths[scene]);
+		// Mini-plan 21 E — load, then swap: what ChangeSceneToFile does inside, split so the load can be timed.
+		Scripts.Diagnostics.SceneEntryProbe.BeginRequest(scene.ToString());
+		PackedScene packed = GD.Load<PackedScene>(Paths[scene]);
+		Scripts.Diagnostics.SceneEntryProbe.NoteLoaded();
+		GetTree().ChangeSceneToPacked(packed);
 	}
 
 	// Push a scene as an overlay on top of the current scene tree.

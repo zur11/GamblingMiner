@@ -191,6 +191,7 @@ public partial class DiceGame : Control, IBetEventSource
 	// Inicialización
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.SceneEntryProbe.ReadyStarted();   // mini-plan 21 E, DEBUG-only
 		// Inicializar motor y servicios
 		_engine = new DiceEngine();
 		_bankrollStateService = GetNodeOrNull<BankrollStateService>("/root/BankrollStateService");
@@ -226,9 +227,11 @@ public partial class DiceGame : Control, IBetEventSource
 			_calendarTimeService.SpeedMultiplier = GameSecondsPerRealSecond;
 			_calendarTimeService.IsRunning = false;
 		}
+		Scripts.Diagnostics.SceneEntryProbe.Mark("services");
 		_blockchainNetworkRoot = new NetworkRoot();
 		_blockchainNetworkRoot.Name = "BlockchainNetworkRoot";
 		AddChild(_blockchainNetworkRoot);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("networkRoot");
 		_savedStrategyRepository = new SavedBettingStrategyRepository(SavedStrategiesPath);
 		var strategy = new ProgressiveBettingStrategy();
 
@@ -321,6 +324,7 @@ public partial class DiceGame : Control, IBetEventSource
 		RefreshHardwareDrivenSpeed();
 		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
 		_apsSelector.ItemSelected += _ => OnBetsPerSecondChanged(0d);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("nodes+signals+aps");
 
 		// DEV/TEST time-acceleration selector (the ladder is DevTimeScaleSelector's own), placed next to the
 		// APS selector — the two together are the `credits × DevTimeScale` throughput demand.
@@ -345,6 +349,7 @@ public partial class DiceGame : Control, IBetEventSource
 		// edge. The shipping control remains Mining Pools & Hardware.
 		var devCredits = new UI.DevPlayerCreditsSelector.DevPlayerCreditsSelector { Position = new Vector2(1752f, 563f) };
 		AddChild(devCredits);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("devControls");
 		_session.OnStopped += OnSessionStopped;
 
 		_wallet.BalanceDeltaChanged += (sessionId, delta) =>
@@ -356,26 +361,37 @@ public partial class DiceGame : Control, IBetEventSource
 		};
 
 		UpdateAllUI();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("UpdateAllUI");
 		UpdateStrategySaveLoadButtons();
 		InitializeActiveNodeSelector();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("nodeSelector");
 		bool hadAnyNodeFinancialState = _blockchainNetworkRoot?.HasAnyNodeFinancialState() ?? false;
 		RestoreLegacyCheckpointIfNeeded();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("legacyRestore");
 		// Must run AFTER the checkpoint restore above (it rolls bet history back to the last mined block):
 		// GetLoadedHistoryStats() below reads the currently-loaded history, so calling it before the rollback
 		// would compute "General P/L" / "last deposit P/L" from uncommitted bets the checkpoint just discarded.
 		ApplyRealtimeBootstrapFromLoadedHistory();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("historyBootstrap");
 		// SF.4B.6: seed the in-game bet-history list from the centralized persistent store so the most-recent
 		// history reproduces on entry (before, it started empty on re-entry). Runs AFTER the checkpoint rollback
 		// above so it reflects committed history; live BetExecuted events keep prepending after this.
 		IReadOnlyList<BetRecord> recentOnEntry = _userStatsService?.GetRecentBets(BetHistoryContainer.MaxRecentEntries);
 		_betHistoryContainer?.LoadFromHistoricalRecords(recentOnEntry);
 		SeedRollFromRecentBets(recentOnEntry);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("recentBets");
 		BuildBetDisplayToggle();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("betViewToggle");
 		LoadActiveNodeFinancialState();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("nodeFinancialState");
 		LoadActiveNodeStrategySnapshot();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("strategySnapshot");
 		EnsureInitialBankrollFunded();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("bankrollFunded");
 		EnsureMissingNodeFinancialStates(hadAnyNodeFinancialState);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("missingNodeStates");
 		RefreshCalculatorFromGameSettings();
+		Scripts.Diagnostics.SceneEntryProbe.Mark("calculator");
 
 		// Background autobet (SimulationService): subscribe for live UI updates, and if a background
 		// autobet is already running (we navigated back into DiceGame), bind to it instead of starting fresh.
@@ -393,6 +409,9 @@ public partial class DiceGame : Control, IBetEventSource
 				_simulationService.ConsumeStopNotice();
 			}
 		}
+
+		Scripts.Diagnostics.SceneEntryProbe.Mark("simBind");
+		Scripts.Diagnostics.SceneEntryProbe.ReadyEnded();
 	}
 
 	private void InitializeApsSelector()
@@ -675,6 +694,7 @@ public partial class DiceGame : Control, IBetEventSource
 
 	public override void _Process(double delta)
 	{
+		Scripts.Diagnostics.SceneEntryProbe.FirstProcess();   // mini-plan 21 E: reports once per entry, DEBUG-only
 		if (_readoutSampler.ShouldRepaint(delta))
 		{
 			UpdateCurrentAppTimeUI(cadenceSample: true);
@@ -1640,6 +1660,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_chanceSlider.Value = cfg.Chance;
 			_highLowToggleBtn.ButtonPressed = cfg.BetHigh;
 			_highLowToggleBtn.Text = cfg.BetHigh ? "HIGH" : "LOW";
+			Scripts.Diagnostics.SceneEntryProbe.Mark("bind:slider+toggle");
 
 			// D-M2.2: while a session runs, the SESSION is the truthful source — the per-node snapshot
 			// is what was CONFIGURED, this is what is EXECUTING, and the two can already disagree.
@@ -1659,9 +1680,11 @@ public partial class DiceGame : Control, IBetEventSource
 					_loadingNodeStrategy = false;
 				}
 
+				Scripts.Diagnostics.SceneEntryProbe.Mark("bind:applyStrategy");
 				// Keep the per-node snapshot in step with what is executing, so stopping the run and
 				// re-reading the panel cannot show a third, older configuration.
 				SaveActiveNodeStrategySnapshot();
+				Scripts.Diagnostics.SceneEntryProbe.Mark("bind:saveSnapshot");
 			}
 		}
 		_strategyPanel.SetManualEnabled(false);
@@ -1672,11 +1695,14 @@ public partial class DiceGame : Control, IBetEventSource
 		bool paused = _simulationService?.IsPaused == true;
 		_isAutoPaused = paused;
 		_strategyPanel.SetAutoPaused(paused);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("bind:panelState");
 		// The scene was rebuilt on entry with every control back at its enabled default, so the run lock
 		// has to be re-asserted here — this is exactly where it was missing.
 		ApplyRunLock(true);
+		Scripts.Diagnostics.SceneEntryProbe.Mark("bind:runLock");
 		RefreshNodeSelectorReadyDots();
 		ReseedWalletAcrossTransition(); // scene rebound onto a running sim — a wholesale rebind, not steady state
+		Scripts.Diagnostics.SceneEntryProbe.Mark("bind:readyDots+reseed");
 	}
 
 	private void OnBetsPerSecondChanged(double _)
@@ -2149,8 +2175,11 @@ public partial class DiceGame : Control, IBetEventSource
 
 	private void OnOpenCalculatorPressed()
 	{
-		_martingaleCalculator.Open();
+		// Refresh first, while the calculator is still hidden: it records the inputs and marks its table pending,
+		// and Open() then builds the rows ONCE from that fresh context (mini-plan 21 E). In the old order the
+		// table was built by the refresh after Open, and the lazy build would have made it twice.
 		RefreshCalculatorFromGameSettings();
+		_martingaleCalculator.Open();
 	}
 
 	private void OnOpenBankrollProgrammerPressed()
@@ -2666,7 +2695,9 @@ public partial class DiceGame : Control, IBetEventSource
 		if (snapshot.HistoryCheckpointUtcTicks.HasValue)
 		{
 			DateTime checkpointUtc = new DateTime(snapshot.HistoryCheckpointUtcTicks.Value, DateTimeKind.Utc);
+			Scripts.Diagnostics.SceneEntryProbe.Mark("restore:before");
 			_userStatsService?.RollbackHistoryToUtc(checkpointUtc);
+			Scripts.Diagnostics.SceneEntryProbe.Mark("restore:rollbackHistory");
 		}
 
 		if (snapshot.CalendarLocalTicks.HasValue && _calendarTimeService != null)
@@ -2675,6 +2706,7 @@ public partial class DiceGame : Control, IBetEventSource
 			_calendarTimeService.SetLocalDateTime(local);
 			_calendarTimeService.SetExplorerSelectedLocalDateTime(local);
 			_calendarTimeService.PersistCurrentTime();
+			Scripts.Diagnostics.SceneEntryProbe.Mark("restore:clock");
 		}
 	}
 

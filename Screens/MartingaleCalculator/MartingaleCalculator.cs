@@ -27,6 +27,14 @@ public partial class MartingaleCalculator : Control
 	private decimal _ctxSessionProfit;
 	private bool _ctxShowDoneRows;
 
+	// Mini-plan 21 E — the table is built only where someone can see it. CalculateFromGameContext instantiates up
+	// to 500 row scenes, and DiceGame refreshed it while the calculator was CLOSED: three times on every entry with
+	// a run going (strategy snapshot, explicit refresh, binding to the run), ~330 ms each — measured by the
+	// [SceneEntry] probe at 658–740 + 350–375 ms of a ~1.4 s entry — plus freeing 1,500 discarded rows in the next
+	// frame, and again on every throttled refresh during the run. The inputs are still recorded at once; only the
+	// rows wait for Open(). Mini-plan 10's rule for the bet list, applied here: a row nobody can see costs nothing.
+	private bool _tablePending;
+
 	public override void _Ready()
 	{
 		_totalBankrollInput = GetNode<LineEdit>("%TotalBankrollInput");
@@ -38,6 +46,18 @@ public partial class MartingaleCalculator : Control
 		_progressionStartingBalanceLabel = GetNode<Label>("%ProgressionStartingBalanceLabel");
 		_rowScene = GD.Load<PackedScene>("res://Screens/MartingaleCalculator/BetRollRow/BetRollRow.tscn");
 
+		// Mini-plan 21 E (developer's screenshot, 2026-10-11): the panel used the default theme's semi-transparent
+		// style, so DiceGame's bet list showed through the table. The full-screen Background stays a translucent
+		// dim on purpose; the panel itself is made opaque here, without touching the .tscn layout.
+		GetNode<PanelContainer>("Panel").AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(0.16f, 0.16f, 0.17f, 1f),
+			CornerRadiusTopLeft = 6,
+			CornerRadiusTopRight = 6,
+			CornerRadiusBottomLeft = 6,
+			CornerRadiusBottomRight = 6
+		});
+
 		GetNode<Button>("%CalculateButton").Pressed += OnCalculatePressed;
 		GetNode<Button>("%ResetButton").Pressed += OnResetPressed;
 		GetNode<Button>("%CloseCalculatorButton").Pressed += OnClosePressed;
@@ -47,7 +67,17 @@ public partial class MartingaleCalculator : Control
 
 	public void Open()
 	{
+		// DiceGame builds several controls in code AFTER this node (the DEV block, the Bet View toggle, the DEV credits
+		// ladder), and Godot draws — and hands clicks to — later siblings on top. Becoming the last child on every
+		// open puts the calculator above all of them, for drawing and for input alike, whatever is added later.
+		MoveToFront();
 		Visible = true;
+		if (_tablePending && _hasGameContext)
+		{
+			_tablePending = false;
+			CalculateFromGameContext();
+		}
+
 		_totalBankrollInput.GrabFocus();
 	}
 
@@ -135,6 +165,13 @@ public partial class MartingaleCalculator : Control
 		_progressionStartingBalanceLabel.Text =
 			string.Create(CultureInfo.InvariantCulture, $"Progression starting balance: {bankroll:F8} SC");
 
+		if (!IsVisibleInTree())
+		{
+			_tablePending = true;   // built by Open(), from the context recorded above
+			return;
+		}
+
+		_tablePending = false;
 		CalculateFromGameContext();
 	}
 
