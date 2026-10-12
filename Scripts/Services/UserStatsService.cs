@@ -540,13 +540,23 @@ public partial class UserStatsService : Node
 			return;
 		}
 
-		// This one MUST load everything, and the reason is worth stating so nobody "optimises" it later:
-		// RollbackToUtc trims in memory and then REBUILDS THE JOURNAL FROM WHAT IS IN MEMORY. Loading only
-		// the tail chunks would rewrite the journal from that tail alone and delete every older chunk —
-		// turning a rollback of a few bets into the loss of the entire retained history.
-		// Once per process (DiceGame's checkpoint restore is guarded), and only when a checkpoint exists.
-		BetHistory.EnsureAllChunksLoaded();
+		// Mini-plan 22 B — ONCE PER PROCESS, whoever asks first. The checkpoint service now asks at boot (so no scene
+		// can read bets the world discarded); DiceGame's first-entry restore still calls here and becomes a no-op. It
+		// is left in place until a run shows nothing reaches it any more (Standing Convention 12).
+		if (_historyRolledBackThisProcess)
+		{
+			ReportJournalRollbackSkipped(checkpointUtc);
+			return;
+		}
+
+		_historyRolledBackThisProcess = true;
+
+		// Mini-plan 22 C — this USED to load every segment first, with a warning not to "optimise" it: the old
+		// RollbackToUtc rewrote the journal from memory, so a partial load would have erased the older history. The
+		// new RollbackToUtc rewrites only the segments it reads (newest first, up to the boundary), so it needs no
+		// load at all — and whatever IS already in memory it trims the same way. See BetHistoryRepository.
 		BetHistory.RollbackToUtc(checkpointUtc);
+		ReportJournalRollback(checkpointUtc);
 
 		// Mini-plan 08 D1 — NOT a replay of the journal. This was RebuildStatsFromLoadedHistory(), which
 		// re-derived Stats from the ~200,000 bets retention still holds: once anything had been pruned, every
@@ -556,6 +566,45 @@ public partial class UserStatsService : Node
 		// restore already put in place IS the committed lifetime total; the journal is only a window onto it.
 		Stats = UserBettingStats.FromRollup(Rollup);
 		EmitStatsChangedImmediate();
+	}
+
+	private bool _historyRolledBackThisProcess;
+
+	// Mini-plan 22 — one line per rollback, to the Godot editor's OUTPUT panel (GD.Print): what the targeted
+	// truncation read, rewrote, deleted and dropped, its own time, and the DEBUG cross-check against the old full
+	// path's rule (missing / extra must both be 0), timed apart so it never inflates the cost being measured.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void ReportJournalRollback(DateTime checkpointUtc)
+	{
+		BetHistoryRepository.RollbackDiagnostics d = BetHistory.LastRollback;
+		string Ms(double ms) => ms.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+		string at = checkpointUtc.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+		if (d.Refused)
+		{
+			GD.Print("[JournalRollback] checkpoint " + at + " UTC — REFUSED by WorldWriteGuard; the journal is unchanged.");
+			return;
+		}
+
+		string check = d.CrossCheckMissing < 0
+			? "cross-check off"
+			: "cross-check vs the full path: missing " + d.CrossCheckMissing + ", extra " + d.CrossCheckExtra
+				+ (d.CrossCheckMissing == 0 && d.CrossCheckExtra == 0 ? " (OK)" : " (MISMATCH)")
+				+ " in " + Ms(d.CrossCheckMs) + " ms";
+		GD.Print("[JournalRollback] checkpoint " + at + " UTC"
+			+ (d.Failed ? " | FAILED part-way, see the error above" : "")
+			+ " | dropped " + d.BetsDropped + " bets + " + d.DepositsDropped + " deposits"
+			+ " | read " + d.SegmentsRead + " segments, rewrote " + d.SegmentsRewritten + ", deleted " + d.SegmentsDeleted
+			+ (d.UnparsedKept > 0 ? ", kept " + d.UnparsedKept + " unparsed lines" : "")
+			+ " | in memory dropped " + d.InMemoryBetsDropped
+			+ " | " + Ms(d.TruncateMs) + " ms"
+			+ " | " + check);
+	}
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void ReportJournalRollbackSkipped(DateTime checkpointUtc)
+	{
+		GD.Print("[JournalRollback] checkpoint " + checkpointUtc.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)
+			+ " UTC — already rolled back in this process; this call is a no-op");
 	}
 
 	// Used only for the pre-genesis reset (no block has ever been mined): unlike RollbackHistoryToUtc, there

@@ -970,9 +970,16 @@ precision, a relative offset ("+1m40s"), or showing the bet's game date differen
 player-facing consequence, which is why it is an objective rather than a one-line change. **Verify the 3-residue
 claim against a running list before building anything** — it is arithmetic from the code, not a measurement.
 
-### The explorer held 10,000 more bets than the journal — NOT investigated (noted 2026-10-10)
+### The explorer held 10,000 more bets than the journal — ✅ EXPLAINED AND FIXED by mini-plan 22 (2026-10-11)
 
-**Status: open, found by mini-plan 20 F round 4 and deliberately not chased inside a UI plan.**
+> **Not duplicated records: discarded ones.** Boot restored the clock and every balance to the last block but left
+> the journal untouched until the first DiceGame entry of the process, so an explorer visit before that entry
+> counted the bets the restart had discarded. Mini-plan 22 A measured it (8,570 discarded bets visible, matching
+> Claude's count from the disk exactly, 0 after the rollback), and 22 B moved the rollback to boot. The final run's
+> explorer, opened first after a restart, reported `afterPresent=0`. The INC-002 duplicate-id hypothesis below was the
+> wrong shape. Text below is the original note.
+
+**Status at noting: open, found by mini-plan 20 F round 4 and deliberately not chased inside a UI plan.**
 `BetsHistoryExplorer`'s `[ExplorerPerf]` reported `records=200100` on one entry and `records=136958` on the next,
 over the same date range. The journal on disk held **126,958** bets in 13 segments: the second load is exactly
 **10,000** above the disk, and before the cursor the first load held ~63,000 more than the second. One segment is
@@ -1004,9 +1011,24 @@ its frame's end, and verifies every checkpoint capture still reads the mining be
 zero violations, with the cost in blocks per real minute measured within one session. **No world wipe; journals
 already written keep their holes**, and the explorer's one-second trim stays for them.
 
-### The first DiceGame entry after launch spends ~1.3 s rolling the journal back — open (noted 2026-10-11)
+### The first DiceGame entry after launch spends ~1.3 s rolling the journal back — ✅ DONE (mini-plan 22, 2026-10-11)
 
-**Status: open, measured by mini-plan 21 E and deliberately not changed there.** `[SceneEntry]` put
+> **Done, and it was a correctness defect as well as a cost.** The journal is now rolled back **at boot**, called by
+> the checkpoint service after the rollup, so no scene can read bets a restart discarded. It is rolled back **only as
+> far as its tail**: newest segment first, a mixed one rewritten atomically, stopping at the first segment with nothing
+> to drop. The final run dropped 179 bets in **51.9 ms** (was 1,319–1,829 ms), read 2 segments and rewrote 1; a DEBUG
+> cross-check against the old full path read missing 0, extra 0. The first DiceGame entry went from 1.7–2.3 s to 419 ms,
+> the rest being the process's cold first entry. Close-out: the plan's §6.
+>
+> **Original specification note:** taken by `AIHelperFiles/mini22-journal-rollback-plan.md`, branch
+> `mini22-journal-rollback`; next was Part A. Reading the code to specify it raised a correctness question as well as the cost: **boot does not roll
+> the journal back**, only the first DiceGame entry does, so until then every reader sees bets the world discarded.
+> That may be what explained mini-plan 20's 10,000-bet mismatch. **A** measures inside the rollback and tests that
+> hypothesis. **C** makes the rollback only as large as the tail it removes, verified against the old full path by a
+> DEBUG cross-check that must read 0 mismatches. **B** then moves it to boot, called by the checkpoint service so
+> Pattern 5's order (and INC-004's recovery path) is untouched.
+
+**Status at specification: open, measured by mini-plan 21 E and deliberately not changed there.** `[SceneEntry]` put
 `restore:rollbackHistory` at **1,319–1,829 ms** on the first DiceGame entry of a process, and 0.0 after:
 `RestoreLegacyCheckpointIfNeeded` → `RestoreCheckpointClockAndHistoryOnly` → `UserStatsService.RollbackHistoryToUtc`,
 once per process (guarded by `_checkpointRestoreSpentThisSession`). It is Pattern 2's guarantee that a restart

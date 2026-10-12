@@ -943,24 +943,276 @@ namespace Scripts.History
 			}
 		}
 
-		// Mini-plan 12 A — this rewrites the FILES from the live set (see RebuildJournalFromCurrentState), so
-		// with the live cap in force a restore writes back at most MaxInMemoryRecords. The steady state is
-		// unchanged, because retention caps the files at the same number anyway; what moves is the boundary
-		// after a restore on a session that had already trimmed. Verified on a real restore, not assumed.
+		// ── Mini-plan 22 C — the rollback is only as large as the tail it removes ────────────────────────────
+		//
+		// It used to load every segment, trim the bets after the checkpoint in memory, and REWRITE THE WHOLE JOURNAL
+		// from memory (RebuildJournalFromCurrentState). Measured (mini-plan 22 A): ~490 ms of load and ~830 ms of
+		// rewrite (20 files, 25 MB) to drop 8,570 bets that sat, as one contiguous tail, entirely in the LAST file.
+		// The old rule "this MUST load everything" was true of that design — a rewrite from memory erases whatever was
+		// not loaded — and it is not a rule of the rollback. This version rewrites only what it reads:
+		//
+		//   1. Flush what the session still owes the files, so the files are the whole truth.
+		//   2. Walk the segments NEWEST FIRST. A segment entirely after the checkpoint is deleted; a mixed one is
+		//      rewritten atomically (.tmp → rename) keeping the lines at or before it; the first segment with
+		//      nothing to drop is the boundary, and it and every older segment are neither rewritten nor read.
+		//      Nothing after the checkpoint at all ⇒ one segment read, nothing written.
+		//   3. A line that cannot be parsed is KEPT, never dropped on a guess, and counted.
+		//   4. Whatever is already in memory is trimmed the same way, without touching the files again.
+		//
+		// The whole-journal semantics it must reproduce are the old ones: every bet and deposit whose timestamp is
+		// after the checkpoint goes, everything else stays. In DEBUG builds a cross-check reads the whole journal
+		// before and after and compares the surviving ids against exactly that rule (missing / extra must be 0). Out-
+		// of-order stamps that sit in a segment OLDER than the boundary would show up there as "extra".
+		//
+		// Not done here, deliberately: retention pruning. The full rewrite also enforced the 20-segment cap; this one
+		// can leave the journal one partial segment over it, which the next rotation trims — the same state the
+		// journal is in between any two rotations.
+		public readonly record struct RollbackDiagnostics(
+			bool Refused,
+			bool Failed,
+			int SegmentsRead,
+			int SegmentsRewritten,
+			int SegmentsDeleted,
+			int BetsDropped,
+			int DepositsDropped,
+			int UnparsedKept,
+			int InMemoryBetsDropped,
+			double TruncateMs,
+			int CrossCheckMissing,
+			int CrossCheckExtra,
+			double CrossCheckMs);
+
+		public RollbackDiagnostics LastRollback { get; private set; }
+
+		// DEBUG cross-check switch — OFF since mini-plan 22's close-out. It verified the targeted path against the old
+		// full path's rule on a real restore (179 bets dropped: missing 0, extra 0), and it costs ~1.8 s at every
+		// editor boot because it reads the whole journal twice. Turn it back on whenever this method or the journal's
+		// segment layout changes. Release builds never compile it. (static readonly rather than const, so turning it
+		// off does not make the guarded block "unreachable code" — CS0162 — and declared under DEBUG only, since
+		// nothing else reads it — CS0414.)
+#if DEBUG
+		private static readonly bool VerifyRollbackAgainstFullPath = false;
+#endif
+
 		public void RollbackToUtc(DateTime checkpointUtc)
 		{
-			DateTime checkpoint = checkpointUtc.Kind == DateTimeKind.Utc
-				? checkpointUtc
-				: checkpointUtc.ToUniversalTime();
+			DateTime checkpoint = AsUtc(checkpointUtc);
 
-			_records.RemoveAll(r => r != null && r.TimestampUtc > checkpoint);
-			_deposits.RemoveAll(d => d != null && d.TimestampUtc > checkpoint);
+			if (WorldWriteGuard.RefuseWrite(nameof(BetHistoryRepository)))
+			{
+				LastRollback = new RollbackDiagnostics(true, false, 0, 0, 0, 0, 0, 0, 0, 0d, -1, -1, 0d);
+				return;
+			}
+
+			Flush(force: false);
+
+			double crossCheckMs = 0d;
+#if DEBUG
+			HashSet<(string, long)> expected = null;
+			if (VerifyRollbackAgainstFullPath)
+			{
+				long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
+				expected = ReadJournalIds(checkpoint);
+				crossCheckMs += (System.Diagnostics.Stopwatch.GetTimestamp() - c0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+			}
+#endif
+
+			long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+			int read = 0, rewritten = 0, deleted = 0, betsDropped = 0, depositsDropped = 0, unparsed = 0;
+			bool failed = false;
+			try
+			{
+				List<string> segments = GetJournalChunkPaths(includeLegacyBaseFile: true);
+				for (int s = segments.Count - 1; s >= 0; s--)
+				{
+					string path = segments[s];
+					string[] lines = File.ReadAllLines(path);
+					read++;
+
+					var kept = new List<string>(lines.Length);
+					int droppedHere = 0;
+					foreach (string line in lines)
+					{
+						if (string.IsNullOrWhiteSpace(line))
+						{
+							continue;
+						}
+
+						JournalLine entry = null;
+						try
+						{
+							entry = JsonSerializer.Deserialize<JournalLine>(line, _jsonOptions);
+						}
+						catch
+						{
+							// fall through: unparsed lines are kept, below
+						}
+
+						if (entry == null)
+						{
+							unparsed++;
+							kept.Add(line);
+							continue;
+						}
+
+						if (AsUtc(entry.TimestampUtc) > checkpoint)
+						{
+							droppedHere++;
+							if (entry.Type == EntryTypeDeposit) depositsDropped++;
+							else betsDropped++;
+							continue;
+						}
+
+						kept.Add(line);
+					}
+
+					if (droppedHere == 0)
+					{
+						break; // the boundary: this segment and every older one are entirely at or before the checkpoint
+					}
+
+					if (kept.Count == 0)
+					{
+						File.Delete(path);
+						deleted++;
+					}
+					else
+					{
+						WriteSegmentAtomically(path, kept);
+						rewritten++;
+					}
+				}
+			}
+			catch (Exception e)
+			{
+				// Loud, and safe to stop at: segments are processed newest first and each one is replaced atomically,
+				// so a failure leaves a journal whose newest files are already cut and whose older files are intact.
+				failed = true;
+				string message = "[BetHistory] Journal rollback FAILED part-way (" + e.GetType().Name + ": " + e.Message +
+					"). Newer segments already processed are cut; older ones are untouched.";
+				GD.PushError(message);
+				GD.Print(message); // the Output panel too: a failure here must not be visible only in Debugger → Errors
+			}
+
+			// The live set, trimmed by the same rule. The files are already right, so nothing is rewritten.
+			int memoryDropped = _records.RemoveAll(r => r != null && AsUtc(r.TimestampUtc) > checkpoint);
+			_deposits.RemoveAll(d => d != null && AsUtc(d.TimestampUtc) > checkpoint);
 			RebuildRecordIdIndex();
 			ResetNextRecordIdFromRecords(); // the rewind the counter must follow (mini-plan 13 B)
 			_pendingJournalEntries.Clear();
 			_mutationsSinceLastSave = 0;
-			RebuildJournalFromCurrentState();
+			PointAppendTargetAtNewestSegment();
+			double truncateMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
+			int missing = -1, extra = -1;
+#if DEBUG
+			if (expected != null)
+			{
+				long c1 = System.Diagnostics.Stopwatch.GetTimestamp();
+				HashSet<(string, long)> actual = ReadJournalIds(null);
+				missing = expected.Count(id => !actual.Contains(id));
+				extra = actual.Count(id => !expected.Contains(id));
+				crossCheckMs += (System.Diagnostics.Stopwatch.GetTimestamp() - c1) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+			}
+#endif
+
+			LastRollback = new RollbackDiagnostics(false, failed, read, rewritten, deleted, betsDropped, depositsDropped,
+				unparsed, memoryDropped, truncateMs, missing, extra, crossCheckMs);
 		}
+
+		private static DateTime AsUtc(DateTime value) => value.Kind switch
+		{
+			DateTimeKind.Utc => value,
+			DateTimeKind.Local => value.ToUniversalTime(),
+			_ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+		};
+
+		// INC-001 / Ch. 40 — a segment is replaced, never truncated in place: the new content goes to a sibling .tmp,
+		// is flushed to the device, and only then renamed over the original. A crash leaves either the old segment or
+		// the new one, plus at worst a stray .tmp (swept by suffix on a world wipe, CLAUDE.md Pattern 2).
+		private static void WriteSegmentAtomically(string path, List<string> lines)
+		{
+			string tmp = path + ".tmp";
+			using (var stream = new FileStream(tmp, FileMode.Create, System.IO.FileAccess.Write, FileShare.None))
+			using (var writer = new StreamWriter(stream))
+			{
+				foreach (string line in lines)
+				{
+					writer.WriteLine(line);
+				}
+
+				writer.Flush();
+				stream.Flush(true);
+			}
+
+			File.Move(tmp, path, overwrite: true);
+		}
+
+		// After a rollback the next Flush must append to the newest file that still exists (the rewrite rule's third
+		// point, kept): a deleted segment's path must not be reused as if it were still the active one.
+		private void PointAppendTargetAtNewestSegment()
+		{
+			List<string> remaining = GetJournalChunkPaths(includeLegacyBaseFile: true);
+			if (remaining.Count == 0)
+			{
+				_activeJournalPath = _filePath;
+				_activeJournalLineCount = 0;
+				return;
+			}
+
+			_activeJournalPath = remaining[^1];
+			try
+			{
+				_activeJournalLineCount = File.ReadLines(_activeJournalPath).Count();
+			}
+			catch
+			{
+				_activeJournalLineCount = 0;
+			}
+		}
+
+#if DEBUG
+		// The cross-check's reader: every (type, id) in the journal, optionally only those at or before `atOrBefore` —
+		// the old full path's survivors, computed independently of the code under test.
+		private HashSet<(string, long)> ReadJournalIds(DateTime? atOrBefore)
+		{
+			var ids = new HashSet<(string, long)>();
+			foreach (string path in GetJournalChunkPaths(includeLegacyBaseFile: true))
+			{
+				foreach (string line in File.ReadLines(path))
+				{
+					if (string.IsNullOrWhiteSpace(line))
+					{
+						continue;
+					}
+
+					JournalLine entry;
+					try
+					{
+						entry = JsonSerializer.Deserialize<JournalLine>(line, _jsonOptions);
+					}
+					catch
+					{
+						continue;
+					}
+
+					if (entry == null || entry.Id <= 0)
+					{
+						continue;
+					}
+
+					if (atOrBefore.HasValue && AsUtc(entry.TimestampUtc) > atOrBefore.Value)
+					{
+						continue;
+					}
+
+					ids.Add((entry.Type, entry.Id));
+				}
+			}
+
+			return ids;
+		}
+#endif
 
 		// The id index mirrors _records, so a truncation has to release the ids it dropped — otherwise a
 		// legitimate later re-registration of a rolled-back bet would be refused as a duplicate.
