@@ -1004,9 +1004,17 @@ its frame's end, and verifies every checkpoint capture still reads the mining be
 zero violations, with the cost in blocks per real minute measured within one session. **No world wipe; journals
 already written keep their holes**, and the explorer's one-second trim stays for them.
 
-### The first DiceGame entry after launch spends ~1.3 s rolling the journal back — open (noted 2026-10-11)
+### The first DiceGame entry after launch spends ~1.3 s rolling the journal back — 📝 SPECIFIED (mini-plan 22, 2026-10-11)
 
-**Status: open, measured by mini-plan 21 E and deliberately not changed there.** `[SceneEntry]` put
+> **Taken by `AIHelperFiles/mini22-journal-rollback-plan.md`, branch `mini22-journal-rollback`. Nothing built; next is
+> Part A.** Reading the code to specify it raised a correctness question as well as the cost: **boot does not roll
+> the journal back**, only the first DiceGame entry does, so until then every reader sees bets the world discarded.
+> That may be what explained mini-plan 20's 10,000-bet mismatch. **A** measures inside the rollback and tests that
+> hypothesis. **C** makes the rollback only as large as the tail it removes, verified against the old full path by a
+> DEBUG cross-check that must read 0 mismatches. **B** then moves it to boot, called by the checkpoint service so
+> Pattern 5's order (and INC-004's recovery path) is untouched.
+
+**Status at specification: open, measured by mini-plan 21 E and deliberately not changed there.** `[SceneEntry]` put
 `restore:rollbackHistory` at **1,319–1,829 ms** on the first DiceGame entry of a process, and 0.0 after:
 `RestoreLegacyCheckpointIfNeeded` → `RestoreCheckpointClockAndHistoryOnly` → `UserStatsService.RollbackHistoryToUtc`,
 once per process (guarded by `_checkpointRestoreSpentThisSession`). It is Pattern 2's guarantee that a restart
