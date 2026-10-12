@@ -982,10 +982,20 @@ any figure computed off `BetHistory` (the explorer's summary, streaks, max level
 understood.** First step: count duplicate `BetRecord.Id`s in the explorer's `_allRecords` against the journal
 files, on the same world, in the same session.
 
-### The 100-second rule — 📝 SPECIFIED (mini-plan 21, 2026-10-10)
+### The 100-second rule — ✅ DONE (mini-plan 21, 2026-10-11)
 
-**Status: `AIHelperFiles/mini21-hundred-second-rule-plan.md`, branch `mini21-hundred-second-rule`. Nothing built;
-next is Part A, a baseline run on today's code.** It takes the two objectives below as one plan, because the
+> **The developer's rule now holds: 981 violations → 0** over 148,407 bets, holes 41 → 0, clock overspend 1.21 % →
+> 0. The fix was not the one specified: the baseline showed a hole is mostly bets **stamped late** (each followed by
+> exactly 179 gaps at the `MaxBetsPerFrame` cap), so capping the clock alone could not pass the count. **One simulated
+> span per frame now moves the clock and every engine, and a bet's stamp is its remaining accumulator.** Mini-plan 08's
+> back-date clamp is deleted, and the rule is canonical in CLAUDE.md's Time section. **Part E**, the developer's ~1 s
+> DiceGame load: with a run going it was the hidden martingale calculator rebuilding 500 rows three times per entry;
+> the table is now built only when opened, and the calculator draws above DiceGame's code-built controls.
+> **Still open:** the first entry after launch spends ~1.3 s in the checkpoint's history rollback (objective below).
+> Close-out: the plan's §6. Text below is the original specification.
+
+**Status at specification: `AIHelperFiles/mini21-hundred-second-rule-plan.md`, branch `mini21-hundred-second-rule`.
+Nothing built; next was Part A, a baseline run on today's code.** It takes the two objectives below as one plan, because the
 developer's rule (*at most 100 in-game seconds between one bet and the next*; `100 ÷ credits` at a known credit
 count) is broken by both. **A** measures the baseline with instruments that already exist (the journal, and the
 Frame cost CSV's overspend columns). **B** caps the clock's per-frame advance at the bet engines' backlog window,
@@ -994,7 +1004,18 @@ its frame's end, and verifies every checkpoint capture still reads the mining be
 zero violations, with the cost in blocks per real minute measured within one session. **No world wipe; journals
 already written keep their holes**, and the explorer's one-second trim stays for them.
 
-### A long frame advances the clock past the bets — the holes in the journal (noted 2026-10-10)
+### The first DiceGame entry after launch spends ~1.3 s rolling the journal back — open (noted 2026-10-11)
+
+**Status: open, measured by mini-plan 21 E and deliberately not changed there.** `[SceneEntry]` put
+`restore:rollbackHistory` at **1,319–1,829 ms** on the first DiceGame entry of a process, and 0.0 after:
+`RestoreLegacyCheckpointIfNeeded` → `RestoreCheckpointClockAndHistoryOnly` → `UserStatsService.RollbackHistoryToUtc`,
+once per process (guarded by `_checkpointRestoreSpentThisSession`). It is Pattern 2's guarantee that a restart
+reverts to the last mined block, in the journal area INC-003 and INC-004 were about. **First step, before any
+proposal:** time inside `RollbackHistoryToUtc` (full-journal load vs. the rollback itself vs. a write). Then ask
+whether the work can move to boot, run once in the background, or skip a journal already at the boundary, without
+weakening the guarantee.
+
+### A long frame advances the clock past the bets — the holes in the journal (noted 2026-10-10) — ✅ DONE by mini-plan 21
 
 **Status: taken by mini-plan 21 (M1), above. Found by mini-plan 20 F round 5.** The journal holds stretches of
 **6–17 game-minutes with no player bet** inside a single continuous session: bet ids consecutive, balance continuous,
@@ -1028,7 +1049,7 @@ simulation did; this project does not rewrite history in place (mini-plan 08 §5
 them. The explorer's As Played trim (mini-plan 20 F) hides the holes in replay meanwhile; it does not remove them
 from the world.
 
-### Per-bet timestamp fidelity when a frame holds about one bet — candidate (noted 2026-10-08)
+### Per-bet timestamp fidelity when a frame holds about one bet — candidate (noted 2026-10-08) — ✅ DONE by mini-plan 21
 
 **Status: taken by mini-plan 21 (M2), above. From mini-plan 20 Part 0 round 2.** At 1 credit × 9000X the journal's gaps between player
 bets average 100.6 s but come as **100 / 50 / 150 s**. Mini-plan 08's rule gives a frame's LAST bet the clock's

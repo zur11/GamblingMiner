@@ -4,8 +4,9 @@
 roadmap objective opened by mini-plan 20 F round 5, *"A long frame advances the clock past the bets"*, and the
 candidate it absorbed, *"Per-bet timestamp fidelity when a frame holds about one bet"*.
 
-**Status:** 📝 **SPECIFIED 2026-10-10**, branch `mini21-hundred-second-rule` (proposed). Nothing built.
-**Part A DONE, B + C DONE 2026-10-11:** R-global 981 → **0**, overspend 1.21 % → **0**. **Next:** Part E (the ~1 s DiceGame load), then D (close).
+**Status:** ✅ **COMPLETE 2026-10-11** (close-out §6), merged from `mini21-hundred-second-rule`. R-global
+**981 → 0**, holes 41 → 0, overspend 1.21 % → 0. Part E: a run-going DiceGame entry no longer loads visibly.
+**Carried:** the first entry's ~1.3 s history rollback (roadmap). *(Specified 2026-10-10.)*
 
 ---
 
@@ -365,6 +366,52 @@ Each part is one stage → ask → commit unit.
 - **I4** Any new eager writer calls `WorldWriteGuard.RefuseWrite` first (Pattern 2). None is expected.
 - **I5** Times written into a protocol are converted to the screen's local time and say so.
 
-## 6. Close-out
+## 6. Close-out (2026-10-11)
 
-*(Written at close-out.)*
+**The developer's rule holds.** Never more than `100 ÷ credits` game-seconds between two consecutive bets of a node,
+at every speed and credit count, across scene changes.
+
+| | baseline (A) | final (B + C) |
+|---|---|---|
+| bets in the run | 87,100 | 148,407 |
+| **R-global** (gap > 100 s) | **981** | **0** |
+| holes ≥ 150 s | 41 | 0 |
+| distinct gap values | thousands | five, the exact interval at each credit count |
+| Frame cost overspend | 1.21 % | 0.000 % in every row |
+| id / balance breaks, backwards stamps | 0 / 0 / 0 | 0 / 0 / 0 |
+
+Part D's count is the B + C run: Part E touched no simulation code, so that run stands as the final measurement.
+
+**What it took, and how the plan moved.**
+
+1. **The specified fix was refuted by the baseline before it was built.** Every hole at 99 credits was followed by
+   exactly 179 gaps at 1.010 s: a `MaxBetsPerFrame` frame anchored on the clock. The holes were bets stamped late,
+   not bets lost, so capping the clock (B1) could not pass the count. **The holes and the quantization were one defect
+   at two sizes:** stamps were anchored on the clock, and the clock was not where a bet's interval expired.
+2. **The fix that replaced it:** one simulated span per frame, shared by every engine and by the clock. The clock
+   advances by exactly that span, and a bet's back-date is its engine's remaining accumulator. Spacing is exact by
+   construction, and mini-plan 08's clamp had nothing left to do and was deleted.
+3. **Part E, the ~1 s DiceGame load**, measured before it was fixed. P-E1 was refuted: the engine side was cheap.
+   Three separate costs turned up. The run-only one was the **hidden martingale calculator instantiating 500 rows
+   three times per entry**; it is now built only when opened. Its test exposed an overlay defect (E4): code-built
+   controls drawn above the calculator, and a translucent panel.
+
+**Carried, with a home in the roadmap:** the first DiceGame entry after launch still spends ~1.3 s in
+`RollbackHistoryToUtc`, the checkpoint's history rollback (Pattern 2). Measured, deliberately not changed here.
+
+**Documentation moved with the code:** CLAUDE.md's Time section states the rule canonically, and "tick" now says a
+tick holds one bet per credit (mini-plan 20 C2b's clarification, done here); autoload row #3 says who moves the clock.
+SERVICES.md marks `SimulationThrottle` as a readout. The two IMPLEMENTATION_STATUS lines that still listed R2-C1's
+overspend as open are marked closed. The explorer's As Played trim is kept for journals written before this plan.
+**CLAUDE.md is at ~85,900 characters**, past its 85,000 target and under the 95,000 warning; the growth is a rule,
+not a case (its own policy's test).
+
+**Lessons.**
+
+- **A baseline can refute the fix, not only the premise.** Part A was specified to count violations. Its most
+  valuable output was the 179-gap signature, which retired option B1 before any code existed.
+- **Three equal costs in three different places point to one operation.** E2's ~330 ms × 3 was one hidden rebuild.
+- **An address-less `sed -i` is a whole-file edit** (Convention 14). It appended a line after every line of a 1,700-line
+  file and reported nothing. Caught on the next read, repaired, and verified against git.
+- **"Paint what can be seen" applies beyond lists.** The calculator broke mini-plan 10's rule in a place nobody
+  thought of as a list.
