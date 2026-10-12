@@ -108,21 +108,18 @@ Workflow).
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **1** | **Step 17.A + 17.C** — a direct `DiceGame → BetsHistoryExplorer` button, and the event-driven audit (migrate the `_Process` polling backlog) | `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` (SPECIFIED 2026-08-20, not started) | 17.C is a **declared Basic Mode v0.1 gate** (§6). 17.A does not exist yet (verified 2026-10-12: only `CalendarsNavigator` and `ScFinances` reach the explorer) |
+| **1** | **Step 17.A + 17.C** — a direct `DiceGame → BetsHistoryExplorer` button, and the event-driven audit (migrate the `_Process` polling backlog) | `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` (SPECIFIED 2026-08-20, **re-specified 2026-10-12**, not started) | 17.C is a **declared Basic Mode v0.1 gate** (§6). 17.A does not exist yet (verified 2026-10-12: only `CalendarsNavigator` and `ScFinances` reach the explorer) |
 | **2** | **User settings persistence** | §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20 and 23 added view preferences with no home |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §17.B · the P-items below | Step 17 suspends 17.B until A and C are built **and tested** (developer's gate) |
 | — | **Small item, fold into whichever UI plan comes first:** DiceGame's "Numbers" bet view | §6 | Its cost is solved: mini-plan 23 built the 10-number row and the latest-only view |
 
-**⚠ Re-verify before relying on Step 17's text — it was written 2026-08-20 and twenty mini-plans have run since:**
-- **17.C's suspension has likely EXPIRED.** Four targets (`AuctioningCompanyDetails`, `CompanyDetails`,
-  `CompaniesWallets`, `CasinoCoinSwaps`) were suspended until the world reaches Market Birth (2010-07-18). The
-  developer's world was past 2012 in October 2026. Confirm on the current world, then treat them as active.
-- **Ch. 38's poll catalogue is stale** (audited 2026-07-21). Re-derive it from the code first: 25 files under
-  `Screens/` and `UI/` override `_Process` (count of 2026-10-12).
-- **Scenes changed since the plan:** mini-plans 20–23 touched `BetsHistoryExplorer`, `DiceGame`, `CalendarsNavigator`
-  and `MainMenu`. In particular, `CalendarsNavigator`'s refusal to auto-update is deliberate (its comment, and
-  `mini06-…-plan.md` §9.7e). It is not a poll to migrate.
+**📝 Step 17 re-verified 2026-10-12 — its §0 governs.** The catalogue was re-derived from the code: 25 overrides, 8
+not polls, 9 subscribed with a fallback timer, 8 pure polls covering 10 scenes. Ch. 38 §38.5 stays stale until
+17.C closes. Of the four Market-Birth suspensions, only `CompanyDetails` remains, and it now waits for **a founded
+company**. The live test world, at 2012-02-13 and height 1,670, has none, because no test run has let the bots mine
+(not a real-play state). 17.A is kept and arrives at **the present, both ways** (developer, 2026-10-12). Plan §8
+records every decision. Runs as **mini-plan 25**, branch `mini25-event-driven-audit`.
 
 **Not scheduled (open, see their entries):** T4.2 (Step 17.D) · P9 unit tests · the bot treasury policy (waits on P5)
 · the machine-adaptive budget (needs a second machine) · T6 pass 2 · the Network Fee Option-B experiment.

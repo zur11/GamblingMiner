@@ -1,11 +1,16 @@
 # Step 17 — Direct Access, the Event-Driven Audit, and Two Objectives Held Back
 
-> **Status: SPECIFIED, NOT STARTED (2026-08-20).** Scope fixed by the developer: **all four** objectives in
-> one step, with **17.A and 17.C active now** and **17.B and 17.D suspended until A and C are implemented
-> AND tested** — a gate the developer set, recorded as such rather than dressed up as a technical
-> dependency.
+> **Status: RE-SPECIFIED 2026-10-12, NOT STARTED.** §0 re-verifies the 2026-08-20 text against the code and
+> the developer's current world, and **§0 wins where it disagrees with anything below it**. Next: the
+> developer settled every §8 decision on 2026-10-12. Next: unit 1 = 17.C.0's DEBUG refresh counter, then
+> measurement M0 (§5.5), **before any migration**.
 >
-> Branch (suggested): `explorer-access-and-event-driven-audit` off `main`.
+> Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
+> active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
+> developer set, recorded as such rather than dressed up as a technical dependency.
+>
+> Branch: **`mini25-event-driven-audit`**. It runs as mini-plan 25, and this file stays the plan of record
+> (developer, 2026-10-12). *(The 2026-08-20 suggestion was `explorer-access-and-event-driven-audit`.)*
 >
 > **World treatment: no bump expected.** Nothing in 17.A or 17.C persists. The `WorldFormatVersion` bump
 > that mini-plan 05 §6 decided was **executed by mini-plan 07** — step 5, `a0c27ea`, 5 → 6, on 2026-08-23 —
@@ -19,6 +24,115 @@
 > **Prior art this step consumes rather than re-derives:** `ProjectDesignManual.md` **Ch. 38** (the whole
 > event-driven principle, the genuine exceptions, the §38.5 catalogue and the §38.7 inverse failure),
 > `CLAUDE.md` Important Patterns **§6**, and `PRIVATE_ROADMAP.md` **§6** (the Basic Mode gate) and **§8 T4**.
+
+---
+
+## 0. Re-verification, 2026-10-12 — what twenty mini-plans changed underneath this plan
+
+Done at specification time against `main` @ `34e965d` and the developer's live world, read-only. **Every row
+below was read from the code, not carried from §38.5** (§39.16 rule 12). It is 17.C.0's structural half;
+17.C.0 keeps only the *measured* half (§5.5).
+
+### 0.1 — Five facts that move the plan
+
+1. **The suspension of §5.1a has expired for ONE of its four targets, not four.** The live world reads game
+   date **2012-02-13**, chain height **1,670** — 575 days past Market Birth, so `CasinoCoinSwaps` is
+   verifiable. But `CompanyFoundings` holds **0 entries**: no company has ever been founded in this world,
+   so **`CompanyDetails` stays suspended**, its precondition renamed from "Market Birth" to **"a founded
+   company exists"**. The other two left the list for code reasons: `AuctioningCompanyDetails` **was already
+   migrated** (it has no `_Process`; it rebuilds on `NetworkRoot.BlockAccepted`), and `CompaniesWallets` is
+   a 24-line subclass of `BotsBtcWallets` that lists the 40 non-miners. Those exist from genesis, so it is
+   verifiable today. *(The 0 is an artefact of the TEST scenario, not a defect (developer, 2026-10-12):
+   no test run has let the bots mine, so no bot holds the BTC to bid in an auction. That never happens in
+   real play. `CompanyDetails`'s precondition is therefore a **test world in which bots have mined long
+   enough to win an auction**.)*
+2. **One migration covers three scenes.** `CompaniesWallets` and `CastMinerWallets` both inherit
+   `BotsBtcWallets`'s 3 s poll. §38.5 listed only the base.
+3. **The catalogue's biggest cost may not be a poll at all — it may be §38.7's inverse failure inside a
+   scene.** `CasinoCoinSwaps` binds `RefreshAll` and `CasinoGamblingFinances` binds `RefreshLabels`
+   **directly** to `CasinoScBalanceService.BalanceChanged`, which fires on every settled casino bet (§38.7
+   measured up to ~20 a frame). `RefreshAll` rebuilds the recent-swaps list; `RefreshLabels` does a LINQ
+   count over up to 500 loan records. **This is a structural reading, not a cost** (Pattern 6, instrument
+   rule 4). M0 counts it before anything is changed.
+4. **There is no mempool event**, and five scenes show pending figures (`StatusBar`'s BTC cell,
+   `BTCWallet`, `CasinoFinances`, `FoundersWallets`, the `BotsBtcWallets` family). `BlockAccepted` covers
+   confirmations, but a broadcast enters the mempool through four sites (`NetworkRoot` ×3,
+   `NetworkSimulator` ×1, all calling `BlockchainService.AddTransactionToPendingTransactions`) and
+   announces nothing. Today the timers are the only thing that shows a pending spend. → **D-17.1.**
+5. **`CalendarsNavigator` repaints every frame a value that only its own inputs can change.** Since
+   mini-plan 23 B (from mini-plan 06 §9.7e), the selection is a snapshot taken on arrival and **must never
+   follow the clock**, so this is **not a poll to make live**, as the roadmap warns. It is still per-frame
+   work: three calendar builds and four string formats per frame, while visible. Repainting from its own
+   input events would keep §9.7e intact. It is the cheapest and least valuable item here. → **D-17.2.**
+
+### 0.2 — The re-derived catalogue (25 `_Process` overrides under `Screens/` + `UI/`)
+
+**A — not polls; leave them** (8):
+
+| Scene | Why it stays |
+|---|---|
+| `DiceGame` | Genuine (§38.2): autobet pacing, sampled clock, edge-triggered flags |
+| `BetsHistoryExplorer` | Genuine: the playback transport is real-time by definition; its view rebuild is already real-time-cadenced and append-only (mini-plans 02/04) |
+| `BetHistoryContainer`, `PreviousWinnerNumbersGrid`, `PreviousWinnerNumbersRow`, `LatestWinnerNumber` | **Already event-driven.** `_Process` is a one-shot next-frame flush: `SetProcess(true)` on `BetExecuted`, `SetProcess(false)` after one flush |
+| `SimRetentionReadout` | §38.3 hybrid: reads `SimulationThrottle`, which the sim writes every frame, and repaints only on change |
+| `CalendarsNavigator` | §9.7e: see fact 5. Optional input-driven repaint, D-17.2 |
+
+**B — subscribed, plus a fallback timer** (9). Here the C.0 question is the **fallback**: *which state
+does it cover that no event announces?* If the answer is none, delete it (§39.16 rule 3). Otherwise, name
+the missing event.
+
+| Scene | Events today | Timer | Note |
+|---|---|---|---|
+| `StatusBar` | `BlockAccepted`, `MarketDayChanged` | balances 10 Hz (deliberate, mini-plan 15 B); clock sampler (§29.13); BTC 2 s | BTC fallback = the mempool gap (fact 4). The 10 Hz balance cadence is a decision, not a poll |
+| `ScFinances` | `BankStateChanged`, `BalanceChanged`, `TransfersChanged`, `AutoRechargeAmountChanged`, `MarketDayChanged` | 2 s + clock sampler | Five events already; the fallback looks vestigial |
+| `ScTransactions` | `BankStateChanged`, `BalanceChanged` | 2 s | Same |
+| `CasinoGamblingFinances` | casino `BalanceChanged` → `RefreshLabels` **unbuffered** | 2 s + clock sampler | **Inverse-failure suspect** (fact 3) |
+| `CasinoCoinSwaps` | `SwapDeskChanged`, casino `BalanceChanged` → `RefreshAll` **unbuffered**, `MarketDayChanged` | 2 s | **Inverse-failure suspect** (fact 3); live input in both quote panels |
+| `ClientsTransactions` | `LedgerChanged` | 2 s | |
+| `ClientsBetsHistory` | `ClientBetSettled` (live feed) | 2 s summary + rows | Per-bet event: the rebuild must stay coalesced |
+| `FinancialBettingStats` | `StatsChanged`, `LedgerChanged` | 0.75 s, only while the sim runs | Already the narrowest timer in the set |
+| `CentralBank` | `CentralBankChanged` → dirty + 0.5 s coalesce | 5 s | **Already the target shape**; it was built after §38.5. Fallback question only |
+
+**C — pure timer polls, no subscription** (8 overrides, 10 scenes):
+
+| Scene | Timer | What it re-reads | Event that would serve |
+|---|---|---|---|
+| `BlockExplorer` | 1 s, full `RefreshUi` | chain, balances, auction | `BlockAccepted` (+ mempool) |
+| `BTCPoolsAndHardwareShop` | 1 s, casino detail only | pool/casino stats | `BlockAccepted`, `HardwareAllocationRepository.HardwareChanged` |
+| `BotPlayHistory` | 1 s, bot list + table | bot bet history | `ClientBetSettled`, coalesced |
+| `CompanyDetails` | 1 s, `RefreshAll` (signature-gated actions, §22.12) | company/governance | `BlockAccepted`. **Suspended: no founded company** |
+| `BTCWallet` | 2 s | player BTC balances, addresses, txs | `BlockAccepted` + mempool. Live input: the send form |
+| `CasinoFinances` | 2 s | casino BTC side | `BlockAccepted` + mempool. Live input: reserve mode, send form |
+| `FoundersWallets` | 2 s, **five** refreshes | founders' balances, address book, txs, economics | `BlockAccepted` + mempool. Live input: send form, lottery |
+| `BotsBtcWallets` (+ `CompaniesWallets`, `CastMinerWallets`) | 3 s | holder/miner lists + detail | `BlockAccepted` + mempool. Live input: send form, reactivation |
+
+**Services** (6 overrides outside the scope above, read for completeness): `CalendarTimeService` and
+`SimulationService` are genuine. `BtcMarketDataService`/`BtcNetworkDataService` are the §38.3 reference.
+`CasinoCoinSwapService` is §38.7's coalescer. `CasinoClientLedgerService` is a dirty-flag disk flush. **None
+are migration targets.**
+
+### 0.3 — 17.A: the recommendation flips
+
+§4.1 recommended opening at **the last selected date (a)**, because `ExplorerSelectedLocalDateTime`
+"already means where the explorer opens". That premise moved. Since mini-plan 23 B, **every arrival at the
+Calendar from anywhere but the explorer re-seeds the selection to the present**, on the developer's stated
+intent (mini-plan 06 §9.7e). Nothing re-seeds it on the way back to DiceGame: `← Back` writes the selection
+only when its target is the Calendar. So under (a), a player who chose 2010-03-01 in the Calendar, played a
+game-year in DiceGame and then pressed the new button would land on 2010-03-01. **That is §9.7e's "the
+default position is the least useful one" defect, reopened through a new door.**
+
+**New recommendation: (b), the present.** The rule then reads the same for both doors: *arriving from
+anywhere but the explorer means "now"*. That is the rule the developer already chose for the Calendar. The
+"two entry semantics" objection in §4.1 inverts: under (a), it is the direct door that would disagree with
+the Calendar door. → **D-17.0, the developer's call.**
+
+*(Side note, no action: `CalendarTimeService.ExplorerSelectedLocalDateTime` is initialised to wall-clock
+`DateTime.Now`. The bootstrap landing and three of `EnsureGameEpochInitialized`'s four branches overwrite
+it. The fourth, an unparsable `calendar_state.json`, does not. `BlockSessionCheckpointService` (#13) then
+overwrites it on every boot anyway: the pre-genesis reset always does, and the checkpoint restore does
+whenever the snapshot carries `CalendarLocalTicks`. The default therefore survives only if an unparsable
+calendar file meets a checkpoint without a clock. A corrupt-file corner, **not chased further** and not
+acted on. It is recorded so nobody "fixes" it as a game-time violation without reading this.)*
 
 ---
 
@@ -87,7 +201,10 @@ measured. **That reason expired when mini-plan 05 closed.**
 | **a** | **The last selected date** (`CalendarTimeService.ExplorerSelectedLocalDateTime`) | The button is a *shortcut to the same destination*. Nothing about the explorer's behaviour changes; only the number of clicks does |
 | **b** | **The present** | The button becomes a *different destination* — "show me now" — and the Calendar route keeps "show me then" |
 
-**Recommendation: (a).** `ExplorerSelectedLocalDateTime` already means "where the explorer opens", it is
+> **⚠ Superseded 2026-10-12 by §0.3 — the recommendation is now (b).** The paragraph below is kept as
+> written, because its reasoning was right for the code it read.
+
+**Recommendation (2026-08-20): (a).** `ExplorerSelectedLocalDateTime` already means "where the explorer opens", it is
 already what the checkpoint restores and what `CalendarsNavigator` writes, and (b) would give one scene two
 entry semantics depending on which door you came through — the kind of split that is invisible in code
 review and confusing in play.
@@ -108,7 +225,23 @@ review and confusing in play.
 ### 4.3 — Verification
 
 Open from both doors in one session and confirm: the same date, the same paused arrival, and a back button
-that returns to whichever scene launched it.
+that returns to whichever scene launched it. *(Under D-17.0 = (b), "the same date" means: both doors open at
+the present when entered fresh. From the Calendar door that holds only if its own date was left
+untouched.)*
+
+### 4.4 — 17.A2: DiceGame's "Numbers" view — PROPOSED fold-in (developer's yes needed, D-17.3)
+
+`PRIVATE_ROADMAP.md` §6 asks for this small item to be folded into "whichever UI plan comes first", and 17.A
+already opens `DiceGame.tscn`. Its cost is already solved: `PreviousWinnerNumbersRow` (last 10) and
+`LatestWinnerNumber` (one), both live in the explorer behind a toggle since mini-plan 23. **Two
+preconditions carried from §6:**
+
+- **Fix the old grid's geometry first.** It has never been on screen, starts at y 534 under the Bet View
+  button, and its 540 minimum height runs into the bottom danger band (Ch. 29 §29.11).
+- **Read Ch. 29 before touching the scene** (CLAUDE.md). DiceGame's buttons are absolutely positioned,
+  and 17.A adds one more button to the same scene.
+
+If the developer declines, it goes back to §6 untouched.
 
 ---
 
@@ -136,6 +269,11 @@ for that state already exist (§38.4), and **(4)** does it hold live user input 
 applies to.
 
 ### 5.1a — ⚠ A constraint this plan missed when it was written (added 2026-08-21)
+
+> **⚠ Resolved 2026-10-12 by §0.1 fact 1.** Of the four, only **`CompanyDetails`** is still suspended, and
+> its precondition is now **"a founded company exists"**: the live world is past Market Birth with 0
+> companies. `CasinoCoinSwaps` and `CompaniesWallets` are active, and `AuctioningCompanyDetails` is already
+> migrated. The rule this section states (§39.16 rule 10) still governs `CompanyDetails`.
 
 **Several §38.5 candidates cannot be VERIFIED in any world that exists today**, and the plan declared none
 of it. Measured on the live world: chain at **210 blocks**, game date **2009-05-27**, **0 companies
@@ -185,6 +323,53 @@ Per scene: the panel still shows correct data after each of the events it now de
 in-progress edit survives** where one is possible. Across the step: the sim's `SimulationThrottle` readout
 should be no worse than before, and ideally better. **It is a measurement, not a target** (§38.7's third
 rule) — if it worsens, the question is which migration did it, not whether to raise a budget.
+
+**Exit criterion, stated as COUNTS (added 2026-10-12, CLAUDE.md Pattern 6 instrument rule 3).** A
+millisecond or retention figure does not reproduce across sessions here, so it is supporting evidence
+only. For every migrated scene, the probe of §5.5 must read:
+
+- **at rest** (sim stopped, no input): **0 refreshes per second**. *A panel at rest does no work.* Today
+  every B/C scene does 0.2–1 per second.
+- **under the sim**: **≤ 1 ÷ its coalesce interval** (e.g. ≤ 4/s at 0.25 s). It must never track the
+  settled-bet rate.
+- plus §5.3's two functional checks: correct data after each event it depends on, and an in-progress edit
+  that survives.
+
+### 5.4 — Order of work (2026-10-12)
+
+One unit = one stage → message → commit loop. Instrument, then measure, **then** change anything.
+
+| # | Unit | Notes |
+|---|---|---|
+| 1 | **C.0 instrument** — a DEBUG-only `UiRefreshProbe`: per-scene refresh counts per real second, one `GD.Print` line every 5 s while any count is non-zero | `[Conditional("DEBUG")]` like `ExplorerFrameProbe`; one call at each B/C refresh entry point, plus a count of `AddTransactionToPendingTransactions` successes (D-17.1's rate). It stays as the exit-criterion instrument |
+| 2 | **M0** — baseline measurement, §5.5 | No code change between 1 and 2 |
+| 3 | **17.A** (+ **17.A2** if D-17.3 = yes) | Ch. 29 first |
+| 4 | **C.1** — `CasinoCoinSwaps`, `CasinoGamblingFinances`: route casino `BalanceChanged` through a dirty flag + coalesce, `CentralBank`'s shape | Only if M0 confirms P1. If refuted, it drops to the B group |
+| 5 | **C.2** — the mempool event (if D-17.1 = yes), then one unit per chain-side scene: the `BotsBtcWallets` family, `BTCWallet`, `CasinoFinances`, `FoundersWallets`, `BlockExplorer`, `BTCPoolsAndHardwareShop` | Within the group, M0's counts set the order. Live input: §38.5 note 1 |
+| 6 | **C.3** — the B group's fallbacks, one scene per unit: delete each, or name the state it covers | `StatusBar`'s 10 Hz balance cadence is out of scope (a decision, mini-plan 15 B) |
+| 7 | **C.4** — `BotPlayHistory` onto `ClientBetSettled`, coalesced | Per-bet event: §38.7 rule 1 |
+| 8 | **C.5** — `CalendarsNavigator` input-driven repaint, only if D-17.2 = yes | Must not subscribe to the clock (§9.7e) |
+| 9 | **C.6** — `CompanyDetails`: migrate blind, mark **unverified** | §39.16 rule 10: migrating blind is allowed, declaring it done is not |
+| 10 | **M1** — the M0 protocol again, same world and settings, then close-out | |
+
+### 5.5 — Measurement M0: predictions registered BEFORE the run (2026-10-12)
+
+**Conditions, each with the reason it matters.** Use the developer's current world (2012-02-13, h1,670),
+where every active target has data. Fix `DevTimeScale` at **9000X** for the whole run: the per-bet event
+rate, and with it P1, scales with it. Run a **player autobet**: without settling bets the casino
+`BalanceChanged` never fires and P1 cannot be tested. Keep **hardware credits** unchanged for the whole run
+and record them. They change bets per frame, but no figure here crosses sessions, so any fixed value works.
+**One session.** Retention is compared within it only (instrument rule 3).
+
+| | Prediction | Read from | Refuted if |
+|---|---|---|---|
+| **P1** | With the sim running, `CasinoCoinSwaps.RefreshAll` and `CasinoGamblingFinances.RefreshLabels` each run **≥ 100 times per real second**. Their timers alone give 0.5/s | the probe's lines in **the Godot editor's Output panel** | either reads **< 10/s**. Between 10 and 100: confirmed in kind, not in size |
+| **P2** | In the same session, `Sim: NN%` reads **≥ 10 points lower** in `CasinoCoinSwaps` than in `ScTransactions` (both host the `StatusBar`; `ScTransactions` has no per-bet subscription) | the `Sim: NN%` readout in each scene's **StatusBar**, read after 30 s in each | the gap is **< 5 points**. 5–10: inconclusive, and C.1 proceeds on P1's count alone |
+| **Canary** | With the sim **stopped**, every B/C scene reports its timer rate (0.2–1/s). This checks the instrument, not the code: a zero means a probe call is missing | Output panel | — |
+| **Recorded** | The mempool add rate under the sim, D-17.1's input. **No prediction**: nothing derivable bounds it | Output panel | — |
+
+The numbered protocol, naming each scene in visit order, is written into this section before the
+developer runs it (CLAUDE.md, plan lifecycle step 3).
 
 ---
 
@@ -248,3 +433,24 @@ something.*
 - Anything that changes what the `_Process` overrides Ch. 38 calls **genuinely necessary** do — the game
   clock, the background sim loop, autobet pacing. 17.C migrates polls, and a poll is not the same thing as
   a per-frame job that needs real delta.
+- **Producing a world with founded companies** (§0.1 fact 1: a bot-mining test run). It only gates
+  `CompanyDetails`'s verification. Building that world is not part of this plan.
+
+---
+
+## 8. Decisions at specification (2026-10-12) — the developer's
+
+**Taken 2026-10-12:** D-17.1 = **the event** · D-17.2 = **leave it** · D-17.3 = **yes** · branch
+`mini25-event-driven-audit` · **17.A is kept** (first asked for 2026-08-18, mini-plan 05 §7, and
+re-confirmed) · D-17.0 = **(b)**, by the developer's rule **"always arriving at the present, both
+ways"**: DiceGame → Explorer opens at the present, and Explorer → DiceGame shows the present. The return
+direction already holds: the explorer never moves the world clock, and DiceGame's checkpoint clock restore
+runs once per launch, never on re-entry. 17.A's verification checks it anyway.
+
+| # | Decision | Recommendation |
+|---|---|---|
+| **D-17.0** | Where 17.A's button opens the explorer: **(a)** the last selected date, or **(b)** the present | **(b)**, §0.3: one rule for both doors, the rule §9.7e already chose |
+| **D-17.1** | Add a mempool event (`NetworkRoot`, fired from the four add sites, consumers coalescing), or keep a long fallback timer only for pending figures | **The event.** Otherwise five scenes keep a timer for one gap. Its rate is measured at M0 first (§38.7 rule 1) |
+| **D-17.2** | `CalendarsNavigator`: repaint from its own inputs (C.5), or leave it per-frame | **Leave it** unless M0 shows a cost. It runs only while that scene is visible, and §9.7e makes it the scene where a mistake costs most |
+| **D-17.3** | Fold DiceGame's "Numbers" view into 17.A as 17.A2 | **Yes.** Same scene and the same Ch. 29 read, and its cost was solved by mini-plan 23 |
+| **Branch** | `mini25-event-driven-audit` or `step17-event-driven-audit` | Either. The plan of record stays this file |
