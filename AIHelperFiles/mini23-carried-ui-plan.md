@@ -46,6 +46,18 @@ rebuilt each time from `BlockSessionCheckpointService.CurrentSnapshot.CalendarLo
 `[Exit] close request propagated`, propagates `NotificationWMCloseRequest` to the whole tree, then calls `Quit()`.
 Debug and ExportRelease builds clean; detector 17 / 0 / 0 / 0.
 
+**A — verified by the developer (2026-10-11):** the footer is visible and does not scroll, Cancel does nothing, Exit
+closes the app, and the next launch restores the date the dialog named.
+
+**C — built (2026-10-11). P-C1 holds.** The widened pass 4,
+`(\.ToString\("[^"]*(ddd|MMM)[^"]*"|\{[^{}"]*:[^{}"]*(ddd|MMM)[^{}"]*\})`, minus lines with `InvariantCulture`, read **5
+before the fix** (exactly the five sites, no false positive; the old pass read 0) and **0 after**. Four `.ToString`
+calls gained `CultureInfo.InvariantCulture`, and the interpolated one became `string.Create(CultureInfo.InvariantCulture,
+$"…")`. The stored command changed in CLAUDE.md (Money Handling) and Manual §29.12.1, which also records why. Both
+edits used the file tool, and **the command extracted from each document was run**: 0 on the fixed code and 5 on the
+pre-fix code (stashed), so the documents store the command that works (Convention 14). Passes 1–3 are unchanged (17 / 0 /
+0). CLAUDE.md grew to ~86,200 characters (target 85,000, warning 95,000), because the stored tripwire changed.
+
 **B — Calendar.** As specified: in `_Ready`, if `SceneManager.PreviousScene != BetsHistoryExplorer`, set the selection
 to `GamePresentLocalDateTime` (the line "Set Now" already runs). No subscription; the selection does not move while
 the player is choosing.
