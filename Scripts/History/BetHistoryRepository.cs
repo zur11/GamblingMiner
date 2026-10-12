@@ -984,9 +984,15 @@ namespace Scripts.History
 
 		public RollbackDiagnostics LastRollback { get; private set; }
 
-		// DEBUG cross-check switch. On while mini-plan 22 verifies the targeted path; it doubles the rollback's reads,
-		// so it is a decision of the close-out whether it stays on.
-		private const bool VerifyRollbackAgainstFullPath = true;
+		// DEBUG cross-check switch — OFF since mini-plan 22's close-out. It verified the targeted path against the old
+		// full path's rule on a real restore (179 bets dropped: missing 0, extra 0), and it costs ~1.8 s at every
+		// editor boot because it reads the whole journal twice. Turn it back on whenever this method or the journal's
+		// segment layout changes. Release builds never compile it. (static readonly rather than const, so turning it
+		// off does not make the guarded block "unreachable code" — CS0162 — and declared under DEBUG only, since
+		// nothing else reads it — CS0414.)
+#if DEBUG
+		private static readonly bool VerifyRollbackAgainstFullPath = false;
+#endif
 
 		public void RollbackToUtc(DateTime checkpointUtc)
 		{

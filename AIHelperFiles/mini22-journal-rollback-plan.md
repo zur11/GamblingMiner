@@ -4,8 +4,9 @@
 roadmap objective opened by mini-plan 21 E, *"The first DiceGame entry after launch spends ~1.3 s rolling the
 journal back"*, and a correctness question that reading the code raised while specifying it.
 
-**Status:** 📝 **SPECIFIED 2026-10-11**, branch `mini22-journal-rollback` (proposed). Nothing built.
-**Part A DONE 2026-10-11:** P-A3 confirmed (8,570 discarded bets visible before the first DiceGame entry, 0 after); the rewrite is ~⅔ of the cost. **Next:** C (targeted truncation + cross-check), then B (move to boot).
+**Status:** ✅ **COMPLETE 2026-10-11** (close-out §6), merged from `mini22-journal-rollback`. The journal is rolled
+back **at boot** (no scene can read discarded bets any more) and only as far as its tail: **51.9 ms**, against
+1,319–1,829 ms, with a cross-check against the old full path reading **0 / 0**. *(Specified 2026-10-11.)*
 
 ---
 
@@ -192,6 +193,49 @@ only if it is now false.
 - **I4** The autoload order is unchanged (Pattern 5).
 - **I5** Times in protocols are given in local time, and say so.
 
-## 6. Close-out
+## 6. Close-out (2026-10-11)
 
-*(Written at close-out.)*
+**Final run** (developer's run; disk counted by Claude after the game was closed and before it was reopened). The
+journal boundary was 2012-02-10 06:03:50.4984384 UTC. On disk: 201,686 bets in 21 files, **179 after the boundary**,
+all in the last file as a contiguous tail, 0 deposits after it, no stray `.tmp`.
+
+| | prediction | result |
+|---|---|---|
+| bets dropped at boot | 179 (the disk count) | **179** + 0 deposits |
+| segments | read 2, rewrite 1, delete 0 | **read 2, rewrote 1, deleted 0** |
+| rollback time | < 150 ms | **51.9 ms** (was 1,319–1,829 ms) |
+| **P-C2** cross-check vs the full path | missing 0, extra 0 | **missing 0, extra 0 (OK)** |
+| **P-C3** explorer opened first after the restart | `afterPresent=0` | **`records=201507 afterPresent=0`** (201,686 − 179) |
+| DiceGame's first-entry call | a no-op | **"already rolled back in this process; this call is a no-op"** |
+| `restore:rollbackHistory` in `[SceneEntry]` | ≈ 0 | **0.1 ms** |
+| **P-C1** first DiceGame entry | an ordinary entry's cost | **419 ms** (was 1,700–2,300). The rest is the process's cold first entry (load 38 ms, children 108 ms, first frame 102 ms), not the rollback |
+
+**What the plan found and fixed.**
+
+1. **A correctness defect, not only a cost.** Boot restored the clock and every balance to the last block but left
+   the journal alone until the first DiceGame entry. Every reader before that saw bets the world had discarded:
+   8,570 in Part A's run, visible in `BetsHistoryExplorer`. **That was mini-plan 20's "10,000 more bets than disk"**,
+   an explorer visit before the first DiceGame entry of the process. The journal is now rolled back at boot, called
+   by the checkpoint service right after the rollup, so Pattern 2's sentence, *"an app restart reverts the whole
+   world … performed at startup by `ApplyCheckpointToServices()`"*, is now true of the journal as well. CLAUDE.md is
+   unchanged, because the sentence was already right about intent and is now right about fact.
+2. **The cost was the design, not the work.** The rollback rewrote ~25 MB to drop bets from one file, and a rule
+   written to protect that design ("this MUST load everything") read like a rule of the rollback. The new one rewrites
+   only the segments it reads, newest first, and stops at the first segment with nothing to drop.
+
+**Close-out decisions.**
+- **The DEBUG cross-check is switched OFF** (`VerifyRollbackAgainstFullPath = false`, declared under `#if DEBUG`). It
+  did its job (0 / 0), and it cost ~1.8 s at every editor boot. The code stays, with a note to switch it back on
+  whenever this method or the segment layout changes.
+- **DiceGame's call is kept as a guarded no-op**, not deleted. The run shows it reached and harmless. It also covers
+  the legacy branch where no node state exists, and removing it buys nothing measurable.
+- **The instruments stay** (`[BootCheckpoint]`, `[ExplorerLoad]`, `[JournalRollback]`, DEBUG-only).
+
+**Lessons.**
+- **A rule written to protect a design reads like a rule of the problem.** "Must load everything" was true of a
+  rewrite-from-memory and false of a rollback. Ask what a constraint protects before inheriting it.
+- **Where a restore happens is part of its correctness.** The clock had been moved to boot "so it applies regardless
+  of which scene the app opens into". Its comment stated the rule, and the journal, restored beside it, never got the
+  same treatment.
+- **Counting the disk between two steps of the protocol** gave an independent number to compare three instruments
+  against, and all three agreed to the record.
