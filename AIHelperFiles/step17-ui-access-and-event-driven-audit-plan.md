@@ -2,8 +2,8 @@
 
 > **Status: RE-SPECIFIED 2026-10-12, NOT STARTED.** §0 re-verifies the 2026-08-20 text against the code and
 > the developer's current world, and **§0 wins where it disagrees with anything below it**. Next: the
-> developer settled every §8 decision on 2026-10-12. Next: unit 1 = 17.C.0's DEBUG refresh counter, then
-> measurement M0 (§5.5), **before any migration**.
+> developer settled every §8 decision on 2026-10-12. **Unit 1 (the `UiRefreshProbe` instrument) is built.**
+> Next: measurement M0, using the protocol in §5.5, **before any migration**.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -368,8 +368,52 @@ and record them. They change bets per frame, but no figure here crosses sessions
 | **Canary** | With the sim **stopped**, every B/C scene reports its timer rate (0.2–1/s). This checks the instrument, not the code: a zero means a probe call is missing | Output panel | — |
 | **Recorded** | The mempool add rate under the sim, D-17.1's input. **No prediction**: nothing derivable bounds it | Output panel | — |
 
-The numbered protocol, naming each scene in visit order, is written into this section before the
-developer runs it (CLAUDE.md, plan lifecycle step 3).
+**The instrument (unit 1, built).** `Scripts/Diagnostics/UiRefreshProbe`, armed by the **"↻ UI refresh"**
+toggle beside "⏱ Block cost" in DiceGame's DEV block. Every 5 s of real time it prints one line:
+`[UiRefresh] 5.0 s in <scene> | sim RUNNING, retention NN% | <site> N.N/s · … | mempool adds N.N/s`.
+The lines go to the Godot editor's Output panel and to `user://logs/godot.log`, **which is where the run is
+read**, so nothing is transcribed. Retention is the Sim% figure averaged over the window, which puts P2 in
+the same line as P1. 18 count sites cover the 17 panels; `ClientsBetsHistory` has a second one on its
+per-bet feed.
+
+#### M0 protocol
+
+**Settings, each one a condition that changes a reading:**
+- a **DEBUG** run, i.e. launched from the Godot editor, because the probe does not exist in an export;
+- **DEV time scale 9000X**, which is not persisted, so set it after launching;
+- a **player autobet that keeps running for the whole of leg B**: **Stop on block mined OFF**, **Auto
+  Recharge ON**, and your usual strategy otherwise. If it stops anyway, the log shows `sim stopped` in that
+  window and the window is discarded, so restart it and carry on.
+
+Hardware credits are read afterwards from `hardware_allocation.json`. Nothing to set.
+
+1. Launch from the Godot editor. Main Menu → **DiceGame**. **Layout check:** "↻ UI refresh" sits on the same
+   line as "⏱ Block cost", and nothing in that DEV block overlaps the chance slider.
+2. Set the DEV time scale to **9000X**. Tick **"↻ UI refresh"**. *Godot editor's Output panel:*
+   `[UiRefresh] ARMED`.
+3. **Leg A, the canary (no autobet).** Stay **10 s in DiceGame**. *Expected:* one `no refreshes` line, which
+   shows the quiet report works. Then Main Menu → ScFinances → **ScTransactions, 15 s** (*expected:*
+   `ScTransactions.RefreshAll` ≈ 0.5/s). Then Main Menu → **BotsBtcWallets, 15 s** (*expected:* ≈ 0.3/s).
+4. **Leg B (autobet running).** Main Menu → **DiceGame**. Start the autobet. Stay **15 s**.
+5. Visit in this order. Times are minimums and longer is fine. Move between scenes by any route.
+   - Main Menu → **ScFinances 15 s** → **ScTransactions 30 s** (P2's control)
+   - ScFinances → **CasinoCoinSwaps 30 s** (P1, P2)
+   - Main Menu → **CasinoGamblingFinances 15 s** (P1) → **ClientsBetsHistory 15 s** → back →
+     **ClientsTransactions 15 s**
+   - Main Menu → **CentralBank**, **CasinoFinances**, **FoundersWallets**, **BotsBtcWallets**,
+     **CompaniesWallets**, **CastMinerWallets**, **BotPlayHistory**, 15 s each
+   - Main Menu → DiceGame → **BlockExplorer 15 s**; DiceGame → **BTCWallet 15 s**; DiceGame →
+     **BTCPoolsAndHardwareShop**, **select the casino pool, 15 s**. Selecting the casino matters: its
+     refresh only runs while the casino is selected.
+6. Return to DiceGame, stop the autobet, close the game, and say so in the chat. Don't relaunch before the
+   log is read: a launch rotates `godot.log` (the old one is kept, but it has to be identified).
+
+No selection is asked for elsewhere: every other count sits at the top of a refresh that runs whatever is
+selected. `CompanyDetails` cannot be reached, because no company exists (§0.1 fact 1).
+
+**Analysis rules (fixed now):** the first window reported in each newly entered scene is discarded, because
+it began in the previous scene. A scene's rate is the median of its remaining windows. P2 compares the median
+retention of `CasinoCoinSwaps` against `ScTransactions`.
 
 ---
 

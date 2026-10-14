@@ -62,6 +62,7 @@ public partial class BotPlayHistory : Control
 
 	private void RebuildBotList()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("BotPlayHistory.RebuildBotList");   // DEBUG-only, mini-plan 25
 		IReadOnlyList<string> nodeIds = _simulation?.GetActiveBotNodeIds() ?? new List<string>();
 
 		// Drop buttons for bots that are no longer present.

@@ -67,6 +67,7 @@ public partial class ScTransactions : Control
 
 	private void RefreshAll()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("ScTransactions.RefreshAll");   // DEBUG-only, mini-plan 25
 		if (!GodotObject.IsInstanceValid(this) || _playerBank == null) return;
 
 		decimal bank      = _playerBank.BankAccountBalance;

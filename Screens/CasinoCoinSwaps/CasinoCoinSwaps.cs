@@ -173,6 +173,7 @@ public partial class CasinoCoinSwaps : Control
 
 	private void RefreshAll()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("CasinoCoinSwaps.RefreshAll");   // DEBUG-only, mini-plan 25
 		if (!GodotObject.IsInstanceValid(this) || _swapService == null) return;
 
 		RefreshHeader();

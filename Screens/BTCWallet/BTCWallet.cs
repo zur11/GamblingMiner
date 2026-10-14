@@ -555,6 +555,7 @@ public partial class BTCWallet : Control
 
 	private void RefreshBalances()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("BTCWallet.RefreshBalances");   // DEBUG-only, mini-plan 25
 		var wallet = WalletInitializationService.PlayerWallet;
 		if (wallet == null) return;
 

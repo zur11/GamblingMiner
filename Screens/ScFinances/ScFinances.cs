@@ -172,6 +172,7 @@ public partial class ScFinances : Control
 
 	private void RefreshAll()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("ScFinances.RefreshAll");   // DEBUG-only, mini-plan 25
 		if (!GodotObject.IsInstanceValid(this) || _playerBank == null) return;
 
 		decimal bank     = _playerBank.BankAccountBalance;

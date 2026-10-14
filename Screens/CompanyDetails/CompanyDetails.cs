@@ -246,6 +246,7 @@ public partial class CompanyDetails : Control
 
 	private void RefreshAll()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("CompanyDetails.RefreshAll");   // DEBUG-only, mini-plan 25
 		NonMinerDonationSummary? summary = _networkRoot.GetNonMinerAuctionLedger()
 			.FirstOrDefault(s => s.NonMinerAddress == _nonMinerAddress);
 		CompanyFounding? founding = _networkRoot.GetCompanyFounding(_nonMinerAddress);

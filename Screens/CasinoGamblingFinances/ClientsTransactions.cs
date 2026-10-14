@@ -72,6 +72,7 @@ public partial class ClientsTransactions : Control
 
 	private void RefreshAll()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("ClientsTransactions.RefreshAll");   // DEBUG-only, mini-plan 25
 		RefreshGlobalTotals();
 		RebuildClientPanel();
 	}

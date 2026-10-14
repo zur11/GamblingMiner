@@ -783,6 +783,7 @@ public partial class FoundersWallets : Control
 
 	private void RefreshBalances()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("FoundersWallets.RefreshBalances");   // DEBUG-only, mini-plan 25
 		if (_currentFounder == null) return;
 
 		// Main balance = AVAILABLE (spendable): settled holdings NOT committed to an in-flight automatic

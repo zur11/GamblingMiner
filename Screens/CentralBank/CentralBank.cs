@@ -105,6 +105,7 @@ public partial class CentralBank : Control
 
 	private void RefreshAll()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("CentralBank.RefreshAll");   // DEBUG-only, mini-plan 25
 		if (!GodotObject.IsInstanceValid(this) || _fed == null) return;
 
 		_totalsLabel.Text = string.Create(CultureInfo.InvariantCulture,

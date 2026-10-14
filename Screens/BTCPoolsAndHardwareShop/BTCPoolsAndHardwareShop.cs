@@ -174,6 +174,7 @@ public partial class BTCPoolsAndHardwareShop : Control
 
 	private void BuildCasinoDetail()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("BTCPoolsAndHardwareShop.BuildCasinoDetail");   // DEBUG-only, mini-plan 25
 		ClearDetail();
 		int casinoTotal = HardwareAllocationRepository.TotalCasinoPoolCredits();
 		int individualTotal = HardwareAllocationRepository.TotalIndividualCredits();

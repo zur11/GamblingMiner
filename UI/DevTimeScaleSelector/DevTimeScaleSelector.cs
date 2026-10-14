@@ -86,6 +86,7 @@ namespace UI.DevTimeScaleSelector
 			AddBetCostToggle();
 			AddFrameCostToggle();
 			AddBlockCostToggle();
+			AddUiRefreshToggle();
 			AddFrameCapSelector();
 			AddBudgetSelector();
 			AddFrameReportCounter();
@@ -338,7 +339,36 @@ namespace UI.DevTimeScaleSelector
 			};
 			toggle.AddThemeFontSizeOverride("font_size", 16);
 			toggle.Toggled += pressed => Scripts.Diagnostics.BlockCostProfiler.Arm(pressed);
-			DiagnosticColumn().AddChild(toggle);
+			// Mini-plan 25 — in a ROW rather than straight into the column, so the UI refresh toggle can sit beside it.
+			// DiceGame's column starts at y 445 with ChanceSlider at y 637 below it, and a fourth always-visible line
+			// would reach the slider; sharing a line adds no height.
+			_blockCostRow = new HBoxContainer();
+			_blockCostRow.AddThemeConstantOverride("separation", 12);
+			_blockCostRow.AddChild(toggle);
+			DiagnosticColumn().AddChild(_blockCostRow);
+		}
+
+		private HBoxContainer _blockCostRow;
+
+		// Mini-plan 25 (Step 17.C.0) — arms Scripts/Diagnostics/UiRefreshProbe. Not a cost profiler: it COUNTS panel
+		// refreshes per real second, the unit 17.C's exit criterion is stated in. Same contract as the three above
+		// (DEBUG-only, OFF by default, static state outlives the scene). Arm it here, then walk to the panel to read:
+		// it keeps counting in every scene, including the ones that have no DEV selector of their own.
+		[System.Diagnostics.Conditional("DEBUG")]
+		private void AddUiRefreshToggle()
+		{
+			var toggle = new CheckButton
+			{
+				Text = "↻ UI refresh",
+				ButtonPressed = Scripts.Diagnostics.UiRefreshProbe.Enabled, // the static state outlives the scene
+				TooltipText =
+					"DEV — count how often each panel rebuilds itself, and how many new transactions enter the "
+					+ "mempool, per real second. One line every few seconds in the Godot editor's Output panel, "
+					+ "naming the scene on screen and whether the sim is running.",
+			};
+			toggle.AddThemeFontSizeOverride("font_size", 16);
+			toggle.Toggled += pressed => Scripts.Diagnostics.UiRefreshProbe.Arm(pressed);
+			((Node)_blockCostRow ?? DiagnosticColumn()).AddChild(toggle);
 		}
 
 		// Mini-plan 08 P1 — arms Scripts/Diagnostics/BetCostProfiler, which times one bet segment by segment.

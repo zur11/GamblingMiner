@@ -195,6 +195,8 @@ public partial class BotsBtcWallets : Control
 
 	private void RefreshBotListBalances()
 	{
+		// Named by the runtime type: CompaniesWallets and CastMinerWallets inherit this refresh.
+		Scripts.Diagnostics.UiRefreshProbe.Count(GetType().Name + ".RefreshBotListBalances");   // DEBUG-only, mini-plan 25
 		foreach (var (btn, bot) in _minerButtons)
 			btn.Text = BuildBotRowText(bot);
 

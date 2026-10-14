@@ -84,6 +84,8 @@ public partial class ClientsBetsHistory : Control
 
 	private void OnClientBetSettled(string nodeId, string gameId, BetTransactionEvent bet)
 	{
+		// The per-bet live feed — an append, not a rebuild. Counted so its rate sits beside the rebuilds (§38.7).
+		Scripts.Diagnostics.UiRefreshProbe.Count("ClientsBetsHistory.OnClientBetSettled");   // DEBUG-only, mini-plan 25
 		if (bet == null) return;
 
 		int filterIdx = _gameFilter.Selected;
@@ -162,6 +164,7 @@ public partial class ClientsBetsHistory : Control
 
 	private void RefreshClientRows()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("ClientsBetsHistory.RefreshClientRows");   // DEBUG-only, mini-plan 25
 		foreach (Node child in _clientRows.GetChildren())
 			child.QueueFree();
 

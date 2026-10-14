@@ -209,6 +209,7 @@ namespace UI.StatusBar
 
 		private void RefreshBtcBalance()
 		{
+			Scripts.Diagnostics.UiRefreshProbe.Count("StatusBar.RefreshBtcBalance");   // DEBUG-only, mini-plan 25
 			if (_btcBalanceLabel == null)
 			{
 				return;

@@ -1564,6 +1564,7 @@ public partial class NetworkRoot : Node
 		{
 			return null;
 		}
+		Scripts.Diagnostics.UiRefreshProbe.CountMempoolAdd();   // DEBUG-only, mini-plan 25 (D-17.1's rate)
 		SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
 		if (hasChange) sender.ReceiveWallet?.MarkReceiveConsumed(); // a fresh change address was used
 		return tx;
@@ -1950,6 +1951,7 @@ public partial class NetworkRoot : Node
 
 		Transaction tx = casino.BuildSignedSpend(inputs, outputs, totalFee, null);
 		if (!casino.Blockchain.AddTransactionToPendingTransactions(tx)) return false;
+		Scripts.Diagnostics.UiRefreshProbe.CountMempoolAdd();   // DEBUG-only, mini-plan 25 (D-17.1's rate)
 		SharedNetwork.BroadcastTransaction(casino.NodeId, tx);
 		if (hasChange) casino.ReceiveWallet?.MarkReceiveConsumed();
 		return true;
@@ -5126,6 +5128,7 @@ public partial class NetworkRoot : Node
 			return;
 		}
 
+		Scripts.Diagnostics.UiRefreshProbe.CountMempoolAdd();   // DEBUG-only, mini-plan 25 (D-17.1's rate)
 		SharedNetwork.BroadcastTransaction(company.NodeId, tx);
 		if (hasChange)
 		{

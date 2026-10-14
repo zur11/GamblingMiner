@@ -529,6 +529,7 @@ public partial class BlockExplorer : Control
 
 	private void RefreshUi()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("BlockExplorer.RefreshUi");   // DEBUG-only, mini-plan 25
 		Block last = _networkRoot.GetPlayerLatestBlock();
 
 		// Difficulty readout (D.3): the MAIN presenter shows the difficulty of the block being mined NOW

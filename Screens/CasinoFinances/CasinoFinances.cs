@@ -452,6 +452,7 @@ public partial class CasinoFinances : Control
 
 	private void RefreshBalances()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("CasinoFinances.RefreshBalances");   // DEBUG-only, mini-plan 25
 		if (_casinoWallet == null) return;
 
 		// Step 8 — aggregate across the casino's owned set (base + any change addresses); it becomes

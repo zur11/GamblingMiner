@@ -176,6 +176,7 @@ public partial class CasinoGamblingFinances : Control
 
 	private void RefreshLabels()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("CasinoGamblingFinances.RefreshLabels");   // DEBUG-only, mini-plan 25
 		if (_casinoSc == null) return;
 
 		_mainBalanceLabel.Text = $"Main Balance:  {Money.FormatSignedAdaptive(_casinoSc.MainBalance)} SC";

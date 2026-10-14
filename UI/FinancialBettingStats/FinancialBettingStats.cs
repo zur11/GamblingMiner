@@ -88,6 +88,7 @@ public partial class FinancialBettingStats : VBoxContainer
 
 	public void Refresh()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("FinancialBettingStats.Refresh");   // DEBUG-only, mini-plan 25
 		if (!GodotObject.IsInstanceValid(this) || _userStats == null) return;
 		UpdateFrom(PlayerFinancialStatsCalculator.Compute(_userStats.Stats, _ledger));
 		if (_totalBetsLabel != null)
