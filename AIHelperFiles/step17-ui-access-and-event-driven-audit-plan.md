@@ -3,7 +3,10 @@
 > **Status: RE-SPECIFIED 2026-10-12, NOT STARTED.** §0 re-verifies the 2026-08-20 text against the code and
 > the developer's current world, and **§0 wins where it disagrees with anything below it**. Next: the
 > developer settled every §8 decision on 2026-10-12. **Unit 1 (the `UiRefreshProbe` instrument) is built.**
-> Next: measurement M0, using the protocol in §5.5, **before any migration**.
+> **2026-10-14: §9 added.** Every test now starts from genesis and doubles as a **Rank-System calibration
+> run**, and unit 2 (the `RankCalibrationTrace` instrument) is built. Next: set up R1 (§9.3, needs the
+> developer's go-ahead), then run M0 (§5.5) in R1's first minutes and continue R1 to Market Birth. All of
+> this comes **before any migration**.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -354,8 +357,12 @@ One unit = one stage → message → commit loop. Instrument, then measure, **th
 
 ### 5.5 — Measurement M0: predictions registered BEFORE the run (2026-10-12)
 
-**Conditions, each with the reason it matters.** Use the developer's current world (2012-02-13, h1,670),
-where every active target has data. Fix `DevTimeScale` at **9000X** for the whole run: the per-bet event
+**Conditions, each with the reason it matters.** *(World changed 2026-10-14: the developer wants every test
+from the original genesis, so M0 runs at the start of rank calibration run R1 (§9) on a fresh world, not
+on the 2012 world. Nothing in P1/P2 needs the later era. `CasinoCoinSwaps` is pre-Market-Birth there and
+shows its locked teaser, but its `BalanceChanged` subscription is unconditional, so P1 is still tested. R1's
+bots are betting too, which raises the casino's `BalanceChanged` rate and can only make P1 easier to
+confirm, never harder.)* Fix `DevTimeScale` at **9000X** for the whole run: the per-bet event
 rate, and with it P1, scales with it. Run a **player autobet**: without settling bets the casino
 `BalanceChanged` never fires and P1 cannot be tested. Keep **hardware credits** unchanged for the whole run
 and record them. They change bets per frame, but no figure here crosses sessions, so any fixed value works.
@@ -498,3 +505,129 @@ runs once per launch, never on re-entry. 17.A's verification checks it anyway.
 | **D-17.2** | `CalendarsNavigator`: repaint from its own inputs (C.5), or leave it per-frame | **Leave it** unless M0 shows a cost. It runs only while that scene is visible, and §9.7e makes it the scene where a mistake costs most |
 | **D-17.3** | Fold DiceGame's "Numbers" view into 17.A as 17.A2 | **Yes.** Same scene and the same Ch. 29 read, and its cost was solved by mini-plan 23 |
 | **Branch** | `mini25-event-driven-audit` or `step17-event-driven-audit` | Either. The plan of record stays this file |
+
+---
+
+## 9. Rank calibration runs — every test from genesis (developer, 2026-10-14)
+
+**The developer's decisions, recorded as given.** Every test from now on starts from the **original
+genesis**. Throughout, the plan tracks **the cumulative SC each casino player has wagered since the start**.
+That figure is what the **Casino Rank System** levels will be measured on: **20 to 33 levels in total**, with
+thresholds preferably at **round numbers**, found by running tests with **different bet amounts** and
+seeing how many levels a player reaches on average over the game's years. The same data is to inform
+**minimum bet amounts**.
+
+This section produces data. It does **not** design the Rank System: that is still its own design plan
+(`PRIVATE_ROADMAP.md`, "Casino Rank System"), which these runs feed.
+
+### 9.1 — What is already determined before any run (arithmetic, not measurement)
+
+Each figure is derived from a canonical rule and labelled as derived, so no run is spent re-measuring it.
+
+- **Bets per game-year are fixed by credits.** The 100-second rule gives a node `credits ÷ 100` bets per
+  game-second, so **315,576 bets per credit per game-year**. The game's span runs from the player start
+  (2009-03-21) to where both historical datasets end (2025-12-31): 6,130 days, **16.78 game-years**, i.e.
+  **5,296,320 bets per credit**. *(Assumed span; the developer to confirm, §9.6.)*
+- **Expected loss is 0.98% of wagered, for EVERY strategy and every win chance.** The RTP is fixed at
+  99.02% and a progression changes only the variance, never the edge.
+- **Consequence: without income, expected lifetime wagered is capped at capital ÷ edge = 40,000 / 0.0098 ≈
+  4.08M SC, whatever the bet size.** Bet size only sets *when* the cap is reached. With 1 credit and a flat
+  bet, the break-even bet that exactly spends the capital over the whole span is **≈ 0.77 SC**:
+
+  | Flat bet, 1 credit | Wagered / game-year | Expected ruin | Lifetime wagered (span-capped) |
+  |---|---|---|---|
+  | 0.01 SC | 3,156 | never within the span | 52,963 |
+  | 0.1 SC | 31,558 | never within the span | 529,632 |
+  | 0.5 SC | 157,788 | never within the span (25.9 yr) | 2,648,160 |
+  | 1 SC | 315,576 | 12.9 yr | 4.08M |
+  | 2 SC | 631,152 | 6.5 yr | 4.08M |
+  | 5 SC | 1,577,880 | 2.6 yr | 4.08M |
+
+  These are expectations. The spread is small at these bet counts: one standard deviation of net over
+  the span is ≈ base bet × √bets, about 1,800 SC at 0.77 SC against a 40,000 capital.
+- **So every rank level above ~4M SC is reachable only through income**, which in Basic Mode means mined
+  BTC turned into SC at the swap desk after Market Birth. The top of the ladder is therefore a question about
+  mining, the core loop, and that is what the runs must measure. A player's own wagered below the cap
+  needs no run at all: it is bets × average bet.
+- **The minimum bet is the price of a nonce attempt.** Today it is **1 satoshi** (`DiceGame`'s MIN button
+  sets 0.00000001), so a player can advance time and mine at essentially no risk. A minimum bet `m` costs
+  `0.0098 × m` SC per nonce attempt, and puts the floor of the rank ladder at `m × 5,296,320 × credits`
+  lifetime. **The minimum bet and the rank floor are one decision**, and these runs inform both.
+
+### 9.2 — The instrument
+
+`Scripts/Diagnostics/RankCalibrationTrace` (DEBUG-only) writes **one row per block checkpoint** to
+`user://logs/rank_calibration_trace.csv`. Each row has the game date and chain length, then:
+- for the player: the lifetime rollup's bets, wagered and net, and the SC in Main, Bankroll and Bank;
+- for **each of the five casino clients** (`player`, `bot_1..4`, from the casino's client book): credits,
+  bets, wagered, net and BTC held.
+
+It writes inside `BlockSessionCheckpointService.CaptureCheckpoint`, the one path every capture takes, from
+the snapshot itself. So a row is always committed state: a restart never rolls one back, and a run can be
+continued across sessions on the same world. Bots are valid samples, because they recharge from their own
+Main Balance and drop out when it is empty, with no FED loan (`SimulationService`). They are bounded by
+capital exactly like the player.
+
+### 9.3 — How a run starts (each time, with the developer's go-ahead)
+
+Claude does steps 1–3 on the developer's machine. **Nothing is deleted until the next launch, which the
+developer does.**
+1. **Archive** the current world: copy `%APPDATA%/Godot/app_userdata/GamblingMiner` to
+   `GamblingMiner_archive_<run>_<date>`, the existing practice.
+2. **Arm the wipe:** write `0` into `world_format_version.txt`. On the next launch `WorldGuardService` sees a
+   format mismatch and performs the standard clean reset. That wipes world state and resets hardware to
+   its defaults. It **keeps** the exempt set: wallet seeds, saved strategies, notes, logs.
+3. **Separate the trace:** rename `logs/rank_calibration_trace.csv` to `rank_calibration_<previous run>.csv`.
+4. The developer launches, from genesis.
+
+### 9.4 — Run R1 (proposed): five bet sizes in one world
+
+**Five bet sizes, one per casino player, bracketing the 0.77 SC break-even.** Every one is flat (0% on
+loss and on win) at 50% chance, so the average bet equals the base bet and the run measures the economy
+rather than a strategy:
+
+| Client | Base bet | Why this size |
+|---|---|---|
+| `bot_1` | 0.01 SC | a near-minimum player: the ladder's floor |
+| `bot_2` | 0.1 SC | a cautious player |
+| `bot_3` | 0.5 SC | just under break-even: never ruins within the span |
+| `player` | 1 SC | just over break-even: ruins in ~12.9 yr without income |
+| `bot_4` | 2 SC | an aggressive player: ruins in ~6.5 yr without income |
+
+**Settings:**
+- **credits:** the post-wipe defaults, left alone. That is the real starting state, and the trace records
+  it.
+- **DEV time scale 9000X.**
+- **Auto Recharge ON** for everyone (bots have it forced on).
+- **Stop on block mined OFF** (forced off for bots).
+- **Length:** **at least to Market Birth (2010-07-18)**, about 1.33 game-years. At full retention that is
+  roughly 80 real minutes. It may be spread across sessions, and longer is better.
+
+**M0 (§5.5) runs in R1's first minutes.**
+
+**Predictions, registered before the run:**
+
+| | Prediction | Refuted if |
+|---|---|---|
+| **R1-P1** | Each client's bets per game-year = **315,576 × its credits**: the 100-second rule, per client | any client off by **> 1%** over a full game-year |
+| **R1-P2** | Each client's net ≈ **−0.0098 × its wagered**, within ±3σ (σ ≈ base × √bets) | any client outside ±3σ |
+| **R1-P3** | The player's rollup wagered **equals** the player's client-book wagered, to the satoshi, at every row | any difference |
+| **R1-P4** | No client ruins before Market Birth: the largest bet, 2 SC, ruins in ~6.5 yr | any client's runner disappearing before 2010-07-18 |
+| **Measured** | BTC mined per client per game-year, by credits. **No prediction**: it depends on network competition, which nothing above derives | — |
+
+**What R1 answers.** Whether the deterministic part (§9.1) holds in the game. And the first measurement of
+the part that decides the top of the ladder: **BTC per credit per year**, priced in SC at the historical
+rate.
+
+### 9.5 — Run ledger
+
+| Run | World archived as | Parameters | Game span covered | Result |
+|---|---|---|---|---|
+| R1 | — | §9.4 | — | proposed |
+
+### 9.6 — Open, for the developer
+
+- **The game's span:** is it 2009-03-21 → 2025-12-31, where both datasets end? §9.1's lifetime figures
+  depend on it.
+- **Who holds a rank:** the player only, or every casino player (`bot_1..4` too)? The runs use all five
+  as samples either way.

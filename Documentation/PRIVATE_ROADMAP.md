@@ -111,7 +111,7 @@ Workflow).
 | **1** | **Step 17.A + 17.C** — a direct `DiceGame → BetsHistoryExplorer` button, and the event-driven audit (migrate the `_Process` polling backlog) | `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` (SPECIFIED 2026-08-20, **re-specified 2026-10-12**, not started) | 17.C is a **declared Basic Mode v0.1 gate** (§6). 17.A does not exist yet (verified 2026-10-12: only `CalendarsNavigator` and `ScFinances` reach the explorer) |
 | **2** | **User settings persistence** | §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20 and 23 added view preferences with no home |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
-| **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §17.B · the P-items below | Step 17 suspends 17.B until A and C are built **and tested** (developer's gate) |
+| **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §17.B · the P-items below | Step 17 suspends 17.B until A and C are built **and tested** (developer's gate). **The Rank's calibration data is already being gathered by mini-plan 25 §9 (2026-10-14)**, as a by-product of its test runs |
 | — | **Small item, fold into whichever UI plan comes first:** DiceGame's "Numbers" bet view | §6 | Its cost is solved: mini-plan 23 built the 10-number row and the latest-only view |
 
 **📝 Step 17 re-verified 2026-10-12 — its §0 governs.** The catalogue was re-derived from the code: 25 overrides, 8
@@ -228,6 +228,22 @@ Done when players have short-term and medium-term targets.
 > - who holds a rank (the player only, or `bot_1..4` too);
 > - the tiers and the advancement criteria;
 > - where the rank is shown.
+>
+> **📝 Developer's decisions, 2026-10-14 — the design plan starts from these:**
+> - The rank is measured on a casino player's **cumulative SC wagered since the start**.
+> - **20 to 33 levels in total**, with thresholds preferably at **round numbers**.
+> - The thresholds are **calibrated from test runs from genesis with different bet amounts**, which also
+>   inform **minimum bet amounts**.
+>
+> The data is being gathered now by **mini-plan 25 §9** (`AIHelperFiles/step17-…-plan.md`). It provides
+> the `RankCalibrationTrace` instrument, one row per block with every casino player's wagered, net, credits
+> and BTC, and a run ledger. Two findings from its §9.1 arithmetic shape the design:
+> - **Without income, expected lifetime wagered is capped at ≈ 4.08M SC** (40,000 ÷ the 0.98% edge) for
+>   every strategy and every bet size. Levels above that are reachable only by mining BTC and selling it for
+>   SC, so the ladder's top is set by mining, not by bet size.
+> - **The minimum bet is the price of a nonce attempt.** Today it is 1 satoshi, so time and mining are
+>   almost free. The minimum bet and the ladder's floor (`minBet × 5,296,320 bets per credit` over
+>   2009-03-21 → 2025-12-31) are one decision.
 
 Goal: a progression ladder for casino participants (player, and notably **Miner Referrals**) that gates and scales rewards.
 

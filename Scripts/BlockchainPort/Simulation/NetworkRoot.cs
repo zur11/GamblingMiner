@@ -1466,6 +1466,14 @@ public partial class NetworkRoot : Node
 		return SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player) ? AggregateSpendable(player) : 0m;
 	}
 
+	// The same for ANY node, for static consumers (mini-plan 25 §9: RankCalibrationTrace, once per block per
+	// casino client). Same cost rule: one UTXO-set pass per call, behind an edge, never per frame.
+	public static decimal GetNodeSpendableBalanceStatic(string nodeId)
+	{
+		EnsureInitialized();
+		return SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) ? AggregateSpendable(node) : 0m;
+	}
+
 	public static bool MineNodeStatic(string nodeId, long minedAtUnixMs)
 	{
 		if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? miner))
