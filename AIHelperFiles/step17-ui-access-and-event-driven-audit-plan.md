@@ -4,8 +4,9 @@
 > the developer's current world, and **§0 wins where it disagrees with anything below it**. Next: the
 > developer settled every §8 decision on 2026-10-12. **Unit 1 (the `UiRefreshProbe` instrument) is built.**
 > **2026-10-14: §9 added.** Every test now starts from genesis and doubles as a **Rank-System calibration
-> run**, and unit 2 (the `RankCalibrationTrace` instrument) is built. Next: set up R1 (§9.3, needs the
-> developer's go-ahead), then run M0 (§5.5) in R1's first minutes and continue R1 to Market Birth. All of
+> run**, and unit 2 (the `RankCalibrationTrace` instrument) is built. **R1 is set up**: the world is
+> archived and the wipe is armed for the developer's next launch (§9.5). Next: the developer runs §9.7,
+> which is R1 with M0 inside it, to at least 2010-07-18; then Claude reads the trace and `godot.log`. All of
 > this comes **before any migration**.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
@@ -623,11 +624,42 @@ rate.
 
 | Run | World archived as | Parameters | Game span covered | Result |
 |---|---|---|---|---|
-| R1 | — | §9.4 | — | proposed |
+| R1 | `GamblingMiner_archive_preR1_2026-10-14` (the 2012 world, h1,670, byte-identical copy) | §9.4 | — | **set up 2026-10-14**: wipe armed (`world_format_version.txt` 11 → 0); runs on the developer's next launch |
 
-### 9.6 — Open, for the developer
+### 9.6 — Answered by the developer (2026-10-14)
 
-- **The game's span:** is it 2009-03-21 → 2025-12-31, where both datasets end? §9.1's lifetime figures
-  depend on it.
-- **Who holds a rank:** the player only, or every casino player (`bot_1..4` too)? The runs use all five
-  as samples either way.
+- **The game's span is Basic Mode's: 2009-03-21 → 2025-12-31.** §9.1's lifetime figures stand.
+- **Who holds a rank: the player AND the four bots**, i.e. every casino player. The bots are therefore not
+  only calibration samples but rank holders, and the design plan must show their rank somewhere.
+
+### 9.7 — R1 session protocol (M0 included)
+
+**Two code facts the protocol depends on.** Bots bet only once each has a strategy **stored in DiceGame**
+(`BuildBotConfigs` skips a bot without one), and they start together with the player's autobet. Those stored
+strategies live in a static that does **not** survive a launch. So every session re-assigns them, and
+**saved strategies**, which do survive a wipe, make that a five-click step. A wiped world has no hardware
+entries; every node bets at **1 credit** (the clamp in `HardwareRate`), and the trace records that
+effective figure.
+
+1. Launch from the Godot editor. *Godot editor's Output panel:* `[NetworkRoot] World reset triggered
+   (format 0 → 11 …)`, then the historical bootstrap. Don't touch the DEV credits selector anywhere: R1
+   runs at the post-wipe defaults.
+2. Main Menu → **DiceGame**. **Layout check:** "↻ UI refresh" sits on the same line as "⏱ Block cost",
+   and nothing in that DEV block overlaps the chance slider.
+3. **Once only (they survive future wipes):** save five strategies. Each has *Increase on loss 0%*,
+   *Increase on win 0%*, no profit/loss stop, *Stop on block mined OFF*, chance **50**. Name them by base
+   bet: **`R1 0.01`**, **`R1 0.1`**, **`R1 0.5`**, **`R1 1`**, **`R1 2`**.
+4. **Each session:** with the active-node selector, load **`R1 0.01` on `bot_1`**, **`R1 0.1` on
+   `bot_2`**, **`R1 0.5` on `bot_3`**, **`R1 2` on `bot_4`**, then select **`player`** and load **`R1 1`**,
+   with **Auto Recharge ON**.
+5. Set the DEV time scale to **9000X** and tick **"↻ UI refresh"**. *Output panel:* `[UiRefresh] ARMED`.
+6. **M0 leg A** (no autobet yet): §5.5 step 3, i.e. DiceGame 10 s, ScTransactions 15 s, BotsBtcWallets
+   15 s.
+7. Back to DiceGame with **`player`** selected → **start the autobet**. The four bots start with it.
+8. **M0 leg B:** §5.5 steps 4–5, the scene tour.
+9. Untick "↻ UI refresh" (M0 is done, and it only adds lines from here) and **let R1 run to at least
+   2010-07-18** in any scene. A session can end at any time: the trace is written at every block, and a
+   restart reverts only to the last block.
+10. To end a session: stop the autobet in DiceGame, close the game, and say so in the chat. To continue
+    R1 later, launch and repeat steps 4, 5 (9000X only) and 7. **The world is not wiped again**, because the
+    wipe rewrote the stamp to 11.

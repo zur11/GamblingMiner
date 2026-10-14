@@ -71,7 +71,12 @@ namespace Scripts.Diagnostics
 				{
 					CasinoClientLedgerService.ClientBetStats stats = null;
 					book?.TryGetValue(client, out stats);
-					int credits = Scripts.Hardware.HardwareAllocationRepository.GetNode(client)?.TotalCredits ?? 0;
+					// The EFFECTIVE credits — the rate the node actually bets at. A freshly wiped world has no hardware
+					// entries, so TotalCredits reads 0 while SimulationService.HardwareRate and DiceGame.BuildBotConfigs
+					// clamp it to [1, MaxAutoBetBaseAps]; recording the raw 0 would make bets ÷ credits meaningless.
+					int credits = Math.Clamp(
+						Scripts.Hardware.HardwareAllocationRepository.GetNode(client)?.TotalCredits ?? 0,
+						1, SimulationService.MaxAutoBetBaseAps);
 					decimal btc = NetworkRoot.GetNodeSpendableBalanceStatic(client);
 					row.Append(string.Create(CultureInfo.InvariantCulture,
 						$",{credits},{stats?.TotalBets ?? 0},{stats?.TotalWagered ?? 0m:F8},{stats?.NetProfit ?? 0m:F8},{btc:F8}"));

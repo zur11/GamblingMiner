@@ -225,7 +225,7 @@ Done when players have short-term and medium-term targets.
 > its own before any implementation plan**. The text below was written when the rank drove the referral commission.
 > That commission is now **Post-Basic Mode**, so the design round must first answer what the rank drives *in Basic
 > Mode*. Candidates already named below: P7's conversion-fee tiers and P8's achievements. It must also settle:
-> - who holds a rank (the player only, or `bot_1..4` too);
+> - who holds a rank (the player only, or `bot_1..4` too); **answered 2026-10-14: all five**, below;
 > - the tiers and the advancement criteria;
 > - where the rank is shown.
 >
@@ -234,6 +234,8 @@ Done when players have short-term and medium-term targets.
 > - **20 to 33 levels in total**, with thresholds preferably at **round numbers**.
 > - The thresholds are **calibrated from test runs from genesis with different bet amounts**, which also
 >   inform **minimum bet amounts**.
+> - **Rank holders: the player AND `bot_1..4`**, every casino player.
+> - The span the ladder is calibrated over is **Basic Mode's: 2009-03-21 → 2025-12-31**.
 >
 > The data is being gathered now by **mini-plan 25 §9** (`AIHelperFiles/step17-…-plan.md`). It provides
 > the `RankCalibrationTrace` instrument, one row per block with every casino player's wagered, net, credits
