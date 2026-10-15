@@ -183,6 +183,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private Button _openCalculatorBtn;
 	private Button _openBankrollProgrammerBtn;
 	private Button _openCalendarNavigatorBtn;
+	private Button _openBetsExplorerBtn;
 	private MartingaleCalculator _martingaleCalculator;
 
 	// --- Componentes del juego ---
@@ -269,6 +270,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_openCalculatorBtn = GetNode<Button>("%OpenCalculatorBtn");
 		_openBankrollProgrammerBtn = GetNode<Button>("%OpenBankrollProgrammerBtn");
 		_openCalendarNavigatorBtn = GetNode<Button>("%OpenCalendarNavigatorBtn");
+		_openBetsExplorerBtn = GetNode<Button>("%OpenBetsExplorerBtn");
 		_openBlockExplorerBtn = GetNode<Button>("%OpenBlockExplorerBtn");
 		_activeNodeSelector = GetNode<OptionButton>("%ActiveNodeSelector");
 		_strategyNameInput = GetNode<LineEdit>("%StrategyNameInput");
@@ -288,6 +290,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_openCalculatorBtn.Pressed += OnOpenCalculatorPressed;
 		_openBankrollProgrammerBtn.Pressed += OnOpenBankrollProgrammerPressed;
 		_openCalendarNavigatorBtn.Pressed += OnOpenCalendarNavigatorPressed;
+		_openBetsExplorerBtn.Pressed += OnOpenBetsExplorerPressed;
 		_openBlockExplorerBtn.Pressed += OnOpenBlockExplorerPressed;
 		GetNode<Button>("%MainMenuBtn").Pressed += OnGoToMainMenuPressed;
 		_activeNodeSelector.ItemSelected += OnActiveNodeSelected;
@@ -2174,6 +2177,29 @@ public partial class DiceGame : Control, IBetEventSource
 		// (the old overlay path is obsolete and caused "trapped" back-buttons when autobet was active).
 		_calendarTimeService?.PersistCurrentTime();
 		_sceneManager?.Go(SceneManager.SceneId.CalendarsNavigator);
+	}
+
+	// Mini-plan 25 / Step 17.A (developer, 2026-08-18; arrival rule 2026-10-12) — a direct door to the bets explorer,
+	// beside the Calendar route rather than instead of it. It ALWAYS arrives at the present: the developer's rule
+	// for every entry that is not a return from the explorer itself (mini-plan 06 §9.7e, built for the Calendar by
+	// mini-plan 23 B). Opening at the last selected date instead would reopen §9.7e's defect through a new door —
+	// nothing re-seeds the selection on the way back to DiceGame, so it could be a game-year stale. "The present"
+	// is the Calendar's own definition (CalendarsNavigator.PresentLocal): the later of the live clock and the
+	// present frontier. Only the explorer's SELECTION is written, never the world clock, and the explorer still
+	// arrives paused (mini-plan 04 §4.1). Its "← Back" returns here through SceneManager.PreviousScene.
+	private void OnOpenBetsExplorerPressed()
+	{
+		// In-memory only (block = the only disk commit) — the same pair as the Block Explorer door below.
+		SaveActiveNodeFinancialState(false);
+		_calendarTimeService?.PersistCurrentTime();
+		if (_calendarTimeService != null)
+		{
+			DateTime live = _calendarTimeService.CurrentLocalDateTime;
+			DateTime frontier = _calendarTimeService.GamePresentLocalDateTime;
+			_calendarTimeService.SetExplorerSelectedLocalDateTime(live > frontier ? live : frontier);
+		}
+
+		_sceneManager?.Go(SceneManager.SceneId.BetsHistoryExplorer);
 	}
 
 	private void OnOpenBlockExplorerPressed()

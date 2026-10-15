@@ -564,6 +564,25 @@ public partial class NetworkRoot : Node
 	// that skips BuildBotPoolOpportunities — which is precisely how a guard quietly stops guarding. Same
 	// reflex as AssertEscalationSlopesAreOrdered and P15.9's clamp tripwire: an invariant that lives only
 	// in prose is an invariant nobody checks.
+	// Mini-plan 25 §4.5 — a displayed figure with a cheap closed-form bound gets the bound asserted (Pattern 2): only the
+	// player and bot_1..4 qualify, so a company can never show more than 1 + MinerBots.Count donors. More means an
+	// identity counted twice, which is how a raw-address count once split the player in two (2026-07-14). Latched:
+	// the ledger is recomputed on every refresh, and one report says everything. GD.Print as well as PrintErr,
+	// because this check passes in silence (CLAUDE.md, "name the panel").
+	private static bool _bidderCountAssertFired;
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	private static void AssertBidderCountBounded(int bidderCount, string nonMinerNodeId)
+	{
+		int max = 1 + BotWalletRegistry.MinerBots.Count;
+		if (_bidderCountAssertFired || (bidderCount >= 0 && bidderCount <= max)) return;
+		_bidderCountAssertFired = true;
+		string message = $"[AuctionLedger] {nonMinerNodeId} counts {bidderCount} donors, above the {max} qualifying "
+						 + "identities — an identity is being counted twice.";
+		GD.Print(message);
+		GD.PrintErr(message);
+	}
+
 	[System.Diagnostics.Conditional("DEBUG")]
 	private static void AssertBidderIsNotRestingOnReserve(string botNodeId)
 	{
@@ -6801,12 +6820,25 @@ public partial class NetworkRoot : Node
 			BotWalletRecord b = nonMiners[i];
 			List<(string donor, decimal amount, long ts, long seq)> list = donations[b.Address];
 
+			// Mini-plan 25 §4.5 (developer, 2026-10-15) — the company's funding split by WHO sent it. Sends from
+			// the qualifying bidders (the player + bot_1..4) are bids: they are counted as DONORS, by IDENTITY,
+			// not by address, since every bot owns several addresses (P16.2) and an address is a key, not an
+			// identity. Everything else (cast miners, the non-miner economy; D-EB.7: never bids) is the
+			// company's BTC INCOME. Both replaced TotalReceived/DonorCount, which mixed the two and counted every
+			// distinct sender address as a "donor".
+			int bidderCount = list
+				.Where(d => qualifyingBidders.Contains(d.donor))
+				.Select(d => botNodeIdByAddress.TryGetValue(d.donor, out string? botId) ? botId : d.donor)
+				.Distinct()
+				.Count();
+			AssertBidderCountBounded(bidderCount, b.NodeId);
+
 			var summary = new NonMinerDonationSummary
 			{
 				NonMinerNodeId = b.NodeId,
 				NonMinerAddress = b.Address,
-				TotalReceived = list.Sum(d => d.amount),          // ALL funding (economy + bids) — display
-				DonorCount = list.Select(d => d.donor).Distinct().Count()
+				CompanyBtcIncome = list.Where(d => !qualifyingBidders.Contains(d.donor)).Sum(d => d.amount),
+				BidderCount = bidderCount
 			};
 
 			// ND.8b.1 (D-ND8.37) — non_miner_{i+1} (BotWalletRegistry's fixed creation order) always
@@ -8761,8 +8793,10 @@ public sealed class NonMinerDonationSummary
 	public string CompanyMarketCategory { get; set; } = string.Empty;
 	public DateTime? CompanyAppearanceDateLocal { get; set; }
 	public string CompanyAnchor { get; set; } = string.Empty;
-	public decimal TotalReceived { get; set; }
-	public int DonorCount { get; set; }
+	// Mini-plan 25 §4.5 — "Company's BTC Income": BTC received from every sender that is NOT a qualifying bidder.
+	public decimal CompanyBtcIncome { get; set; }
+	// Mini-plan 25 §4.5 — distinct qualifying bidders (player + bot_1..4) who ever sent here; 0..5 by construction.
+	public int BidderCount { get; set; }
 	public string LeadingDonorAddress { get; set; } = string.Empty;
 	public decimal LeadingDonorTotal { get; set; }
 	// ND.4b (D-ND4b.10, corrected 2026-07-11) — the leading bid's LIVE, CURRENT SC value (BTC principal ×

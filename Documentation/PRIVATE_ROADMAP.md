@@ -336,9 +336,13 @@ How much a company has received plays no part. So this is a **bidding-rule chang
 ND.10d rule).
 
 **Design questions for that plan's design round — not decided:**
-- **"Received" means which figure?** `TotalReceived` is ALL funding, the `recv` figure `BlockExplorer`
-  shows, including economy-only sends. The alternative is the qualifying pool's value. It should agree
-  with whatever mini-plan 25's donor count settles on.
+- **"Received" means which figure?** Since mini-plan 25 §4.5 (2026-10-15) the funding is split in two, and
+  `TotalReceived` no longer exists:
+  - **"Company's BTC Income"** (`CompanyBtcIncome`): sends from every wallet that is not a qualifying bidder,
+    the figure the player now sees on both auction screens;
+  - **the bids** of the player + casino miners: the tracked pool, counted as donors.
+
+  Preferring by income, by bids, or by their sum are three different behaviours.
 - **How strong is the preference?** Options:
   - a multiplier on the tie-break weight, e.g. `1 + k × received ÷ max received`;
   - weight proportional to received, with a floor so a fresh pool can still be seeded;

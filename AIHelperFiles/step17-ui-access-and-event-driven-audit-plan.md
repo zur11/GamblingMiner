@@ -9,7 +9,8 @@
 > which lifts `CompanyDetails`'s suspension. Next: the developer picks the next calibration run (§9.9), then
 > 17.A and C.1. **Chosen: R1-continued (§9.10).** The developer's two company items are placed: the donor
 > count is **17.A3** (§4.5), and the bot preference goes to the Player Holdings Hub entry in the roadmap.
-> Next unit: **17.A + A2 + A3**.
+> **Unit 3 (17.A + 17.A3) is built**: the direct button, the donor count and "Company's BTC Income"; its
+> verification is §4.6. Next unit: **17.A2**, the Numbers view, which needs its grid geometry fixed first.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -278,6 +279,52 @@ and 13).
 - the count matches the distinct qualifying senders, recomputed from the chain;
 - it never exceeds 5;
 - the two screens agree.
+
+**Decided by the developer, 2026-10-15:**
+- **D-17.4 = yes.**
+- The rest of the funding gets a name: **"Company's BTC Income"**, the BTC received from every wallet that is
+  not the player or a casino miner. It updates constantly.
+
+**Built (2026-10-15):**
+- `NonMinerDonationSummary.TotalReceived` and `DonorCount` are **deleted**. They mixed bids with income and
+  counted sender *addresses*. Their only reader was `BlockExplorer`'s row (grepped).
+- In their place:
+  - `CompanyBtcIncome`: the BTC from every non-qualifying sender;
+  - `BidderCount`: distinct qualifying **identities**. A bot owns several addresses since P16.2, so it is
+    mapped to its node id first.
+- **`BlockExplorer`'s row:** `BTC income X BTC | N donors`.
+- **`AuctioningCompanyDetails`:** a second status line, `Donors: N (player + casino miners) | Company's BTC
+  Income: X BTC`.
+- **Update rate:** "constantly" means at every block. The page rebuilds on `BlockAccepted`, and income only
+  exists once a block confirms it; a payment still in the mempool is not income yet.
+- **The 0..5 bound** is asserted under DEBUG: `[AuctionLedger] … counted twice`, latched, printed with
+  `GD.Print` and `PrintErr`.
+
+### 4.6 — Verification protocol V-A (17.A + 17.A3), run inside an R1-continued session (§9.10)
+
+**Predictions:**
+- **V-A1:** the direct button opens the explorer **at the present**, paused, from any prior state.
+- **V-A2:** `← Back` returns to the scene that opened the explorer.
+- **V-A3:** the two screens show the same donor count, never above 5.
+- **V-A4:** no `[AuctionLedger]` line ever appears.
+
+**Refuted if** any step below differs.
+
+1. DiceGame, autobet running. **Look:** the **"Bets / Explorer"** button sits right of "Calendar Navigator",
+   both lines readable and nothing clipped.
+2. Press it. The explorer opens at **the clock's current date and time**, **paused**. Press **"← Back"**: you
+   return to **DiceGame**.
+3. **The regression test.** DiceGame → Calendar Navigator → set an **old date** (any 2010 date) → Apply →
+   open the explorer: it shows that old date. Now press **"Back to Dice"**, then the **direct button**: it
+   must open at **the present**, NOT the old date.
+4. The Calendar route still works: DiceGame → Calendar Navigator (it shows the present) → open the explorer
+   → same date, paused → **"← Back"** returns to the **Calendar**.
+5. DiceGame → BlockExplorer → toggle **Auction / Company Mode**. Each in-auction row reads `BTC income …
+   BTC | N donors`, with **N between 0 and 5**.
+6. Press **Details** on an in-auction company with bids. Its second status line reads `Donors: N (player +
+   casino miners) | Company's BTC Income: … BTC`, and **N equals that row's N**. Wait for two or three blocks:
+   the income figure may grow. It must never shrink.
+7. *Godot editor's Output panel:* **no** `[AuctionLedger]` line for the whole session.
 
 > **The developer's second company item, bots preferring companies with more BTC received, is NOT in this
 > plan.** It changes the referral auction's bidding rule, so `REFERRAL_AUCTION.md` §1 and the bid-probability

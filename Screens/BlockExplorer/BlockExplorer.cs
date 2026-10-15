@@ -167,8 +167,9 @@ public partial class BlockExplorer : Control
 		foreach (Node child in _enrollModeRowsVBox.GetChildren())
 			child.QueueFree();
 
-		// EB.2 (D-EB.6/7): TotalReceived counts ALL funding (bot economy + player bids); the leader and
-		// the countdown reflect only QUALIFYING bids. A non-miner with no qualifying bid yet shows
+		// EB.2 (D-EB.6/7): the leader and the countdown reflect only QUALIFYING bids. Mini-plan 25 §4.5: so do the
+		// donors (BidderCount, the same figure AuctioningCompanyDetails shows, D-17.4), and the rest of the
+		// funding is the company's BTC income. A non-miner with no qualifying bid yet shows
 		// "awaiting first bid" — its window countdown has not started and it stays recruitable.
 		// ND.4b (D-ND4b.10, corrected 2026-07-11): the leading bid's BTC principal now also shows its
 		// LIVE, CURRENT SC value (priced as of now, never frozen at the bid's own day).
@@ -184,7 +185,7 @@ public partial class BlockExplorer : Control
 				? "awaiting first bid — no countdown"
 				: string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left");
 			string line = string.Create(CultureInfo.InvariantCulture,
-				$"{NetworkRoot.DescribeCompany(s)}  | recv {s.TotalReceived:F8} BTC ({s.DonorCount} donor)  | {leader}  | {clock}");
+				$"{NetworkRoot.DescribeCompany(s)}  | BTC income {s.CompanyBtcIncome:F8} BTC  | {s.BidderCount} {(s.BidderCount == 1 ? "donor" : "donors")}  | {leader}  | {clock}");
 
 			var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
 

@@ -142,7 +142,13 @@ public partial class AuctioningCompanyDetails : Control
 			PlayerAuctionStake.Pst => "PST (dividend shares)",
 			_ => "nothing (no tracked slot)"
 		};
-		_statusLabel.Text = $"In Auction — {clock}  |  If it closed now you would mint: {stakeCaption}";
+		// Mini-plan 25 §4.5 (developer, 2026-10-15) — who funds this company, split the way the auction splits it:
+		// DONORS are the qualifying bidders (player + casino miners, the same BidderCount BlockExplorer shows) and
+		// the company's BTC INCOME is everything sent by anyone else. Both move only when a block confirms a
+		// payment, and this page rebuilds on every BlockAccepted, so they are as current as the chain.
+		string funding = string.Create(CultureInfo.InvariantCulture,
+			$"Donors: {summary.BidderCount} (player + casino miners)  |  Company's BTC Income: {summary.CompanyBtcIncome:F8} BTC");
+		_statusLabel.Text = $"In Auction — {clock}  |  If it closed now you would mint: {stakeCaption}\n{funding}";
 
 		// ND.6d — the pool's occupied-slot count selects the casino-bot re-bid mode shown per slot below:
 		// EARLY RUSH while it holds <7 slots (steep tier 4/5/6 probabilities so bots contest young pools
