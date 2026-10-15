@@ -246,6 +246,15 @@ Done when players have short-term and medium-term targets.
 > - **The minimum bet is the price of a nonce attempt.** Today it is 1 satoshi, so time and mining are
 >   almost free. The minimum bet and the ladder's floor (`minBet × 5,296,320 bets per credit` over
 >   2009-03-21 → 2025-12-31) are one decision.
+>
+> **R1 measured it (2026-10-15, mini-plan 25 §9.8).** The flat-bet arithmetic holds **exactly**: 315,576 bets
+> per credit per game-year for every client, and losses within 1.13σ of the edge. So varying flat bet sizes
+> needs no more runs. Mining in 2009–2012 gave **35–43 blocks per credit per game-year**. Priced at
+> historical highs, one early miner's coins (~5,100 BTC) can fund a wagering capacity of **~10¹⁰ SC**.
+> The ladder therefore has to span about **six to seven decades**: a minimum-bet floor near 10⁴, the
+> no-income cap at ~4M, and a miner's top near 10¹⁰. Two round-number families fit 20–33 levels, recorded
+> as candidates, not chosen: **1-2-5** and **1-2-3-5 per decade**. The next runs measure what arithmetic
+> cannot: later-era mining, progressions, and more credits (§9.9).
 
 Goal: a progression ladder for casino participants (player, and notably **Miner Referrals**) that gates and scales rewards.
 

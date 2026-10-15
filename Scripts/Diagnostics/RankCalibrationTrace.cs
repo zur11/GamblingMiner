@@ -23,9 +23,12 @@ namespace Scripts.Diagnostics
 	/// A row written here therefore never describes a moment a restart later rolls back (Pattern 2), and the values
 	/// come out of the snapshot itself, so the row and the checkpoint cannot disagree.</para>
 	///
-	/// <para><b>Columns.</b> The player appears twice on purpose: <c>p_*</c> from the lifetime rollup and
-	/// <c>player_*</c> from the casino's client book. They are written by different code and must agree; a gap
-	/// between them is a finding, and it costs nothing to check. Credits are per client because bets per game second
+	/// <para><b>Columns.</b> One identical block per casino client. The player's bets/wagered/net come from the
+	/// lifetime rollup and the bots' from the casino's client book, because that is where each one LIVES: the book
+	/// deliberately never records the player (ND.8f — "player stats stay in UserStatsService";
+	/// <c>SimulationService</c> and <c>DiceGame</c> both skip it). The first version of this trace read the player from
+	/// the book too, claiming a cross-check, and R1 wrote 0 for the player in every row: a column whose label claims
+	/// more than its source can give. Credits are per client because bets per game second
 	/// are credits ÷ 100 (the 100-second rule), so wagered cannot be read without them. BTC is per client too,
 	/// because without income a player's expected lifetime wagered is capped near capital ÷ house edge whatever the
 	/// bet size (plan §9.1), so everything above that cap is mined BTC turned into SC. Five UTXO passes per block;
@@ -63,14 +66,27 @@ namespace Scripts.Diagnostics
 				row.Append(string.Create(CultureInfo.InvariantCulture,
 					$"{gameLocal:yyyy-MM-dd HH:mm:ss},{NetworkRoot.GetPlayerChainLengthStatic()},"));
 				row.Append(string.Create(CultureInfo.InvariantCulture,
-					$"{rollup?.TotalBets ?? 0},{rollup?.TotalWagered ?? 0m:F8},{rollup?.TotalNetProfit ?? 0m:F8},"));
-				row.Append(string.Create(CultureInfo.InvariantCulture,
 					$"{snapshot.PrincipalBalance:F8},{snapshot.BankrollBalance:F8},{snapshot.PlayerBankState?.BankAccountBalance ?? 0m:F8}"));
 
 				foreach (string client in Clients)
 				{
-					CasinoClientLedgerService.ClientBetStats stats = null;
-					book?.TryGetValue(client, out stats);
+					int bets;
+					decimal wagered, net;
+					if (client == "player")
+					{
+						bets = rollup?.TotalBets ?? 0;
+						wagered = rollup?.TotalWagered ?? 0m;
+						net = rollup?.TotalNetProfit ?? 0m;
+					}
+					else
+					{
+						CasinoClientLedgerService.ClientBetStats stats = null;
+						book?.TryGetValue(client, out stats);
+						bets = stats?.TotalBets ?? 0;
+						wagered = stats?.TotalWagered ?? 0m;
+						net = stats?.NetProfit ?? 0m;
+					}
+
 					// The EFFECTIVE credits — the rate the node actually bets at. A freshly wiped world has no hardware
 					// entries, so TotalCredits reads 0 while SimulationService.HardwareRate and DiceGame.BuildBotConfigs
 					// clamp it to [1, MaxAutoBetBaseAps]; recording the raw 0 would make bets ÷ credits meaningless.
@@ -79,7 +95,7 @@ namespace Scripts.Diagnostics
 						1, SimulationService.MaxAutoBetBaseAps);
 					decimal btc = NetworkRoot.GetNodeSpendableBalanceStatic(client);
 					row.Append(string.Create(CultureInfo.InvariantCulture,
-						$",{credits},{stats?.TotalBets ?? 0},{stats?.TotalWagered ?? 0m:F8},{stats?.NetProfit ?? 0m:F8},{btc:F8}"));
+						$",{credits},{bets},{wagered:F8},{net:F8},{btc:F8}"));
 				}
 
 				row.Append('\n');
@@ -98,7 +114,7 @@ namespace Scripts.Diagnostics
 		private static string BuildHeader()
 		{
 			var header = new StringBuilder(
-				"gameTimeLocal,chainLength,p_rollupBets,p_rollupWagered,p_rollupNet,p_scMain,p_scBankroll,p_scBank");
+				"gameTimeLocal,chainLength,p_scMain,p_scBankroll,p_scBank");
 			foreach (string client in Clients)
 			{
 				header.Append($",{client}_credits,{client}_bets,{client}_wagered,{client}_net,{client}_btc");

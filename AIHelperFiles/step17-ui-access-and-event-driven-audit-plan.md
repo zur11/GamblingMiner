@@ -4,10 +4,10 @@
 > the developer's current world, and **§0 wins where it disagrees with anything below it**. Next: the
 > developer settled every §8 decision on 2026-10-12. **Unit 1 (the `UiRefreshProbe` instrument) is built.**
 > **2026-10-14: §9 added.** Every test now starts from genesis and doubles as a **Rank-System calibration
-> run**, and unit 2 (the `RankCalibrationTrace` instrument) is built. **R1 is set up**: the world is
-> archived and the wipe is armed for the developer's next launch (§9.5). Next: the developer runs §9.7,
-> which is R1 with M0 inside it, to at least 2010-07-18; then Claude reads the trace and `godot.log`. All of
-> this comes **before any migration**.
+> run**, and unit 2 (the `RankCalibrationTrace` instrument) is built. **2026-10-15: M0 and R1 are done**
+> (§5.5 results, §9.8). M0's P1 is confirmed, so C.1 proceeds. R1 ran to 2012-02-14 and founded 18 companies,
+> which lifts `CompanyDetails`'s suspension. Next: the developer picks the next calibration run (§9.9), then
+> 17.A and C.1.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -353,7 +353,7 @@ One unit = one stage → message → commit loop. Instrument, then measure, **th
 | 6 | **C.3** — the B group's fallbacks, one scene per unit: delete each, or name the state it covers | `StatusBar`'s 10 Hz balance cadence is out of scope (a decision, mini-plan 15 B) |
 | 7 | **C.4** — `BotPlayHistory` onto `ClientBetSettled`, coalesced | Per-bet event: §38.7 rule 1 |
 | 8 | **C.5** — `CalendarsNavigator` input-driven repaint, only if D-17.2 = yes | Must not subscribe to the clock (§9.7e) |
-| 9 | **C.6** — `CompanyDetails`: migrate blind, mark **unverified** | §39.16 rule 10: migrating blind is allowed, declaring it done is not |
+| 9 | **C.6** — `CompanyDetails` | **Verifiable since R1 (2026-10-15): 18 founded companies.** No longer blind, provided it is verified on R1's world or another that has companies |
 | 10 | **M1** — the M0 protocol again, same world and settings, then close-out | |
 
 ### 5.5 — Measurement M0: predictions registered BEFORE the run (2026-10-12)
@@ -420,7 +420,39 @@ No selection is asked for elsewhere: every other count sits at the top of a refr
 selected. `CompanyDetails` cannot be reached, because no company exists (§0.1 fact 1).
 
 **Analysis rules (fixed now):** the first window reported in each newly entered scene is discarded, because
-it began in the previous scene. A scene's rate is the median of its remaining windows. P2 compares the median
+it began in the previous scene.
+
+#### M0 results (run 2026-10-14/15, R1's fresh world, 9000X, every client at 1 credit)
+
+Read from `user://logs/godot.log`, lines 42–568: 137 windows, each the median of its scene's
+non-transition windows.
+
+| | Verdict | Measured |
+|---|---|---|
+| **P1** | ✅ **CONFIRMED, decisively** | `CasinoCoinSwaps.RefreshAll` **450/s**, `CasinoGamblingFinances.RefreshLabels` **450/s**. That is exactly 5 clients × 90 bets/s: each rebuild fires once per settled casino bet. `ClientsBetsHistory.OnClientBetSettled` runs at the same 450/s (the per-bet feed) |
+| **P2** | ❌ **REFUTED** | Retention read **100% in every window of the run**, `CasinoCoinSwaps` included. At this load (5 credits in total) the per-bet rebuilds cost too little to move retention, and a saturated readout cannot show a difference below its ceiling (instrument rule 5) |
+| **Canary** | ✅ passed | `ScTransactions` 0.4–0.6/s, `BotsBtcWallets` 0.2–0.4/s, and the explicit `no refreshes` line in DiceGame at rest |
+| **Mempool adds** | recorded | **0–0.2/s**, all of it in the founder-transaction era: **no fee-paying traffic exists before Market Birth**, so this is a floor. D-17.1's rate must be re-measured after 2010-07-18 before it is relied on |
+
+**Rates for C.n's ordering**, each the median under the sim:
+
+| Rate | Panels |
+|---|---|
+| ~450/s | the two P1 sites, plus the `ClientsBetsHistory` feed |
+| ~5/s | `FinancialBettingStats`: the 250 ms `StatsChanged` throttle plus its 0.75 s timer |
+| 1/s | `BlockExplorer`, `BTCPoolsAndHardwareShop`, `BotPlayHistory` |
+| 0.4–0.6/s | `BTCWallet`, `FoundersWallets`, `ScFinances`, `ScTransactions`, `ClientsTransactions`, `ClientsBetsHistory`'s rebuild |
+| 0.2–0.4/s | `BotsBtcWallets` and its two subclasses |
+| 0.2/s | `CentralBank` (its fallback alone; no FED event fired) |
+
+**Leaks:** none. Every per-bet rate fell to 0 in the first full window after leaving its scene.
+**Not measured:** `CasinoFinances`. The tour visited `CasinoGamblingFinances` twice instead; by code it is
+a 2 s timer, i.e. 0.5/s.
+
+**What it means for C.1.** By §5.4's rule C.1 proceeds, since P1 is confirmed. But its benefit will **not**
+show as retention at 5 credits. It is justified by the count (450 rebuilds a second for a value no single
+bet can visibly move) and by load: the same subscription at 99 credits would fire about 20× as often. C.1's
+exit criterion is therefore a count, `≤ 4/s` at a 0.25 s coalesce, never a retention figure. A scene's rate is the median of its remaining windows. P2 compares the median
 retention of `CasinoCoinSwaps` against `ScTransactions`.
 
 ---
@@ -624,7 +656,80 @@ rate.
 
 | Run | World archived as | Parameters | Game span covered | Result |
 |---|---|---|---|---|
-| R1 | `GamblingMiner_archive_preR1_2026-10-14` (the 2012 world, h1,670, byte-identical copy) | §9.4 | — | **set up 2026-10-14**: wipe armed (`world_format_version.txt` 11 → 0); runs on the developer's next launch |
+| R1 | `GamblingMiner_archive_preR1_2026-10-14` (the 2012 world, h1,670, byte-identical copy) | §9.4 | **2009-03-22 → 2012-02-14, 2.90 game-years**, chain 117 → 1,690, one session | **Done 2026-10-15**, §9.8. Trace: `logs/rank_calibration_R1_part1.csv` |
+
+### 9.8 — R1 results (2026-10-15)
+
+Read from `rank_calibration_R1_part1.csv` (1,573 block rows) and the chain itself.
+
+| | Verdict | Measured |
+|---|---|---|
+| **R1-P1** | ✅ **CONFIRMED, exactly** | **315,576 bets per game-year for all five clients, deviation 0.000%.** All five end at 916,081 bets. The 100-second rule holds per client |
+| **R1-P2** | ✅ CONFIRMED | Every net within 1.13σ of −0.98% of wagered: player z = 0.92, `bot_1` −0.50, `bot_2` −0.14, `bot_3` 1.13, `bot_4` 0.46 |
+| **R1-P3** | ❌ **REFUTED — by its own premise, not by the code** | The client book holds **0** for the player in every row. That is by design (ND.8f): the book records `bot_1..4` only, and the player lives in `UserStatsService`. The trace's claim that the two "must agree" was wrong. **Fixed:** the trace now reads each client from its own source, and the stale columns are gone |
+| **R1-P4** | ✅ CONFIRMED | Nobody was ruined: all five bet counts stay equal to the last row. `bot_4` (2 SC) lost 17,078 SC in 2.9 years, about 42% of its capital, on track for the predicted ~6.5-year ruin |
+
+**Wagered after 2.9 game-years, each exactly bets × base bet:**
+
+| Client | Base bet | Wagered (SC) | Net (SC) |
+|---|---|---|---|
+| `bot_1` | 0.01 | 9,160.81 | −94.50 |
+| `bot_2` | 0.1 | 91,608.10 | −910.93 |
+| `bot_3` | 0.5 | 458,040.50 | −3,952.60 |
+| `player` | 1 | 916,081.00 | −8,105.23 |
+| `bot_4` | 2 | 1,832,162.00 | −17,077.87 |
+
+**So the flat-bet part of §9.1 needs no further runs:** a run cannot teach anything that bets × base bet
+does not already say.
+
+**Mining, the part only a run can measure.** From the chain (blocks 117–1,690, 1,574 blocks, 542/game-year):
+- each casino client at 1 credit mined **98–126 blocks**: player 102, `bot_1` 105, `bot_2` 121, `bot_3` 98,
+  `bot_4` 126. That is about **35–43 blocks, or 1,750–2,170 BTC, per credit per game-year in 2009–2012**;
+- the rest went to the historical cast (artforz 123, Satoshi 109, laszlo 90, …) and the scheduled mass.
+
+The player kept all **5,100 BTC**. The bots spent about 90% of theirs bidding in the referral auctions and
+hold ~510–558 each. **18 companies were founded**, which lifts `CompanyDetails`'s suspension (§0.1 fact 1):
+this world can verify it.
+
+**What 5,100 BTC is worth in SC** (historical price, before the 10% swap fee):
+
+| Date | Value |
+|---|---|
+| 2012-02-14 | ≈ 24k SC |
+| 2013-12-04 | ≈ 6.1M SC |
+| 2017-12-17 | ≈ 97.7M SC |
+| 2021-11-08 | ≈ 335M SC |
+| 2025-12-31 | ≈ 450M SC |
+
+Wagered at 0.98% expected loss, the 2021 figure alone is a capacity of **~3 × 10¹⁰ SC**. *An extrapolation,
+not a measurement:* the network's competition grows sharply after 2012, and the halving at 2,100 blocks
+falls inside the next game-year, so BTC per credit-year will fall. Measuring that fall is the next thing a
+run must do.
+
+**The range the ladder has to span, as of R1:**
+- **floor:** a minimum-bet player. At 0.01 SC that is ~53k SC lifetime per credit;
+- **no-income cap:** ~4.08M SC;
+- **top:** a miner who sells and re-wagers, up to ~10¹⁰ SC.
+
+That is roughly **six to seven decades**, and it is where the 20–33 levels must fit. Two round-number
+families fit it, written down as candidates for the design plan, **not chosen**:
+- **1-2-5 per decade** (3 levels a decade): about 19–22 levels over 10⁴ → 10¹⁰/10¹¹;
+- **1-2-3-5 per decade** (4 a decade): 25 levels over 10⁴ → 10¹⁰, or 29 levels from 10³.
+
+### 9.9 — Next runs (proposed 2026-10-15; the developer chooses)
+
+R1 showed that **varying flat bet amounts teaches nothing new**, because the arithmetic is exact. What the
+arithmetic cannot predict is:
+- **(a)** mining income in later eras, where network competition grows and the halving falls;
+- **(b)** progression strategies, whose average bet diverges in theory and is capped only by the bankroll
+  and ruin;
+- **(c)** more hardware credits.
+
+| Option | What | Why |
+|---|---|---|
+| **R1-continued** (recommended first) | Keep R1's world and parameters and **continue it while 17.C's migrations are verified**, with no wipe. The trace carries on in a new file | (a) for free: it reaches the 2012–2014 era where competition grows and the first halving lands. It is also the world 17.C.6 needs, now that 18 companies exist. M1 can be the same world, as §5.4 asks |
+| **R2** (from genesis) | Progressions, every client at 1 credit. `player` flat 0.1 SC (the control), and the bots at base 0.01 with **+100% / +50% / +25% on loss**, reset on win, plus one with a stop-loss and insist | (b): the average-bet multiplier and ruin under progressions, the case a martingale player brings to the ladder |
+| **R3** (from genesis) | Credits: `player` at 10 credits through the DEV credits selector, everyone else as R1 | (c): mining share and bets per year at 10×, which P5's hardware progression will produce |
 
 ### 9.6 — Answered by the developer (2026-10-14)
 
