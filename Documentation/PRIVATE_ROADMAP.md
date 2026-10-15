@@ -321,6 +321,34 @@ Candidate inputs (all already available, none requiring new state):
 
 **Promoted in priority by Step 16's own playtest (2026-08-05).** Two of the three participation settings are now per-company (`PlayerPauseOnVotes`, `PlayerAutoAbstain`, plus three policy dials), and with the player holding NST in ten companies the panel-by-panel management is already the slowest part of the loop — this hub is where a bulk view belongs. The step also produced the exact failure it exists to prevent: with the game frozen by a vote at BTC Guild the developer went to ArtForz Cluster, found a normal page, and had no route onward. P16.8e's pause locator patches that one case; **a holdings hub answers the general question ("where is anything waiting for me?") that the locator only answers for the pause.** Reuse `GetCompaniesAwaitingPlayerVote` as the badge source.
 
+**📝 Folded in by the developer (2026-10-15): casino bots prefer to bid on companies with more BTC received.**
+A company-economy change belonging to the same plan, as the developer's companies item. Its sibling, the
+donor count in `AuctioningCompanyDetails`, went to mini-plan 25 §4.5 instead, because it is display-only.
+
+**What it changes.** Pool choice today is spec'd in `REFERRAL_AUCTION.md` §1:
+- every biddable pool rolls its own ladder probability each slot (ND.10c);
+- the pools that hit compete in a **weighted tie-break** (ND.10l, with `FreshPoolSeedingWeight` for an
+  unparticipated pool);
+- the target list is built soonest-to-expire first (D-ND4b.4).
+
+How much a company has received plays no part. So this is a **bidding-rule change**: §1 gets the new rule,
+§2 an amendment entry, and the per-block probability panel must use the same weights (Convention 6, the
+ND.10d rule).
+
+**Design questions for that plan's design round — not decided:**
+- **"Received" means which figure?** `TotalReceived` is ALL funding, the `recv` figure `BlockExplorer`
+  shows, including economy-only sends. The alternative is the qualifying pool's value. It should agree
+  with whatever mini-plan 25's donor count settles on.
+- **How strong is the preference?** Options:
+  - a multiplier on the tie-break weight, e.g. `1 + k × received ÷ max received`;
+  - weight proportional to received, with a floor so a fresh pool can still be seeded;
+  - a strict sort.
+- **It reinforces itself:** more received draws more bids, which add to received. Should a ceiling or
+  decay keep auctions from collapsing onto a few companies? Standing Convention 11's "assert the output varies" applies
+  to the spread of founded companies.
+
+**Must not land while a rank-calibration run is open** (mini-plan 25 §9.10): it changes how bots spend BTC.
+
 ### Why 60,000 was unreachable, and what was declined (measured 2026-10-07)
 
 **Status: the measurement behind mini-plan 19, kept because the next reader will otherwise re-litigate it.** Mini-plan 18 C extracted every *case narrative* it could place in an existing

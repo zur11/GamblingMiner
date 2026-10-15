@@ -7,7 +7,9 @@
 > run**, and unit 2 (the `RankCalibrationTrace` instrument) is built. **2026-10-15: M0 and R1 are done**
 > (§5.5 results, §9.8). M0's P1 is confirmed, so C.1 proceeds. R1 ran to 2012-02-14 and founded 18 companies,
 > which lifts `CompanyDetails`'s suspension. Next: the developer picks the next calibration run (§9.9), then
-> 17.A and C.1.
+> 17.A and C.1. **Chosen: R1-continued (§9.10).** The developer's two company items are placed: the donor
+> count is **17.A3** (§4.5), and the bot preference goes to the Player Holdings Hub entry in the roadmap.
+> Next unit: **17.A + A2 + A3**.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -247,6 +249,41 @@ preconditions carried from §6:**
 
 If the developer declines, it goes back to §6 untouched.
 
+### 4.5 — 17.A3: the donor count in `AuctioningCompanyDetails` (developer, 2026-10-15)
+
+**The request:** show the number of donors in `AuctioningCompanyDetails`, counting **only the player and the
+casino miners** (`bot_1..4`).
+
+**What the code does today** (`NetworkRoot.ComputeAuctionLedger`):
+- `AuctioningCompanyDetails` shows **no donor figure at all**.
+- The only one is `NonMinerDonationSummary.DonorCount`, shown in `BlockExplorer`'s auction rows as
+  `(N donor)`. It counts **every distinct sender** to the company's address: cast miners and the non-miner
+  economy included, whose sends are economy-only and never bids (D-EB.7).
+- So the figure the player sees today already disagrees with the developer's definition.
+
+**Build:**
+- Add `BidderCount` to the summary. It is the distinct donors of the same `list`, filtered by the
+  `qualifyingBidders` set the same method already builds: player addresses canonicalised to the base
+  address, plus `bot_1..4`'s owned addresses.
+- Show it in `AuctioningCompanyDetails`'s status line.
+- **It has a closed-form bound: 0 ≤ `BidderCount` ≤ 5**, since only five identities qualify. Assert it under
+  DEBUG (CLAUDE.md, Pattern 2: "where a displayed figure has a cheap closed-form bound, assert it").
+
+**D-17.4 — `BlockExplorer`'s `(N donor)`.** Recommendation: **show `BidderCount` there too**, under the same
+label. Two screens giving two different "donor" numbers for one company is Convention 6's failure. If that
+leaves `DonorCount` with no reader, delete it (Convention 3), after grepping every consumer (Conventions 12
+and 13).
+
+**Verify** on R1's world, which has auctions in progress:
+- the count matches the distinct qualifying senders, recomputed from the chain;
+- it never exceeds 5;
+- the two screens agree.
+
+> **The developer's second company item, bots preferring companies with more BTC received, is NOT in this
+> plan.** It changes the referral auction's bidding rule, so `REFERRAL_AUCTION.md` §1 and the bid-probability
+> panel would move with it (Convention 6). Doing it mid-plan would also change the bots' BTC behaviour halfway
+> through R1-continued. It is specified in `PRIVATE_ROADMAP.md`, in the Player Holdings Hub entry.
+
 ---
 
 ## 5. 17.C — The event-driven audit
@@ -347,7 +384,7 @@ One unit = one stage → message → commit loop. Instrument, then measure, **th
 |---|---|---|
 | 1 | **C.0 instrument** — a DEBUG-only `UiRefreshProbe`: per-scene refresh counts per real second, one `GD.Print` line every 5 s while any count is non-zero | `[Conditional("DEBUG")]` like `ExplorerFrameProbe`; one call at each B/C refresh entry point, plus a count of `AddTransactionToPendingTransactions` successes (D-17.1's rate). It stays as the exit-criterion instrument |
 | 2 | **M0** — baseline measurement, §5.5 | No code change between 1 and 2 |
-| 3 | **17.A** (+ **17.A2** if D-17.3 = yes) | Ch. 29 first |
+| 3 | **17.A** + **17.A2** (D-17.3 = yes) + **17.A3** (§4.5) | Ch. 29 first. A3 touches `NetworkRoot`'s ledger and two scenes |
 | 4 | **C.1** — `CasinoCoinSwaps`, `CasinoGamblingFinances`: route casino `BalanceChanged` through a dirty flag + coalesce, `CentralBank`'s shape | Only if M0 confirms P1. If refuted, it drops to the B group |
 | 5 | **C.2** — the mempool event (if D-17.1 = yes), then one unit per chain-side scene: the `BotsBtcWallets` family, `BTCWallet`, `CasinoFinances`, `FoundersWallets`, `BlockExplorer`, `BTCPoolsAndHardwareShop` | Within the group, M0's counts set the order. Live input: §38.5 note 1 |
 | 6 | **C.3** — the B group's fallbacks, one scene per unit: delete each, or name the state it covers | `StatusBar`'s 10 Hz balance cadence is out of scope (a decision, mini-plan 15 B) |
@@ -730,6 +767,27 @@ arithmetic cannot predict is:
 | **R1-continued** (recommended first) | Keep R1's world and parameters and **continue it while 17.C's migrations are verified**, with no wipe. The trace carries on in a new file | (a) for free: it reaches the 2012–2014 era where competition grows and the first halving lands. It is also the world 17.C.6 needs, now that 18 companies exist. M1 can be the same world, as §5.4 asks |
 | **R2** (from genesis) | Progressions, every client at 1 credit. `player` flat 0.1 SC (the control), and the bots at base 0.01 with **+100% / +50% / +25% on loss**, reset on win, plus one with a stop-loss and insist | (b): the average-bet multiplier and ruin under progressions, the case a martingale player brings to the ladder |
 | **R3** (from genesis) | Credits: `player` at 10 credits through the DEV credits selector, everyone else as R1 | (c): mining share and bets per year at 10×, which P5's hardware progression will produce |
+
+**Chosen 2026-10-15: R1-continued.** R1's world carries on, with no wipe, and R2/R3 wait until this plan's
+migrations are verified.
+
+### 9.10 — R1-continued: how a session resumes
+
+The trace's header changed with R1-P3's fix, so continuation rows go to a fresh
+`logs/rank_calibration_trace.csv`, and part 1 stays in `rank_calibration_R1_part1.csv`. The two join on game
+date and chain length.
+
+1. Launch from the Godot editor. **No wipe is expected:** the Output panel must NOT show `World reset
+   triggered`. If it does, stop and say so.
+2. DiceGame → load **`R1 0.01` on `bot_1`**, **`R1 0.1` on `bot_2`**, **`R1 0.5` on `bot_3`**, **`R1 2` on
+   `bot_4`**, then **`R1 1` on `player`**, Auto Recharge ON.
+3. DEV time scale **9000X**. Leave "↻ UI refresh" OFF unless a verification protocol asks for it.
+4. Start the autobet with `player` selected. Any verification protocol from §5 runs inside the session.
+5. End as before: stop the autobet, close the game, and say so in the chat.
+
+**One caveat to read the data by:** the 17.C migrations change only how panels refresh, never the
+simulation, so R1's parameters stay the same across its parts. Anything that does change the sim (item 2
+above, P5, P7) waits until R1 is closed.
 
 ### 9.6 — Answered by the developer (2026-10-14)
 
