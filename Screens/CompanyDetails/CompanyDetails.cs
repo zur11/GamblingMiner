@@ -285,12 +285,36 @@ public partial class CompanyDetails : Control
 			? $"  —  appeared {d:yyyy-MM-dd}"
 			: string.Empty;
 		_identityLabel.Text = $"{NetworkRoot.DescribeCompany(summary)}{appearance}   [{summary.NonMinerAddress}]";
+		// Mini-plan 25 §4.7 (developer, 2026-10-15) — the company's funding in two phases. Line 2 is what FOUNDED it and no
+		// longer moves: the BTC its donors (player + casino miners) gave, and the income it had received from everyone
+		// else by then. Line 3 is income since founding, counted from zero, plus its SC value with every receipt priced
+		// at its OWN day and never re-priced. All from NetworkRoot's ledger, the same source the auction screens read.
+		string unpriced = summary.IncomeSinceFoundingUnpricedBtc > 0m
+			? string.Create(CultureInfo.InvariantCulture, $"  (+{summary.IncomeSinceFoundingUnpricedBtc:F8} BTC received before Market Birth, no SC price)")
+			: string.Empty;
 		_statusLabel.Text = string.Create(CultureInfo.InvariantCulture,
-			$"Founded {FormatDate(founding.FoundedAtUnixMs)}  |  treasury {_networkRoot.GetNodeSpendableBalance(founding.NonMinerNodeId):F8} BTC  |  You hold: {holdingCaption}");
+			$"Founded {FormatDate(founding.FoundedAtUnixMs)}  |  treasury {_networkRoot.GetNodeSpendableBalance(founding.NonMinerNodeId):F8} BTC  |  You hold: {holdingCaption}\n"
+			+ $"Total donated to found it: {summary.DonatedBtc:F8} BTC by {summary.BidderCount} {(summary.BidderCount == 1 ? "donor" : "donors")} (player + casino miners)  |  Total Foundational Income: {summary.FoundationalIncomeBtc:F8} BTC\n"
+			+ $"Company's BTC Income since founding: {summary.IncomeSinceFoundingBtc:F8} BTC  |  Total income in SC: {summary.IncomeSinceFoundingSc:N8} SC (each receipt at its day's price){unpriced}");
 
 
 		RebuildInfo(founding, gov);
 		RebuildOrUpdateActions(founding, gov);
+		PrintFundingOnce(summary);
+	}
+
+	// Mini-plan 25 §4.8 — DEBUG-only: the funding figures, ONCE per opening of this page (it refreshes every second, and
+	// one line per visit is what the verification compares: the founding figures must not move between two visits, the
+	// running ones may only grow). Read from user://logs/godot.log, so nothing is transcribed.
+	private bool _fundingPrinted;
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void PrintFundingOnce(NonMinerDonationSummary summary)
+	{
+		if (_fundingPrinted) return;
+		_fundingPrinted = true;
+		GD.Print(string.Create(CultureInfo.InvariantCulture,
+			$"[CompanyFunding] founded {summary.NonMinerNodeId} h{_networkRoot.GetPlayerLatestBlock().Index} donated={summary.DonatedBtc:F8} donors={summary.BidderCount} foundational={summary.FoundationalIncomeBtc:F8} sinceBtc={summary.IncomeSinceFoundingBtc:F8} sinceSc={summary.IncomeSinceFoundingSc:F8} unpriced={summary.IncomeSinceFoundingUnpricedBtc:F8}"));
 	}
 
 	// Step 16 P16.8e — WHERE the pause is, said on the screen the player is actually looking at. The game

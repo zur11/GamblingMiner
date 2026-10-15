@@ -9,8 +9,9 @@
 > which lifts `CompanyDetails`'s suspension. Next: the developer picks the next calibration run (§9.9), then
 > 17.A and C.1. **Chosen: R1-continued (§9.10).** The developer's two company items are placed: the donor
 > count is **17.A3** (§4.5), and the bot preference goes to the Player Holdings Hub entry in the roadmap.
-> **Unit 3 (17.A + 17.A3) is built**: the direct button, the donor count and "Company's BTC Income"; its
-> verification is §4.6. Next unit: **17.A2**, the Numbers view, which needs its grid geometry fixed first.
+> **Unit 3 (17.A + 17.A3) is committed. Unit 4 (17.A4, §4.7), a company's funding in two phases, is built.**
+> Verification of both is one session, §4.8, inside R1-continued. Next unit: **17.A2**, the Numbers view,
+> which needs its grid geometry fixed first.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -300,7 +301,74 @@ and 13).
 - **The 0..5 bound** is asserted under DEBUG: `[AuctionLedger] … counted twice`, latched, printed with
   `GD.Print` and `PrintErr`.
 
-### 4.6 — Verification protocol V-A (17.A + 17.A3), run inside an R1-continued session (§9.10)
+### 4.7 — 17.A4: a company's funding in two phases (developer, 2026-10-15)
+
+**The request:**
+- a label with the total BTC donated by the five auction participants (player + `bot_1..4`), live during the
+  auction and then kept as the total donated to found the company;
+- the other wallets' income becomes **"Total Foundational Income"** at founding;
+- "Company's BTC Income" restarts from 0 after founding;
+- every post-founding receipt is valued in SC **at its own day's price** and summed, never re-priced.
+
+**The rule, per receipt at the company's address** (`ComputeAuctionLedger`; all derived from the chain on every
+computation, nothing persisted, so no wipe):
+
+| When | From | Counts as |
+|---|---|---|
+| Confirmed by the window's close | a qualifying bidder | **Donated** (`DonatedBtc`), ignored same-block bids included since they are never refunded. The donor count is taken over the same set |
+| After the close | a qualifying bidder | nothing: a late bid that `CancelAndRefundStaleAuctionBids` refunds |
+| Before founding | anyone else | **Foundational income** (`FoundationalIncomeBtc`). It is the live "Company's BTC Income" during the auction |
+| From the founding block on | anyone else | **Income since founding** (`IncomeSinceFoundingBtc`), plus `IncomeSinceFoundingSc` at `GetEffectivePriceUsd(receipt's own date)`. Pre-Market-Birth receipts are reported as unpriced BTC, never as 0 SC |
+| Any time | the company's own addresses, or memo `SEIZED` / `COLLATERAL` | nothing: transfers, not income |
+
+The founding split uses `CompanyFounding.FoundedAtUnixMs`, the resolving block. The donation split uses the
+window close, which is the auction's own boundary (ND.8d.7).
+
+**Where it shows:**
+- `AuctioningCompanyDetails`: `Donors · Donated · Company's BTC Income`;
+- `BlockExplorer`'s auction rows: `donated X BTC by N donors | BTC income Y BTC`;
+- `CompanyDetails`: two new status lines, the founding figures (donated, donors, Total Foundational Income),
+  then income since founding in BTC and in SC.
+
+**A note this narrowed.** D-ND4b.10's comment said *"NOTHING in this system displays a frozen
+historical-day value"*. That stays true of the leading bid, and is now scoped to it, because this feature
+adds a frozen value on purpose.
+
+**Measured before building:** in R1's world, the post-founding receipts at company base addresses come from:
+- cast miners' sell-flow, by far the most (laszlo 3,418 BTC, tcatm 2,813, artforz 2,786, …);
+- 725 BTC from derived (change) addresses, which the code resolves through `OwnedAddressSet` and the offline
+  survey could not.
+
+**No company was founded before Market Birth** (the first was ArtForz Cluster, 2010-09-24), so the unpriced
+branch cannot be exercised in this world.
+
+### 4.8 — Verification V-A, one session (supersedes §4.6), inside R1-continued (§9.10)
+
+**Predictions:**
+- **V-A1:** the direct button always arrives at the present, paused.
+- **V-A2:** `← Back` returns to the opening scene.
+- **V-A3:** donor counts agree across screens and stay within 0..5.
+- **V-A4:** no `[AuctionLedger]` line appears.
+- **V-A5:** an auction's `donated` and `income` never decrease.
+- **V-A6:** a founded company's founding figures are **identical** on two visits blocks apart, and its income
+  since founding (BTC and SC) only grows.
+
+**Read from `godot.log`'s `[CompanyFunding]` lines (DEBUG):** V-A5 from the per-block auction lines, V-A6 from
+the two `founded` lines. **Refuted if** any step or log line differs.
+
+The steps are the ones given to the developer in the chat on 2026-10-15, kept here verbatim in substance:
+1. resume R1 (§9.10);
+2. check the button;
+3. button → present → `← Back`;
+4. the Calendar-old-date regression;
+5. the Calendar route;
+6. `BlockExplorer` auction rows;
+7. an in-auction company's Details for ~1 real minute;
+8. **ArtForz Cluster**'s Details, then leave for 2–3 minutes and open it again;
+9. no `[AuctionLedger]` in the Output panel;
+10. keep R1 running to at least **2013-01-01**, which covers the first halving at block 2,100.
+
+### 4.6 — Verification protocol V-A (17.A + 17.A3) — *superseded by §4.8*
 
 **Predictions:**
 - **V-A1:** the direct button opens the explorer **at the present**, paused, from any prior state.

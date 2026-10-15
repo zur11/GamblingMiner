@@ -6775,6 +6775,7 @@ public partial class NetworkRoot : Node
 		(HashSet<string> playerAddresses, Dictionary<string, string> botNodeIdByAddress) = BuildAuctionBidderIdentity(player);
 
 		long seq = 0;
+		var nonIncomeSeqs = new HashSet<long>();
 		if (player is not null)
 		{
 			foreach (Block block in player.Blockchain.Chain)
@@ -6789,6 +6790,13 @@ public partial class NetworkRoot : Node
 					{
 						string donor = playerAddresses.Contains(tx.Sender) ? player.WalletAddress : tx.Sender;
 						list.Add((donor, tx.Amount, block.Timestamp, seq));
+						// Mini-plan 25 §4.7 — inflows that are TRANSFERS, never income: a dead company's inflow
+						// forwarded to its absorber, and collateral posted to a bank. Tagged here, where the memo
+						// is in hand, and excluded from every income figure below.
+						if (tx.InputDataText == SeizedInflowMemo || tx.InputDataText == BankCollateralMemo)
+						{
+							nonIncomeSeqs.Add(seq);
+						}
 					}
 					seq++;
 				}
@@ -6820,26 +6828,54 @@ public partial class NetworkRoot : Node
 			BotWalletRecord b = nonMiners[i];
 			List<(string donor, decimal amount, long ts, long seq)> list = donations[b.Address];
 
-			// Mini-plan 25 §4.5 (developer, 2026-10-15) — the company's funding split by WHO sent it. Sends from
-			// the qualifying bidders (the player + bot_1..4) are bids: they are counted as DONORS, by IDENTITY,
-			// not by address, since every bot owns several addresses (P16.2) and an address is a key, not an
-			// identity. Everything else (cast miners, the non-miner economy; D-EB.7: never bids) is the
-			// company's BTC INCOME. Both replaced TotalReceived/DonorCount, which mixed the two and counted every
-			// distinct sender address as a "donor".
-			int bidderCount = list
-				.Where(d => qualifyingBidders.Contains(d.donor))
-				.Select(d => botNodeIdByAddress.TryGetValue(d.donor, out string? botId) ? botId : d.donor)
-				.Distinct()
-				.Count();
-			AssertBidderCountBounded(bidderCount, b.NodeId);
+			// Mini-plan 25 §4.5/§4.7 (developer, 2026-10-15) — the company's funding, split by WHO sent it and WHEN.
+			// Sends from the qualifying bidders (the player + bot_1..4) are bids: the DONATED total and the
+			// donor count are taken from them further down, once the auction's window close is known. Everything
+			// else (cast miners, the non-miner economy; D-EB.7: never bids) is INCOME, minus the company's own
+			// addresses and the two transfer memos. Before the company is founded it is the "foundational" income,
+			// frozen at the founding block; after it, income counts again from zero and each receipt is also
+			// valued in SC at the price of the day it arrived. These replaced TotalReceived/DonorCount, which
+			// mixed bids with income and counted every sender ADDRESS as a donor.
+			_companyFoundings.TryGetValue(b.NodeId, out CompanyFounding? founding);
+			long foundedAtMs = founding?.FoundedAtUnixMs ?? long.MaxValue;
+			HashSet<string> selfAddresses = SharedNodesById.TryGetValue(b.NodeId, out NodeAgent? companyNode)
+				? OwnedAddressSet(companyNode)
+				: new HashSet<string> { b.Address };
 
 			var summary = new NonMinerDonationSummary
 			{
 				NonMinerNodeId = b.NodeId,
 				NonMinerAddress = b.Address,
-				CompanyBtcIncome = list.Where(d => !qualifyingBidders.Contains(d.donor)).Sum(d => d.amount),
-				BidderCount = bidderCount
+				IsFounded = founding != null
 			};
+
+			foreach ((string donor, decimal amount, long ts, long seq) receipt in list)
+			{
+				if (qualifyingBidders.Contains(receipt.donor) || selfAddresses.Contains(receipt.donor)
+					|| nonIncomeSeqs.Contains(receipt.seq))
+				{
+					continue;
+				}
+
+				if (receipt.ts < foundedAtMs)
+				{
+					summary.FoundationalIncomeBtc += receipt.amount;
+					continue;
+				}
+
+				summary.IncomeSinceFoundingBtc += receipt.amount;
+				// The day's price, FROZEN at the receipt's own date: a later move in BTC re-values nothing already
+				// received (the developer's rule). Before Market Birth there is no price, so such BTC is reported
+				// as unpriced rather than as 0 SC.
+				if (_marketData?.GetEffectivePriceUsd(DateTimeOffset.FromUnixTimeMilliseconds(receipt.ts).LocalDateTime) is decimal dayPrice)
+				{
+					summary.IncomeSinceFoundingSc = Scripts.Finance.Money.Normalize(summary.IncomeSinceFoundingSc + receipt.amount * dayPrice);
+				}
+				else
+				{
+					summary.IncomeSinceFoundingUnpricedBtc += receipt.amount;
+				}
+			}
 
 			// ND.8b.1 (D-ND8.37) — non_miner_{i+1} (BotWalletRegistry's fixed creation order) always
 			// pairs with CompanyRoster.Auctionable[i]; see BtcNetworkDataService.ComputeNonMinerIntroSchedule.
@@ -7010,8 +7046,10 @@ public partial class NetworkRoot : Node
 			summary.LeadingDonorAddress = leader.Value.donor;
 			summary.LeadingDonorTotal = leader.Value.amount;
 			// Corrected 2026-07-11 (developer correction — "day-of-donation" was a writing mistake in the
-			// original D-ND4b.10 spec that leaked into the docs; NOTHING in this system displays a frozen
-			// historical-day value — it is ALWAYS priced as of NOW): live/current SC value, recomputed
+			// original D-ND4b.10 spec that leaked into the docs; the LEADING BID never displays a frozen
+			// historical-day value — it is ALWAYS priced as of NOW. *Scope narrowed 2026-10-15: this note read
+			// "NOTHING in this system", and mini-plan 25 §4.7 deliberately adds a frozen one, IncomeSinceFoundingSc,
+			// where each receipt keeps the price of its own day*): live/current SC value, recomputed
 			// fresh on every call as the game clock advances, not frozen at the leading bid's own day.
 			summary.LeadingDonorScValue = _marketData?.GetEffectivePriceUsd(
 					DateTimeOffset.FromUnixTimeMilliseconds(nowMs).LocalDateTime) is decimal price
@@ -7027,6 +7065,19 @@ public partial class NetworkRoot : Node
 			// the ND.8d.6 leader self-raises — an ignored bid "doesn't participate in the auction" at all.
 			summary.TrackedDonations = ComputeTrackedDonationPool(
 				bids.Where(bd => bd.ts <= summary.WindowCloseUnixMs && !ignoredBidSeqs.Contains(bd.seq)).ToList(), nowMs);
+
+			// Mini-plan 25 §4.7 — the DONATED total: every bid the company KEPT, i.e. confirmed by the window's close.
+			// That includes ignored same-block bids, which are never refunded, and leaves out late bids, which
+			// CancelAndRefundStaleAuctionBids sends back. Live while the auction runs, then fixed at its close: the
+			// total donated to found the company. The donor count is taken over the same set, by IDENTITY (every bot
+			// owns several addresses since P16.2; an address is a key, not an identity).
+			var donatedBids = bids.Where(bd => bd.ts <= summary.WindowCloseUnixMs).ToList();
+			summary.DonatedBtc = donatedBids.Sum(bd => bd.amount);
+			summary.BidderCount = donatedBids
+				.Select(bd => botNodeIdByAddress.TryGetValue(bd.donor, out string? botId) ? botId : bd.donor)
+				.Distinct()
+				.Count();
+			AssertBidderCountBounded(summary.BidderCount, b.NodeId);
 
 			if (resolvedAtMs.HasValue || nowMs >= summary.WindowCloseUnixMs)
 			{
@@ -8793,10 +8844,25 @@ public sealed class NonMinerDonationSummary
 	public string CompanyMarketCategory { get; set; } = string.Empty;
 	public DateTime? CompanyAppearanceDateLocal { get; set; }
 	public string CompanyAnchor { get; set; } = string.Empty;
-	// Mini-plan 25 §4.5 — "Company's BTC Income": BTC received from every sender that is NOT a qualifying bidder.
-	public decimal CompanyBtcIncome { get; set; }
-	// Mini-plan 25 §4.5 — distinct qualifying bidders (player + bot_1..4) who ever sent here; 0..5 by construction.
+	// Mini-plan 25 §4.5/§4.7 (developer, 2026-10-15) — the company's funding. All derived from the chain on every ledger
+	// computation; nothing here is persisted.
+	public bool IsFounded { get; set; }
+	// BTC the qualifying bidders (player + bot_1..4) sent and the company kept: live during the auction, then the
+	// total donated to found the company.
+	public decimal DonatedBtc { get; set; }
+	// Distinct qualifying bidders behind DonatedBtc; 0..5 by construction (asserted under DEBUG).
 	public int BidderCount { get; set; }
+	// Income = BTC from every other sender, minus the company's own addresses and the SEIZED/COLLATERAL transfers.
+	// Before founding: "Total Foundational Income" once founded, frozen at the founding block.
+	public decimal FoundationalIncomeBtc { get; set; }
+	// After founding, counted from zero.
+	public decimal IncomeSinceFoundingBtc { get; set; }
+	// The same receipts, each valued at the BTC price of the day it arrived, never re-priced afterwards.
+	public decimal IncomeSinceFoundingSc { get; set; }
+	// Post-founding receipts that arrived before Market Birth, so have no SC price.
+	public decimal IncomeSinceFoundingUnpricedBtc { get; set; }
+	// "Company's BTC Income" as the player sees it: the running income of the company's current phase.
+	public decimal CompanyBtcIncome => IsFounded ? IncomeSinceFoundingBtc : FoundationalIncomeBtc;
 	public string LeadingDonorAddress { get; set; } = string.Empty;
 	public decimal LeadingDonorTotal { get; set; }
 	// ND.4b (D-ND4b.10, corrected 2026-07-11) — the leading bid's LIVE, CURRENT SC value (BTC principal ×

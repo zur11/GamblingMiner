@@ -185,7 +185,7 @@ public partial class BlockExplorer : Control
 				? "awaiting first bid — no countdown"
 				: string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left");
 			string line = string.Create(CultureInfo.InvariantCulture,
-				$"{NetworkRoot.DescribeCompany(s)}  | BTC income {s.CompanyBtcIncome:F8} BTC  | {s.BidderCount} {(s.BidderCount == 1 ? "donor" : "donors")}  | {leader}  | {clock}");
+				$"{NetworkRoot.DescribeCompany(s)}  | donated {s.DonatedBtc:F8} BTC by {s.BidderCount} {(s.BidderCount == 1 ? "donor" : "donors")}  | BTC income {s.CompanyBtcIncome:F8} BTC  | {leader}  | {clock}");
 
 			var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
 

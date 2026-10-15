@@ -117,6 +117,16 @@ public partial class AuctioningCompanyDetails : Control
 		}
 	}
 
+	// Mini-plan 25 §4.8 — DEBUG-only: the live funding figures, once per rebuild, i.e. once per block while this page is
+	// open. The verification reads them from user://logs/godot.log: donated and income may only grow while the
+	// auction runs.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void PrintFunding(NonMinerDonationSummary summary)
+	{
+		GD.Print(string.Create(CultureInfo.InvariantCulture,
+			$"[CompanyFunding] auction {summary.NonMinerNodeId} h{_networkRoot.GetPlayerLatestBlock().Index} donated={summary.DonatedBtc:F8} donors={summary.BidderCount} income={summary.CompanyBtcIncome:F8}"));
+	}
+
 	// D-ND5.9 — while InAuction: the live top-10 tracked donation pool (D-ND5.3). ND.10b — now two columns:
 	// the bids list (left) + the per-bot real leading-bid roll panel (right). Rebuilt on BlockAccepted.
 	private void ShowLiveTrackedDonations(NonMinerDonationSummary summary, IReadOnlyList<NonMinerDonationSummary> ledger)
@@ -142,13 +152,16 @@ public partial class AuctioningCompanyDetails : Control
 			PlayerAuctionStake.Pst => "PST (dividend shares)",
 			_ => "nothing (no tracked slot)"
 		};
-		// Mini-plan 25 §4.5 (developer, 2026-10-15) — who funds this company, split the way the auction splits it:
-		// DONORS are the qualifying bidders (player + casino miners, the same BidderCount BlockExplorer shows) and
-		// the company's BTC INCOME is everything sent by anyone else. Both move only when a block confirms a
-		// payment, and this page rebuilds on every BlockAccepted, so they are as current as the chain.
+		// Mini-plan 25 §4.5/§4.7 (developer, 2026-10-15) — who funds this company, split the way the auction splits it:
+		// DONORS are the qualifying bidders (player + casino miners), and DONATED is what they gave and the company
+		// kept, both the same figures BlockExplorer shows. The company's BTC INCOME is everything sent by anyone
+		// else. All three move only when a block confirms a payment, and this page rebuilds on every
+		// BlockAccepted, so they are as current as the chain. At founding, donated and income freeze into what
+		// CompanyDetails shows as the founding figures.
 		string funding = string.Create(CultureInfo.InvariantCulture,
-			$"Donors: {summary.BidderCount} (player + casino miners)  |  Company's BTC Income: {summary.CompanyBtcIncome:F8} BTC");
+			$"Donors: {summary.BidderCount} (player + casino miners)  |  Donated: {summary.DonatedBtc:F8} BTC  |  Company's BTC Income: {summary.CompanyBtcIncome:F8} BTC");
 		_statusLabel.Text = $"In Auction — {clock}  |  If it closed now you would mint: {stakeCaption}\n{funding}";
+		PrintFunding(summary);
 
 		// ND.6d — the pool's occupied-slot count selects the casino-bot re-bid mode shown per slot below:
 		// EARLY RUSH while it holds <7 slots (steep tier 4/5/6 probabilities so bots contest young pools
