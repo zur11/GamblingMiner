@@ -773,7 +773,10 @@ cast-miner path, which has no catch of its own, but it is not shown.
 - governance exceptions are logged at the source and rethrown;
 - the block profiler names any block that never reached its checkpoint.
 
-**Verification:** run R2 (plan §9.12, R2-P4).
+**Verification: ✅ PASSED (R2, 2026-10-18, plan §9.13):**
+- 18 companies founded on the v12 world, **0 duplicate holders**;
+- **0 exceptions** in `godot.log`;
+- **0 aborted blocks**, i.e. no gap in the rank trace's `chainLength`, over 1,524 blocks.
 
 **Fix** — mini-plan 25 §10: record a bot's donor under its BASE address, the bot twin of the 2026-07-14 player
 fix, then a `WorldFormatVersion` bump and wipe (Standing Convention 4).

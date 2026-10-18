@@ -257,6 +257,14 @@ Done when players have short-term and medium-term targets.
 > no-income cap at ~4M, and a miner's top near 10¹⁰. Two round-number families fit 20–33 levels, recorded
 > as candidates, not chosen: **1-2-5** and **1-2-3-5 per decade**. The next runs measure what arithmetic
 > cannot: later-era mining, progressions, and more credits (§9.9).
+>
+> **R1-continued and R2 (2026-10-16/18, §9.11/§9.13):**
+> - **Mining at 1 credit collapses after 2012**: 5 blocks in 637 for all five casino clients.
+> - **A strategy multiplies wagered by a predictable factor `m`**: +25% on loss 1.333, +50% 2.000 (both measured
+>   within 0.1%), a bankroll-limited martingale about 6–8 (measured 7.6).
+>
+> So lifetime wagered = `5,296,320 bets per credit × credits × base × m`, capped by `(capital + income) ÷ edge`. Only
+> the income term is still unmeasured past 2012; that is R3 (more credits).
 
 Goal: a progression ladder for casino participants (player, and notably **Miner Referrals**) that gates and scales rewards.
 

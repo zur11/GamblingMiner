@@ -14,8 +14,9 @@
 > in unit 5, and the root fix is decided (D-17.6 = yes). R1 is closed (§9.11). Next: one session on R1's world to
 > measure the freezes (§10.1) and check unit 5's layout; **then** the INC-006 root fix + wipe; then R2. 17.A2
 > follows. **2026-10-18: the freeze session ran (§10.1 results), and unit 6 is built**: INC-006's second crash site,
-> the root fix, the v12 wipe, and two loudness instruments. Next: **R2 from genesis** (§9.12), which also verifies
-> INC-006.
+> the root fix, the v12 wipe, and two loudness instruments. **R2 ran 2026-10-18: every prediction confirmed, and
+> INC-006 verified** (§9.13). Next: the developer chooses between the code units still open (17.A2, then 17.C.1…) and
+> R3; they can overlap, R3 running in the sessions that verify the code.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -827,7 +828,7 @@ rate.
 | Run | World archived as | Parameters | Game span covered | Result |
 |---|---|---|---|---|
 | R1 | before: `GamblingMiner_archive_preR1_2026-10-14` (the 2012 world). After: `GamblingMiner_archive_R1_end_2026-10-18` (h2,372) | §9.4 | **2009-03-22 → 2013-05-12, ~4.1 game-years**, chain 117 → 2,372, three sessions | **Closed**, §9.8 + §9.11. Traces: `logs/rank_calibration_R1_part1.csv`, `_part2.csv` |
-| R2 | — | §9.12 | — | proposed, on the v12 world |
+| R2 | — (the current world) | §9.12 | **2009-03-21 → 2012-01-31, 2.86 game-years**, chain 116 → 1,639, one session | **Done 2026-10-18**, §9.13. Trace: `logs/rank_calibration_trace.csv` (rename to `rank_calibration_R2.csv` at R3's setup) |
 
 ### 9.8 — R1 results (2026-10-15)
 
@@ -982,6 +983,34 @@ streaks and recharges can be reconstructed exactly.
 
 **Refuted if** any of these misses. **Length:** to at least **2011-06-30**, about 2.3 game-years, so that several
 companies are founded and their first votes close.
+
+### 9.13 — R2 results (2026-10-18): every prediction confirmed
+
+One session on the v12 world, **2009-03-21 → 2012-01-31, 2.86 game-years**, chain 116 → 1,639 (1,524 trace rows).
+
+| | Verdict | Measured |
+|---|---|---|
+| **R2-P1** | ✅ exact | 315,576 bets/yr for all five clients, deviation 0.000%. 903,921 bets each |
+| **R2-P2** | ✅ | `bot_4` flat **m = 1.0000** · `bot_2` +25% **1.3348** (pred 1.333, +0.1%) · `bot_1` +50% **1.9988** (pred 2.000, −0.06%) · player martingale **7.6014** (band 5–8) · `bot_3` martingale + SL5 **6.1617**, below the player |
+| **R2-P3** | ✅ | No client was ruined. The player holds 38,606 SC: 40,000 − 1,393.74 |
+| **R2-P4** | ✅ **INC-006 verified** | 18 foundings, **0 duplicate `HolderId`** · `godot.log`: 0 `[Governance] EXCEPTION`, 0 `[BotAutoBetError]`, 0 exceptions of any kind · rank trace: **0 gaps** in `chainLength`, so no block was aborted |
+
+**A false alarm, recorded because it was raised.** The progressions lost more than the 0.98% edge (player
+−2.03%, `bot_3` −2.55% of wagered). A first noise estimate called `bot_3`'s gap z ≈ −5.7, but it assumed the
+stop-loss caps a streak at 9 levels. The code measures loss from the segment's last re-anchor (`BaseBetSession.
+ApplyStopConditions`), so a segment in profit lets a streak go deeper: the estimate was a floor. **Measured
+exactly instead, on the player's journal** (the last 204,654 bets): net/W −7.08%, exact σ = √(Σbet² × 0.9804) =
+826.72 SC, **z = −1.23**. The ladder reached **level 15** (a 327.68 SC bet), each level half as frequent as the one
+below it. **A progression's realised loss rate swings widely; its expectation does not** (−edge × wagered). For
+the Rank this changes nothing, since only wagered counts.
+
+**What R2 adds to the ladder.** A strategy multiplies wagered by a predictable `m`: 1.33 and 2.00 exactly for the
+convergent progressions, about 6–8 for a bankroll-limited martingale. So a player's lifetime wagered is
+`5,296,320 × credits × base × m`, capped by `(capital + income) ÷ edge` (§9.1). Every factor except income is now
+measured or exact.
+
+**Still open for the ladder: R3, more credits.** It is the run that says whether mining, and therefore the money
+that funds big wagering, survives past 2012 (§9.11).
 
 **R1 is CLOSED (2026-10-16), recommended:** 4.05 game-years in total, past the first halving, and the
 mining question it could answer is answered. Its world is not reused for R2 (INC-006's fix needs a wipe,
