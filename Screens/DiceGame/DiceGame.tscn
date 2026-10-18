@@ -1,7 +1,6 @@
-[gd_scene load_steps=7 format=3 uid="uid://c711y35rvk5gf"]
+[gd_scene load_steps=6 format=3 uid="uid://c711y35rvk5gf"]
 
 [ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame/DiceGame.cs" id="1_k3ff0"]
-[ext_resource type="PackedScene" uid="uid://dcj5ru0ys536m" path="res://Screens/DiceGame/PreviousWinnerNumbersGrid/PreviousWinnerNumbersGrid.tscn" id="2_5hi04"]
 [ext_resource type="PackedScene" uid="uid://cc4mcdfki2u7r" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.tscn" id="3_usic0"]
 [ext_resource type="PackedScene" uid="uid://c2crwe1sryeto" path="res://UI/FinancialBettingStats/FinancialBettingStats.tscn" id="5_ne2vn"]
 [ext_resource type="PackedScene" uid="uid://drs5mewqvl7kt" path="res://UI/StrategyControlPanel/StrategyControlPanel.tscn" id="6_8x8ps"]
@@ -16,7 +15,6 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_k3ff0")
 _betHistoryContainer = NodePath("ScrollContainer2/BetHistoryContainer")
-_previousWinnerNumbersGrid = NodePath("ScrollContainer/PreviousWinnerNumbersGrid")
 _strategyPanel = NodePath("StrategyControlPanel")
 
 [node name="UiTextLabels" type="Control" parent="."]
@@ -260,19 +258,6 @@ offset_right = 1741.0
 offset_bottom = 594.0
 theme_override_font_sizes/font_size = 22
 text = "1"
-
-[node name="ScrollContainer" type="ScrollContainer" parent="."]
-visible = false
-custom_minimum_size = Vector2(550, 540)
-layout_mode = 0
-offset_left = 720.0
-offset_top = 534.0
-offset_right = 1270.0
-offset_bottom = 1078.0
-
-[node name="PreviousWinnerNumbersGrid" parent="ScrollContainer" instance=ExtResource("2_5hi04")]
-unique_name_in_owner = true
-layout_mode = 2
 
 [node name="ScrollContainer2" type="ScrollContainer" parent="."]
 custom_minimum_size = Vector2(550, 300)

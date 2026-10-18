@@ -15,8 +15,9 @@
 > measure the freezes (§10.1) and check unit 5's layout; **then** the INC-006 root fix + wipe; then R2. 17.A2
 > follows. **2026-10-18: the freeze session ran (§10.1 results), and unit 6 is built**: INC-006's second crash site,
 > the root fix, the v12 wipe, and two loudness instruments. **R2 ran 2026-10-18: every prediction confirmed, and
-> INC-006 verified** (§9.13). Next: the developer chooses between the code units still open (17.A2, then 17.C.1…) and
-> R3; they can overlap, R3 running in the sessions that verify the code.
+> INC-006 verified** (§9.13). The developer chose (2026-10-18) to follow the recommended order: 17.A2, then 17.C.1,
+> with R3 running in the sessions that verify the code. **Unit 7 (17.A2, §4.4) is built.** Next: unit 8 = 17.C.1, then
+> one session that verifies both and starts R3.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -255,6 +256,29 @@ preconditions carried from §6:**
   and 17.A adds one more button to the same scene.
 
 If the developer declines, it goes back to §6 untouched.
+
+**Built 2026-10-18 (unit 7).**
+- **The button now cycles four views:** `Bet View: Detailed` → `Last 10` → `Latest` → `OFF`.
+- **The two Numbers views** are `PreviousWinnerNumbersRow` and `LatestWinnerNumber`, from the same scene and script
+  the explorer uses. They are built in code in the detailed window's own place: the title in the column-header
+  band at y 574, the numbers under it, nowhere near the bottom band.
+- **Their feed** is DiceGame's own `BetExecuted`, which fires per bet for manual bets AND for every sim-settled
+  player bet (`OnSimBetSettled` raises it per bet, never coalesced; the bet list relies on the same).
+- **Their cost when hidden:** both take every roll into a ring and paint only while visible, so a hidden view costs
+  one push per bet.
+- **Opening a view** reloads it from the journal's last 10 bets.
+- **The precondition is met by deletion, not repair.** The old 100-cell grid is gone from `DiceGame.tscn`: its
+  node, its `NodePath`, its resource and its `[Export]` field. Its class is untouched, since the explorer keeps an
+  inactive copy.
+- **Not persisted:** a view preference has no home until user-settings persistence (▶ NEXT #2), so every entry
+  opens on Detailed, as before.
+
+**Verify (in the next session):**
+1. The button cycles through all four labels.
+2. **Last 10** shows ten coloured numbers in one row, and **Latest** shows one big number. Both update during an
+   autobet at 9000X.
+3. Each view opens already filled with the latest rolls.
+4. Nothing overlaps the bet buttons or the "Betting Statistics" panel.
 
 ### 4.5 — 17.A3: the donor count in `AuctioningCompanyDetails` (developer, 2026-10-15)
 
