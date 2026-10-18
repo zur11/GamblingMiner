@@ -230,7 +230,9 @@ Done when players have short-term and medium-term targets.
 > - where the rank is shown.
 >
 > **📝 Developer's decisions, 2026-10-14 — the design plan starts from these:**
-> - The rank is measured on a casino player's **cumulative SC wagered since the start**.
+> - The rank is measured on a casino player's **cumulative SC wagered since the start**, in the casino's games
+>   only (DiceGame, and other games post-Basic Mode). **Income from activity outside the casino never counts**:
+>   mining, dividends, refunds, swaps (developer, 2026-10-16).
 > - **20 to 33 levels in total**, with thresholds preferably at **round numbers**.
 > - The thresholds are **calibrated from test runs from genesis with different bet amounts**, which also
 >   inform **minimum bet amounts**.

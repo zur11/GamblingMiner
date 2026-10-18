@@ -11,8 +11,9 @@
 > count is **17.A3** (§4.5), and the bot preference goes to the Player Holdings Hub entry in the roadmap.
 > **Units 3–4 (17.A, A3, A4) committed and verified 2026-10-16 (§4.8 results)**, except the button layout,
 > fixed in unit 5 together with the donor wording. **The session's audit found INC-006** (§10): the crash is fixed
-> in unit 5, and the root fix waits on D-17.6. R1 is closed (§9.11). Next: one session on R1's world to measure
-> the freezes (§10.1) and check unit 5's layout; then the INC-006 root fix + wipe; then R2. 17.A2 follows.
+> in unit 5, and the root fix is decided (D-17.6 = yes). R1 is closed (§9.11). Next: one session on R1's world to
+> measure the freezes (§10.1) and check unit 5's layout; **then** the INC-006 root fix + wipe; then R2. 17.A2
+> follows.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -934,14 +935,18 @@ Read from `logs/rank_calibration_trace.csv` (492 rows) and the chain.
   (player 0, `bot_1` 1, `bot_3` 1, `bot_4` 3). In 2009–2012 it was 35–43 per credit per game-year; now it is
   **about 1**. The historical network outgrew a 1-credit miner, as it outgrew real CPU miners.
 - **Bots' BTC rose anyway** (`bot_1` 528 → 2,243, `bot_2` 510 → 1,813) **with almost no mining**: most likely
-  dividends from their shareholdings, plus stale-bid refunds. *Inferred, not decomposed.* That is a second BTC
-  income channel. The player has none, never having bid.
+  dividends from their shareholdings, plus stale-bid refunds. *Inferred, not decomposed.* The player has none of
+  it, never having bid.
 
-**What it means for the Rank ladder.** The top end needs a miner, and mining after 2012 needs credits. So:
-- **R3 (more credits) is no longer optional.** It is the run that says whether a player can still earn after
-  2012;
-- **the early-mining windfall is the realistic source** of a 10⁹–10¹⁰ wagering capacity;
-- **company dividends are a second channel** the design plan must count.
+**What it means for the Rank ladder.** **The rank counts ONLY the SC wagered in the casino's games** (DiceGame
+now, other games post-Basic Mode). **Income from activity outside the casino never counts toward it** —
+mining, dividends, refunds, swaps (developer, 2026-10-16, correcting this section's first draft, which called
+dividends "a second channel the design plan must count"). Outside income matters to these runs for one reason
+only: it is SC a player can go on to wager, so it decides how far up the ladder their *wagering* can reach.
+With that reading:
+- **R3 (more credits) is no longer optional.** It is the run that says whether a player can still mine, and so
+  keep wagering big, after 2012;
+- **the early-mining windfall is the realistic source** of a 10⁹–10¹⁰ wagering capacity.
 
 **R1 is CLOSED (2026-10-16), recommended:** 4.05 game-years in total, past the first halving, and the
 mining question it could answer is answered. Its world is not reused for R2 (INC-006's fix needs a wipe,
@@ -973,7 +978,10 @@ in the bid rules becomes per identity.
   linear.
 - **Recommendation: do it now, as the next code unit, before R2.** R1 is closed and its data is in the trace
   files, which survive the wipe. R2 from genesis is the next run anyway. Running R2 on the old rule would bias
-  exactly the bot-BTC channel §9.11 just found.
+  the bots' BTC, the capital they would otherwise go on to wager.
+- **DECIDED 2026-10-16: yes, as recommended.** **Sequencing:** the code is written only AFTER the developer's §10.1
+  freeze session on R1's world. Godot builds from the working tree, so a fix sitting there would make the measured
+  world run code it never ran before, and confound the measurement.
 
 ### 10.1 — The freezes (developer, 2026-10-16): "slight freezes of up to one second in DiceGame each time a block was mined"
 
