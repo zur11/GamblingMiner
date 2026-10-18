@@ -13,7 +13,9 @@
 > fixed in unit 5 together with the donor wording. **The session's audit found INC-006** (§10): the crash is fixed
 > in unit 5, and the root fix is decided (D-17.6 = yes). R1 is closed (§9.11). Next: one session on R1's world to
 > measure the freezes (§10.1) and check unit 5's layout; **then** the INC-006 root fix + wipe; then R2. 17.A2
-> follows.
+> follows. **2026-10-18: the freeze session ran (§10.1 results), and unit 6 is built**: INC-006's second crash site,
+> the root fix, the v12 wipe, and two loudness instruments. Next: **R2 from genesis** (§9.12), which also verifies
+> INC-006.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -824,7 +826,8 @@ rate.
 
 | Run | World archived as | Parameters | Game span covered | Result |
 |---|---|---|---|---|
-| R1 | `GamblingMiner_archive_preR1_2026-10-14` (the 2012 world, h1,670, byte-identical copy) | §9.4 | **2009-03-22 → 2012-02-14, 2.90 game-years**, chain 117 → 1,690, one session | **Done 2026-10-15**, §9.8. Trace: `logs/rank_calibration_R1_part1.csv` |
+| R1 | before: `GamblingMiner_archive_preR1_2026-10-14` (the 2012 world). After: `GamblingMiner_archive_R1_end_2026-10-18` (h2,372) | §9.4 | **2009-03-22 → 2013-05-12, ~4.1 game-years**, chain 117 → 2,372, three sessions | **Closed**, §9.8 + §9.11. Traces: `logs/rank_calibration_R1_part1.csv`, `_part2.csv` |
+| R2 | — | §9.12 | — | proposed, on the v12 world |
 
 ### 9.8 — R1 results (2026-10-15)
 
@@ -948,6 +951,38 @@ With that reading:
   keep wagering big, after 2012;
 - **the early-mining windfall is the realistic source** of a 10⁹–10¹⁰ wagering capacity.
 
+### 9.12 — Run R2 (proposed 2026-10-18): progressions, from genesis, on the v12 world
+
+**What it measures:** the average-bet multiplier `m = wagered ÷ (bets × base)` under progressions, which is the
+part of a player's wagered that §9.1's arithmetic cannot give. **Every client uses the same base, 0.01 SC, at 50%
+chance and 1 credit**, so the five `m`s compare directly. A win resets to base: `IncreaseOnWinPercent = 0` returns
+`BaseBet` (`ProgressiveBettingStrategy`).
+
+| Client | Strategy (saved as) | Predicted `m` | Why |
+|---|---|---|---|
+| `bot_4` | flat (`R2 flat`) | **1.000** exactly | the control |
+| `bot_2` | +25% on loss (`R2 L25`) | **1.333** (= 0.5 · Σ 0.625ʲ) | convergent: the bankroll never binds |
+| `bot_1` | +50% on loss (`R2 L50`) | **2.000** (= 0.5 · Σ 0.75ʲ) | convergent |
+| `player` | +100% on loss (`R2 L100`) | **5–8**, a band | martingale: the series diverges, so `m` is set by how far the bankroll lets it climb, ≈ levels ÷ 2 |
+| `bot_3` | +100% on loss, Stop on loss 5 SC, insist (`R2 L100 SL5`) | **below the player's** | the stop resets the ladder early |
+
+The martingale sits on the PLAYER deliberately: only the player's bets are journalled one by one, so its
+streaks and recharges can be reconstructed exactly.
+
+**Predictions:**
+- **R2-P1:** 315,576 bets per game-year for every client, whatever its strategy.
+- **R2-P2:** `bot_2` and `bot_1` within **±3%** of 1.333 and 2.000; `bot_4` exact; the player inside 5–8;
+  `bot_3` below the player.
+- **R2-P3:** no client is ruined. At `m` = 8 the martingale loses ~250 SC a game-year.
+- **R2-P4 (INC-006 verified):**
+  - every founding in `state.json` has **no duplicate `HolderId`**;
+  - `godot.log` holds **no `[Governance] EXCEPTION`** and **no `[BotAutoBetError]`**;
+  - the rank trace has **no missing `chainLength`**, i.e. no aborted block. That is the boring check, and it
+    needs no profiler.
+
+**Refuted if** any of these misses. **Length:** to at least **2011-06-30**, about 2.3 game-years, so that several
+companies are founded and their first votes close.
+
 **R1 is CLOSED (2026-10-16), recommended:** 4.05 game-years in total, past the first halving, and the
 mining question it could answer is answered. Its world is not reused for R2 (INC-006's fix needs a wipe,
 §10).
@@ -982,6 +1017,15 @@ in the bid rules becomes per identity.
 - **DECIDED 2026-10-16: yes, as recommended.** **Sequencing:** the code is written only AFTER the developer's §10.1
   freeze session on R1's world. Godot builds from the working tree, so a fix sitting there would make the measured
   world run code it never ran before, and confound the measurement.
+- **BUILT 2026-10-18 (unit 6), after that session.**
+  - `ComputeAuctionLedger` records a bot's donor under its node's base address. The false comment ("Single-address
+    participants need no equivalent") is replaced by its history.
+  - **Every reader of `DonorAddress` was checked** (Convention 13). The bot-side ones already test
+    `OwnedAddressSet(bot).Contains(…)`, which includes the base address, so they stay correct. Founding's
+    `perDonor`, the explorer's per-donor slot count and the leader's self-raise rule become per identity.
+  - `WorldFormatVersion` **11 → 12**: the next launch wipes.
+  - R1's world was archived first, byte-identical, as `GamblingMiner_archive_R1_end_2026-10-18`. Its traces are
+    `rank_calibration_R1_part{1,2}.csv`.
 
 ### 10.1 — The freezes (developer, 2026-10-16): "slight freezes of up to one second in DiceGame each time a block was mined"
 
@@ -999,6 +1043,39 @@ in the bid rules becomes per identity.
 **Decision rule:** the phase holding **≥ 50% of the `totalMs` of the blocks over 200 ms** is the subject. The
 criterion is stated as a **count**, the number of blocks over 200 ms, so a fix can be judged within one session
 (instrument rule 3). **Measured on R1's world before the wipe**, because that is where the freezes were seen.
+
+#### §10.1 results (session of 2026-10-18, R1's world, h2,328 → 2,372, 45 blocks, "⏱ Block cost" armed)
+
+**Two populations, and the instrument had to be read before the code.**
+
+| | Completed blocks (31) | Aborted blocks (14) |
+|---|---|---|
+| What the row shows | every phase non-zero, checkpoint ≈ 17 ms | **every phase after governance exactly 0.000, checkpoint 0** |
+| A rank-trace row (written inside `CaptureCheckpoint`) | yes | **none**: the block never reached its checkpoint |
+| Mean `totalMs` | **390 ms** | 6,060 ms, *not a cost* (below) |
+
+- **The freeze on every block is H1, confirmed by the registered rule.** In completed blocks, `botTransactions` is
+  **75%** of the total: 9,120 of 12,098 ms. Its cast **sell-flow** alone is **281 ms per block**, and **30 of 31
+  blocks exceed 200 ms**. That is the stall the developer felt each time a block was mined.
+- **The "governance 3–11 s" rows are not a measurement.** A row is closed by the checkpoint capture, and a phase
+  stays open until the next `Enter`. In an aborted block nothing after governance ran, so its open governance
+  phase absorbed the real time until the next block's `BeginBlock` closed the row: instrument rule 2, a residual is
+  not the work inside it. *The first reading of these rows called them a governance cost; it was retracted once
+  the zeros were read, and it was the rank trace that settled it.*
+- **14 blocks aborted in governance, 2 logged.** The two are the second INC-006 site, `ComputeReserveVoteOutcome`'s
+  `ToDictionary`, which unit 5's grep missed because it matched `Holdings` and `ToDictionary` on **one line** only.
+  The other 12 left nothing in `godot.log`, and the data cannot say what stopped them. The likeliest cause is the
+  same duplicate-NST exception on the cast-miner path, which has no catch of its own, **but that is not shown**.
+  So both blind spots are now made loud (below), and R2 will say.
+
+**Built in unit 6:**
+- the second `ToDictionary` is grouped and summed;
+- every governance exception is logged at its source with `GD.Print` + `PushError` and **rethrown**, so behaviour is
+  unchanged;
+- `BlockCostProfiler` prints `NEVER REACHED ITS CHECKPOINT` whenever it has to close an abandoned row.
+
+**Not built, and the next performance question:** the 281 ms sell-flow. It is a real per-block cost on every
+block, and the subject of its own unit with its own measurement first (`PRIVATE_ROADMAP.md` §8 T4).
 
 ### 9.6 — Answered by the developer (2026-10-14)
 

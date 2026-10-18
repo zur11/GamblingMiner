@@ -759,6 +759,22 @@ had **stopped betting** from those moments on.
 **Recovery** — the crash is fixed (`GroupBy` + `Sum` in `CloseCompanyVote`; a holder's vote weight is the sum of its
 NST). The world's persisted foundings stay split until the root fix and its wipe (plan §10).
 
+**Follow-up, 2026-10-18 — the first fix was half a fix.** The next session, on the same world, threw again: a
+**second** `ToDictionary` over holders, in `ComputeReserveVoteOutcome`. Unit 5's blast-radius grep had matched
+`Holdings` and `ToDictionary` **on the same line**, and this chain spans three. That session's block-cost trace
+also showed **14 blocks aborted inside governance**: no phase after it ran, and no checkpoint. **Only 2 of the 14
+left a log line.** The other 12 are unexplained by the data; the likeliest cause is the same exception on the
+cast-miner path, which has no catch of its own, but it is not shown.
+
+**Fix (built 2026-10-18, mini-plan 25 unit 6):**
+- the second site is grouped and summed;
+- the ledger records a bot's donor under its base address;
+- `WorldFormatVersion` goes 11 → 12, so the next launch wipes;
+- governance exceptions are logged at the source and rethrown;
+- the block profiler names any block that never reached its checkpoint.
+
+**Verification:** run R2 (plan §9.12, R2-P4).
+
 **Fix** — mini-plan 25 §10: record a bot's donor under its BASE address, the bot twin of the 2026-07-14 player
 fix, then a `WorldFormatVersion` bump and wipe (Standing Convention 4).
 
@@ -775,3 +791,10 @@ fix, then a `WorldFormatVersion` bump and wipe (Standing Convention 4).
    looks.
 4. **A world nobody can produce is a world nobody has tested.** The defect needed bots that mine, bid and found
    companies; it shipped with P16.2 and surfaced 78 days later, in the first run that produced such a world.
+5. **A blast-radius grep must match the SHAPE, not the line.** LINQ chains span lines, and a grep that wants two
+   tokens on one line misses exactly the long chain. The miss cost a session. Search for each token alone and read
+   every hit's surrounding lines.
+6. **An aborted step is invisible unless something counts what should have followed it.** Fourteen blocks lost
+   their checkpoint. The trace that exposed them was one written inside the checkpoint, so a missing row was the
+   only evidence: **the boring check found what the clever instrument mislabelled as a cost** (Standing
+   Convention 16).

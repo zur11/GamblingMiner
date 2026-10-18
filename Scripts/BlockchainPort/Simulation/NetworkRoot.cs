@@ -119,7 +119,11 @@ public partial class NetworkRoot : Node
 	// v11 (mini-plan 14 B, same day): v10's chain file was written with the INDENTED options, so each block
 	// spanned dozens of lines in a file whose whole contract is one block per line. Nothing could read it back.
 	// The bump is what makes that unreadable file go away instead of failing every load that finds it.
-	private const int WorldFormatVersion = 11;
+	// v12 (mini-plan 25, INC-006 / D-17.6 — 2026-10-18): the auction ledger records a casino bot's donor under its
+	// BASE address, as the player's has been since 2026-07-14. Every persisted founding was minted under the old rule
+	// (one holding per signing ADDRESS, NST-vs-PST decided per address group), and merging the duplicate rows would
+	// not reproduce the slot-bonus arithmetic, which is not linear. Per project policy the world is reset.
+	private const int WorldFormatVersion = 12;
 	private const string WorldVersionPath = "user://world_format_version.txt";
 	// Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
 	// A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
@@ -2219,7 +2223,21 @@ public partial class NetworkRoot : Node
 			TrySettleResolvedAuctions(block); // Step 14 (ND.5, D-ND5.10): settle any non-miner that just resolved this block
 			CancelAndRefundStaleAuctionBids(block); // Step 14 (ND.8d, D-ND8d.7): cancel pending / refund confirmed bids to auctions that already closed
 			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Governance);
-			TickCompanyGovernance(block); // Step 14 (ND.8b.3): votes + dividends, committed in this block's snapshot write below
+			// INC-006 (mini-plan 25) — an exception here aborts the rest of this block (no historical events, no world
+			// persist request, no casino rewards, no BlockAccepted, and no checkpoint from the caller). In one session 14
+			// blocks were aborted in governance and only 2 left a log line, through the bot runner's catch-all. Logged
+			// here, where it happens, and RETHROWN: the behaviour is unchanged, only its silence is gone. GD.Print as well
+			// as PushError, so it reaches the Output panel.
+			try
+			{
+				TickCompanyGovernance(block); // Step 14 (ND.8b.3): votes + dividends, committed in this block's snapshot write below
+			}
+			catch (Exception e)
+			{
+				GD.Print($"[Governance] EXCEPTION in block {block.Index}, the rest of this block is aborted: {e.GetType().Name}: {e.Message}");
+				GD.PushError($"[Governance] EXCEPTION in block {block.Index}: {e}");
+				throw;
+			}
 			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.HistoricalEvents);
 			HistoricalEventScheduler.OnBlockMined(block); // Step 7.4: inject scripted player-era txs at their date
 			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Snapshot);
@@ -4603,9 +4621,13 @@ public partial class NetworkRoot : Node
 			return new ReserveVoteOutcome { BandMin = min, BandMax = max, Outcome = fallbackOutcome };
 		}
 
+		// INC-006 — grouped by holder like CloseCompanyVote's own map: a holder can own several holdings. This second
+		// ToDictionary was missed by unit 5's grep, which matched `Holdings` and `ToDictionary` on ONE line, and it
+		// threw in the very next session.
 		Dictionary<string, decimal> nstByHolder = founding.Holdings
 			.Where(h => h.Nst > 0m)
-			.ToDictionary(h => h.HolderId, h => h.Nst);
+			.GroupBy(h => h.HolderId)
+			.ToDictionary(g => g.Key, g => g.Sum(h => h.Nst));
 
 		decimal votedWeight = 0m, weightedReserve = 0m;
 		foreach ((string holderId, CompanyBallot ballot) in ballots)
@@ -6778,8 +6800,22 @@ public partial class NetworkRoot : Node
 		// address in Enroll Mode / details rows, split DonorCount, split settlement payout rows. All
 		// mechanics already treated those bids as the player (qualification, the ND.4d one-satoshi
 		// floor, D-ND5.7 payout routing — each checks the full playerAddresses set), so this only
-		// unifies the recorded identity. Single-address participants (bot_1..4) need no equivalent.
+		// unifies the recorded identity.
+		// INC-006 (mini-plan 25, 2026-10-18) — the bots get the same treatment. This comment used to end "Single-address
+		// participants (bot_1..4) need no equivalent", which was true on 2026-07-14 and false from P16.2 (2026-07-30) on,
+		// when bots began signing from rotating change addresses. Every rule downstream that groups or compares donors
+		// (one bid per donor per block, the leader's ignored self-raise, founding's one holding per donor) then saw one bot
+		// as several parties: founding minted a holding per ADDRESS, and decided NST-vs-PST per address group. A bot's
+		// donor is now recorded under its BASE address, at the point of recording, so no reader has to remember to.
 		(HashSet<string> playerAddresses, Dictionary<string, string> botNodeIdByAddress) = BuildAuctionBidderIdentity(player);
+		var botBaseAddressByNodeId = new Dictionary<string, string>();
+		foreach (BotWalletRecord casinoMinerBot in BotWalletRegistry.MinerBots)
+		{
+			if (SharedNodesById.TryGetValue(casinoMinerBot.NodeId, out NodeAgent? botNode))
+			{
+				botBaseAddressByNodeId[casinoMinerBot.NodeId] = botNode.WalletAddress;
+			}
+		}
 
 		long seq = 0;
 		var nonIncomeSeqs = new HashSet<long>();
@@ -6795,7 +6831,12 @@ public partial class NetworkRoot : Node
 					// same-block tie-break without any new persisted/schema field.
 					if (donations.TryGetValue(tx.Recipient, out List<(string, decimal, long, long)>? list))
 					{
-						string donor = playerAddresses.Contains(tx.Sender) ? player.WalletAddress : tx.Sender;
+						string donor = playerAddresses.Contains(tx.Sender)
+							? player.WalletAddress
+							: botNodeIdByAddress.TryGetValue(tx.Sender, out string? bidderBotId)
+								&& botBaseAddressByNodeId.TryGetValue(bidderBotId, out string? botBase)
+								? botBase
+								: tx.Sender;
 						list.Add((donor, tx.Amount, block.Timestamp, seq));
 						// Mini-plan 25 §4.7 — inflows that are TRANSFERS, never income: a dead company's inflow
 						// forwarded to its absorber, and collateral posted to a bank. Tagged here, where the memo

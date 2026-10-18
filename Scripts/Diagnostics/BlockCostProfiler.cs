@@ -231,6 +231,12 @@ namespace Scripts.Diagnostics
 			// missing row would read as "no block", which is the one thing this instrument must not invent.
 			if (_inBlock)
 			{
+				// Mini-plan 25 (INC-006) — this is not a timing detail, it is a finding: the previous block's processing
+				// stopped before its checkpoint, so its row is about to be closed HERE, with its last open phase holding
+				// all the real time until this block began. 14 such rows in one session read as "governance 3–11 s"
+				// before anyone noticed every later phase was exactly 0. Said out loud, in the Output panel.
+				GD.Print(string.Create(CultureInfo.InvariantCulture,
+					$"[BlockCost] h={_chainHeight:N0} NEVER REACHED ITS CHECKPOINT — its processing was aborted; that row's last open phase is not a cost."));
 				EndBlock();
 			}
 

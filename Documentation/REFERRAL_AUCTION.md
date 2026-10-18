@@ -104,6 +104,13 @@ All entries below are **superseded or explanatory**. The rule above is the only 
 - **ND.10k (2026-07-28)** — one bid per donor per block (highest wins, `ignoredBidSeqs`, no refund); a fourth non-blocking wallet warning reading `PendingTransactions` directly, because the mempool is a state the player cannot see. Applied retroactively. **Still current.**
 - **ND.10l (2026-07-28)** — weighted tie-break replacing ND.10c's uniform draw; `FreshPoolSeedingWeight = 34` (a sentinel's replacement, not a probability); panel DP switched to a 0/1-knapsack convolution, verified against brute-force subset enumeration. **Still current.**
 - **Step 16 P16.6 (2026-07-31)** — the reserve guard is a hysteresis and was resolving as "not resting" after every restart (`bot_4` led six auctions it should never have entered); now chain-seeded, announced per launch, DEBUG-tripwired at the bid broadcast. Emergent consequence, recorded not changed: bots are born at 0 BTC ⇒ born resting, so only the 300 gates a fresh bot (~6 mined blocks before its first bid). **Still current.**
+- **Mini-plan 25, INC-006 (2026-10-18)** — **a donor is an IDENTITY, for bots too.** The ledger had recorded a casino
+  bot's bid under the address that signed it. Since P16.2 that is a rotating change address, so every donor-keyed
+  rule saw one bot as several parties: one bid per donor per block, the leader's ignored self-raise, founding's one
+  holding per donor with NST-vs-PST per donor. Bot donors are now recorded under the bot's base address, as the
+  player's have been since 2026-07-14. No §1 figure changes; what changes is that §1's word "donor" now means the
+  same thing for a bot as for the player. `WorldFormatVersion` 12. Case: `INCIDENT_LOG.md` INC-006. **Still
+  current.**
 
 ### Standing invariants across the history
 

@@ -582,6 +582,12 @@ DiceGame's mining readout reads the live difficulty (T3). Full entries: `ROADMAP
 
 **Not a priority.** Nothing here blocks Basic Mode, and none of it should interrupt the bank testing. It is written down now because the run that exposed it is the largest world this project has produced, and that evidence has a short half-life.
 
+**📝 New measured cost (mini-plan 25 §10.1, 2026-10-18): the cast sell-flow, 281 ms on every block.** It is the
+first world with bots mining and 22 companies, at h2,328–2,372. Completed blocks average **390 ms**, and **75%** of
+that is `botTransactions`, almost all of it the sell-flow. **30 of 31 blocks exceed 200 ms**, which is the stall the
+developer reported "each time a block was mined". Not diagnosed further. The next step is a sub-phase breakdown of
+`ScheduleBotTransactionsAfterBlock`'s sell-flow, measured, before anything is changed.
+
 **Status at 2026-10-12 — only T4.2 is open.** The rest shipped, and their specifications and measurements
 (T4.0, T4.0b, T4.1, T4.3–T4.6) are in `ROADMAP_ARCHIVE.md`:
 - **T4.6**, the per-block cost budget: mini-plan 13.
