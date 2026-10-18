@@ -696,3 +696,82 @@ then discarded by `WorldFormatVersion` 6 → 7, per project policy.
 3. **Moving a timestamp moves every boundary computed from it.** The fix that gave each bet its true instant
    never asked what the checkpoint boundary was derived from. **When a change redefines a time or a quantity,
    enumerate the comparisons that consume it before calling it done.**
+
+---
+
+## INC-006 — One bot, several shareholders: the auction still keyed bots by address (2026-10-16)
+
+**World / context** — Branch `mini25-event-driven-audit`, canonical timeline, `WorldFormatVersion 11`. Rank
+calibration run R1 (mini-plan 25 §9), resumed as R1-continued: the player and `bot_1..4` all betting and mining at
+1 credit, 9000X, 2012-02-14 → 2013-04-10. The first world in this project's history where the casino bots mined
+long enough to found companies (22). Full diagnosis: `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md`
+§10.
+
+**Symptom** — nothing the developer saw. Two `ERROR: [BotAutoBetError]` lines in `godot.log`, read during the
+session audit, for nodes `bot_1` and `bot_4`, both naming the duplicate key `bot_1`. The trace then showed both bots
+had **stopped betting** from those moments on.
+
+**Timeline**
+
+1. **2026-07-14** — the same defect, for the PLAYER: a bid funded from a change address made the player a second,
+   unnamed donor. Fixed by canonicalising the player's donor address in `ComputeAuctionLedger`. The fix's comment
+   says *"Single-address participants (bot_1..4) need no equivalent."* True that day.
+2. **2026-07-30, P16.2** (`5b81853`) — bots become full UTXO citizens with rotating change addresses. Step 16 makes
+   `BuildAuctionBidderIdentity` map every owned bot address (so ownership and payouts resolve), but the donor
+   **recorded** in the ledger stays the raw signing address. The comment above stays, now false.
+3. **No world until R1 let the bots mine**, so no bot ever bid from a change address in a world anyone inspected.
+4. **2026-10-14/15, R1** — the bots mine, bid, and found 18 companies, then 22.
+5. **2012-06-15 and 2012-07-28 (game time)** — Casascius's quarterly vote closes; `CloseCompanyVote` throws twice.
+6. **2026-10-16** — found in the log; diagnosed from `state.json` and the code.
+
+**Faults**
+
+1. **ROOT — the ledger records a bot's donor as the address that signed the bid.** Every rule downstream that
+   groups or compares donors therefore sees one bot as several parties. The best evidenced is founding: `perDonor` is
+   keyed by `DonorAddress`, so each address group mints its own holding, and decides NST-vs-PST from **its own**
+   tiers only. A bot holding a top-3 slot from one address and a lower slot from another mints NST for the first and
+   PST for the second, where one identity should have minted NST on its whole stake.
+2. **PROXIMATE — `CloseCompanyVote` built `nstByHolder` with `ToDictionary`**, which throws on a holder with two NST
+   entries. Only Casascius had one (`bot_1`: 3,921.83 + 1,514.61 NST).
+3. **AMPLIFIER — the exception escaped `HandleMinedBlock` mid-block** and was caught by `ExecuteBotBet`'s catch-all.
+   The catch-all **stopped the runner** of whichever bot had mined the block, and the block's
+   `CaptureCheckpoint` never ran. A governance error in one company became a casino client silently leaving the
+   game, with nothing on screen.
+
+**Evidence**
+- `state.json`: **21 of 22** founded companies hold a duplicate `HolderId`, and 1 of 22 has a duplicate NST holder.
+- `godot.log`, lines 1010 and 1327: the stack trace, `CloseCompanyVote` → `TickCompanyGovernance` →
+  `HandleMinedBlock` → `ExecuteBotBet`.
+- `rank_calibration_trace.csv` part 2:
+  - `bot_1`: 91,169 bets/yr against 315,576 (−71.1%);
+  - `bot_4`: 123,740 (−60.8%);
+  - the other three: exactly 315,576.
+
+**Blast radius**
+- **Silently wrong:** every bot's NST/PST split in every company founded since bots first bid from change
+  addresses. Through it, bots' voting weight and the NST/PST balance of 21 companies.
+- **Suspected, not measured:** the bid rules that compare donors (one bid per donor per block, the leader's
+  ignored self-raise, own-slot counts) treat a bot's change-address bid as another party's. The bots' "tier-1
+  satisfied" rule usually keeps them off their own lead, so the size is unknown.
+- **Lost:** two R1-continued bots' bets after mid-2012, and two block checkpoints.
+- **Not affected:** the player, whose donor identity has been canonical since 2026-07-14.
+
+**Recovery** — the crash is fixed (`GroupBy` + `Sum` in `CloseCompanyVote`; a holder's vote weight is the sum of its
+NST). The world's persisted foundings stay split until the root fix and its wipe (plan §10).
+
+**Fix** — mini-plan 25 §10: record a bot's donor under its BASE address, the bot twin of the 2026-07-14 player
+fix, then a `WorldFormatVersion` bump and wipe (Standing Convention 4).
+
+**Lesson**
+1. **A comment that justifies NOT doing something is a premise, and premises expire.** "Single-address
+   participants need no equivalent" was correct and became false 16 days later without anyone touching it. When a
+   capability is extended to a new class of participant, **grep for the sentences that said that class did not
+   have it** (Standing Convention 13, found again).
+2. **An identity map that fixes the readers is half a fix if the writer still records the key.** Step 16 taught
+   every reader to resolve a bot's addresses, but the ledger kept recording addresses. **Canonicalise at the point
+   of recording**, so no reader has to remember to.
+3. **A catch-all around a whole simulation step converts one bad record into a silent participant loss.** It
+   protected the frame and hid the fault. A catch that stops a runner must at least say so where the developer
+   looks.
+4. **A world nobody can produce is a world nobody has tested.** The defect needed bots that mine, bid and found
+   companies; it shipped with P16.2 and surfaced 78 days later, in the first run that produced such a world.

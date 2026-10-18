@@ -294,7 +294,7 @@ public partial class CompanyDetails : Control
 			: string.Empty;
 		_statusLabel.Text = string.Create(CultureInfo.InvariantCulture,
 			$"Founded {FormatDate(founding.FoundedAtUnixMs)}  |  treasury {_networkRoot.GetNodeSpendableBalance(founding.NonMinerNodeId):F8} BTC  |  You hold: {holdingCaption}\n"
-			+ $"Total donated to found it: {summary.DonatedBtc:F8} BTC by {summary.BidderCount} {(summary.BidderCount == 1 ? "donor" : "donors")} (player + casino miners)  |  Total Foundational Income: {summary.FoundationalIncomeBtc:F8} BTC\n"
+			+ $"Total donated to found it: {summary.DonatedBtc:F8} BTC by {summary.BidderCount} {(summary.BidderCount == 1 ? "donor" : "donors")}  |  Total Foundational Income: {summary.FoundationalIncomeBtc:F8} BTC\n"
 			+ $"Company's BTC Income since founding: {summary.IncomeSinceFoundingBtc:F8} BTC  |  Total income in SC: {summary.IncomeSinceFoundingSc:N8} SC (each receipt at its day's price){unpriced}");
 
 

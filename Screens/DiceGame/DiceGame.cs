@@ -311,7 +311,9 @@ public partial class DiceGame : Control, IBetEventSource
 		// enough to clear PAUSE's real edge, and returned home when it hides. Both signals only mark the shift
 		// dirty; _Process applies it on the next frame, after the containers have laid PAUSE out (Pattern 6's
 		// edge-trigger shape: one flag read per frame, work only on change).
-		foreach (string navName in new[] { "OpenCalculatorBtn", "OpenBlockExplorerBtn", "OpenBankrollProgrammerBtn", "MainMenuBtn", "OpenCalendarNavigatorBtn" })
+		// Mini-plan 25: "OpenBetsExplorerBtn" joined the column (below the Calendar) after a playtest showed what being
+		// left out of this list does: the column moved for PAUSE and the new button stayed put, under it.
+		foreach (string navName in new[] { "OpenCalculatorBtn", "OpenBlockExplorerBtn", "OpenBankrollProgrammerBtn", "MainMenuBtn", "OpenCalendarNavigatorBtn", "OpenBetsExplorerBtn" })
 		{
 			if (GetNodeOrNull<Control>("%" + navName) is Control navButton)
 			{

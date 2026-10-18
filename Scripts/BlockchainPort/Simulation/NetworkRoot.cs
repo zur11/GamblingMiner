@@ -4677,9 +4677,16 @@ public partial class NetworkRoot : Node
 
 		if (totalNst > 0m && vote.Ballots.Count > 0)
 		{
+			// Mini-plan 25 (2026-10-16) — GROUPED by holder, never ToDictionary. A holder can own SEVERAL holdings:
+			// founding groups slots by donor ADDRESS, and since P16.2 a bot bids from rotating change addresses, so one
+			// bot can mint two NST entries. ToDictionary threw on the duplicate key mid-HandleMinedBlock, which aborted
+			// the rest of that block's processing (R1-continued: Casascius, twice). A holder's vote weight is the SUM of
+			// its NST, which is also what the totals above already assume. The address split itself is the defect; this
+			// only stops it taking a block down. See the plan's §10.
 			Dictionary<string, decimal> nstByHolder = founding.Holdings
 				.Where(h => h.Nst > 0m)
-				.ToDictionary(h => h.HolderId, h => h.Nst);
+				.GroupBy(h => h.HolderId)
+				.ToDictionary(g => g.Key, g => g.Sum(h => h.Nst));
 
 			decimal votedWeight = 0m, weightedReserve = 0m, weightedPayout = 0m, lighterWeight = 0m, darkerWeight = 0m;
 			decimal weightedDividendsCut = 0m; // P15.4e

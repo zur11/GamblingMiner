@@ -1417,6 +1417,10 @@ public partial class SimulationService : Node
 		catch (Exception ex)
 		{
 			GD.PushError($"[BotAutoBetError] node={runner.NodeId} {ex}");
+			// INC-006 — this catch STOPS the runner, so the bot leaves the game for the rest of the session. PushError lands in
+			// the Debugger's Errors tab only, and a casino client vanished twice in R1-continued with nothing in the Output
+			// panel. Say it there too, in one line (CLAUDE.md, "name the panel").
+			GD.Print($"[BotAutoBetError] {runner.NodeId} STOPPED for this session: {ex.GetType().Name}: {ex.Message}");
 			runner.Session.Stop(IBettingStrategy.StopReason.ManualStop);
 			SaveBotFinancialState(runner);
 		}

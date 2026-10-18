@@ -159,7 +159,7 @@ public partial class AuctioningCompanyDetails : Control
 		// BlockAccepted, so they are as current as the chain. At founding, donated and income freeze into what
 		// CompanyDetails shows as the founding figures.
 		string funding = string.Create(CultureInfo.InvariantCulture,
-			$"Donors: {summary.BidderCount} (player + casino miners)  |  Donated: {summary.DonatedBtc:F8} BTC  |  Company's BTC Income: {summary.CompanyBtcIncome:F8} BTC");
+			$"Donors: {summary.BidderCount}  |  Donated: {summary.DonatedBtc:F8} BTC  |  Company's BTC Income: {summary.CompanyBtcIncome:F8} BTC");
 		_statusLabel.Text = $"In Auction — {clock}  |  If it closed now you would mint: {stakeCaption}\n{funding}";
 		PrintFunding(summary);
 

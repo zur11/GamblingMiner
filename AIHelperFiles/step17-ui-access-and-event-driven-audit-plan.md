@@ -9,9 +9,10 @@
 > which lifts `CompanyDetails`'s suspension. Next: the developer picks the next calibration run (§9.9), then
 > 17.A and C.1. **Chosen: R1-continued (§9.10).** The developer's two company items are placed: the donor
 > count is **17.A3** (§4.5), and the bot preference goes to the Player Holdings Hub entry in the roadmap.
-> **Unit 3 (17.A + 17.A3) is committed. Unit 4 (17.A4, §4.7), a company's funding in two phases, is built.**
-> Verification of both is one session, §4.8, inside R1-continued. Next unit: **17.A2**, the Numbers view,
-> which needs its grid geometry fixed first.
+> **Units 3–4 (17.A, A3, A4) committed and verified 2026-10-16 (§4.8 results)**, except the button layout,
+> fixed in unit 5 together with the donor wording. **The session's audit found INC-006** (§10): the crash is fixed
+> in unit 5, and the root fix waits on D-17.6. R1 is closed (§9.11). Next: one session on R1's world to measure
+> the freezes (§10.1) and check unit 5's layout; then the INC-006 root fix + wipe; then R2. 17.A2 follows.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -367,6 +368,20 @@ The steps are the ones given to the developer in the chat on 2026-10-15, kept he
 8. **ArtForz Cluster**'s Details, then leave for 2–3 minutes and open it again;
 9. no `[AuctionLedger]` in the Output panel;
 10. keep R1 running to at least **2013-01-01**, which covers the first halving at block 2,100.
+
+#### V-A results (session of 2026-10-15/16, R1-continued, h1,691 → 2,327)
+
+| | Verdict | Evidence |
+|---|---|---|
+| **V-A1/A2** (navigation) | ✅ by the developer's report | No navigation defect reported |
+| **Button layout** | ❌ **FAILED, fixed** | The developer's screenshot: when the autobet starts, DiceGame shifts its nav column right to clear PAUSE (`ApplyNavShiftIfDirty`), and the new button was not in the shifted list, so the column slid over it. **Fix (developer's layout):** all six buttons at **half height and half font**, with "Bets Explorer" **below** "Calendar Navigator", in the shifted list |
+| **V-A3** | ✅ | `donors=4` throughout, the same on both screens |
+| **V-A4** | ✅ | No `[AuctionLedger]` line in `godot.log` |
+| **V-A5** | ✅ | Coinwash (`non_miner_19`), h1,743–1,781: `donated` only rose (2.49 → 1,451.43 BTC); `income` stayed 0.00 |
+| **V-A6** | ✅ | ArtForz Cluster at h1,726 and h1,784: **every figure identical**, founding and running alike, since no income arrived in those 58 blocks |
+| **Wording** | changed | The developer asked for the donor count without "(player + casino miners)". Removed on both details pages |
+
+**Found during the audit, outside V-A:** INC-006, §10.
 
 ### 4.6 — Verification protocol V-A (17.A + 17.A3) — *superseded by §4.8*
 
@@ -903,6 +918,79 @@ date and chain length.
 **One caveat to read the data by:** the 17.C migrations change only how panels refresh, never the
 simulation, so R1's parameters stay the same across its parts. Anything that does change the sim (item 2
 above, P5, P7) waits until R1 is closed.
+
+### 9.11 — R1 part 2 results (2012-02-14 → 2013-04-10, 1.15 game-years, chain 1,691 → 2,327)
+
+Read from `logs/rank_calibration_trace.csv` (492 rows) and the chain.
+
+- **The bet arithmetic holds exactly again** for every client that kept betting: the player, `bot_2` and `bot_3`,
+  each at 315,576 bets/yr, deviation 0.000%. Nets are within 1.02σ.
+- **`bot_1` and `bot_4` stopped betting mid-2012**, at 91,169 and 123,740 bets/yr. That is INC-006's amplifier: a
+  governance exception killed whichever bot runner had mined the block. Their part-2 figures are truncated and
+  are excluded from any rate.
+- **The first halving landed at block 2,101 on 2012-11-16** (the real one was 2012-11-28), and the coinbase
+  fell to 25 BTC.
+- **Mining at 1 credit collapsed after 2012.** In the 637 blocks of part 2 the five casino clients mined **5**
+  (player 0, `bot_1` 1, `bot_3` 1, `bot_4` 3). In 2009–2012 it was 35–43 per credit per game-year; now it is
+  **about 1**. The historical network outgrew a 1-credit miner, as it outgrew real CPU miners.
+- **Bots' BTC rose anyway** (`bot_1` 528 → 2,243, `bot_2` 510 → 1,813) **with almost no mining**: most likely
+  dividends from their shareholdings, plus stale-bid refunds. *Inferred, not decomposed.* That is a second BTC
+  income channel. The player has none, never having bid.
+
+**What it means for the Rank ladder.** The top end needs a miner, and mining after 2012 needs credits. So:
+- **R3 (more credits) is no longer optional.** It is the run that says whether a player can still earn after
+  2012;
+- **the early-mining windfall is the realistic source** of a 10⁹–10¹⁰ wagering capacity;
+- **company dividends are a second channel** the design plan must count.
+
+**R1 is CLOSED (2026-10-16), recommended:** 4.05 game-years in total, past the first halving, and the
+mining question it could answer is answered. Its world is not reused for R2 (INC-006's fix needs a wipe,
+§10).
+
+---
+
+## 10. INC-006 — bots keyed by address in the auction (found 2026-10-16)
+
+Full entry: `Documentation/INCIDENT_LOG.md` **INC-006**. In short:
+- `ComputeAuctionLedger` records a bot's donor as the address that **signed** the bid. Since P16.2 that rotates
+  through change addresses.
+- Founding groups slots per address, so one bot mints several holdings (**21 of 22** companies), with
+  NST-vs-PST decided per address group instead of per identity.
+- In Casascius one bot held two NST entries. `CloseCompanyVote`'s `ToDictionary` threw mid-`HandleMinedBlock`,
+  and `ExecuteBotBet`'s catch-all stopped the runner of the bot that had mined the block. That happened twice.
+
+**Done in this unit:**
+1. `CloseCompanyVote` groups by holder and sums NST, so the crash cannot recur on any persisted world.
+2. The catch-all now also prints `[BotAutoBetError] <node> STOPPED for this session` with `GD.Print`, so it
+   reaches the Output panel.
+
+**D-17.6 — the root fix (the developer's call).** Record a bot's donor under its **base address**, exactly as
+the player's has been since 2026-07-14. One founding holding per identity follows, and every donor comparison
+in the bid rules becomes per identity.
+- **It changes the simulation**, so it carries a **`WorldFormatVersion` bump 11 → 12 and a wipe**. That is
+  Standing Convention 4 and the developer's standing "no migrations" rule: the 22 persisted foundings were
+  minted wrong, and merging their duplicate rows would not reproduce the slot-bonus arithmetic, which is not
+  linear.
+- **Recommendation: do it now, as the next code unit, before R2.** R1 is closed and its data is in the trace
+  files, which survive the wipe. R2 from genesis is the next run anyway. Running R2 on the old rule would bias
+  exactly the bot-BTC channel §9.11 just found.
+
+### 10.1 — The freezes (developer, 2026-10-16): "slight freezes of up to one second in DiceGame each time a block was mined"
+
+**Not diagnosed, and no fix guessed** (Pattern 6, the closing rule). The instrument exists: **"⏱ Block cost"**
+(`BlockCostProfiler`) prints one line per block with its phases, to the Output panel and to
+`logs/block_cost_trace.csv`. An older trace (2026-10-07, h1,606, a world with no companies) already shows a
+**436 ms block, 426 of them in `botTransactions`**.
+
+**Hypotheses, registered before the run:**
+- **H1 `botTransactions`**, the sell-flow and bot sends. It was already the 426 ms phase.
+- **H2 `auctions`**, the ledger. It walks the whole chain and is computed several times per block; mini-plan 25
+  §4.5/§4.7 added per-company work to it.
+- **H3 `governance`**, 22 companies.
+
+**Decision rule:** the phase holding **≥ 50% of the `totalMs` of the blocks over 200 ms** is the subject. The
+criterion is stated as a **count**, the number of blocks over 200 ms, so a fix can be judged within one session
+(instrument rule 3). **Measured on R1's world before the wipe**, because that is where the freezes were seen.
 
 ### 9.6 — Answered by the developer (2026-10-14)
 
