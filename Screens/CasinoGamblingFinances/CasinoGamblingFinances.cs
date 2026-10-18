@@ -55,6 +55,14 @@ public partial class CasinoGamblingFinances : Control
 
 	private double _fallbackTimer;
 	private const double FallbackInterval = 2.0;
+
+	// Mini-plan 25 17.C.1 — the casino's BalanceChanged fires on EVERY settled casino bet: M0 counted RefreshLabels at
+	// 450 a second, each one a LINQ count over up to 500 loan records. Same fix as CasinoCoinSwaps: the event marks the
+	// labels dirty and _Process repaints at most once per BalanceCoalesceSeconds (§38.7 rule 2). The 2 s fallback is
+	// 17.C.3's question.
+	private bool _balanceDirty;
+	private double _balanceCoalesceTimer;
+	private const double BalanceCoalesceSeconds = 0.25;
 	// Mini-plan 15b — the shared readout sampler; see UI/Readouts/ReadoutSampling.cs and §29.13.
 	private readonly UI.Readouts.AdaptiveReadoutSampler _clockSampler = new();
 
@@ -136,7 +144,7 @@ public partial class CasinoGamblingFinances : Control
 
 		if (_casinoSc != null)
 		{
-			_casinoSc.BalanceChanged += RefreshLabels;
+			_casinoSc.BalanceChanged += MarkBalanceDirty;
 			_bankrollTargetInput.Text = _casinoSc.BankrollTarget.ToString("N8", CultureInfo.InvariantCulture);
 			_autoLoanInput.Text = _casinoSc.AutoLoanAmount.ToString("N8", CultureInfo.InvariantCulture);
 		}
@@ -150,7 +158,7 @@ public partial class CasinoGamblingFinances : Control
 	public override void _ExitTree()
 	{
 		if (_casinoSc != null)
-			_casinoSc.BalanceChanged -= RefreshLabels;
+			_casinoSc.BalanceChanged -= MarkBalanceDirty;
 	}
 
 	public override void _Process(double delta)
@@ -166,6 +174,19 @@ public partial class CasinoGamblingFinances : Control
 			_gameDateLabel.Text = "Game date: " + _clockSampler.FormatGameTime(local, "yyyy-MM-dd");
 		}
 
+		if (_balanceDirty)
+		{
+			_balanceCoalesceTimer += delta;
+			if (_balanceCoalesceTimer >= BalanceCoalesceSeconds)
+			{
+				_balanceCoalesceTimer = 0;
+				_balanceDirty = false;
+				_fallbackTimer = 0; // just repainted: the fallback need not repeat it
+				RefreshLabels();
+				return;
+			}
+		}
+
 		_fallbackTimer += delta;
 		if (_fallbackTimer >= FallbackInterval)
 		{
@@ -173,6 +194,8 @@ public partial class CasinoGamblingFinances : Control
 			RefreshLabels();
 		}
 	}
+
+	private void MarkBalanceDirty() => _balanceDirty = true;
 
 	private void RefreshLabels()
 	{

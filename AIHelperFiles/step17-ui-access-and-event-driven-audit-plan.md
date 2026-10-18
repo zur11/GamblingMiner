@@ -16,8 +16,8 @@
 > follows. **2026-10-18: the freeze session ran (§10.1 results), and unit 6 is built**: INC-006's second crash site,
 > the root fix, the v12 wipe, and two loudness instruments. **R2 ran 2026-10-18: every prediction confirmed, and
 > INC-006 verified** (§9.13). The developer chose (2026-10-18) to follow the recommended order: 17.A2, then 17.C.1,
-> with R3 running in the sessions that verify the code. **Unit 7 (17.A2, §4.4) is built.** Next: unit 8 = 17.C.1, then
-> one session that verifies both and starts R3.
+> with R3 running in the sessions that verify the code. **Unit 7 (17.A2, §4.4) is committed; unit 8 (17.C.1, §5.5) is
+> built; R3 is set up** (§9.14, wipe armed). Next: one session that verifies 17.A2 and 17.C.1 (V-C1) and starts R3.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -644,6 +644,24 @@ non-transition windows.
 **Not measured:** `CasinoFinances`. The tour visited `CasinoGamblingFinances` twice instead; by code it is
 a 2 s timer, i.e. 0.5/s.
 
+#### 17.C.1 — built 2026-10-18 (unit 8)
+
+**What changed.**
+- `CasinoCoinSwaps` and `CasinoGamblingFinances` no longer rebuild on the casino's `BalanceChanged`: the event
+  only sets a dirty flag. `_Process` rebuilds at most once every **0.25 s** (`BalanceCoalesceSeconds`) while the flag
+  is set, which is `CentralBank`'s shape and §38.7 rule 2.
+- `SwapDeskChanged` and `MarketDayChanged` stay immediate: rare, and they do move the page.
+- A coalesced rebuild resets the 2 s fallback, so the two never double up.
+- **Not done here:** the 2 s fallbacks themselves. They are 17.C.3's question, because they may be what shows the
+  player's chain-side BTC, which no event covers.
+
+**V-C1 predictions, registered before the run:**
+- Under the sim at 9000X, the probe reads **`CasinoCoinSwaps.RefreshAll` and `CasinoGamblingFinances.RefreshLabels`
+  at 3.5–4.5/s**, against 450/s at M0. **Refuted if** either exceeds **5/s**, or reads 0 while the sim runs (that
+  would mean the page stopped updating).
+- At rest, both still read 0.4–0.6/s, the unchanged fallback.
+- **Functional:** on both pages the casino balances visibly change while the autobet runs.
+
 **What it means for C.1.** By §5.4's rule C.1 proceeds, since P1 is confirmed. But its benefit will **not**
 show as retention at 5 credits. It is justified by the count (450 rebuilds a second for a value no single
 bet can visibly move) and by load: the same subscription at 99 credits would fire about 20× as often. C.1's
@@ -852,7 +870,8 @@ rate.
 | Run | World archived as | Parameters | Game span covered | Result |
 |---|---|---|---|---|
 | R1 | before: `GamblingMiner_archive_preR1_2026-10-14` (the 2012 world). After: `GamblingMiner_archive_R1_end_2026-10-18` (h2,372) | §9.4 | **2009-03-22 → 2013-05-12, ~4.1 game-years**, chain 117 → 2,372, three sessions | **Closed**, §9.8 + §9.11. Traces: `logs/rank_calibration_R1_part1.csv`, `_part2.csv` |
-| R2 | — (the current world) | §9.12 | **2009-03-21 → 2012-01-31, 2.86 game-years**, chain 116 → 1,639, one session | **Done 2026-10-18**, §9.13. Trace: `logs/rank_calibration_trace.csv` (rename to `rank_calibration_R2.csv` at R3's setup) |
+| R2 | after: `GamblingMiner_archive_R2_end_2026-10-18` | §9.12 | **2009-03-21 → 2012-01-31, 2.86 game-years**, chain 116 → 1,639, one session | **Done 2026-10-18**, §9.13. Trace: `logs/rank_calibration_R2.csv` |
+| R3 | — | §9.14 | — | **set up 2026-10-18**: wipe armed (12 → 0) |
 
 ### 9.8 — R1 results (2026-10-15)
 
@@ -1035,6 +1054,29 @@ measured or exact.
 
 **Still open for the ladder: R3, more credits.** It is the run that says whether mining, and therefore the money
 that funds big wagering, survives past 2012 (§9.11).
+
+### 9.14 — Run R3 (set up 2026-10-18): the player at 10 credits
+
+**The question:** does mining, the only route to the money that funds big wagering, survive past 2012 for a player
+with more hardware? R1-continued answered it for 1 credit: no (§9.11).
+
+**Settings:**
+- **player:** **10 credits** (the DEV credits selector) and `R1 0.1`, flat. The player wagers the same SC per year as R1's
+  player (10 × 0.1 = 1 × 1), so its capital lasts as long; only its mining power changes.
+- **bots:** R1's strategies at 1 credit (`bot_1` `R1 0.01`, `bot_2` `R1 0.1`, `bot_3` `R1 0.5`, `bot_4` `R1 2`). That is
+  R1's baseline, so the player's 10× is the only variable.
+- 9000X; at least **2014-01-01**, across sessions.
+
+**Predictions:**
+- **R3-P1:** player bets/yr = **3,155,760** (10 × 315,576); bots 315,576. Exact.
+- **R3-P2:** 2009–2012, the player mines **≈ 10× a bot's blocks** (±30%). R1 measured 98–126 per bot.
+  **Refuted outside 7×–13×.**
+- **R3-P3:** after 2012-02, the player mines **≈ 10 blocks per game-year**, i.e. 10× R1-continued's ~1 per credit.
+  **Refuted below 3 or above 30.** This is the number the ladder's top depends on.
+- **R3-P4:** no ruin, and INC-006 stays fixed (R2-P4's three checks).
+
+The world was archived first: `GamblingMiner_archive_R2_end_2026-10-18` (101 files, byte-identical). R2's trace is
+`logs/rank_calibration_R2.csv`, and the stamp is 12 → 0, so the next launch wipes.
 
 **R1 is CLOSED (2026-10-16), recommended:** 4.05 game-years in total, past the first halving, and the
 mining question it could answer is answered. Its world is not reused for R2 (INC-006's fix needs a wipe,

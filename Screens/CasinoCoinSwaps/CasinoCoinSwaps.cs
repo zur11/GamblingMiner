@@ -67,6 +67,16 @@ public partial class CasinoCoinSwaps : Control
 
 	private double _refreshTimer;
 	private const double RefreshInterval = 2.0;
+
+	// Mini-plan 25 17.C.1 — the casino's BalanceChanged fires on EVERY settled casino bet: M0 counted RefreshAll at 450 a
+	// second (5 clients × 90 bets/s at 9000X), each one rebuilding the header, both quote panels and the recent-swaps
+	// list for an SC balance no single bet can visibly move. §38.7's rule 2, at the consumer: the event only marks the
+	// page dirty, and _Process rebuilds at most once per BalanceCoalesceSeconds. SwapDeskChanged and MarketDayChanged
+	// stay immediate: they are rare and they DO move what this page shows. The 2 s timer below is untouched here;
+	// whether it can go is 17.C.3's question (it may be what shows the player's chain-side BTC, which no event covers).
+	private bool _balanceDirty;
+	private double _balanceCoalesceTimer;
+	private const double BalanceCoalesceSeconds = 0.25;
 	private const int MaxRecentSwapsShown = 20;
 
 	private static readonly Color DisabledReasonColor = new Color(1f, 0.45f, 0.35f);
@@ -144,7 +154,7 @@ public partial class CasinoCoinSwaps : Control
 			_sceneManager?.Go(_sceneManager.PreviousScene ?? SceneManager.SceneId.MainMenu);
 
 		if (_swapService != null) _swapService.SwapDeskChanged += RefreshAll;
-		if (_casinoSc != null)    _casinoSc.BalanceChanged += RefreshAll;
+		if (_casinoSc != null)    _casinoSc.BalanceChanged += MarkBalanceDirty;
 		if (_market != null)      _market.MarketDayChanged += OnMarketDayChanged;
 
 		RefreshAll();
@@ -153,12 +163,26 @@ public partial class CasinoCoinSwaps : Control
 	public override void _ExitTree()
 	{
 		if (_swapService != null) _swapService.SwapDeskChanged -= RefreshAll;
-		if (_casinoSc != null)    _casinoSc.BalanceChanged -= RefreshAll;
+		if (_casinoSc != null)    _casinoSc.BalanceChanged -= MarkBalanceDirty;
 		if (_market != null)      _market.MarketDayChanged -= OnMarketDayChanged;
 	}
 
 	public override void _Process(double delta)
 	{
+		// The coalesced balance path first: one bool test per frame while nothing changed (Pattern 6's hybrid).
+		if (_balanceDirty)
+		{
+			_balanceCoalesceTimer += delta;
+			if (_balanceCoalesceTimer >= BalanceCoalesceSeconds)
+			{
+				_balanceCoalesceTimer = 0;
+				_balanceDirty = false;
+				_refreshTimer = 0; // just rebuilt: the fallback need not repeat it
+				RefreshAll();
+				return;
+			}
+		}
+
 		_refreshTimer += delta;
 		if (_refreshTimer >= RefreshInterval)
 		{
@@ -166,6 +190,8 @@ public partial class CasinoCoinSwaps : Control
 			RefreshAll();
 		}
 	}
+
+	private void MarkBalanceDirty() => _balanceDirty = true;
 
 	private void OnMarketDayChanged(MarketDay day) => RefreshAll();
 
