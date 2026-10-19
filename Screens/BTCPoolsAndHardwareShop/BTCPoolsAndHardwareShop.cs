@@ -30,8 +30,12 @@ public partial class BTCPoolsAndHardwareShop : Control
 	private readonly Dictionary<string, Button> _nodeButtons = new();
 	private string? _selectedNodeId;
 
-	private double _refreshTimer;
-	private const double RefreshInterval = 1.0;
+	// Mini-plan 25 17.C.2 — the casino detail is refreshed by EVENTS through a leading-edge throttle, no longer by a 1 s
+	// timer: its figures move when a block is mined (pool rewards) or hardware changes (HardwareChanged). At rest 0/s;
+	// under load never above the old rate. The detail is labels and a table only, so a rebuild loses no input.
+	private bool _casinoDirty = true; // dirty at entry: harmless, SelectNode builds the detail itself
+	private double _sinceLastRefresh = double.MaxValue;
+	private const double MinRefreshInterval = 1.0;
 
 	public override void _Ready()
 	{
@@ -69,15 +73,28 @@ public partial class BTCPoolsAndHardwareShop : Control
 
 		BuildNodeList();
 		ShowNoSelection();
+
+		NetworkRoot.BlockAccepted += OnBlockAccepted;
+		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
 	}
+
+	public override void _ExitTree()
+	{
+		// Both events are static: unsubscribe, or this scene stays reachable after it leaves.
+		NetworkRoot.BlockAccepted -= OnBlockAccepted;
+		HardwareAllocationRepository.HardwareChanged -= OnHardwareChanged;
+	}
+
+	private void OnBlockAccepted(GodotBlockchainPort.Blockchain.Block _) => _casinoDirty = true;
+	private void OnHardwareChanged(string _) => _casinoDirty = true;
 
 	public override void _Process(double delta)
 	{
 		// Casino stats change as blocks are mined in the background — keep them live while shown.
-		if (_selectedNodeId != CasinoNodeId) return;
-		_refreshTimer += delta;
-		if (_refreshTimer < RefreshInterval) return;
-		_refreshTimer = 0d;
+		_sinceLastRefresh += delta;
+		if (_selectedNodeId != CasinoNodeId || !_casinoDirty || _sinceLastRefresh < MinRefreshInterval) return;
+		_casinoDirty = false;
+		_sinceLastRefresh = 0d;
 		BuildCasinoDetail();
 	}
 

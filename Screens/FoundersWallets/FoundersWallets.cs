@@ -97,8 +97,13 @@ public partial class FoundersWallets : Control
 	private string _currentPassphraseNodeId = string.Empty;
 	private string _sendFromNodeId = string.Empty;
 	private WalletMode _modeBeforeSend = WalletMode.Base;
-	private double _refreshTimer;
-	private const double RefreshInterval = 2.0;
+	// Mini-plan 25 17.C.2 — refreshed by EVENTS (a block, a new mempool transaction) through a leading-edge throttle, no
+	// longer by a 2 s timer (same shape as BotsBtcWallets). The two readouts that look time-driven are not: founder power
+	// is recomputed per block, and scripted activity is injected by HistoricalEventScheduler.OnBlockMined, so a block is
+	// exactly when they change. At rest 0/s; under load never above the old rate. No input is written by the refresh.
+	private bool _chainDirty = true; // dirty at entry: the first frame paints, events or not
+	private double _sinceLastRefresh = double.MaxValue;
+	private const double MinRefreshInterval = 2.0;
 
 	public override void _Ready()
 	{
@@ -174,13 +179,27 @@ public partial class FoundersWallets : Control
 
 		// Default to Satoshi.
 		SelectFounder(WalletInitializationService.SatoshiWallet);
+
+		NetworkRoot.BlockAccepted += OnChainChanged;
+		NetworkRoot.MempoolChanged += MarkChainDirty;
 	}
+
+	public override void _ExitTree()
+	{
+		// Static events: unsubscribe, or this scene stays reachable after it leaves.
+		NetworkRoot.BlockAccepted -= OnChainChanged;
+		NetworkRoot.MempoolChanged -= MarkChainDirty;
+	}
+
+	private void OnChainChanged(Block _) => _chainDirty = true;
+	private void MarkChainDirty() => _chainDirty = true;
 
 	public override void _Process(double delta)
 	{
-		_refreshTimer += delta;
-		if (_refreshTimer < RefreshInterval) return;
-		_refreshTimer = 0d;
+		_sinceLastRefresh += delta;
+		if (!_chainDirty || _sinceLastRefresh < MinRefreshInterval) return;
+		_chainDirty = false;
+		_sinceLastRefresh = 0d;
 		RefreshBalances();
 		RefreshAutomaticActivity();
 		RefreshAddressBook();
@@ -266,6 +285,12 @@ public partial class FoundersWallets : Control
 		};
 		_founderTitle.Text = $"{displayName} Wallet";
 		_addressLabel.Text = founder?.BaseAddress ?? "—";
+
+		// Mini-plan 25 17.C.2 — the 2 s timer used to repaint a newly selected founder within 2 s. With the refresh
+		// event-driven it would keep showing the PREVIOUS founder's figures until the next block, so selecting asks for an
+		// immediate repaint, bypassing the throttle.
+		_chainDirty = true;
+		_sinceLastRefresh = double.MaxValue;
 
 		SetMode(WalletMode.Base);
 	}

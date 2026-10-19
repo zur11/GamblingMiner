@@ -78,8 +78,14 @@ public partial class CasinoFinances : Control
 	private string _currentPassphraseNodeId = string.Empty;
 	private string _sendFromNodeId = string.Empty;
 	private WalletMode _modeBeforeSend = WalletMode.Base;
-	private double _refreshTimer;
-	private const double RefreshInterval = 2.0;
+	// Mini-plan 25 17.C.2 — refreshed by EVENTS through a leading-edge throttle, no longer by a 2 s timer (same shape as
+	// BotsBtcWallets and BTCWallet). The casino's BTC side moves on a block or a new mempool transaction; the reserve line
+	// reads the swap desk, which announces its own changes (SwapDeskChanged, already coalesced in the service). At rest
+	// 0/s; under load never above the old rate. The refresh writes no input (the reserve SpinBox is only written by its
+	// own mode switch).
+	private bool _chainDirty = true; // dirty at entry: the first frame paints, events or not
+	private double _sinceLastRefresh = double.MaxValue;
+	private const double MinRefreshInterval = 2.0;
 
 	public override void _Ready()
 	{
@@ -153,13 +159,29 @@ public partial class CasinoFinances : Control
 		BuildAddressListSection();
 		BuildTransactionsSection();
 		SetMode(WalletMode.Base);
+
+		NetworkRoot.BlockAccepted += OnChainChanged;
+		NetworkRoot.MempoolChanged += MarkChainDirty;
+		if (_swapService != null) _swapService.SwapDeskChanged += MarkChainDirty;
 	}
+
+	public override void _ExitTree()
+	{
+		// Two static events and an autoload's: all three outlive this scene, so all three are released.
+		NetworkRoot.BlockAccepted -= OnChainChanged;
+		NetworkRoot.MempoolChanged -= MarkChainDirty;
+		if (_swapService != null) _swapService.SwapDeskChanged -= MarkChainDirty;
+	}
+
+	private void OnChainChanged(Block _) => _chainDirty = true;
+	private void MarkChainDirty() => _chainDirty = true;
 
 	public override void _Process(double delta)
 	{
-		_refreshTimer += delta;
-		if (_refreshTimer < RefreshInterval) return;
-		_refreshTimer = 0d;
+		_sinceLastRefresh += delta;
+		if (!_chainDirty || _sinceLastRefresh < MinRefreshInterval) return;
+		_chainDirty = false;
+		_sinceLastRefresh = 0d;
 		RefreshBalances();
 	}
 

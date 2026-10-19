@@ -18,9 +18,10 @@
 > INC-006 verified** (§9.13). The developer chose (2026-10-18) to follow the recommended order: 17.A2, then 17.C.1,
 > with R3 running in the sessions that verify the code. **Unit 7 (17.A2, §4.4) is committed; unit 8 (17.C.1, §5.5) is
 > built; R3 is set up** (§9.14, wipe armed). **R3's session ran to 2015 (2026-10-18): 17.A2 verified, V-C1 confirmed (450 →
-> ~4 rebuilds/s), R3's predictions all confirmed** (§9.15), which closes the rank-calibration series. Next: **17.C.2**, the
-> mempool event and the chain-side scenes. Its rate is still unmeasured after Market Birth, so the next session reads it
-> on R3's world, which is at 2015.
+> ~4 rebuilds/s), R3's predictions all confirmed** (§9.15), which closes the rank-calibration series. **Unit 9 (17.C.2,
+> §5.5) is built:** `MempoolChanged` plus five chain-side scenes on a leading-edge throttle, and two defects the migration
+> exposed. Next: the V-C2 session on R3's world (no wipe), then `BlockExplorer`, C.3 (the B group's fallbacks), C.4
+> (`BotPlayHistory`), C.6 (`CompanyDetails`), M1 and the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -678,6 +679,55 @@ a 2 s timer, i.e. 0.5/s.
 
 **More than a 100× reduction** in rebuilds for the two scenes M0 found worst. Retention read 100% before and after,
 as P2 predicted it would at 5 credits, so the count is the evidence.
+
+#### 17.C.2 — built 2026-10-18 (unit 9): the mempool event, and five chain-side scenes off their timers
+
+**The event (D-17.1).** `NetworkRoot.MempoolChanged`, static, is fired by `NotifyMempoolChanged()` at the three
+places a transaction originates, which are also the probe's three counting sites. It is never fired from the
+broadcast fan-out. Subscribers may only mark themselves dirty.
+
+**The shape: a LEADING-EDGE THROTTLE, not a short coalesce.** An event (`BlockAccepted`, `MempoolChanged`, and per
+scene the right extra one) marks the page dirty. The next frame rebuilds **once `MinRefreshInterval` has passed since
+the last rebuild**, and the interval is **the old timer's**. Against the timer that gives:
+- **0/s at rest**;
+- **never above the old rate under load**;
+- a change shown **within a frame** after a quiet spell.
+
+Why not 0.25 s as in C.1: `BotsBtcWallets` does a full UTXO pass **per row** (40 rows in `CompaniesWallets`), and the
+mempool event's rate is unbounded, so a short coalesce could hand a saturated frame more work than the poll did
+(§38.7's inverse failure, rule 1).
+
+| Scene | Events | `MinRefreshInterval` |
+|---|---|---|
+| `BotsBtcWallets` + `CompaniesWallets` + `CastMinerWallets` | block, mempool | 3 s |
+| `BTCWallet` | block, mempool | 2 s |
+| `CasinoFinances` | block, mempool, `SwapDeskChanged` | 2 s |
+| `FoundersWallets` | block, mempool (founder power and scripted activity change per block) | 2 s |
+| `BTCPoolsAndHardwareShop` (casino detail) | block, `HardwareChanged` | 1 s |
+
+**Two defects found by the migration itself, both fixed in this unit:**
+- **`BotsBtcWallets` overwrote the reactivation-block field on every refresh, focus or not** (§38.5 note 1). It is
+  now written only when the field does not have focus.
+- **Two actions relied on the timer to show their result:** `BTCWallet.SetMode` and `FoundersWallets.SelectFounder`.
+  Event-driven, a founder switch at rest would have kept the previous founder's figures until the next block. Both
+  now request an immediate repaint, and every migrated page starts dirty, so it paints on its first frame.
+
+**Not in this unit:** `BlockExplorer`. It shows live per-bet counters (the current nonce attempt), which no
+block/mempool event covers, so it needs its own decision.
+
+**V-C2 predictions** (UiRefreshProbe, R3's world at 2015):
+- **At rest:** each scene's count appears once on entry, then **0/s**. **Refuted** by any steady at-rest rate.
+- **Under the sim at 9000X:**
+  - the `BotsBtcWallets` family **≤ 0.34/s**;
+  - `BTCWallet`, `CasinoFinances` and `FoundersWallets` **≤ 0.5/s**;
+  - `BTCPoolsAndHardwareShop` with the casino selected **≤ 1.0/s**.
+
+  **Refuted** by any rate above its old timer's.
+- **Recorded:** the **mempool add rate after Market Birth**, D-17.1's open input.
+- **Functional:**
+  - balances still move while the autobet runs;
+  - selecting Hal or Mike Hearn repaints at once;
+  - typing in the reactivation-block field is not overwritten.
 
 **What it means for C.1.** By §5.4's rule C.1 proceeds, since P1 is confirmed. But its benefit will **not**
 show as retention at 5 credits. It is justified by the count (450 rebuilds a second for a value no single

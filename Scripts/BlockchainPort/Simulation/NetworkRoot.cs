@@ -1595,7 +1595,7 @@ public partial class NetworkRoot : Node
 		{
 			return null;
 		}
-		Scripts.Diagnostics.UiRefreshProbe.CountMempoolAdd();   // DEBUG-only, mini-plan 25 (D-17.1's rate)
+		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
 		SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
 		if (hasChange) sender.ReceiveWallet?.MarkReceiveConsumed(); // a fresh change address was used
 		return tx;
@@ -1982,7 +1982,7 @@ public partial class NetworkRoot : Node
 
 		Transaction tx = casino.BuildSignedSpend(inputs, outputs, totalFee, null);
 		if (!casino.Blockchain.AddTransactionToPendingTransactions(tx)) return false;
-		Scripts.Diagnostics.UiRefreshProbe.CountMempoolAdd();   // DEBUG-only, mini-plan 25 (D-17.1's rate)
+		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
 		SharedNetwork.BroadcastTransaction(casino.NodeId, tx);
 		if (hasChange) casino.ReceiveWallet?.MarkReceiveConsumed();
 		return true;
@@ -2130,6 +2130,21 @@ public partial class NetworkRoot : Node
 	// and the post-block side effects. Confirmations change every node's spendable set, so event-driven
 	// consumers (CasinoCoinSwapService availability) recompute here instead of polling per-frame (§1.1).
 	public static event Action<Block>? BlockAccepted;
+
+	// Mini-plan 25 17.C.2 (D-17.1) — fired when a NEW transaction enters its originator's mempool: the three places a
+	// transaction originates (BuildAndBroadcastUtxoSpend, the casino-bot bid, the company dividend batch), never the
+	// broadcast fan-out into the other nodes, which would multiply each one by the node count. Before it, a pending
+	// spend reached the wallet screens only through their timers. Fired synchronously from deep inside the simulation,
+	// at a rate nothing bounds (M0 read 0-0.2/s before Market Birth, a floor): a subscriber MUST only mark itself
+	// dirty and do its work later, throttled (§38.7 rule 1). It is static like BlockAccepted, so a scene that
+	// subscribes must unsubscribe in _ExitTree.
+	public static event Action? MempoolChanged;
+
+	private static void NotifyMempoolChanged()
+	{
+		Scripts.Diagnostics.UiRefreshProbe.CountMempoolAdd();   // DEBUG-only, mini-plan 25 (D-17.1's rate)
+		MempoolChanged?.Invoke();
+	}
 
 	// ── Mini-plan 17 A3 — the UTXO oracle's driver ──────────────────────────────────────────────────────
 	// Built BEFORE the incremental update (B1), so it cannot be written to fit a result. Today the cache is
@@ -5184,7 +5199,7 @@ public partial class NetworkRoot : Node
 			return;
 		}
 
-		Scripts.Diagnostics.UiRefreshProbe.CountMempoolAdd();   // DEBUG-only, mini-plan 25 (D-17.1's rate)
+		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
 		SharedNetwork.BroadcastTransaction(company.NodeId, tx);
 		if (hasChange)
 		{
