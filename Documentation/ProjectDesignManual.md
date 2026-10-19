@@ -3248,7 +3248,13 @@ If a panel "won't scroll," exactly one of these is false — usually (1) the ele
 **Pattern B — a single `RichTextLabel`'s own internal scroll.** Best for one big block of dynamic BBCode text.
 - Settings: `scroll_active = true`, `fit_content = false`, and a **bounded** height (via `size_flags_vertical = 3` inside an expanding parent).
 - The label renders **all** of its text into an internal scroll buffer and shows its own scrollbar — no height estimation, no clipping. It also handles its own mouse wheel.
-- Used by `BlockExplorer`'s right column (Latest Block + Network Status + Address Directory merged into one label).
+- Used by `BlockExplorer`'s right side: since mini-plan 25 (2026-10-19), **four** Pattern-B labels in a 2×2
+  `GridContainer` (Latest Block · Casino Players · Network Status · Node → Address), each cell expanding both ways
+  so the grid fixes every panel's size. It used to be ONE label holding all four. Every block changed that text's
+  total length, with the transaction list above everything else, so the scroll position jumped and the page was
+  hard to navigate at 9000X. **When unrelated content shares one scroll, a change in any part moves all of
+  them; give each part its own.** Each keeps its scroll across refreshes (`SetTextKeepingScroll`, trap 5 below)
+  and pads its last line (trap 4).
 
 ### 29.3 — The traps that wasted the session (in the order they bit)
 

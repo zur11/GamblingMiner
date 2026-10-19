@@ -22,8 +22,8 @@
 > §5.5) is built:** `MempoolChanged` plus five chain-side scenes on a leading-edge throttle, and two defects the migration
 > exposed. **Unit 10 (17.A5, §4.9), the auction countdown on the live clock, is built.** **V-C2 ran 2026-10-19: confirmed**
 > (§5.5; 0/s at rest, 40–95% fewer rebuilds under load; mempool 0.90/s after Market Birth), and 17.A5 was verified by the
-> developer's report. **Unit 11 (`BlockExplorer`, §5.5) is built**, which closes 17.C.2. Next: C.3 (the B group's
-> fallbacks), C.4
+> developer's report. **Unit 11 (`BlockExplorer`, §5.5) is committed**, which closes 17.C.2. **Unit 12 (17.A6, §4.10),
+> BlockExplorer's four fixed panels, is built.** Next: C.3 (the B group's fallbacks), C.4
 > (`BotPlayHistory`), C.6 (`CompanyDetails`), M1 and the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
@@ -450,6 +450,38 @@ renders **1** (baseline 1); `AdaptiveReadoutSampler` now also in `AuctioningComp
 **Verify (added to the V-C2 session):** with the autobet running at 9000X, an in-auction company's Details page
 shows its countdown **moving between blocks**, with no digit sitting still; `BlockExplorer`'s auction rows move
 their tenths of a day between blocks too.
+
+### 4.10 — 17.A6: `BlockExplorer`'s right side as four fixed panels (developer, 2026-10-19; unit 12)
+
+**The request (with three screenshots):**
+1. Give each part its own scroll and a defined size, so that no scroll-of-scrolls is needed. Today one scroll holds
+   everything, and its length changes with every block, which makes it hard to navigate, above all at 9000X.
+2. Move the casino-miner bots and the player out of Network Status into their own panel.
+
+**The cause of (1).** The right side was **one** Pattern-B `RichTextLabel` (Ch. 29 §29.2) holding the latest
+block (with its full transaction list), Network Status and the address directory. Every block changed the transaction
+list's length, above everything else, so the whole text moved under the reader.
+
+**Built:**
+- **A 2×2 `GridContainer`** of four Pattern-B labels: **Latest Block** | **Casino Players** on top, **Network Status**
+  | **Node → Address** below. Every cell expands both ways, so the grid fixes each panel's size and nothing grows with
+  its content. **No scroll is nested in another.**
+- **`SetTextKeepingScroll`** keeps each panel's own position across refreshes, and pads its last line (Ch. 29 §29.3
+  traps 5 and 4).
+- **Casino Players** is the player plus the casino-miner bots (`BotWalletRegistry.MinerBots`, not literals), split
+  from the same status lines in one pass. Network Status keeps everyone else, the casino node included.
+- **The page's `margin_bottom` goes 16 → 50**, the safe band (§29.11). The grid's bottom row sits at the page's bottom
+  edge, exactly where a windowed game can clip.
+- **Found on the way:** `FormatBlockTime` formatted `"yyyy-MM-dd HH:mm:ss"` without `InvariantCulture`. In a custom
+  pattern `:` is the culture's time separator, which the four-pass detector cannot see. Fixed.
+- `ProjectDesignManual.md` §29.2 named this column as its one-label example; it now describes the grid and the rule
+  it illustrates.
+
+**Verify (next session):**
+- the four panels show at once, each with its own scrollbar;
+- scrolling one, then waiting for a few blocks at 9000X, leaves it **where it was**;
+- Casino Players lists exactly `player` and `bot_1..4`, and none of the five appears in Network Status;
+- nothing is clipped at the bottom.
 
 ### 4.6 — Verification protocol V-A (17.A + 17.A3) — *superseded by §4.8*
 

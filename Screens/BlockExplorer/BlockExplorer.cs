@@ -24,7 +24,16 @@ public partial class BlockExplorer : Control
 	private Label _chainInfoLabel = null!;
 	// One scrollable right column (Latest Block + Network Status + Address Directory) — a single
 	// internally-scrolling RichTextLabel so the whole column is reachable (incl. Satoshi, last in the directory).
-	private RichTextLabel _rightColumnLabel = null!;
+	// Mini-plan 25 (developer, 2026-10-19) — the right side is FOUR fixed panels in a 2×2 grid, each its own
+	// RichTextLabel with its own internal scroll (Ch. 29 §29.2 Pattern B, four times), instead of ONE label holding all
+	// of it. With one label, every block changed the length of the whole text (the latest block's transaction list
+	// above everything else), so the scroll position jumped and navigating at 9000X was hard. Now each panel's size is
+	// fixed by the grid, each keeps its own scroll position across refreshes, and nothing scrolls inside a scroll.
+	// The casino players (player + bot_1..4) have their own panel, out of Network Status.
+	private RichTextLabel _latestBlockLabel = null!;
+	private RichTextLabel _casinoPlayersLabel = null!;
+	private RichTextLabel _networkStatusLabel = null!;
+	private RichTextLabel _addressDirectoryLabel = null!;
 
 	private LineEdit _txLookupInput = null!;
 	private LineEdit _addressLookupInput = null!;
@@ -88,7 +97,10 @@ public partial class BlockExplorer : Control
 		_minerNodeOption = GetNode<OptionButton>("%MinerNodeOption");
 
 		_chainInfoLabel = GetNode<Label>("%ChainInfoLabel");
-		_rightColumnLabel = GetNode<RichTextLabel>("%RightColumnLabel");
+		_latestBlockLabel = GetNode<RichTextLabel>("%LatestBlockLabel");
+		_casinoPlayersLabel = GetNode<RichTextLabel>("%CasinoPlayersLabel");
+		_networkStatusLabel = GetNode<RichTextLabel>("%NetworkStatusLabel");
+		_addressDirectoryLabel = GetNode<RichTextLabel>("%AddressDirectoryLabel");
 
 		_txLookupInput = GetNode<LineEdit>("%TxLookupInput");
 		_addressLookupInput = GetNode<LineEdit>("%AddressLookupInput");
@@ -650,11 +662,7 @@ public partial class BlockExplorer : Control
 			+ string.Create(CultureInfo.InvariantCulture, $" | Mining difficulty (block #{last.Index + 1}): {miningDifficulty:F2} ({trend})")
 			+ $" | Avg block time (last {window}): {avgBlockText} (target {FormatDuration(targetSec)})";
 
-		// Preserve the label's own internal scroll position across the 1 s refresh (setting Text resets it to top).
-		VScrollBar rightVScroll = _rightColumnLabel.GetVScrollBar();
-		double rightScroll = rightVScroll.Value;
-
-		_rightColumnLabel.Text =
+		SetTextKeepingScroll(_latestBlockLabel,
 			"[b]Latest Block (player view)[/b]\n" +
 			$"Index: {last.Index}\n" +
 			$"Time: {FormatBlockTime(last.Timestamp)}\n" +
@@ -664,18 +672,42 @@ public partial class BlockExplorer : Control
 			$"PrevHash: {last.PreviousBlockHash}\n" +
 			$"MerkleRoot: {last.MerkleRoot}\n" +
 			$"Transactions: {last.Transactions.Count}\n" +
-			BuildLatestTransactionPreview(last) +
-			"\n\n[b]Network Status[/b]\n" + string.Join("\n", BuildNodeStatusLinesWithMiningRates()) +
-			"\n\n" + BuildAddressDirectory() +
-			"\n\n\n"; // trailing padding so the last real line (Satoshi) clears the scroll's bottom edge
+			BuildLatestTransactionPreview(last));
 
-		rightVScroll.Value = rightScroll;
+		// One pass over the status lines, split by WHO: the casino's players (the player and its four casino-miner bots)
+		// get their own panel, everyone else stays in Network Status.
+		var casinoLines = new List<string>();
+		var networkLines = new List<string>();
+		foreach ((string nodeId, string line) in BuildNodeStatusLinesWithMiningRates())
+		{
+			(IsCasinoPlayer(nodeId) ? casinoLines : networkLines).Add(line);
+		}
+
+		SetTextKeepingScroll(_casinoPlayersLabel, "[b]Casino Players[/b]\n" + string.Join("\n", casinoLines));
+		SetTextKeepingScroll(_networkStatusLabel, "[b]Network Status[/b]\n" + string.Join("\n", networkLines));
+		SetTextKeepingScroll(_addressDirectoryLabel, BuildAddressDirectory());
 
 		RefreshEnrollMode();
 	}
 
+	// The player and the four casino-miner bots: the casino's own players, the same five canonical clients the
+	// casino's books keep (CasinoClientLedgerService), read from the registry rather than repeated as literals.
+	private static bool IsCasinoPlayer(string nodeId) =>
+		nodeId == "player" || BotWalletRegistry.MinerBots.Any(b => b.NodeId == nodeId);
+
+	// Ch. 29 §29.3, both traps at once: setting Text resets a RichTextLabel's scroll to the top, so the position is saved
+	// and restored; and the last line sits flush against the bottom edge, so three blank lines pad it clear.
+	private static void SetTextKeepingScroll(RichTextLabel label, string text)
+	{
+		VScrollBar scroll = label.GetVScrollBar();
+		double position = scroll.Value;
+		label.Text = text + "\n\n\n";
+		scroll.Value = position;
+	}
+
 	// Appends a "⛏ <bets/sec>" marker to nodes that are actively mining in the background simulation.
-	private IEnumerable<string> BuildNodeStatusLinesWithMiningRates()
+	// Mini-plan 25 — yields the node id beside the line, so the caller can split the casino's players out.
+	private IEnumerable<(string NodeId, string Line)> BuildNodeStatusLinesWithMiningRates()
 	{
 		IReadOnlyDictionary<string, double> rates =
 			_simulationService?.GetActiveMiningRates() ?? new Dictionary<string, double>();
@@ -685,14 +717,16 @@ public partial class BlockExplorer : Control
 		// silently broken: the lookup would have missed and the ⛏ marker would have vanished.
 		foreach ((string nodeId, string line) in _networkRoot.GetNodeStatusLines())
 		{
-			yield return rates.TryGetValue(nodeId, out double bps)
+			yield return (nodeId, rates.TryGetValue(nodeId, out double bps)
 				? string.Create(CultureInfo.InvariantCulture, $"{line} | ⛏ {bps:0.#}/s")
-				: line;
+				: line);
 		}
 	}
 
+	// InvariantCulture since mini-plan 25: in a custom pattern ':' is the culture's TIME SEPARATOR, so a culture that
+	// uses another one would have rendered the time differently, invisible on an English machine (§29.12.1's shape).
 	private static string FormatBlockTime(long unixMs) =>
-		DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
+		DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
 	// In-game block time as a human-readable duration (e.g. "16h 15m", "2d 03h 10m").
 	private static string FormatDuration(double seconds)
