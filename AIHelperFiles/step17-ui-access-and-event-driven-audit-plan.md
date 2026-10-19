@@ -17,7 +17,10 @@
 > the root fix, the v12 wipe, and two loudness instruments. **R2 ran 2026-10-18: every prediction confirmed, and
 > INC-006 verified** (§9.13). The developer chose (2026-10-18) to follow the recommended order: 17.A2, then 17.C.1,
 > with R3 running in the sessions that verify the code. **Unit 7 (17.A2, §4.4) is committed; unit 8 (17.C.1, §5.5) is
-> built; R3 is set up** (§9.14, wipe armed). Next: one session that verifies 17.A2 and 17.C.1 (V-C1) and starts R3.
+> built; R3 is set up** (§9.14, wipe armed). **R3's session ran to 2015 (2026-10-18): 17.A2 verified, V-C1 confirmed (450 →
+> ~4 rebuilds/s), R3's predictions all confirmed** (§9.15), which closes the rank-calibration series. Next: **17.C.2**, the
+> mempool event and the chain-side scenes. Its rate is still unmeasured after Market Birth, so the next session reads it
+> on R3's world, which is at 2015.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -272,6 +275,8 @@ If the developer declines, it goes back to §6 untouched.
   inactive copy.
 - **Not persisted:** a view preference has no home until user-settings persistence (▶ NEXT #2), so every entry
   opens on Detailed, as before.
+
+**Verified 2026-10-18** (R3's session, by the developer's report: no defect in any of the four views).
 
 **Verify (in the next session):**
 1. The button cycles through all four labels.
@@ -662,6 +667,18 @@ a 2 s timer, i.e. 0.5/s.
 - At rest, both still read 0.4–0.6/s, the unchanged fallback.
 - **Functional:** on both pages the casino balances visibly change while the autobet runs.
 
+**V-C1 results (2026-10-18, R3's fresh world, 9000X): ✅ CONFIRMED.**
+
+| | Predicted | Measured |
+|---|---|---|
+| `CasinoCoinSwaps.RefreshAll` under the sim | 3.5–4.5/s | **3.6–4.0/s** in every full window (M0: **450/s**) |
+| `CasinoGamblingFinances.RefreshLabels` under the sim | 3.5–4.5/s | **3.6–3.8/s** (M0: **450/s**) |
+| both at rest | 0.4–0.6/s | 0.4–0.6/s |
+| balances visibly moving | yes | yes, no defect reported |
+
+**More than a 100× reduction** in rebuilds for the two scenes M0 found worst. Retention read 100% before and after,
+as P2 predicted it would at 5 credits, so the count is the evidence.
+
 **What it means for C.1.** By §5.4's rule C.1 proceeds, since P1 is confirmed. But its benefit will **not**
 show as retention at 5 credits. It is justified by the count (450 rebuilds a second for a value no single
 bet can visibly move) and by load: the same subscription at 99 credits would fire about 20× as often. C.1's
@@ -871,7 +888,7 @@ rate.
 |---|---|---|---|---|
 | R1 | before: `GamblingMiner_archive_preR1_2026-10-14` (the 2012 world). After: `GamblingMiner_archive_R1_end_2026-10-18` (h2,372) | §9.4 | **2009-03-22 → 2013-05-12, ~4.1 game-years**, chain 117 → 2,372, three sessions | **Closed**, §9.8 + §9.11. Traces: `logs/rank_calibration_R1_part1.csv`, `_part2.csv` |
 | R2 | after: `GamblingMiner_archive_R2_end_2026-10-18` | §9.12 | **2009-03-21 → 2012-01-31, 2.86 game-years**, chain 116 → 1,639, one session | **Done 2026-10-18**, §9.13. Trace: `logs/rank_calibration_R2.csv` |
-| R3 | — | §9.14 | — | **set up 2026-10-18**: wipe armed (12 → 0) |
+| R3 | — (the current world) | §9.14 | **2009-03-22 → 2015-01-07, 5.80 game-years**, chain 112 → 3,229, one session | **Done 2026-10-18**, §9.15. Trace: `logs/rank_calibration_trace.csv` (rename to `rank_calibration_R3.csv` before any further wipe) |
 
 ### 9.8 — R1 results (2026-10-15)
 
@@ -1077,6 +1094,37 @@ with more hardware? R1-continued answered it for 1 credit: no (§9.11).
 
 The world was archived first: `GamblingMiner_archive_R2_end_2026-10-18` (101 files, byte-identical). R2's trace is
 `logs/rank_calibration_R2.csv`, and the stamp is 12 → 0, so the next launch wipes.
+
+### 9.15 — R3 results (2026-10-18): every prediction confirmed — mining survives 2012 with credits
+
+One session, **2009-03-22 → 2015-01-07, 5.80 game-years**, chain 112 → 3,229 (3,118 trace rows).
+
+| | Verdict | Measured |
+|---|---|---|
+| **R3-P1** | ✅ exact | player **3,155,760** bets/yr at 10 credits; bots 315,576 |
+| **R3-P2** | ✅ | 2009-03 → 2012-02 (2.89 yr): player **511** blocks against 49 / 57 / 46 / 64 for the bots, i.e. **9.5×** their average. The player took 33% of the network |
+| **R3-P3** | ✅, at 2× the point estimate | 2012-02 → 2015-01 (2.89 yr): player **58 blocks = 20.0/yr**, inside 3–30. Bots at 1 credit: 1.7–3.8/yr. Ratio ≈ 7× |
+| **R3-P4** | ✅ | No ruin; nets within z ≤ 0.77. **INC-006 holds:** 30 foundings with 0 duplicate holders, 0 exceptions, 0 gaps in `chainLength` |
+
+- **The player kept 27,900 BTC:** 511 blocks before the halving at 50 BTC, 58 after.
+- **Priced at historical highs** (before the swap fee), that is ≈ 33M SC in Dec 2013, ≈ 1.8B SC in Nov 2021 and ≈ 2.5B SC
+  on 2025-12-31. At the 0.98% edge, that is a wagering capacity of **~10¹¹ SC**.
+- **A discrepancy noted, not chased.** The bots mined 1.7–3.8 blocks/yr per credit after 2012 here, against about 1 in
+  R1-continued's shorter window (2012-02 → 2013-04). The windows differ (this one runs to 2015), so it is not a
+  contradiction, but nothing here decomposes it.
+
+**What the three runs give the ladder** (only wagered counts, §9.11):
+
+| Term | Status |
+|---|---|
+| bets/yr | **exact**: 315,576 × credits |
+| strategy multiplier `m` | **measured**: 1, 1.33, 2, ~6–8 |
+| capital cap without income | **exact**: ≈ 4.08M SC |
+| income, which lifts the cap | **measured** at 1 and 10 credits, both eras |
+
+The ladder must span **~10⁴ (a minimum-bet floor) → ~10¹¹ (a 10-credit early miner who sells and re-wagers)**, about
+**seven decades**. The two round-number families give **1-2-5: ~22 levels** and **1-2-3-5: ~29 levels**, both inside the
+developer's 20–33. **Enough to start the Rank System's design plan**; that plan, not this one, chooses.
 
 **R1 is CLOSED (2026-10-16), recommended:** 4.05 game-years in total, past the first halving, and the
 mining question it could answer is answered. Its world is not reused for R2 (INC-006's fix needs a wipe,

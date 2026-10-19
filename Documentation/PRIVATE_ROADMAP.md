@@ -263,8 +263,15 @@ Done when players have short-term and medium-term targets.
 > - **A strategy multiplies wagered by a predictable factor `m`**: +25% on loss 1.333, +50% 2.000 (both measured
 >   within 0.1%), a bankroll-limited martingale about 6–8 (measured 7.6).
 >
-> So lifetime wagered = `5,296,320 bets per credit × credits × base × m`, capped by `(capital + income) ÷ edge`. Only
-> the income term is still unmeasured past 2012; that is R3 (more credits).
+> So lifetime wagered = `5,296,320 bets per credit × credits × base × m`, capped by `(capital + income) ÷ edge`.
+>
+> **R3 (2026-10-18, §9.15) measured the income term.** At **10 credits** a player mines **9.5× a 1-credit bot**
+> before 2012 and still **20 blocks per game-year** after it. One such run kept **27,900 BTC**, a wagering capacity
+> of **~10¹¹ SC** at historical highs. The ladder spans **~10⁴ → ~10¹¹**, seven decades:
+> - **1-2-5 per decade ≈ 22 levels**;
+> - **1-2-3-5 ≈ 29 levels**.
+>
+> Both fit 20–33. **The calibration series is closed; the design plan has its data.**
 
 Goal: a progression ladder for casino participants (player, and notably **Miner Referrals**) that gates and scales rewards.
 
