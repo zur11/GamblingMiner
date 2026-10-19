@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using GodotBlockchainPort.Simulation;
 using GodotBlockchainPort.Blockchain;
+using Scripts.Hardware;
 using UI.StatusBar;
 using UI.NotepadPopup;
 #nullable enable
@@ -60,9 +61,26 @@ public partial class BlockExplorer : Control
 	// constant keeps the hue and lifts the value for legibility. Do not "correct" this toward yellow.
 	private static readonly Color WorkMocha = new(0.75f, 0.52f, 0.32f); // #C08552
 
-	// Live auto-refresh so background simulation (mining/balances) shows in real time.
-	private double _autoRefreshTimer;
-	private const double AutoRefreshInterval = 1.0;
+	// Mini-plan 25 17.C.2 (BlockExplorer) — what this page shows, and what moves it. It was rebuilt EVERY real second by a
+	// timer: 63 nodes' balances (a UTXO pass each, in Network Status), the address directory, and with Auction Mode on,
+	// the whole auction ledger (a walk of the entire chain). Everything on it changes only when:
+	//   • a block is mined (latest block, difficulty, balances, blocks mined, auctions);
+	//   • a transaction enters the mempool (pending counts, balances);
+	//   • hardware changes, or the sim starts or stops (the mining rates in Network Status);
+	//   • and the auction COUNTDOWN, which moves with the game clock.
+	// So the page now rebuilds on those EVENTS through a leading-edge throttle at the old 1 s (0/s at rest, never more
+	// than before under load), and the countdown alone is rewritten once a real second while the clock moves, from the
+	// close times cached at the last rebuild, without recomputing anything. Its tenths-of-a-day precision at a 1 s
+	// cadence is the documented exception in ProjectDesignManual §29.13.1 (arithmetic beside RefreshEnrollMode).
+	private bool _uiDirty = true;
+	private double _sinceLastRefresh = double.MaxValue;
+	private const double MinRefreshInterval = 1.0;
+	private bool _lastSimRunning;
+	private CalendarTimeService? _calendar;
+	private readonly List<(Label Label, string Prefix, long CloseMs)> _countdownRows = new();
+	private double _sinceCountdownPaint;
+	private const double CountdownIntervalSeconds = 1.0;
+	private DateTime _lastCountdownClock;
 
 	public override void _Ready()
 	{
@@ -107,8 +125,28 @@ public partial class BlockExplorer : Control
 		BuildEnrollModePanel();
 
 		PopulateNodeSelectors();
+		_calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		_lastSimRunning = _calendar?.IsAutobetActive == true;
 		RefreshUi();
+		_uiDirty = false;
+		_sinceLastRefresh = 0d;
+
+		NetworkRoot.BlockAccepted += OnBlockAccepted;
+		NetworkRoot.MempoolChanged += MarkUiDirty;
+		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
 	}
+
+	public override void _ExitTree()
+	{
+		// All three events are static: unsubscribe, or this scene stays reachable after it leaves.
+		NetworkRoot.BlockAccepted -= OnBlockAccepted;
+		NetworkRoot.MempoolChanged -= MarkUiDirty;
+		HardwareAllocationRepository.HardwareChanged -= OnHardwareChanged;
+	}
+
+	private void OnBlockAccepted(Block _) => _uiDirty = true;
+	private void OnHardwareChanged(string _) => _uiDirty = true;
+	private void MarkUiDirty() => _uiDirty = true;
 
 	// "Enroll Mode" (referral-auction foundation): a toggle that reveals the donation race for
 	// still-recruitable non-miner holder bots. Observe-only for now — enrolled/permanent filtering
@@ -151,6 +189,9 @@ public partial class BlockExplorer : Control
 
 	private void RefreshEnrollMode()
 	{
+		// The rows are about to be rebuilt (or hidden), so the countdown cache is rebuilt with them: a cached label
+		// from the previous build is queued for deletion below.
+		_countdownRows.Clear();
 		bool on = _enrollModeToggle.ButtonPressed;
 		_enrollModePanel.Visible = on;
 		if (!on) return;
@@ -193,11 +234,12 @@ public partial class BlockExplorer : Control
 				: string.Create(CultureInfo.InvariantCulture, $"leading bid {_networkRoot.DescribeAddress(s.LeadingDonorAddress)} ({s.LeadingDonorTotal:F8} BTC{scValue})");
 			string clock = s.LeadingBidUnixMs == 0
 				? "awaiting first bid — no countdown"
-				: s.WindowCloseUnixMs > nowMs
-					? string.Create(CultureInfo.InvariantCulture, $"{(s.WindowCloseUnixMs - nowMs) / 86_400_000d:0.0}d left")
-					: "closed — resolves with the next block";
-			string line = string.Create(CultureInfo.InvariantCulture,
-				$"{NetworkRoot.DescribeCompany(s)}  | donated {s.DonatedBtc:F8} BTC by {s.BidderCount} {(s.BidderCount == 1 ? "donor" : "donors")}  | BTC income {s.CompanyBtcIncome:F8} BTC  | {leader}  | {clock}");
+				: CountdownText(s.WindowCloseUnixMs, nowMs);
+			// Everything before the countdown is fixed until the next rebuild, so it is kept apart: the once-a-second
+			// countdown tick rewrites only the end of the line (UpdateCountdowns).
+			string prefix = string.Create(CultureInfo.InvariantCulture,
+				$"{NetworkRoot.DescribeCompany(s)}  | donated {s.DonatedBtc:F8} BTC by {s.BidderCount} {(s.BidderCount == 1 ? "donor" : "donors")}  | BTC income {s.CompanyBtcIncome:F8} BTC  | {leader}  | ");
+			string line = prefix + clock;
 
 			var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
 
@@ -208,6 +250,10 @@ public partial class BlockExplorer : Control
 			// is a running forecast, never a promise. Same threshold/ranking as FoundCompany by construction
 			// (NetworkRoot.GetPlayerProjectedStake) — the colour cannot drift from the real mint.
 			var rowLabel = new Label { Text = line, SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
+			if (s.LeadingBidUnixMs != 0)
+			{
+				_countdownRows.Add((rowLabel, prefix, s.WindowCloseUnixMs));
+			}
 			row.AddChild(BuildTitlePanel(rowLabel, StakeBorderColor(_networkRoot.GetPlayerProjectedStake(s))));
 
 			// D-ND5.2 — the details button appears ONLY once this non-miner has received at least one
@@ -404,6 +450,28 @@ public partial class BlockExplorer : Control
 		return titlePanel;
 	}
 
+	// The auction countdown, one source for the rebuild and the tick. At zero it says so: an auction resolves on the first
+	// block at or after its close (see AuctioningCompanyDetails.PaintStatus).
+	private static string CountdownText(long closeMs, long nowMs) =>
+		closeMs > nowMs
+			? string.Create(CultureInfo.InvariantCulture, $"{(closeMs - nowMs) / 86_400_000d:0.0}d left")
+			: "closed — resolves with the next block";
+
+	// Mini-plan 25 — rewrites only the countdown at the end of each live auction row, from the cache the last rebuild
+	// filled. No ledger walk and no balance pass: those run on the events above.
+	private void UpdateCountdowns()
+	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("BlockExplorer.UpdateCountdowns");   // DEBUG-only, mini-plan 25
+		long nowMs = new DateTimeOffset(_calendar!.CurrentUtcDateTime).ToUnixTimeMilliseconds();
+		foreach ((Label label, string prefix, long closeMs) in _countdownRows)
+		{
+			if (GodotObject.IsInstanceValid(label))
+			{
+				label.Text = prefix + CountdownText(closeMs, nowMs);
+			}
+		}
+	}
+
 	private void OnOpenAuctioningCompanyDetails(string nonMinerAddress)
 	{
 		AuctioningCompanyDetails.PendingNonMinerAddress = nonMinerAddress;
@@ -418,11 +486,32 @@ public partial class BlockExplorer : Control
 
 	public override void _Process(double delta)
 	{
-		// Reflect the background simulation (blocks, balances, auction) in real time.
-		_autoRefreshTimer += delta;
-		if (_autoRefreshTimer < AutoRefreshInterval) return;
-		_autoRefreshTimer = 0d;
-		RefreshUi();
+		// The sim starting or stopping changes the mining rates and nothing announces it: a one-bool edge per frame.
+		bool simRunning = _calendar?.IsAutobetActive == true;
+		if (simRunning != _lastSimRunning)
+		{
+			_lastSimRunning = simRunning;
+			_uiDirty = true;
+		}
+
+		_sinceLastRefresh += delta;
+		if (_uiDirty && _sinceLastRefresh >= MinRefreshInterval)
+		{
+			_uiDirty = false;
+			_sinceLastRefresh = 0d;
+			_sinceCountdownPaint = 0d;
+			RefreshUi();
+			return;
+		}
+
+		// Between rebuilds, only the countdown moves, and only while the clock does.
+		_sinceCountdownPaint += delta;
+		if (_countdownRows.Count == 0 || _calendar == null || _sinceCountdownPaint < CountdownIntervalSeconds) return;
+		_sinceCountdownPaint = 0d;
+		DateTime clockNow = _calendar.CurrentLocalDateTime;
+		if (clockNow == _lastCountdownClock) return;
+		_lastCountdownClock = clockNow;
+		UpdateCountdowns();
 	}
 
 	private void PopulateNodeSelectors()

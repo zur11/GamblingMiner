@@ -22,7 +22,8 @@
 > §5.5) is built:** `MempoolChanged` plus five chain-side scenes on a leading-edge throttle, and two defects the migration
 > exposed. **Unit 10 (17.A5, §4.9), the auction countdown on the live clock, is built.** **V-C2 ran 2026-10-19: confirmed**
 > (§5.5; 0/s at rest, 40–95% fewer rebuilds under load; mempool 0.90/s after Market Birth), and 17.A5 was verified by the
-> developer's report. Next: `BlockExplorer`, C.3 (the B group's fallbacks), C.4
+> developer's report. **Unit 11 (`BlockExplorer`, §5.5) is built**, which closes 17.C.2. Next: C.3 (the B group's
+> fallbacks), C.4
 > (`BotPlayHistory`), C.6 (`CompanyDetails`), M1 and the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
@@ -745,8 +746,9 @@ mempool event's rate is unbounded, so a short coalesce could hand a saturated fr
   Event-driven, a founder switch at rest would have kept the previous founder's figures until the next block. Both
   now request an immediate repaint, and every migrated page starts dirty, so it paints on its first frame.
 
-**Not in this unit:** `BlockExplorer`. It shows live per-bet counters (the current nonce attempt), which no
-block/mempool event covers, so it needs its own decision.
+**Not in this unit:** `BlockExplorer`. *(The reason given here, "it shows live per-bet counters (the current nonce
+attempt)", was WRONG, corrected by unit 11 below: that counter is DiceGame's. Kept so the correction has something
+to point at.)*
 
 **V-C2 predictions** (UiRefreshProbe, R3's world at 2015):
 - **At rest:** each scene's count appears once on entry, then **0/s**. **Refuted** by any steady at-rest rate.
@@ -786,6 +788,41 @@ whole stay, excluding the entry window (§5.5's analysis rule):
 - **Functional:** no defect reported for the founder repaint, the reactivation field or the balances moving. The same
   goes for 17.A5's countdown on both screens.
 - `godot.log`: 0 exceptions, 0 `[Governance] EXCEPTION`, 0 `NEVER REACHED`, no wipe.
+
+#### 17.C.2, last scene — `BlockExplorer` (unit 11, 2026-10-19)
+
+**A correction first.** Unit 9 held `BlockExplorer` back because it "shows live per-bet counters (the current nonce
+attempt)". **That was wrong.** The per-bet nonce counter is in DiceGame's panel. `BlockExplorer` was never read for
+it, and when it was read (unit 11) it showed nothing that changes per bet.
+
+**What it shows, and what moves each part:**
+
+| Part | Moves on |
+|---|---|
+| latest block, next-block difficulty, average block time | a block (the difficulty is the candidate's, fixed until the next one) |
+| pending-transaction counts | the mempool |
+| Network Status: per node, blocks mined, pending, balance | a block / the mempool. **63 UTXO passes per rebuild** |
+| Network Status: mining rates | hardware changes, or the sim starting/stopping |
+| the address directory | a block / the mempool |
+| Auction Mode rows (with the ledger, a whole-chain walk) | a block, except their countdown |
+| the auction countdown | the game clock (17.A5) |
+
+**Built:**
+- **The 1 s timer is gone.** The page rebuilds on `BlockAccepted`, `MempoolChanged` and `HardwareChanged`, plus a
+  one-bool edge on the sim starting or stopping (nothing announces it), through a leading-edge throttle at the old
+  1 s.
+- **The countdown alone** is rewritten once a real second **while the clock moves**, from the close times cached at
+  the last rebuild (`UpdateCountdowns`), with no ledger walk and no balance pass.
+- `CountdownText` is the one source for the rebuild and the tick. Its tenths-of-a-day precision at 1 s stays the
+  documented §29.13.1 exception.
+
+**Predictions (V-C2b, next session):**
+- at rest: `BlockExplorer.RefreshUi` and `UpdateCountdowns` both **0/s**, since a stopped clock has nothing to
+  move. The old timer did **1/s**, with 63 UTXO passes each;
+- under the sim: `RefreshUi` long-run **≤ 1/s**, and `UpdateCountdowns` **≤ 1/s**, only with Auction Mode on and
+  auctions running;
+- **Functional:** the countdown still moves between blocks, and the block and balance figures still change while
+  the sim runs.
 
 **What it means for C.1.** By §5.4's rule C.1 proceeds, since P1 is confirmed. But its benefit will **not**
 show as retention at 5 credits. It is justified by the count (450 rebuilds a second for a value no single
