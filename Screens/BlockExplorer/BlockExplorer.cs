@@ -35,6 +35,13 @@ public partial class BlockExplorer : Control
 	private RichTextLabel _networkStatusLabel = null!;
 	private RichTextLabel _addressDirectoryLabel = null!;
 
+	// Mini-plan 25 (17.A7, developer, 2026-10-19) — a DEV toggle in the Casino Players panel that shows or hides each
+	// player's SC Main Balance and Bankroll. Default ON. Static, so it survives leaving and re-entering the page
+	// within a session; NOT persisted, because user-settings persistence does not exist yet (PRIVATE_ROADMAP ▶ NEXT #2).
+	// Flipping it repaints only this panel, from the lines the last rebuild cached, with no chain read.
+	private static bool _showCasinoScBalances = true;
+	private readonly List<(string NodeId, string Line)> _casinoStatusLines = new();
+
 	private LineEdit _txLookupInput = null!;
 	private LineEdit _addressLookupInput = null!;
 	private LineEdit _blockLookupInput = null!;
@@ -101,6 +108,22 @@ public partial class BlockExplorer : Control
 		_casinoPlayersLabel = GetNode<RichTextLabel>("%CasinoPlayersLabel");
 		_networkStatusLabel = GetNode<RichTextLabel>("%NetworkStatusLabel");
 		_addressDirectoryLabel = GetNode<RichTextLabel>("%AddressDirectoryLabel");
+
+		// Above the panel's own scroll, so it never scrolls away with the list.
+		var scBalancesToggle = new CheckButton
+		{
+			Text = "DEV: show Main Balance & Bankroll",
+			ButtonPressed = _showCasinoScBalances,
+			TooltipText = "DEV — show or hide each casino player's SC Main Balance and Bankroll in this panel.",
+		};
+		scBalancesToggle.Toggled += on =>
+		{
+			_showCasinoScBalances = on;
+			RenderCasinoPlayers();
+		};
+		VBoxContainer casinoCell = GetNode<VBoxContainer>("%CasinoPlayersCell");
+		casinoCell.AddChild(scBalancesToggle);
+		casinoCell.MoveChild(scBalancesToggle, 0);
 
 		_txLookupInput = GetNode<LineEdit>("%TxLookupInput");
 		_addressLookupInput = GetNode<LineEdit>("%AddressLookupInput");
@@ -676,18 +699,46 @@ public partial class BlockExplorer : Control
 
 		// One pass over the status lines, split by WHO: the casino's players (the player and its four casino-miner bots)
 		// get their own panel, everyone else stays in Network Status.
-		var casinoLines = new List<string>();
+		_casinoStatusLines.Clear();
 		var networkLines = new List<string>();
 		foreach ((string nodeId, string line) in BuildNodeStatusLinesWithMiningRates())
 		{
-			(IsCasinoPlayer(nodeId) ? casinoLines : networkLines).Add(line);
+			if (IsCasinoPlayer(nodeId))
+			{
+				_casinoStatusLines.Add((nodeId, line));
+			}
+			else
+			{
+				networkLines.Add(line);
+			}
 		}
 
-		SetTextKeepingScroll(_casinoPlayersLabel, "[b]Casino Players[/b]\n" + string.Join("\n", casinoLines));
+		RenderCasinoPlayers();
 		SetTextKeepingScroll(_networkStatusLabel, "[b]Network Status[/b]\n" + string.Join("\n", networkLines));
 		SetTextKeepingScroll(_addressDirectoryLabel, BuildAddressDirectory());
 
 		RefreshEnrollMode();
+	}
+
+	// The Casino Players panel from the cached status lines, with each player's SC balances appended while the DEV toggle
+	// is on. The balances are read here rather than cached, so a toggle shows the figures of that moment.
+	private void RenderCasinoPlayers()
+	{
+		var lines = new List<string>(_casinoStatusLines.Count);
+		foreach ((string nodeId, string line) in _casinoStatusLines)
+		{
+			if (_showCasinoScBalances && NetworkRoot.GetNodeScBalances(nodeId) is (decimal main, decimal bankroll))
+			{
+				lines.Add(line + string.Create(CultureInfo.InvariantCulture,
+					$" | Main Balance: {main:N8} SC | Bankroll: {bankroll:N8} SC"));
+			}
+			else
+			{
+				lines.Add(line);
+			}
+		}
+
+		SetTextKeepingScroll(_casinoPlayersLabel, "[b]Casino Players[/b]\n" + string.Join("\n", lines));
 	}
 
 	// The player and the four casino-miner bots: the casino's own players, the same five canonical clients the

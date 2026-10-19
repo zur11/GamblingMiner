@@ -23,7 +23,8 @@
 > exposed. **Unit 10 (17.A5, §4.9), the auction countdown on the live clock, is built.** **V-C2 ran 2026-10-19: confirmed**
 > (§5.5; 0/s at rest, 40–95% fewer rebuilds under load; mempool 0.90/s after Market Birth), and 17.A5 was verified by the
 > developer's report. **Unit 11 (`BlockExplorer`, §5.5) is committed**, which closes 17.C.2. **Unit 12 (17.A6, §4.10),
-> BlockExplorer's four fixed panels, is built.** Next: C.3 (the B group's fallbacks), C.4
+> BlockExplorer's four fixed panels, is committed and confirmed by the developer. Unit 13 (17.A7, §4.11), the casino
+> players' SC-balance DEV toggle, is built.** Next: C.3 (the B group's fallbacks), C.4
 > (`BotPlayHistory`), C.6 (`CompanyDetails`), M1 and the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
@@ -482,6 +483,34 @@ list's length, above everything else, so the whole text moved under the reader.
 - scrolling one, then waiting for a few blocks at 9000X, leaves it **where it was**;
 - Casino Players lists exactly `player` and `bot_1..4`, and none of the five appears in Network Status;
 - nothing is clipped at the bottom.
+
+### 4.11 — 17.A7: a DEV toggle for the casino players' SC balances (developer, 2026-10-19; unit 13)
+
+**The request:** in the Casino Players panel, a DEV toggle to show or hide each player's Main Balance and Bankroll,
+**default ON** (showing). The developer confirmed 17.A6's four panels work as intended.
+
+**Built:**
+- **The toggle:** a `CheckButton`, "DEV: show Main Balance & Bankroll", sits at the top of the Casino Players cell,
+  outside the panel's own scroll, so it never scrolls away. The cell became a `VBoxContainer` holding the toggle and
+  the label, still expanding both ways in the grid.
+- **What it adds:** each casino player's line gains `| Main Balance: … SC | Bankroll: … SC`, with `N8` under
+  `InvariantCulture` and the currency named.
+- **The source** is a new read-only `NetworkRoot.GetNodeScBalances`, which creates nothing and copies no records,
+  unlike `GetOrCreateNodeFinancialState`. It is current while the sim runs: the active node's mirror is written on
+  every bet (`PersistFinancialState`'s fast path), each bot's by `SaveBotFinancialState`, and DiceGame saves its node
+  on leaving.
+- **Flipping the toggle** repaints only this panel, from the status lines the last rebuild cached.
+- **State:** static, so it survives leaving the page within a session. Not persisted: user settings have no home yet
+  (▶ NEXT #2).
+
+**A limit, stated rather than discovered later:** a Bankroll changes with every bet, but this panel repaints with the
+page, at most once a second while blocks and transactions arrive (§5.5, unit 11). Under load the figures can trail
+the live balance by up to a second; at rest they are exact.
+
+**Verify (next session):**
+- the toggle shows ON on first entry, with the five players' balances shown;
+- OFF hides them immediately and ON brings them back;
+- the player's figures match DiceGame's Main Balance and Bankroll at rest.
 
 ### 4.6 — Verification protocol V-A (17.A + 17.A3) — *superseded by §4.8*
 

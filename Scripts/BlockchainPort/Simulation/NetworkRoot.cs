@@ -7842,6 +7842,18 @@ public partial class NetworkRoot : Node
 	// the only commit (Pattern 2), and every block goes through SetNodeFinancialState with persist: true.
 	// In-place is safe because no reader holds the live object: GetOrCreateNodeFinancialState returns a Clone, and
 	// the disk snapshot clones as well.
+	// Mini-plan 25 (17.A7) — a READ-ONLY view of a node's SC Main Balance and Bankroll, for a display. Unlike
+	// GetOrCreateNodeFinancialState it creates nothing (a screen must not invent a state for a node that has none) and
+	// copies no transfer records. Current while the sim runs: the active node's mirror is written on every bet
+	// (SimulationService.PersistFinancialState) and each bot's by SaveBotFinancialState. Null when the node has no state.
+	public static (decimal Main, decimal Bankroll)? GetNodeScBalances(string nodeId)
+	{
+		EnsureInitialized();
+		return SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) && node.FinancialState is NodeFinancialState state
+			? (state.PrincipalBalance, state.BankrollBalance)
+			: null;
+	}
+
 	public bool TryUpdateNodeFinancialBalances(string nodeId, decimal? principalBalance, decimal bankrollBalance)
 	{
 		EnsureInitialized();
