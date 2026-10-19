@@ -156,7 +156,17 @@ public partial class BlockExplorer : Control
 		if (!on) return;
 
 		var ledger = _networkRoot.GetNonMinerAuctionLedger();
-		long nowMs = _networkRoot.GetPlayerLatestBlock().Timestamp;
+		// Mini-plan 25 (developer, 2026-10-19) — the countdown reads the LIVE game clock, not the chain tip's timestamp,
+		// which moved only when a block was mined. It is a live-clock readout WITHOUT a sampler, deliberately, and this
+		// is why that is honest (§29.13's rule: cadence and precision are one decision). It shows tenths of a day
+		// (8,640 game-seconds) and repaints on this page's 1 s refresh. At the clock's ceiling (9000X) one refresh
+		// advances the tenths digit by ~1.04 steps, so it visibly moves every refresh. A freeze needs a step near 10
+		// (~86,400 game-seconds per real second), which the game cannot reach, and slower speeds only move it more
+		// slowly. Recorded as the one exception in §29.13.1.
+		long nowMs = new DateTimeOffset(
+			GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService")?.CurrentUtcDateTime
+				?? DateTimeOffset.FromUnixTimeMilliseconds(_networkRoot.GetPlayerLatestBlock().Timestamp).UtcDateTime)
+			.ToUnixTimeMilliseconds();
 
 		int inAuction = ledger.Count(s => s.Status == NonMinerAuctionStatus.InAuction);
 		int resolved = ledger.Count(s => s.Status == NonMinerAuctionStatus.Resolved);
@@ -183,7 +193,9 @@ public partial class BlockExplorer : Control
 				: string.Create(CultureInfo.InvariantCulture, $"leading bid {_networkRoot.DescribeAddress(s.LeadingDonorAddress)} ({s.LeadingDonorTotal:F8} BTC{scValue})");
 			string clock = s.LeadingBidUnixMs == 0
 				? "awaiting first bid — no countdown"
-				: string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left");
+				: s.WindowCloseUnixMs > nowMs
+					? string.Create(CultureInfo.InvariantCulture, $"{(s.WindowCloseUnixMs - nowMs) / 86_400_000d:0.0}d left")
+					: "closed — resolves with the next block";
 			string line = string.Create(CultureInfo.InvariantCulture,
 				$"{NetworkRoot.DescribeCompany(s)}  | donated {s.DonatedBtc:F8} BTC by {s.BidderCount} {(s.BidderCount == 1 ? "donor" : "donors")}  | BTC income {s.CompanyBtcIncome:F8} BTC  | {leader}  | {clock}");
 

@@ -20,7 +20,8 @@
 > built; R3 is set up** (§9.14, wipe armed). **R3's session ran to 2015 (2026-10-18): 17.A2 verified, V-C1 confirmed (450 →
 > ~4 rebuilds/s), R3's predictions all confirmed** (§9.15), which closes the rank-calibration series. **Unit 9 (17.C.2,
 > §5.5) is built:** `MempoolChanged` plus five chain-side scenes on a leading-edge throttle, and two defects the migration
-> exposed. Next: the V-C2 session on R3's world (no wipe), then `BlockExplorer`, C.3 (the B group's fallbacks), C.4
+> exposed. **Unit 10 (17.A5, §4.9), the auction countdown on the live clock, is built.** Next: the V-C2 session on R3's
+> world (no wipe), which also checks 17.A5, then `BlockExplorer`, C.3 (the B group's fallbacks), C.4
 > (`BotPlayHistory`), C.6 (`CompanyDetails`), M1 and the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
@@ -416,6 +417,37 @@ The steps are the ones given to the developer in the chat on 2026-10-15, kept he
 | **Wording** | changed | The developer asked for the donor count without "(player + casino miners)". Removed on both details pages |
 
 **Found during the audit, outside V-A:** INC-006, §10.
+
+### 4.9 — 17.A5: the auction countdown in real time (developer, 2026-10-19; built as unit 10)
+
+**The report:** an auction's remaining time "does not update in real time, only each time a block is mined".
+
+**The cause** is not the refresh cadence. Both screens measured the countdown against the **chain tip's timestamp**
+(`GetPlayerLatestBlock().Timestamp`). Between blocks no amount of repainting could move it, and each block
+moved it by a whole block's worth of time.
+
+**Built:**
+- **`AuctioningCompanyDetails`** reads the **live game clock**, which makes the countdown a live clock readout. So
+  per §29.13 it takes the shared sampler, with a new `AdaptiveReadoutSampler.FormatRemaining(TimeSpan)`, the
+  countdown twin of `FormatGameTime`: `3d 04:12:07` / `3d 04:12` / `3d 04h` / `3d` at the resolution the sampling
+  can carry, floored. Only the countdown half of the status line repaints at the sampler's cadence; the rest is
+  still rebuilt per block.
+- **The bidding MODE label** (early rush / normal / final-week urgency) **keeps the tip's time**, because that is
+  when the resolver rolls it (Convention 6).
+- **`BlockExplorer`'s auction rows** read the live clock too, at tenths of a day on the page's 1 s refresh, without
+  a sampler. The arithmetic that makes that honest is written beside the code and recorded as the one exception in
+  `ProjectDesignManual.md` §29.13.1.
+- **At zero both say so.** An auction resolves on the first block at or after its close, so they show "closed —
+  resolves with the next block" instead of a misleading "0d".
+- `CLAUDE.md` and §29.13.1 no longer state a count of live-clock scenes. They state the rule and point to the list
+  (Convention 15).
+
+**§29.13.1's greps after the change:** direct `.Text = …CurrentLocalDateTime` **0** (baseline 0); time-of-day
+renders **1** (baseline 1); `AdaptiveReadoutSampler` now also in `AuctioningCompanyDetails`, which holds one.
+
+**Verify (added to the V-C2 session):** with the autobet running at 9000X, an in-auction company's Details page
+shows its countdown **moving between blocks**, with no digit sitting still; `BlockExplorer`'s auction rows move
+their tenths of a day between blocks too.
 
 ### 4.6 — Verification protocol V-A (17.A + 17.A3) — *superseded by §4.8*
 

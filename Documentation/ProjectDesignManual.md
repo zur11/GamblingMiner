@@ -3561,10 +3561,24 @@ grep -rnE '\.Text\s*=.*(CurrentLocalDateTime|CurrentUtcDateTime)' --include=*.cs
 grep -rn "CurrentLocalDateTime\|CurrentUtcDateTime" --include=*.cs Screens/ UI/ | grep -E "HH:mm|H:mm"
 ```
 
-**The complete set of live-clock renderers is five** — `DiceGame`, `StatusBar`, `ScFinances`,
-`CasinoGamblingFinances`, `BetsHistoryExplorer` — and each holds an `AdaptiveReadoutSampler`.
-`grep -rln AdaptiveReadoutSampler --include=*.cs Screens/ UI/` returning a **sixth scene without one is a
-regression**; returning a *new* one with a sampler is fine.
+**The live-clock renderers, each holding an `AdaptiveReadoutSampler`:**
+- `DiceGame`, `StatusBar`, `ScFinances`, `CasinoGamblingFinances`, `BetsHistoryExplorer`;
+- **`AuctioningCompanyDetails`**, the auction countdown (mini-plan 25, 2026-10-19). It used to read the chain tip's
+  timestamp and so moved only per block. It formats with `FormatRemaining`, the countdown twin of
+  `FormatGameTime`.
+
+`grep -rln AdaptiveReadoutSampler --include=*.cs Screens/ UI/` returning a **new live-clock scene WITHOUT one is a
+regression**; a new one with a sampler is fine. *(This paragraph used to say "the complete set is five". It is
+written as a list now, not a count, per Standing Convention 15.)*
+
+**The one documented exception: `BlockExplorer`'s auction rows** (mini-plan 25). They show the same countdown
+from the live clock **without** a sampler, at **tenths of a day** on the page's 1 s refresh. The arithmetic is
+the justification:
+- a tenth of a day is 8,640 game-seconds;
+- at the clock's ceiling (9000X) one refresh advances that digit by ~1.04 steps, so it visibly moves every time;
+- a freeze needs a step near 10 (~86,400 game-seconds per real second), which no speed reaches.
+
+**A new exception needs the same arithmetic written beside it.**
 
 **Verified NOT affected, so nobody re-audits them:** `CalendarsNavigator`'s time presenter reads
 `ExplorerSelectedLocalDateTime`, which `AdvanceSeconds` never touches — it shows a **frozen selection**, so it
