@@ -42,6 +42,16 @@ public partial class BlockExplorer : Control
 	private static bool _showCasinoScBalances = true;
 	private readonly List<(string NodeId, string Line)> _casinoStatusLines = new();
 
+	// Unit 13 repainted the balances only with the page, on a block or a new transaction. At 100X that is once in
+	// minutes, while every bet moves a Bankroll, so the figures sat still until the toggle was flipped (developer's
+	// report). They now follow SETTLED BETS. ClientBetSettled fires for the player's autobet and every bot bet,
+	// hundreds a second at 9000X, so the handler only sets a flag (§38.7 rule 1). The panel repaints at most every
+	// CasinoBalancesIntervalSeconds, StatusBar's own balance cadence (mini-plan 15 B: "money may not sit still"), so
+	// the two tick together. Only this panel repaints: five O(1) reads, no chain walk.
+	private bool _casinoBalancesDirty;
+	private double _sinceCasinoBalancesPaint;
+	private const double CasinoBalancesIntervalSeconds = 0.1;
+
 	private LineEdit _txLookupInput = null!;
 	private LineEdit _addressLookupInput = null!;
 	private LineEdit _blockLookupInput = null!;
@@ -169,14 +179,22 @@ public partial class BlockExplorer : Control
 		NetworkRoot.BlockAccepted += OnBlockAccepted;
 		NetworkRoot.MempoolChanged += MarkUiDirty;
 		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
+		if (_simulationService != null) _simulationService.ClientBetSettled += OnClientBetSettled;
 	}
 
 	public override void _ExitTree()
 	{
-		// All three events are static: unsubscribe, or this scene stays reachable after it leaves.
+		// Three static events and an autoload's: all outlive this scene, so all are released.
 		NetworkRoot.BlockAccepted -= OnBlockAccepted;
 		NetworkRoot.MempoolChanged -= MarkUiDirty;
 		HardwareAllocationRepository.HardwareChanged -= OnHardwareChanged;
+		if (_simulationService != null) _simulationService.ClientBetSettled -= OnClientBetSettled;
+	}
+
+	// Only the casino's players' bets move the balances this panel shows; the flag is all the handler does.
+	private void OnClientBetSettled(string nodeId, string _, Scripts.Finance.BetTransactionEvent __)
+	{
+		if (_showCasinoScBalances) _casinoBalancesDirty = true;
 	}
 
 	private void OnBlockAccepted(Block _) => _uiDirty = true;
@@ -539,7 +557,16 @@ public partial class BlockExplorer : Control
 			return;
 		}
 
-		// Between rebuilds, only the countdown moves, and only while the clock does.
+		// Between rebuilds, two things still move: the casino players' SC balances (settled bets)...
+		_sinceCasinoBalancesPaint += delta;
+		if (_casinoBalancesDirty && _sinceCasinoBalancesPaint >= CasinoBalancesIntervalSeconds)
+		{
+			_casinoBalancesDirty = false;
+			_sinceCasinoBalancesPaint = 0d;
+			RenderCasinoPlayers();
+		}
+
+		// ...and the countdown, only while the clock does.
 		_sinceCountdownPaint += delta;
 		if (_countdownRows.Count == 0 || _calendar == null || _sinceCountdownPaint < CountdownIntervalSeconds) return;
 		_sinceCountdownPaint = 0d;

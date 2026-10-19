@@ -24,7 +24,8 @@
 > (§5.5; 0/s at rest, 40–95% fewer rebuilds under load; mempool 0.90/s after Market Birth), and 17.A5 was verified by the
 > developer's report. **Unit 11 (`BlockExplorer`, §5.5) is committed**, which closes 17.C.2. **Unit 12 (17.A6, §4.10),
 > BlockExplorer's four fixed panels, is committed and confirmed by the developer. Unit 13 (17.A7, §4.11), the casino
-> players' SC-balance DEV toggle, is built.** Next: C.3 (the B group's fallbacks), C.4
+> players' SC-balance DEV toggle, is committed. Unit 14 makes those balances follow settled bets** (the developer found
+> them frozen at 100X; §4.11). Next: C.3 (the B group's fallbacks), C.4
 > (`BotPlayHistory`), C.6 (`CompanyDetails`), M1 and the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
@@ -503,9 +504,16 @@ list's length, above everything else, so the whole text moved under the reader.
 - **State:** static, so it survives leaving the page within a session. Not persisted: user settings have no home yet
   (▶ NEXT #2).
 
-**A limit, stated rather than discovered later:** a Bankroll changes with every bet, but this panel repaints with the
-page, at most once a second while blocks and transactions arrive (§5.5, unit 11). Under load the figures can trail
-the live balance by up to a second; at rest they are exact.
+**~~A limit, stated rather than discovered later~~ — and stated WRONG, corrected by unit 14.** This paragraph said
+the panel, repainting with the page, could trail the live balance "by up to a second". It assumed the page's events
+arrive about once a second, which is true at 9000X. **At 100X a block comes every ~10 real minutes and a new
+transaction every minute or two**, so the balances sat still until the toggle was flipped (the developer's report,
+2026-10-19). The repaint cadence had been reasoned from one speed, and the game runs at many.
+
+**Unit 14 fix:** the balances follow **settled bets**. `SimulationService.ClientBetSettled` fires for the player's
+autobet and every bot bet, and the handler only sets a flag (hundreds of events a second at 9000X, §38.7 rule 1).
+The Casino Players panel alone repaints at most every **0.1 s**, `StatusBar`'s own balance cadence (mini-plan 15 B,
+"money may not sit still"), at any speed. Five O(1) reads, no chain walk; nothing else on the page changes cadence.
 
 **Verify (next session):**
 - the toggle shows ON on first entry, with the five players' balances shown;
