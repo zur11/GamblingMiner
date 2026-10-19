@@ -20,8 +20,9 @@
 > built; R3 is set up** (§9.14, wipe armed). **R3's session ran to 2015 (2026-10-18): 17.A2 verified, V-C1 confirmed (450 →
 > ~4 rebuilds/s), R3's predictions all confirmed** (§9.15), which closes the rank-calibration series. **Unit 9 (17.C.2,
 > §5.5) is built:** `MempoolChanged` plus five chain-side scenes on a leading-edge throttle, and two defects the migration
-> exposed. **Unit 10 (17.A5, §4.9), the auction countdown on the live clock, is built.** Next: the V-C2 session on R3's
-> world (no wipe), which also checks 17.A5, then `BlockExplorer`, C.3 (the B group's fallbacks), C.4
+> exposed. **Unit 10 (17.A5, §4.9), the auction countdown on the live clock, is built.** **V-C2 ran 2026-10-19: confirmed**
+> (§5.5; 0/s at rest, 40–95% fewer rebuilds under load; mempool 0.90/s after Market Birth), and 17.A5 was verified by the
+> developer's report. Next: `BlockExplorer`, C.3 (the B group's fallbacks), C.4
 > (`BotPlayHistory`), C.6 (`CompanyDetails`), M1 and the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
@@ -760,6 +761,31 @@ block/mempool event covers, so it needs its own decision.
   - balances still move while the autobet runs;
   - selecting Hal or Mike Hearn repaints at once;
   - typing in the reactivation-block field is not overwritten.
+
+**V-C2 results (2026-10-19, R3's world at 2015, 9000X): ✅ CONFIRMED.** Each figure is the scene's average over its
+whole stay, excluding the entry window (§5.5's analysis rule):
+
+| Scene | At rest: now (old timer) | Under the sim: now (old timer) |
+|---|---|---|
+| `BotsBtcWallets` | **0** (0.33/s) | **0.200/s** (0.33) |
+| `CompaniesWallets` | — | **0.144/s** (0.33) |
+| `CastMinerWallets` | — | **0.086/s** (0.33) |
+| `BTCWallet` | **0** (0.5/s) | **0.135/s** (0.5) |
+| `FoundersWallets` | **0.109/s**: the requested immediate repaints of the developer's Hal / Mike Hearn clicks, not a steady rate | **0.171/s** (0.5) |
+| `BTCPoolsAndHardwareShop` (casino) | **0.050/s**: the casino-selection click | **0.050/s** (1.0) |
+
+- **At rest the migrated scenes do no work.** Under load they do **40–95% fewer** rebuilds than the timers did, and
+  none exceeds its old rate.
+- **A stated threshold was too tight, and is corrected here rather than quietly.** The prediction gave per-window
+  ceilings (≤ 0.34/s, ≤ 0.5/s), but a 5 s window can legitimately hold two rebuilds of a 3 s leading-edge throttle
+  (0.4/s), and two windows did. The quantity the design bounds is the **long-run** rate, and that is what the table
+  shows. **Every one is under its bound.**
+- **D-17.1's open input, measured:** after Market Birth the mempool takes **0.90 new transactions per second on
+  average** under the sim, **4.1/s at most** in a 5 s window, and 0 in windows with no traffic. That is low enough
+  that the throttle, not the event, sets every scene's rate.
+- **Functional:** no defect reported for the founder repaint, the reactivation field or the balances moving. The same
+  goes for 17.A5's countdown on both screens.
+- `godot.log`: 0 exceptions, 0 `[Governance] EXCEPTION`, 0 `NEVER REACHED`, no wipe.
 
 **What it means for C.1.** By §5.4's rule C.1 proceeds, since P1 is confirmed. But its benefit will **not**
 show as retention at 5 credits. It is justified by the count (450 rebuilds a second for a value no single
