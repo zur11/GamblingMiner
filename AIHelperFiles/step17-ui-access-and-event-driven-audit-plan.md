@@ -30,7 +30,10 @@
 > stats throttle had no trailing edge), and `ClientsBetsHistory`'s per-bet feed (450/s at M0) is coalesced.
 > **Unit 16 (17.C.4 + 17.C.6, §5.5) is built:** `BotPlayHistory` follows `ClientBetSettled`, and `CompanyDetails` follows
 > blocks, the mempool and its own action handlers, which had relied on the timer. That is every migration in 17.C.
-> Next: one verification session (V-C2b, V-C3, C.4/C.6), then M1 and the close-out.
+> **The verification session ran 2026-10-19 (§5.5 results):** 0/s at rest in every scene visited, every ceiling held
+> except two that were mis-registered (stated as refuted), V-C2b confirmed. `CompanyDetails` was not opened, and the
+> ballot check is suspended (no holdings). **Unit 17** puts `BotPlayHistory` on DiceGame's live bet list, at the
+> developer's request. Next: one short session (`CompanyDetails`' counts, the new list), then the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -1020,6 +1023,96 @@ criterion needs it: §5.3 states the criterion as **counts per scene** (0/s at r
 the sim), never as a figure compared across sessions (instrument rule 3). It differs from M0 in two ways. Leg A now
 visits **every** scene, because "0 at rest" is the claim being tested. And `CompanyDetails` is reachable for the first
 time.
+
+#### V-C2b, V-C3, C.4/C.6 and M1 — results (session of 2026-10-19, R3's world, 2015-03 → 2015-05, 9000X)
+
+Read from `user://logs/godot.log`, 206 probe lines. Each scene visit's first window holds its entry paint and is
+excluded. Retention read 98–100% throughout.
+
+**At rest: ✅ every scene reads 0** after its entry window: DiceGame, ScFinances, ScTransactions, CasinoFinances,
+CasinoGamblingFinances, ClientsBetsHistory, ClientsTransactions, CasinoCoinSwaps, CentralBank, BotPlayHistory,
+BlockExplorer, MainMenu. Each of them did 0.2–1/s at M0.
+
+**Under the sim** (mean / max over the full windows):
+
+| Site | Ceiling | Measured | M0 | |
+|---|---|---|---|---|
+| `StatusBar.RefreshBtcBalance` | ≤ 0.5 | 0.2 / 0.4 | 0.5 | ✅ |
+| `ScFinances.RefreshAll` / `.RefreshBalances` | ≤ 1 / ≤ 10 | 0.31 / 0.8 · 7.1 / 8.6 | 0.4–0.6 | ✅ |
+| `ScTransactions.RefreshAll` / `.RefreshNetWorth` | ≤ 1 / ≤ 10 | 0 · 7.9 / 8.8 | 0.4–0.6 | ✅ |
+| `CasinoGamblingFinances.RefreshLabels` | ≤ 4 | 3.2 / 4.0 | 450 | ✅ |
+| `CasinoCoinSwaps.RefreshAll` | ≤ 4 | 3.7 / **4.2** | 450 | ❌ **refuted as registered** (see below) |
+| `ClientsTransactions.RefreshAll` | a measurement | **0** in every window under the sim | 0.4–0.6 | `LedgerChanged`'s real rate is ~0, so **no throttle** (the decision rule was > 1/s) |
+| `ClientsBetsHistory.FlushLiveFeed` | ≤ 10 | 7.9 / 9.2 | **450** | ✅ |
+| `ClientsBetsHistory.RefreshClientRows` | ≤ 0.5 | 0.43 / **0.6** | 0.4–0.6 | ❌ **refuted as registered** (see below) |
+| `FinancialBettingStats.Refresh` (DiceGame, ScFinances) | ≤ 4.5 | 2.8–3.3 / 4.0 | ~5 | ✅ |
+| `CentralBank.RefreshAll` | ≤ 2 | 0.2 | 0.2 | ✅ |
+| `BotPlayHistory.RebuildBotList` / `.RefreshHistoryTable` | 0 after entry / ≤ 1 | 0 · 0.92 / 1.0 | 1 / 1 | ✅ (the table then replaced, below) |
+| `BlockExplorer.RefreshUi` / `.UpdateCountdowns` (V-C2b) | ≤ 1 / ≤ 1 | 0.2 · 0.8 / 1.0; at rest 0 / 0 | 1 / — | ✅ **V-C2b confirmed** |
+| `CompanyDetails.RefreshAll` | ≤ 1 | **not measured**: the page was never opened | 1 | ⏳ |
+
+Mempool adds read 0.9–4.6/s in the windows that contained a block and 0 otherwise. Transactions originate inside
+block processing, so they arrive in bursts.
+
+**Both refutations are of the PREDICTION, and they are stated as such:**
+- **`CasinoCoinSwaps` 4.2 > 4.** The coalesced path alone cannot exceed 20 per 5 s window, but C.1 deliberately kept
+  `SwapDeskChanged` and `MarketDayChanged` *immediate*, and at 9000X a game day passes every ~9.6 real seconds. One
+  immediate rebuild in a full window gives 21/5 = 4.2. The ceiling ignored two subscriptions written in this very
+  plan. *This is inference, not a separated count: the probe does not split the sites.*
+- **`RefreshClientRows` 0.6 > 0.5.** A 2 s leading-edge throttle fits **three** rebuilds in a 5 s window (t = 0, 2,
+  4), so the per-window ceiling is 0.6. The long-run mean of 0.43 holds. **V-C2 made exactly this mistake and
+  recorded it** ("per-window thresholds were too tight, restated as the long-run average"). Registering a
+  per-window ceiling again is CLAUDE.md Pattern 6 instrument rule 4's corollary, live: *a lesson recorded in a
+  close-out is not a lesson applied.* From here on, every throttled ceiling is stated as `ceil(5 / interval) / 5`
+  per window, plus a long-run mean.
+
+**Functional:** the developer reported on `BotPlayHistory` only (below). Leg A's step 2 (the ballot) could not run:
+**the player holds no NST or PST in any company.** That check is **suspended, with its precondition named** (§39.16
+rule 10): a world where the player holds shares. The three one-line `RequestImmediateRefresh` calls are not
+executed by anything else.
+
+**The developer's two `BotPlayHistory` findings:**
+1. **Leg A showed no bots to pick.** That is not a regression. The screen reads `SimulationService`'s in-memory
+   rings, which are empty after a launch until a bot settles a bet in this session. The old timer read the same
+   source. The page now says so instead of showing a bare prompt.
+2. **"The 1 s refresh is too slow; it should flow like the player's bet history in DiceGame."** → **unit 17:** the
+   BBCode table is gone, and the page uses **DiceGame's own list** (`BetHistoryContainer`). That is a 100-entry
+   ring, rows that never move, and a once-per-frame repaint of the visible rows only (mini-plan 10). The cost is
+   bounded by the rows on screen, whatever the bet rate.
+   - The handler appends the selected bot's bet to the ring (O(1)); `LoadFromEvents` / `AppendLiveEvent` are the
+     list's two new entry points for a host that is not DiceGame.
+   - The bot rings now store the settled `BetTransactionEvent` itself, at the list's capacity
+     (`BetHistoryContainer.MaxRecentEntries`). `BotPlayEntry` is deleted (§39.16 rule 3).
+   - The time column takes the scene's own clock sampler unit (§29.13.1's list now names `BotPlayHistory`).
+   - The scene follows Ch. 29: `HSplitContainer` → `HBoxContainer` (trap 2), the `fit_content` table inside a
+     `ScrollContainer` is gone (trap 1), and `margin_bottom` is 50 (§29.11).
+   - **Trade-offs, stated:** 100 plays instead of 260 (DiceGame's own decision, mini-plan 02 §C.6a), and DiceGame's
+     columns (time, multiplier, bet, profit, win/loss by colour). The Roll and Result columns are gone.
+   - It moves `BotPlayHistory` to §0.2's group **A**, the same shape as `BetHistoryContainer`.
+
+**Also confirmed by the developer:** the Pause check (functional 5). The "Total bets" figure matched between DiceGame
+and a freshly opened `ScFinances`, so the stats throttle's trailing edge delivers.
+
+**The developer's third request (2026-10-19): `ClientsBetsHistory`'s feed as fluid as DiceGame's.** Unit 15's feed
+flushed every 0.1 s by moving rows to the top, which reads as jumps. It now uses DiceGame's design, rebuilt locally:
+- a 50-entry ring, and 50 rows built once that never move (row i shows the i-th newest bet);
+- once per frame, only the visible rows whose content is out of date are rewritten. Rows scrolled into view are
+  written the frame they appear.
+- `BetHistoryContainer` itself could not be reused, because this feed needs the client's name and the casino's side
+  of each bet.
+- The time column takes a clock sampler's unit (§29.13.1's list now names it), and each row's tooltip keeps the full
+  instant. The summary keeps its 0.1 s cadence.
+- `margin_bottom` 30 → 50 (§29.11): the feed's scroll expands and pins Back to the bottom edge.
+- A stale line in Ch. 29 §29.10 said this scene's Back button sat inside the scroll. It had not for some time, and
+  the line is corrected.
+
+**What this does to the exit criterion.** Both lists are now §0.2 group **A**, like `BetHistoryContainer`: they paint
+per frame **by design**, with a cost bounded by the visible rows. The "≤ 1 ÷ coalesce" ceiling does not apply to
+them. Under the sim, `ClientsBetsHistory.FlushLiveFeed` will read up to the frame rate (it counts per-frame flushes,
+not rows). At rest both still read 0.
+
+**What M1 still needs before the close-out:** `CompanyDetails`' counts, and the two new lists seen flowing. Both
+fit in one short session.
 
 ---
 

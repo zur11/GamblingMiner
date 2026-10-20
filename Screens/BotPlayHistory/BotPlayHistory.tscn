@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://Screens/BotPlayHistory/BotPlayHistory.cs" id="1"]
+[ext_resource type="PackedScene" uid="uid://cc4mcdfki2u7r" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.tscn" id="2"]
 
 [node name="BotPlayHistory" type="Control"]
 layout_mode = 3
@@ -21,7 +22,7 @@ grow_vertical = 2
 theme_override_constants/margin_left = 40
 theme_override_constants/margin_top = 30
 theme_override_constants/margin_right = 40
-theme_override_constants/margin_bottom = 30
+theme_override_constants/margin_bottom = 50
 
 [node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
 layout_mode = 2
@@ -51,46 +52,41 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "Bot Play History"
 
-[node name="ContentSplit" type="HSplitContainer" parent="RootMargin/RootVBox"]
+[node name="Content" type="HBoxContainer" parent="RootMargin/RootVBox"]
 layout_mode = 2
 size_flags_vertical = 3
-split_offset = 260
+theme_override_constants/separation = 40
 
-[node name="BotListScrollContainer" type="ScrollContainer" parent="RootMargin/RootVBox/ContentSplit"]
+[node name="BotListScrollContainer" type="ScrollContainer" parent="RootMargin/RootVBox/Content"]
 layout_mode = 2
 custom_minimum_size = Vector2(220, 0)
 horizontal_scroll_mode = 0
 
-[node name="BotList" type="VBoxContainer" parent="RootMargin/RootVBox/ContentSplit/BotListScrollContainer"]
+[node name="BotList" type="VBoxContainer" parent="RootMargin/RootVBox/Content/BotListScrollContainer"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 4
 
-[node name="HistoryScrollContainer" type="ScrollContainer" parent="RootMargin/RootVBox/ContentSplit"]
+[node name="HistoryPanel" type="VBoxContainer" parent="RootMargin/RootVBox/Content"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-horizontal_scroll_mode = 0
-
-[node name="HistoryPanel" type="VBoxContainer" parent="RootMargin/RootVBox/ContentSplit/HistoryScrollContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
 theme_override_constants/separation = 10
 
-[node name="BotTitleLabel" type="Label" parent="RootMargin/RootVBox/ContentSplit/HistoryScrollContainer/HistoryPanel"]
+[node name="BotTitleLabel" type="Label" parent="RootMargin/RootVBox/Content/HistoryPanel"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = "Select a miner bot to study its recent plays."
 
-[node name="HistoryTable" type="RichTextLabel" parent="RootMargin/RootVBox/ContentSplit/HistoryScrollContainer/HistoryPanel"]
-unique_name_in_owner = true
+[node name="HistoryScroll" type="ScrollContainer" parent="RootMargin/RootVBox/Content/HistoryPanel"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-custom_minimum_size = Vector2(0, 400)
-bbcode_enabled = true
-fit_content = true
-scroll_active = false
-selection_enabled = true
+horizontal_scroll_mode = 0
+
+[node name="BotHistoryContainer" parent="RootMargin/RootVBox/Content/HistoryPanel/HistoryScroll" instance=ExtResource("2")]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3

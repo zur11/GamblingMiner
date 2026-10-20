@@ -21,22 +21,45 @@ public partial class ClientsBetsHistory : Control
 	private VBoxContainer _liveFeedVBox;
 
 	private const int MaxFeedEntries = 50;
+	// Only used until the first row has been laid out. Deliberately small: underestimating the pitch paints a few
+	// rows too many, overestimating would leave visible rows stale.
+	private const float FallbackFeedRowPitch = 16f;
 
-	// Mini-plan 25 17.C.3 — no 2 s timer, and no work per bet. ClientBetSettled fires on every settled bet of all five
-	// clients: M0 counted it at 450 a second at 9000X, and each one created a Label, freed another and recomputed the
-	// summary (§38.7 rule 1). Now the handler only queues the bet and marks two things dirty:
-	// - the FEED and the SUMMARY repaint at most every FeedFlushIntervalSeconds. A flush writes the queued bets into
-	//   recycled rows (the oldest row moves to the top), so a full feed allocates nothing, and the queue never holds
-	//   more than the feed can show.
+	// Mini-plan 25 17.C.3 — no 2 s timer, and no work per bet beyond a ring write. ClientBetSettled fires on every
+	// settled bet of all five clients: M0 counted it at 450 a second at 9000X, and each one created a Label, freed
+	// another and recomputed the summary (§38.7 rule 1). Now:
+	// - the FEED is DiceGame's bet-list design (BetHistoryContainer, mini-plan 10), at the developer's request
+	//   (2026-10-19: "as fluid as DiceGame"). A settled bet only goes into a ring. The rows are built once and never
+	//   move: row i always shows the i-th newest bet. Once per frame, if anything changed, only the rows inside the
+	//   scroll's visible window are rewritten. The cost per frame is bounded by the VISIBLE rows, whatever the bet
+	//   rate. (A first version flushed every 0.1 s by moving rows to the top, and read as jumpy.) DiceGame's own
+	//   component cannot be reused as is: this feed needs the client's name and the casino's side of each bet.
+	// - the SUMMARY repaints at most every SummaryIntervalSeconds, StatusBar's cadence.
 	// - the client ROWS, which the old timer covered: their per-client bet stats move on every bet and no other event
 	//   announces them. They rebuild through a leading-edge throttle, at most every RowsMinRefreshInterval, the old
 	//   timer's rate. LedgerChanged (a deposit or a recharge moves the "since" baselines and dates) marks them too.
 	// At rest: 0 refreshes a second (the timer was 0.5).
 	private readonly record struct FeedItem(string DisplayName, BetTransactionEvent Bet, string GameId);
-	private readonly System.Collections.Generic.Queue<FeedItem> _pendingFeed = new();
+	private readonly FeedItem[] _feedRing = new FeedItem[MaxFeedEntries];
+	private int _feedHead;
+	private int _feedCount;
+	// Every push shifts every row's content by one, so one counter says which rows are current.
+	private int _feedVersion;
+	private readonly int[] _feedRowVersion = new int[MaxFeedEntries];
+	private readonly Label[] _feedRows = new Label[MaxFeedEntries];
+	private int _visibleFeedRows;
+	private bool _feedDirty;
+	private ScrollContainer _feedScroll;
+
+	// §29.13 — the time column may not show a finer field than the clock can honestly carry at this speed: the same
+	// measured unit DiceGame hands its own list (mini-plan 20 C).
+	private CalendarTimeService _calendar;
+	private readonly UI.Readouts.AdaptiveReadoutSampler _clockSampler = new();
+	private UI.Readouts.AdaptiveReadoutSampler.ClockUnit _paintedUnit = UI.Readouts.AdaptiveReadoutSampler.ClockUnit.Seconds;
+
 	private bool _summaryDirty;
-	private double _sinceFeedFlush = double.MaxValue;
-	private const double FeedFlushIntervalSeconds = 0.1;
+	private double _sinceSummaryPaint = double.MaxValue;
+	private const double SummaryIntervalSeconds = 0.1;
 	private bool _rowsDirty;
 	private double _sinceRowsRebuild = double.MaxValue;
 	private const double RowsMinRefreshInterval = 2.0;
@@ -58,6 +81,26 @@ public partial class ClientsBetsHistory : Control
 		_clientFilter          = GetNode<OptionButton>("%ClientFilter");
 		_clientRows            = GetNode<VBoxContainer>("%ClientRows");
 		_liveFeedVBox          = GetNode<VBoxContainer>("%LiveFeedVBox");
+		_calendar              = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+
+		// The row pool: built once, shown as bets fill it, never reordered.
+		for (int i = 0; i < MaxFeedEntries; i++)
+		{
+			// PASS, not a Label's default IGNORE: the row's tooltip carries the full instant (the time column may be
+			// coarsened, §29.13), and PASS still hands the wheel on to the scroll (Ch. 29 §29.3 trap 3).
+			var row = new Label { Visible = false, MouseFilter = MouseFilterEnum.Pass };
+			row.AddThemeFontSizeOverride("font_size", 16);
+			_liveFeedVBox.AddChild(row);
+			_feedRows[i] = row;
+		}
+
+		// Rows scrolled into view are written the frame they appear.
+		_feedScroll = _liveFeedVBox.GetParent() as ScrollContainer;
+		if (_feedScroll != null)
+		{
+			_feedScroll.GetVScrollBar().ValueChanged += _ => _feedDirty = true;
+			_feedScroll.Resized += () => _feedDirty = true;
+		}
 
 		_gameFilter.AddItem("All Games");
 		_gameFilter.AddItem("Dice");
@@ -96,16 +139,30 @@ public partial class ClientsBetsHistory : Control
 
 	public override void _Process(double delta)
 	{
-		_sinceFeedFlush += delta;
-		if ((_pendingFeed.Count > 0 || _summaryDirty) && _sinceFeedFlush >= FeedFlushIntervalSeconds)
+		if (_calendar != null && _clockSampler.ShouldRepaint(delta))
 		{
-			_sinceFeedFlush = 0d;
-			FlushLiveFeed();
-			if (_summaryDirty)
+			_clockSampler.NoteRepaint(_calendar.CurrentLocalDateTime);
+			if (_clockSampler.Unit != _paintedUnit)
 			{
-				_summaryDirty = false;
-				RefreshGlobalSummary();
+				// A new precision is a new rendering of every row, not just the ones whose bet changed.
+				_paintedUnit = _clockSampler.Unit;
+				_feedVersion++;
+				_feedDirty = true;
 			}
+		}
+
+		if (_feedDirty)
+		{
+			_feedDirty = false;
+			FlushLiveFeed();
+		}
+
+		_sinceSummaryPaint += delta;
+		if (_summaryDirty && _sinceSummaryPaint >= SummaryIntervalSeconds)
+		{
+			_summaryDirty = false;
+			_sinceSummaryPaint = 0d;
+			RefreshGlobalSummary();
 		}
 
 		_sinceRowsRebuild += delta;
@@ -117,7 +174,7 @@ public partial class ClientsBetsHistory : Control
 		}
 	}
 
-	// Called hundreds of times a second under the sim: it queues and marks, nothing else (see the fields).
+	// Called hundreds of times a second under the sim: a ring write and some flags, nothing else (see the fields).
 	private void OnClientBetSettled(string nodeId, string gameId, BetTransactionEvent bet)
 	{
 		_summaryDirty = true;
@@ -134,21 +191,60 @@ public partial class ClientsBetsHistory : Control
 
 		if (gameMatches && clientMatches)
 		{
-			_pendingFeed.Enqueue(new FeedItem(DisplayNameFor(nodeId), bet, gameId));
-			while (_pendingFeed.Count > MaxFeedEntries)
-				_pendingFeed.Dequeue(); // older than anything the feed can still show
+			_feedRing[_feedHead] = new FeedItem(DisplayNameFor(nodeId), bet, gameId);
+			_feedHead = (_feedHead + 1) % MaxFeedEntries;
+			if (_feedCount < MaxFeedEntries) _feedCount++;
+			_feedVersion++;
+			_feedDirty = true;
 		}
 	}
 
+	// Once per frame at most, and only the visible rows whose content is out of date.
 	private void FlushLiveFeed()
 	{
-		if (_pendingFeed.Count == 0) return;
 		Scripts.Diagnostics.UiRefreshProbe.Count("ClientsBetsHistory.FlushLiveFeed");   // DEBUG-only, mini-plan 25
-		while (_pendingFeed.Count > 0)
+		SyncFeedRowVisibility();
+		if (_feedCount == 0) return;
+
+		string timePattern = UI.Readouts.AdaptiveReadoutSampler.TimePatternFor(_paintedUnit);
+		string pattern = timePattern.Length == 0 ? "dd MMM yyyy" : "dd MMM yyyy " + timePattern;
+		(int first, int last) = VisibleFeedRows();
+		for (int row = first; row <= last; row++)
 		{
-			FeedItem item = _pendingFeed.Dequeue();
-			AddLiveFeedEntry(item.DisplayName, item.Bet, item.GameId);
+			if (_feedRowVersion[row] == _feedVersion) continue;
+
+			// Row 0 is the newest bet: the one just behind the ring's write head.
+			int slot = (_feedHead - 1 - row + MaxFeedEntries * 2) % MaxFeedEntries;
+			PaintFeedRow(_feedRows[row], _feedRing[slot], pattern);
+			_feedRowVersion[row] = _feedVersion;
 		}
+	}
+
+	// Rows [first, last] that intersect the scroll's viewport, one row of margin each side. The rows are uniform (one
+	// line, one font), so row 0's pitch is every row's.
+	private (int First, int Last) VisibleFeedRows()
+	{
+		int lastFilled = _feedCount - 1;
+		if (_feedScroll == null) return (0, lastFilled);
+
+		float rowHeight = _feedRows[0].Size.Y > 0f ? _feedRows[0].Size.Y : FallbackFeedRowPitch;
+		float pitch = rowHeight + _liveFeedVBox.GetThemeConstant("separation");
+		float top = _feedScroll.ScrollVertical;
+		float height = _feedScroll.Size.Y > 0f ? _feedScroll.Size.Y : pitch * MaxFeedEntries;
+
+		int first = Mathf.Max(0, (int)(top / pitch) - 1);
+		int last = Mathf.Min(lastFilled, (int)((top + height) / pitch) + 1);
+		return (first, last);
+	}
+
+	// Only rows that hold a bet are visible, so the scroll's content height tracks the number of bets. A no-op once
+	// the feed is full, until a filter change clears it.
+	private void SyncFeedRowVisibility()
+	{
+		if (_visibleFeedRows == _feedCount) return;
+		for (int i = 0; i < MaxFeedEntries; i++)
+			_feedRows[i].Visible = i < _feedCount;
+		_visibleFeedRows = _feedCount;
 	}
 
 	private static string DisplayNameFor(string nodeId)
@@ -158,43 +254,28 @@ public partial class ClientsBetsHistory : Control
 		return nodeId;
 	}
 
-	private void AddLiveFeedEntry(string displayName, BetTransactionEvent bet, string gameId)
+	private static void PaintFeedRow(Label label, FeedItem item, string timePattern)
 	{
-		string ts      = bet.Timestamp.ToLocalTime().ToString("dd MMM yyyy HH:mm:ss", CultureInfo.InvariantCulture);
+		BetTransactionEvent bet = item.Bet;
+		string ts      = bet.Timestamp.ToLocalTime().ToString(timePattern, CultureInfo.InvariantCulture);
 		string outcome = bet.IsWin ? "WIN " : "LOSS";
 		decimal delta  = -bet.CreditedProfit;
 
-		// A full feed recycles its oldest row instead of freeing one and allocating another.
-		Label label;
-		int count = _liveFeedVBox.GetChildCount();
-		if (count >= MaxFeedEntries)
-		{
-			label = (Label)_liveFeedVBox.GetChild(count - 1);
-		}
-		else
-		{
-			label = new Label();
-			label.AddThemeFontSizeOverride("font_size", 16);
-			_liveFeedVBox.AddChild(label);
-		}
-
-		label.Text = string.Create(CultureInfo.InvariantCulture, $"{ts}  {displayName,-6}  {gameId}  Bet {bet.BetAmount:N8} SC  {outcome}  {bet.CreditedProfit:+0.00000000;-0.00000000} SC  → casino: {delta:+0.00000000;-0.00000000} SC");
+		label.Text = string.Create(CultureInfo.InvariantCulture, $"{ts}  {item.DisplayName,-6}  {item.GameId}  Bet {bet.BetAmount:N8} SC  {outcome}  {bet.CreditedProfit:+0.00000000;-0.00000000} SC  → casino: {delta:+0.00000000;-0.00000000} SC");
 		label.AddThemeColorOverride("font_color", bet.IsWin
 			? new Color(1f, 0.5f, 0.4f)   // player win = casino loss → red-ish
 			: new Color(0.4f, 1f, 0.5f));  // player loss = casino gain → green-ish
-		_liveFeedVBox.MoveChild(label, 0);
+		label.TooltipText = bet.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 	}
 
-	// RemoveChild before QueueFree: a node queued for deletion still counts as a child until the frame ends, and the
-	// recycling above must never pick one up.
+	// A filter change starts the feed over: the ring empties and every row hides on the next flush.
 	private void ClearLiveFeed()
 	{
-		_pendingFeed.Clear();
-		foreach (Node child in _liveFeedVBox.GetChildren())
-		{
-			_liveFeedVBox.RemoveChild(child);
-			child.QueueFree();
-		}
+		_feedHead = 0;
+		_feedCount = 0;
+		Array.Clear(_feedRing);
+		_feedVersion++;
+		_feedDirty = true;
 	}
 
 	private void RefreshGlobalSummary()

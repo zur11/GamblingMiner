@@ -3378,7 +3378,7 @@ The footer nodes are **siblings of `ContentScroll`, not children of it**, so the
 
 **Checklist addition (extends §29.5):** *7. Persistent nav/Back buttons go in a fixed footer OUTSIDE the scroll (bounded `VBox` → `ScrollContainer(size_flags_vertical = 3)` for content, then the footer row as a sibling). Never leave them as the last child inside the `ScrollContainer`.*
 
-**Not-yet-fixed mirrors:** the DEV scenes `CasinoGamblingFinances` and `ClientsBetsHistory` still use the old inside-scroll-footer anti-pattern; fix them the same way if the overflow is observed (they're DEV-only, so left as-is for now).
+**Not-yet-fixed mirror:** the DEV scene `CasinoGamblingFinances` still uses the old inside-scroll-footer anti-pattern (its Back button is the last child of `RootScroll`). Fix it the same way if the overflow is observed; it is DEV-only, so left as-is for now. *(This line also named `ClientsBetsHistory` until 2026-10-19. Re-read then, its Back button was already a sibling of the feed's scroll, outside it, so that half had been false for some time.)*
 
 ### 29.11 — The canvas bottom band can fall off-screen (the real Step 12 overflow) — keep a bottom safe area
 
@@ -3571,7 +3571,12 @@ grep -rn "CurrentLocalDateTime\|CurrentUtcDateTime" --include=*.cs Screens/ UI/ 
 - `DiceGame`, `StatusBar`, `ScFinances`, `CasinoGamblingFinances`, `BetsHistoryExplorer`;
 - **`AuctioningCompanyDetails`**, the auction countdown (mini-plan 25, 2026-10-19). It used to read the chain tip's
   timestamp and so moved only per block. It formats with `FormatRemaining`, the countdown twin of
-  `FormatGameTime`.
+  `FormatGameTime`;
+- **`BotPlayHistory`** (mini-plan 25, 2026-10-19), since it shows a bot's plays in DiceGame's live bet list. The
+  list's time column moves with the clock, so the scene measures the clock and hands the list its unit
+  (`SetMotionUnit`), exactly as DiceGame does (mini-plan 20 C);
+- **`ClientsBetsHistory`**'s live feed (mini-plan 25, 2026-10-19), rebuilt on the same per-frame visible-rows design.
+  Its time column takes the sampler's unit, and each row's tooltip keeps the full instant.
 
 `grep -rln AdaptiveReadoutSampler --include=*.cs Screens/ UI/` returning a **new live-clock scene WITHOUT one is a
 regression**; a new one with a sampler is fine. *(This paragraph used to say "the complete set is five". It is

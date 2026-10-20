@@ -170,6 +170,24 @@ public partial class BetHistoryContainer : VBoxContainer
 		RequestFlush();
 	}
 
+	// Mini-plan 25 (developer, 2026-10-19) — the two entry points for a host that is not DiceGame and feeds the list
+	// itself: BotPlayHistory shows one bot's plays, which arrive through SimulationService.ClientBetSettled, not
+	// DiceGame.BetExecuted. Same ring, same once-per-frame visible-rows flush, same visibility gate as the live path,
+	// so a bot's plays flow exactly as the player's do.
+	public void LoadFromEvents(IReadOnlyList<BetTransactionEvent> oldestFirst)
+	{
+		ClearEntries();
+		for (int i = System.Math.Max(0, oldestFirst.Count - MaxRecentEntries); i < oldestFirst.Count; i++)
+		{
+			Push(oldestFirst[i]);
+		}
+
+		// Synchronous, like LoadFromHistoricalRecords: a selection must show its rows on the frame it happens.
+		Flush();
+	}
+
+	public void AppendLiveEvent(BetTransactionEvent betEvent) => OnBetExecuted(string.Empty, betEvent);
+
 	public void ClearEntries()
 	{
 		EnsurePool();
