@@ -5,9 +5,11 @@ mini-plan 25's measurement F1 (`step17-ui-access-and-event-driven-audit-plan.md`
 the two 📝 notes under §8 **T4**.
 
 **Status:** 🔨 **IN PROGRESS.** Specified 2026-10-20 (`68d6b9f`, all of §11 approved by the developer). **Unit 1, Part
-A's instrument, is built** (§3.5). §7 step 1 is done: F1's two traces are archived. Next: the developer runs **M1**
-(§7). Part B, the fix, is specified from M1's data as an amendment to this file (§8), with its own predictions
-registered before its code.
+A's instrument, is built** (§3.5). **M1 ran 2026-10-20 (§7.1)**: 6.0 s per block, 98.7% of it in sends, 95.6% of a
+send in the fan-out, all four self-checks passed, 7 predictions confirmed, P3 half refuted, P4 and G1 refuted. **Part
+B is amended from that data (§8.1):** F-a (verify once per broadcast) and F-b (a confirmed-txid set), an A/B switch by
+block parity, two oracles, and an allocation split for G2's 16 MB per frame. Next: **unit 2** (the fixes), **unit 3**
+(the allocation split), then **M2**.
 
 **Branch:** `mini26-per-block-freeze` (proposed, D-26.1).
 
@@ -319,6 +321,64 @@ CHECKPOINT`, `[UtxoAssert] MISMATCH`, `[Governance] EXCEPTION` and `[BetJournal]
    normally and tell me "M1 done". I read `godot.log`, `block_cost_trace.csv`, `send_cost_trace.csv` and
    `frame_cost_trace.csv` myself.
 
+### 7.1 — M1 results (session of 2026-10-20, 17:19 → 18:06 UTC, h3,496 → 3,707, 2015-07-09 → 12-10)
+
+**The run.** The developer ran it for 47 real minutes, longer than asked, which bought 212 blocks. The player and the
+four bots ran, all four checks were silent in `godot.log`, and both instruments were armed in a DEBUG build. The
+toggles were not unticked before closing, so the final summary is missing; the 200-block summary stands in for it.
+
+**The freeze is now 6.0 s per block.** Mean `totalMs` is **5,995 ms**, the worst block **27,467 ms** (h3,634), and
+**every one of the 212 blocks is over 1 s.** FrameCost filed exactly **212 stalls totalling 1,284 s**: the game was
+frozen for **21 of the session's 47 minutes**. Per block, in ms:
+
+| Phase or term | ms/block | of which in sends |
+|---|---|---|
+| sell-flow | 3,410 | 3,376 |
+| exchanges | 1,687 | 1,687 |
+| governance | 658 | 588 |
+| donation | 102 | 69 |
+| auctions · checkpoint · broadcast | 64 · 62 · 10 | — |
+| gate (attempts' decision work) · `FirstBlockHeightMinedBy` | 9.0 · 4.6 | — |
+
+**Self-checks first:**
+
+| | Result |
+|---|---|
+| **V1** | ✅ **0 of 2,212 sends** were accepted at fewer nodes than they reached. The width ran 72–81 as the network grew from 75 to 82 nodes |
+| **V2** | ⚠ The count is consistent: 14,152 transactions scanned per admission, against a chain of ~12.9k–15.2k. The time is **183 ns per transaction**, **above my "single to low double digits" band.** The band was my guess and is refuted. The time itself is measured by timestamps and stands |
+| **V3** | ✅ **exact**: 380,796 verifies counted, against 380,796 by per-send arithmetic |
+| **V4** | ✅ the send stages sum to 5,693 of 5,719 ms per block (a 0.5% remainder). There were **0 orphan admissions** |
+
+**The predictions:**
+
+| # | Result | Verdict |
+|---|---|---|
+| **P1** | sends **98.7%** of `botTx`; gate **0.2%** | ✅ confirmed. §2.6's rival is refuted: attempts that never sent cost almost nothing |
+| **P2** | fan-out **95.6%** of send time (select 0.0 · keys 1.5 · sign 1.7 · local 1.2) | ✅ confirmed |
+| **P3** | signature **59.6%** of admission time, dup scan **39.6%**, UTXO checks 0.8% | ⚠ **half refuted**: the signature clause holds, but the dup scan is well over its ≤ 25% |
+| **P4** | ms per input: 1 input **395.8** · 2–5 240.8 · 6–30 **165.9** · 31+ **147.6** | ❌ **refuted**: the fat sends cost 0.37–0.42× per input. A least-squares fit over all sends gives **241 ms + 141 ms × inputs**. There is a large *per-send* term, which is the dup scan (it runs once per admission, whatever the inputs) |
+| **P5** | `FirstBlockHeightMinedBy` **0.13%** of the sell-flow (4,097 calls, 1,619 blocks each) | ✅ confirmed. **Mini-plan 18 §8's attribution is refuted** |
+| **P6** | exchange sends carry **9.01** inputs against the sell-flow's **1.07** (8.4×); exchanges ran on **46.7%** of blocks | ✅ confirmed |
+| **P7** | in the 86 blocks with governance over 200 ms, sends hold **93.1%** of governance time | ✅ confirmed (registered as 50/50) |
+| **P8** | in the 30 blocks with donation over 200 ms, sends hold **92.3%** | ✅ confirmed |
+| **G1** | GC pause **2.51%** of frame time (1.25 ms/frame; 128,505 gen-0, 4,972 gen-1 and 21 gen-2 collections over 32,400 frames) | ❌ **refuted**, narrowly |
+| **G2** | **16,219 KB allocated per frame**, **99.8%** of it inside the sim | ✅ confirmed, and far beyond its 1 MB threshold |
+
+**What one send costs, now measured.** Each of the ~78 admissions at the other nodes costs **2.58 ms of duplicate
+scan** (14,152 transactions walked) plus **3.99 ms of signature check** (2.17 inputs, so **1.84 ms per input**, which
+covers the txid recompute, the address re-derivation and the P-256 verify). The UTXO checks cost 0.05 ms. **My §2.6
+estimates were about 10× low on both** (0.1–0.2 ms and 0.2–0.5 ms), and that is what closes §2.6's gap. The sender's
+side is small: 8.3 ms per key derivation (2,128 of them) and ~95 ms of signing per block.
+
+**Decision rules, applied:**
+- **R1.** The fan-out is the only stage at ≥ 20%. Inside it, the signature check and the dup scan are both ≥ 20%.
+  Both have exact fixes, F-a and F-b. **R1's stop clause does not trigger:** the cost is the work done at each node,
+  not the number of nodes. F-c (keys, 1.5%) and F-d (UTXO checks, 0.8%) are **out**.
+- **R2** does not trigger.
+- **R3.** P7 and P8 are confirmed, so the same fix covers the governance and donation spikes.
+- **R4.** G1 failed, so the allocation hunt becomes a Part B unit (§8.1, unit 3).
+- **R5** does not apply: there were 96 fat sends.
+
 ---
 
 ## 8. Part B — the fix, specified from M1's data
@@ -346,6 +406,54 @@ row carries its path. **The switch is deleted at close-out** (Convention 3).
   45), **and** mean `botTransactionsMs` new/old **≤ 0.25** in the same session.
 - **If M1 shows that exact fixes cannot reach that**, Part B says so **before** building anything. The developer then
   chooses: stop at what the exact fixes give, or take T4.2 forward (Convention 10's mirror; no grinding).
+
+### 8.1 — The amendment (2026-10-20, from M1's data, registered before any fix code)
+
+**R1 picks F-a and F-b, and nothing else.** Together they remove the two checks that are 99.2% of admission time
+from 78 of every 79 admissions.
+
+**Unit 2: the two fixes, the A/B switch, and two oracles.**
+- **F-a: verify once per broadcast.** `NetworkSimulator.BroadcastTransaction` runs `ValidateTransactionSignature`
+  **once**. Its answer cannot differ between nodes, because it reads only the transaction (static helpers and
+  `CryptoUtils`, checked 2026-10-20). Each receiving node's admission is then told the result and skips that one
+  check. **Every other rule still runs at every node:** the duplicate check, the UTXO, maturity and double-spend
+  checks, and the fee check. If the one verification fails, no node admits, which is what 78 failed verifications
+  produce today. The check sits inside the broadcast rather than reusing the sender's local admission (D-26.6), so it
+  does not depend on every caller admitting locally first, even though all three do today.
+- **F-b: a confirmed-txid set per `BlockchainService`.** `ContainsTransactionId` answers its confirmed half from a
+  `HashSet<string>`. The set is maintained from the chain version, in mini-plan 17 B1's fail-safe shape: it advances
+  by one block when exactly one block was appended since it was last current, and is rebuilt otherwise. The four
+  mutation sites all bump `_chainVersion` (verified 2026-10-20), so no path can leave it stale. The pending half stays
+  a scan, since the mempool holds tens of transactions.
+- **The A/B switch (D-26.4, D-26.7).** It is DEBUG-only and active **only while "⏱ Block cost" is armed**, so an
+  ordinary DEBUG playtest always takes the new path, and a release build has no switch. `HandleMinedBlock` sets it
+  from block parity: **even heights take the old path** (78 verifications, the full scan), odd heights the new.
+  Sends between blocks keep the last block's path. Each block row and send row carries `abPath`. **The switch is
+  deleted at close-out.**
+- **Two oracles, free on the old path.** Every old-path admission also computes the new path's answer: the set's
+  `Contains` against the scan, and the broadcast's single verification against the node's own. A disagreement prints
+  `[SendPathOracle] MISMATCH` with `GD.Print`. This is mini-plan 17's lesson: the old path proves the new one, on every
+  admission, in the same run.
+
+**Unit 3: where the 16 MB per frame comes from (R4, measurement only).** FrameCost splits each frame's allocation
+across its six segments (Recompute, PlayerLoop, BotLoop, FounderDrive, ScheduledDrive, Tail). The instrument rides
+along M2, so one session answers both questions. **No allocation fix is built in this plan without its own
+predictions**, registered after M2.
+
+**Predictions for M2, counts first (rule 3):**
+
+| # | Prediction | Threshold |
+|---|---|---|
+| **B1** | verifies per sent send | **new path: Σ inputs × 2** (the local one plus one broadcast check); old path: Σ inputs × node count, as M1. Exact by construction, so this tests the wiring |
+| **B2** | transactions scanned per admission | **new path ≤ 50** (the mempool only); old path ≈ the confirmed count, as M1 |
+| **B3** | the oracles | **0 `MISMATCH`** over every old-path admission (~85,000 in a 200-block run) |
+| **B4** | mean `botTransactionsMs`, new ÷ old, in the same session | **≤ 0.15**. Sends are 98.7% of the phase, the fan-out is 95.6% of a send, and the two checks are 99.2% of an admission. Removing them at 78 of 79 admissions leaves ~7% of a send, plus everything outside the fan-out. **The exit criterion stays ≤ 0.25** (§8) |
+| **B5** | new-path blocks over 1,000 ms | **≤ 10%** of new-path blocks: the exit criterion. My projection for a new-path block is ~300–500 ms. **At risk:** a fat exchange still pays 8.3 ms per key derivation plus its local verifies, roughly 1 s at 89 inputs |
+| **B6** | governance spikes (governance > 200 ms) | **new path ≤ 25%** of the old path's count per block |
+| **G3** | the largest allocating sim segment | **ScheduledDrive ≥ 50%** of sim allocation. That is the cast and the invisible mass doing PoW: ~1,400 attempts per frame, each building a header string and two hex digests. Rival: the player's and bots' settle loops |
+
+**M2's protocol** is §7's, steps 2–8, unchanged: the player and all four bots, DiceGame, 9000X, both toggles ticked
+before the autobet, **about 40 real minutes** (M1's 47 gave 212 blocks, so 40 gives ~100 per path).
 
 ---
 
@@ -383,3 +491,6 @@ row carries its path. **The switch is deleted at close-out** (Convention 3).
 | **D-26.3** | The GC question is measured here and fixed only under R4 | yes |
 | **D-26.4** | M2 is an interleaved A/B by block parity, through a DEBUG-only switch deleted at close-out | yes, confirmed again at Part B |
 | **D-26.5** | T4.2 stays out; a fix that needs it comes back to the developer | yes |
+| **D-26.6** | F-a verifies inside `BroadcastTransaction`, not by trusting the caller's local admission | yes: one extra verification per send buys independence from caller discipline (§8.1) |
+| **D-26.7** | The A/B switch is active only while "⏱ Block cost" is armed | yes: a DEBUG playtest that isn't measuring always gets the fast path |
+| **D-26.8** | The allocation split (unit 3) rides along M2 rather than getting its own session | yes |
