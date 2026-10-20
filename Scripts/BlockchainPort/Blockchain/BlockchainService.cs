@@ -299,7 +299,31 @@ public sealed class BlockchainService
 	// Step 8 (A.4) — admit a spend to the mempool under UTXO rules: every input references a confirmed,
 	// unspent, mature (if coinbase), non-double-spent output it owns; Σinputs ≥ Σoutputs; and the declared
 	// Fee equals Σinputs − Σoutputs. Coinbases never enter here (they are created inside the block template).
+	//
+	// Mini-plan 26 A — timed in three spans (the duplicate scan, the signature check, the UTXO checks), because a
+	// send runs one admission per node, ~72 of them. BlockCostProfiler.Clock() is 0 unless the profiler is armed and
+	// always 0 outside DEBUG, so a release build pays an inlined constant per span mark and nothing else.
 	public bool AddTransactionToPendingTransactions(Transaction transaction)
+	{
+		long begin = Scripts.Diagnostics.BlockCostProfiler.Clock();
+		long dupEnd = 0, sigEnd = 0;
+#if DEBUG
+		int pendingBefore = PendingTransactions.Count;
+#endif
+		bool accepted = TryAdmitToPending(transaction, ref dupEnd, ref sigEnd);
+#if DEBUG
+		if (begin != 0)
+		{
+			long end = Scripts.Diagnostics.BlockCostProfiler.Clock();
+			Scripts.Diagnostics.BlockCostProfiler.NoteAdmission(begin, dupEnd, sigEnd, end, accepted,
+				transaction.Inputs.Count, pendingBefore, ConfirmedTransactionCountForDiagnostics());
+		}
+#endif
+		return accepted;
+	}
+
+	// The admission rules themselves, unchanged by mini-plan 26 except for the two span marks.
+	private bool TryAdmitToPending(Transaction transaction, ref long dupEnd, ref long sigEnd)
 	{
 		if (transaction.IsCoinbase || transaction.Inputs.Count == 0)
 		{
@@ -313,10 +337,12 @@ public sealed class BlockchainService
 		{
 			return false;
 		}
+		dupEnd = Scripts.Diagnostics.BlockCostProfiler.Clock();
 		if (!ValidateTransactionSignature(transaction))
 		{
 			return false;
 		}
+		sigEnd = Scripts.Diagnostics.BlockCostProfiler.Clock();
 
 		Dictionary<string, UtxoEntry> utxos = GetUtxoSet();
 		HashSet<string> spentByPending = CollectPendingSpentOutpoints();
@@ -348,6 +374,30 @@ public sealed class BlockchainService
 	// (Maturity/pending state is ignored — this asks only "does the coin still exist".)
 	public bool IsUnspentOutput(string txId, int vout) =>
 		GetUtxoSet().ContainsKey(OutPointKey(txId, vout));
+
+#if DEBUG
+	// Mini-plan 26 A (V2) — how many confirmed transactions a missed ContainsTransactionId walked. Cached per chain
+	// version so it is computed once per node per block, not once per admission; DEBUG-only, read only while armed.
+	private int _diagConfirmedTxCount;
+	private int _diagConfirmedTxVersion = -1;
+
+	private int ConfirmedTransactionCountForDiagnostics()
+	{
+		if (_diagConfirmedTxVersion != _chainVersion)
+		{
+			int n = 0;
+			foreach (Block block in Chain)
+			{
+				n += block.Transactions.Count;
+			}
+
+			_diagConfirmedTxCount = n;
+			_diagConfirmedTxVersion = _chainVersion;
+		}
+
+		return _diagConfirmedTxCount;
+	}
+#endif
 
 	// Every outpoint consumed by a pending mempool transaction (for the double-spend guard).
 	private HashSet<string> CollectPendingSpentOutpoints()

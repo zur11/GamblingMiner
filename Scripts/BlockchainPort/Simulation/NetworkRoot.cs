@@ -17,6 +17,9 @@ public partial class NetworkRoot : Node
 	private static readonly Dictionary<string, NodeAgent> SharedNodesById = new();
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
+	// Mini-plan 26 A (V1) — how many nodes a broadcast fans out to (all but the sender), for BlockCostProfiler.
+	public static int NodeCountForDiagnostics => SharedNodesById.Count;
+
 	// Mini-plan 14 B — the chain file's lines MUST be compact, because the file is line-delimited: one block,
 	// one line. `JsonOptions` above is indented for human reading of `state.json`, and using it here wrote each
 	// block across dozens of lines — a file that still looked plausible, appended without error, and would have
@@ -1556,6 +1559,8 @@ public partial class NetworkRoot : Node
 	// (player, Satoshi) returns change to a fresh derived address; others return change to their base address.
 	private static Transaction? BuildAndBroadcastUtxoSpend(NodeAgent sender, string recipientAddress, decimal amount, decimal fee, string? deterministicSalt, string? memo = null)
 	{
+		// Mini-plan 26 A — the send, timed stage by stage (BlockCostProfiler.SendStage). Every exit closes it.
+		Scripts.Diagnostics.BlockCostProfiler.BeginSend();
 		decimal need = amount + fee;
 		HashSet<string> owned = OwnedAddressSet(sender);
 
@@ -1563,19 +1568,26 @@ public partial class NetworkRoot : Node
 		List<(OutPoint outpoint, string address, decimal amount)>? chosen = SelectUtxos(available, need);
 		if (chosen is null)
 		{
+			Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.SelectFailed, 0, 0, 0);
 			return null; // insufficient total funds, even combining every UTXO
 		}
 
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.Keys);
 		var inputs = new List<(OutPoint, string, string, string, string)>(chosen.Count);
 		decimal gathered = 0m;
 		foreach ((OutPoint outpoint, string address, decimal value) in chosen)
 		{
 			if (!TryResolveInputKeys(sender, address, out (string pub, string priv, string secp) keys))
+			{
+				Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.KeysFailed,
+					chosen.Count, CountBaseAddressInputs(sender, chosen), 0);
 				return null; // an owned address whose keys we can't derive (should not happen)
+			}
 			inputs.Add((outpoint, address, keys.pub, keys.priv, keys.secp));
 			gathered += value;
 		}
 
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.Sign);
 		var outputs = new List<TxOutput> { new() { Address = recipientAddress, Amount = amount } };
 		decimal change = gathered - need;
 		bool hasChange = change > 0m;
@@ -1591,14 +1603,33 @@ public partial class NetworkRoot : Node
 		{
 			tx.InputDataText = memo; // display-only label; excluded from the txid/sighash so safe post-signing
 		}
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.LocalAdmit);
 		if (!sender.Blockchain.AddTransactionToPendingTransactions(tx))
 		{
+			Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.AdmitFailed,
+				chosen.Count, CountBaseAddressInputs(sender, chosen), outputs.Count);
 			return null;
 		}
 		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.FanOut);
 		SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
 		if (hasChange) sender.ReceiveWallet?.MarkReceiveConsumed(); // a fresh change address was used
+		Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.Sent,
+			chosen.Count, CountBaseAddressInputs(sender, chosen), outputs.Count);
 		return tx;
+	}
+
+	// Mini-plan 26 A — the inputs spent from the node's base address, whose keys TryResolveInputKeys returns
+	// without a derivation. Read only as an argument of a [Conditional("DEBUG")] call, so a release build never runs it.
+	private static int CountBaseAddressInputs(NodeAgent sender, List<(OutPoint outpoint, string address, decimal amount)> chosen)
+	{
+		int n = 0;
+		foreach ((OutPoint _, string address, decimal _) in chosen)
+		{
+			if (address == sender.WalletAddress) n++;
+		}
+
+		return n;
 	}
 
 	// Coin selection: prefer an EXACT single-UTXO match (amount+fee → no change; preserves scripted exact-
@@ -1943,6 +1974,9 @@ public partial class NetworkRoot : Node
 		decimal totalFee  = perFee * evt.Payouts.Count;
 		decimal need      = totalAmt + totalFee;
 
+		// Mini-plan 26 A — the same send stages as BuildAndBroadcastUtxoSpend. Every exit closes the send.
+		Scripts.Diagnostics.BlockCostProfiler.BeginSend();
+
 		// Coin-select across ALL casino addresses (base + all registered change addresses).
 		HashSet<string> owned = casino.ReceiveWallet != null
 			? new HashSet<string>(casino.ReceiveWallet.OwnedAddresses) { casino.WalletAddress }
@@ -1951,24 +1985,41 @@ public partial class NetworkRoot : Node
 		IReadOnlyList<(OutPoint outpoint, string address, decimal amount)> available =
 			casino.Blockchain.GetSpendableUtxos(owned);
 		List<(OutPoint outpoint, string address, decimal amount)>? chosen = SelectUtxos(available, need);
-		if (chosen is null) return false; // not enough matured funds yet → retry next block
+		if (chosen is null)
+		{
+			Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.SelectFailed, 0, 0, 0);
+			return false; // not enough matured funds yet → retry next block
+		}
 
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.Keys);
 		var inputs = new List<(OutPoint, string, string, string, string)>(chosen.Count);
 		decimal gathered = 0m;
 		foreach ((OutPoint outpoint, string address, decimal value) in chosen)
 		{
-			if (!TryResolveInputKeys(casino, address, out var keys)) return false;
+			if (!TryResolveInputKeys(casino, address, out var keys))
+			{
+				Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.KeysFailed,
+					chosen.Count, CountBaseAddressInputs(casino, chosen), 0);
+				return false;
+			}
 			inputs.Add((outpoint, address, keys.pub, keys.priv, keys.secp));
 			gathered += value;
 		}
 
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.Sign);
 		// One output per recipient; any invalid payout aborts the whole tx.
 		var outputs = new List<TxOutput>(evt.Payouts.Count + 1);
 		foreach (CasinoPoolPendingPayout payout in evt.Payouts)
 		{
 			if (string.IsNullOrEmpty(payout.RecipientAddress) || payout.NetAmount <= 0m ||
 				payout.RecipientAddress == casino.WalletAddress)
+			{
+				// Not a send failure of any stage measured here: the payout itself was invalid. Closed as a
+				// selection failure so the send is not left open; it is the rare path and counted with it.
+				Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.SelectFailed,
+					chosen.Count, CountBaseAddressInputs(casino, chosen), 0);
 				return false;
+			}
 			outputs.Add(new TxOutput { Address = payout.RecipientAddress, Amount = payout.NetAmount });
 		}
 
@@ -1981,10 +2032,19 @@ public partial class NetworkRoot : Node
 		}
 
 		Transaction tx = casino.BuildSignedSpend(inputs, outputs, totalFee, null);
-		if (!casino.Blockchain.AddTransactionToPendingTransactions(tx)) return false;
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.LocalAdmit);
+		if (!casino.Blockchain.AddTransactionToPendingTransactions(tx))
+		{
+			Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.AdmitFailed,
+				chosen.Count, CountBaseAddressInputs(casino, chosen), outputs.Count);
+			return false;
+		}
 		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.FanOut);
 		SharedNetwork.BroadcastTransaction(casino.NodeId, tx);
 		if (hasChange) casino.ReceiveWallet?.MarkReceiveConsumed();
+		Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.Sent,
+			chosen.Count, CountBaseAddressInputs(casino, chosen), outputs.Count);
 		return true;
 	}
 
@@ -5140,6 +5200,8 @@ public partial class NetworkRoot : Node
 		}
 
 		// Coin-select across ALL the company's addresses (base + derived change addresses since P16.2).
+		// Mini-plan 26 A — the same send stages as BuildAndBroadcastUtxoSpend. Every exit closes the send.
+		Scripts.Diagnostics.BlockCostProfiler.BeginSend();
 		decimal need = netByHolder.Values.Sum() + fee;
 		HashSet<string> owned = company.ReceiveWallet != null
 			? new HashSet<string>(company.ReceiveWallet.OwnedAddresses) { company.WalletAddress }
@@ -5150,6 +5212,7 @@ public partial class NetworkRoot : Node
 		List<(OutPoint outpoint, string address, decimal amount)>? chosen = SelectUtxos(available, need);
 		if (chosen is null)
 		{
+			Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.SelectFailed, 0, 0, 0);
 			// P16.1b — ND.10e's rule survives the batching: a failed settlement must never vanish. The
 			// treasury being momentarily short of spendable UTXOs looks exactly like "no dividend was
 			// due", and this row is now the difference between the two. Nothing is lost — every
@@ -5160,12 +5223,15 @@ public partial class NetworkRoot : Node
 			return;
 		}
 
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.Keys);
 		var inputs = new List<(OutPoint, string, string, string, string)>(chosen.Count);
 		decimal gathered = 0m;
 		foreach ((OutPoint outpoint, string address, decimal value) in chosen)
 		{
 			if (!TryResolveInputKeys(company, address, out (string pub, string priv, string secp) keys))
 			{
+				Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.KeysFailed,
+					chosen.Count, CountBaseAddressInputs(company, chosen), 0);
 				AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "dividend_settlement_failed", "batch",
 					$"holders={payees.Count} reason=unresolvable_key address={address}");
 				return;
@@ -5175,6 +5241,7 @@ public partial class NetworkRoot : Node
 			gathered += value;
 		}
 
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.Sign);
 		var outputs = new List<TxOutput>(payees.Count + 1);
 		foreach ((string holderId, string address, decimal _, CompanyClaimable _) in payees)
 		{
@@ -5191,8 +5258,11 @@ public partial class NetworkRoot : Node
 
 		Transaction tx = company.BuildSignedSpend(inputs, outputs, fee, null);
 		tx.InputDataText = "DIVIDEND"; // display-only; excluded from the txid/sighash
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.LocalAdmit);
 		if (!company.Blockchain.AddTransactionToPendingTransactions(tx))
 		{
+			Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.AdmitFailed,
+				chosen.Count, CountBaseAddressInputs(company, chosen), outputs.Count);
 			AppendCompanyGovernanceTrace(block.Timestamp, block.Index, gov, "dividend_settlement_failed", "batch",
 				string.Format(System.Globalization.CultureInfo.InvariantCulture,
 					"holders={0} btc={1:F8} reason=rejected_by_mempool", payees.Count, need - fee));
@@ -5200,11 +5270,15 @@ public partial class NetworkRoot : Node
 		}
 
 		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
+		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.FanOut);
 		SharedNetwork.BroadcastTransaction(company.NodeId, tx);
 		if (hasChange)
 		{
 			company.ReceiveWallet?.MarkReceiveConsumed();
 		}
+
+		Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.Sent,
+			chosen.Count, CountBaseAddressInputs(company, chosen), outputs.Count);
 
 		// Only now are the claimables cleared — a settlement that never broadcast must leave them intact.
 		decimal paidTotal = 0m;
@@ -5710,11 +5784,14 @@ public partial class NetworkRoot : Node
 		// asymmetry is what the split is for: a median of 0.957 ms against a mean of 76.899 has to come from a
 		// path that does not run every time.
 		long botDonationBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+		// Mini-plan 26 A — each Mark* says which sub-phase a send inside it belongs to; NoteBotPhase still times it.
+		Scripts.Diagnostics.BlockCostProfiler.MarkBotPhase(Scripts.Diagnostics.BlockCostProfiler.BotPhase.CasinoDonation);
 		TryCasinoBotDonation(block);
 		Scripts.Diagnostics.BlockCostProfiler.NoteBotPhase(
 			Scripts.Diagnostics.BlockCostProfiler.BotPhase.CasinoDonation, botDonationBegin);
 
 		long botBudgetBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+		Scripts.Diagnostics.BlockCostProfiler.MarkBotPhase(Scripts.Diagnostics.BlockCostProfiler.BotPhase.Budget);
 
 		// The mempool is primed to hover AT the target level, so the next block template (which takes up
 		// to MaxBlockTransactions − 1 pending txs by fee) carries ≈ target non-coinbase txs. ORGANIC
@@ -5737,10 +5814,12 @@ public partial class NetworkRoot : Node
 		// what the decision itself cost — otherwise the cheap path would look like no path at all.
 		Scripts.Diagnostics.BlockCostProfiler.NoteBotPhase(
 			Scripts.Diagnostics.BlockCostProfiler.BotPhase.Budget, botBudgetBegin);
+		Scripts.Diagnostics.BlockCostProfiler.NoteBotBudget(budget); // mini-plan 26 A
 
 		if (budget <= 0) return;
 
 		long sellFlowBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+		Scripts.Diagnostics.BlockCostProfiler.MarkBotPhase(Scripts.Diagnostics.BlockCostProfiler.BotPhase.CastSellFlow);
 		int created = TryCastSellFlow(block, chain, budget);
 		Scripts.Diagnostics.BlockCostProfiler.NoteBotPhase(
 			Scripts.Diagnostics.BlockCostProfiler.BotPhase.CastSellFlow, sellFlowBegin);
@@ -5748,6 +5827,7 @@ public partial class NetworkRoot : Node
 		if (created < budget)
 		{
 			long exchangeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
+			Scripts.Diagnostics.BlockCostProfiler.MarkBotPhase(Scripts.Diagnostics.BlockCostProfiler.BotPhase.NonMinerExchanges);
 			TryNonMinerExchanges(block, budget - created);
 			Scripts.Diagnostics.BlockCostProfiler.NoteBotPhase(
 				Scripts.Diagnostics.BlockCostProfiler.BotPhase.NonMinerExchanges, exchangeBegin);
@@ -6293,33 +6373,54 @@ public partial class NetworkRoot : Node
 	private static Transaction? TrySellFlowSend(BotWalletRecord record, Block block, List<Block> chain,
 		List<(string address, decimal weight)> recipientPool)
 	{
-		if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? node)) return null;
+		// Mini-plan 26 A — `gate` names the check that ends the attempt if it returns from here, and is reported on
+		// every exit by the finally. The attempt's gate time is separated from the send it may lead to.
+		var gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.NoNode;
+		Scripts.Diagnostics.BlockCostProfiler.BeginSendAttempt();
+		try
+		{
+			if (!SharedNodesById.TryGetValue(record.NodeId, out NodeAgent? node)) return null;
 
-		// Warmup measured PER BOT from the block it first mined — so circulation starts a few
-		// blocks after a miner actually begins mining (works for miners introduced gradually,
-		// not an absolute chain index that the historical bootstrap would have already passed).
-		int? firstMinedHeight = FirstBlockHeightMinedBy(record.NodeId, chain);
-		if (firstMinedHeight is null) return null; // hasn't mined yet → nothing to circulate
-		if (block.Index - firstMinedHeight.Value < CirculationWarmupBlocks) return null;
+			// Warmup measured PER BOT from the block it first mined — so circulation starts a few
+			// blocks after a miner actually begins mining (works for miners introduced gradually,
+			// not an absolute chain index that the historical bootstrap would have already passed).
+			gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.NeverMined;
+			long scanBegin = Scripts.Diagnostics.BlockCostProfiler.Clock();
+			int? firstMinedHeight = FirstBlockHeightMinedBy(record.NodeId, chain);
+			// Mini-plan 26 P5 — mini-plan 18's named cause, timed. A miss walks the whole chain.
+			Scripts.Diagnostics.BlockCostProfiler.NoteFirstMinedScan(scanBegin,
+				firstMinedHeight is int found && chain.Count > 0 ? found - chain[0].Index + 1 : chain.Count);
+			if (firstMinedHeight is null) return null; // hasn't mined yet → nothing to circulate
+			gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.Warmup;
+			if (block.Index - firstMinedHeight.Value < CirculationWarmupBlocks) return null;
 
-		decimal spendable = AggregateSpendable(node); // Step 16 — whole wallet: cast miners carry seeds since P16.2
-		if (spendable < MinBotSpendableBalanceBtc) return null;
+			gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.LowBalance;
+			decimal spendable = AggregateSpendable(node); // Step 16 — whole wallet: cast miners carry seeds since P16.2
+			if (spendable < MinBotSpendableBalanceBtc) return null;
 
-		decimal fraction = MinSendFractionDecimal
-			+ (decimal)Random.Shared.NextDouble() * (MaxSendFractionDecimal - MinSendFractionDecimal);
-		decimal sendAmount = Math.Round(spendable * fraction, 8);
-		if (sendAmount <= 0m) return null;
+			gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.AmountFee;
+			decimal fraction = MinSendFractionDecimal
+				+ (decimal)Random.Shared.NextDouble() * (MaxSendFractionDecimal - MinSendFractionDecimal);
+			decimal sendAmount = Math.Round(spendable * fraction, 8);
+			if (sendAmount <= 0m) return null;
 
-		// D-ND7.3 — the cast sell-flow pays the day's replayed MEAN fee (the cast IS the network's
-		// average activity). 0 pre-birth.
-		decimal fee = NetworkFeePolicy.MeanFeeAt(block.Timestamp);
-		if (sendAmount + fee > spendable) return null; // must cover amount + fee
+			// D-ND7.3 — the cast sell-flow pays the day's replayed MEAN fee (the cast IS the network's
+			// average activity). 0 pre-birth.
+			decimal fee = NetworkFeePolicy.MeanFeeAt(block.Timestamp);
+			if (sendAmount + fee > spendable) return null; // must cover amount + fee
 
-		string recipientAddress = DrawWeightedRecipient(recipientPool); // ND.8b.5 — ∝ effective inflow weight
-		if (recipientAddress == node.WalletAddress) return null; // never send to self
+			gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.Self;
+			string recipientAddress = DrawWeightedRecipient(recipientPool); // ND.8b.5 — ∝ effective inflow weight
+			if (recipientAddress == node.WalletAddress) return null; // never send to self
 
-		// Step 8 — UTXO spend (coin-select the miner's base-address UTXOs + change back to its base).
-		return BuildAndBroadcastUtxoSpend(node, recipientAddress, sendAmount, fee, null);
+			// Step 8 — UTXO spend (coin-select the miner's base-address UTXOs + change back to its base).
+			gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.ReachedSend;
+			return BuildAndBroadcastUtxoSpend(node, recipientAddress, sendAmount, fee, null);
+		}
+		finally
+		{
+			Scripts.Diagnostics.BlockCostProfiler.EndSendAttempt(gate);
+		}
 	}
 
 	// Non-miner ↔ non-miner exchange scheduler (D-14.2, new at ND.3): fills the remaining automated-tx
@@ -6335,25 +6436,39 @@ public partial class NetworkRoot : Node
 		int offset = Random.Shared.Next(holders.Count);
 		for (int i = 0; i < holders.Count && created < budget; i++)
 		{
-			BotWalletRecord senderRecord = holders[(offset + i) % holders.Count];
-			if (!SharedNodesById.TryGetValue(senderRecord.NodeId, out NodeAgent? sender)) continue;
+			// Mini-plan 26 A — the same attempt accounting as TrySellFlowSend: `gate` is reported on every exit.
+			var gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.NoNode;
+			Scripts.Diagnostics.BlockCostProfiler.BeginSendAttempt();
+			try
+			{
+				BotWalletRecord senderRecord = holders[(offset + i) % holders.Count];
+				if (!SharedNodesById.TryGetValue(senderRecord.NodeId, out NodeAgent? sender)) continue;
 
-			decimal spendable = AggregateSpendable(sender); // Step 16 — whole wallet (companies carry seeds since P16.2)
-			if (spendable < MinBotSpendableBalanceBtc) continue;
+				gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.LowBalance;
+				decimal spendable = AggregateSpendable(sender); // Step 16 — whole wallet (companies carry seeds since P16.2)
+				if (spendable < MinBotSpendableBalanceBtc) continue;
 
-			decimal fraction = MinSendFractionDecimal
-				+ (decimal)Random.Shared.NextDouble() * (MaxSendFractionDecimal - MinSendFractionDecimal);
-			decimal sendAmount = Math.Round(spendable * fraction, 8);
-			if (sendAmount <= 0m) continue;
+				gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.AmountFee;
+				decimal fraction = MinSendFractionDecimal
+					+ (decimal)Random.Shared.NextDouble() * (MaxSendFractionDecimal - MinSendFractionDecimal);
+				decimal sendAmount = Math.Round(spendable * fraction, 8);
+				if (sendAmount <= 0m) continue;
 
-			decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp); // D-ND7.3 — median, 0 pre-birth
-			if (sendAmount + fee > spendable) continue;
+				decimal fee = NetworkFeePolicy.MedianFeeAt(block.Timestamp); // D-ND7.3 — median, 0 pre-birth
+				if (sendAmount + fee > spendable) continue;
 
-			BotWalletRecord recipient = holders[Random.Shared.Next(holders.Count)];
-			if (recipient.NodeId == senderRecord.NodeId || recipient.Address == sender.WalletAddress) continue;
+				gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.Self;
+				BotWalletRecord recipient = holders[Random.Shared.Next(holders.Count)];
+				if (recipient.NodeId == senderRecord.NodeId || recipient.Address == sender.WalletAddress) continue;
 
-			if (BuildAndBroadcastUtxoSpend(sender, recipient.Address, sendAmount, fee, null) != null)
-				created++;
+				gate = Scripts.Diagnostics.BlockCostProfiler.AttemptGate.ReachedSend;
+				if (BuildAndBroadcastUtxoSpend(sender, recipient.Address, sendAmount, fee, null) != null)
+					created++;
+			}
+			finally
+			{
+				Scripts.Diagnostics.BlockCostProfiler.EndSendAttempt(gate);
+			}
 		}
 	}
 

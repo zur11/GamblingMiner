@@ -4,9 +4,10 @@
 mini-plan 25's measurement F1 (`step17-ui-access-and-event-driven-audit-plan.md` §5.5 "F1 results", §10.1, §11.4), and
 the two 📝 notes under §8 **T4**.
 
-**Status:** 📝 **SPECIFIED 2026-10-20, not started.** Next: **unit 1**, Part A's instrument (§3). Then the developer
-runs **M1** (§7). Part B, the fix, is specified from M1's data as an amendment to this file (§8), with its own
-predictions registered before its code.
+**Status:** 🔨 **IN PROGRESS.** Specified 2026-10-20 (`68d6b9f`, all of §11 approved by the developer). **Unit 1, Part
+A's instrument, is built** (§3.5). §7 step 1 is done: F1's two traces are archived. Next: the developer runs **M1**
+(§7). Part B, the fix, is specified from M1's data as an amendment to this file (§8), with its own predictions
+registered before its code.
 
 **Branch:** `mini26-per-block-freeze` (proposed, D-26.1).
 
@@ -202,6 +203,39 @@ filter hides the other (instrument rule 1).
   `string.Create(CultureInfo.InvariantCulture, …)` with its `+`-chain within three lines of the wrapper. Otherwise
   the baseline is updated in the same commit.
 
+### 3.5 — As built (unit 1, 2026-10-20)
+
+**Where the marks are.**
+- `BuildAndBroadcastUtxoSpend` carries the five send stages. So do the two paths that build their own spend: the
+  casino-pool payout (`DistributePoolEventAsSingleTx`, in the CasinoRewards phase, so `OtherInBlock`) and the
+  dividend batch (Governance). Every exit closes its send.
+- `ScheduleBotTransactionsAfterBlock` marks each bot sub-phase and notes the budget.
+- `TrySellFlowSend` and the exchange loop wrap each candidate in `BeginSendAttempt` / `EndSendAttempt`. A local
+  `gate` names the check that ends it, and a `finally` reports it on every exit.
+- `AddTransactionToPendingTransactions` became a timed wrapper around `TryAdmitToPending`. That method holds the
+  rules, unchanged except for two span marks.
+
+**Release cost.** `BlockCostProfiler.Clock()` returns 0 outside DEBUG. The admission wrapper's DEBUG work sits
+under `#if DEBUG`, and everything else is a `[Conditional("DEBUG")]` call, whose arguments are not evaluated in a
+release build. Both builds have 0 warnings, and the locale detector reads **17/0/0/0**. The 17 hit lines are
+identical by content to `HEAD`'s, so the count did not hold by coincidence.
+
+**Where the build differs from §3, stated rather than smoothed over:**
+- **V2 is a plausibility check, not an independent count.** `txsScanned` is *derived*: a txid that passes the
+  duplicate check was compared against every pending and confirmed transaction, because the scan has no early exit
+  on a miss. Counting inside the LINQ walk would change the cost being measured. V2 therefore reads as **ns per
+  transaction scanned**, which must be plausible (single to low double digits).
+- **Three columns more than §3.1 listed:** `orphanAdmissions` (admissions with no send open; expected 0), and
+  `sellSendMs` / `exchSendMs`, which P1 needs per context.
+- **Instrument work inside the timed span.** The confirmed-transaction count behind V2 is computed once per node per
+  chain version, so ~72 walks of ~3,500 blocks per block, inside the fan-out stage. Estimated (not timed) at
+  ~0.2–0.4 ms per block. Each send also appends one struct to a list. The rows are formatted and written only after
+  the block's timing has closed.
+- **The pool payout's invalid-payout exit** is closed as `SelectFailed`, so the send is not left open. It is not a
+  stage failure, and it is the rare path.
+- **A report's own allocation and GC are billed to no frame.** FrameCost reads the allocation and pause counters
+  after its commit, exactly as it already did for time.
+
 ---
 
 ## 4. Instrument self-checks: read these before any prediction (Convention 16, the boring check)
@@ -263,7 +297,8 @@ I will state both as refuted if they fail.
 1. **Before launching, archive F1's two traces.** Unit 1 changes both headers, and the profilers rotate a mismatched
    file onto `.old`, which already holds older traces (2026-10-06 and 2026-09-22). In
    `%APPDATA%/Godot/app_userdata/GamblingMiner/logs/`, rename `block_cost_trace.csv` → `block_cost_trace_F1.csv` and
-   `frame_cost_trace.csv` → `frame_cost_trace_F1.csv`.
+   `frame_cost_trace.csv` → `frame_cost_trace_F1.csv`. ✅ **Done 2026-10-20** with the developer's approval; both
+   `.old` files are untouched.
 2. Launch from the editor (a DEBUG build). In the **Output panel**, confirm the `[Build] DEBUG` line.
 3. Open **DiceGame** and stay there for the whole run (D-26.2; F1 showed the scene does not move the cost). The clock
    should read ~2015-07-08.
