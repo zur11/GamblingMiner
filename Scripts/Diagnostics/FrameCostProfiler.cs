@@ -103,7 +103,9 @@ namespace Scripts.Diagnostics
 			"gameDateUtc,chainHeight,castPowered,scheduledPower,scheduledCapShare,blockWorkMsPerBlock,blockWorkMaxMs," +
 			"botEnginesPerFrame,botCapBoundShare,stalls,stallTotalMs,stallMaxMs," +
 			// Mini-plan 26 A — what the gen-0 GC on every frame costs (G1) and who allocates (G2).
-			"gcPauseMsPerFrame,gcPauseShare,gc0Count,gc1Count,gc2Count,allocKBPerFrame,allocSimShare,stallGcPauseMs,stallAllocMB";
+			"gcPauseMsPerFrame,gcPauseShare,gc0Count,gc1Count,gc2Count,allocKBPerFrame,allocSimShare,stallGcPauseMs,stallAllocMB," +
+			// Mini-plan 26 B (unit 3, G3) — the sim's allocation by segment, KB per frame.
+			"allocKBRecompute,allocKBPlayerLoop,allocKBBotLoop,allocKBFounderDrive,allocKBScheduledDrive,allocKBTail";
 
 		// ── Committed frames of the current report window (flat arrays: no allocation per frame) ──────────
 		private static readonly double[] _periodMs = new double[ReportEveryFrames];
@@ -139,6 +141,8 @@ namespace Scripts.Diagnostics
 		private static readonly int[] _gc2n = new int[ReportEveryFrames];
 		private static readonly long[] _allocBytes = new long[ReportEveryFrames];
 		private static readonly long[] _simAllocBytes = new long[ReportEveryFrames];
+		// Mini-plan 26 B (unit 3, G3) — the sim's allocation by segment, read at the same boundaries as its time.
+		private static readonly long[] _segAllocBytes = new long[ReportEveryFrames * SegmentCount];
 		private static int _count;
 
 		// ── The era, as last noted inside a frame (mini-plan 11 C1) ───────────────────────────────────────
@@ -166,8 +170,10 @@ namespace Scripts.Diagnostics
 		private static long _curAllocBegin;
 		private static TimeSpan _curPauseBegin;
 		private static readonly long[] _curSegTicks = new long[SegmentCount];
+		private static readonly long[] _curSegAlloc = new long[SegmentCount];
 		private static int _openSegment = -1;
 		private static long _openSince;
+		private static long _openSinceAlloc;
 		private static int _curPlayerBets, _curBotBets, _curFounderAttempts, _curScheduledAttempts, _curCheckpoints;
 		private static bool _curCapBound;
 		private static int _curBlocks, _curBotEngines;
@@ -183,6 +189,7 @@ namespace Scripts.Diagnostics
 		private static TimeSpan _pendingPauseBegin;
 		private static long _pendingSimTicks;
 		private static readonly long[] _pendingSegTicks = new long[SegmentCount];
+		private static readonly long[] _pendingSegAlloc = new long[SegmentCount];
 		private static int _pendingPlayerBets, _pendingBotBets, _pendingFounderAttempts, _pendingScheduledAttempts, _pendingCheckpoints;
 		private static bool _pendingCapBound;
 		private static int _pendingBlocks, _pendingBotEngines;
@@ -304,6 +311,7 @@ namespace Scripts.Diagnostics
 			_curAllocBegin = GC.GetAllocatedBytesForCurrentThread();
 			_curPauseBegin = GC.GetTotalPauseDuration();
 			Array.Clear(_curSegTicks, 0, SegmentCount);
+			Array.Clear(_curSegAlloc, 0, SegmentCount);
 			_openSegment = -1;
 			_curPlayerBets = _curBotBets = _curFounderAttempts = _curScheduledAttempts = _curCheckpoints = 0;
 			_curCapBound = false;
@@ -318,16 +326,19 @@ namespace Scripts.Diagnostics
 		{
 			if (!Enabled || !_inFrame) return;
 			long now = Stopwatch.GetTimestamp();
-			CloseOpenSegment(now);
+			long alloc = GC.GetAllocatedBytesForCurrentThread();
+			CloseOpenSegment(now, alloc);
 			_openSegment = (int)segment;
 			_openSince = now;
+			_openSinceAlloc = alloc;
 		}
 
-		private static void CloseOpenSegment(long now)
+		private static void CloseOpenSegment(long now, long alloc)
 		{
 			if (_openSegment >= 0)
 			{
 				_curSegTicks[_openSegment] += now - _openSince;
+				_curSegAlloc[_openSegment] += alloc - _openSinceAlloc;
 				_openSegment = -1;
 			}
 		}
@@ -453,7 +464,8 @@ namespace Scripts.Diagnostics
 		{
 			if (!Enabled || !_inFrame) return;
 			long now = Stopwatch.GetTimestamp();
-			CloseOpenSegment(now);
+			long allocAtEnd = GC.GetAllocatedBytesForCurrentThread();
+			CloseOpenSegment(now, allocAtEnd);
 			_inFrame = false;
 
 			_pendingValid = true;
@@ -462,10 +474,11 @@ namespace Scripts.Diagnostics
 			_pendingGc1 = _curGc1;
 			_pendingGc2 = _curGc2;
 			_pendingAllocBegin = _curAllocBegin;
-			_pendingAllocSimEnd = GC.GetAllocatedBytesForCurrentThread(); // the sim's share ends here (G2)
+			_pendingAllocSimEnd = allocAtEnd; // the sim's share ends here (G2)
 			_pendingPauseBegin = _curPauseBegin;
 			_pendingSimTicks = now - _curBegin;
 			Array.Copy(_curSegTicks, _pendingSegTicks, SegmentCount);
+			Array.Copy(_curSegAlloc, _pendingSegAlloc, SegmentCount);
 			_pendingPlayerBets = _curPlayerBets;
 			_pendingBotBets = _curBotBets;
 			_pendingFounderAttempts = _curFounderAttempts;
@@ -500,6 +513,7 @@ namespace Scripts.Diagnostics
 			for (int s = 0; s < SegmentCount; s++)
 			{
 				_segMs[i * SegmentCount + s] = TicksToMs(_pendingSegTicks[s]);
+				_segAllocBytes[i * SegmentCount + s] = _pendingSegAlloc[s];
 			}
 			_playerBets[i] = _pendingPlayerBets;
 			_botBets[i] = _pendingBotBets;
@@ -638,6 +652,22 @@ namespace Scripts.Diagnostics
 			double allocKBPerFrame = sumAlloc / 1024.0 / n;
 			double allocSimShare = sumAlloc > 0 ? (double)sumSimAlloc / sumAlloc : 0d;
 
+			// Mini-plan 26 B (unit 3) — G3, the sim's allocation by segment, in KB per frame.
+			var segAllocKB = new double[SegmentCount];
+			for (int i = 0; i < n; i++)
+			{
+				for (int s = 0; s < SegmentCount; s++)
+				{
+					segAllocKB[s] += _segAllocBytes[i * SegmentCount + s] / 1024.0;
+				}
+			}
+			double segAllocTotalKB = 0d;
+			for (int s = 0; s < SegmentCount; s++)
+			{
+				segAllocKB[s] /= n;
+				segAllocTotalKB += segAllocKB[s];
+			}
+
 			double scheduledCapShare = (double)scheduledCapFrames / n;
 			double botCapShare = (double)botCapFrames / n;
 			double blockWorkPerBlock = sumBlocks > 0 ? sumBlockWork / sumBlocks : 0d;
@@ -682,6 +712,14 @@ namespace Scripts.Diagnostics
 				$"           G1 GC pause {sumGcPause / n:N3} ms/frame = {gcPauseShare * 100.0:N2}% of frame time (pre-registered < 2%) · collections gen0 {sumGc0:N0}, gen1 {sumGc1:N0}, gen2 {sumGc2:N0} (cumulative by generation)\n"));
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           G2 allocated {allocKBPerFrame:N0} KB/frame on the main thread, {allocSimShare * 100.0:N1}% of it inside the sim (pre-registered >= 1,024 KB and >= 70%)\n"));
+			sb.Append("           G3 sim allocation by segment, KB/frame:");
+			for (int s = 0; s < SegmentCount; s++)
+			{
+				double share = segAllocTotalKB > 0d ? 100.0 * segAllocKB[s] / segAllocTotalKB : 0d;
+				sb.Append(string.Create(CultureInfo.InvariantCulture,
+					$" {SegmentNames[s].Split(' ')[0]} {segAllocKB[s]:N0} ({share:N1}%)"));
+			}
+			sb.Append("  (pre-registered: ScheduledDrive >= 50%)\n");
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"           R2-C1 overspend: {overspend * 100.0:N3}%  (clock advanced {sumCalendarAdvance:N1} game-s vs {sumRetainedGame:N1} retained) · Bet view {Scripts.Diagnostics.BetUiDiagnostics.View}\n"));
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
@@ -706,7 +744,8 @@ namespace Scripts.Diagnostics
 
 			WriteTraceRow(string.Format(CultureInfo.InvariantCulture,
 				"{0:O},{1},{2},{3:F2},{4:F3},{5:F3},{6:F3},{7},{8},{9},{10:F3},{11:F3},{12:F3},{13:F4},{14:F4},{15:F4},{16:F4},{17:F4},{18:F4},{19:F4},{20:F4},{21:F3},{22:F4},{23:F3},{24:F3},{25:F3},{26:F1},{27:F1},{28:F4},{29},{30},{31},{32},{33:F3},{34:F3},{35:F6},{36},{37:F0},{38:O},{39},{40},{41:F1},{42:F4},{43:F3},{44:F3},{45:F3},{46:F4},{47},{48:F1},{49:F1}," +
-				"{50:F4},{51:F5},{52},{53},{54},{55:F1},{56:F4},{57:F1},{58:F2}",
+				"{50:F4},{51:F5},{52},{53},{54},{55:F1},{56:F4},{57:F1},{58:F2}," +
+				"{59:F1},{60:F1},{61:F1},{62:F1},{63:F1},{64:F1}",
 				DateTime.UtcNow, n, partial ? 1 : 0, fps, p50Period, p95Period, maxPeriod, over16, over33, over50,
 				p50Sim, p95Sim, maxSim, simShare,
 				segSum[0] / n, segSum[1] / n, segSum[2] / n, segSum[3] / n, segSum[4] / n, segSum[5] / n, sumUnaccounted / n,
@@ -724,7 +763,8 @@ namespace Scripts.Diagnostics
 				_stalls, _stallTotalMs, _stallMaxMs,
 				// Mini-plan 26 A — G1 / G2, and what the stalls held.
 				sumGcPause / n, gcPauseShare, sumGc0, sumGc1, sumGc2, allocKBPerFrame, allocSimShare,
-				_stallGcPauseMs, _stallAllocBytes / (1024.0 * 1024.0)));
+				_stallGcPauseMs, _stallAllocBytes / (1024.0 * 1024.0),
+				segAllocKB[0], segAllocKB[1], segAllocKB[2], segAllocKB[3], segAllocKB[4], segAllocKB[5]));
 		}
 
 		private static void WriteTraceRow(string row)

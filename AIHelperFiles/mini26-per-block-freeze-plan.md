@@ -8,8 +8,8 @@ the two 📝 notes under §8 **T4**.
 A's instrument, is built** (§3.5). **M1 ran 2026-10-20 (§7.1)**: 6.0 s per block, 98.7% of it in sends, 95.6% of a
 send in the fan-out, all four self-checks passed, 7 predictions confirmed, P3 half refuted, P4 and G1 refuted. **Part
 B is amended from that data (§8.1):** F-a (verify once per broadcast) and F-b (a confirmed-txid set), an A/B switch by
-block parity, two oracles, and an allocation split for G2's 16 MB per frame. Next: **unit 2** (the fixes), **unit 3**
-(the allocation split), then **M2**.
+block parity, two oracles, and an allocation split for G2's 16 MB per frame. **Units 2 and 3 are built (§8.2).**
+Next: the developer runs **M2** (§8.1, about 40 real minutes).
 
 **Branch:** `mini26-per-block-freeze` (proposed, D-26.1).
 
@@ -451,6 +451,43 @@ predictions**, registered after M2.
 | **B5** | new-path blocks over 1,000 ms | **≤ 10%** of new-path blocks: the exit criterion. My projection for a new-path block is ~300–500 ms. **At risk:** a fat exchange still pays 8.3 ms per key derivation plus its local verifies, roughly 1 s at 89 inputs |
 | **B6** | governance spikes (governance > 200 ms) | **new path ≤ 25%** of the old path's count per block |
 | **G3** | the largest allocating sim segment | **ScheduledDrive ≥ 50%** of sim allocation. That is the cast and the invisible mass doing PoW: ~1,400 attempts per frame, each building a header string and two hex digests. Rival: the player's and bots' settle loops |
+
+### 8.2 — As built (units 2 and 3, 2026-10-20)
+
+**F-a.**
+- `ValidateTransactionSignature` is now **`static`**, so the compiler enforces that its verdict depends on nothing
+  but the transaction.
+- `NetworkSimulator.BroadcastTransaction` verifies once and passes the verdict into
+  `AddTransactionToPendingTransactions(tx, signatureVerdict)`.
+- With a verdict, the admission skips only the verification. The duplicate check before it and the UTXO, maturity,
+  double-spend and fee checks after it run at every node, **in the same order**, so a bad signature is still rejected
+  at the same step.
+- Without one (the sender's own admission, and every other caller), it verifies as before.
+
+**F-b.** `ContainsTransactionId` answers its confirmed half from `ConfirmedTransactionIds()`. The set is kept current
+by `AdvanceConfirmedTxIdsWithAppendedBlock`, which sits beside mini-plan 17's UTXO advance at all three append sites.
+It is fail-safe on **version and length**: if it is not exactly one block behind, the next read rebuilds it from the
+chain. `TryReplaceChain` therefore always rebuilds.
+
+**The switch and the oracles.**
+- `BlockCostProfiler.OldSendPath` is set by `SetSendPathForBlock` at the top of `HandleMinedBlock`. Disarming clears
+  it.
+- On the old path every node verifies, as before, and compares with the verdict; the duplicate check scans, as
+  before, and compares with the set. Each comparison is a `NoteOracle` call. A disagreement prints
+  `[SendPathOracle] MISMATCH`, and both are counted in `oracleChecks` / `oracleMismatches`.
+- Rows carry `abPath`, and the new columns are `broadcastVerifies` / `broadcastVerifyMs`.
+- `verifiedHere` keeps B1's count honest: an admission that was handed the verdict verified nothing.
+
+**⚠ One difference from the pre-fix code, stated:** the old path is not *exactly* the old code. The broadcast's single
+verification also runs on old-path blocks, because the oracle needs it. That is one verification per send on top of
+~78, about **1.3% of the old path's signature work**. It makes B4's ratio slightly conservative, never flattering.
+
+**Unit 3.** FrameCost reads the main thread's allocation at the same segment boundaries it already times, and
+reports G3 per segment in the Output panel and in six new CSV columns.
+
+**Checks.** Both builds have 0 warnings, and the locale detector reads **17/0/0/0**, with hit lines identical to unit
+1's. M1's three traces and its log are archived as `*_M1.csv` and `M1_godot.log`. The log's name is outside Godot's
+`godot*.log` rotation, which keeps five.
 
 **M2's protocol** is §7's, steps 2–8, unchanged: the player and all four bots, DiceGame, 9000X, both toggles ticked
 before the autobet, **about 40 real minutes** (M1's 47 gave 212 blocks, so 40 gives ~100 per path).

@@ -181,6 +181,7 @@ public sealed class BlockchainService
 		Chain.Add(newBlock);
 		_chainVersion++;
 		AdvanceUtxoCacheWithAppendedBlock(newBlock); // mini-plan 17 B1
+		AdvanceConfirmedTxIdsWithAppendedBlock(newBlock); // mini-plan 26 B (F-b)
 		return newBlock;
 	}
 
@@ -209,6 +210,7 @@ public sealed class BlockchainService
 		Chain.Add(newBlock);
 		_chainVersion++;
 		AdvanceUtxoCacheWithAppendedBlock(newBlock); // mini-plan 17 B1
+		AdvanceConfirmedTxIdsWithAppendedBlock(newBlock); // mini-plan 26 B (F-b)
 		return newBlock;
 	}
 
@@ -257,7 +259,10 @@ public sealed class BlockchainService
 	// Step 8 (A.4) — per-input validation: txid integrity + for EVERY input an ownership proof (the input's
 	// secp256k1 key derives the address recorded on it) and a P-256 signature over the tx sighash. A coinbase
 	// (no inputs) is signature-valid by definition. Enables inputs across several owned addresses.
-	public bool ValidateTransactionSignature(Transaction tx)
+	//
+	// Mini-plan 26 B (F-a) — STATIC, which is the proof F-a rests on: the verdict reads only the transaction, so it
+	// cannot differ between nodes, and NetworkSimulator.BroadcastTransaction computes it once instead of ~78 times.
+	public static bool ValidateTransactionSignature(Transaction tx)
 	{
 		if (tx.IsCoinbase)
 		{
@@ -303,28 +308,37 @@ public sealed class BlockchainService
 	// Mini-plan 26 A — timed in three spans (the duplicate scan, the signature check, the UTXO checks), because a
 	// send runs one admission per node, ~72 of them. BlockCostProfiler.Clock() is 0 unless the profiler is armed and
 	// always 0 outside DEBUG, so a release build pays an inlined constant per span mark and nothing else.
-	public bool AddTransactionToPendingTransactions(Transaction transaction)
+	//
+	// Mini-plan 26 B (F-a) — `signatureVerdict` is the broadcast's single verification of this very transaction. When
+	// given, the admission uses it instead of verifying again; every other rule still runs here, in the same order.
+	// Null (the sender's own admission, and every other caller) verifies here exactly as before.
+	public bool AddTransactionToPendingTransactions(Transaction transaction, bool? signatureVerdict = null)
 	{
 		long begin = Scripts.Diagnostics.BlockCostProfiler.Clock();
 		long dupEnd = 0, sigEnd = 0;
 #if DEBUG
 		int pendingBefore = PendingTransactions.Count;
 #endif
-		bool accepted = TryAdmitToPending(transaction, ref dupEnd, ref sigEnd);
+		bool accepted = TryAdmitToPending(transaction, signatureVerdict, ref dupEnd, ref sigEnd, out bool verifiedHere);
 #if DEBUG
 		if (begin != 0)
 		{
 			long end = Scripts.Diagnostics.BlockCostProfiler.Clock();
+			// The scan's derived count applies only where the scan ran: the old path (F-b's set walks nothing).
+			int confirmedScanned = Scripts.Diagnostics.BlockCostProfiler.OldSendPath ? ConfirmedTransactionCountForDiagnostics() : 0;
 			Scripts.Diagnostics.BlockCostProfiler.NoteAdmission(begin, dupEnd, sigEnd, end, accepted,
-				transaction.Inputs.Count, pendingBefore, ConfirmedTransactionCountForDiagnostics());
+				transaction.Inputs.Count, pendingBefore, confirmedScanned, verifiedHere);
 		}
 #endif
 		return accepted;
 	}
 
-	// The admission rules themselves, unchanged by mini-plan 26 except for the two span marks.
-	private bool TryAdmitToPending(Transaction transaction, ref long dupEnd, ref long sigEnd)
+	// The admission rules themselves. Mini-plan 26 changed only where the signature verdict comes from (F-a) and how
+	// the duplicate check answers (F-b, inside ContainsTransactionId); the rules and their order are unchanged.
+	private bool TryAdmitToPending(Transaction transaction, bool? signatureVerdict, ref long dupEnd, ref long sigEnd,
+		out bool verifiedHere)
 	{
+		verifiedHere = false;
 		if (transaction.IsCoinbase || transaction.Inputs.Count == 0)
 		{
 			return false;
@@ -338,7 +352,18 @@ public sealed class BlockchainService
 			return false;
 		}
 		dupEnd = Scripts.Diagnostics.BlockCostProfiler.Clock();
-		if (!ValidateTransactionSignature(transaction))
+		verifiedHere = !signatureVerdict.HasValue;
+#if DEBUG
+		// Mini-plan 26 B — the old path verifies at every node, as before F-a, and checks the broadcast's verdict.
+		if (Scripts.Diagnostics.BlockCostProfiler.OldSendPath) verifiedHere = true;
+#endif
+		bool signatureOk = verifiedHere ? ValidateTransactionSignature(transaction) : signatureVerdict!.Value;
+		if (verifiedHere && signatureVerdict.HasValue)
+		{
+			Scripts.Diagnostics.BlockCostProfiler.NoteOracle("F-a signature verdict", signatureOk, signatureVerdict.Value,
+				transaction.TransactionId);
+		}
+		if (!signatureOk)
 		{
 			return false;
 		}
@@ -705,7 +730,67 @@ public sealed class BlockchainService
 			return true;
 		}
 
-		return Chain.Any(b => b.Transactions.Any(t => t.TransactionId == transactionId));
+		// Mini-plan 26 B (F-b) — the confirmed half answers from a set instead of walking every transaction ever
+		// confirmed (2.58 ms per admission at ~14,000 transactions, ~78 admissions per send: M1, plan §7.1).
+#if DEBUG
+		if (Scripts.Diagnostics.BlockCostProfiler.OldSendPath)
+		{
+			bool scanned = Chain.Any(b => b.Transactions.Any(t => t.TransactionId == transactionId));
+			Scripts.Diagnostics.BlockCostProfiler.NoteOracle("F-b confirmed-txid set", scanned,
+				ConfirmedTransactionIds().Contains(transactionId), transactionId);
+			return scanned;
+		}
+#endif
+		return ConfirmedTransactionIds().Contains(transactionId);
+	}
+
+	// ── Mini-plan 26 B (F-b) — every confirmed txid, kept current on append ─────────────────────────────────────
+	// The shape of mini-plan 17 B1's UTXO advance, and fail-safe the same way: the set advances by ONE appended block
+	// only when it was exactly current before that append (version AND length one behind); in every other state it is
+	// rebuilt from the chain on the next read, which is always correct. All four chain mutations bump _chainVersion
+	// (CreateNewBlock, CommitBlock, TryAcceptMinedBlock, TryReplaceChain), and Chain has no setter, so a mutation that
+	// skipped the bump would still be caught by the length check. Ordinal, as the scan's `==` is.
+	private HashSet<string>? _confirmedTxIds;
+	private int _confirmedTxIdsVersion = -1;
+	private int _confirmedTxIdsLength = -1;
+
+	private HashSet<string> ConfirmedTransactionIds()
+	{
+		if (_confirmedTxIds != null && _confirmedTxIdsVersion == _chainVersion && _confirmedTxIdsLength == Chain.Count)
+		{
+			return _confirmedTxIds;
+		}
+
+		var ids = new HashSet<string>(StringComparer.Ordinal);
+		foreach (Block block in Chain)
+		{
+			foreach (Transaction tx in block.Transactions)
+			{
+				ids.Add(tx.TransactionId);
+			}
+		}
+
+		_confirmedTxIds = ids;
+		_confirmedTxIdsVersion = _chainVersion;
+		_confirmedTxIdsLength = Chain.Count;
+		return ids;
+	}
+
+	// Called beside AdvanceUtxoCacheWithAppendedBlock, immediately after each Chain.Add + _chainVersion++ pair.
+	private void AdvanceConfirmedTxIdsWithAppendedBlock(Block appended)
+	{
+		if (_confirmedTxIds == null || _confirmedTxIdsVersion != _chainVersion - 1 || _confirmedTxIdsLength != Chain.Count - 1)
+		{
+			return; // not exactly current before this append: the next read rebuilds
+		}
+
+		foreach (Transaction tx in appended.Transactions)
+		{
+			_confirmedTxIds.Add(tx.TransactionId);
+		}
+
+		_confirmedTxIdsVersion = _chainVersion;
+		_confirmedTxIdsLength = Chain.Count;
 	}
 
 	// Step 4: hash a compact block header (prevHash + merkleRoot + timestamp + nonce) via
@@ -863,6 +948,7 @@ public sealed class BlockchainService
 		PendingTransactions.Clear();
 		_chainVersion++;
 		AdvanceUtxoCacheWithAppendedBlock(newBlock); // mini-plan 17 B1
+		AdvanceConfirmedTxIdsWithAppendedBlock(newBlock); // mini-plan 26 B (F-b)
 		return true;
 	}
 

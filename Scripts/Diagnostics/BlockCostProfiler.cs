@@ -81,7 +81,9 @@ namespace Scripts.Diagnostics
 			"sends,sendFails,sendInputs,sendInputsMax,sendMs,selectMs,keysMs,signMs,localAdmitMs,fanOutMs," +
 			"admissions,orphanAdmissions,dupScanMs,txsScanned,sigCheckMs,sigVerifies,utxoCheckMs,keyDerivations," +
 			"sellSendMs,exchSendMs,govSends,govSendMs,donationSends,donationSendMs,sellSendInputs,exchSendInputs," +
-			"allocMB,gcPauseMs,gc0,gc1,gc2";
+			"allocMB,gcPauseMs,gc0,gc1,gc2," +
+			// Mini-plan 26 B — the A/B path (old/new), its oracles, and F-a's single verification per broadcast.
+			"abPath,oracleChecks,oracleMismatches,broadcastVerifies,broadcastVerifyMs";
 
 		private static readonly long[] _phaseTicks = new long[PhaseCount];
 		private static int _openPhase = -1;
@@ -335,6 +337,7 @@ namespace Scripts.Diagnostics
 			public DateTime Utc;
 			public int Height, Context, Inputs, BaseInputs, Outputs, Outcome, FanOutNodes, FanOutAccepted;
 			public double TotalMs, SelectMs, KeysMs, SignMs, LocalMs, FanOutMs;
+			public bool OldPath; // mini-plan 26 B
 		}
 
 		private static readonly List<SendRow> _sendRows = new(64);
@@ -343,7 +346,7 @@ namespace Scripts.Diagnostics
 
 		private const string SendHeader =
 			"reportUtc,chainHeight,context,inputs,baseAddressInputs,outputs,outcome,totalMs,selectMs,keysMs,signMs," +
-			"localAdmitMs,fanOutMs,fanOutNodes,fanOutAccepted";
+			"localAdmitMs,fanOutMs,fanOutNodes,fanOutAccepted,abPath";
 
 		private static bool _sendHeaderChecked;
 
@@ -379,6 +382,7 @@ namespace Scripts.Diagnostics
 			}
 
 			Enabled = enabled;
+			OldSendPath = false; // mini-plan 26 B — the next block sets it; a disarmed profiler never takes the old path
 			BlockCount = 0;
 			_inBlock = false;
 			_openPhase = -1;
@@ -428,6 +432,8 @@ namespace Scripts.Diagnostics
 			Array.Clear(_sesBucketInputs);
 			_sesAllocMB = 0d;
 			_sesGcPauseMs = 0d;
+			_sesOracleChecks = 0;
+			_sesOracleMismatches = 0;
 			_sendRows.Clear();
 		}
 
@@ -493,6 +499,8 @@ namespace Scripts.Diagnostics
 			_blkAdmissions = _blkOrphanAdmissions = _blkSigVerifies = 0;
 			_blkTxsScanned = 0;
 			_blkDupMs = _blkSigMs = _blkUtxoMs = 0d;
+			_blkOracleChecks = _blkOracleMismatches = _blkBroadcastVerifies = 0;
+			_blkBroadcastVerifyMs = 0d;
 			_blkAllocBegin = GC.GetAllocatedBytesForCurrentThread();
 			_blkPauseBegin = GC.GetTotalPauseDuration();
 			_blkGc0Begin = GC.CollectionCount(0);
@@ -665,6 +673,63 @@ namespace Scripts.Diagnostics
 			{
 				_utxoNodes.Add(nodeId);
 			}
+		}
+
+		// ── Mini-plan 26 B — the A/B switch and its oracles (DELETE at close-out, Convention 3) ─────────────────
+		// M2 compares the two fixes (F-a: one signature verification per broadcast; F-b: the confirmed-txid set)
+		// against the code they replace IN ONE SESSION, by block parity: even heights take the OLD path, odd the new.
+		// Only while this profiler is armed (D-26.7), so a DEBUG playtest that is not measuring always takes the new
+		// path; a release build never reads the switch at all. On the old path the new answer is computed too and
+		// compared, so every old-path admission is an oracle check of the new one (mini-plan 17's lesson).
+
+		/// <summary>True while the block being processed takes the pre-fix path. Always false unless armed.</summary>
+		public static bool OldSendPath { get; private set; }
+
+		/// <summary>Sets the path for the block about to be processed, from its height.</summary>
+		[Conditional("DEBUG")]
+		public static void SetSendPathForBlock(int blockIndex)
+		{
+			OldSendPath = Enabled && blockIndex % 2 == 0;
+		}
+
+		private static int _blkOracleChecks, _blkOracleMismatches;
+		private static long _sesOracleChecks, _sesOracleMismatches;
+		private static int _blkBroadcastVerifies;
+		private static double _blkBroadcastVerifyMs;
+
+		/// <summary>
+		/// One oracle comparison on the old path: <paramref name="what"/> names the check, <paramref name="oldAnswer"/>
+		/// is what the replaced code said and <paramref name="newAnswer"/> what the fix says. A disagreement is printed
+		/// with GD.Print (the Output panel, and so godot.log, where Claude reads it after the run).
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void NoteOracle(string what, bool oldAnswer, bool newAnswer, string detail)
+		{
+			if (!Enabled) return;
+			_sesOracleChecks++;
+			if (_inBlock) _blkOracleChecks++;
+			if (oldAnswer == newAnswer) return;
+
+			_sesOracleMismatches++;
+			if (_inBlock) _blkOracleMismatches++;
+			GD.Print(string.Create(CultureInfo.InvariantCulture,
+				$"[SendPathOracle] MISMATCH in {what} at h={_chainHeight:N0}: old path says {oldAnswer}, new path says {newAnswer} ({detail})"));
+		}
+
+		/// <summary>
+		/// F-a's single verification in <c>NetworkSimulator.BroadcastTransaction</c>, counted as signature verifies
+		/// (B1) and timed on its own: it runs inside the fan-out stage but outside every admission.
+		/// </summary>
+		[Conditional("DEBUG")]
+		public static void NoteBroadcastVerify(long startTicks, int inputs)
+		{
+			if (!Enabled || startTicks == 0) return;
+			double ms = TicksToMs(Stopwatch.GetTimestamp() - startTicks);
+			_sesSigVerifies += inputs;
+			if (!_inBlock) return;
+			_blkBroadcastVerifies += inputs;
+			_blkSigVerifies += inputs;
+			_blkBroadcastVerifyMs += ms;
 		}
 
 		// ── Mini-plan 26 A — the entry points ──────────────────────────────────────────────────────────────────
@@ -845,6 +910,7 @@ namespace Scripts.Diagnostics
 				SignMs = TicksToMs(_sendStageTicks[(int)SendStage.Sign]),
 				LocalMs = TicksToMs(_sendStageTicks[(int)SendStage.LocalAdmit]),
 				FanOutMs = TicksToMs(_sendStageTicks[(int)SendStage.FanOut]),
+				OldPath = OldSendPath,
 			});
 		}
 
@@ -914,7 +980,7 @@ namespace Scripts.Diagnostics
 		/// </summary>
 		[Conditional("DEBUG")]
 		public static void NoteAdmission(long begin, long dupEnd, long sigEnd, long end, bool accepted, int inputs,
-			int pendingBefore, int confirmedTxs)
+			int pendingBefore, int confirmedTxs, bool verifiedHere)
 		{
 			if (!Enabled || begin == 0) return;
 
@@ -922,7 +988,8 @@ namespace Scripts.Diagnostics
 			long sigTicks = dupEnd == 0 ? 0 : (sigEnd != 0 ? sigEnd : end) - dupEnd;
 			long utxoTicks = sigEnd == 0 ? 0 : end - sigEnd;
 			long scanned = dupEnd != 0 ? (long)pendingBefore + confirmedTxs : 0;
-			int verifies = sigEnd != 0 ? inputs : 0;
+			// Mini-plan 26 B — an admission handed F-a's verdict did not verify anything itself (B1 counts real work).
+			int verifies = sigEnd != 0 && verifiedHere ? inputs : 0;
 
 			int where = !_inSend ? AdmitOrphan
 				: _sendOpenStage == (int)SendStage.LocalAdmit ? AdmitLocal
@@ -1069,6 +1136,10 @@ namespace Scripts.Diagnostics
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"\n    per block: allocated {_sesAllocMB / blocks:N1} MB, GC pause {_sesGcPauseMs / blocks:N1} ms"));
 
+			// Mini-plan 26 B — the figures above mix both A/B paths; the per-path split is in the CSVs (abPath).
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"\n    B3 oracle (old-path admissions checked against the new answer): {_sesOracleChecks:N0} checks, {_sesOracleMismatches:N0} MISMATCH (expected 0)"));
+
 			GD.Print(sb.ToString());
 		}
 
@@ -1081,10 +1152,10 @@ namespace Scripts.Diagnostics
 			foreach (SendRow r in _sendRows)
 			{
 				sb.Append(string.Format(CultureInfo.InvariantCulture,
-					"{0:O},{1},{2},{3},{4},{5},{6},{7:F3},{8:F3},{9:F3},{10:F3},{11:F3},{12:F3},{13},{14}\n",
+					"{0:O},{1},{2},{3},{4},{5},{6},{7:F3},{8:F3},{9:F3},{10:F3},{11:F3},{12:F3},{13},{14},{15}\n",
 					r.Utc, r.Height, SendContextNames[r.Context], r.Inputs, r.BaseInputs, r.Outputs,
 					(SendOutcome)r.Outcome, r.TotalMs, r.SelectMs, r.KeysMs, r.SignMs, r.LocalMs, r.FanOutMs,
-					r.FanOutNodes, r.FanOutAccepted));
+					r.FanOutNodes, r.FanOutAccepted, r.OldPath ? "old" : "new"));
 			}
 
 			_sendRows.Clear();
@@ -1199,7 +1270,9 @@ namespace Scripts.Diagnostics
 					_blkAdmissions, _blkOrphanAdmissions, _blkDupMs, _blkTxsScanned, _blkSigMs, _blkSigVerifies, _blkUtxoMs, _blkKeyDerivations,
 					_blkSendMsByCtx[ctxSell], _blkSendMsByCtx[ctxExch], _blkSentByCtx[ctxGov], _blkSendMsByCtx[ctxGov],
 					_blkSentByCtx[ctxDon], _blkSendMsByCtx[ctxDon], _blkInputsByCtx[ctxSell], _blkInputsByCtx[ctxExch],
-					allocMB, gcPauseMs, gc0, gc1, gc2));
+					allocMB, gcPauseMs, gc0, gc1, gc2) +
+				string.Format(CultureInfo.InvariantCulture, ",{0},{1},{2},{3},{4:F3}",
+					OldSendPath ? "old" : "new", _blkOracleChecks, _blkOracleMismatches, _blkBroadcastVerifies, _blkBroadcastVerifyMs));
 
 			// Outside the block's timing, which closed above: writing the rows is never billed to the stage they describe.
 			FlushSendRows();

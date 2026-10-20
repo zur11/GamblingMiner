@@ -2261,6 +2261,8 @@ public partial class NetworkRoot : Node
 		// Mini-plan 13 A — per-block phase timing (Scripts/Diagnostics/BlockCostProfiler.cs), DEBUG-only and
 		// disarmed by default. The phases below are contiguous: each Enter closes the previous one. Opened here
 		// rather than at the caller so every miner's block is timed by the same boundaries.
+		// Mini-plan 26 B — the A/B path for this block (even height = old), set before anything in it sends.
+		Scripts.Diagnostics.BlockCostProfiler.SetSendPathForBlock(block.Index);
 		Scripts.Diagnostics.BlockCostProfiler.BeginBlock(miner.NodeId, block.Index,
 			DateTimeOffset.FromUnixTimeMilliseconds(block.Timestamp).UtcDateTime);
 		Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Broadcast);
