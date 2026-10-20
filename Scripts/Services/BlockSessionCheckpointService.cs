@@ -293,6 +293,7 @@ public partial class BlockSessionCheckpointService : Node
 		};
 
 		SaveState();
+		Scripts.Diagnostics.RankCalibrationTrace.WriteBlockRow(CurrentSnapshot);   // DEBUG-only, mini-plan 25 §9
 		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[Checkpoint] CAPTURED — PlayerBankroll={CurrentSnapshot.BankrollBalance:F8}  PlayerMain={CurrentSnapshot.PrincipalBalance:F8}  CasinoMain={CurrentSnapshot.CasinoScMainBalance:F8}  CasinoBankroll={CurrentSnapshot.CasinoScBankroll:F8}"));
 	}
 

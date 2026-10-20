@@ -53,8 +53,18 @@ public partial class CasinoGamblingFinances : Control
 	private static readonly Color IndicatorRed   = new Color(0.95f, 0.3f, 0.3f);
 	private static readonly Color IndicatorGrey  = new Color(0.55f, 0.55f, 0.55f);
 
-	private double _fallbackTimer;
-	private const double FallbackInterval = 2.0;
+	// Mini-plan 25 17.C.1 — the casino's BalanceChanged fires on EVERY settled casino bet: M0 counted RefreshLabels at
+	// 450 a second, each one a LINQ count over up to 500 loan records. Same fix as CasinoCoinSwaps: the event marks the
+	// labels dirty and _Process repaints at most once per BalanceCoalesceSeconds (§38.7 rule 2).
+	// 17.C.3 — the 2 s fallback is gone. Every figure here has an event, and two of them were never subscribed: the
+	// FED's loan figures and history (CentralBankChanged) and the swap desk's state (SwapDeskChanged). Both now mark
+	// the same dirty flag. The one value that changes with TIME, the auto floor's doses-in-window, can only age while
+	// the clock moves, which is only while bets settle, and each settled bet already fires BalanceChanged.
+	// The page's own buttons repaint directly. At rest: 0 refreshes a second (the timer was 0.5).
+	private CentralBankService _fed;
+	private bool _balanceDirty;
+	private double _balanceCoalesceTimer;
+	private const double BalanceCoalesceSeconds = 0.25;
 	// Mini-plan 15b — the shared readout sampler; see UI/Readouts/ReadoutSampling.cs and §29.13.
 	private readonly UI.Readouts.AdaptiveReadoutSampler _clockSampler = new();
 
@@ -136,13 +146,17 @@ public partial class CasinoGamblingFinances : Control
 
 		if (_casinoSc != null)
 		{
-			_casinoSc.BalanceChanged += RefreshLabels;
+			_casinoSc.BalanceChanged += MarkBalanceDirty;
 			_bankrollTargetInput.Text = _casinoSc.BankrollTarget.ToString("N8", CultureInfo.InvariantCulture);
 			_autoLoanInput.Text = _casinoSc.AutoLoanAmount.ToString("N8", CultureInfo.InvariantCulture);
 		}
 
-		// Pre-populate the loan input with the default draw amount (100M).
+		// Pre-populate the loan input with the default draw amount (InitialLoanAmount).
 		_manualLoanInput.Text = CasinoScBalanceService.InitialLoanAmount.ToString("N0", CultureInfo.InvariantCulture);
+
+		_fed = GetNodeOrNull<CentralBankService>("/root/CentralBankService");
+		if (_fed != null)         _fed.CentralBankChanged += MarkBalanceDirty;
+		if (_swapService != null) _swapService.SwapDeskChanged += MarkBalanceDirty;
 
 		RefreshLabels();
 	}
@@ -150,7 +164,9 @@ public partial class CasinoGamblingFinances : Control
 	public override void _ExitTree()
 	{
 		if (_casinoSc != null)
-			_casinoSc.BalanceChanged -= RefreshLabels;
+			_casinoSc.BalanceChanged -= MarkBalanceDirty;
+		if (_fed != null)         _fed.CentralBankChanged -= MarkBalanceDirty;
+		if (_swapService != null) _swapService.SwapDeskChanged -= MarkBalanceDirty;
 	}
 
 	public override void _Process(double delta)
@@ -166,16 +182,23 @@ public partial class CasinoGamblingFinances : Control
 			_gameDateLabel.Text = "Game date: " + _clockSampler.FormatGameTime(local, "yyyy-MM-dd");
 		}
 
-		_fallbackTimer += delta;
-		if (_fallbackTimer >= FallbackInterval)
+		if (_balanceDirty)
 		{
-			_fallbackTimer = 0;
-			RefreshLabels();
+			_balanceCoalesceTimer += delta;
+			if (_balanceCoalesceTimer >= BalanceCoalesceSeconds)
+			{
+				_balanceCoalesceTimer = 0;
+				_balanceDirty = false;
+				RefreshLabels();
+			}
 		}
 	}
 
+	private void MarkBalanceDirty() => _balanceDirty = true;
+
 	private void RefreshLabels()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("CasinoGamblingFinances.RefreshLabels");   // DEBUG-only, mini-plan 25
 		if (_casinoSc == null) return;
 
 		_mainBalanceLabel.Text = $"Main Balance:  {Money.FormatSignedAdaptive(_casinoSc.MainBalance)} SC";

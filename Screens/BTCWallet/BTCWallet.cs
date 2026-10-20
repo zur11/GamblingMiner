@@ -85,8 +85,14 @@ public partial class BTCWallet : Control
 	private string _currentPassphraseNodeId = string.Empty;
 	private string _sendFromNodeId = string.Empty;
 	private WalletMode _modeBeforeSend = WalletMode.Base;
-	private double _balanceRefreshTimer = 0d;
-	private const double BalanceRefreshInterval = 2.0;
+	// Mini-plan 25 17.C.2 — refreshed by EVENTS (a block, a new mempool transaction) through a leading-edge throttle,
+	// no longer by a 2 s timer: an event marks the page dirty, and the next frame rebuilds once MinRefreshInterval has
+	// passed since the last rebuild. At rest that is 0/s (the timer was 0.5/s); under load it never exceeds the old rate;
+	// after a quiet spell a change shows within a frame. Everything this page shows is chain state (balances, address
+	// book, transactions), and the send form's inputs are never written by the refresh. Same shape as BotsBtcWallets.
+	private bool _chainDirty = true; // dirty at entry: the first frame paints, events or not
+	private double _sinceLastRefresh = double.MaxValue;
+	private const double MinRefreshInterval = 2.0;
 	private CalendarTimeService? _calendarTimeService;
 	private BtcMarketDataService? _btcMarketDataService;
 
@@ -152,16 +158,28 @@ public partial class BTCWallet : Control
 		InitializeBaseWallet();
 		SetMode(WalletMode.Base);
 		ShowSeedPopupIfNeeded();
+
+		NetworkRoot.BlockAccepted += OnChainChanged;
+		NetworkRoot.MempoolChanged += MarkChainDirty;
 	}
+
+	public override void _ExitTree()
+	{
+		// Static events: unsubscribe, or this scene stays reachable after it leaves.
+		NetworkRoot.BlockAccepted -= OnChainChanged;
+		NetworkRoot.MempoolChanged -= MarkChainDirty;
+	}
+
+	private void OnChainChanged(Block _) => _chainDirty = true;
+	private void MarkChainDirty() => _chainDirty = true;
 
 	public override void _Process(double delta)
 	{
-		_balanceRefreshTimer += delta;
-		if (_balanceRefreshTimer >= BalanceRefreshInterval)
-		{
-			_balanceRefreshTimer = 0d;
-			RefreshBalances();
-		}
+		_sinceLastRefresh += delta;
+		if (!_chainDirty || _sinceLastRefresh < MinRefreshInterval) return;
+		_chainDirty = false;
+		_sinceLastRefresh = 0d;
+		RefreshBalances();
 	}
 
 	public override void _Input(InputEvent @event)
@@ -555,6 +573,7 @@ public partial class BTCWallet : Control
 
 	private void RefreshBalances()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("BTCWallet.RefreshBalances");   // DEBUG-only, mini-plan 25
 		var wallet = WalletInitializationService.PlayerWallet;
 		if (wallet == null) return;
 
@@ -614,6 +633,10 @@ public partial class BTCWallet : Control
 	private void SetMode(WalletMode mode)
 	{
 		_currentMode = mode;
+		// Mini-plan 25 17.C.2 — a mode switch shows a different panel, which the 2 s timer used to fill within 2 s. With the
+		// refresh event-driven it would wait for the next block, so the switch asks for one now, bypassing the throttle.
+		_chainDirty = true;
+		_sinceLastRefresh = double.MaxValue;
 		_baseWalletPanel.Visible         = mode == WalletMode.Base;
 		_passphraseLockedPanel.Visible   = mode == WalletMode.PassphraseLocked;
 		_passphraseUnlockedPanel.Visible = mode == WalletMode.PassphraseUnlocked;

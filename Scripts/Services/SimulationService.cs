@@ -47,16 +47,6 @@ public partial class SimulationService : Node
 		public int BetsPerSecond;
 	}
 
-	// One settled-bet entry in a bot's rolling play history (for the Bot Play-History study screen).
-	// Mirrors the player's BetTransactionEvent fields that matter for studying a strategy.
-	public sealed record BotPlayEntry(
-		decimal BetAmount,
-		int Roll,
-		decimal Multiplier,
-		bool IsWin,
-		decimal Profit,
-		DateTime TimestampUtc);
-
 	private sealed class BotRunner
 	{
 		public string NodeId = "";
@@ -279,8 +269,11 @@ public partial class SimulationService : Node
 	// Per-bot rolling play history (Bot Play-History screen). Keyed by nodeId — NOT on the transient
 	// BotRunner — so it survives a recharge/restart (the history is the bot's, not the session's).
 	// In-memory only: cleared on app restart. Each buffer caps at BotHistoryCapacity (newest kept).
-	private const int BotHistoryCapacity = 260;
-	private readonly Dictionary<string, Queue<BotPlayEntry>> _botHistories = new();
+	// Mini-plan 25 (developer, 2026-10-19): the screen now shows a bot's plays in DiceGame's own list, so a buffer
+	// keeps exactly what that list can show, and stores the settled BetTransactionEvent itself (an immutable record
+	// the bet already allocated) rather than a copy of five of its fields.
+	private const int BotHistoryCapacity = BetHistoryContainer.MaxRecentEntries;
+	private readonly Dictionary<string, Queue<BetTransactionEvent>> _botHistories = new();
 
 	private const string PlayerNodeId = "player";
 
@@ -1417,6 +1410,10 @@ public partial class SimulationService : Node
 		catch (Exception ex)
 		{
 			GD.PushError($"[BotAutoBetError] node={runner.NodeId} {ex}");
+			// INC-006 — this catch STOPS the runner, so the bot leaves the game for the rest of the session. PushError lands in
+			// the Debugger's Errors tab only, and a casino client vanished twice in R1-continued with nothing in the Output
+			// panel. Say it there too, in one line (CLAUDE.md, "name the panel").
+			GD.Print($"[BotAutoBetError] {runner.NodeId} STOPPED for this session: {ex.GetType().Name}: {ex.Message}");
 			runner.Session.Stop(IBettingStrategy.StopReason.ManualStop);
 			SaveBotFinancialState(runner);
 		}
@@ -1571,14 +1568,13 @@ public partial class SimulationService : Node
 
 	private void PushBotPlayEntry(string nodeId, BetTransactionEvent e)
 	{
-		if (!_botHistories.TryGetValue(nodeId, out Queue<BotPlayEntry>? buffer))
+		if (!_botHistories.TryGetValue(nodeId, out Queue<BetTransactionEvent>? buffer))
 		{
-			buffer = new Queue<BotPlayEntry>(BotHistoryCapacity);
+			buffer = new Queue<BetTransactionEvent>(BotHistoryCapacity);
 			_botHistories[nodeId] = buffer;
 		}
 
-		buffer.Enqueue(new BotPlayEntry(
-			e.BetAmount, e.Roll, e.Multiplier, e.IsWin, e.Profit, e.Timestamp));
+		buffer.Enqueue(e);
 
 		while (buffer.Count > BotHistoryCapacity)
 		{
@@ -1586,16 +1582,15 @@ public partial class SimulationService : Node
 		}
 	}
 
-	// Last (up to 260) settled bets for a bot, newest first. Empty if the bot has no recorded plays.
-	public IReadOnlyList<BotPlayEntry> GetBotPlayHistory(string nodeId)
+	// A bot's last BotHistoryCapacity settled bets, OLDEST first: the order BetHistoryContainer pushes them in.
+	// Empty if the bot has no recorded plays.
+	public IReadOnlyList<BetTransactionEvent> GetBotPlayHistory(string nodeId)
 	{
-		if (_botHistories.TryGetValue(nodeId, out Queue<BotPlayEntry>? buffer) && buffer.Count > 0)
+		if (_botHistories.TryGetValue(nodeId, out Queue<BetTransactionEvent>? buffer) && buffer.Count > 0)
 		{
-			var list = buffer.ToList();
-			list.Reverse(); // queue is oldest→newest; the screen wants newest first
-			return list;
+			return buffer.ToList();
 		}
-		return Array.Empty<BotPlayEntry>();
+		return Array.Empty<BetTransactionEvent>();
 	}
 
 	// Bots that currently have a running session OR any recorded play history, sorted for a stable list.

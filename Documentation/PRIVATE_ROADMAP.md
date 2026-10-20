@@ -101,28 +101,19 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 > What shipped, and when, is `IMPLEMENTATION_STATUS.md`. `AIHelperFiles/IMPLEMENTATION_ROADMAP.md` is history (last
 > updated 2026-06-30, ends at Step 10); **the order below is the authoritative one.**
 
-### ▶ NEXT — the agreed working order (2026-10-12)
+### ▶ NEXT — the agreed working order (2026-10-12, updated 2026-10-20)
 
 Decided with the developer at mini-plan 24. Each item is its own plan, under the usual lifecycle (CLAUDE.md, Git
-Workflow).
+Workflow). **Item 1 of 2026-10-12, Step 17.A + 17.C, is ✅ DONE (mini-plan 25, 2026-10-20)**, and so is the "Numbers"
+small item (its 17.A2). Both rows, and the two §6 checklist items they closed, are in `ROADMAP_ARCHIVE.md`. Mini-plan
+25's measurement F1 inserted the new item 1, and the developer approved it with F1's commit.
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **1** | **Step 17.A + 17.C** — a direct `DiceGame → BetsHistoryExplorer` button, and the event-driven audit (migrate the `_Process` polling backlog) | `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` (SPECIFIED 2026-08-20, not started) | 17.C is a **declared Basic Mode v0.1 gate** (§6). 17.A does not exist yet (verified 2026-10-12: only `CalendarsNavigator` and `ScFinances` reach the explorer) |
-| **2** | **User settings persistence** | §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20 and 23 added view preferences with no home |
+| **1** | **The per-block freeze: T4's after-block traffic** (`ScheduleBotTransactionsAfterBlock`, the cast's sell-flow, and the governance spikes) — a sub-phase breakdown measured first, then the fix | §8 T4, its two 📝 notes · mini-plan 25 plan §5.5 "F1 results" | **The most visible defect in the game at 2015, and it worsens as the world ages:** 2.7 s mean per block, worst 6.9 s, every scene frozen. Inserted by F1 (2026-10-20). To be specified as mini-plan 26 |
+| **2** | **User settings persistence** | §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
-| **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §17.B · the P-items below | Step 17 suspends 17.B until A and C are built **and tested** (developer's gate) |
-| — | **Small item, fold into whichever UI plan comes first:** DiceGame's "Numbers" bet view | §6 | Its cost is solved: mini-plan 23 built the 10-number row and the latest-only view |
-
-**⚠ Re-verify before relying on Step 17's text — it was written 2026-08-20 and twenty mini-plans have run since:**
-- **17.C's suspension has likely EXPIRED.** Four targets (`AuctioningCompanyDetails`, `CompanyDetails`,
-  `CompaniesWallets`, `CasinoCoinSwaps`) were suspended until the world reaches Market Birth (2010-07-18). The
-  developer's world was past 2012 in October 2026. Confirm on the current world, then treat them as active.
-- **Ch. 38's poll catalogue is stale** (audited 2026-07-21). Re-derive it from the code first: 25 files under
-  `Screens/` and `UI/` override `_Process` (count of 2026-10-12).
-- **Scenes changed since the plan:** mini-plans 20–23 touched `BetsHistoryExplorer`, `DiceGame`, `CalendarsNavigator`
-  and `MainMenu`. In particular, `CalendarsNavigator`'s refusal to auto-update is deliberate (its comment, and
-  `mini06-…-plan.md` §9.7e). It is not a poll to migrate.
+| **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
 **Not scheduled (open, see their entries):** T4.2 (Step 17.D) · P9 unit tests · the bot treasury policy (waits on P5)
 · the machine-adaptive budget (needs a second machine) · T6 pass 2 · the Network Fee Option-B experiment.
@@ -228,9 +219,53 @@ Done when players have short-term and medium-term targets.
 > its own before any implementation plan**. The text below was written when the rank drove the referral commission.
 > That commission is now **Post-Basic Mode**, so the design round must first answer what the rank drives *in Basic
 > Mode*. Candidates already named below: P7's conversion-fee tiers and P8's achievements. It must also settle:
-> - who holds a rank (the player only, or `bot_1..4` too);
+> - who holds a rank (the player only, or `bot_1..4` too); **answered 2026-10-14: all five**, below;
 > - the tiers and the advancement criteria;
 > - where the rank is shown.
+>
+> **📝 Developer's decisions, 2026-10-14 — the design plan starts from these:**
+> - The rank is measured on a casino player's **cumulative SC wagered since the start**, in the casino's games
+>   only (DiceGame, and other games post-Basic Mode). **Income from activity outside the casino never counts**:
+>   mining, dividends, refunds, swaps (developer, 2026-10-16).
+> - **20 to 33 levels in total**, with thresholds preferably at **round numbers**.
+> - The thresholds are **calibrated from test runs from genesis with different bet amounts**, which also
+>   inform **minimum bet amounts**.
+> - **Rank holders: the player AND `bot_1..4`**, every casino player.
+> - The span the ladder is calibrated over is **Basic Mode's: 2009-03-21 → 2025-12-31**.
+>
+> The data is being gathered now by **mini-plan 25 §9** (`AIHelperFiles/step17-…-plan.md`). It provides
+> the `RankCalibrationTrace` instrument, one row per block with every casino player's wagered, net, credits
+> and BTC, and a run ledger. Two findings from its §9.1 arithmetic shape the design:
+> - **Without income, expected lifetime wagered is capped at ≈ 4.08M SC** (40,000 ÷ the 0.98% edge) for
+>   every strategy and every bet size. Levels above that are reachable only by mining BTC and selling it for
+>   SC, so the ladder's top is set by mining, not by bet size.
+> - **The minimum bet is the price of a nonce attempt.** Today it is 1 satoshi, so time and mining are
+>   almost free. The minimum bet and the ladder's floor (`minBet × 5,296,320 bets per credit` over
+>   2009-03-21 → 2025-12-31) are one decision.
+>
+> **R1 measured it (2026-10-15, mini-plan 25 §9.8).** The flat-bet arithmetic holds **exactly**: 315,576 bets
+> per credit per game-year for every client, and losses within 1.13σ of the edge. So varying flat bet sizes
+> needs no more runs. Mining in 2009–2012 gave **35–43 blocks per credit per game-year**. Priced at
+> historical highs, one early miner's coins (~5,100 BTC) can fund a wagering capacity of **~10¹⁰ SC**.
+> The ladder therefore has to span about **six to seven decades**: a minimum-bet floor near 10⁴, the
+> no-income cap at ~4M, and a miner's top near 10¹⁰. Two round-number families fit 20–33 levels, recorded
+> as candidates, not chosen: **1-2-5** and **1-2-3-5 per decade**. The next runs measure what arithmetic
+> cannot: later-era mining, progressions, and more credits (§9.9).
+>
+> **R1-continued and R2 (2026-10-16/18, §9.11/§9.13):**
+> - **Mining at 1 credit collapses after 2012**: 5 blocks in 637 for all five casino clients.
+> - **A strategy multiplies wagered by a predictable factor `m`**: +25% on loss 1.333, +50% 2.000 (both measured
+>   within 0.1%), a bankroll-limited martingale about 6–8 (measured 7.6).
+>
+> So lifetime wagered = `5,296,320 bets per credit × credits × base × m`, capped by `(capital + income) ÷ edge`.
+>
+> **R3 (2026-10-18, §9.15) measured the income term.** At **10 credits** a player mines **9.5× a 1-credit bot**
+> before 2012 and still **20 blocks per game-year** after it. One such run kept **27,900 BTC**, a wagering capacity
+> of **~10¹¹ SC** at historical highs. The ladder spans **~10⁴ → ~10¹¹**, seven decades:
+> - **1-2-5 per decade ≈ 22 levels**;
+> - **1-2-3-5 ≈ 29 levels**.
+>
+> Both fit 20–33. **The calibration series is closed; the design plan has its data.**
 
 Goal: a progression ladder for casino participants (player, and notably **Miner Referrals**) that gates and scales rewards.
 
@@ -296,6 +331,38 @@ Candidate inputs (all already available, none requiring new state):
 **The larger idea it belongs to** is the audit's **D2, "decision inbox"** (`step15-…-plan.md` §10.5 handoff): the game generates far more events than it shows — votes opening, dividends becoming payable, auctions closing, FBI heat on a holding — and they live in five different scenes. A holdings hub with a **badge count in the StatusBar** is the smallest version of that idea and probably the highest engagement-per-line change available. Once Step 16's per-company pause toggle exists (D-16.11), this screen is also the natural place to manage those toggles in bulk.
 
 **Promoted in priority by Step 16's own playtest (2026-08-05).** Two of the three participation settings are now per-company (`PlayerPauseOnVotes`, `PlayerAutoAbstain`, plus three policy dials), and with the player holding NST in ten companies the panel-by-panel management is already the slowest part of the loop — this hub is where a bulk view belongs. The step also produced the exact failure it exists to prevent: with the game frozen by a vote at BTC Guild the developer went to ArtForz Cluster, found a normal page, and had no route onward. P16.8e's pause locator patches that one case; **a holdings hub answers the general question ("where is anything waiting for me?") that the locator only answers for the pause.** Reuse `GetCompaniesAwaitingPlayerVote` as the badge source.
+
+**📝 Folded in by the developer (2026-10-15): casino bots prefer to bid on companies with more BTC received.**
+A company-economy change belonging to the same plan, as the developer's companies item. Its sibling, the
+donor count in `AuctioningCompanyDetails`, went to mini-plan 25 §4.5 instead, because it is display-only.
+
+**What it changes.** Pool choice today is spec'd in `REFERRAL_AUCTION.md` §1:
+- every biddable pool rolls its own ladder probability each slot (ND.10c);
+- the pools that hit compete in a **weighted tie-break** (ND.10l, with `FreshPoolSeedingWeight` for an
+  unparticipated pool);
+- the target list is built soonest-to-expire first (D-ND4b.4).
+
+How much a company has received plays no part. So this is a **bidding-rule change**: §1 gets the new rule,
+§2 an amendment entry, and the per-block probability panel must use the same weights (Convention 6, the
+ND.10d rule).
+
+**Design questions for that plan's design round — not decided:**
+- **"Received" means which figure?** Since mini-plan 25 §4.5 (2026-10-15) the funding is split in two, and
+  `TotalReceived` no longer exists:
+  - **"Company's BTC Income"** (`CompanyBtcIncome`): sends from every wallet that is not a qualifying bidder,
+    the figure the player now sees on both auction screens;
+  - **the bids** of the player + casino miners: the tracked pool, counted as donors.
+
+  Preferring by income, by bids, or by their sum are three different behaviours.
+- **How strong is the preference?** Options:
+  - a multiplier on the tie-break weight, e.g. `1 + k × received ÷ max received`;
+  - weight proportional to received, with a floor so a fresh pool can still be seeded;
+  - a strict sort.
+- **It reinforces itself:** more received draws more bids, which add to received. Should a ceiling or
+  decay keep auctions from collapsing onto a few companies? Standing Convention 11's "assert the output varies" applies
+  to the spread of founded companies.
+
+**Must not land while a rank-calibration run is open** (mini-plan 25 §9.10): it changes how bots spend BTC.
 
 ### Why 60,000 was unreachable, and what was declined (measured 2026-10-07)
 
@@ -469,28 +536,15 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   | setting | today | belongs to |
   |---|---|---|
   | Saved betting strategies | `saved_betting_strategies.json`, exempt from the wipe — survives, which surprised the developer | the player, probably — but the surprise says the rule was never stated, not that the file is wrong |
-  | **Bet View: Detailed / OFF** (mini-plan 10) | not persisted; resets to Detailed on every DiceGame entry | the player. A **view preference only**: after mini-plan 10 both states cost the same (~0.025 ms per bet) and both reach the clock's ceiling, so forgetting it changes nothing but what is on screen. *(Until 2026-09-21 this row called it a speed choice with a higher hidden budget. That was the design before the list got cheap, and the two-budget plan was never built.)* |
+  | **Bet View: Detailed / Last 10 / Latest only / OFF** (mini-plan 10; the two Numbers modes since mini-plan 25 17.A2) | not persisted; resets to Detailed on every DiceGame entry | the player. A **view preference only**: after mini-plan 10 both states cost the same (~0.025 ms per bet) and both reach the clock's ceiling, so forgetting it changes nothing but what is on screen. *(Until 2026-09-21 this row called it a speed choice with a higher hidden budget. That was the design before the list got cheap, and the two-budget plan was never built.)* |
   | DEV time scale (the requested one) | not persisted | DEV, but the same mechanism |
   | **Bets explorer replay pace, speed and Per Bet credits** (mini-plan 20 F) | not persisted; every entry opens **As Played** at 1x (Per Bet at 1 credit when toggled) | the player. A **view preference**, like Bet View |
 | **Bets explorer winning-numbers view: Last 10 / Latest only** (mini-plan 23 E) | a `static` in `BetsHistoryExplorer`: survives scene changes, resets to Last 10 at every launch | the player. A **view preference** |
+  | **BlockExplorer's casino players' SC balances, shown / hidden** (DEV, mini-plan 25 17.A7) | a `static` in `BlockExplorer`: survives scene changes, resets to shown at every launch | DEV, but the same mechanism |
   | DEV player credits ladder (mini-plan 20 Part 0) | writes the real hardware state (`hardware_allocation.json`), so it persists as a shop purchase does | **world**, deliberately: it is a shortcut to the shop, not a setting of its own |
   | The strategy panel's last-used values | not persisted; distinct from a *saved* strategy | the player |
   | Anything a future options menu holds | does not exist | the player |
 
-- [ ] **The event-driven audit — Step 17.C, item 1 of ▶ NEXT.** Before Basic Mode v0.1 is complete, every
-  `_Process` override is audited against CLAUDE.md Important Patterns §6 / `ProjectDesignManual.md` Ch. 38, and the
-  poll-based refreshes are migrated where feasible. Re-derive the catalogue from the code first (Ch. 38 §38.5 was
-  audited 2026-07-21).
-- [ ] **DiceGame's "Numbers" bet view — a small item, moved into Basic Mode (developer, 2026-10-12).** It shipped in
-  mini-plan 10 and was withdrawn because the 100-cell grid halved the frame rate (D-10.3). **Mini-plan 23 solved the
-  cost** by showing less:
-  - `PreviousWinnerNumbersRow` (the last 10, 0.4–0.6 ms a frame at 99 bets/s);
-  - `LatestWinnerNumber` (one number, ~0.02 ms);
-  - both are live in `BetsHistoryExplorer` behind a toggle.
-
-  DiceGame can use the same components. **Before showing anything there, fix the old grid's scene geometry**: it has
-  never been on screen, starts at y 534 under the Bet View button, and its 540 minimum height runs past the bottom
-  band (Ch. 29 §29.11). Fold this into whichever UI plan comes first.
 - [~] **Clarify auto-recharge behavior in UI and docs.** Docs done (ProjectDesignManual Ch. 25 + CLAUDE.md). The UI
   warning when auto-recharge is OFF is still pending (P2).
 - [ ] **Hal's network-coupled fade:** replace the linear `1.0 → 0` stand-in once gradual miner spawning exists.
@@ -523,6 +577,23 @@ DiceGame's mining readout reads the live difficulty (T3). Full entries: `ROADMAP
 **Why this exists.** Two signals from the same 2026-07-29 run: **INC-001** (`Documentation/INCIDENT_LOG.md`) — a 1.13 GB bet journal and a world that failed to load silently — and the developer's report that **fluidity at 9000X decayed progressively over the last days of the playtest ("cada vez más lag")**. P15.11 fixed the *durability* half. This entry is the *scale* half: the reason those numbers were allowed to grow at all. Design context: `ProjectDesignManual.md` **Chapter 40**.
 
 **Not a priority.** Nothing here blocks Basic Mode, and none of it should interrupt the bank testing. It is written down now because the run that exposed it is the largest world this project has produced, and that evidence has a short half-life.
+
+**📝 New measured cost (mini-plan 25 §10.1, 2026-10-18): the cast sell-flow, 281 ms on every block.** It is the
+first world with bots mining and 22 companies, at h2,328–2,372. Completed blocks average **390 ms**, and **75%** of
+that is `botTransactions`, almost all of it the sell-flow. **30 of 31 blocks exceed 200 ms**, which is the stall the
+developer reported "each time a block was mined". Not diagnosed further. The next step is a sub-phase breakdown of
+`ScheduleBotTransactionsAfterBlock`'s sell-flow, measured, before anything is changed.
+
+**📝 And it grows with game time (mini-plan 25 F1, 2026-10-20, R3's world, h3,451–3,495, 2015-06-06 → 07-08).**
+Across 45 blocks the mean is **2,684 ms per block**, **83%** of it `botTx`. Governance adds spikes of up to
+**3.7 s**, and the worst block took **6.9 s**. Every one of those is a frozen game (FrameCost files any period over
+1 s as a stall), in **every** scene: per visit, the cost follows the era, not the scene. DiceGame read 1.6 s/block
+over Jun 6–8 and **3.4 s over Jun 25–30, double in three game-weeks.** §10.1's 281 ms in 2013 was the same cost at
+~1/8 of its present size. A Stop pressed during such a block waits for it, which is the developer's "several
+seconds to stop". Also seen, not yet understood: **a gen-0 GC on nearly every frame** (FrameCost "frames with a GC"
+≈ 600 of 600), an allocation rate worth one look alongside the sell-flow. **This is no longer "not a priority":
+it is the most visible defect in the game at 2015, and it worsens as the world ages.** Proposed as the next
+mini-plan after mini-plan 25: the sub-phase breakdown first, then the fix.
 
 **Status at 2026-10-12 — only T4.2 is open.** The rest shipped, and their specifications and measurements
 (T4.0, T4.0b, T4.1, T4.3–T4.6) are in `ROADMAP_ARCHIVE.md`:

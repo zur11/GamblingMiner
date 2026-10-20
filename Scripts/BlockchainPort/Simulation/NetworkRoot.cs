@@ -119,7 +119,11 @@ public partial class NetworkRoot : Node
 	// v11 (mini-plan 14 B, same day): v10's chain file was written with the INDENTED options, so each block
 	// spanned dozens of lines in a file whose whole contract is one block per line. Nothing could read it back.
 	// The bump is what makes that unreadable file go away instead of failing every load that finds it.
-	private const int WorldFormatVersion = 11;
+	// v12 (mini-plan 25, INC-006 / D-17.6 — 2026-10-18): the auction ledger records a casino bot's donor under its
+	// BASE address, as the player's has been since 2026-07-14. Every persisted founding was minted under the old rule
+	// (one holding per signing ADDRESS, NST-vs-PST decided per address group), and merging the duplicate rows would
+	// not reproduce the slot-bonus arithmetic, which is not linear. Per project policy the world is reset.
+	private const int WorldFormatVersion = 12;
 	private const string WorldVersionPath = "user://world_format_version.txt";
 	// Step 13 (TL.1) — stamps which calendar (TimelineConfig.Tag) the persisted world was built under.
 	// A canon save loaded under the alt-timeline flag (or vice versa) is a corrupt hybrid (e.g. a 2009
@@ -564,6 +568,25 @@ public partial class NetworkRoot : Node
 	// that skips BuildBotPoolOpportunities — which is precisely how a guard quietly stops guarding. Same
 	// reflex as AssertEscalationSlopesAreOrdered and P15.9's clamp tripwire: an invariant that lives only
 	// in prose is an invariant nobody checks.
+	// Mini-plan 25 §4.5 — a displayed figure with a cheap closed-form bound gets the bound asserted (Pattern 2): only the
+	// player and bot_1..4 qualify, so a company can never show more than 1 + MinerBots.Count donors. More means an
+	// identity counted twice, which is how a raw-address count once split the player in two (2026-07-14). Latched:
+	// the ledger is recomputed on every refresh, and one report says everything. GD.Print as well as PrintErr,
+	// because this check passes in silence (CLAUDE.md, "name the panel").
+	private static bool _bidderCountAssertFired;
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	private static void AssertBidderCountBounded(int bidderCount, string nonMinerNodeId)
+	{
+		int max = 1 + BotWalletRegistry.MinerBots.Count;
+		if (_bidderCountAssertFired || (bidderCount >= 0 && bidderCount <= max)) return;
+		_bidderCountAssertFired = true;
+		string message = $"[AuctionLedger] {nonMinerNodeId} counts {bidderCount} donors, above the {max} qualifying "
+						 + "identities — an identity is being counted twice.";
+		GD.Print(message);
+		GD.PrintErr(message);
+	}
+
 	[System.Diagnostics.Conditional("DEBUG")]
 	private static void AssertBidderIsNotRestingOnReserve(string botNodeId)
 	{
@@ -1466,6 +1489,14 @@ public partial class NetworkRoot : Node
 		return SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player) ? AggregateSpendable(player) : 0m;
 	}
 
+	// The same for ANY node, for static consumers (mini-plan 25 §9: RankCalibrationTrace, once per block per
+	// casino client). Same cost rule: one UTXO-set pass per call, behind an edge, never per frame.
+	public static decimal GetNodeSpendableBalanceStatic(string nodeId)
+	{
+		EnsureInitialized();
+		return SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) ? AggregateSpendable(node) : 0m;
+	}
+
 	public static bool MineNodeStatic(string nodeId, long minedAtUnixMs)
 	{
 		if (!SharedNodesById.TryGetValue(nodeId, out NodeAgent? miner))
@@ -1564,6 +1595,7 @@ public partial class NetworkRoot : Node
 		{
 			return null;
 		}
+		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
 		SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
 		if (hasChange) sender.ReceiveWallet?.MarkReceiveConsumed(); // a fresh change address was used
 		return tx;
@@ -1950,6 +1982,7 @@ public partial class NetworkRoot : Node
 
 		Transaction tx = casino.BuildSignedSpend(inputs, outputs, totalFee, null);
 		if (!casino.Blockchain.AddTransactionToPendingTransactions(tx)) return false;
+		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
 		SharedNetwork.BroadcastTransaction(casino.NodeId, tx);
 		if (hasChange) casino.ReceiveWallet?.MarkReceiveConsumed();
 		return true;
@@ -2098,6 +2131,21 @@ public partial class NetworkRoot : Node
 	// consumers (CasinoCoinSwapService availability) recompute here instead of polling per-frame (§1.1).
 	public static event Action<Block>? BlockAccepted;
 
+	// Mini-plan 25 17.C.2 (D-17.1) — fired when a NEW transaction enters its originator's mempool: the three places a
+	// transaction originates (BuildAndBroadcastUtxoSpend, the casino-bot bid, the company dividend batch), never the
+	// broadcast fan-out into the other nodes, which would multiply each one by the node count. Before it, a pending
+	// spend reached the wallet screens only through their timers. Fired synchronously from deep inside the simulation,
+	// at a rate nothing bounds (M0 read 0-0.2/s before Market Birth, a floor): a subscriber MUST only mark itself
+	// dirty and do its work later, throttled (§38.7 rule 1). It is static like BlockAccepted, so a scene that
+	// subscribes must unsubscribe in _ExitTree.
+	public static event Action? MempoolChanged;
+
+	private static void NotifyMempoolChanged()
+	{
+		Scripts.Diagnostics.UiRefreshProbe.CountMempoolAdd();   // DEBUG-only, mini-plan 25 (D-17.1's rate)
+		MempoolChanged?.Invoke();
+	}
+
 	// ── Mini-plan 17 A3 — the UTXO oracle's driver ──────────────────────────────────────────────────────
 	// Built BEFORE the incremental update (B1), so it cannot be written to fit a result. Today the cache is
 	// itself produced by a replay and this passes trivially; once B1 lands it is the only thing that can prove
@@ -2190,7 +2238,21 @@ public partial class NetworkRoot : Node
 			TrySettleResolvedAuctions(block); // Step 14 (ND.5, D-ND5.10): settle any non-miner that just resolved this block
 			CancelAndRefundStaleAuctionBids(block); // Step 14 (ND.8d, D-ND8d.7): cancel pending / refund confirmed bids to auctions that already closed
 			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Governance);
-			TickCompanyGovernance(block); // Step 14 (ND.8b.3): votes + dividends, committed in this block's snapshot write below
+			// INC-006 (mini-plan 25) — an exception here aborts the rest of this block (no historical events, no world
+			// persist request, no casino rewards, no BlockAccepted, and no checkpoint from the caller). In one session 14
+			// blocks were aborted in governance and only 2 left a log line, through the bot runner's catch-all. Logged
+			// here, where it happens, and RETHROWN: the behaviour is unchanged, only its silence is gone. GD.Print as well
+			// as PushError, so it reaches the Output panel.
+			try
+			{
+				TickCompanyGovernance(block); // Step 14 (ND.8b.3): votes + dividends, committed in this block's snapshot write below
+			}
+			catch (Exception e)
+			{
+				GD.Print($"[Governance] EXCEPTION in block {block.Index}, the rest of this block is aborted: {e.GetType().Name}: {e.Message}");
+				GD.PushError($"[Governance] EXCEPTION in block {block.Index}: {e}");
+				throw;
+			}
 			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.HistoricalEvents);
 			HistoricalEventScheduler.OnBlockMined(block); // Step 7.4: inject scripted player-era txs at their date
 			Scripts.Diagnostics.BlockCostProfiler.Enter(Scripts.Diagnostics.BlockCostProfiler.Phase.Snapshot);
@@ -4574,9 +4636,13 @@ public partial class NetworkRoot : Node
 			return new ReserveVoteOutcome { BandMin = min, BandMax = max, Outcome = fallbackOutcome };
 		}
 
+		// INC-006 — grouped by holder like CloseCompanyVote's own map: a holder can own several holdings. This second
+		// ToDictionary was missed by unit 5's grep, which matched `Holdings` and `ToDictionary` on ONE line, and it
+		// threw in the very next session.
 		Dictionary<string, decimal> nstByHolder = founding.Holdings
 			.Where(h => h.Nst > 0m)
-			.ToDictionary(h => h.HolderId, h => h.Nst);
+			.GroupBy(h => h.HolderId)
+			.ToDictionary(g => g.Key, g => g.Sum(h => h.Nst));
 
 		decimal votedWeight = 0m, weightedReserve = 0m;
 		foreach ((string holderId, CompanyBallot ballot) in ballots)
@@ -4648,9 +4714,16 @@ public partial class NetworkRoot : Node
 
 		if (totalNst > 0m && vote.Ballots.Count > 0)
 		{
+			// Mini-plan 25 (2026-10-16) — GROUPED by holder, never ToDictionary. A holder can own SEVERAL holdings:
+			// founding groups slots by donor ADDRESS, and since P16.2 a bot bids from rotating change addresses, so one
+			// bot can mint two NST entries. ToDictionary threw on the duplicate key mid-HandleMinedBlock, which aborted
+			// the rest of that block's processing (R1-continued: Casascius, twice). A holder's vote weight is the SUM of
+			// its NST, which is also what the totals above already assume. The address split itself is the defect; this
+			// only stops it taking a block down. See the plan's §10.
 			Dictionary<string, decimal> nstByHolder = founding.Holdings
 				.Where(h => h.Nst > 0m)
-				.ToDictionary(h => h.HolderId, h => h.Nst);
+				.GroupBy(h => h.HolderId)
+				.ToDictionary(g => g.Key, g => g.Sum(h => h.Nst));
 
 			decimal votedWeight = 0m, weightedReserve = 0m, weightedPayout = 0m, lighterWeight = 0m, darkerWeight = 0m;
 			decimal weightedDividendsCut = 0m; // P15.4e
@@ -5126,6 +5199,7 @@ public partial class NetworkRoot : Node
 			return;
 		}
 
+		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
 		SharedNetwork.BroadcastTransaction(company.NodeId, tx);
 		if (hasChange)
 		{
@@ -6741,10 +6815,25 @@ public partial class NetworkRoot : Node
 		// address in Enroll Mode / details rows, split DonorCount, split settlement payout rows. All
 		// mechanics already treated those bids as the player (qualification, the ND.4d one-satoshi
 		// floor, D-ND5.7 payout routing — each checks the full playerAddresses set), so this only
-		// unifies the recorded identity. Single-address participants (bot_1..4) need no equivalent.
+		// unifies the recorded identity.
+		// INC-006 (mini-plan 25, 2026-10-18) — the bots get the same treatment. This comment used to end "Single-address
+		// participants (bot_1..4) need no equivalent", which was true on 2026-07-14 and false from P16.2 (2026-07-30) on,
+		// when bots began signing from rotating change addresses. Every rule downstream that groups or compares donors
+		// (one bid per donor per block, the leader's ignored self-raise, founding's one holding per donor) then saw one bot
+		// as several parties: founding minted a holding per ADDRESS, and decided NST-vs-PST per address group. A bot's
+		// donor is now recorded under its BASE address, at the point of recording, so no reader has to remember to.
 		(HashSet<string> playerAddresses, Dictionary<string, string> botNodeIdByAddress) = BuildAuctionBidderIdentity(player);
+		var botBaseAddressByNodeId = new Dictionary<string, string>();
+		foreach (BotWalletRecord casinoMinerBot in BotWalletRegistry.MinerBots)
+		{
+			if (SharedNodesById.TryGetValue(casinoMinerBot.NodeId, out NodeAgent? botNode))
+			{
+				botBaseAddressByNodeId[casinoMinerBot.NodeId] = botNode.WalletAddress;
+			}
+		}
 
 		long seq = 0;
+		var nonIncomeSeqs = new HashSet<long>();
 		if (player is not null)
 		{
 			foreach (Block block in player.Blockchain.Chain)
@@ -6757,8 +6846,20 @@ public partial class NetworkRoot : Node
 					// same-block tie-break without any new persisted/schema field.
 					if (donations.TryGetValue(tx.Recipient, out List<(string, decimal, long, long)>? list))
 					{
-						string donor = playerAddresses.Contains(tx.Sender) ? player.WalletAddress : tx.Sender;
+						string donor = playerAddresses.Contains(tx.Sender)
+							? player.WalletAddress
+							: botNodeIdByAddress.TryGetValue(tx.Sender, out string? bidderBotId)
+								&& botBaseAddressByNodeId.TryGetValue(bidderBotId, out string? botBase)
+								? botBase
+								: tx.Sender;
 						list.Add((donor, tx.Amount, block.Timestamp, seq));
+						// Mini-plan 25 §4.7 — inflows that are TRANSFERS, never income: a dead company's inflow
+						// forwarded to its absorber, and collateral posted to a bank. Tagged here, where the memo
+						// is in hand, and excluded from every income figure below.
+						if (tx.InputDataText == SeizedInflowMemo || tx.InputDataText == BankCollateralMemo)
+						{
+							nonIncomeSeqs.Add(seq);
+						}
 					}
 					seq++;
 				}
@@ -6790,13 +6891,54 @@ public partial class NetworkRoot : Node
 			BotWalletRecord b = nonMiners[i];
 			List<(string donor, decimal amount, long ts, long seq)> list = donations[b.Address];
 
+			// Mini-plan 25 §4.5/§4.7 (developer, 2026-10-15) — the company's funding, split by WHO sent it and WHEN.
+			// Sends from the qualifying bidders (the player + bot_1..4) are bids: the DONATED total and the
+			// donor count are taken from them further down, once the auction's window close is known. Everything
+			// else (cast miners, the non-miner economy; D-EB.7: never bids) is INCOME, minus the company's own
+			// addresses and the two transfer memos. Before the company is founded it is the "foundational" income,
+			// frozen at the founding block; after it, income counts again from zero and each receipt is also
+			// valued in SC at the price of the day it arrived. These replaced TotalReceived/DonorCount, which
+			// mixed bids with income and counted every sender ADDRESS as a donor.
+			_companyFoundings.TryGetValue(b.NodeId, out CompanyFounding? founding);
+			long foundedAtMs = founding?.FoundedAtUnixMs ?? long.MaxValue;
+			HashSet<string> selfAddresses = SharedNodesById.TryGetValue(b.NodeId, out NodeAgent? companyNode)
+				? OwnedAddressSet(companyNode)
+				: new HashSet<string> { b.Address };
+
 			var summary = new NonMinerDonationSummary
 			{
 				NonMinerNodeId = b.NodeId,
 				NonMinerAddress = b.Address,
-				TotalReceived = list.Sum(d => d.amount),          // ALL funding (economy + bids) — display
-				DonorCount = list.Select(d => d.donor).Distinct().Count()
+				IsFounded = founding != null
 			};
+
+			foreach ((string donor, decimal amount, long ts, long seq) receipt in list)
+			{
+				if (qualifyingBidders.Contains(receipt.donor) || selfAddresses.Contains(receipt.donor)
+					|| nonIncomeSeqs.Contains(receipt.seq))
+				{
+					continue;
+				}
+
+				if (receipt.ts < foundedAtMs)
+				{
+					summary.FoundationalIncomeBtc += receipt.amount;
+					continue;
+				}
+
+				summary.IncomeSinceFoundingBtc += receipt.amount;
+				// The day's price, FROZEN at the receipt's own date: a later move in BTC re-values nothing already
+				// received (the developer's rule). Before Market Birth there is no price, so such BTC is reported
+				// as unpriced rather than as 0 SC.
+				if (_marketData?.GetEffectivePriceUsd(DateTimeOffset.FromUnixTimeMilliseconds(receipt.ts).LocalDateTime) is decimal dayPrice)
+				{
+					summary.IncomeSinceFoundingSc = Scripts.Finance.Money.Normalize(summary.IncomeSinceFoundingSc + receipt.amount * dayPrice);
+				}
+				else
+				{
+					summary.IncomeSinceFoundingUnpricedBtc += receipt.amount;
+				}
+			}
 
 			// ND.8b.1 (D-ND8.37) — non_miner_{i+1} (BotWalletRegistry's fixed creation order) always
 			// pairs with CompanyRoster.Auctionable[i]; see BtcNetworkDataService.ComputeNonMinerIntroSchedule.
@@ -6967,8 +7109,10 @@ public partial class NetworkRoot : Node
 			summary.LeadingDonorAddress = leader.Value.donor;
 			summary.LeadingDonorTotal = leader.Value.amount;
 			// Corrected 2026-07-11 (developer correction — "day-of-donation" was a writing mistake in the
-			// original D-ND4b.10 spec that leaked into the docs; NOTHING in this system displays a frozen
-			// historical-day value — it is ALWAYS priced as of NOW): live/current SC value, recomputed
+			// original D-ND4b.10 spec that leaked into the docs; the LEADING BID never displays a frozen
+			// historical-day value — it is ALWAYS priced as of NOW. *Scope narrowed 2026-10-15: this note read
+			// "NOTHING in this system", and mini-plan 25 §4.7 deliberately adds a frozen one, IncomeSinceFoundingSc,
+			// where each receipt keeps the price of its own day*): live/current SC value, recomputed
 			// fresh on every call as the game clock advances, not frozen at the leading bid's own day.
 			summary.LeadingDonorScValue = _marketData?.GetEffectivePriceUsd(
 					DateTimeOffset.FromUnixTimeMilliseconds(nowMs).LocalDateTime) is decimal price
@@ -6984,6 +7128,19 @@ public partial class NetworkRoot : Node
 			// the ND.8d.6 leader self-raises — an ignored bid "doesn't participate in the auction" at all.
 			summary.TrackedDonations = ComputeTrackedDonationPool(
 				bids.Where(bd => bd.ts <= summary.WindowCloseUnixMs && !ignoredBidSeqs.Contains(bd.seq)).ToList(), nowMs);
+
+			// Mini-plan 25 §4.7 — the DONATED total: every bid the company KEPT, i.e. confirmed by the window's close.
+			// That includes ignored same-block bids, which are never refunded, and leaves out late bids, which
+			// CancelAndRefundStaleAuctionBids sends back. Live while the auction runs, then fixed at its close: the
+			// total donated to found the company. The donor count is taken over the same set, by IDENTITY (every bot
+			// owns several addresses since P16.2; an address is a key, not an identity).
+			var donatedBids = bids.Where(bd => bd.ts <= summary.WindowCloseUnixMs).ToList();
+			summary.DonatedBtc = donatedBids.Sum(bd => bd.amount);
+			summary.BidderCount = donatedBids
+				.Select(bd => botNodeIdByAddress.TryGetValue(bd.donor, out string? botId) ? botId : bd.donor)
+				.Distinct()
+				.Count();
+			AssertBidderCountBounded(summary.BidderCount, b.NodeId);
 
 			if (resolvedAtMs.HasValue || nowMs >= summary.WindowCloseUnixMs)
 			{
@@ -7685,6 +7842,18 @@ public partial class NetworkRoot : Node
 	// the only commit (Pattern 2), and every block goes through SetNodeFinancialState with persist: true.
 	// In-place is safe because no reader holds the live object: GetOrCreateNodeFinancialState returns a Clone, and
 	// the disk snapshot clones as well.
+	// Mini-plan 25 (17.A7) — a READ-ONLY view of a node's SC Main Balance and Bankroll, for a display. Unlike
+	// GetOrCreateNodeFinancialState it creates nothing (a screen must not invent a state for a node that has none) and
+	// copies no transfer records. Current while the sim runs: the active node's mirror is written on every bet
+	// (SimulationService.PersistFinancialState) and each bot's by SaveBotFinancialState. Null when the node has no state.
+	public static (decimal Main, decimal Bankroll)? GetNodeScBalances(string nodeId)
+	{
+		EnsureInitialized();
+		return SharedNodesById.TryGetValue(nodeId, out NodeAgent? node) && node.FinancialState is NodeFinancialState state
+			? (state.PrincipalBalance, state.BankrollBalance)
+			: null;
+	}
+
 	public bool TryUpdateNodeFinancialBalances(string nodeId, decimal? principalBalance, decimal bankrollBalance)
 	{
 		EnsureInitialized();
@@ -8750,8 +8919,25 @@ public sealed class NonMinerDonationSummary
 	public string CompanyMarketCategory { get; set; } = string.Empty;
 	public DateTime? CompanyAppearanceDateLocal { get; set; }
 	public string CompanyAnchor { get; set; } = string.Empty;
-	public decimal TotalReceived { get; set; }
-	public int DonorCount { get; set; }
+	// Mini-plan 25 §4.5/§4.7 (developer, 2026-10-15) — the company's funding. All derived from the chain on every ledger
+	// computation; nothing here is persisted.
+	public bool IsFounded { get; set; }
+	// BTC the qualifying bidders (player + bot_1..4) sent and the company kept: live during the auction, then the
+	// total donated to found the company.
+	public decimal DonatedBtc { get; set; }
+	// Distinct qualifying bidders behind DonatedBtc; 0..5 by construction (asserted under DEBUG).
+	public int BidderCount { get; set; }
+	// Income = BTC from every other sender, minus the company's own addresses and the SEIZED/COLLATERAL transfers.
+	// Before founding: "Total Foundational Income" once founded, frozen at the founding block.
+	public decimal FoundationalIncomeBtc { get; set; }
+	// After founding, counted from zero.
+	public decimal IncomeSinceFoundingBtc { get; set; }
+	// The same receipts, each valued at the BTC price of the day it arrived, never re-priced afterwards.
+	public decimal IncomeSinceFoundingSc { get; set; }
+	// Post-founding receipts that arrived before Market Birth, so have no SC price.
+	public decimal IncomeSinceFoundingUnpricedBtc { get; set; }
+	// "Company's BTC Income" as the player sees it: the running income of the company's current phase.
+	public decimal CompanyBtcIncome => IsFounded ? IncomeSinceFoundingBtc : FoundationalIncomeBtc;
 	public string LeadingDonorAddress { get; set; } = string.Empty;
 	public decimal LeadingDonorTotal { get; set; }
 	// ND.4b (D-ND4b.10, corrected 2026-07-11) — the leading bid's LIVE, CURRENT SC value (BTC principal ×

@@ -19,8 +19,11 @@ public partial class ClientsTransactions : Control
 	private Label _netCommitmentLabel;
 	private VBoxContainer _txListVBox;
 
-	private double _refreshTimer;
-	private const double RefreshInterval = 2.0;
+	// Mini-plan 25 17.C.3 — no 2 s timer: it covered nothing. Every figure on this page is read from the ledger's
+	// entries, and every runtime write to them fires LedgerChanged (AddEntry, the checkpoint restore, the pre-genesis
+	// reset). The event only marks the page dirty, so a burst of entries in one frame costs one rebuild, on the next
+	// frame, outside whatever deep call recorded them. At rest: 0 refreshes a second (the timer was 0.5).
+	private bool _dirty;
 
 	// ND.8f: all five canonical casino clients (single source of truth in the ledger service).
 	private static readonly (string Id, string Display)[] KnownClients = CasinoClientLedgerService.CanonicalClients;
@@ -49,7 +52,7 @@ public partial class ClientsTransactions : Control
 		GetNode<Button>("%BackBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.CasinoGamblingFinances);
 
 		if (_ledger != null)
-			_ledger.LedgerChanged += RefreshAll;
+			_ledger.LedgerChanged += MarkDirty;
 
 		RefreshAll();
 	}
@@ -57,21 +60,21 @@ public partial class ClientsTransactions : Control
 	public override void _ExitTree()
 	{
 		if (_ledger != null)
-			_ledger.LedgerChanged -= RefreshAll;
+			_ledger.LedgerChanged -= MarkDirty;
 	}
+
+	private void MarkDirty() => _dirty = true;
 
 	public override void _Process(double delta)
 	{
-		_refreshTimer += delta;
-		if (_refreshTimer >= RefreshInterval)
-		{
-			_refreshTimer = 0;
-			RefreshAll();
-		}
+		if (!_dirty) return;
+		_dirty = false;
+		RefreshAll();
 	}
 
 	private void RefreshAll()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("ClientsTransactions.RefreshAll");   // DEBUG-only, mini-plan 25
 		RefreshGlobalTotals();
 		RebuildClientPanel();
 	}

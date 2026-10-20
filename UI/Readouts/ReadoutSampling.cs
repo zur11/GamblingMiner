@@ -272,6 +272,23 @@ namespace UI.Readouts
 			string pattern = timePattern.Length == 0 ? datePattern.TrimEnd() : datePattern + " " + timePattern;
 			return gameLocal.ToString(pattern, CultureInfo.InvariantCulture);
 		}
+
+		/// <summary>Mini-plan 25 — a COUNTDOWN at the resolution this sampler can honestly show: the same rule as
+		/// <see cref="FormatGameTime"/>, applied to a span instead of an instant (`3d 04:12:07`, `3d 04:12`, `3d 04h`, `3d`).
+		/// Floored, never rounded: a countdown must not show more time left than there is. The caller feeds the sampler
+		/// the CLOCK (NoteRepaint), not the countdown, since both move at the same rate.</summary>
+		public string FormatRemaining(TimeSpan remaining)
+		{
+			if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
+			int days = (int)remaining.TotalDays;
+			return _unit switch
+			{
+				ClockUnit.Seconds => string.Create(CultureInfo.InvariantCulture, $"{days}d {remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}"),
+				ClockUnit.Minutes => string.Create(CultureInfo.InvariantCulture, $"{days}d {remaining.Hours:00}:{remaining.Minutes:00}"),
+				ClockUnit.Hours => string.Create(CultureInfo.InvariantCulture, $"{days}d {remaining.Hours:00}h"),
+				_ => string.Create(CultureInfo.InvariantCulture, $"{days}d"),
+			};
+		}
 	}
 
 	/// <summary>

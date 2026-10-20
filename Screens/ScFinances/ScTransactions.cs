@@ -22,8 +22,15 @@ public partial class ScTransactions : Control
 	private Label _netWorthLabel;
 	private VBoxContainer _txListVBox;
 
-	private double _refreshTimer;
-	private const double RefreshInterval = 2.0;
+	// Mini-plan 25 17.C.3 — no 2 s timer. Of everything this page shows, one figure had no subscribed event: Net
+	// Worth, through the Bankroll, which moves on every settled bet. ClientBetSettled only marks it dirty (hundreds
+	// a second at 9000X, §38.7 rule 1), and _Process repaints that ONE label at most every NetWorthIntervalSeconds,
+	// StatusBar's cadence (the same Bankroll sits in the bar above). The list and the bank figures keep their two
+	// events. At rest: 0 refreshes a second (the timer was 0.5).
+	private SimulationService _simulation;
+	private bool _netWorthDirty;
+	private double _sinceNetWorthPaint = double.MaxValue;
+	private const double NetWorthIntervalSeconds = 0.1;
 
 	public override void _Ready()
 	{
@@ -45,6 +52,8 @@ public partial class ScTransactions : Control
 
 		if (_playerBank != null) _playerBank.BankStateChanged += RefreshAll;
 		if (_principal != null)  _principal.BalanceChanged += RefreshAll;
+		_simulation = GetNodeOrNull<SimulationService>("/root/SimulationService");
+		if (_simulation != null) _simulation.ClientBetSettled += OnClientBetSettled;
 
 		RefreshAll();
 	}
@@ -53,37 +62,48 @@ public partial class ScTransactions : Control
 	{
 		if (_playerBank != null) _playerBank.BankStateChanged -= RefreshAll;
 		if (_principal != null)  _principal.BalanceChanged -= RefreshAll;
+		if (_simulation != null) _simulation.ClientBetSettled -= OnClientBetSettled;
 	}
+
+	private void OnClientBetSettled(string _, string __, BetTransactionEvent ___) => _netWorthDirty = true;
 
 	public override void _Process(double delta)
 	{
-		_refreshTimer += delta;
-		if (_refreshTimer >= RefreshInterval)
-		{
-			_refreshTimer = 0;
-			RefreshAll();
-		}
+		_sinceNetWorthPaint += delta;
+		if (!_netWorthDirty || _sinceNetWorthPaint < NetWorthIntervalSeconds) return;
+		_netWorthDirty = false;
+		_sinceNetWorthPaint = 0d;
+		Scripts.Diagnostics.UiRefreshProbe.Count("ScTransactions.RefreshNetWorth");   // DEBUG-only, mini-plan 25
+		RefreshNetWorth();
 	}
 
 	private void RefreshAll()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("ScTransactions.RefreshAll");   // DEBUG-only, mini-plan 25
 		if (!GodotObject.IsInstanceValid(this) || _playerBank == null) return;
 
 		decimal bank      = _playerBank.BankAccountBalance;
 		decimal deposited = _playerBank.TotalDepositedToCasino;
 		decimal withdrawn = _playerBank.TotalWithdrawnFromCasino;
 		decimal netInside = Money.Normalize(deposited - withdrawn);
-		decimal main      = _principal?.CurrentBalance ?? 0m;
-		decimal bankrollBal = _bankroll?.CurrentBalance ?? 0m;
-		decimal netWorth  = Money.Normalize(bank + main + bankrollBal);
-
 		_privateBankLabel.Text     = string.Create(CultureInfo.InvariantCulture, $"Private Bank Account:      {bank:N8} SC");
 		_totalDepositedLabel.Text  = string.Create(CultureInfo.InvariantCulture, $"Total deposited → casino:  {deposited:N8} SC");
 		_totalWithdrawnLabel.Text  = string.Create(CultureInfo.InvariantCulture, $"Total withdrawn → bank:    {withdrawn:N8} SC");
 		_netInsideLabel.Text       = string.Create(CultureInfo.InvariantCulture, $"Net inside casino:         {netInside:N8} SC");
-		_netWorthLabel.Text        = string.Create(CultureInfo.InvariantCulture, $"Net Worth (all):           {netWorth:N8} SC");
+		RefreshNetWorth();
 
 		BuildTxList();
+	}
+
+	private void RefreshNetWorth()
+	{
+		if (!GodotObject.IsInstanceValid(this) || _playerBank == null) return;
+
+		decimal bank        = _playerBank.BankAccountBalance;
+		decimal main        = _principal?.CurrentBalance ?? 0m;
+		decimal bankrollBal = _bankroll?.CurrentBalance ?? 0m;
+		decimal netWorth    = Money.Normalize(bank + main + bankrollBal);
+		_netWorthLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Net Worth (all):           {netWorth:N8} SC");
 	}
 
 	private void BuildTxList()

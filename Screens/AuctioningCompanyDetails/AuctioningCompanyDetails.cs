@@ -42,10 +42,23 @@ public partial class AuctioningCompanyDetails : Control
 	private static readonly Color HoldingSilver = new(0.75f, 0.75f, 0.78f); // would mint PST
 	private static readonly Color HoldingBlack = new(0.05f, 0.05f, 0.05f);  // no tracked slot
 
+	// Mini-plan 25 (developer, 2026-10-19) — the auction COUNTDOWN in real time. It was measured against the chain TIP's
+	// timestamp, so it moved only when a block was mined, in steps of a whole block's time. It now reads the live game
+	// clock, which makes it a live clock readout. Per §29.13 that means the shared sampler, which decides both the cadence
+	// and the finest field shown, so no digit freezes and none claims precision the sampling cannot carry. The rest of
+	// the status line still changes only with a block (BlockAccepted), so only the clock half is repainted here.
+	// The bidding MODE (early rush / normal / urgency) keeps reading the tip: that is when the resolver rolls it.
+	private readonly UI.Readouts.AdaptiveReadoutSampler _countdownSampler = new();
+	private CalendarTimeService? _calendar;
+	private bool _countdownLive;
+	private long _countdownCloseMs;
+	private string _statusAfterClock = string.Empty;
+
 	public override void _Ready()
 	{
 		_networkRoot = GetNode<NetworkRoot>("NetworkRoot");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+		_calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		BuildBorderOverlay();
 
 		GetNode<HBoxContainer>("%StatusBarPlaceholder").AddChild(new StatusBar());
@@ -117,15 +130,54 @@ public partial class AuctioningCompanyDetails : Control
 		}
 	}
 
+	// Mini-plan 25 §4.8 — DEBUG-only: the live funding figures, once per rebuild, i.e. once per block while this page is
+	// open. The verification reads them from user://logs/godot.log: donated and income may only grow while the
+	// auction runs.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private void PrintFunding(NonMinerDonationSummary summary)
+	{
+		GD.Print(string.Create(CultureInfo.InvariantCulture,
+			$"[CompanyFunding] auction {summary.NonMinerNodeId} h{_networkRoot.GetPlayerLatestBlock().Index} donated={summary.DonatedBtc:F8} donors={summary.BidderCount} income={summary.CompanyBtcIncome:F8}"));
+	}
+
+	// The countdown repaints at the sampler's cadence while a window is running. Nothing else on the page is touched
+	// here: the rest of the status line was composed at the last block.
+	public override void _Process(double delta)
+	{
+		if (!_countdownLive || _calendar == null || !_countdownSampler.ShouldRepaint(delta)) return;
+		PaintStatus();
+		_countdownSampler.NoteRepaint(_calendar.CurrentLocalDateTime);
+	}
+
+	private void PaintStatus()
+	{
+		string clock;
+		if (!_countdownLive)
+		{
+			clock = "awaiting first bid — no countdown";
+		}
+		else
+		{
+			long clockNowMs = new DateTimeOffset(_calendar?.CurrentUtcDateTime ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
+			long remainingMs = _countdownCloseMs - clockNowMs;
+			// At zero the window has closed in game time, but an auction resolves on the first BLOCK at or after its
+			// close, so the page says so instead of sitting on a misleading "0d".
+			clock = remainingMs > 0
+				? _countdownSampler.FormatRemaining(TimeSpan.FromMilliseconds(remainingMs)) + " left in the current window"
+				: "window closed — it resolves with the next block";
+		}
+
+		_statusLabel.Text = "In Auction — " + clock + _statusAfterClock;
+	}
+
 	// D-ND5.9 — while InAuction: the live top-10 tracked donation pool (D-ND5.3). ND.10b — now two columns:
 	// the bids list (left) + the per-bot real leading-bid roll panel (right). Rebuilt on BlockAccepted.
 	private void ShowLiveTrackedDonations(NonMinerDonationSummary summary, IReadOnlyList<NonMinerDonationSummary> ledger)
 	{
+		// The chain tip's instant: what the BIDDING mode below is decided against. The countdown no longer uses it.
 		long nowMs = _networkRoot.GetPlayerLatestBlock().Timestamp;
-		string clock = summary.LeadingBidUnixMs == 0
-			? "awaiting first bid — no countdown"
-			: string.Create(CultureInfo.InvariantCulture,
-				$"{Math.Max(0d, (summary.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left in the current window");
+		_countdownLive = summary.LeadingBidUnixMs != 0;
+		_countdownCloseMs = summary.WindowCloseUnixMs;
 
 		// ND.10f — the page border + caption: what the player WOULD mint if this pool closed right now.
 		// A running forecast, not a promise — every later bid can re-order the tracked pool beneath it.
@@ -142,7 +194,17 @@ public partial class AuctioningCompanyDetails : Control
 			PlayerAuctionStake.Pst => "PST (dividend shares)",
 			_ => "nothing (no tracked slot)"
 		};
-		_statusLabel.Text = $"In Auction — {clock}  |  If it closed now you would mint: {stakeCaption}";
+		// Mini-plan 25 §4.5/§4.7 (developer, 2026-10-15) — who funds this company, split the way the auction splits it:
+		// DONORS are the qualifying bidders (player + casino miners), and DONATED is what they gave and the company
+		// kept, both the same figures BlockExplorer shows. The company's BTC INCOME is everything sent by anyone
+		// else. All three move only when a block confirms a payment, and this page rebuilds on every
+		// BlockAccepted, so they are as current as the chain. At founding, donated and income freeze into what
+		// CompanyDetails shows as the founding figures.
+		string funding = string.Create(CultureInfo.InvariantCulture,
+			$"Donors: {summary.BidderCount}  |  Donated: {summary.DonatedBtc:F8} BTC  |  Company's BTC Income: {summary.CompanyBtcIncome:F8} BTC");
+		_statusAfterClock = $"  |  If it closed now you would mint: {stakeCaption}\n{funding}";
+		PaintStatus();
+		PrintFunding(summary);
 
 		// ND.6d — the pool's occupied-slot count selects the casino-bot re-bid mode shown per slot below:
 		// EARLY RUSH while it holds <7 slots (steep tier 4/5/6 probabilities so bots contest young pools

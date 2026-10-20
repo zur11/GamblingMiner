@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using GodotBlockchainPort.Simulation;
 using GodotBlockchainPort.Blockchain;
+using Scripts.Hardware;
 using UI.StatusBar;
 using UI.NotepadPopup;
 #nullable enable
@@ -23,7 +24,33 @@ public partial class BlockExplorer : Control
 	private Label _chainInfoLabel = null!;
 	// One scrollable right column (Latest Block + Network Status + Address Directory) — a single
 	// internally-scrolling RichTextLabel so the whole column is reachable (incl. Satoshi, last in the directory).
-	private RichTextLabel _rightColumnLabel = null!;
+	// Mini-plan 25 (developer, 2026-10-19) — the right side is FOUR fixed panels in a 2×2 grid, each its own
+	// RichTextLabel with its own internal scroll (Ch. 29 §29.2 Pattern B, four times), instead of ONE label holding all
+	// of it. With one label, every block changed the length of the whole text (the latest block's transaction list
+	// above everything else), so the scroll position jumped and navigating at 9000X was hard. Now each panel's size is
+	// fixed by the grid, each keeps its own scroll position across refreshes, and nothing scrolls inside a scroll.
+	// The casino players (player + bot_1..4) have their own panel, out of Network Status.
+	private RichTextLabel _latestBlockLabel = null!;
+	private RichTextLabel _casinoPlayersLabel = null!;
+	private RichTextLabel _networkStatusLabel = null!;
+	private RichTextLabel _addressDirectoryLabel = null!;
+
+	// Mini-plan 25 (17.A7, developer, 2026-10-19) — a DEV toggle in the Casino Players panel that shows or hides each
+	// player's SC Main Balance and Bankroll. Default ON. Static, so it survives leaving and re-entering the page
+	// within a session; NOT persisted, because user-settings persistence does not exist yet (PRIVATE_ROADMAP ▶ NEXT #2).
+	// Flipping it repaints only this panel, from the lines the last rebuild cached, with no chain read.
+	private static bool _showCasinoScBalances = true;
+	private readonly List<(string NodeId, string Line)> _casinoStatusLines = new();
+
+	// Unit 13 repainted the balances only with the page, on a block or a new transaction. At 100X that is once in
+	// minutes, while every bet moves a Bankroll, so the figures sat still until the toggle was flipped (developer's
+	// report). They now follow SETTLED BETS. ClientBetSettled fires for the player's autobet and every bot bet,
+	// hundreds a second at 9000X, so the handler only sets a flag (§38.7 rule 1). The panel repaints at most every
+	// CasinoBalancesIntervalSeconds, StatusBar's own balance cadence (mini-plan 15 B: "money may not sit still"), so
+	// the two tick together. Only this panel repaints: five O(1) reads, no chain walk.
+	private bool _casinoBalancesDirty;
+	private double _sinceCasinoBalancesPaint;
+	private const double CasinoBalancesIntervalSeconds = 0.1;
 
 	private LineEdit _txLookupInput = null!;
 	private LineEdit _addressLookupInput = null!;
@@ -60,9 +87,26 @@ public partial class BlockExplorer : Control
 	// constant keeps the hue and lifts the value for legibility. Do not "correct" this toward yellow.
 	private static readonly Color WorkMocha = new(0.75f, 0.52f, 0.32f); // #C08552
 
-	// Live auto-refresh so background simulation (mining/balances) shows in real time.
-	private double _autoRefreshTimer;
-	private const double AutoRefreshInterval = 1.0;
+	// Mini-plan 25 17.C.2 (BlockExplorer) — what this page shows, and what moves it. It was rebuilt EVERY real second by a
+	// timer: 63 nodes' balances (a UTXO pass each, in Network Status), the address directory, and with Auction Mode on,
+	// the whole auction ledger (a walk of the entire chain). Everything on it changes only when:
+	//   • a block is mined (latest block, difficulty, balances, blocks mined, auctions);
+	//   • a transaction enters the mempool (pending counts, balances);
+	//   • hardware changes, or the sim starts or stops (the mining rates in Network Status);
+	//   • and the auction COUNTDOWN, which moves with the game clock.
+	// So the page now rebuilds on those EVENTS through a leading-edge throttle at the old 1 s (0/s at rest, never more
+	// than before under load), and the countdown alone is rewritten once a real second while the clock moves, from the
+	// close times cached at the last rebuild, without recomputing anything. Its tenths-of-a-day precision at a 1 s
+	// cadence is the documented exception in ProjectDesignManual §29.13.1 (arithmetic beside RefreshEnrollMode).
+	private bool _uiDirty = true;
+	private double _sinceLastRefresh = double.MaxValue;
+	private const double MinRefreshInterval = 1.0;
+	private bool _lastSimRunning;
+	private CalendarTimeService? _calendar;
+	private readonly List<(Label Label, string Prefix, long CloseMs)> _countdownRows = new();
+	private double _sinceCountdownPaint;
+	private const double CountdownIntervalSeconds = 1.0;
+	private DateTime _lastCountdownClock;
 
 	public override void _Ready()
 	{
@@ -70,7 +114,26 @@ public partial class BlockExplorer : Control
 		_minerNodeOption = GetNode<OptionButton>("%MinerNodeOption");
 
 		_chainInfoLabel = GetNode<Label>("%ChainInfoLabel");
-		_rightColumnLabel = GetNode<RichTextLabel>("%RightColumnLabel");
+		_latestBlockLabel = GetNode<RichTextLabel>("%LatestBlockLabel");
+		_casinoPlayersLabel = GetNode<RichTextLabel>("%CasinoPlayersLabel");
+		_networkStatusLabel = GetNode<RichTextLabel>("%NetworkStatusLabel");
+		_addressDirectoryLabel = GetNode<RichTextLabel>("%AddressDirectoryLabel");
+
+		// Above the panel's own scroll, so it never scrolls away with the list.
+		var scBalancesToggle = new CheckButton
+		{
+			Text = "DEV: show Main Balance & Bankroll",
+			ButtonPressed = _showCasinoScBalances,
+			TooltipText = "DEV — show or hide each casino player's SC Main Balance and Bankroll in this panel.",
+		};
+		scBalancesToggle.Toggled += on =>
+		{
+			_showCasinoScBalances = on;
+			RenderCasinoPlayers();
+		};
+		VBoxContainer casinoCell = GetNode<VBoxContainer>("%CasinoPlayersCell");
+		casinoCell.AddChild(scBalancesToggle);
+		casinoCell.MoveChild(scBalancesToggle, 0);
 
 		_txLookupInput = GetNode<LineEdit>("%TxLookupInput");
 		_addressLookupInput = GetNode<LineEdit>("%AddressLookupInput");
@@ -107,8 +170,36 @@ public partial class BlockExplorer : Control
 		BuildEnrollModePanel();
 
 		PopulateNodeSelectors();
+		_calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+		_lastSimRunning = _calendar?.IsAutobetActive == true;
 		RefreshUi();
+		_uiDirty = false;
+		_sinceLastRefresh = 0d;
+
+		NetworkRoot.BlockAccepted += OnBlockAccepted;
+		NetworkRoot.MempoolChanged += MarkUiDirty;
+		HardwareAllocationRepository.HardwareChanged += OnHardwareChanged;
+		if (_simulationService != null) _simulationService.ClientBetSettled += OnClientBetSettled;
 	}
+
+	public override void _ExitTree()
+	{
+		// Three static events and an autoload's: all outlive this scene, so all are released.
+		NetworkRoot.BlockAccepted -= OnBlockAccepted;
+		NetworkRoot.MempoolChanged -= MarkUiDirty;
+		HardwareAllocationRepository.HardwareChanged -= OnHardwareChanged;
+		if (_simulationService != null) _simulationService.ClientBetSettled -= OnClientBetSettled;
+	}
+
+	// Only the casino's players' bets move the balances this panel shows; the flag is all the handler does.
+	private void OnClientBetSettled(string nodeId, string _, Scripts.Finance.BetTransactionEvent __)
+	{
+		if (_showCasinoScBalances) _casinoBalancesDirty = true;
+	}
+
+	private void OnBlockAccepted(Block _) => _uiDirty = true;
+	private void OnHardwareChanged(string _) => _uiDirty = true;
+	private void MarkUiDirty() => _uiDirty = true;
 
 	// "Enroll Mode" (referral-auction foundation): a toggle that reveals the donation race for
 	// still-recruitable non-miner holder bots. Observe-only for now — enrolled/permanent filtering
@@ -151,12 +242,25 @@ public partial class BlockExplorer : Control
 
 	private void RefreshEnrollMode()
 	{
+		// The rows are about to be rebuilt (or hidden), so the countdown cache is rebuilt with them: a cached label
+		// from the previous build is queued for deletion below.
+		_countdownRows.Clear();
 		bool on = _enrollModeToggle.ButtonPressed;
 		_enrollModePanel.Visible = on;
 		if (!on) return;
 
 		var ledger = _networkRoot.GetNonMinerAuctionLedger();
-		long nowMs = _networkRoot.GetPlayerLatestBlock().Timestamp;
+		// Mini-plan 25 (developer, 2026-10-19) — the countdown reads the LIVE game clock, not the chain tip's timestamp,
+		// which moved only when a block was mined. It is a live-clock readout WITHOUT a sampler, deliberately, and this
+		// is why that is honest (§29.13's rule: cadence and precision are one decision). It shows tenths of a day
+		// (8,640 game-seconds) and repaints on this page's 1 s refresh. At the clock's ceiling (9000X) one refresh
+		// advances the tenths digit by ~1.04 steps, so it visibly moves every refresh. A freeze needs a step near 10
+		// (~86,400 game-seconds per real second), which the game cannot reach, and slower speeds only move it more
+		// slowly. Recorded as the one exception in §29.13.1.
+		long nowMs = new DateTimeOffset(
+			GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService")?.CurrentUtcDateTime
+				?? DateTimeOffset.FromUnixTimeMilliseconds(_networkRoot.GetPlayerLatestBlock().Timestamp).UtcDateTime)
+			.ToUnixTimeMilliseconds();
 
 		int inAuction = ledger.Count(s => s.Status == NonMinerAuctionStatus.InAuction);
 		int resolved = ledger.Count(s => s.Status == NonMinerAuctionStatus.Resolved);
@@ -167,8 +271,9 @@ public partial class BlockExplorer : Control
 		foreach (Node child in _enrollModeRowsVBox.GetChildren())
 			child.QueueFree();
 
-		// EB.2 (D-EB.6/7): TotalReceived counts ALL funding (bot economy + player bids); the leader and
-		// the countdown reflect only QUALIFYING bids. A non-miner with no qualifying bid yet shows
+		// EB.2 (D-EB.6/7): the leader and the countdown reflect only QUALIFYING bids. Mini-plan 25 §4.5: so do the
+		// donors (BidderCount, the same figure AuctioningCompanyDetails shows, D-17.4), and the rest of the
+		// funding is the company's BTC income. A non-miner with no qualifying bid yet shows
 		// "awaiting first bid" — its window countdown has not started and it stays recruitable.
 		// ND.4b (D-ND4b.10, corrected 2026-07-11): the leading bid's BTC principal now also shows its
 		// LIVE, CURRENT SC value (priced as of now, never frozen at the bid's own day).
@@ -182,9 +287,12 @@ public partial class BlockExplorer : Control
 				: string.Create(CultureInfo.InvariantCulture, $"leading bid {_networkRoot.DescribeAddress(s.LeadingDonorAddress)} ({s.LeadingDonorTotal:F8} BTC{scValue})");
 			string clock = s.LeadingBidUnixMs == 0
 				? "awaiting first bid — no countdown"
-				: string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0d, (s.WindowCloseUnixMs - nowMs) / 86_400_000d):0.0}d left");
-			string line = string.Create(CultureInfo.InvariantCulture,
-				$"{NetworkRoot.DescribeCompany(s)}  | recv {s.TotalReceived:F8} BTC ({s.DonorCount} donor)  | {leader}  | {clock}");
+				: CountdownText(s.WindowCloseUnixMs, nowMs);
+			// Everything before the countdown is fixed until the next rebuild, so it is kept apart: the once-a-second
+			// countdown tick rewrites only the end of the line (UpdateCountdowns).
+			string prefix = string.Create(CultureInfo.InvariantCulture,
+				$"{NetworkRoot.DescribeCompany(s)}  | donated {s.DonatedBtc:F8} BTC by {s.BidderCount} {(s.BidderCount == 1 ? "donor" : "donors")}  | BTC income {s.CompanyBtcIncome:F8} BTC  | {leader}  | ");
+			string line = prefix + clock;
 
 			var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
 
@@ -195,6 +303,10 @@ public partial class BlockExplorer : Control
 			// is a running forecast, never a promise. Same threshold/ranking as FoundCompany by construction
 			// (NetworkRoot.GetPlayerProjectedStake) — the colour cannot drift from the real mint.
 			var rowLabel = new Label { Text = line, SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
+			if (s.LeadingBidUnixMs != 0)
+			{
+				_countdownRows.Add((rowLabel, prefix, s.WindowCloseUnixMs));
+			}
 			row.AddChild(BuildTitlePanel(rowLabel, StakeBorderColor(_networkRoot.GetPlayerProjectedStake(s))));
 
 			// D-ND5.2 — the details button appears ONLY once this non-miner has received at least one
@@ -391,6 +503,28 @@ public partial class BlockExplorer : Control
 		return titlePanel;
 	}
 
+	// The auction countdown, one source for the rebuild and the tick. At zero it says so: an auction resolves on the first
+	// block at or after its close (see AuctioningCompanyDetails.PaintStatus).
+	private static string CountdownText(long closeMs, long nowMs) =>
+		closeMs > nowMs
+			? string.Create(CultureInfo.InvariantCulture, $"{(closeMs - nowMs) / 86_400_000d:0.0}d left")
+			: "closed — resolves with the next block";
+
+	// Mini-plan 25 — rewrites only the countdown at the end of each live auction row, from the cache the last rebuild
+	// filled. No ledger walk and no balance pass: those run on the events above.
+	private void UpdateCountdowns()
+	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("BlockExplorer.UpdateCountdowns");   // DEBUG-only, mini-plan 25
+		long nowMs = new DateTimeOffset(_calendar!.CurrentUtcDateTime).ToUnixTimeMilliseconds();
+		foreach ((Label label, string prefix, long closeMs) in _countdownRows)
+		{
+			if (GodotObject.IsInstanceValid(label))
+			{
+				label.Text = prefix + CountdownText(closeMs, nowMs);
+			}
+		}
+	}
+
 	private void OnOpenAuctioningCompanyDetails(string nonMinerAddress)
 	{
 		AuctioningCompanyDetails.PendingNonMinerAddress = nonMinerAddress;
@@ -405,11 +539,41 @@ public partial class BlockExplorer : Control
 
 	public override void _Process(double delta)
 	{
-		// Reflect the background simulation (blocks, balances, auction) in real time.
-		_autoRefreshTimer += delta;
-		if (_autoRefreshTimer < AutoRefreshInterval) return;
-		_autoRefreshTimer = 0d;
-		RefreshUi();
+		// The sim starting or stopping changes the mining rates and nothing announces it: a one-bool edge per frame.
+		bool simRunning = _calendar?.IsAutobetActive == true;
+		if (simRunning != _lastSimRunning)
+		{
+			_lastSimRunning = simRunning;
+			_uiDirty = true;
+		}
+
+		_sinceLastRefresh += delta;
+		if (_uiDirty && _sinceLastRefresh >= MinRefreshInterval)
+		{
+			_uiDirty = false;
+			_sinceLastRefresh = 0d;
+			_sinceCountdownPaint = 0d;
+			RefreshUi();
+			return;
+		}
+
+		// Between rebuilds, two things still move: the casino players' SC balances (settled bets)...
+		_sinceCasinoBalancesPaint += delta;
+		if (_casinoBalancesDirty && _sinceCasinoBalancesPaint >= CasinoBalancesIntervalSeconds)
+		{
+			_casinoBalancesDirty = false;
+			_sinceCasinoBalancesPaint = 0d;
+			RenderCasinoPlayers();
+		}
+
+		// ...and the countdown, only while the clock does.
+		_sinceCountdownPaint += delta;
+		if (_countdownRows.Count == 0 || _calendar == null || _sinceCountdownPaint < CountdownIntervalSeconds) return;
+		_sinceCountdownPaint = 0d;
+		DateTime clockNow = _calendar.CurrentLocalDateTime;
+		if (clockNow == _lastCountdownClock) return;
+		_lastCountdownClock = clockNow;
+		UpdateCountdowns();
 	}
 
 	private void PopulateNodeSelectors()
@@ -529,6 +693,7 @@ public partial class BlockExplorer : Control
 
 	private void RefreshUi()
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("BlockExplorer.RefreshUi");   // DEBUG-only, mini-plan 25
 		Block last = _networkRoot.GetPlayerLatestBlock();
 
 		// Difficulty readout (D.3): the MAIN presenter shows the difficulty of the block being mined NOW
@@ -547,11 +712,7 @@ public partial class BlockExplorer : Control
 			+ string.Create(CultureInfo.InvariantCulture, $" | Mining difficulty (block #{last.Index + 1}): {miningDifficulty:F2} ({trend})")
 			+ $" | Avg block time (last {window}): {avgBlockText} (target {FormatDuration(targetSec)})";
 
-		// Preserve the label's own internal scroll position across the 1 s refresh (setting Text resets it to top).
-		VScrollBar rightVScroll = _rightColumnLabel.GetVScrollBar();
-		double rightScroll = rightVScroll.Value;
-
-		_rightColumnLabel.Text =
+		SetTextKeepingScroll(_latestBlockLabel,
 			"[b]Latest Block (player view)[/b]\n" +
 			$"Index: {last.Index}\n" +
 			$"Time: {FormatBlockTime(last.Timestamp)}\n" +
@@ -561,18 +722,70 @@ public partial class BlockExplorer : Control
 			$"PrevHash: {last.PreviousBlockHash}\n" +
 			$"MerkleRoot: {last.MerkleRoot}\n" +
 			$"Transactions: {last.Transactions.Count}\n" +
-			BuildLatestTransactionPreview(last) +
-			"\n\n[b]Network Status[/b]\n" + string.Join("\n", BuildNodeStatusLinesWithMiningRates()) +
-			"\n\n" + BuildAddressDirectory() +
-			"\n\n\n"; // trailing padding so the last real line (Satoshi) clears the scroll's bottom edge
+			BuildLatestTransactionPreview(last));
 
-		rightVScroll.Value = rightScroll;
+		// One pass over the status lines, split by WHO: the casino's players (the player and its four casino-miner bots)
+		// get their own panel, everyone else stays in Network Status.
+		_casinoStatusLines.Clear();
+		var networkLines = new List<string>();
+		foreach ((string nodeId, string line) in BuildNodeStatusLinesWithMiningRates())
+		{
+			if (IsCasinoPlayer(nodeId))
+			{
+				_casinoStatusLines.Add((nodeId, line));
+			}
+			else
+			{
+				networkLines.Add(line);
+			}
+		}
+
+		RenderCasinoPlayers();
+		SetTextKeepingScroll(_networkStatusLabel, "[b]Network Status[/b]\n" + string.Join("\n", networkLines));
+		SetTextKeepingScroll(_addressDirectoryLabel, BuildAddressDirectory());
 
 		RefreshEnrollMode();
 	}
 
+	// The Casino Players panel from the cached status lines, with each player's SC balances appended while the DEV toggle
+	// is on. The balances are read here rather than cached, so a toggle shows the figures of that moment.
+	private void RenderCasinoPlayers()
+	{
+		var lines = new List<string>(_casinoStatusLines.Count);
+		foreach ((string nodeId, string line) in _casinoStatusLines)
+		{
+			if (_showCasinoScBalances && NetworkRoot.GetNodeScBalances(nodeId) is (decimal main, decimal bankroll))
+			{
+				lines.Add(line + string.Create(CultureInfo.InvariantCulture,
+					$" | Main Balance: {main:N8} SC | Bankroll: {bankroll:N8} SC"));
+			}
+			else
+			{
+				lines.Add(line);
+			}
+		}
+
+		SetTextKeepingScroll(_casinoPlayersLabel, "[b]Casino Players[/b]\n" + string.Join("\n", lines));
+	}
+
+	// The player and the four casino-miner bots: the casino's own players, the same five canonical clients the
+	// casino's books keep (CasinoClientLedgerService), read from the registry rather than repeated as literals.
+	private static bool IsCasinoPlayer(string nodeId) =>
+		nodeId == "player" || BotWalletRegistry.MinerBots.Any(b => b.NodeId == nodeId);
+
+	// Ch. 29 §29.3, both traps at once: setting Text resets a RichTextLabel's scroll to the top, so the position is saved
+	// and restored; and the last line sits flush against the bottom edge, so three blank lines pad it clear.
+	private static void SetTextKeepingScroll(RichTextLabel label, string text)
+	{
+		VScrollBar scroll = label.GetVScrollBar();
+		double position = scroll.Value;
+		label.Text = text + "\n\n\n";
+		scroll.Value = position;
+	}
+
 	// Appends a "⛏ <bets/sec>" marker to nodes that are actively mining in the background simulation.
-	private IEnumerable<string> BuildNodeStatusLinesWithMiningRates()
+	// Mini-plan 25 — yields the node id beside the line, so the caller can split the casino's players out.
+	private IEnumerable<(string NodeId, string Line)> BuildNodeStatusLinesWithMiningRates()
 	{
 		IReadOnlyDictionary<string, double> rates =
 			_simulationService?.GetActiveMiningRates() ?? new Dictionary<string, double>();
@@ -582,14 +795,16 @@ public partial class BlockExplorer : Control
 		// silently broken: the lookup would have missed and the ⛏ marker would have vanished.
 		foreach ((string nodeId, string line) in _networkRoot.GetNodeStatusLines())
 		{
-			yield return rates.TryGetValue(nodeId, out double bps)
+			yield return (nodeId, rates.TryGetValue(nodeId, out double bps)
 				? string.Create(CultureInfo.InvariantCulture, $"{line} | ⛏ {bps:0.#}/s")
-				: line;
+				: line);
 		}
 	}
 
+	// InvariantCulture since mini-plan 25: in a custom pattern ':' is the culture's TIME SEPARATOR, so a culture that
+	// uses another one would have rendered the time differently, invisible on an English machine (§29.12.1's shape).
 	private static string FormatBlockTime(long unixMs) =>
-		DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
+		DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
 	// In-game block time as a human-readable duration (e.g. "16h 15m", "2d 03h 10m").
 	private static string FormatDuration(double seconds)

@@ -100,8 +100,16 @@ public partial class BotsBtcWallets : Control
 
 	private CalendarTimeService? _calendarTimeService;
 	private BotWalletRecord? _selectedBot;
-	private double _refreshTimer;
-	private const double RefreshInterval = 3.0;
+	// Mini-plan 25 17.C.2 — refreshed by EVENTS (a block, a new mempool transaction) through a LEADING-EDGE THROTTLE, no
+	// longer by a 3 s timer. An event only marks the page dirty. If MinRefreshInterval has passed since the last
+	// rebuild, the next frame rebuilds; otherwise the rebuild waits until it has. So, against the old timer: at rest it
+	// costs NOTHING (0/s, against 0.33/s), under load it can never exceed the old rate, and after a quiet spell a change
+	// shows within a frame instead of up to 3 s later. The interval is the old timer's on purpose: every row costs a
+	// full UTXO pass (GetNodeWalletTotals), CompaniesWallets has 40 rows, and the mempool event's rate is unbounded,
+	// so a shorter coalesce would hand a saturated frame MORE work than the poll did (§38.7, the inverse failure).
+	private bool _chainDirty = true; // dirty at entry: the first frame paints, events or not
+	private double _sinceLastRefresh = double.MaxValue;
+	private const double MinRefreshInterval = 3.0;
 
 	public override void _Ready()
 	{
@@ -134,13 +142,28 @@ public partial class BotsBtcWallets : Control
 		BuildDetailPanel();
 		BuildBotList();
 		ShowNoSelection();
+
+		NetworkRoot.BlockAccepted += OnChainChanged;
+		NetworkRoot.MempoolChanged += MarkChainDirty;
 	}
+
+	public override void _ExitTree()
+	{
+		// Both events are static: a scene that leaves without unsubscribing stays reachable and keeps being called.
+		NetworkRoot.BlockAccepted -= OnChainChanged;
+		NetworkRoot.MempoolChanged -= MarkChainDirty;
+	}
+
+	private void OnChainChanged(Block _) => _chainDirty = true;
+	private void MarkChainDirty() => _chainDirty = true;
 
 	public override void _Process(double delta)
 	{
-		_refreshTimer += delta;
-		if (_refreshTimer < RefreshInterval) return;
-		_refreshTimer = 0d;
+		// One add and one bool test per frame while nothing changed (Pattern 6's hybrid).
+		_sinceLastRefresh += delta;
+		if (!_chainDirty || _sinceLastRefresh < MinRefreshInterval) return;
+		_chainDirty = false;
+		_sinceLastRefresh = 0d;
 		RefreshBotListBalances();
 		if (_selectedBot != null) RefreshDetailPanel(_selectedBot);
 	}
@@ -195,6 +218,8 @@ public partial class BotsBtcWallets : Control
 
 	private void RefreshBotListBalances()
 	{
+		// Named by the runtime type: CompaniesWallets and CastMinerWallets inherit this refresh.
+		Scripts.Diagnostics.UiRefreshProbe.Count(GetType().Name + ".RefreshBotListBalances");   // DEBUG-only, mini-plan 25
 		foreach (var (btn, bot) in _minerButtons)
 			btn.Text = BuildBotRowText(bot);
 
@@ -419,9 +444,14 @@ public partial class BotsBtcWallets : Control
 				int remaining = Math.Max(0, bot.ReactivationBlockHeight!.Value - chainLen);
 				_reactivationBlockLabel.Text = $"Reactivates at block: {bot.ReactivationBlockHeight.Value}";
 				_blocksRemainingLabel.Text = $"Blocks remaining:     {remaining}";
-				_reactivationBlockInput.Text = bot.ReactivationBlockHeight.Value.ToString();
+				// Mini-plan 25 17.C.2 (§38.5 note 1) — never overwrite a field the player is typing in. This refresh used
+				// to rewrite it every 3 s, focus or not, so a block number half-typed was replaced mid-edit.
+				if (!_reactivationBlockInput.HasFocus())
+				{
+					_reactivationBlockInput.Text = bot.ReactivationBlockHeight.Value.ToString();
+				}
 			}
-			else
+			else if (!_reactivationBlockInput.HasFocus())
 			{
 				_reactivationBlockInput.Text = string.Empty;
 			}

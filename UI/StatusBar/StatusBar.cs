@@ -16,9 +16,12 @@ namespace UI.StatusBar
 		private static readonly Color BtcWalletColor = new(0.97f, 0.58f, 0.10f);
 
 		// One AggregateSpendable pass over the UTXO set — cheap at this cadence, ruinous per frame (§38.7).
-		// BlockAccepted is the real edge; the timer only covers the player's own mid-block sends (a BTCWallet
-		// send or a swap sell reduces spendable the instant it is broadcast, with no block to announce it).
-		private const double BtcBalanceFallbackInterval = 2.0;
+		// Mini-plan 25 17.C.3 — refreshed by EVENTS only, through a leading-edge throttle. BlockAccepted covers a
+		// confirmation; MempoolChanged covers what the old 2 s fallback existed for, the player's own mid-block sends
+		// (a BTCWallet send or a swap sell reduces spendable the instant it is broadcast, with no block to announce it).
+		// Every mempool removal happens inside a block's processing, so BlockAccepted covers those. At rest: 0/s (the
+		// timer was 0.5/s). Under load: never above the old rate. After a quiet spell a change shows within a frame.
+		private const double BtcBalanceMinRefreshInterval = 2.0;
 
 		// The clock turns violet whenever it is NOT showing the present — i.e. while the calendar or the
 		// history explorer has wound it back for a replay. A date is the one figure on this bar a player has
@@ -39,7 +42,7 @@ namespace UI.StatusBar
 		private const double BalanceRefreshInterval = 0.1;
 
 		private bool _btcBalanceDirty = true;
-		private double _btcBalanceTimer;
+		private double _sinceBtcBalanceRefresh = double.MaxValue;
 		private double _balanceTimer;
 		private readonly AdaptiveReadoutSampler _clockSampler = new();
 		// Repaint the clock's colour only on the edge — RefreshClock runs on every clock repaint.
@@ -106,6 +109,7 @@ namespace UI.StatusBar
 			}
 
 			NetworkRoot.BlockAccepted += OnBlockAccepted;
+			NetworkRoot.MempoolChanged += OnMempoolChanged;
 
 			RefreshBalances();
 			RefreshClock();
@@ -121,6 +125,7 @@ namespace UI.StatusBar
 			}
 
 			NetworkRoot.BlockAccepted -= OnBlockAccepted; // static event — must not outlive this node
+			NetworkRoot.MempoolChanged -= OnMempoolChanged; // static too
 		}
 
 		public override void _Process(double delta)
@@ -143,16 +148,11 @@ namespace UI.StatusBar
 				RefreshClock();
 			}
 
-			_btcBalanceTimer += delta;
-			if (_btcBalanceTimer >= BtcBalanceFallbackInterval)
-			{
-				_btcBalanceTimer = 0.0;
-				_btcBalanceDirty = true;
-			}
-
-			if (_btcBalanceDirty)
+			_sinceBtcBalanceRefresh += delta;
+			if (_btcBalanceDirty && _sinceBtcBalanceRefresh >= BtcBalanceMinRefreshInterval)
 			{
 				_btcBalanceDirty = false;
+				_sinceBtcBalanceRefresh = 0.0;
 				RefreshBtcBalance();
 			}
 		}
@@ -206,9 +206,11 @@ namespace UI.StatusBar
 		// it only raises a dirty flag here — the UTXO pass runs on the next frame, never inside the block
 		// commit (the AuctioningCompanyDetails precedent).
 		private void OnBlockAccepted(Block block) => _btcBalanceDirty = true;
+		private void OnMempoolChanged() => _btcBalanceDirty = true;
 
 		private void RefreshBtcBalance()
 		{
+			Scripts.Diagnostics.UiRefreshProbe.Count("StatusBar.RefreshBtcBalance");   // DEBUG-only, mini-plan 25
 			if (_btcBalanceLabel == null)
 			{
 				return;
