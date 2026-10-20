@@ -311,7 +311,9 @@ CHECKPOINT`, `[UtxoAssert] MISMATCH`, `[Governance] EXCEPTION` and `[BetJournal]
 3. Open **DiceGame** and stay there for the whole run (D-26.2; F1 showed the scene does not move the cost).
 4. DEV time selector: **9000X**.
 5. Tick the **"⏱ Block cost"** and **"⏱ Frame cost"** checkboxes **before** starting the autobet.
-6. Start the autobet with the strategy already loaded. The player stays at 10 credits; change nothing.
+6. Start the autobet for the **player and all four bots**, each with the strategy and credits it already has (the
+   player at 10 credits, `bot_1`…`bot_4` at 1). That is F1's configuration: `session_lifecycle_trace.csv` shows all
+   five runners stopped together at the end of F1. Change nothing.
 7. Let it run for **about 20 real minutes**. F1 took ~7 minutes for 45 blocks, so 20 minutes should give ~120.
 8. Stop the autobet, then untick both checkboxes (the disarm writes the final summary to the log). Close the game
    normally and tell me "M1 done". I read `godot.log`, `block_cost_trace.csv`, `send_cost_trace.csv` and
