@@ -25,28 +25,17 @@ public partial class FinancialBettingStats : VBoxContainer
 
 	private UserStatsService _userStats;
 	private CasinoClientLedgerService _ledger;
-	private SimulationService _simService;
 
-	// SF.4B follow-up (live-sync fix): the panel converges to the live truth on a timer, NOT only on events.
-	// UserStatsService throttles StatsChanged to 250 ms in high-frequency (autobet) mode and DEFERS the final
-	// batch until the next bet or a SetHighFrequencyMode(false) flush — so a passive subscriber (e.g. ScFinances,
-	// which never toggles that flag) could be left showing a stale value when betting pauses. A cheap periodic
-	// Refresh makes the panel correct-by-construction in ANY host scene regardless of which events it caught.
-	// It runs ONLY while an autobet is active (SimulationService.IsRunning): that is the ONLY time StatsChanged
-	// is throttled AND the only time stats change without a discrete player action. When idle (autobet off),
-	// game time doesn't advance and every manual bet / deposit / recharge fires an IMMEDIATE StatsChanged /
-	// LedgerChanged, so the events alone keep the panel current and the timer would be pure wasted work.
-	private double _refreshTimer;
-	private const double RefreshInterval = 0.75;
-
-	// Wire both data sources for immediate updates: StatsChanged (every bet, throttled) refreshes lifetime;
-	// LedgerChanged moves the since-deposit / since-recharge baselines. The periodic Refresh in _Process is the
-	// safety net that catches anything these events defer or drop while an autobet runs.
+	// Both data sources are events: StatsChanged (every bet, throttled to 250 ms during an autobet) refreshes
+	// lifetime, and LedgerChanged moves the since-deposit / since-recharge baselines.
+	// Mini-plan 25 17.C.3 — the 0.75 s timer that ran while an autobet was active is gone. It existed (SF.4B's
+	// live-sync fix) because the throttle deferred its last batch until the next bet, so a paused run left this
+	// panel stale. The throttle now has a trailing edge (UserStatsService._Process) and delivers the deferred
+	// change itself, so the gap is closed at its owner, for every subscriber, and this panel needs no timer.
 	public void ConnectTo(UserStatsService userStats, CasinoClientLedgerService ledger)
 	{
 		_userStats  = userStats;
 		_ledger     = ledger;
-		_simService = GetNodeOrNull<SimulationService>("/root/SimulationService");
 
 		if (_userStats != null) _userStats.StatsChanged += OnStatsChanged;
 		if (_ledger != null)    _ledger.LedgerChanged += Refresh;
@@ -75,16 +64,6 @@ public partial class FinancialBettingStats : VBoxContainer
 	}
 
 	private void OnStatsChanged(Scripts.User.UserBettingStats _) => Refresh();
-
-	public override void _Process(double delta)
-	{
-		// Only reconcile while an autobet is actively advancing time; otherwise events keep us current (above).
-		if (_simService == null || !_simService.IsRunning) return;
-		_refreshTimer += delta;
-		if (_refreshTimer < RefreshInterval) return;
-		_refreshTimer = 0;
-		Refresh();
-	}
 
 	public void Refresh()
 	{

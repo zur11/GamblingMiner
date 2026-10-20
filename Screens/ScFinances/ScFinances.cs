@@ -50,8 +50,22 @@ public partial class ScFinances : Control
 	// Guards the programmatic ButtonPressed writes below from re-triggering the Toggled handlers.
 	private bool _syncingToggles;
 
-	private double _fallbackTimer;
-	private const double FallbackInterval = 2.0;
+	// Mini-plan 25 17.C.3 — no fallback timer. It covered two figures no subscribed event announced: the Bankroll,
+	// which moves on every settled bet, and the player's confirmed BTC, which moves on a block. Now:
+	// - ClientBetSettled only marks the BALANCES dirty (hundreds a second at 9000X, §38.7 rule 1), and _Process
+	//   repaints the balance labels at most every BalancesIntervalSeconds: StatusBar's cadence, because the same
+	//   Bankroll sits in the bar above this page at 10 Hz, and two copies of one figure must not disagree for 2 s.
+	//   No chain walk on that path: the BTC figure comes from the cache below.
+	// - BlockAccepted marks the page dirty, and the next frame runs the full RefreshAll, which re-reads the address
+	//   book (the only place _playerConfirmedBtc is written) and the transfer list. Never inside the block commit.
+	// - Every other figure already had an event (the five subscriptions in _Ready), unchanged.
+	// At rest: 0 refreshes a second (the timer was 0.5).
+	private SimulationService _simulation;
+	private bool _balancesDirty;
+	private double _sinceBalancesPaint = double.MaxValue;
+	private const double BalancesIntervalSeconds = 0.1;
+	private bool _chainDirty;
+	private decimal _playerConfirmedBtc;
 	// Mini-plan 15b — the shared readout sampler; see UI/Readouts/ReadoutSampling.cs and §29.13.
 	private readonly UI.Readouts.AdaptiveReadoutSampler _clockSampler = new();
 
@@ -132,6 +146,9 @@ public partial class ScFinances : Control
 			_bankrollProgram.AutoRechargeAmountChanged += RefreshAll;
 		}
 		if (_btcMarketData != null)  _btcMarketData.MarketDayChanged += OnMarketDayChanged;
+		_simulation = GetNodeOrNull<SimulationService>("/root/SimulationService");
+		if (_simulation != null) _simulation.ClientBetSettled += OnClientBetSettled;
+		NetworkRoot.BlockAccepted += OnBlockAccepted;
 
 		RefreshAll();
 	}
@@ -146,9 +163,13 @@ public partial class ScFinances : Control
 			_bankrollProgram.AutoRechargeAmountChanged -= RefreshAll;
 		}
 		if (_btcMarketData != null) _btcMarketData.MarketDayChanged -= OnMarketDayChanged;
+		if (_simulation != null) _simulation.ClientBetSettled -= OnClientBetSettled;
+		NetworkRoot.BlockAccepted -= OnBlockAccepted; // static event — must not outlive this node
 	}
 
 	private void OnMarketDayChanged(MarketDay day) => RefreshAll();
+	private void OnClientBetSettled(string _, string __, BetTransactionEvent ___) => _balancesDirty = true;
+	private void OnBlockAccepted(GodotBlockchainPort.Blockchain.Block _) => _chainDirty = true;
 
 	public override void _Process(double delta)
 	{
@@ -162,17 +183,52 @@ public partial class ScFinances : Control
 			_gameDateLabel.Text = "Game date: " + _clockSampler.FormatGameTime(local, "yyyy-MM-dd");
 		}
 
-		_fallbackTimer += delta;
-		if (_fallbackTimer >= FallbackInterval)
+		if (_chainDirty)
 		{
-			_fallbackTimer = 0;
+			_chainDirty = false;
+			_balancesDirty = false; // RefreshAll repaints the balances too
+			_sinceBalancesPaint = 0d;
 			RefreshAll();
+			return;
+		}
+
+		_sinceBalancesPaint += delta;
+		if (_balancesDirty && _sinceBalancesPaint >= BalancesIntervalSeconds)
+		{
+			_balancesDirty = false;
+			_sinceBalancesPaint = 0d;
+			Scripts.Diagnostics.UiRefreshProbe.Count("ScFinances.RefreshBalances");   // DEBUG-only, mini-plan 25
+			RefreshBalances();
 		}
 	}
 
 	private void RefreshAll()
 	{
 		Scripts.Diagnostics.UiRefreshProbe.Count("ScFinances.RefreshAll");   // DEBUG-only, mini-plan 25
+		if (!GodotObject.IsInstanceValid(this) || _playerBank == null) return;
+
+		_playerConfirmedBtc = SumPlayerConfirmedBtc();
+		RefreshBalances();
+
+		if (GodotObject.IsInstanceValid(_bankTransferHistoryList))
+		{
+			var history = _playerBank.BankTransferHistory;
+			_bankTransferHistoryList.Clear();
+			for (int i = history.Count - 1; i >= 0; i--)
+			{
+				var r = history[i];
+				bool isDeposit = r.Direction == PlayerBankAccountService.DirectionBankToMain;
+				string dirWord = isDeposit ? "deposit" : "withdrawal";
+				string sign    = isDeposit ? "+" : "-";
+				_bankTransferHistoryList.AddItem(string.Create(CultureInfo.InvariantCulture,
+					$"{r.GameDateLocal:yyyy-MM-dd HH:mm:ss} | {sign}{r.Amount:N8} SC | {dirWord} | {r.Method}"));
+			}
+		}
+	}
+
+	// The balance labels alone: no chain walk and no list rebuild, so it can follow settled bets (see the fields).
+	private void RefreshBalances()
+	{
 		if (!GodotObject.IsInstanceValid(this) || _playerBank == null) return;
 
 		decimal bank     = _playerBank.BankAccountBalance;
@@ -203,21 +259,19 @@ public partial class ScFinances : Control
 
 		_depositAvailableLabel.Text  = string.Create(CultureInfo.InvariantCulture, $"Available: {bank:N8} SC");
 		_withdrawAvailableLabel.Text = string.Create(CultureInfo.InvariantCulture, $"Available: {main:N8} SC");
+	}
 
-		if (GodotObject.IsInstanceValid(_bankTransferHistoryList))
+	// The player's confirmed BTC across the whole address book: a chain read, so only RefreshAll calls it.
+	private decimal SumPlayerConfirmedBtc()
+	{
+		if (_networkRoot == null) return 0m;
+
+		decimal totalBtc = 0m;
+		foreach ((_, decimal confirmed, _, _) in _networkRoot.GetNodeAddressBook("player"))
 		{
-			var history = _playerBank.BankTransferHistory;
-			_bankTransferHistoryList.Clear();
-			for (int i = history.Count - 1; i >= 0; i--)
-			{
-				var r = history[i];
-				bool isDeposit = r.Direction == PlayerBankAccountService.DirectionBankToMain;
-				string dirWord = isDeposit ? "deposit" : "withdrawal";
-				string sign    = isDeposit ? "+" : "-";
-				_bankTransferHistoryList.AddItem(string.Create(CultureInfo.InvariantCulture,
-					$"{r.GameDateLocal:yyyy-MM-dd HH:mm:ss} | {sign}{r.Amount:N8} SC | {dirWord} | {r.Method}"));
-			}
+			totalBtc += confirmed;
 		}
+		return totalBtc;
 	}
 
 	// Step 13 (MD.2 / D-13.3-c) — ONE label whose content the toggle switches: ON → total net worth
@@ -231,12 +285,7 @@ public partial class ScFinances : Control
 			return;
 		}
 
-		decimal totalBtc = 0m;
-		foreach ((_, decimal confirmed, _, _) in _networkRoot.GetNodeAddressBook("player"))
-		{
-			totalBtc += confirmed;
-		}
-
+		decimal totalBtc = _playerConfirmedBtc;
 		DateTime gameTime = _calendarTime?.CurrentLocalDateTime ?? DateTime.MinValue;
 		decimal? price = _btcMarketData?.GetEffectivePriceUsd(gameTime);
 		if (price is not decimal p)

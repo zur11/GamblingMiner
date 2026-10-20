@@ -472,7 +472,7 @@ See `Documentation/GLOSSARY.md` for the full canonical terminology list. Key ter
 - Follow existing naming patterns: `PascalCase` for classes and files, `_camelCase` for private fields
 - Always call `Money.Normalize()` before storing any decimal result
 - Use `DateTime.Utc` for storage; `DateTime.Local` for display
-- High-frequency service events must be throttled — see `UserStatsService.EmitStatsChangedIfNeeded()` as the reference pattern
+- High-frequency service events must be throttled — see `UserStatsService.EmitStatsChangedIfNeeded()` as the reference pattern, **with its trailing edge** (`UserStatsService._Process`): a throttle that defers a change must also deliver it, or the last change waits for an event that may never come (mini-plan 25 C.3)
 
 ### Asking the developer to read output — NAME THE PANEL, ALWAYS
 

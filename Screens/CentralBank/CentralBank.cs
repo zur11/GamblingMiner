@@ -42,8 +42,11 @@ public partial class CentralBank : Control
 	private bool _dirty = true;
 	private double _coalesceTimer;
 	private const double CoalesceInterval = 0.5;  // batch bursts of draw events into one rebuild
-	private double _fallbackTimer;
-	private const double FallbackInterval = 5.0; // safety net only — every figure on this page has an event
+	// Mini-plan 25 17.C.3 — the 5 s fallback is gone, and the note beside it ("every figure on this page has an
+	// event") was not true. The FED's figures (CentralBankChanged) and the SC ledger's (LedgerChanged) had events.
+	// The four NetworkRoot sections did not: the banks' balance sheets, the financier preview, the FBI files and the
+	// closed companies. Every one of them changes inside a block's processing, before BlockAccepted fires, so
+	// BlockAccepted now marks the page dirty like the other two. At rest: 0 refreshes a second (the timer was 0.2).
 
 	private static readonly Color ColorDraw     = new Color(1f, 0.65f, 0.2f);  // orange — SC minted into debt
 	private static readonly Color ColorRepay    = new Color(0.4f, 1f, 0.4f);   // green  — SC burned out of existence
@@ -68,6 +71,7 @@ public partial class CentralBank : Control
 
 		if (_fed != null)    _fed.CentralBankChanged += MarkDirty;
 		if (_ledger != null) _ledger.LedgerChanged   += MarkDirty;
+		NetworkRoot.BlockAccepted += OnBlockAccepted;
 
 		RefreshAll();
 	}
@@ -76,9 +80,11 @@ public partial class CentralBank : Control
 	{
 		if (_fed != null)    _fed.CentralBankChanged -= MarkDirty;
 		if (_ledger != null) _ledger.LedgerChanged   -= MarkDirty;
+		NetworkRoot.BlockAccepted -= OnBlockAccepted; // static event — must not outlive this node
 	}
 
 	private void MarkDirty() => _dirty = true;
+	private void OnBlockAccepted(GodotBlockchainPort.Blockchain.Block _) => _dirty = true;
 
 	public override void _Process(double delta)
 	{
@@ -89,17 +95,8 @@ public partial class CentralBank : Control
 			{
 				_coalesceTimer = 0;
 				_dirty = false;
-				_fallbackTimer = 0;
 				RefreshAll();
-				return;
 			}
-		}
-
-		_fallbackTimer += delta;
-		if (_fallbackTimer >= FallbackInterval)
-		{
-			_fallbackTimer = 0;
-			RefreshAll();
 		}
 	}
 

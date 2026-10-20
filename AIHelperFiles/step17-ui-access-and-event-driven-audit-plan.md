@@ -25,8 +25,11 @@
 > developer's report. **Unit 11 (`BlockExplorer`, §5.5) is committed**, which closes 17.C.2. **Unit 12 (17.A6, §4.10),
 > BlockExplorer's four fixed panels, is committed and confirmed by the developer. Unit 13 (17.A7, §4.11), the casino
 > players' SC-balance DEV toggle, is committed. Unit 14 makes those balances follow settled bets** (the developer found
-> them frozen at 100X; §4.11). Next: C.3 (the B group's fallbacks), C.4
-> (`BotPlayHistory`), C.6 (`CompanyDetails`), M1 and the close-out.
+> them frozen at 100X; §4.11). **Unit 15 (17.C.3, §5.5) is built:** all nine B-group fallbacks are gone. Only one was
+> vestigial. The other eight covered state that an event now announces. One real gap was closed at its owner (the
+> stats throttle had no trailing edge), and `ClientsBetsHistory`'s per-bet feed (450/s at M0) is coalesced.
+> Next: C.4 (`BotPlayHistory`), C.6 (`CompanyDetails`), then one verification session (V-C2b, V-C3, C.4, C.6), M1 and
+> the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -898,6 +901,71 @@ show as retention at 5 credits. It is justified by the count (450 rebuilds a sec
 bet can visibly move) and by load: the same subscription at 99 credits would fire about 20× as often. C.1's
 exit criterion is therefore a count, `≤ 4/s` at a 0.25 s coalesce, never a retention figure. A scene's rate is the median of its remaining windows. P2 compares the median
 retention of `CasinoCoinSwaps` against `ScTransactions`.
+
+#### 17.C.3 — the B group's fallbacks (unit 15, 2026-10-19)
+
+**One unit, not nine.** §5.4 planned one scene per unit so each could be deferred on its own. The audit answered
+all nine in one pass, none needed deferring, and the verification is one session anyway. The diff stays readable per
+scene, and each file's comment names what its fallback covered.
+
+**The question for each fallback:** which state does it cover that no subscribed event announces? §0.2 guessed
+"vestigial" for two of them, and **only one actually was**. Most covered state whose event already existed but had
+never been wired.
+
+| Scene | What the fallback actually covered | Now |
+|---|---|---|
+| `StatusBar` BTC (2 s) | the player's mid-block sends (a broadcast with no block yet) | `MempoolChanged`, through a leading-edge throttle at the old 2 s. Every mempool *removal* happens inside a block's processing, so `BlockAccepted` covers those |
+| `ScFinances` (2 s) | **the Bankroll** (every settled bet) and **the player's confirmed BTC** (a block) | `ClientBetSettled` marks the balances dirty, and only the balance labels repaint, at most every **0.1 s**: `StatusBar`'s cadence, because the same Bankroll sits in the bar above it. `BlockAccepted` triggers the full rebuild, the only path that walks the address book (cached for the balance path) |
+| `ScTransactions` (2 s) | Net Worth, through the Bankroll | `ClientBetSettled`. Only that one label repaints, at most every 0.1 s |
+| `CasinoGamblingFinances` (2 s) | the FED's loan figures and history, and the swap desk's state: **both had events, neither was subscribed** | `CentralBankChanged` and `SwapDeskChanged` join C.1's dirty flag. The auto floor's doses-in-window ages with game time, but the clock only moves while bets settle, and every settled bet fires `BalanceChanged` |
+| `CasinoCoinSwaps` (2 s) | **the two player figures the quotes clamp to**: Main Balance (moved by auto-recharges mid-run) and spendable BTC | `PrincipalBalanceService.BalanceChanged`, `BlockAccepted` and `MempoolChanged` join C.1's dirty flag. The casino's side was covered: the swap service recomputes on a block and fires `SwapDeskChanged`. The date, halts and the day's network fee follow `MarketDayChanged`, which fires on every day boundary, data or not |
+| `ClientsTransactions` (2 s) | **nothing.** Every runtime write to the ledger's entries fires `LedgerChanged` | deleted. `LedgerChanged` now marks the page dirty, so a burst of entries costs one rebuild, on the next frame |
+| `ClientsBetsHistory` (2 s) | the five client rows: their per-client bet stats move on every bet, with no other event | `ClientBetSettled` and `LedgerChanged` (the "since" baselines), through a leading-edge throttle at the old 2 s. **The live feed is fixed too** (below) |
+| `FinancialBettingStats` (0.75 s, while the sim runs) | **a gap in `StatsChanged`'s throttle**: it defers the last batch until the next bet, and a paused run (DiceGame's Pause, or a run waiting on the player's vote) has no next bet | fixed at the owner: `UserStatsService._Process` is the throttle's **trailing edge** and delivers a pending change once 250 ms have passed (one bool test per frame). That covers every subscriber, `BetsHistoryExplorer` included. The timer is deleted |
+| `CentralBank` (5 s) | the four NetworkRoot sections (banks, financier preview, FBI files, closures). **The comment said "every figure on this page has an event", and that was false** | `BlockAccepted`: every one of the four changes inside a block's processing, before it fires |
+
+**`ClientsBetsHistory`'s live feed.** M0 measured it at **450/s**, each event creating a `Label`, freeing another
+and recomputing the summary. No unit had picked it up, and §5.3's exit criterion forbids it ("never track the
+settled-bet rate"). Now the handler queues the bet (capped at the 50 rows the feed shows) and marks things dirty.
+The feed and the summary flush at most every 0.1 s, and a full feed **recycles its oldest row** instead of
+allocating one. `ClearLiveFeed` now detaches before freeing, so the recycling can never pick up a node queued for
+deletion.
+
+**In passing:** `CasinoGamblingFinances`' comment read "the default draw amount (100M)" over a line reading
+`InitialLoanAmount`, which is 40,000. That is Convention 15's own example, still in the code, and it now cites the
+symbol.
+
+**Probe sites renamed or added**, so M1 compares like with like: `ClientsBetsHistory.OnClientBetSettled` is now
+`ClientsBetsHistory.FlushLiveFeed` (the handler does no work). New: `ScFinances.RefreshBalances` and
+`ScTransactions.RefreshNetWorth`.
+
+**V-C3 predictions, registered before the run** (with V-C2b, C.4 and C.6, one session, 9000X, read from **the Godot
+editor's Output panel**). The first window after entering a scene includes its entry paint and is not counted.
+
+| Site | At rest (sim stopped) | Under the sim | M0, for comparison |
+|---|---|---|---|
+| `StatusBar.RefreshBtcBalance` | 0 | ≤ 0.5/s | 0.5/s |
+| `ScFinances.RefreshAll` | 0 | ≤ 1/s (blocks, recharges) | 0.4–0.6/s |
+| `ScFinances.RefreshBalances` | 0 | ≤ 10/s, and > 0 | new |
+| `ScTransactions.RefreshAll` / `.RefreshNetWorth` | 0 / 0 | ≤ 1/s / ≤ 10/s, and > 0 | 0.4–0.6/s |
+| `CasinoGamblingFinances.RefreshLabels`, `CasinoCoinSwaps.RefreshAll` | 0 | ≤ 4/s (V-C1: 3.6–4.0) | 450/s |
+| `ClientsTransactions.RefreshAll` | 0 | **a measurement, not a prediction:** the timer hid `LedgerChanged`'s real rate. **> 1/s ⇒ it gets a throttle** | 0.4–0.6/s |
+| `ClientsBetsHistory.FlushLiveFeed` / `.RefreshClientRows` | 0 / 0 | ≤ 10/s / ≤ 0.5/s | 450/s / 0.4–0.6/s |
+| `FinancialBettingStats.Refresh` | 0 | ≤ 4.5/s (the 250 ms throttle plus ledger events) | ~5/s |
+| `CentralBank.RefreshAll` | 0 | ≤ 2/s (0.5 s coalesce); ≈ the block rate expected | 0.2/s |
+
+**Refuted if** any site reads above 0 in a full window at rest, or above its ceiling under the sim. **Functional,
+one check each:**
+1. `ScFinances`, during an autobet: its Bankroll moves together with the StatusBar's, with no 2 s lag.
+2. `ScTransactions`: Net Worth moves during the autobet.
+3. `CasinoCoinSwaps` (after Market Birth): type into a quote field while the autobet runs. The text must survive,
+   and the quote must follow the player's Main Balance as it recharges.
+4. `ClientsBetsHistory`: the feed shows all five clients, newest on top, at most 50 rows. Pick one client in the
+   filter: the feed clears and refills with that client only. The client rows' bet counts climb about every 2 s.
+5. `FinancialBettingStats`: in DiceGame, Pause the autobet and note the panel's "Total bets". Then open
+   `ScFinances`, whose panel reads the stats fresh on entry. **The two must match.** Before the trailing edge they
+   could differ by the bets in the last 250 ms window.
+6. `CentralBank`, after a bank exists: its sections change after a block with no input.
 
 ---
 

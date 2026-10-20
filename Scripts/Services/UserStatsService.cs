@@ -768,6 +768,22 @@ public partial class UserStatsService : Node
 		EmitStatsChangedImmediate();
 	}
 
+	// Mini-plan 25 17.C.3 — the throttle's TRAILING edge. EmitStatsChangedIfNeeded swallows an emit that falls inside
+	// the interval and leaves it pending for the next bet. When the bets stop WITHOUT SetHighFrequencyMode(false) (a
+	// paused run, or one waiting on the player's vote), that next bet does not come, the last change is never
+	// announced, and FinancialBettingStats kept a 0.75 s timer to cover it. Here a pending change is delivered once the
+	// interval has passed. Per frame, while nothing is pending, the cost is one bool test (Pattern 6's hybrid). The rate
+	// is unchanged: at most one emit per interval. A throttle that defers must also deliver.
+	public override void _Process(double delta)
+	{
+		if (!_hasPendingStatsChange || (DateTime.UtcNow - _lastStatsEmitUtc) < HighFrequencyStatsEmitInterval)
+		{
+			return;
+		}
+
+		EmitStatsChangedImmediate();
+	}
+
 	private void EmitStatsChangedImmediate()
 	{
 		_hasPendingStatsChange = false;

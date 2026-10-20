@@ -65,15 +65,18 @@ public partial class CasinoCoinSwaps : Control
 	private bool _panelALastEditedReceive;
 	private bool _panelBLastEditedReceive;
 
-	private double _refreshTimer;
-	private const double RefreshInterval = 2.0;
-
 	// Mini-plan 25 17.C.1 — the casino's BalanceChanged fires on EVERY settled casino bet: M0 counted RefreshAll at 450 a
 	// second (5 clients × 90 bets/s at 9000X), each one rebuilding the header, both quote panels and the recent-swaps
 	// list for an SC balance no single bet can visibly move. §38.7's rule 2, at the consumer: the event only marks the
 	// page dirty, and _Process rebuilds at most once per BalanceCoalesceSeconds. SwapDeskChanged and MarketDayChanged
-	// stay immediate: they are rare and they DO move what this page shows. The 2 s timer below is untouched here;
-	// whether it can go is 17.C.3's question (it may be what shows the player's chain-side BTC, which no event covers).
+	// stay immediate: they are rare and they DO move what this page shows.
+	// 17.C.3 — the 2 s timer is gone. It covered the two PLAYER figures the quotes clamp to, which nothing here was
+	// subscribed to: Main Balance (moved by auto-recharges mid-run; PrincipalBalanceService.BalanceChanged) and the
+	// player's spendable BTC (a block, or a broadcast with no block yet: BlockAccepted and MempoolChanged). All three
+	// mark the same dirty flag. The casino's side was already covered: the swap service recomputes it on a block and
+	// fires SwapDeskChanged when it moved. The date, a halt and the day's network fee follow MarketDayChanged, which
+	// fires on every day boundary, data or not. At rest: 0 refreshes a second (the timer was 0.5).
+	private PrincipalBalanceService _principal;
 	private bool _balanceDirty;
 	private double _balanceCoalesceTimer;
 	private const double BalanceCoalesceSeconds = 0.25;
@@ -156,6 +159,10 @@ public partial class CasinoCoinSwaps : Control
 		if (_swapService != null) _swapService.SwapDeskChanged += RefreshAll;
 		if (_casinoSc != null)    _casinoSc.BalanceChanged += MarkBalanceDirty;
 		if (_market != null)      _market.MarketDayChanged += OnMarketDayChanged;
+		_principal = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
+		if (_principal != null)   _principal.BalanceChanged += MarkBalanceDirty;
+		GodotBlockchainPort.Simulation.NetworkRoot.BlockAccepted  += OnBlockAccepted;
+		GodotBlockchainPort.Simulation.NetworkRoot.MempoolChanged += MarkBalanceDirty;
 
 		RefreshAll();
 	}
@@ -165,7 +172,13 @@ public partial class CasinoCoinSwaps : Control
 		if (_swapService != null) _swapService.SwapDeskChanged -= RefreshAll;
 		if (_casinoSc != null)    _casinoSc.BalanceChanged -= MarkBalanceDirty;
 		if (_market != null)      _market.MarketDayChanged -= OnMarketDayChanged;
+		if (_principal != null)   _principal.BalanceChanged -= MarkBalanceDirty;
+		// Static events — they must not outlive this node.
+		GodotBlockchainPort.Simulation.NetworkRoot.BlockAccepted  -= OnBlockAccepted;
+		GodotBlockchainPort.Simulation.NetworkRoot.MempoolChanged -= MarkBalanceDirty;
 	}
+
+	private void OnBlockAccepted(Block _) => _balanceDirty = true;
 
 	public override void _Process(double delta)
 	{
@@ -177,17 +190,8 @@ public partial class CasinoCoinSwaps : Control
 			{
 				_balanceCoalesceTimer = 0;
 				_balanceDirty = false;
-				_refreshTimer = 0; // just rebuilt: the fallback need not repeat it
 				RefreshAll();
-				return;
 			}
-		}
-
-		_refreshTimer += delta;
-		if (_refreshTimer >= RefreshInterval)
-		{
-			_refreshTimer = 0;
-			RefreshAll();
 		}
 	}
 
@@ -252,8 +256,8 @@ public partial class CasinoCoinSwaps : Control
 		// was hardcoded into this label until 2026-08-20 — the per-quote breakdowns below already read it live.
 		// It is a genuine 0 from Market Birth (2010-07-18) through 2011-04-13, and the label must not advertise a
 		// charge that is not made. Zero here is a KNOWN value, not missing data, so it reads "no network fee"
-		// rather than the "—" this scene uses for absent/locked figures. RefreshHeader polls every 2 s, so the
-		// label follows the median across a day boundary with no extra wiring.
+		// rather than the "—" this scene uses for absent/locked figures. The median is a daily figure, and
+		// MarketDayChanged fires on every day boundary, so the label follows it with no timer (17.C.3).
 		decimal feePercent    = _swapService.GetSwapFeePercentFor("player");
 		decimal networkFeeBtc = _swapService.CurrentNetworkFeeBtc;
 		_feeLabel.Text = networkFeeBtc > 0m
