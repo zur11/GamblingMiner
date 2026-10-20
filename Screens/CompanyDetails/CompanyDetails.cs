@@ -51,7 +51,7 @@ public partial class CompanyDetails : Control
 	private static readonly Color HoldingBlack = new(0.05f, 0.05f, 0.05f);  // none
 
 	// The action panels are rebuilt ONLY when this signature changes (open-vote identity + holding
-	// class), so the player's in-progress SpinBox/OptionButton edits survive the 1 s info refresh.
+	// class), so the player's in-progress SpinBox/OptionButton edits survive the info refresh.
 	private string _actionSignature = string.Empty;
 	private SpinBox? _reserveSpin;
 	private OptionButton? _marketOption;
@@ -64,8 +64,19 @@ public partial class CompanyDetails : Control
 	private Label? _claimableLabel;
 	private Label? _claimFeedbackLabel;
 
-	private double _refreshTimer;
-	private const double RefreshInterval = 1.0;
+	// Mini-plan 25 17.C.6 — refreshed by EVENTS, no longer by a 1 s timer. Each refresh walks the whole chain
+	// (GetNonMinerAuctionLedger) and rebuilds the info panel. Everything on the page moves on one of three things:
+	// - a block: governance, votes, the pause, dividends, bank lending, the funding figures, and every SC price
+	//   (keyed to the latest block's timestamp, not to the clock) → BlockAccepted;
+	// - a transaction reaching the mempool: the treasury's spendable balance → MempoolChanged;
+	// - the player's own action on this page (a ballot, a claim, a saved policy), which changes state no event
+	//   announces → RequestImmediateRefresh in each handler. The ballot handler used to rely on "the next refresh".
+	// The events only mark the page dirty, and the next frame rebuilds once MinRefreshInterval (the old 1 s) has
+	// passed since the last rebuild. At rest: 0/s (the timer was 1/s). Under load: never above the old rate. The
+	// action panels keep their signature gate (§22.12), so an in-progress edit survives exactly as before.
+	private bool _dirty;
+	private double _sinceLastRefresh;
+	private const double MinRefreshInterval = 1.0;
 
 	public override void _Ready()
 	{
@@ -104,15 +115,40 @@ public partial class CompanyDetails : Control
 			return;
 		}
 
+		NetworkRoot.BlockAccepted += OnBlockAccepted;
+		NetworkRoot.MempoolChanged += MarkDirty;
+		_subscribed = true;
+
 		RefreshAll();
+	}
+
+	private bool _subscribed; // _Ready can leave early (no company address) before subscribing
+
+	public override void _ExitTree()
+	{
+		if (!_subscribed) return;
+		// Static events — they must not outlive this node.
+		NetworkRoot.BlockAccepted -= OnBlockAccepted;
+		NetworkRoot.MempoolChanged -= MarkDirty;
+	}
+
+	private void OnBlockAccepted(GodotBlockchainPort.Blockchain.Block _) => _dirty = true;
+	private void MarkDirty() => _dirty = true;
+
+	// The player's own actions: shown on the next frame, not after the throttle.
+	private void RequestImmediateRefresh()
+	{
+		_dirty = true;
+		_sinceLastRefresh = double.MaxValue;
 	}
 
 	public override void _Process(double delta)
 	{
 		if (string.IsNullOrEmpty(_nonMinerAddress)) return;
-		_refreshTimer += delta;
-		if (_refreshTimer < RefreshInterval) return;
-		_refreshTimer = 0d;
+		_sinceLastRefresh += delta;
+		if (!_dirty || _sinceLastRefresh < MinRefreshInterval) return;
+		_dirty = false;
+		_sinceLastRefresh = 0d;
 		RefreshAll();
 	}
 
@@ -303,7 +339,7 @@ public partial class CompanyDetails : Control
 		PrintFundingOnce(summary);
 	}
 
-	// Mini-plan 25 §4.8 — DEBUG-only: the funding figures, ONCE per opening of this page (it refreshes every second, and
+	// Mini-plan 25 §4.8 — DEBUG-only: the funding figures, ONCE per opening of this page (it refreshes on every block, and
 	// one line per visit is what the verification compares: the founding figures must not move between two visits, the
 	// running ones may only grow). Read from user://logs/godot.log, so nothing is transcribed.
 	private bool _fundingPrinted;
@@ -809,6 +845,7 @@ public partial class CompanyDetails : Control
 				abstainCheck.ButtonPressed);
 			pendingClear = false;
 			SyncPolicyControls();
+			RequestImmediateRefresh(); // a changed pause flag changes the panel signature; no event announces it
 
 			SetPolicyFeedback(abstainCheck.ButtonPressed
 				? "Policy saved. You abstain from every vote here — no ballot, no pause."
@@ -1265,6 +1302,7 @@ public partial class CompanyDetails : Control
 				: "Could not register (the vote may have closed).";
 		}
 		_actionSignature = string.Empty; // force a panel rebuild on the next refresh
+		RequestImmediateRefresh();       // ...which nothing else would trigger: a ballot fires no event
 	}
 
 	private void BuildDividendPanel(CompanyGovernanceState gov, string title)
@@ -1295,6 +1333,7 @@ public partial class CompanyDetails : Control
 			_claimFeedbackLabel.Text = message;
 			_claimFeedbackLabel.Modulate = ok ? Colors.LightGreen : Colors.Orange;
 		}
+		RequestImmediateRefresh(); // the claimable figure has no event of its own
 	}
 
 	// ── ND.9d/e/f — the "Company Policy (initial → current)" panel ────────────────────────────────

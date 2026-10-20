@@ -28,8 +28,9 @@
 > them frozen at 100X; §4.11). **Unit 15 (17.C.3, §5.5) is built:** all nine B-group fallbacks are gone. Only one was
 > vestigial. The other eight covered state that an event now announces. One real gap was closed at its owner (the
 > stats throttle had no trailing edge), and `ClientsBetsHistory`'s per-bet feed (450/s at M0) is coalesced.
-> Next: C.4 (`BotPlayHistory`), C.6 (`CompanyDetails`), then one verification session (V-C2b, V-C3, C.4, C.6), M1 and
-> the close-out.
+> **Unit 16 (17.C.4 + 17.C.6, §5.5) is built:** `BotPlayHistory` follows `ClientBetSettled`, and `CompanyDetails` follows
+> blocks, the mempool and its own action handlers, which had relied on the timer. That is every migration in 17.C.
+> Next: one verification session (V-C2b, V-C3, C.4/C.6), then M1 and the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -966,6 +967,59 @@ one check each:**
    `ScFinances`, whose panel reads the stats fresh on entry. **The two must match.** Before the trailing edge they
    could differ by the bets in the last 250 ms window.
 6. `CentralBank`, after a bank exists: its sections change after a block with no input.
+
+#### 17.C.4 and 17.C.6 — `BotPlayHistory` and `CompanyDetails` (unit 16, 2026-10-19)
+
+**`BotPlayHistory` (C.4), 1 s timer → `ClientBetSettled`.** The page shows two things:
+- **The bot list** changes only when a node is seen for the first time. A bot is listed once it has a recorded play,
+  the sim pushes that play just before it fires the event, and the rings are never removed in-process. So the
+  handler marks the list dirty once per new id (a `HashSet`), and it rebuilds on the next frame.
+- **The table**, up to 260 BBCode rows, follows bets of the **selected** bot only, through a leading-edge throttle
+  at the old 1 s. The other four clients' bets no longer rebuild it.
+- *Seen and not touched:* the table is a `fit_content = true` `RichTextLabel` inside a `ScrollContainer` (Ch. 29's
+  #1 anti-pattern). No scroll bug has been reported there, so it is noted rather than restructured.
+
+**`CompanyDetails` (C.6), 1 s timer → events.** Each refresh walks the whole chain (`GetNonMinerAuctionLedger`).
+Everything on the page moves on one of three things:
+
+| Moves on | What | Now |
+|---|---|---|
+| a block | governance, votes, the pause, dividends, bank lending, the funding figures, and every SC price (keyed to the latest block's timestamp, not the clock) | `BlockAccepted` |
+| the mempool | the treasury's spendable balance | `MempoolChanged` |
+| **the player's own action** | a ballot, a dividend claim, a saved policy: state no event announces | `RequestImmediateRefresh()` in each handler |
+
+**The third row is a latent defect the timer hid.** `OnSubmitBallot` cleared the action signature with the comment
+"force a panel rebuild **on the next refresh**", and the claim and policy handlers had no refresh of their own. They
+worked only because a timer came around within a second. Deleting the timer without them would have left a
+submitted ballot's form on screen until the next block. That would be a "Submit does nothing" report at 100X, where
+a block can be ten real minutes away. **Convention 13's shape:** a read correct only because a timer existed.
+
+Events mark the page dirty, and the next frame rebuilds once the old 1 s has passed. The signature-gated action
+panels (§22.12) are unchanged, so an in-progress edit survives as before. **C.6's suspension is lifted:** R3's
+world has founded companies.
+
+**Predictions, registered before the run** (same session as V-C3, **Output panel**):
+
+| Site | At rest | Under the sim | M0 |
+|---|---|---|---|
+| `BotPlayHistory.RebuildBotList` | 0 | 0 after the first window (once per new id) | 1/s |
+| `BotPlayHistory.RefreshHistoryTable` (new site) | 0 | ≤ 1/s with a bot selected, 0 with none | 1/s |
+| `CompanyDetails.RefreshAll` | 0 | ≤ 1/s | 1/s (by code; suspended at M0) |
+
+**Functional:**
+1. `BotPlayHistory`: with the autobet running, every betting bot is listed. Select one: its table grows about once
+   a second, newest on top.
+2. `CompanyDetails`: open a company you hold NST in, with the sim **stopped**. Submit a ballot (or change and save
+   the vote policy). The page must update **at once**, with no block. Then start the sim: the treasury and the
+   funding lines follow blocks.
+3. Type into a ballot SpinBox while blocks arrive. The value must survive (the §22.12 gate, unchanged).
+
+**This session is also M1** (§5.4 row 10). Its tour is M0's: an at-rest leg, then every scene under the sim. It runs on
+R3's world, not M0's fresh one. "Same world" is not reproducible after the v12 wipe, and nothing in the exit
+criterion needs it: §5.3 states the criterion as **counts per scene** (0/s at rest, ≤ 1 ÷ the coalesce interval under
+the sim), never as a figure compared across sessions (instrument rule 3). It differs from M0 in two ways. Leg A now
+visits **every** scene, because "0 at rest" is the claim being tested. And `CompanyDetails` is reachable for the first
+time.
 
 ---
 

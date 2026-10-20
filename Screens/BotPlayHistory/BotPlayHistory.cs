@@ -10,7 +10,7 @@ using UI.NotepadPopup;
 
 // Study screen: shows the last 260 settled plays of each miner bot currently betting alongside the
 // player. Data comes from SimulationService's in-memory per-bot ring buffers (see GetBotPlayHistory).
-// Read-only and live-updating on a light timer so it tracks a running background autobet.
+// Read-only and live-updating, so it tracks a running background autobet.
 public partial class BotPlayHistory : Control
 {
 	private SceneManager? _sceneManager;
@@ -25,8 +25,19 @@ public partial class BotPlayHistory : Control
 	private readonly Dictionary<string, Button> _botButtons = new();
 	private string? _selectedNodeId;
 
-	private double _refreshTimer;
-	private const double RefreshInterval = 1.0;
+	// Mini-plan 25 17.C.4 — refreshed by ClientBetSettled, no longer by a 1 s timer. The event fires on every settled
+	// bet of every client (hundreds a second at 9000X), so the handler only marks flags (§38.7 rule 1):
+	// - the BOT LIST changes only when a node is seen for the first time. A bot is listed once it has a recorded play,
+	//   SimulationService pushes that play just before it fires the event, and the rings are never removed
+	//   in-process. So the list rebuilds once per new id, on the next frame.
+	// - the TABLE (up to 260 rows of BBCode) rebuilds only for bets of the SELECTED bot, through a leading-edge
+	//   throttle at the old 1 s. After a quiet spell a new play shows within a frame.
+	// At rest: 0 refreshes a second (the timer was 1).
+	private readonly HashSet<string> _seenNodeIds = new();
+	private bool _listDirty;
+	private bool _tableDirty;
+	private double _sinceTableRefresh = double.MaxValue;
+	private const double TableMinRefreshInterval = 1.0;
 
 	public override void _Ready()
 	{
@@ -46,16 +57,36 @@ public partial class BotPlayHistory : Control
 
 		RebuildBotList();
 		ShowNoSelection();
+
+		if (_simulation != null) _simulation.ClientBetSettled += OnClientBetSettled;
+	}
+
+	public override void _ExitTree()
+	{
+		if (_simulation != null) _simulation.ClientBetSettled -= OnClientBetSettled;
+	}
+
+	private void OnClientBetSettled(string nodeId, string _, BetTransactionEvent __)
+	{
+		if (_seenNodeIds.Add(nodeId)) _listDirty = true;
+		if (nodeId == _selectedNodeId) _tableDirty = true;
 	}
 
 	public override void _Process(double delta)
 	{
-		_refreshTimer += delta;
-		if (_refreshTimer < RefreshInterval) return;
-		_refreshTimer = 0d;
+		if (_listDirty)
+		{
+			_listDirty = false;
+			RebuildBotList();
+		}
 
-		RebuildBotList();
-		if (_selectedNodeId != null) RefreshHistoryTable(_selectedNodeId);
+		_sinceTableRefresh += delta;
+		if (_tableDirty && _sinceTableRefresh >= TableMinRefreshInterval)
+		{
+			_tableDirty = false;
+			_sinceTableRefresh = 0d;
+			if (_selectedNodeId != null) RefreshHistoryTable(_selectedNodeId);
+		}
 	}
 
 	// ── Bot list ─────────────────────────────────────────────────────────────
@@ -64,6 +95,7 @@ public partial class BotPlayHistory : Control
 	{
 		Scripts.Diagnostics.UiRefreshProbe.Count("BotPlayHistory.RebuildBotList");   // DEBUG-only, mini-plan 25
 		IReadOnlyList<string> nodeIds = _simulation?.GetActiveBotNodeIds() ?? new List<string>();
+		_seenNodeIds.UnionWith(nodeIds); // a listed bot never needs a first-sighting rebuild
 
 		// Drop buttons for bots that are no longer present.
 		foreach (string existing in new List<string>(_botButtons.Keys))
@@ -108,6 +140,7 @@ public partial class BotPlayHistory : Control
 
 	private void RefreshHistoryTable(string nodeId)
 	{
+		Scripts.Diagnostics.UiRefreshProbe.Count("BotPlayHistory.RefreshHistoryTable");   // DEBUG-only, mini-plan 25
 		IReadOnlyList<SimulationService.BotPlayEntry> plays =
 			_simulation?.GetBotPlayHistory(nodeId) ?? new List<SimulationService.BotPlayEntry>();
 
