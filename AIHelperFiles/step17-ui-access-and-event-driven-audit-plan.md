@@ -33,7 +33,9 @@
 > **The verification session ran 2026-10-19 (§5.5 results):** 0/s at rest in every scene visited, every ceiling held
 > except two that were mis-registered (stated as refuted), V-C2b confirmed. `CompanyDetails` was not opened, and the
 > ballot check is suspended (no holdings). **Unit 17** puts `BotPlayHistory` on DiceGame's live bet list, at the
-> developer's request. Next: one short session (`CompanyDetails`' counts, the new list), then the close-out.
+> developer's request. **The second M1 session ran 2026-10-20:** `CompanyDetails` confirmed, both lists flow, and the
+> freezes in `ClientsBetsHistory` sit at the blocks (§5.5). Next: measurement F1 to attribute them (block vs. scene),
+> then the close-out.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -1113,6 +1115,42 @@ not rows). At rest both still read 0.
 
 **What M1 still needs before the close-out:** `CompanyDetails`' counts, and the two new lists seen flowing. Both
 fit in one short session.
+
+#### M1, second session (2026-10-20, R3's world, 9000X) — results, and a freeze to attribute
+
+**`CompanyDetails` (C.6): ✅ confirmed.** At rest it reads 0 after the entry paint. Under the sim, 0.2–0.3/s against
+≤ 1/s (M0 by code: 1/s). Mempool adds of 1.1–2.8/s in those windows did not raise it, which is the throttle working.
+**`BotPlayHistory`'s list (unit 17): ✅** the developer reports it flowing, with no long freeze. `RebuildBotList` runs
+once per new id on entry, then 0. **`ClientsBetsHistory`'s feed: flows**, but the developer reports **frequent freezes
+of up to a second**. The developer compares them to the smaller per-block freeze still felt in DiceGame.
+
+**What the log already says.** `FlushLiveFeed` runs once per frame in which a bet arrived. Under the sim that is
+every frame, so its count is a **frame-rate proxy** for this scene. Splitting its 16 full windows by whether a
+block landed in them (mempool adds > 0 happen only inside block processing):
+
+| Windows | `FlushLiveFeed` per second |
+|---|---|
+| no block (9) | 39.9 · 53.4 · 48.6 · 48.4 · 46.9 · 53.5 · 50.8 · 45.2 · 45.1, **mean ≈ 48** |
+| with a block (8) | 31.6 · 17.9 · 20.3 · 24.3 · 29.4 · 30.2 · 38.3 · 35.6, **mean ≈ 28** |
+
+At ~48 fps the gap is ~100 frames per 5 s window, i.e. **on the order of a second or more of frame time lost per
+block window**. The freezes are therefore at the blocks. What the log cannot say is **whose** cost they are:
+- **H-A, the block's own cost.** The block's work is the same in every scene. T4's sell-flow measured 281 ms/block in
+  2013 (§10.1), and the world is now in 2015 with more companies and a larger cast. A feed that moves every frame
+  only makes the stop visible, and a still screen hides it.
+- **H-B, this scene adds to it.** Something here does extra work at a block, or a burst of allocations pushes a GC
+  into the block frame.
+
+**Measurement F1, predictions registered before the run** (one session, "⏱ Frame cost" and "⏱ Block cost" both
+armed, 9000X, autobet running; read from `user://logs/godot.log`):
+- **H-A predicts:** the worst frame of every `[FrameCost]` window carries a checkpoint. Its time is mostly **sim**
+  (sim ≥ 70% of the worst frame). Per-block block work is within **1.5×** of each other in DiceGame,
+  `ClientsBetsHistory` and `BotPlayHistory`, all in the same session.
+- **H-B predicts:** `ClientsBetsHistory`'s worst frames exceed DiceGame's by more than 200 ms **outside the sim**
+  (frame − sim), or its frames-with-a-GC are at least **2×** DiceGame's.
+- **Decision rule.** H-A ⇒ the freeze is T4's (the sell-flow, `PRIVATE_ROADMAP.md` §8 T4). Mini-plan 25 closes and
+  T4 is proposed as the next mini-plan. H-B ⇒ the scene is fixed inside mini-plan 25 before the close-out. Neither
+  ⇒ report what was seen, and nothing is changed on a guess.
 
 ---
 
