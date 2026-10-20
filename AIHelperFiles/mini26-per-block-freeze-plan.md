@@ -9,7 +9,10 @@ A's instrument, is built** (§3.5). **M1 ran 2026-10-20 (§7.1)**: 6.0 s per blo
 send in the fan-out, all four self-checks passed, 7 predictions confirmed, P3 half refuted, P4 and G1 refuted. **Part
 B is amended from that data (§8.1):** F-a (verify once per broadcast) and F-b (a confirmed-txid set), an A/B switch by
 block parity, two oracles, and an allocation split for G2's 16 MB per frame. **Units 2 and 3 are built (§8.2).**
-Next: the developer runs **M2** (§8.1, about 40 real minutes).
+**M2 ran 2026-10-20 (§8.3): every prediction confirmed and the exit criterion met.** A new-path block costs 416 ms
+against the old path's 4,858 in the same session; 1 of 130 new-path blocks went over 1 s; 0 oracle mismatches in
+311,740 checks. Next: the **close-out**, which deletes the A/B switch (Convention 3), hands G1/G3's allocation
+finding to T4, and merges.
 
 **Branch:** `mini26-per-block-freeze` (proposed, D-26.1).
 
@@ -488,6 +491,50 @@ reports G3 per segment in the Output panel and in six new CSV columns.
 **Checks.** Both builds have 0 warnings, and the locale detector reads **17/0/0/0**, with hit lines identical to unit
 1's. M1's three traces and its log are archived as `*_M1.csv` and `M1_godot.log`. The log's name is outside Godot's
 `godot*.log` rotation, which keeps five.
+
+### 8.3 — M2 results (session of 2026-10-20, 22:12 → 22:52 UTC, h3,708 → 3,967, 2015-12-10 → 2016-06-08)
+
+**The run.** 40 real minutes and 260 blocks, exactly **130 per path**. It was a DEBUG build, both instruments were
+armed and disarmed (so the final summary exists), and `godot.log` has **no** `NEVER REACHED ITS CHECKPOINT`,
+`[UtxoAssert] MISMATCH`, `[Governance] EXCEPTION`, `[BetJournal] UNDECLARED` or `[SendPathOracle] MISMATCH`.
+
+**Same session, same world, alternating blocks:**
+
+| | Old path (even heights) | **New path (odd heights)** | New ÷ old |
+|---|---|---|---|
+| mean block (`totalMs`) | 4,858 ms | **416 ms** | **0.086** |
+| worst block | 19,332 ms (h3,806) | **1,093 ms** (h3,807) | |
+| blocks over 1,000 ms | 130 of 130 (100%) | **1 of 130 (0.8%)** | |
+| mean `botTransactionsMs` | 4,361 ms | **268 ms** | **0.061** |
+| mean governance | 399 ms; 92 spikes over 200 ms | **52 ms; 1 spike** | 0.011 spikes |
+| mean send | 313.1 ms (fan-out 299.7) | **15.4 ms** (fan-out 2.8) | 0.049 |
+| sends with 31+ inputs | 10, mean 4,811 ms | **12, mean 172 ms** | 0.036 |
+| verifies per input | 81.44 | **2.000** | |
+| transactions scanned per admission | 17,452 | **7.3** | |
+
+| # | Result | Verdict |
+|---|---|---|
+| **B1** | new path: 8,094 verifies for 4,047 inputs, **exactly 2.000×**; old path 81.44× (≈ the 80-node fan-out, plus the local and broadcast checks) | ✅ confirmed |
+| **B2** | new path **7.3** transactions scanned per admission (the mempool only); old path 17,452 | ✅ confirmed |
+| **B3** | **311,740 oracle checks, 0 mismatches.** On the old path, every admission's scan and verification agreed with what the set and the broadcast's verdict said | ✅ confirmed |
+| **B4** | `botTx` new ÷ old = **0.061** (predicted ≤ 0.15) | ✅ confirmed |
+| **B5** | **1 of 130** new-path blocks over 1 s (**0.8%**, against ≤ 10%) | ✅ confirmed: **the exit criterion is met** |
+| **B6** | governance spikes **1 against 92** (1.1%, against ≤ 25%) | ✅ confirmed |
+| **G3** | ScheduledDrive allocates **98.4%** of the sim's 10.4 MB per frame (PlayerLoop 1.1%, BotLoop 0.4%). At 1,839 scheduled PoW attempts per frame, that is **~5.6 KB per attempt** | ✅ confirmed |
+| **V1** | **0 of 3,909 sent sends** were accepted at fewer nodes than they reached, on either path. The one failed send is a governance dividend that found too few spendable coins (`SelectFailed`): a game condition the dividend code already traces, not the fix | ✅ |
+
+**§8's exit criterion is met on both counts:** new-path blocks over 1 s are 0.8% (≤ 10%), and `botTx` new ÷ old is
+0.061 (≤ 0.25). FrameCost's 131 stalls are the 130 old-path blocks and the one new-path block over 1 s.
+
+**What a new-path block still costs (~416 ms).** Signing 83 ms · key derivation 72 ms · governance 52 ms · auctions
+45 ms · fan-out 43 ms (now mostly the UTXO checks) · checkpoint 41 ms · local admission 33 ms · the broadcast's
+single verification 32 ms. No term is above 20% of the block, and the one block over a second was a fat send.
+**This is the floor this plan was entitled to reach with exact fixes.** Further cuts would be different work: the
+`BigInteger` secp256k1 behind the key derivation and the signing, or T4.2.
+
+**G1 still fails** (GC pause 2.72% of frame time, against < 2%). G3 names its source: per-attempt allocation in the
+scheduled network's PoW drive. Per R4 that is a unit *after* the freeze fix. It is **not** a freeze: pauses average
+0.55 ms per frame. So it is handed on with its measurement (close-out) rather than built here.
 
 **M2's protocol** is §7's, steps 2–8, unchanged: the player and all four bots, DiceGame, 9000X, both toggles ticked
 before the autobet, **about 40 real minutes** (M1's 47 gave 212 blocks, so 40 gives ~100 per path).
