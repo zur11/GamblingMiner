@@ -292,26 +292,30 @@ I will state both as refuted if they fail.
 
 ## 7. Measurement M1: protocol (the developer runs it; I read the files)
 
-**Prediction first:** §5, all of it. **Where to look while it runs:** the **Godot editor's Output panel**.
+**Prediction first:** §5, all of it. **The developer watches nothing while it runs** (developer, 2026-10-20, restating
+the lifecycle rule that Claude reads the logs itself). Every check below that used to be "watch the Output panel" is
+read afterwards from `user://logs/godot.log`, which receives the same `GD.Print` lines, and from the CSV traces. The
+run's length is set by time, not by a print. The block count is read from the trace, and if it falls short of 100
+blocks, Claude asks for a second session rather than reading a short run as a full one.
+
+**What Claude checks afterwards, in `godot.log`:** `[Build] DEBUG` (a DEBUG build ran) · `[BlockCost] ARMED` with the
+node count (V1) · `[FrameCost] ARMED` · the `[BlockCost] SENDS` summaries · the **absence** of `NEVER REACHED ITS
+CHECKPOINT`, `[UtxoAssert] MISMATCH`, `[Governance] EXCEPTION` and `[BetJournal] UNDECLARED`.
 
 1. **Before launching, archive F1's two traces.** Unit 1 changes both headers, and the profilers rotate a mismatched
    file onto `.old`, which already holds older traces (2026-10-06 and 2026-09-22). In
    `%APPDATA%/Godot/app_userdata/GamblingMiner/logs/`, rename `block_cost_trace.csv` → `block_cost_trace_F1.csv` and
    `frame_cost_trace.csv` → `frame_cost_trace_F1.csv`. ✅ **Done 2026-10-20** with the developer's approval; both
    `.old` files are untouched.
-2. Launch from the editor (a DEBUG build). In the **Output panel**, confirm the `[Build] DEBUG` line.
-3. Open **DiceGame** and stay there for the whole run (D-26.2; F1 showed the scene does not move the cost). The clock
-   should read ~2015-07-08.
+2. Launch the game from the Godot editor (Play), as usual.
+3. Open **DiceGame** and stay there for the whole run (D-26.2; F1 showed the scene does not move the cost).
 4. DEV time selector: **9000X**.
-5. Tick **"⏱ Block cost"** and **"⏱ Frame cost"** **before** starting the autobet. The **Output panel** shows
-   `[BlockCost] ARMED` (with the node count, V1) and `[FrameCost] ARMED`.
+5. Tick the **"⏱ Block cost"** and **"⏱ Frame cost"** checkboxes **before** starting the autobet.
 6. Start the autobet with the strategy already loaded. The player stays at 10 credits; change nothing.
-7. Run until the **Output panel** has printed `[BlockCost] SENDS over 100 block(s)`, the second summary. F1's 45 blocks
-   took ~7 real minutes, so expect ~15–20.
-8. During the run, watch the **Output panel** for `NEVER REACHED ITS CHECKPOINT`, `[UtxoAssert] MISMATCH`,
-   `[Governance] EXCEPTION` and `[BetJournal] UNDECLARED`. **Each should be absent.** Note any that appear.
-9. Stop the autobet, then untick both toggles (the disarm prints the final summary). Close the game normally and tell
-   me "M1 done". I read `godot.log`, `block_cost_trace.csv`, `send_cost_trace.csv` and `frame_cost_trace.csv` myself.
+7. Let it run for **about 20 real minutes**. F1 took ~7 minutes for 45 blocks, so 20 minutes should give ~120.
+8. Stop the autobet, then untick both checkboxes (the disarm writes the final summary to the log). Close the game
+   normally and tell me "M1 done". I read `godot.log`, `block_cost_trace.csv`, `send_cost_trace.csv` and
+   `frame_cost_trace.csv` myself.
 
 ---
 
