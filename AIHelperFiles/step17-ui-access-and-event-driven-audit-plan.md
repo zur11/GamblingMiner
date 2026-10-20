@@ -34,8 +34,9 @@
 > except two that were mis-registered (stated as refuted), V-C2b confirmed. `CompanyDetails` was not opened, and the
 > ballot check is suspended (no holdings). **Unit 17** puts `BotPlayHistory` on DiceGame's live bet list, at the
 > developer's request. **The second M1 session ran 2026-10-20:** `CompanyDetails` confirmed, both lists flow, and the
-> freezes in `ClientsBetsHistory` sit at the blocks (§5.5). Next: measurement F1 to attribute them (block vs. scene),
-> then the close-out.
+> freezes in `ClientsBetsHistory` sit at the blocks (§5.5). **F1 ran 2026-10-20: H-A, the block's own cost** (2.7 s mean
+> per block in 2015, growing with game time, the same in every scene). That cost belongs to T4, not to this plan. Next:
+> the close-out, with T4's sell-flow proposed as the next mini-plan.
 >
 > Scope fixed by the developer (2026-08-20): **all four** objectives in one step, with **17.A and 17.C
 > active now** and **17.B and 17.D suspended until A and C are implemented AND tested** — a gate the
@@ -1151,6 +1152,43 @@ armed, 9000X, autobet running; read from `user://logs/godot.log`):
 - **Decision rule.** H-A ⇒ the freeze is T4's (the sell-flow, `PRIVATE_ROADMAP.md` §8 T4). Mini-plan 25 closes and
   T4 is proposed as the next mini-plan. H-B ⇒ the scene is fixed inside mini-plan 25 before the close-out. Neither
   ⇒ report what was seen, and nothing is changed on a guess.
+
+#### F1 results (session of 2026-10-20, h3,451 → 3,495, 2015-06-06 → 07-08): ✅ H-A, the block's own cost
+
+**The block costs whole seconds, in every scene.** Across 45 blocks `[BlockCost]` reads a mean **2,684 ms per
+block** (worst **6,941 ms**). **83%** of it is `botTx` (`ScheduleBotTransactionsAfterBlock`, the automated traffic
+including the cast's sell-flow), and governance spikes add up to 3.7 s. Per visit, in time order:
+
+| Visit | Game dates | Blocks | Mean per block | `botTx` | governance |
+|---|---|---|---|---|---|
+| DiceGame | Jun 6–8 | 7 | 1,586 ms | 1,488 | 19 |
+| ClientsBetsHistory | Jun 15–17 | 7 | 2,475 ms | 1,925 | 483 |
+| BotPlayHistory | Jun 19–24 | 11 | 1,860 ms | 1,456 | 337 |
+| DiceGame | Jun 25–30 | 7 | 3,408 ms | 2,965 | 375 |
+| ClientsBetsHistory | Jul 2–7 | 8 | 4,001 ms | 3,063 | 869 |
+
+- **The scene does not move it.** Against the adjacent DiceGame visit, `ClientsBetsHistory`'s `botTx` is **1.29×**
+  and then **1.03×**, inside the 1.5× rule. The remainder is governance, which is game events (votes and dividends
+  inside NetworkRoot), not scene work.
+- **The era does.** DiceGame doubled between its two visits, three game-weeks apart. §10.1's 281 ms in 2013 is this
+  cost at about 1/8 of its present size.
+- **Stalls (over 1 s) in every scene:** DiceGame (worst 3.4 s), `ClientsBetsHistory` (worst 8.3 s),
+  `BotPlayHistory` (worst 3.0 s). The developer felt them least where the screen moves least.
+- **The slow stop is the same cost.** The last block, h3,495, took 6.9 s, and a Stop pressed meanwhile waits for it.
+
+**One prediction was ill-posed, and is stated so.** H-A said "the worst frame of every `[FrameCost]` window
+carries a checkpoint, mostly sim". It cannot hold. FrameCost files every period over 1 s as a **stall** and keeps it
+out of every figure, so a multi-second block frame is never a window's "worst frame" (those read 36–403 ms here,
+GC and `ScheduledDrive`). That is CLAUDE.md Pattern 6 instrument rule 1, *an instrument that filters cannot see what
+it filters out*, and its stall count is exactly the "something that still watches the clock". The verdict rests on
+`[BlockCost]` and the stall counts, not on that line.
+
+**H-B is refuted:** no scene-specific excess outside the block. **Also seen, not chased here:** a gen-0 GC on nearly
+every frame ("frames with a GC" ≈ 600 of 600), recorded for T4.
+
+**Decision (the rule registered above):** the freeze is T4's. **Mini-plan 25 closes**, and T4's sell-flow (the
+sub-phase breakdown first, then the fix) is proposed as the next mini-plan. `PRIVATE_ROADMAP.md` §8 T4 now carries
+these figures, and it no longer calls the cost "not a priority".
 
 ---
 

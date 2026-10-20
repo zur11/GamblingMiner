@@ -603,6 +603,17 @@ that is `botTransactions`, almost all of it the sell-flow. **30 of 31 blocks exc
 developer reported "each time a block was mined". Not diagnosed further. The next step is a sub-phase breakdown of
 `ScheduleBotTransactionsAfterBlock`'s sell-flow, measured, before anything is changed.
 
+**📝 And it grows with game time (mini-plan 25 F1, 2026-10-20, R3's world, h3,451–3,495, 2015-06-06 → 07-08).**
+Across 45 blocks the mean is **2,684 ms per block**, **83%** of it `botTx`. Governance adds spikes of up to
+**3.7 s**, and the worst block took **6.9 s**. Every one of those is a frozen game (FrameCost files any period over
+1 s as a stall), in **every** scene: per visit, the cost follows the era, not the scene. DiceGame read 1.6 s/block
+over Jun 6–8 and **3.4 s over Jun 25–30, double in three game-weeks.** §10.1's 281 ms in 2013 was the same cost at
+~1/8 of its present size. A Stop pressed during such a block waits for it, which is the developer's "several
+seconds to stop". Also seen, not yet understood: **a gen-0 GC on nearly every frame** (FrameCost "frames with a GC"
+≈ 600 of 600), an allocation rate worth one look alongside the sell-flow. **This is no longer "not a priority":
+it is the most visible defect in the game at 2015, and it worsens as the world ages.** Proposed as the next
+mini-plan after mini-plan 25: the sub-phase breakdown first, then the fix.
+
 **Status at 2026-10-12 — only T4.2 is open.** The rest shipped, and their specifications and measurements
 (T4.0, T4.0b, T4.1, T4.3–T4.6) are in `ROADMAP_ARCHIVE.md`:
 - **T4.6**, the per-block cost budget: mini-plan 13.
