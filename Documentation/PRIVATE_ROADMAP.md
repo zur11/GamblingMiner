@@ -110,7 +110,7 @@ small item (its 17.A2). Both rows, and the two §6 checklist items they closed, 
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **1** | **The per-block freeze: T4's after-block traffic** (`ScheduleBotTransactionsAfterBlock`, the cast's sell-flow, and the governance spikes) — a sub-phase breakdown measured first, then the fix | §8 T4, its two 📝 notes · mini-plan 25 plan §5.5 "F1 results" | **The most visible defect in the game at 2015, and it worsens as the world ages:** 2.7 s mean per block, worst 6.9 s, every scene frozen. Inserted by F1 (2026-10-20). To be specified as mini-plan 26 |
+| **1** | **The per-block freeze: T4's after-block traffic** (`ScheduleBotTransactionsAfterBlock`, the cast's sell-flow, and the governance spikes) — a sub-phase breakdown measured first, then the fix | **`AIHelperFiles/mini26-per-block-freeze-plan.md` (SPECIFIED 2026-10-20, not started)**, branch `mini26-per-block-freeze` · §8 T4, its two 📝 notes · mini-plan 25 plan §5.5 "F1 results" | **The most visible defect in the game at 2015:** 2.7 s mean per block, worst 8.5 s, every scene frozen. Inserted by F1 (2026-10-20). Mini-plan 26 §2 reads F1's rows: the sell-flow is flat across that window, and the growth is exchanges arriving as the historical tx target outgrows the cast |
 | **2** | **User settings persistence** | §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
@@ -586,14 +586,18 @@ developer reported "each time a block was mined". Not diagnosed further. The nex
 
 **📝 And it grows with game time (mini-plan 25 F1, 2026-10-20, R3's world, h3,451–3,495, 2015-06-06 → 07-08).**
 Across 45 blocks the mean is **2,684 ms per block**, **83%** of it `botTx`. Governance adds spikes of up to
-**3.7 s**, and the worst block took **6.9 s**. Every one of those is a frozen game (FrameCost files any period over
+**3.7 s**, and the worst block took **8.5 s** (h3,483; *this read 6.9 s, the last block's figure, until mini-plan 26
+§2.1 corrected it on 2026-10-20*). Every one of those is a frozen game (FrameCost files any period over
 1 s as a stall), in **every** scene: per visit, the cost follows the era, not the scene. DiceGame read 1.6 s/block
 over Jun 6–8 and **3.4 s over Jun 25–30, double in three game-weeks.** §10.1's 281 ms in 2013 was the same cost at
 ~1/8 of its present size. A Stop pressed during such a block waits for it, which is the developer's "several
 seconds to stop". Also seen, not yet understood: **a gen-0 GC on nearly every frame** (FrameCost "frames with a GC"
 ≈ 600 of 600), an allocation rate worth one look alongside the sell-flow. **This is no longer "not a priority":
 it is the most visible defect in the game at 2015, and it worsens as the world ages.** Proposed as the next
-mini-plan after mini-plan 25: the sub-phase breakdown first, then the fix.
+mini-plan after mini-plan 25: the sub-phase breakdown first, then the fix. **Taken by mini-plan 26
+(`AIHelperFiles/mini26-per-block-freeze-plan.md`, SPECIFIED 2026-10-20).** Its §2.3 reads "double in three
+game-weeks" from F1's own sub-phase columns. The sell-flow was flat (1.2–1.5 s). The doubling is
+`TryNonMinerExchanges` starting at h3,481, as `txTargetPerBlock` rose 5.3 → 12.1: a change of regime, not a curve.
 
 **Status at 2026-10-12 — only T4.2 is open.** The rest shipped, and their specifications and measurements
 (T4.0, T4.0b, T4.1, T4.3–T4.6) are in `ROADMAP_ARCHIVE.md`:
