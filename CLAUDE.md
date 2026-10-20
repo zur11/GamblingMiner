@@ -279,7 +279,7 @@ event Action<UserBettingStats> StatsChanged;
 private void EmitStatsChangedIfNeeded()  // 250 ms throttle
 ```
 
-This is the service-to-service half of a broader project-wide principle — see **Pattern 6** below for the full rule (when `_Process` is and isn't warranted) and the standing project goal to audit every remaining poller before Basic Mode v0.1 ships.
+This is the service-to-service half of a broader project-wide principle — see **Pattern 6** below for the full rule (when `_Process` is and isn't warranted).
 
 ### 2. Checkpoint / Rollback — a block is the only commit to disk
 
@@ -381,7 +381,7 @@ Corollary: a drift filed as "harmless and self-correcting" stops being harmless 
 
 **Already-good examples in this codebase (services firing typed events on real state changes):** `UserStatsService.StatsChanged` (throttled 250ms — the reference pattern for a HIGH-FREQUENCY event, `EmitStatsChangedIfNeeded()`), `SimulationService.ClientBetSettled`, `CasinoClientLedgerService.LedgerChanged` / `ScMonetaryLedgerService.LedgerChanged`, `PrincipalBalanceService.BalanceChanged` / `CasinoScBalanceService.BalanceChanged`, `PlayerBankAccountService.BankStateChanged`, `CasinoCoinSwapService.SwapDeskChanged`, `BtcMarketDataService.MarketDayChanged`, `BtcNetworkDataService.NetworkDayChanged`.
 
-**The backlog exists and is catalogued elsewhere.** Roughly fifteen scenes still poll on a timer to rebuild a panel from state that only changes on a discrete event. **Do not add a new poll-shaped `_Process` to it without first checking whether an event already exists** (or should) for the state you are reading. The list, the two implementation caveats, and the Basic Mode v0.1 gate: `Documentation/ProjectDesignManual.md` **Ch. 38** (§38.4 the existing events, §38.5 the candidates) · `PRIVATE_ROADMAP.md` §6. ⚠ That catalogue was audited 2026-07-21 and entries have moved since — **re-derive it from the code before working through it** (Step 17 §5.1).
+**The polling backlog was cleared by mini-plan 25 (2026-10-20), which met the Basic Mode v0.1 gate.** Every `_Process` override under `Screens/` and `UI/` is accounted for in `Documentation/ProjectDesignManual.md` **§38.5**: what each does, why it stays, and five lessons the migration paid for. §38.4 holds the event table. **Do not add a new poll-shaped `_Process` without first checking whether an event already exists** (or should) for the state you are reading. A new override is a new row in §38.5.
 
 **The INVERSE failure — a correct event, fired far too often, driving expensive work.** It cost more than any poll in the backlog, so migrating a poll to an event is **not automatically an improvement**. Three standing rules:
 
@@ -390,8 +390,6 @@ Corollary: a drift filed as "harmless and self-correcting" stops being harmless 
 3. **A displayed throttle is a MEASUREMENT, not a diagnosis.** Below-1 retention means *"find what is eating the frame"*, never *"raise `MaxBacklogSeconds`/`MaxBetsPerFrame`"* — which only hands a saturated frame more work.
 
 Case, with the measurement that caught it: `ProjectDesignManual.md` **§38.7**.
-
-**Project goal, tracked in `Documentation/PRIVATE_ROADMAP.md` §6:** before Basic Mode v0.1 is considered complete, audit every `_Process` override in the project against this principle and migrate what's feasible to event-driven design. Not a hard blocker on other work — but do not add a NEW poll-shaped `_Process` to the backlog above without first checking whether an event already exists (or should) for the state you're reading.
 
 **Five ways an instrument or a UNIT lies, each measured the hard way — the rules here, the cases in `ProjectDesignManual.md` §40.12.** Six consecutive mini-plans were performance work and in every one the instrument was as much the subject as the code:
 

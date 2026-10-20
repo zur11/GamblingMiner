@@ -101,25 +101,19 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 > What shipped, and when, is `IMPLEMENTATION_STATUS.md`. `AIHelperFiles/IMPLEMENTATION_ROADMAP.md` is history (last
 > updated 2026-06-30, ends at Step 10); **the order below is the authoritative one.**
 
-### ▶ NEXT — the agreed working order (2026-10-12)
+### ▶ NEXT — the agreed working order (2026-10-12, updated 2026-10-20)
 
 Decided with the developer at mini-plan 24. Each item is its own plan, under the usual lifecycle (CLAUDE.md, Git
-Workflow).
+Workflow). **Item 1 of 2026-10-12, Step 17.A + 17.C, is ✅ DONE (mini-plan 25, 2026-10-20)**, and so is the "Numbers"
+small item (its 17.A2). Both rows, and the two §6 checklist items they closed, are in `ROADMAP_ARCHIVE.md`. Mini-plan
+25's measurement F1 inserted the new item 1, and the developer approved it with F1's commit.
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **1** | **Step 17.A + 17.C** — a direct `DiceGame → BetsHistoryExplorer` button, and the event-driven audit (migrate the `_Process` polling backlog) | `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` (SPECIFIED 2026-08-20, **re-specified 2026-10-12**, not started) | 17.C is a **declared Basic Mode v0.1 gate** (§6). 17.A does not exist yet (verified 2026-10-12: only `CalendarsNavigator` and `ScFinances` reach the explorer) |
-| **2** | **User settings persistence** | §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20 and 23 added view preferences with no home |
+| **1** | **The per-block freeze: T4's after-block traffic** (`ScheduleBotTransactionsAfterBlock`, the cast's sell-flow, and the governance spikes) — a sub-phase breakdown measured first, then the fix | §8 T4, its two 📝 notes · mini-plan 25 plan §5.5 "F1 results" | **The most visible defect in the game at 2015, and it worsens as the world ages:** 2.7 s mean per block, worst 6.9 s, every scene frozen. Inserted by F1 (2026-10-20). To be specified as mini-plan 26 |
+| **2** | **User settings persistence** | §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
-| **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §17.B · the P-items below | Step 17 suspends 17.B until A and C are built **and tested** (developer's gate). **The Rank's calibration data is already being gathered by mini-plan 25 §9 (2026-10-14)**, as a by-product of its test runs |
-| — | **Small item, fold into whichever UI plan comes first:** DiceGame's "Numbers" bet view | §6 | Its cost is solved: mini-plan 23 built the 10-number row and the latest-only view |
-
-**📝 Step 17 re-verified 2026-10-12 — its §0 governs.** The catalogue was re-derived from the code: 25 overrides, 8
-not polls, 9 subscribed with a fallback timer, 8 pure polls covering 10 scenes. Ch. 38 §38.5 stays stale until
-17.C closes. Of the four Market-Birth suspensions, only `CompanyDetails` remains, and it now waits for **a founded
-company**. The live test world, at 2012-02-13 and height 1,670, has none, because no test run has let the bots mine
-(not a real-play state). 17.A is kept and arrives at **the present, both ways** (developer, 2026-10-12). Plan §8
-records every decision. Runs as **mini-plan 25**, branch `mini25-event-driven-audit`.
+| **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
 **Not scheduled (open, see their entries):** T4.2 (Step 17.D) · P9 unit tests · the bot treasury policy (waits on P5)
 · the machine-adaptive budget (needs a second machine) · T6 pass 2 · the Network Fee Option-B experiment.
@@ -542,28 +536,15 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   | setting | today | belongs to |
   |---|---|---|
   | Saved betting strategies | `saved_betting_strategies.json`, exempt from the wipe — survives, which surprised the developer | the player, probably — but the surprise says the rule was never stated, not that the file is wrong |
-  | **Bet View: Detailed / OFF** (mini-plan 10) | not persisted; resets to Detailed on every DiceGame entry | the player. A **view preference only**: after mini-plan 10 both states cost the same (~0.025 ms per bet) and both reach the clock's ceiling, so forgetting it changes nothing but what is on screen. *(Until 2026-09-21 this row called it a speed choice with a higher hidden budget. That was the design before the list got cheap, and the two-budget plan was never built.)* |
+  | **Bet View: Detailed / Last 10 / Latest only / OFF** (mini-plan 10; the two Numbers modes since mini-plan 25 17.A2) | not persisted; resets to Detailed on every DiceGame entry | the player. A **view preference only**: after mini-plan 10 both states cost the same (~0.025 ms per bet) and both reach the clock's ceiling, so forgetting it changes nothing but what is on screen. *(Until 2026-09-21 this row called it a speed choice with a higher hidden budget. That was the design before the list got cheap, and the two-budget plan was never built.)* |
   | DEV time scale (the requested one) | not persisted | DEV, but the same mechanism |
   | **Bets explorer replay pace, speed and Per Bet credits** (mini-plan 20 F) | not persisted; every entry opens **As Played** at 1x (Per Bet at 1 credit when toggled) | the player. A **view preference**, like Bet View |
 | **Bets explorer winning-numbers view: Last 10 / Latest only** (mini-plan 23 E) | a `static` in `BetsHistoryExplorer`: survives scene changes, resets to Last 10 at every launch | the player. A **view preference** |
+  | **BlockExplorer's casino players' SC balances, shown / hidden** (DEV, mini-plan 25 17.A7) | a `static` in `BlockExplorer`: survives scene changes, resets to shown at every launch | DEV, but the same mechanism |
   | DEV player credits ladder (mini-plan 20 Part 0) | writes the real hardware state (`hardware_allocation.json`), so it persists as a shop purchase does | **world**, deliberately: it is a shortcut to the shop, not a setting of its own |
   | The strategy panel's last-used values | not persisted; distinct from a *saved* strategy | the player |
   | Anything a future options menu holds | does not exist | the player |
 
-- [ ] **The event-driven audit — Step 17.C, item 1 of ▶ NEXT.** Before Basic Mode v0.1 is complete, every
-  `_Process` override is audited against CLAUDE.md Important Patterns §6 / `ProjectDesignManual.md` Ch. 38, and the
-  poll-based refreshes are migrated where feasible. Re-derive the catalogue from the code first (Ch. 38 §38.5 was
-  audited 2026-07-21).
-- [ ] **DiceGame's "Numbers" bet view — a small item, moved into Basic Mode (developer, 2026-10-12).** It shipped in
-  mini-plan 10 and was withdrawn because the 100-cell grid halved the frame rate (D-10.3). **Mini-plan 23 solved the
-  cost** by showing less:
-  - `PreviousWinnerNumbersRow` (the last 10, 0.4–0.6 ms a frame at 99 bets/s);
-  - `LatestWinnerNumber` (one number, ~0.02 ms);
-  - both are live in `BetsHistoryExplorer` behind a toggle.
-
-  DiceGame can use the same components. **Before showing anything there, fix the old grid's scene geometry**: it has
-  never been on screen, starts at y 534 under the Bet View button, and its 540 minimum height runs past the bottom
-  band (Ch. 29 §29.11). Fold this into whichever UI plan comes first.
 - [~] **Clarify auto-recharge behavior in UI and docs.** Docs done (ProjectDesignManual Ch. 25 + CLAUDE.md). The UI
   warning when auto-recharge is OFF is still pending (P2).
 - [ ] **Hal's network-coupled fade:** replace the linear `1.0 → 0` stand-in once gradual miner spawning exists.

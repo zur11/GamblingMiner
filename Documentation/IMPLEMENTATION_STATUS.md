@@ -17,6 +17,12 @@ as rules but reachable only by reading a status entry. They now live in `CLAUDE.
 
 ### Implemented
 
+- **Mini-plan 25 — Step 17.A + 17.C: direct explorer access and the event-driven audit ✅ COMPLETE (2026-10-20).** Full record in `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` (close-out §11). Branch `mini25-event-driven-audit`, 28 commits.
+  - **17.A family:** DiceGame → Bets Explorer button, arriving at the present both ways (D-17.0 = b). DiceGame's **Numbers view** folded in (17.A2). Company funding in two phases: donors, donated, Company's BTC Income; then foundational income and income since founding, in BTC and in SC at each receipt's own day (17.A3/A4). The **auction countdown on the live clock** (17.A5). **BlockExplorer's right side as four fixed panels**, with a separate Casino Players panel (17.A6). A DEV toggle for the casino players' SC balances, live per settled bet (17.A7).
+  - **17.C, the Basic Mode v0.1 gate (✅ met):** every `_Process` override audited. Scenes at rest now do **0 refreshes a second** (0.2–1/s before), measured in two sessions. The two scenes M0 found rebuilding **450 times a second** now do ~4. `NetworkRoot.MempoolChanged` is new. `StatsChanged`'s throttle gained a **trailing edge**. `ClientsBetsHistory`'s feed and `BotPlayHistory` paint like DiceGame's list (a ring plus the visible rows per frame). Ch. 38 §38.5 is rewritten as the cleared backlog with five lessons.
+  - **INC-006 found and fixed:** the auction keyed bots by address after P16.2, which gave one bot several shareholdings and crashed two governance paths. Root fix plus `WorldFormatVersion` 11 → 12.
+  - **Rank calibration (§9):** runs R1–R3 from genesis. They measured the arithmetic the Casino Rank System will be designed on (`PRIVATE_ROADMAP.md`, Rank entry).
+  - **Handed on:** measurement F1 showed the per-block freeze is the **block's own cost** (2.7 s mean in 2015, growing with game time, the same in every scene). It goes to T4, proposed as the next mini-plan.
 - **Mini-plan 24 — PRIVATE_ROADMAP depuration ✅ COMPLETE (2026-10-12).** Documentation only. Full record in `AIHelperFiles/mini24-roadmap-depuration-plan.md`.
   - **Moved:** every finished or superseded entry went **verbatim** to the new `Documentation/ROADMAP_ARCHIVE.md`, checked line by line with 0 lost. The roadmap went **162,826 → ~63,000 characters** and now holds only open work.
   - **New working order (developer):** Step 17.A + 17.C → user settings persistence → Holdings Hub → Betting Statistics and the Basic Mode economy.

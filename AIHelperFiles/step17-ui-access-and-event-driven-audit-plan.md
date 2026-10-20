@@ -1,6 +1,8 @@
 # Step 17 — Direct Access, the Event-Driven Audit, and Two Objectives Held Back
 
-> **Status: RE-SPECIFIED 2026-10-12, NOT STARTED.** §0 re-verifies the 2026-08-20 text against the code and
+> **Status: ✅ COMPLETE 2026-10-20 (mini-plan 25). Close-out: §11.** 17.A and 17.C are built and tested. 17.B and 17.D
+> are handed on (§11.4), and the per-block freeze F1 measured is ▶ NEXT item 1 in `PRIVATE_ROADMAP.md`. *The history
+> below is kept as written:* **RE-SPECIFIED 2026-10-12, NOT STARTED.** §0 re-verifies the 2026-08-20 text against the code and
 > the developer's current world, and **§0 wins where it disagrees with anything below it**. Next: the
 > developer settled every §8 decision on 2026-10-12. **Unit 1 (the `UiRefreshProbe` instrument) is built.**
 > **2026-10-14: §9 added.** Every test now starts from genesis and doubles as a **Rank-System calibration
@@ -1762,3 +1764,67 @@ effective figure.
 10. To end a session: stop the autobet in DiceGame, close the game, and say so in the chat. To continue
     R1 later, launch and repeat steps 4, 5 (9000X only) and 7. **The world is not wiped again**, because the
     wipe rewrote the stamp to 11.
+
+---
+
+## 11. Close-out (2026-10-20)
+
+**Mini-plan 25 is ✅ COMPLETE.** 17.A and 17.C are built and tested, so the developer's gate on 17.B and 17.D is
+met. Both leave this plan (handed on, below). Branch `mini25-event-driven-audit`, 28 commits with this one.
+
+### 11.1 — What shipped
+
+**17.A family (§4):** the DiceGame → Bets Explorer button, arriving at the present both ways (D-17.0 = b) ·
+DiceGame's Numbers view (17.A2, the 100-cell grid deleted) · a company's funding in two phases, with donors,
+Company's BTC Income, foundational income, and income since founding in BTC and in SC at each receipt's own day
+(17.A3/A4) · the auction countdown on the live clock (17.A5) · BlockExplorer's right side as four fixed panels with
+the casino players split out (17.A6) · the DEV toggle for their SC balances, live per settled bet (17.A7).
+
+**17.C (§5), the Basic Mode v0.1 gate, met:**
+- **C.1:** the casino's per-bet `BalanceChanged` coalesced in `CasinoCoinSwaps` and `CasinoGamblingFinances`,
+  **450 → ~4 rebuilds/s**.
+- **C.2:** `NetworkRoot.MempoolChanged`, and the chain-side scenes off their timers onto a leading-edge throttle.
+- **C.3:** all nine B-group fallbacks deleted. Only one was vestigial; the other eight covered state that an event now
+  announces. `StatsChanged`'s throttle gained its trailing edge.
+- **C.4 / C.6:** `BotPlayHistory` and `CompanyDetails` moved to events.
+- **Units 17 + the feed:** `ClientsBetsHistory`'s feed and `BotPlayHistory` paint like DiceGame's list.
+- **C.5** was skipped by decision (D-17.2).
+- **Exit criterion (§5.3):** **0 refreshes a second at rest in every migrated scene**, measured in M1's two sessions.
+  Every ceiling under the sim held, except the two mis-registered ones below.
+
+**Found on the way:** **INC-006** (§10). The auction keyed bots by address after P16.2, two governance paths
+crashed, and the root fix shipped with `WorldFormatVersion` 11 → 12.
+
+### 11.2 — Predictions refuted, as refuted
+
+- **M0 P2** (retention would show C.1's cost): refuted, retention 100% at 5 credits. C.1 went ahead on P1's count.
+- **R1-P3:** the casino's client book never records the player (ND.8f), so the trace reads the player from the
+  rollup.
+- **V-C2's** and **V-C3's** per-window ceilings for leading-edge throttles: too tight, and the same mistake twice.
+- **V-C3, `CasinoCoinSwaps` 4.2 > 4:** the ceiling ignored the two immediate subscriptions C.1 deliberately kept.
+- **F1's** worst-frame clause: ill-posed for an instrument that files multi-second frames as stalls.
+
+### 11.3 — Lessons
+
+The five that generalize are in `ProjectDesignManual.md` **§38.5**:
+1. a fallback is not vestigial until you have named what it covered;
+2. a timer hides the code that depends on it;
+3. a throttle that defers must deliver;
+4. a per-bet event drives a ring, never a rebuild;
+5. throttled ceilings are stated per window and as a mean.
+
+The trailing-edge rule is also in CLAUDE.md's throttle reference line.
+
+### 11.4 — Handed on
+
+| What | Where it goes |
+|---|---|
+| **The per-block freeze** (F1: 2.7 s mean per block in 2015, growing with game time, every scene) | `PRIVATE_ROADMAP.md` ▶ NEXT **item 1**, to be specified as mini-plan 26, with §8 T4's two 📝 notes |
+| **17.B, Betting Statistics** (§6.1) | ▶ NEXT item 4. Its gate is met; its own precondition (an open design, and a persisted-format decision that carries a wipe) still stands |
+| **17.D, T4's refactor** (§6.2) | §8 T4 / T4.2. It begins as measurement, which item 1 now is |
+| Two new view settings with no home (DiceGame's 4-mode Bet View, BlockExplorer's balances toggle) | §6's settings table, for ▶ NEXT item 2 |
+| A gen-0 GC on nearly every frame (F1) | §8 T4's F1 note, beside the freeze |
+| `CalendarsNavigator`'s per-frame repaint (D-17.2), `StatusBar`'s 10 Hz balances (mini-plan 15 B) | kept by decision, named in §38.5 |
+| `CasinoGamblingFinances`' Back button inside its scroll (Ch. 29 §29.10) | unchanged, DEV-only, fix if the overflow is observed |
+| `BotPlayHistory`'s dropped Roll / Result columns | restorable on request, by a bot-specific row |
+| **The R3 rank trace** (`user://logs/rank_calibration_trace.csv`) | **rename it `rank_calibration_R3.csv` before any future wipe**, as R1/R2 were |

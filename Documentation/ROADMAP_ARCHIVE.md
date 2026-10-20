@@ -1063,3 +1063,39 @@ Everything above is a hypothesis until the frame is instrumented. Add per-block 
 ## From the Post-Basic Mode checklist — the DiceGame "Numbers" view as written before it moved into Basic Mode (2026-10-12)
 
 - [ ] **A "Numbers" bet view in DiceGame — an option for a later version, not a Basic Mode need** (developer's call, 2026-09-20, D-10.3). A second way to watch bets: only the roll numbers, red or green, in `PreviousWinnerNumbersGrid`. It shipped briefly in mini-plan 10 and was withdrawn because it halved the frame rate at high speed. **The measurements are done; only the design choice is open:** a cell repaint costs **~0.21 ms**, and at 160 bets per frame all 100 cells change every frame (26 fps, against 57 with the same grid visible but not written to). What is written makes no difference, so no cell-level optimisation helps. The two ways out both change what the view promises: **a refresh cadence** (~10 Hz, ~50 fps by arithmetic, unmeasured) or **fewer cells**. Its per-bet cost is already solved (D-10.2: ring buffer, fixed order, 0.025 ms/bet). **Before showing it, fix its scene geometry**, which has never been on screen: it starts at y 534, under the Bet View button, and its 540 minimum height runs past the bottom band (ProjectDesignManual Ch. 29 §29.11). The grid still serves BetsHistoryExplorer, whose replay is slow enough that none of this bites. Full record: mini-plan 10 §A3, D-10.3.
+
+
+## From §5 and §6 — Step 17.A + 17.C, closed by mini-plan 25 (2026-10-20)
+
+Moved verbatim at mini-plan 25's close-out. Record of the work: `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` (close-out §11) and `IMPLEMENTATION_STATUS.md`.
+
+**From ▶ NEXT (2026-10-12):**
+
+| # | Work | Where it is specified | Why here |
+|---|---|---|---|
+| **1** | **Step 17.A + 17.C** — a direct `DiceGame → BetsHistoryExplorer` button, and the event-driven audit (migrate the `_Process` polling backlog) | `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` (SPECIFIED 2026-08-20, **re-specified 2026-10-12**, not started) | 17.C is a **declared Basic Mode v0.1 gate** (§6). 17.A does not exist yet (verified 2026-10-12: only `CalendarsNavigator` and `ScFinances` reach the explorer) |
+| — | **Small item, fold into whichever UI plan comes first:** DiceGame's "Numbers" bet view | §6 | Its cost is solved: mini-plan 23 built the 10-number row and the latest-only view |
+
+**📝 Step 17 re-verified 2026-10-12 — its §0 governs.** The catalogue was re-derived from the code: 25 overrides, 8
+not polls, 9 subscribed with a fallback timer, 8 pure polls covering 10 scenes. Ch. 38 §38.5 stays stale until
+17.C closes. Of the four Market-Birth suspensions, only `CompanyDetails` remains, and it now waits for **a founded
+company**. The live test world, at 2012-02-13 and height 1,670, has none, because no test run has let the bots mine
+(not a real-play state). 17.A is kept and arrives at **the present, both ways** (developer, 2026-10-12). Plan §8
+records every decision. Runs as **mini-plan 25**, branch `mini25-event-driven-audit`.
+
+**From §6, the Basic Mode v0.1 Checklist** (both ✅ done by mini-plan 25: the audit is 17.C, the Numbers view is 17.A2):
+
+- [ ] **The event-driven audit — Step 17.C, item 1 of ▶ NEXT.** Before Basic Mode v0.1 is complete, every
+  `_Process` override is audited against CLAUDE.md Important Patterns §6 / `ProjectDesignManual.md` Ch. 38, and the
+  poll-based refreshes are migrated where feasible. Re-derive the catalogue from the code first (Ch. 38 §38.5 was
+  audited 2026-07-21).
+- [ ] **DiceGame's "Numbers" bet view — a small item, moved into Basic Mode (developer, 2026-10-12).** It shipped in
+  mini-plan 10 and was withdrawn because the 100-cell grid halved the frame rate (D-10.3). **Mini-plan 23 solved the
+  cost** by showing less:
+  - `PreviousWinnerNumbersRow` (the last 10, 0.4–0.6 ms a frame at 99 bets/s);
+  - `LatestWinnerNumber` (one number, ~0.02 ms);
+  - both are live in `BetsHistoryExplorer` behind a toggle.
+
+  DiceGame can use the same components. **Before showing anything there, fix the old grid's scene geometry**: it has
+  never been on screen, starts at y 534 under the Bet View button, and its 540 minimum height runs past the bottom
+  band (Ch. 29 §29.11). Fold this into whichever UI plan comes first.

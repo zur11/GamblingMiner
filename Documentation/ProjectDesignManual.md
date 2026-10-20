@@ -4507,26 +4507,66 @@ The project already leans on this pattern successfully in many places — it is 
 
 | Event | Fires when | Notable subscribers |
 |---|---|---|
-| `UserStatsService.StatsChanged` | A bet/deposit/rollback, throttled 250ms while high-frequency | `BetsHistoryExplorer`, `FinancialBettingStats` |
-| `SimulationService.ClientBetSettled` | Every settled bot/player bet | `ClientsBetsHistory` |
-| `BtcMarketDataService.MarketDayChanged` | A calendar day boundary crosses (edge-triggered, §38.3) | `CasinoCoinSwaps`, `ScFinances`, `CasinoCoinSwapService`, `StatusBar` |
+| `UserStatsService.StatsChanged` | A bet/deposit/rollback, throttled 250ms while high-frequency, **with a trailing edge** (mini-plan 25: a deferred change is delivered once the interval passes) | `BetsHistoryExplorer`, `FinancialBettingStats` |
+| `SimulationService.ClientBetSettled` | Every settled bot/player bet. **Hundreds a second at 9000X: a subscriber marks a flag or writes a ring, nothing more** | `ClientsBetsHistory`, `BotPlayHistory`, `BlockExplorer` (casino players' balances), `ScFinances`, `ScTransactions` |
+| `NetworkRoot.BlockAccepted` (static) | Every live accepted block, after its side effects | `StatusBar`, `ScFinances`, `CasinoCoinSwaps`, `CentralBank`, `CompanyDetails`, `AuctioningCompanyDetails`, the chain-side wallet scenes, `BlockExplorer`, `CasinoCoinSwapService` |
+| `NetworkRoot.MempoolChanged` (static, mini-plan 25) | A NEW transaction enters its originator's mempool (three origin sites, never the broadcast fan-out) | `StatusBar`, `CasinoCoinSwaps`, `CompanyDetails`, the chain-side wallet scenes, `BlockExplorer` |
+| `HardwareAllocationRepository.HardwareChanged` | Hardware or pool allocation changes | `BTCPoolsAndHardwareShop`, `BlockExplorer` |
+| `CentralBankService.CentralBankChanged` | A FED draw/repay/record | `CentralBank`, `CasinoGamblingFinances` |
+| `BtcMarketDataService.MarketDayChanged` | A calendar day boundary crosses, data or not (edge-triggered, §38.3) | `CasinoCoinSwaps`, `ScFinances`, `CasinoCoinSwapService`, `StatusBar` |
 | `BtcNetworkDataService.NetworkDayChanged` | Same edge-triggered pattern | (reserved for future consumers) |
-| `CasinoClientLedgerService.LedgerChanged` / `ScMonetaryLedgerService.LedgerChanged` | A ledger entry is recorded | `ClientsTransactions`, `WorldEconomy`, `FinancialBettingStats` |
-| `CasinoCoinSwapService.SwapDeskChanged` | A swap executes or a desk knob changes | `CasinoCoinSwaps` |
+| `CasinoClientLedgerService.LedgerChanged` / `ScMonetaryLedgerService.LedgerChanged` | A ledger entry is recorded | `ClientsTransactions`, `ClientsBetsHistory`, `CentralBank`, `WorldEconomy`, `FinancialBettingStats` |
+| `CasinoCoinSwapService.SwapDeskChanged` | A swap executes, a desk knob changes, or a block moves the desk's availability | `CasinoCoinSwaps`, `CasinoGamblingFinances`, `CasinoFinances` |
 | `PrincipalBalanceService.BalanceChanged` / `CasinoScBalanceService.BalanceChanged` | A balance mutates | `CasinoCoinSwaps`, `CasinoGamblingFinances`, `ScFinances`, `ScTransactions`, `CasinoCoinSwapService` |
 | `PlayerBankAccountService.BankStateChanged` | A bank transfer/setting changes | `ScFinances`, `ScTransactions` |
 
-### 38.5 — Known migration candidates (audited 2026-07-21 — the backlog, not a mandate to stop and fix immediately)
+### 38.5 — The migration backlog — ✅ CLEARED by mini-plan 25 (2026-10-20)
 
-Roughly fifteen scenes share the identical shape: accumulate `delta` in `_Process`, gate on a `RefreshInterval`/`FallbackInterval` timer (commonly 1–3 seconds), then unconditionally rebuild a panel or list from service state that in truth only changes on a settled bet, a mined block, or a transfer. None of these are broken — they work — but each is a candidate for migrating to "build once in `_Ready()`, then rebuild only when a subscribed event actually fires":
+*Until mini-plan 25 this section listed the candidates as audited 2026-07-21: the shape was "accumulate `delta`, gate
+on a 1–3 s timer, rebuild a panel from state that only changes on an event". That list had aged by the time it was
+worked (Step 17 §0 re-derived it from the code, 2026-10-12). What follows is the state after the work, re-derived
+from the code at the close-out.* Full record, per scene and with every measurement:
+`AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` §0.2 and §5.5.
 
-`StatusBar`, `FinancialBettingStats`, `CalendarsNavigator`, `BetsHistoryExplorer`, `BTCWallet`, `AuctioningCompanyDetails`, `CompanyDetails`, `BlockExplorer`, `CasinoFinances`, `BotPlayHistory`, `ScFinances`, `ScTransactions`, `CasinoGamblingFinances`, `ClientsTransactions`, `ClientsBetsHistory`, `FoundersWallets`, `CasinoCoinSwaps`, `BTCPoolsAndHardwareShop`, `BotsBtcWallets`.
+**Every `_Process` override under `Screens/` and `UI/` (25), and why each one is there:**
 
-Two implementation notes for whoever migrates one of these:
+| Kind | Scenes | What its `_Process` does |
+|---|---|---|
+| Genuine real-time (§38.2) | `DiceGame`, `BetsHistoryExplorer` | autobet pacing, the replay transport, sampled clocks |
+| One-shot or per-frame flush, bounded by what is visible (§38.8) | `BetHistoryContainer`, `PreviousWinnerNumbersGrid`, `PreviousWinnerNumbersRow`, `LatestWinnerNumber`; `ClientsBetsHistory`'s live feed and `BotPlayHistory`'s list since mini-plan 25 | writes at most the visible rows, only in a frame where something changed |
+| Edge-triggered readout (§38.3) | `SimRetentionReadout` | repaints on change of a rounded value |
+| **Event-driven: the override only consumes flags** | `StatusBar` (BTC cell), `ScFinances`, `ScTransactions`, `CasinoGamblingFinances`, `CasinoCoinSwaps`, `ClientsTransactions`, `ClientsBetsHistory` (rows), `CentralBank`, `CompanyDetails`, `BTCWallet`, `CasinoFinances`, `FoundersWallets`, `BotsBtcWallets` (+ `CompaniesWallets`, `CastMinerWallets`), `BTCPoolsAndHardwareShop`, `BlockExplorer`, `BotPlayHistory` (bot list) | an event sets a dirty flag, and the frame rebuilds through a throttle: a **leading-edge** one (rebuild on the first frame after the old interval has passed since the last rebuild) or a **coalescer** (batch for a fixed interval after the first event). At rest: **0 rebuilds a second**, measured, against 0.2–1/s before |
+| Live-clock samplers (§29.13) | inside `StatusBar`, `ScFinances`, `CasinoGamblingFinances`, `AuctioningCompanyDetails`, `BotPlayHistory`, `ClientsBetsHistory` | the measured clock cadence, not a refresh |
+| **Kept by decision** | `StatusBar`'s 10 Hz balances (mini-plan 15 B: "money may not sit still"), `CalendarsNavigator` (its per-frame repaint of a frozen selection, D-17.2: left as it is) | — |
+
+**Five lessons the migration paid for, each with its case in the plan:**
+1. **A fallback timer is not vestigial until you have named what it covered.** Of nine "subscribed, plus a fallback"
+   scenes, **one** fallback covered nothing. The other eight covered real state, and in most of them **the event
+   already existed and was never wired** (`CentralBankChanged`, `SwapDeskChanged`, the player's `BalanceChanged`,
+   `BlockAccepted`). §0.2 had guessed "vestigial" for two, and was right about one.
+2. **A timer hides the code that depends on it.** `CompanyDetails`' ballot handler cleared its panel signature "for the
+   next refresh", and the claim and policy handlers had no refresh at all. They worked only because a timer came
+   around within a second. Deleting a timer means searching for every reader of "the next refresh" (Convention 13's
+   shape, applied to time).
+3. **A throttle that defers a change must also deliver it.** `StatsChanged` held its last batch until the next bet,
+   so a paused run never announced it. That is why a 0.75 s safety-net timer existed downstream. The fix is the
+   throttle's **trailing edge** at the owner, which closes the gap for every subscriber at once.
+4. **A per-bet event drives a ring, never a rebuild.** At 9000X `ClientBetSettled` fires about 450 times a second.
+   The cheap fixes (coalescing to 0.1 s) were correct and read as jumpy. The right shape for a live list is
+   `BetHistoryContainer`'s: a ring written per bet, rows that never move, the visible rows painted once per frame.
+5. **A throttled ceiling is stated per window AND as a long-run mean.** A leading-edge throttle of interval *i*
+   fits `ceil(w / i)` rebuilds in a window of *w* seconds (three per 5 s at 2 s). This was recorded at V-C2 and
+   **repeated** at V-C3, which is CLAUDE.md Pattern 6 instrument rule 4's corollary: a recorded lesson is not an
+   applied one.
+
+Two implementation notes for whoever builds the next scene:
 1. **The existing input-preservation caveat still applies.** Several of these panels rebuild on a timer specifically so an in-progress edit (a SpinBox, an OptionButton) survives — the established fix (see `CompanyDetails.RebuildOrUpdateActions`'s signature-gated rebuild, §22.12) is to split "always-safe-to-rebuild" info from "rebuild only on a real state-shape change," not to abandon periodic refresh entirely where user input is live.
 2. **Not every candidate needs a NEW event.** Some of these already have an applicable event in the table above and simply never wired to it (they predate the event, or were built by copying an existing polling scene rather than the newest event-driven one). Check §38.4 before adding a new event — the state you need may already be announced.
 
-### 38.6 — The Basic Mode v0.1 gate
+### 38.6 — The Basic Mode v0.1 gate — ✅ MET (mini-plan 25, 2026-10-20)
+
+*Met by mini-plan 25 (Step 17.C): every override was audited and every feasible migration done (§38.5). The standing
+rule below still governs all new work. The paragraph that follows is the gate as it was set.*
 
 **Goal, tracked in `Documentation/PRIVATE_ROADMAP.md` §6:** before Basic Mode v0.1 is considered complete, run a dedicated audit pass over every `_Process` override in the project against the §38.1 test, and migrate what's feasible from the §38.5 backlog to event-driven design. This is explicitly **not** a blocker on other Basic Mode work — it is a scheduled cleanup pass, the same category as the T1–T3 tech-debt tasks in `PRIVATE_ROADMAP.md` §8 — but it must happen before v0.1 is called done, both for the runtime cost (fifteen-plus scenes each doing unconditional rebuild work on a timer compounds as more scenes and more session length accumulate) and because every new system built the polling way from here on adds to the very backlog this chapter exists to eventually clear.
 
