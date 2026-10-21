@@ -162,6 +162,12 @@ Done when a player can explain where money moved after a 15-minute session.
 
 Goal: make speed upgrades meaningful without breaking the learned rule.
 
+> **⚠ Constraint from mini-plan 27 (2026-10-21).** The hardware credits are **player data (layer 2)**: they survive a
+> world wipe and are reset only with the player's preferences (`mini27-user-settings-plan.md` §3.4). That was safe
+> because today credits cost nothing. **Once P5 prices hardware in world SC, credits would outlive the world that
+> paid for them.** This plan must decide whether purchased credits move back to the world, or whether the price is
+> refunded or carried over.
+
 - Hardware increases the maximum allowed bets per real second.
 - Each extra bet still equals one nonce attempt.
 - Game time progression remains based on bet ticks, not hardware directly.
@@ -543,7 +549,7 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
   | **Bets explorer replay pace, speed and Per Bet credits** (mini-plan 20 F) | not persisted; every entry opens **As Played** at 1x (Per Bet at 1 credit when toggled) | the player. A **view preference**, like Bet View |
 | **Bets explorer winning-numbers view: Last 10 / Latest only** (mini-plan 23 E) | a `static` in `BetsHistoryExplorer`: survives scene changes, resets to Last 10 at every launch | the player. A **view preference** |
   | **BlockExplorer's casino players' SC balances, shown / hidden** (DEV, mini-plan 25 17.A7) | a `static` in `BlockExplorer`: survives scene changes, resets to shown at every launch | DEV, but the same mechanism |
-  | DEV player credits ladder (mini-plan 20 Part 0) | writes the real hardware state (`hardware_allocation.json`), so it persists as a shop purchase does | **world**, deliberately: it is a shortcut to the shop, not a setting of its own |
+  | DEV player credits ladder (mini-plan 20 Part 0) | writes the real hardware state (`hardware_allocation.json`), so it persists as a shop purchase does | ~~**world**, deliberately: it is a shortcut to the shop, not a setting of its own~~ **Player, layer 2 (preferences), by the developer's decision of 2026-10-21** (mini-plan 27 §3.4): the hardware credits survive a world wipe and are reset with the preferences |
   | The strategy panel's last-used values | a `static` in DiceGame (`_nodeStrategies`), per node: survives scene changes, lost at launch. *(This row said "not persisted" until mini-plan 27 §2.1 checked the code, 2026-10-21.)* Distinct from a *saved* strategy | the player |
   | Notepad notes (added 2026-10-21) | `notepad_notes.json`, on Pattern 2's exempt list | the player: a creation, like saved strategies |
   | Anything a future options menu holds | does not exist | the player |
