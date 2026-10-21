@@ -113,7 +113,7 @@ documents cite them.
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **2** | **User settings persistence** | §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
+| **2** | **User settings persistence** | **`AIHelperFiles/mini27-user-settings-plan.md` (SPECIFIED 2026-10-21, not started)**, branch `mini27-user-settings` · §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
@@ -544,7 +544,8 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 | **Bets explorer winning-numbers view: Last 10 / Latest only** (mini-plan 23 E) | a `static` in `BetsHistoryExplorer`: survives scene changes, resets to Last 10 at every launch | the player. A **view preference** |
   | **BlockExplorer's casino players' SC balances, shown / hidden** (DEV, mini-plan 25 17.A7) | a `static` in `BlockExplorer`: survives scene changes, resets to shown at every launch | DEV, but the same mechanism |
   | DEV player credits ladder (mini-plan 20 Part 0) | writes the real hardware state (`hardware_allocation.json`), so it persists as a shop purchase does | **world**, deliberately: it is a shortcut to the shop, not a setting of its own |
-  | The strategy panel's last-used values | not persisted; distinct from a *saved* strategy | the player |
+  | The strategy panel's last-used values | a `static` in DiceGame (`_nodeStrategies`), per node: survives scene changes, lost at launch. *(This row said "not persisted" until mini-plan 27 §2.1 checked the code, 2026-10-21.)* Distinct from a *saved* strategy | the player |
+  | Notepad notes (added 2026-10-21) | `notepad_notes.json`, on Pattern 2's exempt list | the player: a creation, like saved strategies |
   | Anything a future options menu holds | does not exist | the player |
 
 - [~] **Clarify auto-recharge behavior in UI and docs.** Docs done (ProjectDesignManual Ch. 25 + CLAUDE.md). The UI
