@@ -35,11 +35,20 @@ public sealed class NetworkSimulator
 
 	public bool BroadcastTransaction(string fromNodeId, Transaction tx)
 	{
+		// Mini-plan 26 B (F-a) — the signature is verified ONCE here, and every node is handed the verdict. It reads
+		// only the transaction (BlockchainService.ValidateTransactionSignature is static), so it cannot differ between
+		// nodes; each node still runs every other admission rule itself. M1 measured the per-node verification at
+		// 1.84 ms per input, ~78 times per send (plan §7.1). It is computed here rather than trusted from the
+		// sender's own admission (D-26.6), so it does not depend on every caller admitting locally first.
+		long verifyBegin = Scripts.Diagnostics.BlockCostProfiler.Clock();
+		bool signatureVerdict = BlockchainService.ValidateTransactionSignature(tx);
+		Scripts.Diagnostics.BlockCostProfiler.NoteBroadcastVerify(verifyBegin, tx.Inputs.Count);
+
 		bool acceptedByAtLeastOne = false;
 		foreach ((string nodeId, NodeAgent node) in _nodes)
 		{
 			if (nodeId == fromNodeId) continue;
-			if (node.Blockchain.AddTransactionToPendingTransactions(tx))
+			if (node.Blockchain.AddTransactionToPendingTransactions(tx, signatureVerdict))
 			{
 				acceptedByAtLeastOne = true;
 			}

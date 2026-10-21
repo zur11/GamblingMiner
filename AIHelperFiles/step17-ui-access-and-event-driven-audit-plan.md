@@ -1158,7 +1158,8 @@ armed, 9000X, autobet running; read from `user://logs/godot.log`):
 #### F1 results (session of 2026-10-20, h3,451 → 3,495, 2015-06-06 → 07-08): ✅ H-A, the block's own cost
 
 **The block costs whole seconds, in every scene.** Across 45 blocks `[BlockCost]` reads a mean **2,684 ms per
-block** (worst **6,941 ms**). **83%** of it is `botTx` (`ScheduleBotTransactionsAfterBlock`, the automated traffic
+block** (worst **8,506 ms**, h3,483; *this read 6,941 ms, which is h3,495, the last block, until mini-plan 26 §2.1
+corrected it on 2026-10-20*). **83%** of it is `botTx` (`ScheduleBotTransactionsAfterBlock`, the automated traffic
 including the cast's sell-flow), and governance spikes add up to 3.7 s. Per visit, in time order:
 
 | Visit | Game dates | Blocks | Mean per block | `botTx` | governance |

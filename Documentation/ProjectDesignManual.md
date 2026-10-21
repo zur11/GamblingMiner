@@ -5462,6 +5462,35 @@ written **before** either fast path existed, so it could not be shaped to fit a 
 only prediction in six plans whose value lay in nothing happening is also the one that made an incremental rewrite
 of the UTXO set safe to ship.*
 
+### 40.13 — The per-block freeze: one transaction, checked ~78 times (mini-plan 26, 2026-10-20)
+
+**What it was.** By 2015 every block froze the game for 2–6 s, in every scene, and the freeze grew with the era.
+Each automated send is admitted at the sender and then **broadcast to every other node**, ~78 of them. Each node
+walked **every confirmed transaction** to rule out a duplicate (2.58 ms at ~14,000 transactions) and re-verified
+**every input's signature** (1.84 ms per input), although neither answer can differ between nodes. So a send cost
+~241 ms + 141 ms per input, and ~10–15 sends a block made seconds. The fix does the node-independent work once: one
+verification per broadcast, and a confirmed-txid set kept current on append. A block went from 4,858 to 416 ms in
+the same session. Record: `AIHelperFiles/mini26-per-block-freeze-plan.md`.
+
+**Three lessons, each an instance of a rule in §40.12, and one method worth reusing:**
+
+1. **A cause named from the code is a hypothesis until timed, however long it survives** (§40.12 rule 4).
+   Mini-plan 18 read `FirstBlockHeightMinedBy` as the sell-flow's cost and moved on. Eight plans later, timed
+   directly, it was **0.13%**. Its own figures already argued against it: 126.5 ms per invocation at ~1 send per
+   invocation is a per-*send* cost, not a per-miner one.
+2. **Untimed unit costs are guesses, even when they are written as ranges.** The plan's own estimates for an
+   admission (0.1–0.2 ms to scan, 0.2–0.5 ms per verify) were **~10× low**. They were written down so the run could
+   refute them, and it did. Had they been believed, the fan-out would have been ruled out.
+3. **In a simulated network, every per-transaction cost is multiplied by the node count.** The ~62–83 per-node
+   copies T4.2 describes do not only cost memory. Any check a node runs on a transaction runs once per node, and a
+   check that walks the chain is then *nodes × sends × chain length*: it grows with the era three ways at once.
+   **Before adding work to an admission, ask whether its answer can differ between nodes. If it cannot, do it once.**
+4. **The method: an A/B by block parity, with the old path as the oracle.** Even heights ran the replaced code and
+   odd heights the fix, in one session, so the comparison was within a session (rule 3) and immune to the era
+   drifting under it. On every old-path admission the new answer was also computed and compared, which turned the
+   whole run into an exactness proof (311,740 checks, 0 mismatches). The switch was deleted at close-out
+   (Convention 3).
+
 ---
 
 ## Chapter 41 — Player Participation in Company Governance: Pause, Policy, Abstention (Step 16 P16.5/P16.8)
