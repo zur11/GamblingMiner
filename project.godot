@@ -36,6 +36,7 @@ FoundersMiningService="*res://Scripts/Services/FoundersMiningService.cs"
 SimulationService="*res://Scripts/Services/SimulationService.cs"
 BtcMarketDataService="*res://Scripts/Services/BtcMarketDataService.cs"
 BtcNetworkDataService="*res://Scripts/Services/BtcNetworkDataService.cs"
+UserSettingsService="*res://Scripts/Services/UserSettingsService.cs"
 
 [display]
 

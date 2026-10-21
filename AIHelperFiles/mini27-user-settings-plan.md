@@ -8,9 +8,10 @@ Mini-plan 26 (the per-block freeze, `mini26-per-block-freeze-plan.md`) closed it
 D-27.1 is answered with **two player layers** plus a **User Settings scene**, and D-27.2 with the recommendation.
 **§3.4 governs where it differs from §3.1–§3.3 and §5.** **D-27.9 is answered (2026-10-21): "Wipe everything" is the
 equivalent of deleting the whole user data folder**, identity files and logs included. **Amended again the same day
-with a new objective: a saved-strategies dropdown in DiceGame (unit 3b, §5; S9; D-27.10, proposed).**
+with a new objective: a saved-strategies dropdown in DiceGame (unit 3b, §5; S9; D-27.10, answered: select, then
+Load).** Unit 3 also makes both creations writers atomic (developer, 2026-10-21; §5).
 **Order:** unit 1 → unit 2 → unit 3 → unit 3b → unit 4 → unit 5 → unit 6 → V1 (with V1b) → close-out.
-Next: **unit 1**, the service (§4).
+**Unit 1 ✅ built (§4).** Next: **unit 2**, the wiring.
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
 
@@ -189,6 +190,20 @@ after next.
   corrupt-file line. Under DEBUG it also prints a **write counter** on quit. Both use `GD.Print`, which `godot.log`
   receives, so the developer never has to watch for them.
 
+**✅ Built 2026-10-21** (`Scripts/Services/UserSettingsService.cs`, registered #20 in `project.godot`). Three choices
+made at build, recorded so unit 2 does not re-derive them:
+- **Every getter returns `null` for a setting never set.** The default stays in the scene that owns the setting, so
+  there is one copy of it (Convention 15), and "Reset preferences" is simply the file's absence. Enum settings are
+  stored by **name** (a string), so a renamed enum member falls back to the scene's default instead of failing.
+- **The per-node strategy values are `Config`, `NumberOfBets`, `WinningChance` and `BetHigh`.** Two of
+  `NodeStrategyState`'s fields are left out deliberately: `AutoRechargeEnabled` (the player's is
+  `BankrollProgramService`'s flag, which is world state the checkpoint restores; bots' is always ON) and
+  `BetsPerSecond` (hardware-locked since Phase 3; `ApplyAutoBetSpeedSettings` ignores it).
+- **A corrupt file that cannot be moved aside blocks every write for the session**, because writing would destroy
+  the only copy of the evidence. A second corrupt file finds `settings.json.corrupt` taken and gets a timestamped
+  `.corrupt` name of its own, so neither overwrites the other. The DEBUG quit line counts changes, writes and
+  sets to the current value (S2).
+
 ## 5. Unit 2 — wiring the settings (one commit), and unit 3 — the two files (one commit)
 
 **Unit 2:** each scene reads its value in `_Ready` and writes through the service on change. Nothing polls.
@@ -206,6 +221,12 @@ after next.
 at startup (D-27.2 = a). `settings.json` lives in `preferences/` too. The two creations' names leave Pattern 2's
 exempt list, `hardware_allocation.json` leaves the wipe's delete list, and the path constants are updated in
 `DiceGame`, `NotepadService`, `HardwareAllocationRepository` and `WalletInitializationService`.
+**Unit 3 also makes both creations writers atomic** (developer, 2026-10-21). `SavedBettingStrategyRepository.Persist`
+and `NotepadService.PersistNotes` both open the file with `FileAccess` in Write mode, which truncates it first: the
+INC-001 shape, which §3.3 rules out for the player class. Both become `.tmp` → flush → rename. Both also **swallow a
+bad read** today: the repository warns with `GD.PushWarning` and continues with an empty list, which the next Save then
+writes over the file. `NotepadService` catches silently and does the same. Both get §3.3's treatment: a bad file is
+preserved as `.corrupt`, the failure is printed with `GD.Print`, and nothing is written back over it.
 
 **Unit 3b (amendment, developer, 2026-10-21) — a saved-strategies dropdown in DiceGame.** It belongs to layer 1
 (creations), so it is built **after** unit 3 has moved the strategies file.
@@ -321,7 +342,7 @@ come out of it untouched. So the file is moved **out of `user://`** for one laun
 | **✅ D-27.9 — ANSWERED 2026-10-21: YES** | **"Wipe everything" is the equivalent of deleting the whole user data folder**: identity files and `user://logs/` included, so the next launch is a first launch. The developer keeps the other two actions, **three in total**: Reset preferences, Reset world, Wipe everything | §3.4 item 3. *(Proposed was "no", keeping the identities; the developer chose the full wipe.)* |
 | *D-27.1 as first proposed (superseded)* | **The classification.** Player: Bet View, the explorer's pace/speed/credits/winners view, the strategy panel's values, saved strategies, notepad notes. DEV, player-class (kept across wipes, DEBUG only): the requested time scale, the BlockExplorer toggle. Session: the profiler toggles. World: the credits ladder | as listed. **The one to look at twice is saved strategies.** Your 2026-09-15 surprise could mean "they should be wiped" or "nobody told me they survive". The plan assumes the second: they are your work, like the notes |
 | *D-27.2 as first proposed (superseded)* | **The two existing files** move into `user://player/` | **(a) move them once at startup** (a rename of the same bytes, not a format migration, so your strategies and notes are kept). The rename's code is deleted at the close-out of the plan after next. **(b)** let them be lost and re-save: what the "no migrations" rule usually prefers. I recommend (a), because this is your data, not world state |
-| **D-27.10** | **The strategies dropdown (unit 3b): does choosing an item apply it, or select it for Load?** | **Select, then Load.** *(Re-checked against the code: the run lock already disables Load and the node selector during an autobet, so "an accidental stop of a running session" is covered either way.)* The reasons that remain: applying **overwrites the active node's panel, unsaved edits included, with no undo**, so a mis-click in the popup would be destructive; and select-only leaves `OnLoadStrategyPressed` unedited, so Load's semantics hold by construction |
+| **✅ D-27.10 — ANSWERED 2026-10-21: select, then Load** | **The strategies dropdown (unit 3b): does choosing an item apply it, or select it for Load?** | **Select, then Load.** *(Re-checked against the code: the run lock already disables Load and the node selector during an autobet, so "an accidental stop of a running session" is covered either way.)* The reasons that remain: applying **overwrites the active node's panel, unsaved edits included, with no undo**, so a mis-click in the popup would be destructive; and select-only leaves `OnLoadStrategyPressed` unedited, so Load's semantics hold by construction |
 | **D-27.3** | `UserSettingsService` is autoload **#20** (appended) | yes: it depends on nothing, and nothing reads it before the scenes load |
 | **D-27.4** | DEV keys stored in the same file and read only in DEBUG | yes |
 | **D-27.5** | The strategy panel's values are kept per node id (`player`, `bot_1`…`bot_4`) | yes: the ids are stable across worlds |
