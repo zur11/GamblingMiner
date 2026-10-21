@@ -1065,6 +1065,19 @@ Everything above is a hypothesis until the frame is instrumented. Add per-block 
 - [ ] **A "Numbers" bet view in DiceGame — an option for a later version, not a Basic Mode need** (developer's call, 2026-09-20, D-10.3). A second way to watch bets: only the roll numbers, red or green, in `PreviousWinnerNumbersGrid`. It shipped briefly in mini-plan 10 and was withdrawn because it halved the frame rate at high speed. **The measurements are done; only the design choice is open:** a cell repaint costs **~0.21 ms**, and at 160 bets per frame all 100 cells change every frame (26 fps, against 57 with the same grid visible but not written to). What is written makes no difference, so no cell-level optimisation helps. The two ways out both change what the view promises: **a refresh cadence** (~10 Hz, ~50 fps by arithmetic, unmeasured) or **fewer cells**. Its per-bet cost is already solved (D-10.2: ring buffer, fixed order, 0.025 ms/bet). **Before showing it, fix its scene geometry**, which has never been on screen: it starts at y 534, under the Bet View button, and its 540 minimum height runs past the bottom band (ProjectDesignManual Ch. 29 §29.11). The grid still serves BetsHistoryExplorer, whose replay is slow enough that none of this bites. Full record: mini-plan 10 §A3, D-10.3.
 
 
+## From §5 — the per-block freeze, closed by mini-plan 26 (2026-10-20)
+
+Moved verbatim at mini-plan 26's close-out. Record of the work: `AIHelperFiles/mini26-per-block-freeze-plan.md`
+(close-out §12) and `IMPLEMENTATION_STATUS.md`.
+
+**From ▶ NEXT (2026-10-20):**
+
+| # | Work | Where it is specified | Why here |
+|---|---|---|---|
+| **1** | **The per-block freeze: T4's after-block traffic** (`ScheduleBotTransactionsAfterBlock`, the cast's sell-flow, and the governance spikes) — a sub-phase breakdown measured first, then the fix | **`AIHelperFiles/mini26-per-block-freeze-plan.md` (SPECIFIED 2026-10-20; IN PROGRESS: M1 measured the cause, 95.6% of a send is its re-admission at every other node; the fix, §8.1, is built and M2 confirmed it: 416 ms per block against 4,858 in the same session; close-out next)**, branch `mini26-per-block-freeze` · §8 T4, its two 📝 notes · mini-plan 25 plan §5.5 "F1 results" | **The most visible defect in the game at 2015:** 2.7 s mean per block, worst 8.5 s, every scene frozen. Inserted by F1 (2026-10-20). Mini-plan 26 §2 reads F1's rows: the sell-flow is flat across that window, and the growth is exchanges arriving as the historical tx target outgrows the cast |
+
+---
+
 ## From §5 and §6 — Step 17.A + 17.C, closed by mini-plan 25 (2026-10-20)
 
 Moved verbatim at mini-plan 25's close-out. Record of the work: `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` (close-out §11) and `IMPLEMENTATION_STATUS.md`.

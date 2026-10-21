@@ -232,6 +232,13 @@ a run spanning a cast-size change (the entry-year bootstrap would give one) or a
 
 ### ⚠ The cause, READ FROM THE CODE and therefore not yet measured
 
+> **❌ Refuted by measurement, mini-plan 26 (2026-10-20, `mini26-per-block-freeze-plan.md` §2.4, §7.1).** Timed
+> directly, `FirstBlockHeightMinedBy` is **0.13%** of the sell-flow: 4,097 calls in 212 blocks cost 937 ms. A
+> 1,600-block ordinal scan takes microseconds, not the ~9.7 ms per miner inferred below. The cost was the **send**:
+> ~1 per invocation in this era, and each one re-admitted at every node, with a full-chain txid scan and a signature
+> verification there. The reading below is kept as written; it is the case behind CLAUDE.md Pattern 6 instrument
+> rule 4.
+
 `TrySellFlowSend` — called once per cast miner per invocation — begins with
 `FirstBlockHeightMinedBy(record.NodeId, chain)`, which is **a linear scan of the entire chain**:
 
@@ -371,7 +378,8 @@ running the document's copy, never by trusting that the document matches what yo
 
 ### What follows
 
-- **The next plan is one method: `FirstBlockHeightMinedBy`.** Memoise first-mined height per node, or maintain it
+- *(Superseded 2026-10-20: mini-plan 26 measured this method at 0.13% and fixed the real cause; see the note at §8.)*
+  **The next plan is one method: `FirstBlockHeightMinedBy`.** Memoise first-mined height per node, or maintain it
   in the block hook exactly as mini-plan 17 B1 maintains the UTXO set. It needs its own prediction — stated as a
   **count** (chain blocks inspected per invocation, which should fall to ~0) rather than milliseconds — and the
   existing `botSellFlowMs` column verifies it **within one session**.

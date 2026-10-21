@@ -4,7 +4,8 @@
 mini-plan 25's measurement F1 (`step17-ui-access-and-event-driven-audit-plan.md` §5.5 "F1 results", §10.1, §11.4), and
 the two 📝 notes under §8 **T4**.
 
-**Status:** 🔨 **IN PROGRESS.** Specified 2026-10-20 (`68d6b9f`, all of §11 approved by the developer). **Unit 1, Part
+**Status:** ✅ **COMPLETE 2026-10-20. Close-out: §12.** The freeze is fixed: a block went from 4,858 ms to 416 ms in
+the same session, and the A/B switch is deleted. *The history below is kept as written:* Specified 2026-10-20 (`68d6b9f`, all of §11 approved by the developer). **Unit 1, Part
 A's instrument, is built** (§3.5). **M1 ran 2026-10-20 (§7.1)**: 6.0 s per block, 98.7% of it in sends, 95.6% of a
 send in the fan-out, all four self-checks passed, 7 predictions confirmed, P3 half refuted, P4 and G1 refuted. **Part
 B is amended from that data (§8.1):** F-a (verify once per broadcast) and F-b (a confirmed-txid set), an A/B switch by
@@ -578,3 +579,59 @@ before the autobet, **about 40 real minutes** (M1's 47 gave 212 blocks, so 40 gi
 | **D-26.6** | F-a verifies inside `BroadcastTransaction`, not by trusting the caller's local admission | yes: one extra verification per send buys independence from caller discipline (§8.1) |
 | **D-26.7** | The A/B switch is active only while "⏱ Block cost" is armed | yes: a DEBUG playtest that isn't measuring always gets the fast path |
 | **D-26.8** | The allocation split (unit 3) rides along M2 rather than getting its own session | yes |
+
+---
+
+## 12. Close-out (2026-10-20)
+
+**Mini-plan 26 is ✅ COMPLETE.** Branch `mini26-per-block-freeze`, 8 commits with this one. **§8's exit criterion
+is met:** in the same session, new-path blocks over 1 s were 1 of 130 (≤ 10%), and `botTx` new ÷ old was 0.061
+(≤ 0.25).
+
+### 12.1 — What shipped
+
+- **The fix, exact (§8.1–§8.2):**
+  - **F-a:** `NetworkSimulator.BroadcastTransaction` verifies a transaction's signature once, and every node's
+    admission uses that verdict. `ValidateTransactionSignature` is `static`.
+  - **F-b:** `ContainsTransactionId` answers its confirmed half from a txid set, advanced at the three append sites
+    and rebuilt when it is not exactly one block behind.
+  - Every other admission rule still runs at every node, in its old order.
+- **The A/B switch and both oracles are deleted** (Convention 3). That covers `OldSendPath`,
+  `SetSendPathForBlock`, `NoteOracle`, the old-path branches in `BlockchainService`, the confirmed-count helper,
+  and the `abPath` / `oracle*` columns. A grep for every one of those names returns nothing.
+- **The instruments are kept:**
+  - `BlockCostProfiler` times a send by stage, splits an admission into three checks, counts attempts by gate,
+    times `FirstBlockHeightMinedBy`, counts F-a's single verification, records allocation and GC per block, and
+    writes `user://logs/send_cost_trace.csv`. Since F-b, its "transactions scanned" counts the mempool only.
+  - `FrameCostProfiler` records GC pause, collections by generation, and allocation per frame and per segment.
+- **The evidence is archived** in `user://logs/`: `*_F1.csv`, `*_M1.csv`, `*_M2.csv`, `M1_godot.log`,
+  `M2_godot.log`.
+
+### 12.2 — Predictions, as they fell
+
+| | Confirmed | Refuted |
+|---|---|---|
+| **M1** | P1, P2, P5, P6, P7, P8, G2 | **P3** half (the dup scan was 39.6%, not ≤ 25%) · **P4** (a per-send term: 241 + 141 ms × inputs) · **G1** (GC pause 2.51%) |
+| **M2** | B1, B2, B3, B4, B5, B6, G3 | **G1** again (2.72%) |
+| **Self-checks** | V1, V3 (exact), V4 | **V2's plausibility band** (183 ns per transaction scanned, not single digits). The band was a guess; the time was measured and stands |
+
+Two premises in the roadmap were also corrected from F1's own rows before any new run (§2): the worst F1 block was
+8,506 ms, not 6,941, and "doubling in three game-weeks" was the exchanges arriving, not a curve. Mini-plan 18's
+named cause measured 0.13% (P5); its plan carries the correction where the cause is written.
+
+### 12.3 — Lessons
+
+They are in `ProjectDesignManual.md` **§40.13**:
+1. a cause named from the code is a hypothesis until timed, however long it survives;
+2. untimed unit costs are guesses even when written as ranges (these were ~10× low);
+3. in a simulated network every per-transaction check runs once per node, so ask whether its answer can differ
+   between nodes, and if not, do it once;
+4. the method: an A/B by block parity, with the old path as the oracle.
+
+### 12.4 — Handed on
+
+| What | Where it goes |
+|---|---|
+| **Allocation:** ~10–16 MB per frame, 98.4% in the scheduled network's PoW drive (~5.6 KB per attempt); GC pause ~2.7% of frame time. Not a freeze | `PRIVATE_ROADMAP.md` §8 T4, its mini-plan 26 note. Fix it with its own predictions. The measurement (FrameCost's G3 columns) already exists |
+| **What a block still costs (~416 ms):** signing 83 ms and key derivation 72 ms (the `BigInteger` secp256k1), then governance, auctions, checkpoint and the remaining fan-out, none above 20% | T4, same note. The fan-out's *width* is T4.2 (Step 17.D) |
+| The working order | `PRIVATE_ROADMAP.md` ▶ NEXT: **item 2, user settings persistence**, is next |

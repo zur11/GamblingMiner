@@ -106,11 +106,13 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 Decided with the developer at mini-plan 24. Each item is its own plan, under the usual lifecycle (CLAUDE.md, Git
 Workflow). **Item 1 of 2026-10-12, Step 17.A + 17.C, is ✅ DONE (mini-plan 25, 2026-10-20)**, and so is the "Numbers"
 small item (its 17.A2). Both rows, and the two §6 checklist items they closed, are in `ROADMAP_ARCHIVE.md`. Mini-plan
-25's measurement F1 inserted the new item 1, and the developer approved it with F1's commit.
+25's measurement F1 inserted the new item 1, and the developer approved it with F1's commit. **That item 1, the
+per-block freeze, is ✅ DONE (mini-plan 26, 2026-10-20):** a block went from 4,858 ms to 416 ms in the same session.
+Its row is in `ROADMAP_ARCHIVE.md`. **The next item is 2.** The numbers below are kept as they were, because other
+documents cite them.
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **1** | **The per-block freeze: T4's after-block traffic** (`ScheduleBotTransactionsAfterBlock`, the cast's sell-flow, and the governance spikes) — a sub-phase breakdown measured first, then the fix | **`AIHelperFiles/mini26-per-block-freeze-plan.md` (SPECIFIED 2026-10-20; IN PROGRESS: M1 measured the cause, 95.6% of a send is its re-admission at every other node; the fix, §8.1, is built and M2 confirmed it: 416 ms per block against 4,858 in the same session; close-out next)**, branch `mini26-per-block-freeze` · §8 T4, its two 📝 notes · mini-plan 25 plan §5.5 "F1 results" | **The most visible defect in the game at 2015:** 2.7 s mean per block, worst 8.5 s, every scene frozen. Inserted by F1 (2026-10-20). Mini-plan 26 §2 reads F1's rows: the sell-flow is flat across that window, and the growth is exchanges arriving as the historical tx target outgrows the cast |
 | **2** | **User settings persistence** | §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
@@ -598,6 +600,21 @@ mini-plan after mini-plan 25: the sub-phase breakdown first, then the fix. **Tak
 (`AIHelperFiles/mini26-per-block-freeze-plan.md`, SPECIFIED 2026-10-20).** Its §2.3 reads "double in three
 game-weeks" from F1's own sub-phase columns. The sell-flow was flat (1.2–1.5 s). The doubling is
 `TryNonMinerExchanges` starting at h3,481, as `txTargetPerBlock` rose 5.3 → 12.1: a change of regime, not a curve.
+
+**📝 ✅ Fixed by mini-plan 26 (2026-10-20; `AIHelperFiles/mini26-per-block-freeze-plan.md` §7.1, §8.3, §12).** The
+cause was not the sell-flow's decisions but **every transaction being re-admitted at every other node**: ~78
+admissions per send, each walking all ~14,000 confirmed transactions (2.58 ms) and re-verifying every input's
+signature (1.84 ms per input).
+- **The fix.** Two exact changes: one signature verification per broadcast, and a confirmed-txid set kept on
+  append. In the same session, a block went from **4,858 ms to 416 ms**, blocks over 1 s fell from 130/130 to
+  1/130, and 311,740 oracle checks found 0 disagreements.
+- **Mini-plan 18's named cause** (`FirstBlockHeightMinedBy`) measured **0.13%** of the sell-flow.
+- **Two findings left open here, each with its measurement:**
+  - **Allocation:** the sim allocates **~10–16 MB per frame**, and **98.4%** of it is the scheduled network's PoW
+    drive (**~5.6 KB per attempt**). GC pause is 2.5–2.7% of frame time, not a freeze.
+  - **What a block still costs (~416 ms):** signing (83 ms) and key derivation (72 ms) on the `BigInteger`
+    secp256k1, then governance, auctions and the checkpoint, none above 20%. T4.2 remains the structural answer to
+    the fan-out itself.
 
 **Status at 2026-10-12 — only T4.2 is open.** The rest shipped, and their specifications and measurements
 (T4.0, T4.0b, T4.1, T4.3–T4.6) are in `ROADMAP_ARCHIVE.md`:

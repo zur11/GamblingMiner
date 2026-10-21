@@ -324,10 +324,8 @@ public sealed class BlockchainService
 		if (begin != 0)
 		{
 			long end = Scripts.Diagnostics.BlockCostProfiler.Clock();
-			// The scan's derived count applies only where the scan ran: the old path (F-b's set walks nothing).
-			int confirmedScanned = Scripts.Diagnostics.BlockCostProfiler.OldSendPath ? ConfirmedTransactionCountForDiagnostics() : 0;
 			Scripts.Diagnostics.BlockCostProfiler.NoteAdmission(begin, dupEnd, sigEnd, end, accepted,
-				transaction.Inputs.Count, pendingBefore, confirmedScanned, verifiedHere);
+				transaction.Inputs.Count, pendingBefore, verifiedHere);
 		}
 #endif
 		return accepted;
@@ -353,16 +351,7 @@ public sealed class BlockchainService
 		}
 		dupEnd = Scripts.Diagnostics.BlockCostProfiler.Clock();
 		verifiedHere = !signatureVerdict.HasValue;
-#if DEBUG
-		// Mini-plan 26 B — the old path verifies at every node, as before F-a, and checks the broadcast's verdict.
-		if (Scripts.Diagnostics.BlockCostProfiler.OldSendPath) verifiedHere = true;
-#endif
-		bool signatureOk = verifiedHere ? ValidateTransactionSignature(transaction) : signatureVerdict!.Value;
-		if (verifiedHere && signatureVerdict.HasValue)
-		{
-			Scripts.Diagnostics.BlockCostProfiler.NoteOracle("F-a signature verdict", signatureOk, signatureVerdict.Value,
-				transaction.TransactionId);
-		}
+		bool signatureOk = signatureVerdict ?? ValidateTransactionSignature(transaction);
 		if (!signatureOk)
 		{
 			return false;
@@ -399,30 +388,6 @@ public sealed class BlockchainService
 	// (Maturity/pending state is ignored — this asks only "does the coin still exist".)
 	public bool IsUnspentOutput(string txId, int vout) =>
 		GetUtxoSet().ContainsKey(OutPointKey(txId, vout));
-
-#if DEBUG
-	// Mini-plan 26 A (V2) — how many confirmed transactions a missed ContainsTransactionId walked. Cached per chain
-	// version so it is computed once per node per block, not once per admission; DEBUG-only, read only while armed.
-	private int _diagConfirmedTxCount;
-	private int _diagConfirmedTxVersion = -1;
-
-	private int ConfirmedTransactionCountForDiagnostics()
-	{
-		if (_diagConfirmedTxVersion != _chainVersion)
-		{
-			int n = 0;
-			foreach (Block block in Chain)
-			{
-				n += block.Transactions.Count;
-			}
-
-			_diagConfirmedTxCount = n;
-			_diagConfirmedTxVersion = _chainVersion;
-		}
-
-		return _diagConfirmedTxCount;
-	}
-#endif
 
 	// Every outpoint consumed by a pending mempool transaction (for the double-spend guard).
 	private HashSet<string> CollectPendingSpentOutpoints()
@@ -731,16 +696,8 @@ public sealed class BlockchainService
 		}
 
 		// Mini-plan 26 B (F-b) — the confirmed half answers from a set instead of walking every transaction ever
-		// confirmed (2.58 ms per admission at ~14,000 transactions, ~78 admissions per send: M1, plan §7.1).
-#if DEBUG
-		if (Scripts.Diagnostics.BlockCostProfiler.OldSendPath)
-		{
-			bool scanned = Chain.Any(b => b.Transactions.Any(t => t.TransactionId == transactionId));
-			Scripts.Diagnostics.BlockCostProfiler.NoteOracle("F-b confirmed-txid set", scanned,
-				ConfirmedTransactionIds().Contains(transactionId), transactionId);
-			return scanned;
-		}
-#endif
+		// confirmed (2.58 ms per admission at ~14,000 transactions, ~78 admissions per send: M1, plan §7.1). M2 checked
+		// the set against that walk on 311,740 admissions (both fixes together) with no disagreement, plan §8.3.
 		return ConfirmedTransactionIds().Contains(transactionId);
 	}
 
@@ -749,7 +706,7 @@ public sealed class BlockchainService
 	// only when it was exactly current before that append (version AND length one behind); in every other state it is
 	// rebuilt from the chain on the next read, which is always correct. All four chain mutations bump _chainVersion
 	// (CreateNewBlock, CommitBlock, TryAcceptMinedBlock, TryReplaceChain), and Chain has no setter, so a mutation that
-	// skipped the bump would still be caught by the length check. Ordinal, as the scan's `==` is.
+	// skipped the bump would still be caught by the length check. Ordinal, as the `==` of the walk it replaced was.
 	private HashSet<string>? _confirmedTxIds;
 	private int _confirmedTxIdsVersion = -1;
 	private int _confirmedTxIdsLength = -1;
