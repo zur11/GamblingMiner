@@ -36,10 +36,11 @@ public partial class BlockExplorer : Control
 	private RichTextLabel _addressDirectoryLabel = null!;
 
 	// Mini-plan 25 (17.A7, developer, 2026-10-19) — a DEV toggle in the Casino Players panel that shows or hides each
-	// player's SC Main Balance and Bankroll. Default ON. Static, so it survives leaving and re-entering the page
-	// within a session; NOT persisted, because user-settings persistence does not exist yet (PRIVATE_ROADMAP ▶ NEXT #2).
-	// Flipping it repaints only this panel, from the lines the last rebuild cached, with no chain read.
-	private static bool _showCasinoScBalances = true;
+	// player's SC Main Balance and Bankroll. Default ON. A DEV player preference since mini-plan 27 (D-27.4): read
+	// from UserSettingsService on entry and written on toggle; the `static` that kept it for one launch is gone
+	// (Standing Convention 3). Flipping it repaints only this panel, from the lines the last rebuild cached, with no
+	// chain read.
+	private bool _showCasinoScBalances = true;
 	private readonly List<(string NodeId, string Line)> _casinoStatusLines = new();
 
 	// Unit 13 repainted the balances only with the page, on a block or a new transaction. At 100X that is once in
@@ -120,6 +121,8 @@ public partial class BlockExplorer : Control
 		_addressDirectoryLabel = GetNode<RichTextLabel>("%AddressDirectoryLabel");
 
 		// Above the panel's own scroll, so it never scrolls away with the list.
+		UserSettingsService? userSettings = GetNodeOrNull<UserSettingsService>("/root/UserSettingsService");
+		_showCasinoScBalances = userSettings?.GetDevShowCasinoScBalances() ?? true;
 		var scBalancesToggle = new CheckButton
 		{
 			Text = "DEV: show Main Balance & Bankroll",
@@ -129,6 +132,7 @@ public partial class BlockExplorer : Control
 		scBalancesToggle.Toggled += on =>
 		{
 			_showCasinoScBalances = on;
+			userSettings?.SetDevShowCasinoScBalances(on);
 			RenderCasinoPlayers();
 		};
 		VBoxContainer casinoCell = GetNode<VBoxContainer>("%CasinoPlayersCell");

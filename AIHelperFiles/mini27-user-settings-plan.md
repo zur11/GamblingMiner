@@ -11,7 +11,7 @@ equivalent of deleting the whole user data folder**, identity files and logs inc
 with a new objective: a saved-strategies dropdown in DiceGame (unit 3b, §5; S9; D-27.10, answered: select, then
 Load).** Unit 3 also makes both creations writers atomic (developer, 2026-10-21; §5).
 **Order:** unit 1 → unit 2 → unit 3 → unit 3b → unit 4 → unit 5 → unit 6 → V1 (with V1b) → close-out.
-**Unit 1 ✅ built (§4).** Next: **unit 2**, the wiring.
+**Unit 1 ✅ built (§4). Unit 2 ✅ built (§5).** Next: **unit 3**, the file moves.
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
 
@@ -216,6 +216,31 @@ made at build, recorded so unit 2 does not re-derive them:
 - `static` fields that existed only to remember a preference are **deleted** (Convention 3), with one exception:
   `_nodeStrategies` stays `static`, because it also carries live state.
 
+**✅ Unit 2 built 2026-10-21.** What the code does now, and four things found while wiring it:
+- **The strategy panel's values re-arm the bots after a restart.** `_nodeStrategies` is not just what pre-fills the
+  panel: `BuildBotConfigs` reads it to decide which bots run when the player starts an autobet, and the node
+  selector's dots read it too. Restoring it once per launch (`RestoreNodeStrategiesFromSettingsOnce`, before
+  anything reads the store) therefore puts **every node back as it was before the restart, bots' readiness
+  included**. Before this unit, a restart left every bot unconfigured. *This is what "survives a restart" means
+  for these values. The alternative, pre-filling the panel without arming the bots, would make a bot's state depend
+  on whether the player had looked at it.*
+- **The store's comment said not to persist it, and why.** "A config outliving a restart would describe a run that
+  no longer exists." **Re-checked against the code, the reason no longer holds.** Since D-M2.8 a snapshot is the
+  strategy's *configuration*, taken from the session during a run and never a mid-run rung. A configuration
+  describes the next run as well as the last one. The comment is rewritten to say so.
+- **Every snapshot calls the service, and only a real change writes.** Snapshots are frequent and mostly restate
+  the same strategy (a manual bet, a bot burst, leaving the scene). Each costs one comparison of two small
+  serialized objects. **Not timed.** Dragging the chance slider is the densest real-change source: one write per
+  value step. That happens only with the autobet stopped, because the slider is run-locked.
+- **The explorer's speed is restored, and its automatic drop to 1x on reaching the present (§2.1) is not
+  written.** That drop is the replay's own rule, not the player's choice. The scene still arrives paused (§4.1).
+  A saved value that the control no longer offers (a speed step, a ladder rung, a pace) is ignored in favour of
+  the default, so a later change to a ladder cannot reopen the scene in a state it cannot show.
+- **Deleted statics:** `BetsHistoryExplorer._showLatestWinnerOnly` and `BlockExplorer._showCasinoScBalances`.
+  **Two new statics, both once-per-launch flags rather than preferences:** `DiceGame._nodeStrategiesRestored`, and
+  `DevTimeScaleSelector._requestRestored`. The clock keeps the DEV request for the whole process, so the first
+  selector to load applies the saved request once.
+
 **Unit 3 (amended, §3.4):** `saved_betting_strategies.json` and `notepad_notes.json` move into
 `user://player/creations/`, and `hardware_allocation.json` into `user://player/preferences/`, by a one-time rename
 at startup (D-27.2 = a). `settings.json` lives in `preferences/` too. The two creations' names leave Pattern 2's
@@ -243,9 +268,11 @@ developer's file holds **13** strategies, all `GameId = "Dice"`.
 *The change:*
 - **The repository gains `GetNamesForGame(gameId)`**: the names for that game, sorted by name, ordinal and
   case-insensitive (the same comparison `TryGet` matches with). Nothing else in the repository changes.
-- **`%SavedStrategySelect`, an `OptionButton`**, on a second row directly under `StrategySaveControls` (the band
-  between it and the bet-history headers is free; verified at build). It lists every saved strategy for `GameId`.
-  **Disabled when there are none.**
+- **`%SavedStrategySelect`, an `OptionButton`**, on a second row directly under `StrategySaveControls`. It lists
+  every saved strategy for `GameId`. **Disabled when there are none.** *Placement corrected 2026-10-21 (unit 2): this
+  said "the band between it and the bet-history headers is free". **That was wrong.** The check scanned only the
+  `.tscn`, and DiceGame builds its **Bet View button in code** at (706, 528), 260 × 42, in that band. The free part
+  is **x 966–1260, y 528–570**, beside the Bet View button, about 290 px wide.*
 - **Choosing an item SELECTS, it does not apply** (D-27.10, proposed): it writes the name into `%StrategyNameInput`,
   and the existing **Load** button applies it. `OnLoadStrategyPressed` is **not edited**, so today's semantics hold by
   construction rather than by re-implementation: active node, session stopped first, auto-recharge carried through,
@@ -286,7 +313,7 @@ This is a functional plan, not a performance one, so the criteria are **counts o
 
 | # | Prediction | How it is read |
 |---|---|---|
-| **S1** | **Every setting changed before a restart reads back after it**: N of N, where N is the number the protocol changes (8 in a DEBUG build) | `godot.log`'s load line (N keys), and `user://player/settings.json`, read by Claude |
+| **S1** | **Every setting changed before a restart reads back after it**: N of N, where N is the number the protocol changes (8 in a DEBUG build, **plus one per bot whose strategy values the session touched**: since unit 2, each node's values are a key of their own) | `godot.log`'s load line (N keys), and `user://player/settings.json`, read by Claude |
 | **S2** | **Writes = changes.** The DEBUG write counter equals the number of real changes made in the session, give or take a set to the same value, which writes nothing | the quit line in `godot.log` |
 | **S3** | **A corrupt file fails loudly and harmlessly:** `settings.json.corrupt` exists, the load line says so, the game starts with defaults, and the next change writes a fresh `settings.json` | Claude corrupts the file before the developer's second launch (protocol step 4), then reads the files |
 | **S4** | **The world never sees `user://player/`:** 0 references from `ResetWorldIfIncompatible`; the sweep stays `TopDirectoryOnly` | a grep, baseline 0, rerun at close-out. A real wipe will confirm it at the next `WorldFormatVersion` bump, and the plan does not wait for one |

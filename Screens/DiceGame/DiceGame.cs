@@ -109,14 +109,21 @@ public partial class DiceGame : Control, IBetEventSource
 	// below). As an instance field this emptied on every navigation, so LoadActiveNodeStrategySnapshot
 	// took its ClearStrategySettings() branch and blanked the whole panel — after which BuildConfig()
 	// silently produced flat betting with both stops disarmed, BuildBotConfigs() returned an empty
-	// list, and every node's ready dot went red. Process-lifetime, not persisted: an app restart
-	// reverts the world to the last mined block, so a config outliving that would describe a run that
-	// no longer exists.
+	// list, and every node's ready dot went red.
+	//
+	// Persisted since mini-plan 27 (D-27.5), as a PLAYER preference: written through UserSettingsService on every
+	// snapshot, restored here once per launch (RestoreNodeStrategiesFromSettingsOnce). This said "not persisted: a
+	// config outliving a restart would describe a run that no longer exists" until then. Since D-M2.8 a snapshot is
+	// the strategy's CONFIGURATION, never a mid-run rung, and a configuration describes the next run as well as the
+	// last one. So after a restart every node is set up as it was, bots' readiness included (BuildBotConfigs reads
+	// this store).
 	private static readonly Dictionary<string, NodeStrategyState> _nodeStrategies = new();
+	private static bool _nodeStrategiesRestored;
 	private bool _loadingNodeStrategy;
 	// Mirrors StrategyControlPanel._runLocked for the DiceGame-owned controls — see ApplyRunLock.
 	private bool _runLocked;
 	private SceneManager _sceneManager;
+	private UserSettingsService _userSettings;
 	private PlayerBankAccountService _playerBankAccountService;
 	private CasinoClientLedgerService _casinoClientLedger; // SF.4B: feeds FinancialBettingStats' since-X baselines
 
@@ -208,6 +215,9 @@ public partial class DiceGame : Control, IBetEventSource
 		_userStatsService = GetNode<UserStatsService>("/root/UserStatsService");
 		_playerBankAccountService = GetNodeOrNull<PlayerBankAccountService>("/root/PlayerBankAccountService");
 		_casinoClientLedger = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
+		_userSettings = GetNodeOrNull<UserSettingsService>("/root/UserSettingsService");
+		// Before anything reads the per-node store: the node selector's ready dots and the snapshot load below.
+		RestoreNodeStrategiesFromSettingsOnce();
 		_bankrollStateService?.EnsureInitialized(0m);
 		decimal initialBalance = _bankrollStateService?.CurrentBalance ?? 0m;
 		_wallet = new Wallet(initialBalance);
@@ -947,7 +957,7 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
-		_nodeStrategies[_activeNodeId] = new NodeStrategyState
+		NodeStrategyState state = new NodeStrategyState
 		{
 			Config = CloneConfig(config),
 			NumberOfBets = numberOfBets,
@@ -958,8 +968,52 @@ public partial class DiceGame : Control, IBetEventSource
 			BetHigh = liveConfig?.BetHigh ?? _highLowToggleBtn.ButtonPressed,
 			BetsPerSecond = GetAutoBetBaseAps()
 		};
+		_nodeStrategies[_activeNodeId] = state;
+		// Mini-plan 27: the service writes only when a value really changed, so the many snapshots that restate the
+		// same strategy (a manual bet, a bot burst, leaving the scene) cost a comparison and no write.
+		_userSettings?.SetStrategyPanelValues(_activeNodeId, new UserSettingsService.StrategyPanelValues
+		{
+			Config = CloneConfig(state.Config),
+			NumberOfBets = state.NumberOfBets,
+			WinningChance = state.WinningChance,
+			BetHigh = state.BetHigh
+		});
 
 		RefreshNodeSelectorReadyDots();
+	}
+
+	// Mini-plan 27 unit 2 — once per launch, before the store is first read. A node already in the store is left as
+	// it is (the store outlives the scene; the file only seeds it). Of NodeStrategyState's fields, two are not
+	// preferences and are rebuilt here instead of stored (plan §4): auto-recharge (the player's is
+	// BankrollProgramService's flag, re-synced on load; a bot's is always ON) and BetsPerSecond (hardware-locked,
+	// ApplyAutoBetSpeedSettings ignores it).
+	private void RestoreNodeStrategiesFromSettingsOnce()
+	{
+		if (_nodeStrategiesRestored || _userSettings == null)
+		{
+			return;
+		}
+
+		_nodeStrategiesRestored = true;
+		foreach (string nodeId in _userSettings.GetStrategyPanelNodeIds())
+		{
+			UserSettingsService.StrategyPanelValues values = _userSettings.GetStrategyPanelValues(nodeId);
+			if (_nodeStrategies.ContainsKey(nodeId) || values?.Config == null || values.Config.BaseBet <= 0m)
+			{
+				continue;
+			}
+
+			_nodeStrategies[nodeId] = new NodeStrategyState
+			{
+				Config = values.Config,
+				NumberOfBets = values.NumberOfBets,
+				AutoRechargeEnabled = !string.Equals(nodeId, PlayerNodeId, StringComparison.Ordinal)
+					|| (_bankrollProgramService?.AutoRechargeEnabled ?? true),
+				WinningChance = Math.Clamp(values.WinningChance, 1, 95),
+				BetHigh = values.BetHigh,
+				BetsPerSecond = 1
+			};
+		}
 	}
 
 	private void LoadActiveNodeStrategySnapshot()
@@ -1488,8 +1542,8 @@ public partial class DiceGame : Control, IBetEventSource
 	// promise a speed-up that is no longer there. If a later, heavier view revives the trade, measure it first.
 	//
 	// The containers gate themselves on TREE visibility, so this button only has to show and hide nodes; there
-	// is no second flag that could drift from what is on screen. NOT persisted: user-settings persistence does
-	// not exist yet (PRIVATE_ROADMAP.md), so the window opens visible on every entry.
+	// is no second flag that could drift from what is on screen. The view is a player preference (mini-plan 27):
+	// each press writes it through UserSettingsService, and every entry opens on the last one chosen.
 	//
 	// The red/green roll NUMBERS (mini-plan 25, 17.A2). A 100-cell grid shipped here on 2026-09-19 and was withdrawn the
 	// next day: A3 measured ~0.21 ms per cell repaint, and at 160 bets a frame all 100 cells change every frame, halving
@@ -1556,15 +1610,21 @@ public partial class DiceGame : Control, IBetEventSource
 				+ "the latest one, or nothing. Each press moves to the next view, and a view reloads from your history "
 				+ "when it opens.",
 		};
-		_betDisplayToggleBtn.Pressed += () => SetBetDisplayMode(_betDisplayMode switch
+		_betDisplayToggleBtn.Pressed += () =>
 		{
-			BetDisplayMode.Detailed => BetDisplayMode.LastTen,
-			BetDisplayMode.LastTen => BetDisplayMode.LatestOnly,
-			BetDisplayMode.LatestOnly => BetDisplayMode.Off,
-			_ => BetDisplayMode.Detailed,
-		});
+			SetBetDisplayMode(_betDisplayMode switch
+			{
+				BetDisplayMode.Detailed => BetDisplayMode.LastTen,
+				BetDisplayMode.LastTen => BetDisplayMode.LatestOnly,
+				BetDisplayMode.LatestOnly => BetDisplayMode.Off,
+				_ => BetDisplayMode.Detailed,
+			});
+			_userSettings?.SetDiceBetView(_betDisplayMode.ToString());
+		};
 		AddChild(_betDisplayToggleBtn);
-		SetBetDisplayMode(BetDisplayMode.Detailed);
+		SetBetDisplayMode(UserSettingsService.TryParseEnum(_userSettings?.GetDiceBetView(), out BetDisplayMode savedView)
+			? savedView
+			: BetDisplayMode.Detailed);
 	}
 
 	// The Numbers views occupy the detailed window's own place: the title in the column-header band (y 574), the

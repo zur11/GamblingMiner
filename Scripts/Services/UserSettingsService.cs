@@ -116,7 +116,17 @@ public partial class UserSettingsService : Node
 		Change(Keys.ExplorerLatestWinnerOnly, section.LatestWinnerOnly, value, () => section.LatestWinnerOnly = value);
 	}
 
+	/// <summary>
+	/// Reads an enum setting stored by name. False for null, for an unknown name, and for a number that names no member,
+	/// so a renamed or removed member falls back to the caller's default instead of producing an undefined value.
+	/// </summary>
+	public static bool TryParseEnum<T>(string? value, out T result) where T : struct, Enum =>
+		Enum.TryParse(value, ignoreCase: false, out result) && Enum.IsDefined(result);
+
 	// --- Strategy panel, per node id (D-27.5) ---------------------------------------------------------------------
+
+	public IReadOnlyList<string> GetStrategyPanelNodeIds() =>
+		_settings.StrategyPanel == null ? Array.Empty<string>() : new List<string>(_settings.StrategyPanel.Keys);
 
 	/// <summary>A copy: editing it changes nothing until it is passed back to <see cref="SetStrategyPanelValues"/>.</summary>
 	public StrategyPanelValues? GetStrategyPanelValues(string nodeId)

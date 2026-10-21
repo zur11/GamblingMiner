@@ -6,7 +6,9 @@ namespace UI.DevTimeScaleSelector
 	// base up to the clock's ceiling. It drives CalendarTimeService.DevTimeScale, which scales BOTH the
 	// calendar clock and the bet-execution rate by the same factor, leaving the difficulty / power /
 	// solvetime dynamics invariant (only wall-clock time compresses). Built programmatically (like StatusBar)
-	// so it can be dropped into any screen without editing its .tscn. Not persisted; resets to 100X on restart.
+	// so it can be dropped into any screen without editing its .tscn. The REQUESTED scale is a DEV player preference
+	// (mini-plan 27, D-27.4): written through UserSettingsService on every choice, and restored once per launch by the
+	// first selector that loads. A DEBUG build only; an exported build reads nothing and starts at 100X.
 	public partial class DevTimeScaleSelector : HBoxContainer
 	{
 		// DevTimeScale multipliers on the 100X base clock. Two régimes, deliberately:
@@ -38,6 +40,9 @@ namespace UI.DevTimeScaleSelector
 
 		private OptionButton _selector;
 		private CalendarTimeService _calendar;
+		private UserSettingsService _userSettings;
+		// The clock keeps the request for the rest of the process, so the saved one is applied once, not per entry.
+		private static bool _requestRestored;
 
 		[System.Diagnostics.Conditional("DEBUG")]
 		private static void AssertLadderTopMatchesCeiling()
@@ -60,6 +65,8 @@ namespace UI.DevTimeScaleSelector
 			AddThemeConstantOverride("separation", 8);
 
 			_calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
+			_userSettings = GetNodeOrNull<UserSettingsService>("/root/UserSettingsService");
+			RestoreRequestedScaleOnce();
 
 			var label = new Label { Text = "DEV ⏩ Time:" };
 			label.AddThemeFontSizeOverride("font_size", 18);
@@ -435,6 +442,23 @@ namespace UI.DevTimeScaleSelector
 				// The item list is built from Multipliers in order, so the index maps straight back into it.
 				// Do not restate the ladder's values here — they live in exactly one place, that array.
 				_calendar.RequestedDevTimeScale = Multipliers[index];
+				_userSettings?.SetDevRequestedTimeScale(Multipliers[index]);
+			}
+		}
+
+		// Only a value still on the ladder is applied, so shortening the ladder can never restore a scale the
+		// selector cannot show. Marked done even without a saved value: the clock's own 1 is then the request.
+		private void RestoreRequestedScaleOnce()
+		{
+			if (_requestRestored || _calendar == null)
+			{
+				return;
+			}
+
+			_requestRestored = true;
+			if (_userSettings?.GetDevRequestedTimeScale() is int saved && System.Array.IndexOf(Multipliers, saved) >= 0)
+			{
+				_calendar.RequestedDevTimeScale = saved;
 			}
 		}
 	}

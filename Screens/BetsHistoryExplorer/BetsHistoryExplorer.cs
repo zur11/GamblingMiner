@@ -62,12 +62,14 @@ public partial class BetsHistoryExplorer : Control
 	// three methods) and make WinnersScroll visible and processing.
 	private PreviousWinnerNumbersRow _previousWinnerNumbersRow;
 	// The second view (developer's request, 2026-10-12): only the latest roll, like DiceGame's ResultValue. Both views
-	// are fed every roll and keep their state; only the visible one paints. The choice is static so it survives a
-	// scene round-trip within the process, and every launch starts on the row.
+	// are fed every roll and keep their state; only the visible one paints. The choice is a player preference
+	// (mini-plan 27): read from UserSettingsService on entry and written on toggle. It was a `static` that lived one
+	// launch; the static existed only to remember the choice, so it is gone (Standing Convention 3).
 	private LatestWinnerNumber _latestWinnerNumber;
 	private Label _winnersTitle;
 	private Button _winnersViewToggle;
-	private static bool _showLatestWinnerOnly;
+	private bool _showLatestWinnerOnly;
+	private UserSettingsService _userSettings;
 	private Control _loaderPanel;
 	private Control _contentPanel;
 
@@ -109,8 +111,9 @@ public partial class BetsHistoryExplorer : Control
 	// removes the gaps and lets the viewer choose N (the developer's framing, 2026-10-09: a session played at 99
 	// credits can be read at 99 × 10x either way, or at 1 credit × 1x in Per Bet).
 	//
-	// Neither depends on DevTimeScale. Pace and credits are VIEW choices, not persisted: every entry opens As Played
-	// at 1x, and the settings are listed in the roadmap's user-settings-persistence table.
+	// Neither depends on DevTimeScale. Pace, credits and the speed multiplier are VIEW choices, persisted as player
+	// preferences since mini-plan 27: every entry opens on the last ones chosen (still paused, §4.1), and the
+	// defaults below apply only to a setting never chosen.
 	private enum ReplayPace { AsPlayed, PerBet }
 	private ReplayPace _pace = ReplayPace.AsPlayed;
 	private Button _paceButton;
@@ -366,6 +369,8 @@ public partial class BetsHistoryExplorer : Control
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		_userStatsService = GetNodeOrNull<UserStatsService>("/root/UserStatsService");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
+		_userSettings = GetNodeOrNull<UserSettingsService>("/root/UserSettingsService");
+		RestoreViewPreferences();
 
 		var rootVBox = GetNode<VBoxContainer>("RootMargin/RootVBox");
 		var statusBar = new StatusBar();
@@ -376,7 +381,6 @@ public partial class BetsHistoryExplorer : Control
 		// live-follow is now the player's explicit choice via the Live button, not an automatic
 		// consequence of an autobet running — browsing history during a run is exactly what §9 makes safe.
 		_selectedLocal = _calendarTimeService?.ExplorerSelectedLocalDateTime ?? DateTime.Now;
-		_cursorSpeed = _speedSteps[0];
 		// §4.1 — the scene ARRIVES PAUSED. It used to open playing, cursor already advancing. The scene's
 		// job is to answer "what happened here?", and an auto-advancing view starts destroying that answer
 		// the moment it appears; nothing moves now until the player asks.
@@ -405,7 +409,7 @@ public partial class BetsHistoryExplorer : Control
 
 		// The Per Bet credits selector — the same ladder DiceGame's DEV control offers (HardwareCreditLadder),
 		// between the pace toggle and the speed button it multiplies. Visible only in Per Bet.
-		_perBetCreditsBox = new HBoxContainer { Visible = false };
+		_perBetCreditsBox = new HBoxContainer { Visible = _pace == ReplayPace.PerBet };
 		_perBetCreditsBox.AddThemeConstantOverride("separation", 6);
 		_perBetCreditsBox.AddChild(new Label { Text = "Credits:" });
 		_perBetCreditsSelector = new OptionButton
@@ -1856,6 +1860,7 @@ public partial class BetsHistoryExplorer : Control
 		int idx = Array.FindIndex(_speedSteps, s => Math.Abs(s - _cursorSpeed) < 0.001d);
 		idx = idx < 0 ? 0 : (idx + 1) % _speedSteps.Length;
 		_cursorSpeed = _speedSteps[idx];
+		_userSettings?.SetExplorerSpeed(_cursorSpeed);
 		ResetThrottleMeasurement();
 		RefreshControlLabels();
 		// Raising the speed while parked at the present is how a paused viewer asks to replay again; the
@@ -1868,6 +1873,7 @@ public partial class BetsHistoryExplorer : Control
 	{
 		_pace = _pace == ReplayPace.AsPlayed ? ReplayPace.PerBet : ReplayPace.AsPlayed;
 		_perBetCreditsBox.Visible = _pace == ReplayPace.PerBet;
+		_userSettings?.SetExplorerPace(_pace.ToString());
 		_betsOwed = 0d;
 		ResetThrottleMeasurement();
 		RefreshControlLabels();
@@ -1876,8 +1882,41 @@ public partial class BetsHistoryExplorer : Control
 	private void OnPerBetCreditsSelected(long index)
 	{
 		_perBetCredits = HardwareCreditLadder.Steps[(int)index];
+		_userSettings?.SetExplorerPerBetCredits(_perBetCredits);
 		ResetThrottleMeasurement();
 		RefreshControlLabels();
+	}
+
+	// Mini-plan 27 unit 2 — the four view preferences, from any earlier launch. Each saved value must still be one
+	// the control offers (a speed step, a ladder rung, a pace that exists); anything else, or a value never chosen,
+	// leaves the field's own default, so a later change to a ladder cannot reopen the scene in an unreachable state.
+	// The scene still ARRIVES PAUSED whatever the speed (§4.1).
+	private void RestoreViewPreferences()
+	{
+		_cursorSpeed = _speedSteps[0];
+		if (_userSettings == null)
+		{
+			return;
+		}
+
+		if (UserSettingsService.TryParseEnum(_userSettings.GetExplorerPace(), out ReplayPace savedPace))
+		{
+			_pace = savedPace;
+		}
+
+		if (_userSettings.GetExplorerSpeed() is double savedSpeed &&
+			Array.Exists(_speedSteps, step => Math.Abs(step - savedSpeed) < 0.001d))
+		{
+			_cursorSpeed = savedSpeed;
+		}
+
+		if (_userSettings.GetExplorerPerBetCredits() is int savedCredits &&
+			Array.IndexOf(HardwareCreditLadder.Steps, savedCredits) >= 0)
+		{
+			_perBetCredits = savedCredits;
+		}
+
+		_showLatestWinnerOnly = _userSettings.GetExplorerLatestWinnerOnly() ?? false;
 	}
 
 	// ── "Go to Now" (developer, 2026-08-18 — supersedes mini-plan 03 §9.3's "Go Live") ──────────────────
@@ -2076,6 +2115,7 @@ public partial class BetsHistoryExplorer : Control
 	private void OnWinnersViewToggled(bool latestOnly)
 	{
 		_showLatestWinnerOnly = latestOnly;
+		_userSettings?.SetExplorerLatestWinnerOnly(latestOnly);
 		ApplyWinnersView();
 	}
 
