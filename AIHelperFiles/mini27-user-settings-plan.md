@@ -7,7 +7,9 @@ Mini-plan 26 (the per-block freeze, `mini26-per-block-freeze-plan.md`) closed it
 **Status:** 📝 **SPECIFIED 2026-10-21 (`668ff18`), amended the same day with the developer's answers (§3.4, §8).**
 D-27.1 is answered with **two player layers** plus a **User Settings scene**, and D-27.2 with the recommendation.
 **§3.4 governs where it differs from §3.1–§3.3 and §5.** **D-27.9 is answered (2026-10-21): "Wipe everything" is the
-equivalent of deleting the whole user data folder**, identity files and logs included. Every decision is settled.
+equivalent of deleting the whole user data folder**, identity files and logs included. **Amended again the same day
+with a new objective: a saved-strategies dropdown in DiceGame (unit 3b, §5; S9; D-27.10, proposed).**
+**Order:** unit 1 → unit 2 → unit 3 → unit 3b → unit 4 → unit 5 → unit 6 → V1 (with V1b) → close-out.
 Next: **unit 1**, the service (§4).
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
@@ -205,6 +207,36 @@ at startup (D-27.2 = a). `settings.json` lives in `preferences/` too. The two cr
 exempt list, `hardware_allocation.json` leaves the wipe's delete list, and the path constants are updated in
 `DiceGame`, `NotepadService`, `HardwareAllocationRepository` and `WalletInitializationService`.
 
+**Unit 3b (amendment, developer, 2026-10-21) — a saved-strategies dropdown in DiceGame.** It belongs to layer 1
+(creations), so it is built **after** unit 3 has moved the strategies file.
+
+*What the code does today (verified 2026-10-21).* Loading a saved strategy means typing its exact name into
+`%StrategyNameInput` and pressing Load: `DiceGame.OnLoadStrategyPressed` → `SavedBettingStrategyRepository.TryGet(GameId,
+name)`, matched case-insensitively. **A blank name loads the most recently saved strategy.** Load applies to the
+**active node** (the player or the bot chosen in `%ActiveNodeSelector`), stops a running `_session` first, carries
+the current auto-recharge value through unchanged, re-syncs the player's toggle from `BankrollProgramService`, and
+saves the per-node snapshot. Load is **disabled under the run lock** and when the game has no saved strategy
+(`UpdateStrategySaveLoadButtons`). The repository has `HasAnyForGame` and `TryGet`, **no list accessor**. The
+developer's file holds **13** strategies, all `GameId = "Dice"`.
+
+*The change:*
+- **The repository gains `GetNamesForGame(gameId)`**: the names for that game, sorted by name, ordinal and
+  case-insensitive (the same comparison `TryGet` matches with). Nothing else in the repository changes.
+- **`%SavedStrategySelect`, an `OptionButton`**, on a second row directly under `StrategySaveControls` (the band
+  between it and the bet-history headers is free; verified at build). It lists every saved strategy for `GameId`.
+  **Disabled when there are none.**
+- **Choosing an item SELECTS, it does not apply** (D-27.10, proposed): it writes the name into `%StrategyNameInput`,
+  and the existing **Load** button applies it. `OnLoadStrategyPressed` is **not edited**, so today's semantics hold by
+  construction rather than by re-implementation: active node, session stopped first, auto-recharge carried through,
+  snapshot saved. CLAUDE.md Core Systems rule 1 is untouched.
+- **The dropdown never shows a name other than the one Load will use** (Convention 6). Editing the name field
+  re-selects the matching item, or none.
+- **It refreshes after every Save**, so a new name appears at once and an overwritten one is not listed twice. No
+  event is needed: DiceGame's own repository instance is the only writer while the scene is open (Pattern 6).
+- **The name field stays**, for naming a Save. A blank-name Load still loads the most recent strategy.
+- **Two DEBUG instruments**, `[Conditional("DEBUG")]`, printed with `GD.Print` so `godot.log` receives them:
+  `[StrategyDropdown] listed N for Dice` on every refresh, and `[StrategyLoad] '<name>' -> <nodeId>` on every Load.
+
 **Unit 4 (new, §3.4) — the wipe as one function, and the request it runs at the next launch:**
 - `WipeWorld(reason)` is extracted from `ResetWorldIfIncompatible`, unchanged in what it deletes.
 - `WorldGuardService` reads `user://player/reset_request.json` and performs it **before** anything else loads:
@@ -241,6 +273,7 @@ This is a functional plan, not a performance one, so the criteria are **counts o
 | **S6** | **The one-time move keeps everything:** after the first launch, `creations/` holds the strategies and notes and `preferences/` holds `hardware_allocation.json`, **byte-identical** to the originals, and none remain at the old paths. **R3 still runs at 10 credits** | Claude hashes the files before and after. **Baseline, 2026-10-21 (SHA-256, first 16 hex):** `saved_betting_strategies.json` `10fab9ed593e7122`, 6,408 bytes · `hardware_allocation.json` `7a21a42a44c9d375`, 554 bytes (player 10 credits, `bot_1`…`bot_4` 1 each, all individual) · `notepad_notes.json` **does not exist**, so the move must treat an absent file as nothing to move, never as an error |
 | **S7** | **"Reset preferences" resets layer 2 only:** after the next launch the preferences are at their defaults and the hardware credits at their initial allocation; the creations and the world are untouched (same tip height, same files) | the request file, the deletion lines in `godot.log`, and the files themselves |
 | **S8** | **"Reset world" runs the one `WipeWorld`** (a grep finds a single delete list), and **"Wipe everything" leaves `user://` holding nothing but the files it reports it could not delete** (expected: the session's open `godot.log` at most). **Both are tested only at a wipe the developer chooses, never on R3's world** | a grep now; at that wipe, the deletion lines in `godot.log` and a listing of `user://` |
+| **S9** | **The dropdown lists exactly the saved strategies, and loads exactly what typing the name loads** (unit 3b). With N strategies for `Dice` it lists **N** (13 today) and is **disabled at 0**. A Save under a new name lists **N+1 at once**, without leaving the scene; a Save over an existing name keeps **N**. A strategy chosen and loaded onto a bot or the player lands in that node's strategy values with the saved `Config` | the `[StrategyDropdown]` lines against a `node -e` count of the file; the `[StrategyLoad]` lines against the per-node strategy values unit 2 writes to `settings.json` |
 
 ### 6.1 — Protocol V1 (the developer runs it; watches nothing; Claude reads the files afterwards)
 
@@ -253,6 +286,17 @@ This is a functional plan, not a performance one, so the criteria are **counts o
 5. Launch again, open DiceGame, change Bet View once, and close. Tell me "V1 done".
 6. I restore the copy from step 4, and you launch once more to confirm S1 by eye. **Every value from steps 1–2 should
    be back.**
+
+**Protocol V1b — the dropdown (S9).** It needs a world with **no** saved strategy, and the developer's file must
+come out of it untouched. So the file is moved **out of `user://`** for one launch, and restored afterwards:
+1. Launch, open DiceGame. Select **bot_2** in the node selector, choose **R2 L50** in the dropdown, press **Load**.
+   Select **player**, choose **R1 0.5**, press **Load**. Close the game with the autobet stopped.
+2. **I** copy `user://player/creations/saved_betting_strategies.json` to the scratchpad, record its SHA-256, and move
+   it out of `user://` (only with your go-ahead at this step).
+3. Launch, open DiceGame. The dropdown should be **disabled**. Type **V1 probe** in the name field, press **Save**,
+   then press **Save** again. Close the game.
+4. **I** restore the file and check its hash against step 2. The probe strategy disappears with the restore, so
+   nothing of the test is left in your strategies.
 
 ---
 
@@ -277,6 +321,7 @@ This is a functional plan, not a performance one, so the criteria are **counts o
 | **✅ D-27.9 — ANSWERED 2026-10-21: YES** | **"Wipe everything" is the equivalent of deleting the whole user data folder**: identity files and `user://logs/` included, so the next launch is a first launch. The developer keeps the other two actions, **three in total**: Reset preferences, Reset world, Wipe everything | §3.4 item 3. *(Proposed was "no", keeping the identities; the developer chose the full wipe.)* |
 | *D-27.1 as first proposed (superseded)* | **The classification.** Player: Bet View, the explorer's pace/speed/credits/winners view, the strategy panel's values, saved strategies, notepad notes. DEV, player-class (kept across wipes, DEBUG only): the requested time scale, the BlockExplorer toggle. Session: the profiler toggles. World: the credits ladder | as listed. **The one to look at twice is saved strategies.** Your 2026-09-15 surprise could mean "they should be wiped" or "nobody told me they survive". The plan assumes the second: they are your work, like the notes |
 | *D-27.2 as first proposed (superseded)* | **The two existing files** move into `user://player/` | **(a) move them once at startup** (a rename of the same bytes, not a format migration, so your strategies and notes are kept). The rename's code is deleted at the close-out of the plan after next. **(b)** let them be lost and re-save: what the "no migrations" rule usually prefers. I recommend (a), because this is your data, not world state |
+| **D-27.10** | **The strategies dropdown (unit 3b): does choosing an item apply it, or select it for Load?** | **Select, then Load.** *(Re-checked against the code: the run lock already disables Load and the node selector during an autobet, so "an accidental stop of a running session" is covered either way.)* The reasons that remain: applying **overwrites the active node's panel, unsaved edits included, with no undo**, so a mis-click in the popup would be destructive; and select-only leaves `OnLoadStrategyPressed` unedited, so Load's semantics hold by construction |
 | **D-27.3** | `UserSettingsService` is autoload **#20** (appended) | yes: it depends on nothing, and nothing reads it before the scenes load |
 | **D-27.4** | DEV keys stored in the same file and read only in DEBUG | yes |
 | **D-27.5** | The strategy panel's values are kept per node id (`player`, `bot_1`…`bot_4`) | yes: the ids are stable across worlds |

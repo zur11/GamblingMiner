@@ -113,7 +113,7 @@ documents cite them.
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **2** | **User settings persistence** | **`AIHelperFiles/mini27-user-settings-plan.md` (SPECIFIED 2026-10-21, not started)**, branch `mini27-user-settings` · §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
+| **2** | **User settings persistence** | **`AIHelperFiles/mini27-user-settings-plan.md` (SPECIFIED 2026-10-21, not started; amended the same day with a saved-strategies dropdown in DiceGame, unit 3b)**, branch `mini27-user-settings` · §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
