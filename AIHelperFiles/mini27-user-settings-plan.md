@@ -6,8 +6,9 @@ Mini-plan 26 (the per-block freeze, `mini26-per-block-freeze-plan.md`) closed it
 
 **Status:** 📝 **SPECIFIED 2026-10-21 (`668ff18`), amended the same day with the developer's answers (§3.4, §8).**
 D-27.1 is answered with **two player layers** plus a **User Settings scene**, and D-27.2 with the recommendation.
-**§3.4 governs where it differs from §3.1–§3.3 and §5.** One question is still open and blocks unit 1: **D-27.9**,
-what "wipe everything" includes. Then **unit 1**, the service (§4).
+**§3.4 governs where it differs from §3.1–§3.3 and §5.** **D-27.9 is answered (2026-10-21): "Wipe everything" is the
+equivalent of deleting the whole user data folder**, identity files and logs included. Every decision is settled.
+Next: **unit 1**, the service (§4).
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
 
@@ -139,18 +140,28 @@ wipe, not that they should not. What the developer wants is **two layers of play
 - **A User Settings scene** (new `SceneId.UserSettings`, reached from MainMenu) shows both layers and offers three
   actions, each behind a confirmation:
   1. **Reset preferences**: layer 2 back to defaults, hardware credits included.
-  2. **Wipe the world**: the same wipe a format bump performs. **Both layers are kept.**
-  3. **Wipe everything**: the world and both layers. D-27.9 decides whether identity files go too.
+  2. **Reset world**: the same wipe a format bump performs. **Both layers are kept.**
+  3. **Wipe everything**: **the equivalent of deleting the whole user data folder** (D-27.9, answered 2026-10-21).
+     Every file under `user://`, recursively: the world, both layers, the **identity files** (the five wallet seeds,
+     `bot_wallet_registry.json`, `wordlist_256.json`) and **`user://logs/`**, archived evidence included. The next
+     launch is a first launch, with new wallets and new bot identities.
+     - **What it cannot delete, and must say so.** Windows holds the current session's `godot.log` open from the
+       moment the engine starts, before any autoload runs. The wipe therefore skips any file it cannot delete and
+       reports each one by name. It never fails silently, and never fails the launch.
+     - **Its confirmation is the strongest of the three:** it names the identity files and `user://logs/` explicitly,
+       and asks twice.
+
+  **Exactly three actions** (developer, 2026-10-21): Reset preferences, Reset world, Wipe everything.
 - **Every action runs at the NEXT LAUNCH, never in place.** The scene writes a request file
   (`user://player/reset_request.json`) and quits. `WorldGuardService`, autoload #1, performs the request **before any
   other autoload loads anything**, prints every file it deletes, and deletes the request. This is the TL.3 lesson
   applied by construction: a static cache loaded before a wipe survives it in memory and writes itself back. A reset
   performed while the game runs would be exposed to every cache (`HardwareAllocationRepository`, the settings
   service, `NetworkRoot`); a reset performed before they load cannot be.
-- **One wipe, not two.** "Wipe the world" calls the **same** code a format bump does. Unit 4 extracts the body of
+- **One wipe, not two.** "Reset world" calls the **same** code a format bump does. Unit 4 extracts the body of
   `ResetWorldIfIncompatible` into `WipeWorld(reason)` and calls it from both places. A second delete list would rot
   exactly as the first one did.
-- **The rank trace rule still applies.** "Wipe the world" deletes the `user://logs` traces on the delete list, so the
+- **The rank trace rule still applies.** "Reset world" deletes the `user://logs` traces on the delete list, so the
   scene's confirmation names `rank_calibration_trace.csv` and the other traces it will take, which lets the
   developer rename them first. The archived `*_F1`/`*_M1`/`*_M2` files are not on the list and are untouched.
 
@@ -229,7 +240,7 @@ This is a functional plan, not a performance one, so the criteria are **counts o
 | **S5** | **The checkpoint never reverts a setting:** a setting changed between two blocks is still set after a restart, which reverts the world to the earlier block | the protocol changes a setting with the autobet stopped, then closes before the next block |
 | **S6** | **The one-time move keeps everything:** after the first launch, `creations/` holds the strategies and notes and `preferences/` holds `hardware_allocation.json`, **byte-identical** to the originals, and none remain at the old paths. **R3 still runs at 10 credits** | Claude hashes the files before and after. **Baseline, 2026-10-21 (SHA-256, first 16 hex):** `saved_betting_strategies.json` `10fab9ed593e7122`, 6,408 bytes · `hardware_allocation.json` `7a21a42a44c9d375`, 554 bytes (player 10 credits, `bot_1`…`bot_4` 1 each, all individual) · `notepad_notes.json` **does not exist**, so the move must treat an absent file as nothing to move, never as an error |
 | **S7** | **"Reset preferences" resets layer 2 only:** after the next launch the preferences are at their defaults and the hardware credits at their initial allocation; the creations and the world are untouched (same tip height, same files) | the request file, the deletion lines in `godot.log`, and the files themselves |
-| **S8** | **"Wipe the world" and "Wipe everything" run the one `WipeWorld`:** a grep finds a single delete list. **They are tested only at a wipe the developer chooses, never on R3's world** | a grep now; the deletion lines in `godot.log` at that wipe |
+| **S8** | **"Reset world" runs the one `WipeWorld`** (a grep finds a single delete list), and **"Wipe everything" leaves `user://` holding nothing but the files it reports it could not delete** (expected: the session's open `godot.log` at most). **Both are tested only at a wipe the developer chooses, never on R3's world** | a grep now; at that wipe, the deletion lines in `godot.log` and a listing of `user://` |
 
 ### 6.1 — Protocol V1 (the developer runs it; watches nothing; Claude reads the files afterwards)
 
@@ -262,8 +273,8 @@ This is a functional plan, not a performance one, so the criteria are **counts o
 | **✅ D-27.1 — ANSWERED 2026-10-21** | Two player layers: **creations** (strategies, notes) persist; **preferences** (every other setting, **plus the hardware credits**) are easily reset. A **User Settings scene** manages both and offers a general wipe | §3.4 is the design |
 | **✅ D-27.2 — ANSWERED 2026-10-21** | (a), as recommended: move the existing files once. Now three files: the two creations and `hardware_allocation.json` | §3.4, unit 3 |
 | **D-27.7** | Every reset or wipe runs at the next launch, by a request file `WorldGuardService` performs first | yes: it is the only form a stale static cache cannot defeat (TL.3) |
-| **D-27.8** | "Wipe the world" and a format bump share one `WipeWorld` | yes: one delete list |
-| **D-27.9 — OPEN, blocks unit 1** | **"Wipe everything": do the identity files go too?** That is the five wallet seeds, `bot_wallet_registry.json` and `wordlist_256.json`, which every wipe has kept so far | **No** (recommended): the same wallets and bot identities come back in the next world, and the closest thing to a fresh install stays "delete the user data folder by hand". **Yes:** a truly fresh start, with new addresses for everyone |
+| **D-27.8** | "Reset world" and a format bump share one `WipeWorld` | yes: one delete list |
+| **✅ D-27.9 — ANSWERED 2026-10-21: YES** | **"Wipe everything" is the equivalent of deleting the whole user data folder**: identity files and `user://logs/` included, so the next launch is a first launch. The developer keeps the other two actions, **three in total**: Reset preferences, Reset world, Wipe everything | §3.4 item 3. *(Proposed was "no", keeping the identities; the developer chose the full wipe.)* |
 | *D-27.1 as first proposed (superseded)* | **The classification.** Player: Bet View, the explorer's pace/speed/credits/winners view, the strategy panel's values, saved strategies, notepad notes. DEV, player-class (kept across wipes, DEBUG only): the requested time scale, the BlockExplorer toggle. Session: the profiler toggles. World: the credits ladder | as listed. **The one to look at twice is saved strategies.** Your 2026-09-15 surprise could mean "they should be wiped" or "nobody told me they survive". The plan assumes the second: they are your work, like the notes |
 | *D-27.2 as first proposed (superseded)* | **The two existing files** move into `user://player/` | **(a) move them once at startup** (a rename of the same bytes, not a format migration, so your strategies and notes are kept). The rename's code is deleted at the close-out of the plan after next. **(b)** let them be lost and re-save: what the "no migrations" rule usually prefers. I recommend (a), because this is your data, not world state |
 | **D-27.3** | `UserSettingsService` is autoload **#20** (appended) | yes: it depends on nothing, and nothing reads it before the scenes load |
