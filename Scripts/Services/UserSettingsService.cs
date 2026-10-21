@@ -2,7 +2,6 @@ using Godot;
 using Scripts.Betting;
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -21,10 +20,7 @@ using System.Text.Json.Serialization;
 // the scene's default and an unknown key is ignored, so adding a setting later needs no version bump (Convention 5).
 public partial class UserSettingsService : Node
 {
-	public const string PreferencesDir = "user://player/preferences";
-	public const string SettingsPath = PreferencesDir + "/settings.json";
-	private const string TempPath = SettingsPath + ".tmp";
-	private const string CorruptPath = SettingsPath + ".corrupt";
+	public const string SettingsPath = PlayerDataFiles.PreferencesDir + "/settings.json";
 	public const int CurrentSettingsVersion = 1;
 
 	private static readonly JsonSerializerOptions JsonOptions = new()
@@ -62,7 +58,7 @@ public partial class UserSettingsService : Node
 
 	private SettingsFile _settings = new();
 	// Set when a corrupt file could not be moved aside: writing would then destroy the only copy of the evidence,
-	// so nothing is written this session (plan §3.3, INC-004).
+	// so nothing is written this session (plan §3.3, INC-004). The atomic write is PlayerDataFiles.WriteAtomically.
 	private bool _persistBlocked;
 
 #if DEBUG
@@ -256,32 +252,26 @@ public partial class UserSettingsService : Node
 #endif
 	}
 
-	// Plan §3.3 — a bad file is moved aside ONCE and never overwritten, so the evidence survives; the game starts
-	// from defaults and the next change writes a fresh file. A second bad file finds the first .corrupt taken and
-	// gets a stamped name of its own rather than replacing it (the stamp is file bookkeeping, so wall-clock).
+	// Plan §3.3 — a bad file is moved aside and never overwritten, so the evidence survives; the game starts from
+	// defaults and the next change writes a fresh file (PlayerDataFiles.MoveAsideAsCorrupt).
 	private void PreserveCorruptFile(string detail)
 	{
-		string target = Godot.FileAccess.FileExists(CorruptPath)
-			? SettingsPath + "." + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".corrupt"
-			: CorruptPath;
-		try
+		string? target = PlayerDataFiles.MoveAsideAsCorrupt(SettingsPath);
+		if (target != null)
 		{
-			File.Move(ProjectSettings.GlobalizePath(SettingsPath), ProjectSettings.GlobalizePath(target));
 			GD.Print($"[UserSettings] could not read {SettingsPath} ({detail}). It is preserved as {target}; " +
 				"every preference starts at its default, and the next change writes a fresh file.");
 		}
-		catch (Exception ex)
+		else
 		{
 			_persistBlocked = true;
-			GD.Print($"[UserSettings] could not read {SettingsPath} ({detail}), and could not move it aside " +
-				$"({ex.Message}). Nothing will be written this session, so the file is left exactly as found.");
+			GD.Print($"[UserSettings] could not read {SettingsPath} ({detail}), and could not move it aside. " +
+				"Nothing will be written this session, so the file is left exactly as found.");
 		}
 
 		GD.PushWarning($"[UserSettings] {SettingsPath} was unreadable: {detail}");
 	}
 
-	// INC-001 / Ch. 40 — .tmp, flushed to the device, then renamed over the original; never truncate-and-stream.
-	// The same shape as BetHistoryRepository.WriteSegmentAtomically.
 	private void Persist()
 	{
 		if (_persistBlocked)
@@ -291,18 +281,8 @@ public partial class UserSettingsService : Node
 
 		try
 		{
-			DirAccess.MakeDirRecursiveAbsolute(PreferencesDir);
 			_settings.SettingsVersion = CurrentSettingsVersion;
-			string tmp = ProjectSettings.GlobalizePath(TempPath);
-			using (var stream = new FileStream(tmp, FileMode.Create, System.IO.FileAccess.Write, FileShare.None))
-			using (var writer = new StreamWriter(stream))
-			{
-				writer.Write(JsonSerializer.Serialize(_settings, JsonOptions));
-				writer.Flush();
-				stream.Flush(true);
-			}
-
-			File.Move(tmp, ProjectSettings.GlobalizePath(SettingsPath), overwrite: true);
+			PlayerDataFiles.WriteAtomically(SettingsPath, JsonSerializer.Serialize(_settings, JsonOptions));
 #if DEBUG
 			_writeCount++;
 #endif

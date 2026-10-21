@@ -73,7 +73,6 @@ public partial class DiceGame : Control, IBetEventSource
 	private string _activeNodeId = PlayerNodeId;
 	private const double GameSecondsPerRealSecond = 100.0d; // 10 real min -> 16h 40m game time
 	private const double GameSecondsPerManualBet = 100.0d; // 1 manual bet tick
-	private const string SavedStrategiesPath = "user://saved_betting_strategies.json";
 	private Label _blockchainStatusValue;
 	private OptionButton _activeNodeSelector;
 	private ImageTexture _readyDotTexture;
@@ -246,7 +245,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_blockchainNetworkRoot.Name = "BlockchainNetworkRoot";
 		AddChild(_blockchainNetworkRoot);
 		Scripts.Diagnostics.SceneEntryProbe.Mark("networkRoot");
-		_savedStrategyRepository = new SavedBettingStrategyRepository(SavedStrategiesPath);
+		_savedStrategyRepository = new SavedBettingStrategyRepository(SavedBettingStrategyRepository.DefaultPath);
 		var strategy = new ProgressiveBettingStrategy();
 
 		_session = CreateSession(false); // default manual

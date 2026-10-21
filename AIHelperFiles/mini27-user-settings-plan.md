@@ -11,7 +11,8 @@ equivalent of deleting the whole user data folder**, identity files and logs inc
 with a new objective: a saved-strategies dropdown in DiceGame (unit 3b, §5; S9; D-27.10, answered: select, then
 Load).** Unit 3 also makes both creations writers atomic (developer, 2026-10-21; §5).
 **Order:** unit 1 → unit 2 → unit 3 → unit 3b → unit 4 → unit 5 → unit 6 → V1 (with V1b) → close-out.
-**Unit 1 ✅ built (§4). Unit 2 ✅ built (§5).** Next: **unit 3**, the file moves.
+**Unit 1 ✅ built (§4). Unit 2 ✅ built (§5). Unit 3 ✅ built (§5)**: the first launch after it moves the files
+(S6). Next: **unit 3b**, the strategies dropdown.
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
 
@@ -253,6 +254,34 @@ bad read** today: the repository warns with `GD.PushWarning` and continues with 
 writes over the file. `NotepadService` catches silently and does the same. Both get §3.3's treatment: a bad file is
 preserved as `.corrupt`, the failure is printed with `GD.Print`, and nothing is written back over it.
 
+**✅ Unit 3 built 2026-10-21.**
+- **`PlayerDataFiles`** (`Scripts/Services/`) names the folder and its two layers, and holds the two durability
+  primitives every file in it uses: `WriteAtomically` (`.tmp`, flushed to the device, renamed; creates the folder)
+  and `MoveAsideAsCorrupt` (never overwrites an earlier `.corrupt`; returns null if the file cannot be moved, and
+  the caller then writes nothing that session). `UserSettingsService` now uses them too, so the answer to Pattern 2's
+  three questions is written **once** for the class, not in four writers.
+- **`LegacyPlayerFileRelocation`** moves the three files by `File.Move`, from `WorldGuardService` **before** the
+  world guard. An absent source prints nothing. If source and destination both exist, it moves neither and says
+  so. Its file header says to delete it at the close-out of the plan after next.
+- **Each path has one copy**, in its owner: `SavedBettingStrategyRepository.DefaultPath`, `NotepadService.SavePath`,
+  `HardwareAllocationRepository.SavePath`. DiceGame's constant is deleted. `WalletInitializationService`'s copy
+  now reads the repository's. The old paths survive only in the relocation's table.
+- **The hardware credits became player class, with three consequences** (the developer's decision, §3.4):
+  - `hardware_allocation.json` left the wipe's delete list.
+  - Its write is atomic.
+  - **It is no longer under `WorldWriteGuard`.** §3.3 exempts the class, and leaving the call would contradict it.
+    *Found while building:* a corrupt hardware file used to throw an uncaught `JsonException` at boot. It is now
+    moved aside, and `WalletInitializationService` bootstraps the initial allocation as on a first launch.
+- **S4's tripwire, defined:** `grep -cE 'user://player/|PlayerDataFiles\.' Scripts/BlockchainPort/Simulation/NetworkRoot.cs`,
+  **baseline 0**. *Two traps found writing it:*
+  - **The slash is part of the pattern.** Without it, the grep counts `user://player_bank_account_state.json`, a
+    world file.
+  - **A literal-only grep can be bypassed** by code that names the folder through `PlayerDataFiles.Root`, so the
+    class name counts too.
+- **S6's baseline was re-hashed just before this commit and is unchanged:** `saved_betting_strategies.json`
+  `10fab9ed593e7122`, 6,408 bytes; `hardware_allocation.json` `7a21a42a44c9d375`, 554 bytes; `notepad_notes.json`
+  absent; no `player/` folder yet.
+
 **Unit 3b (amendment, developer, 2026-10-21) — a saved-strategies dropdown in DiceGame.** It belongs to layer 1
 (creations), so it is built **after** unit 3 has moved the strategies file.
 
@@ -316,7 +345,7 @@ This is a functional plan, not a performance one, so the criteria are **counts o
 | **S1** | **Every setting changed before a restart reads back after it**: N of N, where N is the number the protocol changes (8 in a DEBUG build, **plus one per bot whose strategy values the session touched**: since unit 2, each node's values are a key of their own) | `godot.log`'s load line (N keys), and `user://player/settings.json`, read by Claude |
 | **S2** | **Writes = changes.** The DEBUG write counter equals the number of real changes made in the session, give or take a set to the same value, which writes nothing | the quit line in `godot.log` |
 | **S3** | **A corrupt file fails loudly and harmlessly:** `settings.json.corrupt` exists, the load line says so, the game starts with defaults, and the next change writes a fresh `settings.json` | Claude corrupts the file before the developer's second launch (protocol step 4), then reads the files |
-| **S4** | **The world never sees `user://player/`:** 0 references from `ResetWorldIfIncompatible`; the sweep stays `TopDirectoryOnly` | a grep, baseline 0, rerun at close-out. A real wipe will confirm it at the next `WorldFormatVersion` bump, and the plan does not wait for one |
+| **S4** | **The world never sees `user://player/`:** 0 references from `ResetWorldIfIncompatible`; the sweep stays `TopDirectoryOnly` | a grep, baseline 0, rerun at close-out (the exact command is in unit 3's build note: it counts the literal path **with its slash** and the `PlayerDataFiles.` class, over the whole of `NetworkRoot.cs`). A real wipe will confirm it at the next `WorldFormatVersion` bump, and the plan does not wait for one |
 | **S5** | **The checkpoint never reverts a setting:** a setting changed between two blocks is still set after a restart, which reverts the world to the earlier block | the protocol changes a setting with the autobet stopped, then closes before the next block |
 | **S6** | **The one-time move keeps everything:** after the first launch, `creations/` holds the strategies and notes and `preferences/` holds `hardware_allocation.json`, **byte-identical** to the originals, and none remain at the old paths. **R3 still runs at 10 credits** | Claude hashes the files before and after. **Baseline, 2026-10-21 (SHA-256, first 16 hex):** `saved_betting_strategies.json` `10fab9ed593e7122`, 6,408 bytes · `hardware_allocation.json` `7a21a42a44c9d375`, 554 bytes (player 10 credits, `bot_1`…`bot_4` 1 each, all individual) · `notepad_notes.json` **does not exist**, so the move must treat an absent file as nothing to move, never as an error |
 | **S7** | **"Reset preferences" resets layer 2 only:** after the next launch the preferences are at their defaults and the hardware credits at their initial allocation; the creations and the world are untouched (same tip height, same files) | the request file, the deletion lines in `godot.log`, and the files themselves |

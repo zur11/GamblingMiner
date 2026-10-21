@@ -8,9 +8,16 @@ namespace Scripts.Betting
 {
 	public sealed class SavedBettingStrategyRepository
 	{
+		// Mini-plan 27 — a player CREATION (layer 1, plan §3.4): it survives every reset except "Wipe everything".
+		// It lived at user://saved_betting_strategies.json until LegacyPlayerFileRelocation moved it here.
+		public const string DefaultPath = PlayerDataFiles.CreationsDir + "/saved_betting_strategies.json";
+
 		private readonly string _statePath;
 		private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
 		private readonly List<SavedBettingStrategy> _strategies = new();
+		// Set when an unreadable file could not be moved aside: a Save would then write the empty list over the only
+		// copy of the player's strategies, so nothing is written (plan §3.3, INC-004).
+		private bool _persistBlocked;
 
 		public SavedBettingStrategyRepository(string statePath)
 		{
@@ -101,7 +108,7 @@ namespace Scripts.Betting
 				List<SavedBettingStrategy> loaded = JsonSerializer.Deserialize<List<SavedBettingStrategy>>(json, _jsonOptions);
 				if (loaded == null)
 				{
-					return;
+					throw new JsonException("the file holds JSON null");
 				}
 
 				_strategies.Clear();
@@ -120,19 +127,33 @@ namespace Scripts.Betting
 			}
 			catch (Exception ex)
 			{
+				// Was a warning followed by an empty list, which the next Save then wrote over the file: a bad read
+				// silently became the loss of every saved strategy. Now the file is kept as evidence (plan §3.3).
+				_strategies.Clear();
+				string target = PlayerDataFiles.MoveAsideAsCorrupt(_statePath);
+				_persistBlocked = target == null;
+				GD.Print(target != null
+					? $"[SavedBettingStrategyRepository] could not read {_statePath} ({ex.Message}). It is preserved as {target}; the list starts empty."
+					: $"[SavedBettingStrategyRepository] could not read {_statePath} ({ex.Message}), and could not move it aside. Nothing will be saved this session.");
 				GD.PushWarning($"[SavedBettingStrategyRepository] Load failed: {ex.Message}");
 			}
 		}
 
 		private void Persist()
 		{
+			if (_persistBlocked)
+			{
+				GD.Print($"[SavedBettingStrategyRepository] not saved: {_statePath} could not be read or moved aside this session.");
+				return;
+			}
+
 			try
 			{
-				using FileAccess file = FileAccess.Open(_statePath, FileAccess.ModeFlags.Write);
-				file.StoreString(JsonSerializer.Serialize(_strategies, _jsonOptions));
+				PlayerDataFiles.WriteAtomically(_statePath, JsonSerializer.Serialize(_strategies, _jsonOptions));
 			}
 			catch (Exception ex)
 			{
+				GD.Print($"[SavedBettingStrategyRepository] Save failed: {ex.Message}");
 				GD.PushWarning($"[SavedBettingStrategyRepository] Save failed: {ex.Message}");
 			}
 		}

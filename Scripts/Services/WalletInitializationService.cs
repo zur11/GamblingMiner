@@ -14,7 +14,8 @@ public static class WalletInitializationService
 	private const string SatoshiWalletPath = "user://satoshi_wallet_state.json";
 	private const string HalWalletPath = "user://hal_wallet_state.json";
 	private const string MikeHearnWalletPath = "user://mike_hearn_wallet_state.json";
-	private const string HardwareAllocationPath = "user://hardware_allocation.json";
+	// One copy of the path: the repository's (mini-plan 27 moved the file into user://player/preferences/).
+	private const string HardwareAllocationPath = HardwareAllocationRepository.SavePath;
 
 	private static readonly string[] HardwareNodeIds = { "player", "bot_1", "bot_2", "bot_3", "bot_4" };
 

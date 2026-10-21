@@ -8220,10 +8220,16 @@ public partial class NetworkRoot : Node
 	// to this delete list when it ships — the TL.3 canon-relaunch verification found hardware credits,
 	// casino-pool shares, and swap-desk state leaking across the timeline wipe because their files
 	// (hardware_allocation / casino_pool_state / casino_coin_swap_state — the last one created AFTER this
-	// list was written) were never listed. Deliberately SPARED, by design (identity/personal data, not
-	// world state): the wallet seed/address files (wallet_state, casino/satoshi/hal/mike_hearn_wallet_state,
-	// bot_wallet_registry — a fresh bootstrap reuses the same identities), saved_betting_strategies,
-	// notepad_notes, and wordlist_256. See ProjectDesignManual Ch. 35 (§35.1).
+	// list was written) were never listed. Deliberately SPARED, by design (identity data, not world state): the
+	// wallet seed/address files (wallet_state, casino/satoshi/hal/mike_hearn_wallet_state, bot_wallet_registry — a
+	// fresh bootstrap reuses the same identities) and wordlist_256. See ProjectDesignManual Ch. 35 (§35.1).
+	//
+	// Mini-plan 27 — PLAYER files are spared by CLASS, not by this list: they live in the player folder (see
+	// PlayerDataFiles), which no named path, glob or sweep below reaches (the sweep is TopDirectoryOnly).
+	// saved_betting_strategies and notepad_notes moved there (creations), and so did hardware_allocation
+	// (preferences, the developer's decision of 2026-10-21), which is why it is no longer deleted here. Nothing in
+	// that folder may ever be named in this file, by literal path or through that class: the tripwire counts both
+	// forms in NetworkRoot.cs, baseline 0 (plan S4).
 	private static void ResetWorldIfIncompatible()
 	{
 		int storedVersion = 0;
@@ -8289,8 +8295,8 @@ public partial class NetworkRoot : Node
 
 		// TL.3 gap fix (2026-07-07): hardware/pool/swap world state — found leaking across the timeline
 		// wipe during the canon-relaunch verification (alt-bought hardware, bot pool shares, and a casino
-		// pool ledger referencing blocks of the wiped chain all survived into the fresh canon world).
-		DeleteIfExists("user://hardware_allocation.json");
+		// pool ledger referencing blocks of the wiped chain all survived into the fresh canon world). The hardware
+		// credits left this list at mini-plan 27: they are player data now (see the note above this method).
 		DeleteIfExists("user://casino_pool_state.json");
 		DeleteIfExists("user://casino_coin_swap_state.json");
 		DeleteIfExists("user://sc_monetary_ledger.json"); // ND.8c — added WITH the feature (the TL.3 maintenance rule)

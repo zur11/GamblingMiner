@@ -16,6 +16,9 @@ public partial class WorldGuardService : Node
 {
 	public override void _Ready()
 	{
+		// Mini-plan 27 unit 3 — first of all, so the player files are in user://player/ before anything reads them,
+		// and out of the guard's reach before it runs. Deleted with LegacyPlayerFileRelocation (see that file).
+		LegacyPlayerFileRelocation.Run();
 		NetworkRoot.RunWorldCompatibilityGuard();
 	}
 }

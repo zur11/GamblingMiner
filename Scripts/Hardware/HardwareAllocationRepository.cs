@@ -8,12 +8,20 @@ namespace Scripts.Hardware;
 
 #nullable enable
 
-// Persists per-node hardware credit allocation (individual vs casino pool) to
-// user://hardware_allocation.json. Static repository following the
-// BotWalletRegistry pattern: CamelCase JSON via Godot FileAccess.
+// Persists per-node hardware credit allocation (individual vs casino pool). Static repository following the
+// BotWalletRegistry pattern: CamelCase JSON.
+//
+// Mini-plan 27 (developer, 2026-10-21; plan §3.4) — the credits are PLAYER data, layer 2 (preferences): they
+// survive a world wipe and are reset with the preferences. They lived at user://hardware_allocation.json, on the
+// wipe's delete list, until LegacyPlayerFileRelocation moved them here. Being player class, the file is written
+// atomically, a bad read is preserved rather than thrown at boot, and it is not under WorldWriteGuard (§3.3: a
+// broken world must not stop a player-class write; exempt by class). ⚠ P5 must revisit this once hardware is
+// priced in world SC: credits that outlive the world that paid for them are then an inconsistency.
 public static class HardwareAllocationRepository
 {
-	private const string SavePath = "user://hardware_allocation.json";
+	public const string SavePath = PlayerDataFiles.PreferencesDir + "/hardware_allocation.json";
+	// Set when an unreadable file could not be moved aside: a save would then write over the only copy.
+	private static bool _persistBlocked;
 
 	private static readonly JsonSerializerOptions JsonOptions = new()
 	{
@@ -63,10 +71,27 @@ public static class HardwareAllocationRepository
 			return;
 		}
 
-		using FileAccess file = FileAccess.Open(SavePath, FileAccess.ModeFlags.Read);
-		HardwareAllocationSnapshot? loaded =
-			JsonSerializer.Deserialize<HardwareAllocationSnapshot>(file.GetAsText(), JsonOptions);
-		_snapshot = loaded ?? new HardwareAllocationSnapshot();
+		try
+		{
+			using (FileAccess file = FileAccess.Open(SavePath, FileAccess.ModeFlags.Read))
+			{
+				if (file == null) throw new System.IO.IOException($"could not open the file ({FileAccess.GetOpenError()})");
+				_snapshot = JsonSerializer.Deserialize<HardwareAllocationSnapshot>(file.GetAsText(), JsonOptions)
+					?? throw new JsonException("the file holds JSON null");
+			}
+		}
+		catch (Exception ex)
+		{
+			// Was an uncaught throw at boot. Once moved aside, the file is absent, so WalletInitializationService
+			// bootstraps the initial allocation exactly as on a first launch.
+			_snapshot = new HardwareAllocationSnapshot();
+			string? target = PlayerDataFiles.MoveAsideAsCorrupt(SavePath);
+			_persistBlocked = target == null;
+			GD.Print(target != null
+				? $"[HardwareAllocationRepository] could not read {SavePath} ({ex.Message}). It is preserved as {target}; the initial allocation is bootstrapped."
+				: $"[HardwareAllocationRepository] could not read {SavePath} ({ex.Message}), and could not move it aside. Every node reads 0 credits and nothing will be saved this session.");
+			GD.PushWarning($"[HardwareAllocationRepository] Load failed: {ex.Message}");
+		}
 	}
 
 	// Returns the node's state, or a fresh zero-credit state if it has none yet.
@@ -166,15 +191,26 @@ public static class HardwareAllocationRepository
 
 	private static void Save()
 	{
-		// Mini-plan 15 A — a session that could not load its world writes nothing world-shaped.
-		if (WorldWriteGuard.RefuseWrite(nameof(HardwareAllocationRepository))) return;
+		// No WorldWriteGuard call since mini-plan 27: this is player class (see the header). It was guarded while the
+		// credits were world state (mini-plan 15 A).
+		if (_persistBlocked)
+		{
+			GD.Print($"[HardwareAllocationRepository] not saved: {SavePath} could not be read or moved aside this session.");
+			return;
+		}
 
 		// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the close.
 		string payload = JsonSerializer.Serialize(_snapshot, JsonOptions);
 		long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
-		using (FileAccess file = FileAccess.Open(SavePath, FileAccess.ModeFlags.Write))
+		try
 		{
-			file.StoreString(payload);
+			PlayerDataFiles.WriteAtomically(SavePath, payload);
+		}
+		catch (Exception ex)
+		{
+			GD.Print($"[HardwareAllocationRepository] Save failed: {ex.Message}");
+			GD.PushWarning($"[HardwareAllocationRepository] Save failed: {ex.Message}");
+			return;
 		}
 		Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(SavePath, payload.Length, writeBegin);
 	}
