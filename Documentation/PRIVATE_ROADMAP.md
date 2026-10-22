@@ -113,7 +113,7 @@ documents cite them.
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **2** | **User settings persistence** | **`AIHelperFiles/mini27-user-settings-plan.md` (SPECIFIED 2026-10-21, not started; amended the same day with a saved-strategies dropdown in DiceGame, unit 3b)**, branch `mini27-user-settings` · §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
+| **2** | **User settings persistence** | **`AIHelperFiles/mini27-user-settings-plan.md` (IN PROGRESS 2026-10-21: units 1–6 built, verification V1 next; amended with a saved-strategies dropdown in DiceGame, unit 3b)**, branch `mini27-user-settings` · §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
@@ -548,29 +548,31 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 > questions are in §7. Game over is `Private Bank Account + Main Balance + Bankroll = 0` (CLAUDE.md, Canonical
 > Decisions).
 
-- [ ] **User settings persistence — a real design, which does not exist yet.** Player-owned settings are
-  scattered across ad-hoc files with no shared rule for what survives a world wipe. The visible symptom
-  (2026-09-15, v6 → v7 reset): `saved_betting_strategies.json` survives every wipe because it sits in the
-  exempt set (`NetworkRoot.ResetWorldIfIncompatible`, CLAUDE.md Pattern 2), and the developer expected it to
-  be deleted. **Do not fix that file alone.** Decide once which settings belong to the player (survive a
-  wipe) and which to the world (wiped with it), then give them one persistence home. Required for Basic Mode.
+- [~] **User settings persistence — BUILT by mini-plan 27 (2026-10-21); ticked at its close-out, once V1 passes.**
+  The rule is now stated once: **the player class lives under `user://player/`, which no world wipe reaches**, in
+  two layers: `creations/` (saved strategies, notepad notes; only "Wipe everything" deletes them) and
+  `preferences/` (`UserSettingsService`'s `settings.json`; "Reset preferences"). Everything else in `user://` is
+  world state, identity, or evidence. The User Settings scene offers the three resets
+  (`mini27-user-settings-plan.md` §3.4, §3.5). *The symptom that opened this item (2026-09-15, v6 → v7 reset):
+  `saved_betting_strategies.json` survived a wipe nobody had said it would survive. It now survives by a stated
+  rule.*
 
-  **What is waiting for it** — the list is kept here, because each of these is currently a *decision deferred*,
-  and a deferral nobody wrote down becomes an omission. Add a line whenever a feature ships a setting with no
-  home; that is the cost signal telling us when this is due.
+  **A new setting goes into `UserSettingsService`** (a typed getter/setter, null = never set); **a new creation goes
+  into `creations/`**. Neither is ever added to `WipeWorld`. The table below is the classification as built.
 
-  | setting | today | belongs to |
+  | setting | where it lives now | class |
   |---|---|---|
-  | Saved betting strategies | `saved_betting_strategies.json`, exempt from the wipe — survives, which surprised the developer | the player, probably — but the surprise says the rule was never stated, not that the file is wrong |
-  | **Bet View: Detailed / Last 10 / Latest only / OFF** (mini-plan 10; the two Numbers modes since mini-plan 25 17.A2) | not persisted; resets to Detailed on every DiceGame entry | the player. A **view preference only**: after mini-plan 10 both states cost the same (~0.025 ms per bet) and both reach the clock's ceiling, so forgetting it changes nothing but what is on screen. *(Until 2026-09-21 this row called it a speed choice with a higher hidden budget. That was the design before the list got cheap, and the two-budget plan was never built.)* |
-  | DEV time scale (the requested one) | not persisted | DEV, but the same mechanism |
-  | **Bets explorer replay pace, speed and Per Bet credits** (mini-plan 20 F) | not persisted; every entry opens **As Played** at 1x (Per Bet at 1 credit when toggled) | the player. A **view preference**, like Bet View |
-| **Bets explorer winning-numbers view: Last 10 / Latest only** (mini-plan 23 E) | a `static` in `BetsHistoryExplorer`: survives scene changes, resets to Last 10 at every launch | the player. A **view preference** |
-  | **BlockExplorer's casino players' SC balances, shown / hidden** (DEV, mini-plan 25 17.A7) | a `static` in `BlockExplorer`: survives scene changes, resets to shown at every launch | DEV, but the same mechanism |
-  | DEV player credits ladder (mini-plan 20 Part 0) | writes the real hardware state (`hardware_allocation.json`), so it persists as a shop purchase does | **world**, deliberately: it is a shortcut to the shop, not a setting of its own. *(Made a player preference by mini-plan 27 §3.4 and returned to the world the same day by §3.5, before any file moved: hardware is bought with world money, so a world reset returns every node to 1 individual-pool credit.)* |
-  | The strategy panel's last-used values | a `static` in DiceGame (`_nodeStrategies`), per node: survives scene changes, lost at launch. *(This row said "not persisted" until mini-plan 27 §2.1 checked the code, 2026-10-21.)* Distinct from a *saved* strategy | the player |
-  | Notepad notes (added 2026-10-21) | `notepad_notes.json`, on Pattern 2's exempt list | the player: a creation, like saved strategies |
-  | Anything a future options menu holds | does not exist | the player |
+  | Saved betting strategies | `user://player/creations/saved_betting_strategies.json` | player, **creation** |
+  | Notepad notes | `user://player/creations/notepad_notes.json` | player, **creation** |
+  | **Bet View: Detailed / Last 10 / Latest only / OFF** (mini-plan 10; the two Numbers modes since mini-plan 25 17.A2) | `settings.json` | player, **preference**. A view preference only: after mini-plan 10 every view costs the same per bet |
+  | **Bets explorer replay pace, speed and Per Bet credits** (mini-plan 20 F) | `settings.json`; the automatic drop to 1x at the present is not written | player, **preference** |
+  | **Bets explorer winning-numbers view: Last 10 / Latest only** (mini-plan 23 E) | `settings.json` (the `static` is deleted) | player, **preference** |
+  | The strategy panel's values, per node (`_nodeStrategies`) | `settings.json`, restored once per launch, so bots come back armed. Distinct from a *saved* strategy | player, **preference** |
+  | DEV time scale (the requested one) | `settings.json`, DEBUG builds only | player, **DEV preference** |
+  | **BlockExplorer's casino players' SC balances, shown / hidden** (DEV, mini-plan 25 17.A7) | `settings.json`, DEBUG builds only (the `static` is deleted) | player, **DEV preference** |
+  | DEV player credits ladder / the hardware credits | `user://hardware_allocation.json`, on `WipeWorld`'s delete list | **world**: bought with world money, so a world reset returns every node to 1 individual-pool credit (mini-plan 27 §3.5) |
+  | The four profiler toggles | each profiler's static `Enabled` | **session**, deliberately: their contract is OFF at every launch |
+  | Anything a future options menu holds | `UserSettingsService` | player, **preference** |
 
 - [~] **Clarify auto-recharge behavior in UI and docs.** Docs done (ProjectDesignManual Ch. 25 + CLAUDE.md). The UI
   warning when auto-recharge is OFF is still pending (P2).

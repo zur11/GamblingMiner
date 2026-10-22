@@ -1684,7 +1684,7 @@ The Notepad is a simple in-game text editor that lets the player save private no
 
 `Scripts/Services/NotepadService.cs` is registered in `project.godot` as a global autoload. It owns all persistence for the notepad feature.
 
-**Save file**: `user://notepad_notes.json` — a flat JSON object where each key is a note name and each value is the note content:
+**Save file**: `user://player/creations/notepad_notes.json` (a player creation since mini-plan 27: it survives every reset except "Wipe everything", is written atomically, and an unreadable file is preserved as `.corrupt` instead of being silently replaced) — a flat JSON object where each key is a note name and each value is the note content:
 
 ```json
 {

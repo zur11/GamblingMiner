@@ -14,8 +14,8 @@ Load).** Unit 3 also makes both creations writers atomic (developer, 2026-10-21;
 **Order:** unit 1 → unit 2 → unit 3 → unit 3b → unit 4 → unit 5 → unit 6 → V1 (with V1b and V1c) → close-out.
 **Unit 1 ✅ built (§4). Unit 2 ✅ built (§5). Unit 3 ✅ built (§5), and corrected by §3.5 (the hardware credits stay
 in the world)**: the first launch after it moves the two creations (S6). **D-27.11 answered: "Reset preferences"
-does not touch the hardware credits.** **Unit 3b ✅ built (§5). Unit 4 ✅ built (§5). Unit 5 ✅ built (§5).** Next: **unit 6**,
-the docs; then V1 (with V1b and V1c).
+does not touch the hardware credits.** **Unit 3b ✅ built (§5). Unit 4 ✅ built (§5). Unit 5 ✅ built (§5). Unit 6 ✅ built
+(§5).** Next: **the verification run**, in the order of §6.2 (launches A–D).
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
 
@@ -428,6 +428,28 @@ disabled, instead of a blank. The two traces are `[Conditional("DEBUG")]` and pr
 - **`PRIVATE_ROADMAP.md`:** §6's item is ticked, and its table becomes the plan's classification.
 - **A tripwire grep:** `user://player/` must not appear in `ResetWorldIfIncompatible`. The baseline is 0.
 
+**✅ Unit 6 built 2026-10-21.**
+- **CLAUDE.md:**
+  - The autoload count is 20, and row #20 is added.
+  - NotepadService's path is updated.
+  - Pattern 2's third question now names `WipeWorld` and adds the player-class sentence.
+  - The exempt set is rewritten **by class**: the identity class (cited as
+    `WalletInitializationService.IdentityFilePaths`) and the `user://player/` class. The S4 tripwire sits beside
+    it, with its load-bearing slash.
+  - The `WorldWriteGuard` "exempt by class" bullet adds `user://player/`.
+  - The scene count is 26.
+  - **Size: 86,055 → 86,826 characters (+771).** Above the 85,000 target, below the 95,000 warning. All of it is
+    rules or index, which is the growth the budget section allows.
+- **`SERVICES.md`:** 20 entries; `WorldGuardService`'s three steps; the `UserSettingsService` section;
+  `CalendarTimeService`'s "neither is persisted" line corrected.
+- **`SCENES.md`:** 26 ids, the `UserSettings` row, and its place in the navigation map.
+- **`PRIVATE_ROADMAP.md`:** §6's item is marked **`[~]` built, not ticked**. It is ticked at close-out, once V1
+  passes: ticking a functional item before its verification would be claiming the result. Its table is now the
+  classification as built. The ▶ NEXT row reads IN PROGRESS.
+- **`ProjectDesignManual.md` §20.1:** the notepad's new path and durability.
+- **Not edited: `ROADMAP_ARCHIVE.md`**, which is history and quotes the old paths as they were.
+- **The run order** is registered in §6.2, before any data.
+
 ---
 
 ## 6. Verification — predictions registered before any run
@@ -436,7 +458,7 @@ This is a functional plan, not a performance one, so the criteria are **counts o
 
 | # | Prediction | How it is read |
 |---|---|---|
-| **S1** | **Every setting changed before a restart reads back after it**: N of N, where N is the number the protocol changes (8 in a DEBUG build, **plus one per bot whose strategy values the session touched**: since unit 2, each node's values are a key of their own) | `godot.log`'s load line (N keys), and `user://player/settings.json`, read by Claude |
+| **S1** | **Every setting changed before a restart reads back after it**: N of N, where N is the number the protocol changes (8 in a DEBUG build, **plus one per bot whose strategy values the session touched**: since unit 2, each node's values are a key of their own) | `godot.log`'s load line (N keys), and `user://player/preferences/settings.json`, read by Claude |
 | **S2** | **Writes = changes.** The DEBUG write counter equals the number of real changes made in the session, give or take a set to the same value, which writes nothing | the quit line in `godot.log` |
 | **S3** | **A corrupt file fails loudly and harmlessly:** `settings.json.corrupt` exists, the load line says so, the game starts with defaults, and the next change writes a fresh `settings.json` | Claude corrupts the file before the developer's second launch (protocol step 4), then reads the files |
 | **S4** | **The world never sees `user://player/`:** 0 references from `ResetWorldIfIncompatible`; the sweep stays `TopDirectoryOnly` | a grep, baseline 0, rerun at close-out (the exact command is in unit 3's build note: it counts the literal path **with its slash** and the `PlayerDataFiles.` class, over the whole of `NetworkRoot.cs`). A real wipe will confirm it at the next `WorldFormatVersion` bump, and the plan does not wait for one |
@@ -477,6 +499,40 @@ the creations, so it is safe on R3. The other two resets are only **opened and c
 3. Launch again, open DiceGame and close. **I** then read `godot.log`'s `[Reset]` lines and the files: the
    preferences are gone and are at their defaults, and the strategies, the tip height and the hardware credits are
    unchanged (S7).
+
+### 6.2 — The run order (registered before any data, 2026-10-21)
+
+V1, V1b and V1c, merged into four launches. **The developer watches nothing.** Every check is read afterwards from
+`godot.log`, `settings.json` and the files, and V1's step 6 ("confirm by eye") is replaced by Claude reading the
+load line and the file.
+
+- **Launch A** (V1 steps 1–3 and V1b step 1):
+  - Load **R2 L50** onto **bot_2** and **R1 0.5** onto the **player**, both through the dropdown and Load.
+  - Then set every V1 preference, the player's base bet last, so that the edited value is the one persisted.
+  - Close with the autobet stopped.
+  - **Claude reads:**
+    - S6: the move, by hash.
+    - S1: **9 keys** in `settings.json`, V1's 8 plus `strategyPanel.bot_2`.
+    - S2: the quit line.
+    - S5: no block mined.
+    - S9: 13 listed, and `[StrategyLoad]` against `settings.json`'s `strategyPanel.bot_2`.
+  - **Then, between launches:** Claude copies `settings.json` aside and corrupts the original (S3). With the
+    developer's go-ahead, Claude also moves the strategies file out of `user://` (V1b step 2).
+- **Launch B:**
+  - In DiceGame the dropdown should be disabled.
+  - Save **V1 probe** twice, change Bet View once, and close.
+  - **Claude reads:** S3 (`.corrupt` kept, the defaults, a fresh file) and S9 (0, then 1, then still 1).
+  - **Then:** Claude restores the strategies file (hash-checked) and the `settings.json` copy.
+- **Launch C** (V1c steps 1–2):
+  - In User Settings, open Reset world and Cancel; open Wipe everything, Continue, and Cancel.
+  - Then **Reset preferences** and confirm. The game closes.
+  - **Claude reads:** the restored preferences' load line (S1 again, 9 keys), and that no request was written by
+    the two cancelled dialogs.
+- **Launch D:**
+  - Open DiceGame and close.
+  - **Claude reads:** the `[Reset]` lines, an empty `preferences/`, and the unchanged strategies, tip height and
+    hardware credits (S7).
+- **Not in this run:** "Reset world" and "Wipe everything" for real (S8), at a wipe the developer chooses.
 
 ---
 
