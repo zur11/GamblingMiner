@@ -13,8 +13,8 @@ with a new objective: a saved-strategies dropdown in DiceGame (unit 3b, §5; S9;
 Load).** Unit 3 also makes both creations writers atomic (developer, 2026-10-21; §5).
 **Order:** unit 1 → unit 2 → unit 3 → unit 3b → unit 4 → unit 5 → unit 6 → V1 (with V1b) → close-out.
 **Unit 1 ✅ built (§4). Unit 2 ✅ built (§5). Unit 3 ✅ built (§5), and corrected by §3.5 (the hardware credits stay
-in the world)**: the first launch after it moves the two creations (S6). **Open: D-27.11** (does "Reset preferences"
-still touch the hardware credits?), needed by unit 4. Next: **unit 3b**, the strategies dropdown.
+in the world)**: the first launch after it moves the two creations (S6). **D-27.11 answered: "Reset preferences"
+does not touch the hardware credits.** **Unit 3b ✅ built (§5).** Next: **unit 4**, `WipeWorld` and the reset request.
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
 
@@ -141,8 +141,8 @@ wipe, not that they should not. What the developer wants is **two layers of play
   (§3.5): the hardware credits are WORLD state** and stay on the wipe's delete list.
 - **A User Settings scene** (new `SceneId.UserSettings`, reached from MainMenu) shows both layers and offers three
   actions, each behind a confirmation:
-  1. **Reset preferences**: layer 2 back to defaults. *(It said "hardware credits included" until §3.5; whether it
-     still touches them is D-27.11.)*
+  1. **Reset preferences**: layer 2 back to defaults, and nothing else. *(It said "hardware credits included" until
+     §3.5; D-27.11 answered no.)*
   2. **Reset world**: the same wipe a format bump performs. **Both layers are kept.** Every node's hardware credits
      return to the initial allocation (§3.5).
   3. **Wipe everything**: **the equivalent of deleting the whole user data folder** (D-27.9, answered 2026-10-21).
@@ -335,6 +335,25 @@ developer's file holds **13** strategies, all `GameId = "Dice"`.
 - **Two DEBUG instruments**, `[Conditional("DEBUG")]`, printed with `GD.Print` so `godot.log` receives them:
   `[StrategyDropdown] listed N for Dice` on every refresh, and `[StrategyLoad] '<name>' -> <nodeId>` on every Load.
 
+**✅ Unit 3b built 2026-10-21.** Two departures from the text above, plus two of the developer's decisions taken
+before the commit:
+- **Built in code, not in the `.tscn`**, as `_savedStrategySelect`. It sits at (976, 528), 280 × 42, beside the
+  Bet View button, which is built in code the same way. The `%SavedStrategySelect` name above is therefore not a
+  scene node.
+- **`OnLoadStrategyPressed` has two lines appended**, and nothing above them is changed. One re-syncs the
+  dropdown, because a name set from code emits no `TextChanged`. The other is the `[StrategyLoad]` trace.
+  "Not edited" was the promise about its semantics, and the semantics are untouched.
+- ~~**The dropdown is not run-locked.**~~ **It IS run-locked** (developer, 2026-10-21, before this unit's commit):
+  disabled during an active autobet, like Load, the chance slider and HIGH/LOW. `ApplySavedStrategySelectAvailability`
+  is one rule (no strategies, or the run lock), called from both the refresh and `ApplyRunLock`, so it holds
+  whichever runs first on scene entry.
+- **Code-built is for now** (developer, 2026-10-21). Every control built in code moves into a scene at Basic Mode's
+  UI refinement, once everything works. The roadmap entry "UI built in scenes" holds the rule and the inventory
+  command. That work is out of this plan's scope (§7).
+
+Also: with nothing selected, the closed button reads **"Saved strategies (N)"**, or **"No saved strategies"** while
+disabled, instead of a blank. The two traces are `[Conditional("DEBUG")]` and print with `GD.Print`.
+
 **Unit 4 (new, §3.4) — the wipe as one function, and the request it runs at the next launch:**
 - `WipeWorld(reason)` is extracted from `ResetWorldIfIncompatible`, unchanged in what it deletes.
 - `WorldGuardService` reads `user://player/reset_request.json` and performs it **before** anything else loads:
@@ -369,7 +388,7 @@ This is a functional plan, not a performance one, so the criteria are **counts o
 | **S4** | **The world never sees `user://player/`:** 0 references from `ResetWorldIfIncompatible`; the sweep stays `TopDirectoryOnly` | a grep, baseline 0, rerun at close-out (the exact command is in unit 3's build note: it counts the literal path **with its slash** and the `PlayerDataFiles.` class, over the whole of `NetworkRoot.cs`). A real wipe will confirm it at the next `WorldFormatVersion` bump, and the plan does not wait for one |
 | **S5** | **The checkpoint never reverts a setting:** a setting changed between two blocks is still set after a restart, which reverts the world to the earlier block | the protocol changes a setting with the autobet stopped, then closes before the next block |
 | **S6** | **The one-time move keeps everything:** after the first launch, `creations/` holds the strategies (and the notes, if any), **byte-identical** to the originals, and none remain at the old paths. `hardware_allocation.json` is **unmoved and byte-identical** at `user://` (§3.5). **R3 still runs at 10 credits** | Claude hashes the files before and after. **Baseline, 2026-10-21 (SHA-256, first 16 hex):** `saved_betting_strategies.json` `10fab9ed593e7122`, 6,408 bytes · `hardware_allocation.json` `7a21a42a44c9d375`, 554 bytes (player 10 credits, `bot_1`…`bot_4` 1 each, all individual) · `notepad_notes.json` **does not exist**, so the move must treat an absent file as nothing to move, never as an error |
-| **S7** | **"Reset preferences" resets layer 2 only:** after the next launch the preferences are at their defaults; the creations and the world are untouched (same tip height, same files). *The hardware credits: per D-27.11* | the request file, the deletion lines in `godot.log`, and the files themselves |
+| **S7** | **"Reset preferences" resets layer 2 only:** after the next launch the preferences are at their defaults; the creations and the world are untouched (same tip height, same files, **the hardware credits included**: D-27.11) | the request file, the deletion lines in `godot.log`, and the files themselves |
 | **S8** | **"Reset world" runs the one `WipeWorld`** (a grep finds a single delete list), and **"Wipe everything" leaves `user://` holding nothing but the files it reports it could not delete** (expected: the session's open `godot.log` at most). **Both are tested only at a wipe the developer chooses, never on R3's world** | a grep now; at that wipe, the deletion lines in `godot.log` and a listing of `user://` |
 | **S9** | **The dropdown lists exactly the saved strategies, and loads exactly what typing the name loads** (unit 3b). With N strategies for `Dice` it lists **N** (13 today) and is **disabled at 0**. A Save under a new name lists **N+1 at once**, without leaving the scene; a Save over an existing name keeps **N**. A strategy chosen and loaded onto a bot or the player lands in that node's strategy values with the saved `Config` | the `[StrategyDropdown]` lines against a `node -e` count of the file; the `[StrategyLoad]` lines against the per-node strategy values unit 2 writes to `settings.json` |
 
@@ -405,6 +424,8 @@ come out of it untouched. So the file is moved **out of `user://`** for one laun
 - The **identity files** (§3.2).
 - Moving any **world** file. The delete list stays as it is, minus the two names unit 3 retires.
 - Persisting the **profiler toggles**. Their OFF-by-default contract is the point.
+- **Moving code-built controls into scenes**, this plan's dropdown included. It belongs to Basic Mode's UI refinement
+  (developer, 2026-10-21: everything works first). See `PRIVATE_ROADMAP.md` "UI built in scenes".
 
 ---
 
@@ -414,7 +435,7 @@ come out of it untouched. So the file is moved **out of `user://`** for one laun
 |---|---|---|
 | **✅ D-27.1 — ANSWERED 2026-10-21** | Two player layers: **creations** (strategies, notes) persist; **preferences** (every other setting) are easily reset. A **User Settings scene** manages both and offers a general wipe. *(The hardware credits were in the preferences until §3.5 made them world state, the same day)* | §3.4 is the design, §3.5 corrects it |
 | **✅ D-27.2 — ANSWERED 2026-10-21** | (a), as recommended: move the existing files once. The two creations (`hardware_allocation.json` was a third until §3.5) | §3.4, unit 3 |
-| **D-27.11 — OPEN** | **Does "Reset preferences" still reset the hardware credits?** §3.4 said yes, back when the credits were a preference | **Proposed: no.** They are world state now (§3.5), and outside DEV they are bought with money, so resetting the view preferences would destroy a paid-for asset while the world keeps the SC that bought it. That is the same mismatch §3.5 removes. "Reset world" and a format bump already reset them |
+| **✅ D-27.11 — ANSWERED 2026-10-21: no** | **Does "Reset preferences" still reset the hardware credits?** §3.4 said yes, back when the credits were a preference | **Proposed: no.** They are world state now (§3.5), and outside DEV they are bought with money, so resetting the view preferences would destroy a paid-for asset while the world keeps the SC that bought it. That is the same mismatch §3.5 removes. "Reset world" and a format bump already reset them |
 | **D-27.7** | Every reset or wipe runs at the next launch, by a request file `WorldGuardService` performs first | yes: it is the only form a stale static cache cannot defeat (TL.3) |
 | **D-27.8** | "Reset world" and a format bump share one `WipeWorld` | yes: one delete list |
 | **✅ D-27.9 — ANSWERED 2026-10-21: YES** | **"Wipe everything" is the equivalent of deleting the whole user data folder**: identity files and `user://logs/` included, so the next launch is a first launch. The developer keeps the other two actions, **three in total**: Reset preferences, Reset world, Wipe everything | §3.4 item 3. *(Proposed was "no", keeping the identities; the developer chose the full wipe.)* |

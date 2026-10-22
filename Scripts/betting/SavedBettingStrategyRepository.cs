@@ -33,6 +33,18 @@ namespace Scripts.Betting
 				string.Equals(s.GameId, gameId, StringComparison.OrdinalIgnoreCase));
 		}
 
+		// Mini-plan 27 unit 3b — the names a game's dropdown lists, sorted the way TryGet matches them (ordinal, ignoring
+		// case), so the list never shows two names that TryGet would treat as one.
+		public List<string> GetNamesForGame(string gameId)
+		{
+			List<string> names = _strategies
+				.Where(s => string.Equals(s.GameId, gameId, StringComparison.OrdinalIgnoreCase))
+				.Select(s => s.Name)
+				.ToList();
+			names.Sort(StringComparer.OrdinalIgnoreCase);
+			return names;
+		}
+
 		public void Save(SavedBettingStrategy strategy)
 		{
 			if (strategy == null || string.IsNullOrWhiteSpace(strategy.Name))

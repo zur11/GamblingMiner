@@ -81,6 +81,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private LineEdit _strategyNameInput;
 	private Button _saveStrategyBtn;
 	private Button _loadStrategyBtn;
+	private OptionButton _savedStrategySelect;
 	private SavedBettingStrategyRepository _savedStrategyRepository;
 	private ManualStopGate _manualStopGate = ManualStopGate.None;
 
@@ -302,7 +303,11 @@ public partial class DiceGame : Control, IBetEventSource
 		_openBlockExplorerBtn.Pressed += OnOpenBlockExplorerPressed;
 		GetNode<Button>("%MainMenuBtn").Pressed += OnGoToMainMenuPressed;
 		_activeNodeSelector.ItemSelected += OnActiveNodeSelected;
-		_strategyNameInput.TextChanged += _ => UpdateStrategySaveLoadButtons();
+		_strategyNameInput.TextChanged += _ =>
+		{
+			SyncSavedStrategySelectToName();
+			UpdateStrategySaveLoadButtons();
+		};
 		_saveStrategyBtn.Pressed += OnSaveStrategyPressed;
 		_loadStrategyBtn.Pressed += OnLoadStrategyPressed;
 		_martingaleCalculator.CloseRequested += OnCalculatorCloseRequested;
@@ -395,6 +400,7 @@ public partial class DiceGame : Control, IBetEventSource
 		SeedRollFromRecentBets(recentOnEntry);
 		Scripts.Diagnostics.SceneEntryProbe.Mark("recentBets");
 		BuildBetDisplayToggle();
+		BuildSavedStrategySelect();
 		Scripts.Diagnostics.SceneEntryProbe.Mark("betViewToggle");
 		LoadActiveNodeFinancialState();
 		Scripts.Diagnostics.SceneEntryProbe.Mark("nodeFinancialState");
@@ -844,6 +850,7 @@ public partial class DiceGame : Control, IBetEventSource
 		});
 
 		SaveActiveNodeStrategySnapshot();
+		RefreshSavedStrategySelect();
 		UpdateStrategySaveLoadButtons();
 	}
 
@@ -882,7 +889,105 @@ public partial class DiceGame : Control, IBetEventSource
 		UpdateAllUI();
 		RefreshCalculatorFromGameSettings();
 		UpdateStrategySaveLoadButtons();
+		// Mini-plan 27 unit 3b: two lines appended, nothing above them changed. The name field was set from code,
+		// which emits no TextChanged, so the dropdown is re-synced here.
+		SyncSavedStrategySelectToName();
+		TraceStrategyDropdown($"[StrategyLoad] '{saved.Name}' -> {_activeNodeId}");
 	}
+
+	// ── The saved-strategies dropdown (mini-plan 27 unit 3b, developer 2026-10-21) ──────────────────────────────
+	// Lists every saved strategy for this game, so one can be loaded onto the player or any bot without typing its
+	// name. Choosing an item only SELECTS it: it writes the name into the name field, and the existing Load button
+	// applies it (D-27.10). Applying on choice would overwrite the active node's panel, unsaved edits included, on a
+	// mis-click. And OnLoadStrategyPressed stays the one apply path. The dropdown never shows a name other than the one
+	// Load will use (Convention 6): editing the field re-selects the matching item, or none.
+	//
+	// Built in code, in the free part of the band between StrategySaveControls (which ends at y 526) and the
+	// bet-history headers (y 574), beside the Bet View button (x 706-966), and above the bottom band (§29.11). Code-built
+	// for now, like its neighbour: every such control moves into a scene at Basic Mode's UI refinement (PRIVATE_ROADMAP
+	// "UI built in scenes").
+	private void BuildSavedStrategySelect()
+	{
+		_savedStrategySelect = new OptionButton
+		{
+			Position = new Vector2(976f, 528f),
+			CustomMinimumSize = new Vector2(280f, 42f),
+			Size = new Vector2(280f, 42f),
+			ClipText = true,
+			TooltipText = "Your saved strategies for this game. Choosing one puts its name in the field on the left; "
+				+ "Load Strategy then applies it to the selected node (the player or a bot).",
+		};
+		_savedStrategySelect.ItemSelected += OnSavedStrategySelected;
+		AddChild(_savedStrategySelect);
+		RefreshSavedStrategySelect();
+	}
+
+	// Rebuilt from the repository on entry and after every Save. DiceGame's repository instance is the only writer
+	// while the scene is open, so nothing else can change the list under it (Pattern 6: no event needed).
+	private void RefreshSavedStrategySelect()
+	{
+		if (_savedStrategySelect == null || _savedStrategyRepository == null)
+		{
+			return;
+		}
+
+		List<string> names = _savedStrategyRepository.GetNamesForGame(GameId);
+		_savedStrategySelect.Clear();
+		foreach (string name in names)
+		{
+			_savedStrategySelect.AddItem(name);
+		}
+
+		ApplySavedStrategySelectAvailability();
+		SyncSavedStrategySelectToName();
+		TraceStrategyDropdown($"[StrategyDropdown] listed {names.Count} for {GameId}");
+	}
+
+	// Disabled with nothing to list, and under the run lock (developer, 2026-10-21): during an autobet the dropdown
+	// is locked like Load, the chance slider and HIGH/LOW. One rule, called from both the refresh and ApplyRunLock,
+	// so it holds whichever of the two runs first on scene entry.
+	private void ApplySavedStrategySelectAvailability()
+	{
+		if (_savedStrategySelect != null)
+		{
+			_savedStrategySelect.Disabled = _runLocked || _savedStrategySelect.ItemCount == 0;
+		}
+	}
+
+	private void OnSavedStrategySelected(long index)
+	{
+		// Setting Text from code emits no TextChanged, so the Load/Save buttons are refreshed by hand.
+		_strategyNameInput.Text = _savedStrategySelect.GetItemText((int)index);
+		UpdateStrategySaveLoadButtons();
+	}
+
+	private void SyncSavedStrategySelectToName()
+	{
+		if (_savedStrategySelect == null)
+		{
+			return;
+		}
+
+		string typed = _strategyNameInput?.Text.Trim() ?? string.Empty;
+		for (int index = 0; index < _savedStrategySelect.ItemCount; index++)
+		{
+			if (string.Equals(_savedStrategySelect.GetItemText(index), typed, StringComparison.OrdinalIgnoreCase))
+			{
+				_savedStrategySelect.Select(index);
+				return;
+			}
+		}
+
+		// No match: nothing selected, and the closed button says what it holds instead of showing a blank.
+		_savedStrategySelect.Select(-1);
+		_savedStrategySelect.Text = _savedStrategySelect.ItemCount == 0
+			? "No saved strategies"
+			: $"Saved strategies ({_savedStrategySelect.ItemCount})";
+	}
+
+	// S9's instruments: read from godot.log afterwards, so they print with GD.Print, DEBUG builds only.
+	[System.Diagnostics.Conditional("DEBUG")]
+	private static void TraceStrategyDropdown(string line) => GD.Print(line);
 
 	private void UpdateStrategySaveLoadButtons()
 	{
@@ -1446,6 +1551,7 @@ public partial class DiceGame : Control, IBetEventSource
 		}
 
 		UpdateStrategySaveLoadButtons();
+		ApplySavedStrategySelectAvailability();
 	}
 
 	/// <summary>

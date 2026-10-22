@@ -422,6 +422,23 @@ speed its frame cannot hold, and the readout would again promise what does not r
 measured delivery instead of a constant is the known answer; it needs a second machine, or a deliberate
 throttle to stand in for one.
 
+### UI built in scenes — code-built controls move into `.tscn` (BASIC MODE refinement)
+
+**Status: open, named 2026-10-21 by the developer (mini-plan 27 unit 3b).** Many controls are created in C# rather
+than placed in a scene: the toggles, selectors and readouts added beside an existing layout without editing its
+`.tscn` (DiceGame's Bet View button and saved-strategies dropdown, the explorer's pace and Per Bet credits controls,
+the DEV selectors, BlockExplorer's balances toggle…). That was the right call while features were landing: it kept
+each change small and its `.tscn` untouched. **It is not how the UI should be designed:** a control built in code
+cannot be seen, moved or styled in the Godot editor, and its position is a literal in a `.cs` file.
+
+**The developer's order: everything works first, then the UI is refined.** At Basic Mode's refinement stage:
+- **Fixed layout controls move into their scene** as `%UniqueName` nodes, and the code keeps only the wiring.
+- **Repeated rows built for a list** become a small row scene that the code instances, which is the shape
+  `PreviousWinnerNumbersRow` already has. These are a different case from the fixed controls.
+- Read `ProjectDesignManual.md` **Ch. 29** first: moving an absolutely positioned control into a container relayouts it.
+- **The inventory is a command, not a list** (Convention 15). Run it when the work starts:
+  `grep -rlE 'new (Button|OptionButton|CheckButton|CheckBox|Label|LineEdit|RichTextLabel|SpinBox|HBoxContainer|VBoxContainer|GridContainer|PanelContainer|MarginContainer|ScrollContainer)\b' --include=*.cs Screens UI`
+
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 
 **Status: deferred 2026-08-13 (developer's call), targeted at Basic Mode.** Split out of mini-plan 02's Part D so the storage work there can proceed without waiting on a new screen. Full write-up: `AIHelperFiles/mini02-panel-state-and-100k-audit-plan.md` §D.6.
