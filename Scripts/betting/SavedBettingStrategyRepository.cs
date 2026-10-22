@@ -27,6 +27,9 @@ namespace Scripts.Betting
 
 		public bool HasAny => _strategies.Count > 0;
 
+		// Every saved strategy, all games (mini-plan 27 unit 5: the User Settings scene shows the creations layer).
+		public int Count => _strategies.Count;
+
 		public bool HasAnyForGame(string gameId)
 		{
 			return _strategies.Any(s =>

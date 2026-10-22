@@ -17,6 +17,20 @@ public static class WalletInitializationService
 	// One copy of the path: the repository's (mini-plan 27, Convention 15).
 	private const string HardwareAllocationPath = HardwareAllocationRepository.SavePath;
 
+	// The IDENTITY class, named once (mini-plan 27 unit 5): the five wallet seeds, the bot identities and the seed-phrase
+	// wordlist. A world wipe spares them by design (CLAUDE.md Pattern 2's exempt set); only the player's "Wipe
+	// everything" deletes them, and its confirmation lists them from here, so it names exactly what it will take.
+	public static readonly IReadOnlyList<string> IdentityFilePaths = new[]
+	{
+		PlayerWalletPath,
+		CasinoWalletPath,
+		SatoshiWalletPath,
+		HalWalletPath,
+		MikeHearnWalletPath,
+		BotWalletRegistry.RegistryPath,
+		WordlistBootstrapper.StorePath,
+	};
+
 	private static readonly string[] HardwareNodeIds = { "player", "bot_1", "bot_2", "bot_3", "bot_4" };
 
 	private static readonly JsonSerializerOptions JsonOptions = new()

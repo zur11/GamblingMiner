@@ -294,6 +294,33 @@ public partial class UserSettingsService : Node
 		}
 	}
 
+	/// <summary>
+	/// The keys that hold a value, i.e. every preference not at its default (mini-plan 27 unit 5: the User Settings
+	/// scene lists them). DEV keys only in a DEBUG build, matching what the getters return.
+	/// </summary>
+	public IReadOnlyList<string> GetSetKeys()
+	{
+		var keys = new List<string>();
+		if (_settings.DiceGame?.BetView != null) keys.Add(Keys.DiceBetView);
+		BetsExplorerSection? explorer = _settings.BetsExplorer;
+		if (explorer?.Pace != null) keys.Add(Keys.ExplorerPace);
+		if (explorer?.Speed != null) keys.Add(Keys.ExplorerSpeed);
+		if (explorer?.PerBetCredits != null) keys.Add(Keys.ExplorerPerBetCredits);
+		if (explorer?.LatestWinnerOnly != null) keys.Add(Keys.ExplorerLatestWinnerOnly);
+		if (_settings.StrategyPanel != null)
+		{
+			foreach (string nodeId in _settings.StrategyPanel.Keys)
+			{
+				keys.Add(Keys.StrategyPanel + "." + nodeId);
+			}
+		}
+#if DEBUG
+		if (_settings.Dev?.RequestedTimeScale != null) keys.Add(Keys.DevRequestedTimeScale);
+		if (_settings.Dev?.ShowCasinoScBalances != null) keys.Add(Keys.DevShowCasinoScBalances);
+#endif
+		return keys;
+	}
+
 	private (int Keys, int DevKeys) CountKeys()
 	{
 		int keys = 0;

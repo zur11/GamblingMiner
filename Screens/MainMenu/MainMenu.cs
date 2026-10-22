@@ -34,6 +34,7 @@ public partial class MainMenu : Control
 		GetNode<Button>("%CasinoGamblingFinancesBtn").Pressed  += () => _sceneManager?.Go(SceneManager.SceneId.CasinoGamblingFinances);
 		GetNode<Button>("%WorldEconomyBtn").Pressed             += () => _sceneManager?.Go(SceneManager.SceneId.WorldEconomy);
 		GetNode<Button>("%CentralBankBtn").Pressed              += () => _sceneManager?.Go(SceneManager.SceneId.CentralBank);
+		GetNode<Button>("%UserSettingsBtn").Pressed             += () => _sceneManager?.Go(SceneManager.SceneId.UserSettings);
 		GetNode<Button>("%ExitBtn").Pressed                     += OnExitPressed;
 	}
 
@@ -76,13 +77,10 @@ public partial class MainMenu : Control
 		return "The world will resume from the last mined block (" + when + ").\nBets placed since then will be undone.";
 	}
 
-	// No weaker than the window's X: the close request is propagated to every node first, so each existing
-	// NotificationWMCloseRequest handler (BankrollStateService, CasinoScBalanceService) — and any future one — flushes
-	// exactly as it does on X, and only then does the tree quit. A bare Quit() would not deliver that notification.
+	// The quit itself is SceneManager's since mini-plan 27 (User Settings quits the same way), so there is one copy.
 	private void QuitLikeTheWindowClose()
 	{
-		GD.Print("[Exit] close request propagated"); // the Godot editor's OUTPUT panel
-		GetTree().Root.PropagateNotification((int)NotificationWMCloseRequest);
-		GetTree().Quit();
+		if (_sceneManager != null) _sceneManager.QuitLikeTheWindowClose();
+		else GetTree().Quit(); // never leave Exit doing nothing
 	}
 }

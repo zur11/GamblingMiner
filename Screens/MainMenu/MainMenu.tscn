@@ -200,6 +200,15 @@ layout_mode = 2
 
 [node name="Footer" type="HBoxContainer" parent="RootMargin/RootVBox"]
 layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="UserSettingsBtn" type="Button" parent="RootMargin/RootVBox/Footer"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 26
+text = "User Settings"
 
 [node name="ExitBtn" type="Button" parent="RootMargin/RootVBox/Footer"]
 unique_name_in_owner = true

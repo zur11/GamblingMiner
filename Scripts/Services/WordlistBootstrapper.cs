@@ -10,7 +10,7 @@ public static class WordlistBootstrapper
 	public record WordEntry(int Index, string Word);
 
 	private const string SourcePath = "res://Scripts/BlockchainPort/BIP-0039/bip39_2048.txt";
-	private const string StorePath = "user://wordlist_256.json";
+	public const string StorePath = "user://wordlist_256.json"; // public for WalletInitializationService.IdentityFilePaths
 	private const int SubsetSize = 256;
 
 	private static readonly JsonSerializerOptions JsonOptions = new()

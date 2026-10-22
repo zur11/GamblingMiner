@@ -8263,6 +8263,23 @@ public partial class NetworkRoot : Node
 				  (timelineChanged ? $", timeline '{storedTimelineTag}' → '{TimelineConfig.Tag}'" : string.Empty));
 	}
 
+	// The DEV traces a world wipe deletes. Public since mini-plan 27 unit 5, because the User Settings scene's "Reset
+	// world" confirmation names them, and it must name exactly what WipeWorld takes (Standing Convention 6: a displayed
+	// signal shares its source with the action it advertises). Every OTHER file in user://logs/ is evidence, exempt by
+	// class, and keeps appending in the new world (RankCalibrationTrace, the profilers).
+	public static readonly IReadOnlyList<string> WorldTracePaths = new[]
+	{
+		"user://logs/difficulty_trace.csv",
+		"user://logs/founders_trace.csv",
+		"user://logs/swap_desk_trace.csv",
+		"user://logs/network_population_trace.csv",
+		CompanyFoundingTracePath, // ND.6b — was missing since ND.5 (same reasoning as the others); ND.8b.2 renamed the file
+		CompanyGovernanceTracePath, // ND.8b.3 — added WITH the feature (the TL.3/ND.6b rule)
+		CasinoBotBidTracePath,
+		BankCreditTracePath, // Step 15 P15.3a — added WITH the feature (the TL.3/ND.6b rule)
+		Scripts.Sessions.SessionLifecycleTrace.TracePath, // mini-plan 05 D2 — added WITH the feature
+	};
+
 	// Mini-plan 27 unit 4 (D-27.8) — THE world wipe, and the only one. Extracted unchanged in what it deletes from
 	// ResetWorldIfIncompatible, which calls it on a format or timeline mismatch; the player's "Reset world" request
 	// (PlayerResetRequest, performed by WorldGuardService before anything loads) calls it too. One delete list, so the
@@ -8319,15 +8336,8 @@ public partial class NetworkRoot : Node
 
 		// DEV trace telemetry: not player-visible, but rows dated under the other timeline would make the
 		// traces unreadable (founders_trace is actively used to verify founder pacing) — start them fresh.
-		DeleteIfExists("user://logs/difficulty_trace.csv");
-		DeleteIfExists("user://logs/founders_trace.csv");
-		DeleteIfExists("user://logs/swap_desk_trace.csv");
-		DeleteIfExists("user://logs/network_population_trace.csv");
-		DeleteIfExists(CompanyFoundingTracePath); // ND.6b — was missing since ND.5 (same reasoning as the others); ND.8b.2 renamed the file
-		DeleteIfExists(CompanyGovernanceTracePath); // ND.8b.3 — added WITH the feature (the TL.3/ND.6b rule)
-		DeleteIfExists(CasinoBotBidTracePath);
-		DeleteIfExists(BankCreditTracePath); // Step 15 P15.3a — added WITH the feature (the TL.3/ND.6b rule)
-		DeleteIfExists(Scripts.Sessions.SessionLifecycleTrace.TracePath); // mini-plan 05 D2 — added WITH the feature
+		foreach (string trace in WorldTracePaths)
+			DeleteIfExists(trace);
 
 		// The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
 		// and the betting stats rebuild from a pristine world.

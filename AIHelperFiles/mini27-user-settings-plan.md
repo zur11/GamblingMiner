@@ -11,11 +11,11 @@ over §3.4.** **D-27.9 is answered (2026-10-21): "Wipe everything" is the
 equivalent of deleting the whole user data folder**, identity files and logs included. **Amended again the same day
 with a new objective: a saved-strategies dropdown in DiceGame (unit 3b, §5; S9; D-27.10, answered: select, then
 Load).** Unit 3 also makes both creations writers atomic (developer, 2026-10-21; §5).
-**Order:** unit 1 → unit 2 → unit 3 → unit 3b → unit 4 → unit 5 → unit 6 → V1 (with V1b) → close-out.
+**Order:** unit 1 → unit 2 → unit 3 → unit 3b → unit 4 → unit 5 → unit 6 → V1 (with V1b and V1c) → close-out.
 **Unit 1 ✅ built (§4). Unit 2 ✅ built (§5). Unit 3 ✅ built (§5), and corrected by §3.5 (the hardware credits stay
 in the world)**: the first launch after it moves the two creations (S6). **D-27.11 answered: "Reset preferences"
-does not touch the hardware credits.** **Unit 3b ✅ built (§5). Unit 4 ✅ built (§5).** Next: **unit 5**, the User
-Settings scene.
+does not touch the hardware credits.** **Unit 3b ✅ built (§5). Unit 4 ✅ built (§5). Unit 5 ✅ built (§5).** Next: **unit 6**,
+the docs; then V1 (with V1b and V1c).
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
 
@@ -166,9 +166,13 @@ wipe, not that they should not. What the developer wants is **two layers of play
 - **One wipe, not two.** "Reset world" calls the **same** code a format bump does. Unit 4 extracts the body of
   `ResetWorldIfIncompatible` into `WipeWorld(reason)` and calls it from both places. A second delete list would rot
   exactly as the first one did.
-- **The rank trace rule still applies.** "Reset world" deletes the `user://logs` traces on the delete list, so the
-  scene's confirmation names `rank_calibration_trace.csv` and the other traces it will take, which lets the
-  developer rename them first. The archived `*_F1`/`*_M1`/`*_M2` files are not on the list and are untouched.
+- **The rank trace rule still applies, but not for the reason this bullet first gave.** *Corrected at unit 5,
+  against the code:* `rank_calibration_trace.csv` is **not** on the delete list. `user://logs/*` is evidence,
+  exempt by class, and a kept trace **keeps appending in the new world**. So the reason to rename it first is to
+  keep R3's rows apart from the next world's, not to save it from deletion. The confirmation says both things. It
+  names the traces the wipe **deletes** (from `NetworkRoot.WorldTracePaths`, the array `WipeWorld` iterates), and it
+  says that every other file in `user://logs/` is kept and continues, citing the rank trace by its symbol. The
+  archived `*_F1`/`*_M1`/`*_M2` files are not on the list and are untouched.
 
 **The developer's answer to D-27.2: (a).** The existing files move **once**, at startup, by a rename of the same
 bytes: the two creations into layer 1. The developer's strategies and notes are kept. The rename code is deleted at
@@ -395,6 +399,27 @@ disabled, instead of a blank. The two traces are `[Conditional("DEBUG")]` and pr
 - **Read `ProjectDesignManual.md` Ch. 29 before building it** if it holds a `ScrollContainer`. The Back button goes in
   a fixed footer outside any scroll (§29.10).
 
+**✅ Unit 5 built 2026-10-21** (`Screens/UserSettings/`, after reading Ch. 29 §29.1–§29.5, §29.10 and §29.11).
+- **Layout:** Pattern A. `RootMargin` (`margin_bottom = 50`, §29.11) → `RootVBox` → `ContentScroll` (expands,
+  horizontal scroll off) → `ContentVBox`. Every control in the content chain is on `mouse_filter = PASS`, and the
+  long labels wrap (§29.6). The Back button sits in a **fixed footer outside the scroll**, the `ScTransactions`
+  shape.
+- **It shows** the creations (strategies and notes by count, and the folder) and the preferences (each key that
+  holds a value, and the folder). A pending request appears with a **Cancel** button.
+- **The three actions**, each behind a `ConfirmationDialog`. Each confirmation names what it deletes **from the
+  source the reset deletes from** (Convention 6):
+  - "Reset world" lists `NetworkRoot.WorldTracePaths`. That array is new: `WipeWorld` now iterates it instead of
+    holding nine literal `DeleteIfExists` lines, so the dialog and the wipe cannot disagree.
+  - "Wipe everything" lists `WalletInitializationService.IdentityFilePaths`, also new: the five seeds,
+    `BotWalletRegistry.RegistryPath` and `WordlistBootstrapper.StorePath`, both made public. It shows the user
+    folder's absolute path, says to copy anything worth keeping out first, and **asks twice**.
+- **Confirming** writes the request. If the write succeeds, the game closes through
+  `SceneManager.QuitLikeTheWindowClose`, which moved there from MainMenu so that both scenes use one copy. If it
+  fails, nothing is reset and the game stays open to say why.
+- **Reached from MainMenu's fixed footer**, beside Exit. `SceneId.UserSettings` was added the three-step way: 26 ids
+  and 26 paths.
+- **Built in `.tscn`**, not in code, apart from the dialogs, which follow MainMenu's Exit dialog.
+
 **Unit 6 — the docs, in the same branch** (was unit 4):
 - **CLAUDE.md:** the autoload table gains row #20, "19 autoloads" becomes 20, Pattern 2 names the
   `user://player/` class, and **one sentence is added to Pattern 2's third question**: a player-owned file goes under
@@ -443,6 +468,15 @@ come out of it untouched. So the file is moved **out of `user://`** for one laun
    then press **Save** again. Close the game.
 4. **I** restore the file and check its hash against step 2. The probe strategy disappears with the restore, so
    nothing of the test is left in your strategies.
+
+**Protocol V1c — the User Settings scene (S7), on R3's world.** "Reset preferences" touches neither the world nor
+the creations, so it is safe on R3. The other two resets are only **opened and cancelled** here:
+1. From MainMenu, open **User Settings**. Then open **Reset world** → **Cancel**, and open **Wipe everything** →
+   **Continue** → **Cancel** at the last confirmation. Nothing is written by either.
+2. Press **Reset preferences** and confirm. The game closes.
+3. Launch again, open DiceGame and close. **I** then read `godot.log`'s `[Reset]` lines and the files: the
+   preferences are gone and are at their defaults, and the strategies, the tip height and the hardware credits are
+   unchanged (S7).
 
 ---
 
