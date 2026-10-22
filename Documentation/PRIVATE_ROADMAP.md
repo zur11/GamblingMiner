@@ -656,6 +656,22 @@ signature (1.84 ms per input).
 
 The per-node `BlockchainService` is already acknowledged as vestigial — a comment in `NetworkRoot` says *"single-shared-chain design (every node already holds the same canonical chain via BroadcastBlock)"* (grep the phrase; this cited `~L5209` until 2026-08-23, by which point the line had moved ~900 lines — Standing Convention 15), and `RunConsensusRound` was deleted at T2 for the same reason. A single shared chain + one shared UTXO index, with `NodeAgent` reduced to identity + owned addresses, removes the 62× invalidation storm at its source and collapses `BroadcastBlock` to a no-op. **Blocked-by-design consideration:** per-node chains are the substrate the deferred **Divergent Chains / Fork Simulation** wants. The honest resolution is to make the shared chain the default and reintroduce per-node chains *deliberately* when forks ship, rather than paying for 62 unused copies for years.
 
+#### T4.3 — The boot takes about a minute, and 95% of it is unattributed (measured 2026-10-22)
+
+**Status: open, measured, not split.** The developer reported during mini-plan 27's verification that launching had
+grown to "almost half a minute". The first measurement (`Scripts/Diagnostics/BootProbe.cs`, R3's world at height
+3,968, a 22.5 MB `chain.jsonl`) found it longer than that: **57.7 s from the engine's start to MainMenu, and 59.4 s on
+the developer's stopwatch.** After a C# rebuild it was 67.6 s and 77.3 s.
+- **54.7 s of the 57.7 s lie between the first autoload and the last** (#2–#19). Nothing in that stretch is timed.
+- The first autoload (`WorldGuardService`) takes 15 ms, the last (`UserSettingsService`) 0.6 ms, and MainMenu 64 ms.
+- **The candidate, not yet measured:** `NetworkRoot.EnsureInitialized`. It loads the world, registers roughly 72
+  nodes, applies the snapshot to each, and rescans the derived wallets. That is T4.2's "62 copies" shape, and it
+  grows with the chain.
+- **Whether it has doubled cannot be known:** nothing measured the boot before 2026-10-22.
+- **Next step, when scheduled:** extend `BootProbe` with a mark at the start and end of each autoload (and inside
+  `EnsureInitialized`). Then attribute the 55 s **before** changing anything (§40.7). Compare within one session
+  (Pattern 6, rule 3).
+
 ### T5 — Dev shell: PowerShell 5.1 → 7 migration — ⏸️ DEFERRED by decision (2026-08-06), not by oversight
 
 **Decision: stay on Windows PowerShell 5.1 until a migration is FORCED.** Reviewed 2026-08-06 and deliberately deferred: the gain is developer comfort, the risk is nonzero, and nothing in the project is blocked. Revisit only on one of the triggers below — not on general preference.

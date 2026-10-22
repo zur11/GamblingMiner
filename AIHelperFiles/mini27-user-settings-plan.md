@@ -15,8 +15,9 @@ Load).** Unit 3 also makes both creations writers atomic (developer, 2026-10-21;
 **Unit 1 ✅ built (§4). Unit 2 ✅ built (§5). Unit 3 ✅ built (§5), and corrected by §3.5 (the hardware credits stay
 in the world)**: the first launch after it moves the two creations (S6). **D-27.11 answered: "Reset preferences"
 does not touch the hardware credits.** **Unit 3b ✅ built (§5). Unit 4 ✅ built (§5). Unit 5 ✅ built (§5). Unit 6 ✅ built
-(§5).** **Verification: launches A–C done, every prediction so far holds (§6.3).** Next: **launch D**, with
-`BootProbe` timing the boot the developer reported as slower (§6.3).
+(§5).** **Verification done (§6.3, §6.4):** S1, S2, S3, S5, S6, S7 and S9 hold. S4 and S8's code half were measured at 0
+and at one wipe with two callers; S8's run waits for a wipe the developer chooses. The boot the developer reported
+as slower was measured: **not this plan's** (≤ 0.09 s of 58–68 s). Next: **close-out**.
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
 
@@ -575,6 +576,50 @@ double what it used to, not measured.** Checked first:
   "Reset preferences", and UserSettingsService's under 50 ms. If either is in seconds, this plan caused the
   slowdown. If MainMenu's total is far below what the developer feels, the time is spent before the engine
   starts, in the editor's rebuild and launch.
+
+### 6.4 — Results (launches D and E, 2026-10-22)
+
+**S7 holds.** Launch D printed `[Reset] performing 'ResetPreferences'` and `deleted user://player/preferences/settings.json`
+(1 deleted, 0 skipped), and the request was consumed. Afterwards `preferences/` was empty and the game ran at
+defaults. These were all unchanged: the strategies (`10fab9ed593e7122`), the hardware credits (`7a21a42a44c9d375`)
+and the chain (3,968 lines). The dropdown still listed 13.
+
+**The boot, measured** (BootProbe, ms since the engine's start; the developer's stopwatch from pressing Play to
+the menu):
+
+| | D (first launch after a rebuild; a reset pending) | E (straight after, no rebuild) |
+|---|---|---|
+| Before the engine starts (stopwatch − MainMenu) | ≈ 9.7 s | ≈ 1.7 s |
+| Engine start → first autoload | 5,547 ms | 2,894 ms |
+| **WorldGuardService** (all this plan's added boot work) | **90.1 ms** | **15.2 ms** |
+| **Autoloads #2–#19** | **61,849 ms** | **54,703 ms** |
+| **UserSettingsService** (new in this plan) | **0.6 ms** | **0.6 ms** |
+| UserSettingsService → MainMenu ready | 72 ms | 64 ms |
+| MainMenu ready / stopwatch | 67.6 s / **77.3 s** | 57.7 s / **59.4 s** |
+
+**Against the prediction registered before D:**
+- "WorldGuardService under 50 ms": **refuted for D (90.1 ms)**, which ran a pending reset and was the first
+  launch after a rebuild. **It holds for E (15.2 ms).** Either way the figure is milliseconds, not seconds.
+- "UserSettingsService under 50 ms": **holds** (0.6 ms in both).
+- **This plan did not cause the slowdown.** Its boot work is at most 0.09 s of 58–68 s. The code it changed
+  inside autoloads #2–#19 is the hardware repository's load, now wrapped in a try/catch, plus two static arrays.
+  The world wipe is not run on a compatible world, and nothing else of this plan executes there.
+- **The rebuild explains D's extra ~18 s over E:** about 8 s before the engine starts, and 2.6 s of assembly
+  start-up.
+
+**Where the time is: 55–62 s inside autoloads #2–#19, and not attributed further.** No line in that stretch is
+timed. The world's initialization (`NetworkRoot.EnsureInitialized`) runs there:
+- it loads a 22.5 MB `chain.jsonl` and a 2 MB `state.json`;
+- it registers every node (4 miner bots, 40 non-miners, 24 cast miners, the casino, 3 founders);
+- it applies the snapshot to each, and rescans the derived wallets.
+That is the candidate. **It is a candidate, not a measurement.** It is the shape `PRIVATE_ROADMAP.md` §8 T4.2
+already names ("one canonical chain + one UTXO set, instead of 62 copies"), and it grows with the chain.
+**Whether the boot really doubled cannot be checked:** nothing measured it before this plan. The world grew 13%
+since the last pre-plan log. **Recorded as a measured open item in §8 T4, out of this plan's scope; `BootProbe`
+stays for whoever splits it.**
+
+**S8** remains as specified: its code half was measured at unit 4 (one `WipeWorld`, two callers), and its run waits
+for a wipe the developer chooses.
 
 ---
 
