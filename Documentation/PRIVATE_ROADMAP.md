@@ -108,12 +108,14 @@ Workflow). **Item 1 of 2026-10-12, Step 17.A + 17.C, is ✅ DONE (mini-plan 25, 
 small item (its 17.A2). Both rows, and the two §6 checklist items they closed, are in `ROADMAP_ARCHIVE.md`. Mini-plan
 25's measurement F1 inserted the new item 1, and the developer approved it with F1's commit. **That item 1, the
 per-block freeze, is ✅ DONE (mini-plan 26, 2026-10-20):** a block went from 4,858 ms to 416 ms in the same session.
-Its row is in `ROADMAP_ARCHIVE.md`. **The next item is 2.** The numbers below are kept as they were, because other
-documents cite them.
+Its row is in `ROADMAP_ARCHIVE.md`. **Item 2, user settings persistence, is ✅ DONE (mini-plan 27, 2026-10-22).** Its
+row and the §6 item it closed are in `ROADMAP_ARCHIVE.md`. **The next item is 2b, the boot time**, which the developer
+inserted on 2026-10-22, before item 3. It is numbered 2b so that nothing below is renumbered: the numbers are kept
+as they were, because other documents cite them.
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **2** | **User settings persistence** | §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
+| **2b** | **The boot time** (§8 **T4.7**): attribute the ~55 s inside autoloads #2–#19 first, then fix the main cost | §8 T4.7 · mini-plan 27 §6.4 (the measurement) | **Inserted by the developer (2026-10-22)** after mini-plan 27 measured the boot at 57.7 s (59.4 s felt). A minute per launch is paid at every test, and that plan's verification alone took six |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
@@ -161,6 +163,13 @@ Done when a player can explain where money moved after a 15-minute session.
 ### P5 - Hardware Progression
 
 Goal: make speed upgrades meaningful without breaking the learned rule.
+
+> **⚠ Constraint from mini-plan 27 (2026-10-21, `mini27-user-settings-plan.md` §3.5).** The hardware credits are
+> **world state**: a world reset or a format bump returns every node to 1 individual-pool credit (the developer's
+> decision, because outside DEV hardware is bought with the players' money). What P5 inherits is the **restart
+> revert**: the block checkpoint does **not** restore hardware credits. Today that is harmless, because credits cost
+> nothing. **Once P5 prices hardware in SC, a purchase between blocks changes the SC, which a restart reverts, and the
+> credits, which it does not.** P5 must give hardware a checkpoint restore path (CLAUDE.md Pattern 2's first question).
 
 - Hardware increases the maximum allowed bets per real second.
 - Each extra bet still equals one nonce attempt.
@@ -415,6 +424,23 @@ speed its frame cannot hold, and the readout would again promise what does not r
 measured delivery instead of a constant is the known answer; it needs a second machine, or a deliberate
 throttle to stand in for one.
 
+### UI built in scenes — code-built controls move into `.tscn` (BASIC MODE refinement)
+
+**Status: open, named 2026-10-21 by the developer (mini-plan 27 unit 3b).** Many controls are created in C# rather
+than placed in a scene: the toggles, selectors and readouts added beside an existing layout without editing its
+`.tscn` (DiceGame's Bet View button and saved-strategies dropdown, the explorer's pace and Per Bet credits controls,
+the DEV selectors, BlockExplorer's balances toggle…). That was the right call while features were landing: it kept
+each change small and its `.tscn` untouched. **It is not how the UI should be designed:** a control built in code
+cannot be seen, moved or styled in the Godot editor, and its position is a literal in a `.cs` file.
+
+**The developer's order: everything works first, then the UI is refined.** At Basic Mode's refinement stage:
+- **Fixed layout controls move into their scene** as `%UniqueName` nodes, and the code keeps only the wiring.
+- **Repeated rows built for a list** become a small row scene that the code instances, which is the shape
+  `PreviousWinnerNumbersRow` already has. These are a different case from the fixed controls.
+- Read `ProjectDesignManual.md` **Ch. 29** first: moving an absolutely positioned control into a container relayouts it.
+- **The inventory is a command, not a list** (Convention 15). Run it when the work starts:
+  `grep -rlE 'new (Button|OptionButton|CheckButton|CheckBox|Label|LineEdit|RichTextLabel|SpinBox|HBoxContainer|VBoxContainer|GridContainer|PanelContainer|MarginContainer|ScrollContainer)\b' --include=*.cs Screens UI`
+
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 
 **Status: deferred 2026-08-13 (developer's call), targeted at Basic Mode.** Split out of mini-plan 02's Part D so the storage work there can proceed without waiting on a new screen. Full write-up: `AIHelperFiles/mini02-panel-state-and-100k-audit-plan.md` §D.6.
@@ -524,29 +550,6 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 > questions are in §7. Game over is `Private Bank Account + Main Balance + Bankroll = 0` (CLAUDE.md, Canonical
 > Decisions).
 
-- [ ] **User settings persistence — a real design, which does not exist yet.** Player-owned settings are
-  scattered across ad-hoc files with no shared rule for what survives a world wipe. The visible symptom
-  (2026-09-15, v6 → v7 reset): `saved_betting_strategies.json` survives every wipe because it sits in the
-  exempt set (`NetworkRoot.ResetWorldIfIncompatible`, CLAUDE.md Pattern 2), and the developer expected it to
-  be deleted. **Do not fix that file alone.** Decide once which settings belong to the player (survive a
-  wipe) and which to the world (wiped with it), then give them one persistence home. Required for Basic Mode.
-
-  **What is waiting for it** — the list is kept here, because each of these is currently a *decision deferred*,
-  and a deferral nobody wrote down becomes an omission. Add a line whenever a feature ships a setting with no
-  home; that is the cost signal telling us when this is due.
-
-  | setting | today | belongs to |
-  |---|---|---|
-  | Saved betting strategies | `saved_betting_strategies.json`, exempt from the wipe — survives, which surprised the developer | the player, probably — but the surprise says the rule was never stated, not that the file is wrong |
-  | **Bet View: Detailed / Last 10 / Latest only / OFF** (mini-plan 10; the two Numbers modes since mini-plan 25 17.A2) | not persisted; resets to Detailed on every DiceGame entry | the player. A **view preference only**: after mini-plan 10 both states cost the same (~0.025 ms per bet) and both reach the clock's ceiling, so forgetting it changes nothing but what is on screen. *(Until 2026-09-21 this row called it a speed choice with a higher hidden budget. That was the design before the list got cheap, and the two-budget plan was never built.)* |
-  | DEV time scale (the requested one) | not persisted | DEV, but the same mechanism |
-  | **Bets explorer replay pace, speed and Per Bet credits** (mini-plan 20 F) | not persisted; every entry opens **As Played** at 1x (Per Bet at 1 credit when toggled) | the player. A **view preference**, like Bet View |
-| **Bets explorer winning-numbers view: Last 10 / Latest only** (mini-plan 23 E) | a `static` in `BetsHistoryExplorer`: survives scene changes, resets to Last 10 at every launch | the player. A **view preference** |
-  | **BlockExplorer's casino players' SC balances, shown / hidden** (DEV, mini-plan 25 17.A7) | a `static` in `BlockExplorer`: survives scene changes, resets to shown at every launch | DEV, but the same mechanism |
-  | DEV player credits ladder (mini-plan 20 Part 0) | writes the real hardware state (`hardware_allocation.json`), so it persists as a shop purchase does | **world**, deliberately: it is a shortcut to the shop, not a setting of its own |
-  | The strategy panel's last-used values | not persisted; distinct from a *saved* strategy | the player |
-  | Anything a future options menu holds | does not exist | the player |
-
 - [~] **Clarify auto-recharge behavior in UI and docs.** Docs done (ProjectDesignManual Ch. 25 + CLAUDE.md). The UI
   warning when auto-recharge is OFF is still pending (P2).
 - [ ] **Hal's network-coupled fade:** replace the linear `1.0 → 0` stand-in once gradual miner spawning exists.
@@ -616,7 +619,7 @@ signature (1.84 ms per input).
     secp256k1, then governance, auctions and the checkpoint, none above 20%. T4.2 remains the structural answer to
     the fan-out itself.
 
-**Status at 2026-10-12 — only T4.2 is open.** The rest shipped, and their specifications and measurements
+**Status at 2026-10-12 — only T4.2 is open** *(and since 2026-10-22, T4.7, the boot time, below)*. The rest shipped, and their specifications and measurements
 (T4.0, T4.0b, T4.1, T4.3–T4.6) are in `ROADMAP_ARCHIVE.md`:
 - **T4.6**, the per-block cost budget: mini-plan 13.
 - **T4.5**, the chain split out of the snapshot and appended, never rewritten: mini-plan 14.
@@ -628,6 +631,24 @@ signature (1.84 ms per input).
 #### T4.2 — One canonical chain + one UTXO set, instead of 62 copies
 
 The per-node `BlockchainService` is already acknowledged as vestigial — a comment in `NetworkRoot` says *"single-shared-chain design (every node already holds the same canonical chain via BroadcastBlock)"* (grep the phrase; this cited `~L5209` until 2026-08-23, by which point the line had moved ~900 lines — Standing Convention 15), and `RunConsensusRound` was deleted at T2 for the same reason. A single shared chain + one shared UTXO index, with `NodeAgent` reduced to identity + owned addresses, removes the 62× invalidation storm at its source and collapses `BroadcastBlock` to a no-op. **Blocked-by-design consideration:** per-node chains are the substrate the deferred **Divergent Chains / Fork Simulation** wants. The honest resolution is to make the shared chain the default and reintroduce per-node chains *deliberately* when forks ship, rather than paying for 62 unused copies for years.
+
+#### T4.7 — The boot takes about a minute, and 95% of it is unattributed (measured 2026-10-22)
+
+**Status: open, measured, not split; scheduled as ▶ NEXT item 3 (mini-plan 28, developer 2026-10-22).** *(Committed
+first as "T4.3" in `18b6f59`. That number already belongs to the address → outpoint index, mini-plan 17, so this
+entry is T4.7, the next free number; Convention 16.)* The developer reported during mini-plan 27's verification that launching had
+grown to "almost half a minute". The first measurement (`Scripts/Diagnostics/BootProbe.cs`, R3's world at height
+3,968, a 22.5 MB `chain.jsonl`) found it longer than that: **57.7 s from the engine's start to MainMenu, and 59.4 s on
+the developer's stopwatch.** After a C# rebuild it was 67.6 s and 77.3 s.
+- **54.7 s of the 57.7 s lie between the first autoload and the last** (#2–#19). Nothing in that stretch is timed.
+- The first autoload (`WorldGuardService`) takes 15 ms, the last (`UserSettingsService`) 0.6 ms, and MainMenu 64 ms.
+- **The candidate, not yet measured:** `NetworkRoot.EnsureInitialized`. It loads the world, registers roughly 72
+  nodes, applies the snapshot to each, and rescans the derived wallets. That is T4.2's "62 copies" shape, and it
+  grows with the chain.
+- **Whether it has doubled cannot be known:** nothing measured the boot before 2026-10-22.
+- **Next step, when scheduled:** extend `BootProbe` with a mark at the start and end of each autoload (and inside
+  `EnsureInitialized`). Then attribute the 55 s **before** changing anything (§40.7). Compare within one session
+  (Pattern 6, rule 3).
 
 ### T5 — Dev shell: PowerShell 5.1 → 7 migration — ⏸️ DEFERRED by decision (2026-08-06), not by oversight
 

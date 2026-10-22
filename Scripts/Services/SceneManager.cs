@@ -30,6 +30,7 @@ public partial class SceneManager : Node
 		CompanyDetails,
 		WorldEconomy,
 		CentralBank,
+		UserSettings, // mini-plan 27 unit 5 — the player's two layers and the three resets
 	}
 
 	private static readonly Dictionary<SceneId, string> Paths = new()
@@ -59,6 +60,7 @@ public partial class SceneManager : Node
 		[SceneId.CompanyDetails]           = "res://Screens/CompanyDetails/CompanyDetails.tscn",
 		[SceneId.WorldEconomy]              = "res://Screens/WorldEconomy/WorldEconomy.tscn",
 		[SceneId.CentralBank]               = "res://Screens/CentralBank/CentralBank.tscn",
+		[SceneId.UserSettings]              = "res://Screens/UserSettings/UserSettings.tscn",
 	};
 
 	// Overlay stack: scenes added on top without replacing the current scene.
@@ -107,5 +109,16 @@ public partial class SceneManager : Node
 		foreach (Node overlay in _overlayStack)
 			if (GodotObject.IsInstanceValid(overlay)) overlay.QueueFree();
 		_overlayStack.Clear();
+	}
+
+	// Mini-plan 23 A, moved here from MainMenu at mini-plan 27 unit 5 (User Settings quits too, after requesting a
+	// reset): no weaker than the window's X. The close request is propagated to every node first, so each existing
+	// NotificationWMCloseRequest handler (BankrollStateService, CasinoScBalanceService) — and any future one — flushes
+	// exactly as it does on X, and only then does the tree quit. A bare Quit() would not deliver that notification.
+	public void QuitLikeTheWindowClose()
+	{
+		GD.Print("[Exit] close request propagated"); // the Godot editor's OUTPUT panel
+		GetTree().Root.PropagateNotification((int)NotificationWMCloseRequest);
+		GetTree().Quit();
 	}
 }

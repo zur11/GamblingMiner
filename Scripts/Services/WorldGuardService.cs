@@ -16,6 +16,15 @@ public partial class WorldGuardService : Node
 {
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.Mark("first autoload (WorldGuardService) starts");
+		// Mini-plan 27 unit 4 — a reset the player requested in an earlier session (User Settings), performed before
+		// anything has loaded a file it deletes. It runs first because it is the player's explicit instruction. After a
+		// "Wipe everything" the two steps below meet an empty folder and behave exactly as on a first launch.
+		PlayerResetRequest.PerformPending();
+		// Mini-plan 27 unit 3 — the player files are in user://player/ before anything reads them, and out of the
+		// guard's reach before it runs. Deleted with LegacyPlayerFileRelocation (see that file).
+		LegacyPlayerFileRelocation.Run();
 		NetworkRoot.RunWorldCompatibilityGuard();
+		Scripts.Diagnostics.BootProbe.Mark("WorldGuardService done");
 	}
 }

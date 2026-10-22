@@ -16,8 +16,9 @@ public partial class CalendarTimeService : Node
 	// ladder of offered steps is DevTimeScaleSelector.Multipliers, never restated here — its top step is
 	// asserted against MaxGameSecondsPerRealSecond below). It scales BOTH the calendar clock (here) and the bet-execution rate
 	// (SimulationService._Process), keeping attempts-per-IN-GAME-second — and therefore the difficulty /
-	// power / solvetime dynamics — mathematically invariant. Only wall-clock time compresses. NOT persisted;
-	// resets to 1 on restart. Set via the DEV time-scale selector in DiceGame / BlockExplorer.
+	// power / solvetime dynamics — mathematically invariant. Only wall-clock time compresses. Not persisted here:
+	// the developer's REQUEST is a DEV preference that DevTimeScaleSelector saves and restores (mini-plan 27), and
+	// this effective value is re-derived from it. Set via the DEV time-scale selector in DiceGame / BlockExplorer.
 	//
 	// Mini-plan 09 §4 — this is now the EFFECTIVE scale, and only the governor writes it (the setter is private,
 	// so the compiler enforces that). The developer's choice is RequestedDevTimeScale below; SimulationService

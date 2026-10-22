@@ -10,7 +10,7 @@
 
 ---
 
-## 1. The scene inventory — 25 ids, all verified (2026-08-21)
+## 1. The scene inventory — 26 ids, all verified (2026-08-21; `UserSettings` added 2026-10-21)
 
 Source of truth: `Scripts/Services/SceneManager.cs`. Every row was checked to resolve to an existing
 `.tscn`.
@@ -42,6 +42,7 @@ Source of truth: `Scripts/Services/SceneManager.cs`. Every row was checked to re
 | `CompanyDetails` | `Screens/CompanyDetails/CompanyDetails.tscn` |
 | `WorldEconomy` | `Screens/WorldEconomy/WorldEconomy.tscn` |
 | `CentralBank` | `Screens/CentralBank/CentralBank.tscn` |
+| `UserSettings` | `Screens/UserSettings/UserSettings.tscn` |
 
 **Two names that do not match their folder, and both are deliberate:**
 
@@ -125,6 +126,7 @@ MainMenu
 │   └── CasinoCoinSwaps             → origin-aware back
 ├── CasinoCoinSwaps  [player-facing] → Main Menu     (Step 13 — the casino's SC↔BTC swap desk)
 ├── MartingaleCalculator (standalone, full screen) → Main Menu
+├── UserSettings  [player-facing]   → Main Menu      (mini-plan 27 — MainMenu's footer, beside Exit; the player's two layers + three resets, each closes the game)
 ├── WorldEconomy      [DEV]  → Main Menu            (Step 14 ND.8c — SC Monetary Ledger; ND.8b.6 company knobs)
 ├── CentralBank       [DEV]  → Main Menu            (Step 15 P15.1e — the FED's per-client loan accounts)
 ├── CasinoFinances    [DEV]  → Main Menu            (casino BTC wallet / mining view)

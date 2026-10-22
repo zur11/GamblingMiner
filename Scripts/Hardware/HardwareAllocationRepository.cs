@@ -8,12 +8,20 @@ namespace Scripts.Hardware;
 
 #nullable enable
 
-// Persists per-node hardware credit allocation (individual vs casino pool) to
-// user://hardware_allocation.json. Static repository following the
-// BotWalletRegistry pattern: CamelCase JSON via Godot FileAccess.
+// Persists per-node hardware credit allocation (individual vs casino pool). Static repository following the
+// BotWalletRegistry pattern: CamelCase JSON.
+//
+// WORLD state, on the wipe's delete list (developer, 2026-10-21, mini-plan 27 §3.5): outside DEV, hardware is bought
+// with the players' money, so a world reset must take every node's credits back to the initial allocation (1 credit
+// each, individual pool), which is what WalletInitializationService bootstraps when this file is absent. An amendment
+// earlier the same day had made the credits a player preference; it was reversed before any file moved.
+//
+// Written atomically, and a bad read is preserved rather than thrown at boot (DurableFile; mini-plan 27 unit 3).
 public static class HardwareAllocationRepository
 {
-	private const string SavePath = "user://hardware_allocation.json";
+	public const string SavePath = "user://hardware_allocation.json";
+	// Set when an unreadable file could not be moved aside: a save would then write over the only copy.
+	private static bool _persistBlocked;
 
 	private static readonly JsonSerializerOptions JsonOptions = new()
 	{
@@ -63,10 +71,27 @@ public static class HardwareAllocationRepository
 			return;
 		}
 
-		using FileAccess file = FileAccess.Open(SavePath, FileAccess.ModeFlags.Read);
-		HardwareAllocationSnapshot? loaded =
-			JsonSerializer.Deserialize<HardwareAllocationSnapshot>(file.GetAsText(), JsonOptions);
-		_snapshot = loaded ?? new HardwareAllocationSnapshot();
+		try
+		{
+			using (FileAccess file = FileAccess.Open(SavePath, FileAccess.ModeFlags.Read))
+			{
+				if (file == null) throw new System.IO.IOException($"could not open the file ({FileAccess.GetOpenError()})");
+				_snapshot = JsonSerializer.Deserialize<HardwareAllocationSnapshot>(file.GetAsText(), JsonOptions)
+					?? throw new JsonException("the file holds JSON null");
+			}
+		}
+		catch (Exception ex)
+		{
+			// Was an uncaught throw at boot. Once moved aside, the file is absent, so WalletInitializationService
+			// bootstraps the initial allocation exactly as on a first launch.
+			_snapshot = new HardwareAllocationSnapshot();
+			string? target = DurableFile.MoveAsideAsCorrupt(SavePath);
+			_persistBlocked = target == null;
+			GD.Print(target != null
+				? $"[HardwareAllocationRepository] could not read {SavePath} ({ex.Message}). It is preserved as {target}; the initial allocation is bootstrapped."
+				: $"[HardwareAllocationRepository] could not read {SavePath} ({ex.Message}), and could not move it aside. Every node reads 0 credits and nothing will be saved this session.");
+			GD.PushWarning($"[HardwareAllocationRepository] Load failed: {ex.Message}");
+		}
 	}
 
 	// Returns the node's state, or a fresh zero-credit state if it has none yet.
@@ -169,12 +194,24 @@ public static class HardwareAllocationRepository
 		// Mini-plan 15 A — a session that could not load its world writes nothing world-shaped.
 		if (WorldWriteGuard.RefuseWrite(nameof(HardwareAllocationRepository))) return;
 
+		if (_persistBlocked)
+		{
+			GD.Print($"[HardwareAllocationRepository] not saved: {SavePath} could not be read or moved aside this session.");
+			return;
+		}
+
 		// Mini-plan 16 A — counted; see PrincipalBalanceService.SaveState for why the timer brackets the close.
 		string payload = JsonSerializer.Serialize(_snapshot, JsonOptions);
 		long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
-		using (FileAccess file = FileAccess.Open(SavePath, FileAccess.ModeFlags.Write))
+		try
 		{
-			file.StoreString(payload);
+			DurableFile.WriteAtomically(SavePath, payload);
+		}
+		catch (Exception ex)
+		{
+			GD.Print($"[HardwareAllocationRepository] Save failed: {ex.Message}");
+			GD.PushWarning($"[HardwareAllocationRepository] Save failed: {ex.Message}");
+			return;
 		}
 		Scripts.Diagnostics.BlockCostProfiler.NoteStateWrite(SavePath, payload.Length, writeBegin);
 	}

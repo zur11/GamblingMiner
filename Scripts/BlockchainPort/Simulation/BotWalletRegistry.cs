@@ -11,7 +11,7 @@ namespace GodotBlockchainPort.Simulation;
 
 public static class BotWalletRegistry
 {
-	private const string RegistryPath = "user://bot_wallet_registry.json";
+	public const string RegistryPath = "user://bot_wallet_registry.json"; // public for WalletInitializationService.IdentityFilePaths
 
 	// Step 16 P16.2b (D-16.4) — the registry's OWN format version, deliberately separate from
 	// WorldFormatVersion.

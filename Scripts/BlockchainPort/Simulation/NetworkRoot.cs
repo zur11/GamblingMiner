@@ -8217,13 +8217,19 @@ public partial class NetworkRoot : Node
 	}
 
 	// MAINTENANCE RULE (learned at TL.3, 2026-07-07): every NEW persisted world-state file MUST be added
-	// to this delete list when it ships — the TL.3 canon-relaunch verification found hardware credits,
+	// to the delete list (WipeWorld, below; one list since mini-plan 27) when it ships — the TL.3 canon-relaunch verification found hardware credits,
 	// casino-pool shares, and swap-desk state leaking across the timeline wipe because their files
 	// (hardware_allocation / casino_pool_state / casino_coin_swap_state — the last one created AFTER this
-	// list was written) were never listed. Deliberately SPARED, by design (identity/personal data, not
-	// world state): the wallet seed/address files (wallet_state, casino/satoshi/hal/mike_hearn_wallet_state,
-	// bot_wallet_registry — a fresh bootstrap reuses the same identities), saved_betting_strategies,
-	// notepad_notes, and wordlist_256. See ProjectDesignManual Ch. 35 (§35.1).
+	// list was written) were never listed. Deliberately SPARED, by design (identity data, not world state): the
+	// wallet seed/address files (wallet_state, casino/satoshi/hal/mike_hearn_wallet_state, bot_wallet_registry — a
+	// fresh bootstrap reuses the same identities) and wordlist_256. See ProjectDesignManual Ch. 35 (§35.1).
+	//
+	// Mini-plan 27 — PLAYER files are spared by CLASS, not by this list: they live in the player folder (see
+	// PlayerDataFiles), which no named path, glob or sweep below reaches (the sweep is TopDirectoryOnly).
+	// saved_betting_strategies and notepad_notes moved there (creations). Nothing in that folder may ever be named in
+	// this file, by literal path or through that class: the tripwire counts both forms in NetworkRoot.cs, baseline 0
+	// (plan S4). The hardware credits are NOT player data: they are bought with world money, so they stay on this
+	// list and a wipe returns every node to the initial allocation (developer, 2026-10-21, plan §3.5).
 	private static void ResetWorldIfIncompatible()
 	{
 		int storedVersion = 0;
@@ -8253,10 +8259,41 @@ public partial class NetworkRoot : Node
 			return;
 		}
 
-		GD.Print($"[NetworkRoot] World reset triggered (format {storedVersion} → {WorldFormatVersion}" +
-				 (timelineChanged ? $", timeline '{storedTimelineTag}' → '{TimelineConfig.Tag}'" : string.Empty) +
-				 "): resetting chain + clock + financial state (clean reset).");
+		WipeWorld($"format {storedVersion} → {WorldFormatVersion}" +
+				  (timelineChanged ? $", timeline '{storedTimelineTag}' → '{TimelineConfig.Tag}'" : string.Empty));
+	}
 
+	// The DEV traces a world wipe deletes. Public since mini-plan 27 unit 5, because the User Settings scene's "Reset
+	// world" confirmation names them, and it must name exactly what WipeWorld takes (Standing Convention 6: a displayed
+	// signal shares its source with the action it advertises). Every OTHER file in user://logs/ is evidence, exempt by
+	// class, and keeps appending in the new world (RankCalibrationTrace, the profilers).
+	public static readonly IReadOnlyList<string> WorldTracePaths = new[]
+	{
+		"user://logs/difficulty_trace.csv",
+		"user://logs/founders_trace.csv",
+		"user://logs/swap_desk_trace.csv",
+		"user://logs/network_population_trace.csv",
+		CompanyFoundingTracePath, // ND.6b — was missing since ND.5 (same reasoning as the others); ND.8b.2 renamed the file
+		CompanyGovernanceTracePath, // ND.8b.3 — added WITH the feature (the TL.3/ND.6b rule)
+		CasinoBotBidTracePath,
+		BankCreditTracePath, // Step 15 P15.3a — added WITH the feature (the TL.3/ND.6b rule)
+		Scripts.Sessions.SessionLifecycleTrace.TracePath, // mini-plan 05 D2 — added WITH the feature
+	};
+
+	// Mini-plan 27 unit 4 (D-27.8) — THE world wipe, and the only one. Extracted unchanged in what it deletes from
+	// ResetWorldIfIncompatible, which calls it on a format or timeline mismatch; the player's "Reset world" request
+	// (PlayerResetRequest, performed by WorldGuardService before anything loads) calls it too. One delete list, so the
+	// two can never drift apart the way an enumerated list did (CLAUDE.md Pattern 2). It must run before any autoload
+	// has loaded a world file, which both callers guarantee. It ends by writing the two stamps, so the guard that runs
+	// after a requested wipe finds a compatible world and does nothing.
+	public static void WipeWorld(string reason)
+	{
+		GD.Print($"[NetworkRoot] World reset triggered ({reason}): resetting chain + clock + financial state (clean reset).");
+
+		// The version stamp goes FIRST and is rewritten LAST (the end of this method), so a wipe interrupted half-way
+		// leaves no stamp, and the guard sees an incompatible world at the next launch and finishes it. Without this, a
+		// requested wipe interrupted mid-list would leave a half-deleted world behind a compatible stamp.
+		DeleteIfExists(WorldVersionPath);
 		DeleteIfExists(StatePath);
 		// Mini-plan 14 B — the chain is world state in its own file now, so it is wiped with everything else
 		// (CLAUDE.md Pattern 2's third question). Its counters are reset below with the dirty flag.
@@ -8289,8 +8326,9 @@ public partial class NetworkRoot : Node
 
 		// TL.3 gap fix (2026-07-07): hardware/pool/swap world state — found leaking across the timeline
 		// wipe during the canon-relaunch verification (alt-bought hardware, bot pool shares, and a casino
-		// pool ledger referencing blocks of the wiped chain all survived into the fresh canon world).
-		DeleteIfExists("user://hardware_allocation.json");
+		// pool ledger referencing blocks of the wiped chain all survived into the fresh canon world). With the file
+		// gone, WalletInitializationService bootstraps every node at 1 individual-pool credit, 0 casino-pool.
+		DeleteIfExists(HardwareAllocationRepository.SavePath);
 		DeleteIfExists("user://casino_pool_state.json");
 		DeleteIfExists("user://casino_coin_swap_state.json");
 		DeleteIfExists("user://sc_monetary_ledger.json"); // ND.8c — added WITH the feature (the TL.3 maintenance rule)
@@ -8298,27 +8336,20 @@ public partial class NetworkRoot : Node
 
 		// DEV trace telemetry: not player-visible, but rows dated under the other timeline would make the
 		// traces unreadable (founders_trace is actively used to verify founder pacing) — start them fresh.
-		DeleteIfExists("user://logs/difficulty_trace.csv");
-		DeleteIfExists("user://logs/founders_trace.csv");
-		DeleteIfExists("user://logs/swap_desk_trace.csv");
-		DeleteIfExists("user://logs/network_population_trace.csv");
-		DeleteIfExists(CompanyFoundingTracePath); // ND.6b — was missing since ND.5 (same reasoning as the others); ND.8b.2 renamed the file
-		DeleteIfExists(CompanyGovernanceTracePath); // ND.8b.3 — added WITH the feature (the TL.3/ND.6b rule)
-		DeleteIfExists(CasinoBotBidTracePath);
-		DeleteIfExists(BankCreditTracePath); // Step 15 P15.3a — added WITH the feature (the TL.3/ND.6b rule)
-		DeleteIfExists(Scripts.Sessions.SessionLifecycleTrace.TracePath); // mini-plan 05 D2 — added WITH the feature
+		foreach (string trace in WorldTracePaths)
+			DeleteIfExists(trace);
 
 		// The monthly block history chunks and the bet-history chunks are likewise wiped so the explorer
 		// and the betting stats rebuild from a pristine world.
 		string blocksDirAbs = ProjectSettings.GlobalizePath(BlockchainDir);
 		if (System.IO.Directory.Exists(blocksDirAbs))
 			foreach (string staleFile in System.IO.Directory.GetFiles(blocksDirAbs, "blocks-*.json"))
-				try { System.IO.File.Delete(staleFile); } catch { /* best-effort */ }
+				DeleteAbsoluteLoudly(staleFile);
 
 		string userDirAbs = ProjectSettings.GlobalizePath("user://");
 		if (System.IO.Directory.Exists(userDirAbs))
 			foreach (string staleFile in System.IO.Directory.GetFiles(userDirAbs, "bet_history_*.jsonl"))
-				try { System.IO.File.Delete(staleFile); } catch { /* best-effort */ }
+				DeleteAbsoluteLoudly(staleFile);
 
 		// ── Repair/diagnostic siblings: swept by SUFFIX, because enumerating them does not hold ──────
 		// (2026-08-23) Three suffixes attach themselves to a state file and then outlive it: `.tmp` (the
@@ -8581,10 +8612,30 @@ public partial class NetworkRoot : Node
 		return chain;
 	}
 
+	// Mini-plan 27 unit 4 — both print each file they delete, and each one they could not: a wipe the player asked for
+	// must leave a record of what it took (plan §3.4), and a format bump gains the same record. A failure used to be
+	// silent. Only WipeWorld calls them; still best-effort per file, so one locked file cannot abort a world reset.
 	private static void DeleteIfExists(string userPath)
 	{
-		if (FileAccess.FileExists(userPath))
-			DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(userPath));
+		if (!FileAccess.FileExists(userPath))
+			return;
+		Error result = DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(userPath));
+		GD.Print(result == Error.Ok
+			? $"[NetworkRoot]     deleted   {userPath}"
+			: $"[NetworkRoot]     NOT deleted  {userPath} ({result})");
+	}
+
+	private static void DeleteAbsoluteLoudly(string absolutePath)
+	{
+		try
+		{
+			System.IO.File.Delete(absolutePath);
+			GD.Print($"[NetworkRoot]     deleted   {System.IO.Path.GetFileName(absolutePath)}");
+		}
+		catch (Exception ex)
+		{
+			GD.Print($"[NetworkRoot]     NOT deleted  {System.IO.Path.GetFileName(absolutePath)} ({ex.Message})");
+		}
 	}
 
 	// INC-001 / D-15.26 — set when the world snapshot exists but cannot be read. Guards PersistStateToDisk

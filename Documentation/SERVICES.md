@@ -12,7 +12,7 @@ below; this file holds the detail, read on demand.
 
 ## Registration order
 
-The list below is `project.godot`'s `[autoload]` block, verbatim and in order (**19 entries**).
+The list below is `project.godot`'s `[autoload]` block, verbatim and in order (**20 entries**).
 Order is load-bearing — see `CLAUDE.md` Important Patterns §5.
 
 | # | Autoload | Documented in |
@@ -36,6 +36,7 @@ Order is load-bearing — see `CLAUDE.md` Important Patterns §5.
 | 17 | `SimulationService` | this file |
 | 18 | `BtcMarketDataService` | this file |
 | 19 | `BtcNetworkDataService` | this file |
+| 20 | `UserSettingsService` | this file |
 
 `NetworkPopulationScheduler` (last section below) is **not** in that list — it is a pure `static
 class` driven per-frame by `SimulationService`, documented here because it belongs to the same
@@ -51,7 +52,16 @@ registration order.
 ### `WorldGuardService`
 **Location**: `Scripts/Services/WorldGuardService.cs`
 
-Deliberately the **FIRST** autoload: its only job is running `NetworkRoot.RunWorldCompatibilityGuard()` (format-version OR timeline-tag mismatch ⇒ full clean world reset, D-13.7) **before any other autoload can load a `user://` state file into a static cache** — a file deleted after being loaded survives in memory and re-persists, which is how alt-timeline hardware/pool state once leaked across a timeline wipe (TL.3 incident). Keep it first; see `Documentation/ProjectDesignManual.md` Ch. 35 §35.1.
+**Since mini-plan 27 it runs three steps, in this order, all before any other autoload loads a file:**
+1. **`PlayerResetRequest.PerformPending()`**: a reset the player requested from the User Settings scene in an earlier
+   session. Reset preferences empties `user://player/preferences/`; Reset world calls `NetworkRoot.WipeWorld`;
+   Wipe everything deletes every file under `user://`. Each is at most once (the request is deleted before it
+   runs) and prints every file it deletes.
+2. **`LegacyPlayerFileRelocation.Run()`**: the one-time move of the two creations into `user://player/creations/`.
+   It is deleted at the close-out of the plan after mini-plan 27.
+3. The guard, below.
+
+Deliberately the **FIRST** autoload: its original job is running `NetworkRoot.RunWorldCompatibilityGuard()` (format-version OR timeline-tag mismatch ⇒ full clean world reset, D-13.7) **before any other autoload can load a `user://` state file into a static cache** — a file deleted after being loaded survives in memory and re-persists, which is how alt-timeline hardware/pool state once leaked across a timeline wipe (TL.3 incident). Keep it first; see `Documentation/ProjectDesignManual.md` Ch. 35 §35.1.
 
 ### `CalendarTimeService`
 **Location**: `Scripts/Services/CalendarTimeService.cs`
@@ -71,7 +81,9 @@ Manages game-time progression.
   - `RequestedDevTimeScaleChanged` and `DevTimeScaleChanged` fire on change.
   - Every reader of `DevTimeScale` (this clock, the bet engine, the difficulty trace) reads the effective
     value.
-  - Neither value is persisted; both reset to 100X on restart.
+  - Neither is persisted by this service. The REQUEST is a DEV player preference since mini-plan 27:
+    `DevTimeScaleSelector` saves it through `UserSettingsService` and restores it once per launch (DEBUG builds
+    only). The effective value is re-derived from it, as before.
 - Persists to `user://calendar_state.json`
 - Key properties: `CurrentLocalDateTime`, `CurrentUtcDateTime`, `ExplorerSelectedLocalDateTime`
 
@@ -320,6 +332,41 @@ Owns the **historical BTC network dataset** (Step 14 ND.1, autoload #17) — loa
 - Anchors route through `TimelineConfig.PlayerStartDayLocal` (D-14.7 — an alt/entry-year world anchors `decades = 0` at its own landing day, for free).
 - Parsing rules mirror `BtcMarketDataService`: `CultureInfo.InvariantCulture`; blank cells ⇒ `null`, never `0`; hashrate parsed as `double` (a physical measure consumed only via log-ratios — the raw strings exceed `decimal` precision and money rules don't apply); fees as `Money.Normalize`d `decimal` (consumed since ND.7 by the fee-replay schedule above).
 - Consumers: `NetworkPopulationScheduler` (every accessor above), `NetworkRoot.SetScheduledTxTargetPerBlock` (via `SimulationService`), the EB.1 entry-year bootstrap (a throwaway `new BtcNetworkDataService()` + `EnsureLoaded()`, no autoload/scene-tree dependency needed — `NetworkRoot`/`FoundersMiningService` are equally instantiable this way, all either pure-static or holding zero meaningful instance state).
+
+### `UserSettingsService`
+**Location**: `Scripts/Services/UserSettingsService.cs` · plan: `AIHelperFiles/mini27-user-settings-plan.md`
+
+Owns the player's **preferences**: layer 2 of the **player class**, the data that is neither world state nor
+session state (plan §3.1). Autoload **#20**, last by decision: it depends on no other service, and every reader
+is a scene, which loads after all autoloads (Pattern 5).
+
+- **The player class lives under `user://player/`** (`PlayerDataFiles`), in two folders:
+  - `creations/` holds the saved strategies (`SavedBettingStrategyRepository`) and the notepad notes
+    (`NotepadService`). Only "Wipe everything" deletes them.
+  - `preferences/` holds `settings.json`, this service's file. "Reset preferences" deletes it.
+  - **No world wipe can reach either folder**: `WipeWorld` names no path there, and its sweep is
+    `TopDirectoryOnly`. The tripwire is in CLAUDE.md Pattern 2.
+  - **The hardware credits are NOT here.** They are world state (plan §3.5).
+- **Never checkpoint-reverted, never reset pre-genesis, not under `WorldWriteGuard`.** A restart reverts the world,
+  not the player's choice of view, and a broken world must not stop a preference being changed (an exemption by
+  class).
+- **One typed getter/setter pair per setting.** A getter returns **null for a setting never set**, so the default
+  lives once, in the scene that owns it, and "Reset preferences" is simply the file's absence. Enum settings are
+  stored by name and read through `TryParseEnum`, so a renamed member falls back to the default. A missing key
+  takes its default and an unknown one is ignored: a new setting needs no version bump (`settingsVersion` is 1).
+- **What it holds today:**
+  - DiceGame's Bet View, and the strategy panel's values per node id (`player`, `bot_1`…`bot_4`). These are
+    restored once per launch into `DiceGame._nodeStrategies`, so bots come back armed as before the restart.
+  - The Bets Explorer's pace, speed, Per Bet credits and winning-numbers view.
+  - **DEV, read and written only in a DEBUG build:** the requested time scale and BlockExplorer's balances toggle.
+  - **Deliberately not held:** the profiler toggles, whose contract is OFF at every launch.
+- **Writes are event-driven:** a set to the current value writes nothing, and `SettingChanged(key)` fires on a real
+  change only. Each write is atomic (`DurableFile.WriteAtomically`).
+- **A bad file is loud and harmless.** It is moved aside as `.corrupt` (`DurableFile.MoveAsideAsCorrupt`, which
+  never overwrites an earlier one), the failure is printed with `GD.Print`, the game starts from defaults, and the
+  next change writes a fresh file. If the file cannot be moved aside, nothing is written that session.
+- **What `godot.log` receives:** one load line (`[UserSettings] loaded N keys from … (version 1)`, or "no file"),
+  and in DEBUG a quit line counting changes, writes and sets to the current value.
 
 ### `NetworkPopulationScheduler`
 **Location**: `Scripts/Services/NetworkPopulationScheduler.cs`
