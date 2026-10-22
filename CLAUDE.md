@@ -181,7 +181,7 @@ only for the one you need. Order below is registration order.
 
 | # | Service | Owns |
 |---|---|---|
-| 1 | `WorldGuardService` | Runs the world-compatibility guard (format-version or timeline-tag mismatch ⇒ full clean world reset) **before any other autoload can load a `user://` file**. Nothing else. Must stay first |
+| 1 | `WorldGuardService` | **Before any other autoload can load a `user://` file**: performs a pending player reset request (`PlayerResetRequest`), then the world-compatibility guard (format-version or timeline-tag mismatch ⇒ `NetworkRoot.WipeWorld`). Must stay first |
 | 2 | `UserStatsService` | The player's betting stats in **two layers with different lifetimes**: the pruned bet journal (`BetHistory`, segmented by 10,000 entries, capped at 20 segments) and the **unpruned lifetime rollup** that outlives it; emits `StatsChanged` on a 250 ms throttle |
 | 3 | `CalendarTimeService` | The game clock — local/UTC game time, `SpeedMultiplier`, the DEV `DevTimeScale` (the **effective** scale, written only by `DevTimeScaleGovernor` via `SimulationService`; the selector writes `RequestedDevTimeScale`), and `SimulationThrottle` (a readout only). **While a run goes, `SimulationService` moves the clock** (`DrivenBySimulation`; mini-plan 21) |
 | 4 | `BankrollStateService` | The **Bankroll** balance — the active betting subaccount. Balance only; transfers are #6 |

@@ -4,7 +4,9 @@
 first open item ("User settings persistence — a real design, which does not exist yet. Required for Basic Mode").
 Mini-plan 26 (the per-block freeze, `mini26-per-block-freeze-plan.md`) closed item 1 on 2026-10-21.
 
-**Status:** 📝 **SPECIFIED 2026-10-21 (`668ff18`), amended the same day with the developer's answers (§3.4, §8).**
+**Status:** ✅ **COMPLETE 2026-10-22. Close-out: §9.** Every prediction run holds (S1–S3, S5–S7, S9), S4 and S8's
+code half were measured, and S8's run waits for a wipe the developer chooses. *The history below is kept as written:*
+📝 **SPECIFIED 2026-10-21 (`668ff18`), amended the same day with the developer's answers (§3.4, §8).**
 D-27.1 is answered with **two player layers** plus a **User Settings scene**, and D-27.2 with the recommendation.
 **§3.4 governs where it differs from §3.1–§3.3 and §5, and §3.5 (the hardware credits are world state) governs
 over §3.4.** **D-27.9 is answered (2026-10-21): "Wipe everything" is the
@@ -615,7 +617,7 @@ timed. The world's initialization (`NetworkRoot.EnsureInitialized`) runs there:
 That is the candidate. **It is a candidate, not a measurement.** It is the shape `PRIVATE_ROADMAP.md` §8 T4.2
 already names ("one canonical chain + one UTXO set, instead of 62 copies"), and it grows with the chain.
 **Whether the boot really doubled cannot be checked:** nothing measured it before this plan. The world grew 13%
-since the last pre-plan log. **Recorded as a measured open item in §8 T4, out of this plan's scope; `BootProbe`
+since the last pre-plan log. **Recorded as a measured open item in §8 T4.7, out of this plan's scope; `BootProbe`
 stays for whoever splits it.**
 
 **S8** remains as specified: its code half was measured at unit 4 (one `WipeWorld`, two callers), and its run waits
@@ -652,3 +654,81 @@ for a wipe the developer chooses.
 | **D-27.4** | DEV keys stored in the same file and read only in DEBUG | yes |
 | **D-27.5** | The strategy panel's values are kept per node id (`player`, `bot_1`…`bot_4`) | yes: the ids are stable across worlds |
 | **D-27.6** | Branch name | `mini27-user-settings` |
+
+---
+
+## 9. Close-out (2026-10-22)
+
+**Mini-plan 27 is ✅ COMPLETE.** Branch `mini27-user-settings`, 15 commits with this one. The roadmap's question
+("decide once which settings belong to the player and which to the world, then give them one persistence home")
+is answered by a rule that holds **by construction**, not by a list someone must keep: the player class lives
+under `user://player/`, which no world wipe can reach.
+
+### 9.1 — What shipped
+
+- **The two layers:**
+  - `creations/` holds the saved strategies and notepad notes.
+  - `preferences/` holds `settings.json`.
+  - `PlayerDataFiles` names them.
+- **The durability primitives:** `DurableFile.WriteAtomically` and `DurableFile.MoveAsideAsCorrupt`, used by
+  every player file and by the hardware allocation.
+- **`UserSettingsService`, autoload #20,** holds:
+  - Bet View, and the strategy panel's values per node, which re-arm the bots after a restart;
+  - the explorer's pace, speed, Per Bet credits and winners view;
+  - two DEV settings, DEBUG only.
+- **Statics deleted** (Convention 3): `_showLatestWinnerOnly`, `_showCasinoScBalances`.
+- **The one-time relocation of the two creations** (`LegacyPlayerFileRelocation`), run from `WorldGuardService`.
+  **⚠ Delete it at the close-out of the plan after next** (its header says so).
+- **One wipe, `NetworkRoot.WipeWorld`.** It has two callers, prints every file it deletes, and deletes the
+  version stamp first. `NetworkRoot.WorldTracePaths` is the one list of traces it deletes.
+- **`PlayerResetRequest` and the User Settings scene:** three resets, each run at the next launch, at most once.
+  Each confirmation reads what it deletes from the reset's own source (`WorldTracePaths`,
+  `WalletInitializationService.IdentityFilePaths`).
+- **The saved-strategies dropdown in DiceGame:** select, then Load; run-locked.
+- **`SceneManager.QuitLikeTheWindowClose`**, moved out of MainMenu so both scenes quit the same way.
+- **`BootProbe`**, which stays for item 2b.
+
+### 9.2 — Predictions, as they fell
+
+| | Held | Refuted |
+|---|---|---|
+| **Functional** | S1 (9/9 keys, read back), S2 (writes = changes, 3 launches), S3, S5, S6 (byte-identical), S7, S9 | — |
+| **Measured in code** | S4 (tripwire 0), S8's code half (one wipe, two callers) | — |
+| **Boot** | UserSettingsService < 50 ms (0.6) · WorldGuardService < 50 ms in E (15.2) | **WorldGuardService < 50 ms in D (90.1 ms**, with a pending reset, right after a rebuild) |
+| **Deferred** | **S8's run**: "Reset world" and "Wipe everything" at a wipe the developer chooses, never on R3 | |
+
+### 9.3 — Corrections made during the plan, each against the code
+
+1. **The hardware credits went into the player layer (§3.4) and came back out the same day (§3.5)**, before
+   any file moved, by the developer's decision: hardware will be bought with world money.
+2. **The dropdown's placement:** a `.tscn`-only check had called the band free, but the Bet View button is built
+   in code.
+3. **The S4 tripwire needed its slash** (`user://player_bank_account_state.json` is a world file) and the class
+   name (`PlayerDataFiles.`).
+4. **The rank trace is not on the wipe's list.** It is kept and keeps appending in the new world.
+5. **An interrupted world wipe used to leave a half-deleted world behind a compatible stamp.**
+6. **The roadmap entry for the boot was first committed as "T4.3"**, a number already taken (mini-plan 17's
+   address index). It is **T4.7** (Convention 16).
+7. **A deletion between launches A and B ran before its hash check had passed.** Nothing was lost. Since then,
+   hashes are read from stdin, and a deletion runs only inside its passed check.
+
+### 9.4 — Lessons
+
+1. **A rule that holds by construction beats a list.** The old delete list spared the strategies by omission; a
+   folder the wipe cannot reach spares them by design, and a tripwire watches it.
+2. **Name what a confirmation deletes from the deleter's own source** (Convention 6, applied to a destructive
+   action). Two arrays were made public for that alone.
+3. **Compare a loaded value against what the resolver applies, not against the stored record** (Convention 8).
+   S9's first reading looked refuted and was not.
+4. **A citation number is an identity.** Before giving a roadmap item a number, grep for the number.
+
+### 9.5 — Handed on
+
+| What | Where it goes |
+|---|---|
+| **The boot: ~55 s unattributed inside autoloads #2–#19** (57.7 s to MainMenu; 59.4 s felt) | `PRIVATE_ROADMAP.md` §8 **T4.7**, scheduled as ▶ NEXT **item 2b** (developer, 2026-10-22). `BootProbe` is ready for it |
+| **S8's run** | the next wipe the developer chooses (rename `rank_calibration_trace.csv` first, and copy anything to keep out of `user://` before a "Wipe everything") |
+| **Delete `LegacyPlayerFileRelocation`** and its call | the close-out of the plan after next |
+| **P5 must give hardware a checkpoint restore path** once it is priced in SC | `PRIVATE_ROADMAP.md` P5, its mini-plan 27 note |
+| **Moving code-built controls into scenes** | `PRIVATE_ROADMAP.md` "UI built in scenes" (BASIC MODE refinement) |
+| The working order | ▶ NEXT: **item 2b, the boot time**, then item 3, the Player Holdings Hub |

@@ -1112,3 +1112,44 @@ records every decision. Runs as **mini-plan 25**, branch `mini25-event-driven-au
   DiceGame can use the same components. **Before showing anything there, fix the old grid's scene geometry**: it has
   never been on screen, starts at y 534 under the Bet View button, and its 540 minimum height runs past the bottom
   band (Ch. 29 §29.11). Fold this into whichever UI plan comes first.
+
+
+## From §5 and §6 — user settings persistence, closed by mini-plan 27 (2026-10-22)
+
+Moved verbatim at mini-plan 27's close-out; the §6 item's box is ticked here. Record of the work:
+`AIHelperFiles/mini27-user-settings-plan.md` (close-out §9) and `IMPLEMENTATION_STATUS.md`.
+
+**From ▶ NEXT (2026-10-21):**
+
+| # | Work | Where it is specified | Why here |
+|---|---|---|---|
+| **2** | **User settings persistence** | **`AIHelperFiles/mini27-user-settings-plan.md` (IN PROGRESS 2026-10-21: units 1–6 built, verification V1 next; amended with a saved-strategies dropdown in DiceGame, unit 3b)**, branch `mini27-user-settings` · §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
+
+**From §6 (Basic Mode v0.1 Checklist):**
+
+- [x] **User settings persistence — BUILT by mini-plan 27 (2026-10-21); ticked at its close-out, once V1 passes.**
+  The rule is now stated once: **the player class lives under `user://player/`, which no world wipe reaches**, in
+  two layers: `creations/` (saved strategies, notepad notes; only "Wipe everything" deletes them) and
+  `preferences/` (`UserSettingsService`'s `settings.json`; "Reset preferences"). Everything else in `user://` is
+  world state, identity, or evidence. The User Settings scene offers the three resets
+  (`mini27-user-settings-plan.md` §3.4, §3.5). *The symptom that opened this item (2026-09-15, v6 → v7 reset):
+  `saved_betting_strategies.json` survived a wipe nobody had said it would survive. It now survives by a stated
+  rule.*
+
+  **A new setting goes into `UserSettingsService`** (a typed getter/setter, null = never set); **a new creation goes
+  into `creations/`**. Neither is ever added to `WipeWorld`. The table below is the classification as built.
+
+  | setting | where it lives now | class |
+  |---|---|---|
+  | Saved betting strategies | `user://player/creations/saved_betting_strategies.json` | player, **creation** |
+  | Notepad notes | `user://player/creations/notepad_notes.json` | player, **creation** |
+  | **Bet View: Detailed / Last 10 / Latest only / OFF** (mini-plan 10; the two Numbers modes since mini-plan 25 17.A2) | `settings.json` | player, **preference**. A view preference only: after mini-plan 10 every view costs the same per bet |
+  | **Bets explorer replay pace, speed and Per Bet credits** (mini-plan 20 F) | `settings.json`; the automatic drop to 1x at the present is not written | player, **preference** |
+  | **Bets explorer winning-numbers view: Last 10 / Latest only** (mini-plan 23 E) | `settings.json` (the `static` is deleted) | player, **preference** |
+  | The strategy panel's values, per node (`_nodeStrategies`) | `settings.json`, restored once per launch, so bots come back armed. Distinct from a *saved* strategy | player, **preference** |
+  | DEV time scale (the requested one) | `settings.json`, DEBUG builds only | player, **DEV preference** |
+  | **BlockExplorer's casino players' SC balances, shown / hidden** (DEV, mini-plan 25 17.A7) | `settings.json`, DEBUG builds only (the `static` is deleted) | player, **DEV preference** |
+  | DEV player credits ladder / the hardware credits | `user://hardware_allocation.json`, on `WipeWorld`'s delete list | **world**: bought with world money, so a world reset returns every node to 1 individual-pool credit (mini-plan 27 §3.5) |
+  | The four profiler toggles | each profiler's static `Enabled` | **session**, deliberately: their contract is OFF at every launch |
+  | Anything a future options menu holds | `UserSettingsService` | player, **preference** |
+

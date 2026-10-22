@@ -48,9 +48,26 @@ Hardware will later increase the number of bets/attempts per real second, but ha
 
 ## Betting Strategies
 
-Strategies can be saved and loaded during development.
+Name a strategy and press **Save Strategy** to keep it. To use one again, pick it from the **saved strategies list**
+beside the Bet View button, then press **Load Strategy**. It applies to whichever node is selected, you or a bot.
+The list is locked while an autobet runs.
 
-Common parameters include:
+Your saved strategies and notepad notes are **yours, not the world's**: they survive a world reset, and only "Wipe
+everything" deletes them. The panel's values for each node, the views you choose and the replay settings are
+remembered between launches too.
+
+## User Settings
+
+Open **User Settings** from the main menu's bottom row. It shows what you have saved, and offers three resets. Each
+one closes the game and runs the next time you start it:
+
+- **Reset preferences**: every view and panel setting back to its default. Nothing else is touched.
+- **Reset world**: the world starts again from genesis, and every node's hardware returns to 1 credit. Your saved
+  strategies, notes and preferences are kept.
+- **Wipe everything**: deletes the whole user data folder, including your wallets, so the next start is a first
+  start. It asks twice.
+
+Common strategy parameters include:
 
 - Base bet.
 - Chance to win.

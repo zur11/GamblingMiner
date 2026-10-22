@@ -108,12 +108,14 @@ Workflow). **Item 1 of 2026-10-12, Step 17.A + 17.C, is ✅ DONE (mini-plan 25, 
 small item (its 17.A2). Both rows, and the two §6 checklist items they closed, are in `ROADMAP_ARCHIVE.md`. Mini-plan
 25's measurement F1 inserted the new item 1, and the developer approved it with F1's commit. **That item 1, the
 per-block freeze, is ✅ DONE (mini-plan 26, 2026-10-20):** a block went from 4,858 ms to 416 ms in the same session.
-Its row is in `ROADMAP_ARCHIVE.md`. **The next item is 2.** The numbers below are kept as they were, because other
-documents cite them.
+Its row is in `ROADMAP_ARCHIVE.md`. **Item 2, user settings persistence, is ✅ DONE (mini-plan 27, 2026-10-22).** Its
+row and the §6 item it closed are in `ROADMAP_ARCHIVE.md`. **The next item is 2b, the boot time**, which the developer
+inserted on 2026-10-22, before item 3. It is numbered 2b so that nothing below is renumbered: the numbers are kept
+as they were, because other documents cite them.
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **2** | **User settings persistence** | **`AIHelperFiles/mini27-user-settings-plan.md` (IN PROGRESS 2026-10-21: units 1–6 built, verification V1 next; amended with a saved-strategies dropdown in DiceGame, unit 3b)**, branch `mini27-user-settings` · §6, its first open item and its table | "Required for Basic Mode", and mini-plans 20, 23 and 25 added view preferences with no home |
+| **2b** | **The boot time** (§8 **T4.7**): attribute the ~55 s inside autoloads #2–#19 first, then fix the main cost | §8 T4.7 · mini-plan 27 §6.4 (the measurement) | **Inserted by the developer (2026-10-22)** after mini-plan 27 measured the boot at 57.7 s (59.4 s felt). A minute per launch is paid at every test, and that plan's verification alone took six |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
@@ -548,32 +550,6 @@ Items intentionally **not** built for Basic Mode v1 — revisit only once v1 is 
 > questions are in §7. Game over is `Private Bank Account + Main Balance + Bankroll = 0` (CLAUDE.md, Canonical
 > Decisions).
 
-- [~] **User settings persistence — BUILT by mini-plan 27 (2026-10-21); ticked at its close-out, once V1 passes.**
-  The rule is now stated once: **the player class lives under `user://player/`, which no world wipe reaches**, in
-  two layers: `creations/` (saved strategies, notepad notes; only "Wipe everything" deletes them) and
-  `preferences/` (`UserSettingsService`'s `settings.json`; "Reset preferences"). Everything else in `user://` is
-  world state, identity, or evidence. The User Settings scene offers the three resets
-  (`mini27-user-settings-plan.md` §3.4, §3.5). *The symptom that opened this item (2026-09-15, v6 → v7 reset):
-  `saved_betting_strategies.json` survived a wipe nobody had said it would survive. It now survives by a stated
-  rule.*
-
-  **A new setting goes into `UserSettingsService`** (a typed getter/setter, null = never set); **a new creation goes
-  into `creations/`**. Neither is ever added to `WipeWorld`. The table below is the classification as built.
-
-  | setting | where it lives now | class |
-  |---|---|---|
-  | Saved betting strategies | `user://player/creations/saved_betting_strategies.json` | player, **creation** |
-  | Notepad notes | `user://player/creations/notepad_notes.json` | player, **creation** |
-  | **Bet View: Detailed / Last 10 / Latest only / OFF** (mini-plan 10; the two Numbers modes since mini-plan 25 17.A2) | `settings.json` | player, **preference**. A view preference only: after mini-plan 10 every view costs the same per bet |
-  | **Bets explorer replay pace, speed and Per Bet credits** (mini-plan 20 F) | `settings.json`; the automatic drop to 1x at the present is not written | player, **preference** |
-  | **Bets explorer winning-numbers view: Last 10 / Latest only** (mini-plan 23 E) | `settings.json` (the `static` is deleted) | player, **preference** |
-  | The strategy panel's values, per node (`_nodeStrategies`) | `settings.json`, restored once per launch, so bots come back armed. Distinct from a *saved* strategy | player, **preference** |
-  | DEV time scale (the requested one) | `settings.json`, DEBUG builds only | player, **DEV preference** |
-  | **BlockExplorer's casino players' SC balances, shown / hidden** (DEV, mini-plan 25 17.A7) | `settings.json`, DEBUG builds only (the `static` is deleted) | player, **DEV preference** |
-  | DEV player credits ladder / the hardware credits | `user://hardware_allocation.json`, on `WipeWorld`'s delete list | **world**: bought with world money, so a world reset returns every node to 1 individual-pool credit (mini-plan 27 §3.5) |
-  | The four profiler toggles | each profiler's static `Enabled` | **session**, deliberately: their contract is OFF at every launch |
-  | Anything a future options menu holds | `UserSettingsService` | player, **preference** |
-
 - [~] **Clarify auto-recharge behavior in UI and docs.** Docs done (ProjectDesignManual Ch. 25 + CLAUDE.md). The UI
   warning when auto-recharge is OFF is still pending (P2).
 - [ ] **Hal's network-coupled fade:** replace the linear `1.0 → 0` stand-in once gradual miner spawning exists.
@@ -643,7 +619,7 @@ signature (1.84 ms per input).
     secp256k1, then governance, auctions and the checkpoint, none above 20%. T4.2 remains the structural answer to
     the fan-out itself.
 
-**Status at 2026-10-12 — only T4.2 is open.** The rest shipped, and their specifications and measurements
+**Status at 2026-10-12 — only T4.2 is open** *(and since 2026-10-22, T4.7, the boot time, below)*. The rest shipped, and their specifications and measurements
 (T4.0, T4.0b, T4.1, T4.3–T4.6) are in `ROADMAP_ARCHIVE.md`:
 - **T4.6**, the per-block cost budget: mini-plan 13.
 - **T4.5**, the chain split out of the snapshot and appended, never rewritten: mini-plan 14.
@@ -656,9 +632,11 @@ signature (1.84 ms per input).
 
 The per-node `BlockchainService` is already acknowledged as vestigial — a comment in `NetworkRoot` says *"single-shared-chain design (every node already holds the same canonical chain via BroadcastBlock)"* (grep the phrase; this cited `~L5209` until 2026-08-23, by which point the line had moved ~900 lines — Standing Convention 15), and `RunConsensusRound` was deleted at T2 for the same reason. A single shared chain + one shared UTXO index, with `NodeAgent` reduced to identity + owned addresses, removes the 62× invalidation storm at its source and collapses `BroadcastBlock` to a no-op. **Blocked-by-design consideration:** per-node chains are the substrate the deferred **Divergent Chains / Fork Simulation** wants. The honest resolution is to make the shared chain the default and reintroduce per-node chains *deliberately* when forks ship, rather than paying for 62 unused copies for years.
 
-#### T4.3 — The boot takes about a minute, and 95% of it is unattributed (measured 2026-10-22)
+#### T4.7 — The boot takes about a minute, and 95% of it is unattributed (measured 2026-10-22)
 
-**Status: open, measured, not split.** The developer reported during mini-plan 27's verification that launching had
+**Status: open, measured, not split; scheduled as ▶ NEXT item 3 (mini-plan 28, developer 2026-10-22).** *(Committed
+first as "T4.3" in `18b6f59`. That number already belongs to the address → outpoint index, mini-plan 17, so this
+entry is T4.7, the next free number; Convention 16.)* The developer reported during mini-plan 27's verification that launching had
 grown to "almost half a minute". The first measurement (`Scripts/Diagnostics/BootProbe.cs`, R3's world at height
 3,968, a 22.5 MB `chain.jsonl`) found it longer than that: **57.7 s from the engine's start to MainMenu, and 59.4 s on
 the developer's stopwatch.** After a C# rebuild it was 67.6 s and 77.3 s.
