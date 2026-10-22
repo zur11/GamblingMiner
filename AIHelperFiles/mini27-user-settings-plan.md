@@ -6,13 +6,15 @@ Mini-plan 26 (the per-block freeze, `mini26-per-block-freeze-plan.md`) closed it
 
 **Status:** 📝 **SPECIFIED 2026-10-21 (`668ff18`), amended the same day with the developer's answers (§3.4, §8).**
 D-27.1 is answered with **two player layers** plus a **User Settings scene**, and D-27.2 with the recommendation.
-**§3.4 governs where it differs from §3.1–§3.3 and §5.** **D-27.9 is answered (2026-10-21): "Wipe everything" is the
+**§3.4 governs where it differs from §3.1–§3.3 and §5, and §3.5 (the hardware credits are world state) governs
+over §3.4.** **D-27.9 is answered (2026-10-21): "Wipe everything" is the
 equivalent of deleting the whole user data folder**, identity files and logs included. **Amended again the same day
 with a new objective: a saved-strategies dropdown in DiceGame (unit 3b, §5; S9; D-27.10, answered: select, then
 Load).** Unit 3 also makes both creations writers atomic (developer, 2026-10-21; §5).
 **Order:** unit 1 → unit 2 → unit 3 → unit 3b → unit 4 → unit 5 → unit 6 → V1 (with V1b) → close-out.
-**Unit 1 ✅ built (§4). Unit 2 ✅ built (§5). Unit 3 ✅ built (§5)**: the first launch after it moves the files
-(S6). Next: **unit 3b**, the strategies dropdown.
+**Unit 1 ✅ built (§4). Unit 2 ✅ built (§5). Unit 3 ✅ built (§5), and corrected by §3.5 (the hardware credits stay
+in the world)**: the first launch after it moves the two creations (S6). **Open: D-27.11** (does "Reset preferences"
+still touch the hardware credits?), needed by unit 4. Next: **unit 3b**, the strategies dropdown.
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
 
@@ -131,20 +133,18 @@ wipe, not that they should not. What the developer wants is **two layers of play
 | Layer | Folder | Holds | Survives a world wipe | Reset by |
 |---|---|---|---|---|
 | **1 — Creations** | `user://player/creations/` | saved betting strategies, notepad notes | **yes** | only **"Wipe everything"** |
-| **2 — Preferences** | `user://player/preferences/` | `settings.json` (every preference in §2.1) **and the hardware credits** (`hardware_allocation.json`) | **yes** | **"Reset preferences"**, easily, or "Wipe everything" |
+| **2 — Preferences** | `user://player/preferences/` | `settings.json` (every preference in §2.1) | **yes** | **"Reset preferences"**, easily, or "Wipe everything" |
 
 - **Each layer is a folder, so each reset deletes a folder's files.** That is exemption and deletion **by class**,
   never by a list (Pattern 2). Nobody has to keep a list of a layer's files.
-- **The hardware credits move out of the world** at the developer's request: `hardware_allocation.json` leaves the
-  wipe's delete list and goes into layer 2. **Checked first (2026-10-21):** credits are acquired only through the
-  DEV "Buy Hardware" button and the DEV credits ladder, at no cost, and the checkpoint does not restore them. So no
-  world money falls out of step with them, and they are already outside the restart revert. **⚠ A constraint for
-  P5 (hardware progression):** once hardware is priced in world SC, credits that outlive the world that paid for
-  them become an inconsistency. That plan must revisit this layer. The note goes into P5's roadmap entry.
+- ~~**The hardware credits move out of the world** into layer 2.~~ **Reversed the same day, before any file moved
+  (§3.5): the hardware credits are WORLD state** and stay on the wipe's delete list.
 - **A User Settings scene** (new `SceneId.UserSettings`, reached from MainMenu) shows both layers and offers three
   actions, each behind a confirmation:
-  1. **Reset preferences**: layer 2 back to defaults, hardware credits included.
-  2. **Reset world**: the same wipe a format bump performs. **Both layers are kept.**
+  1. **Reset preferences**: layer 2 back to defaults. *(It said "hardware credits included" until §3.5; whether it
+     still touches them is D-27.11.)*
+  2. **Reset world**: the same wipe a format bump performs. **Both layers are kept.** Every node's hardware credits
+     return to the initial allocation (§3.5).
   3. **Wipe everything**: **the equivalent of deleting the whole user data folder** (D-27.9, answered 2026-10-21).
      Every file under `user://`, recursively: the world, both layers, the **identity files** (the five wallet seeds,
      `bot_wallet_registry.json`, `wordlist_256.json`) and **`user://logs/`**, archived evidence included. The next
@@ -170,9 +170,31 @@ wipe, not that they should not. What the developer wants is **two layers of play
   developer rename them first. The archived `*_F1`/`*_M1`/`*_M2` files are not on the list and are untouched.
 
 **The developer's answer to D-27.2: (a).** The existing files move **once**, at startup, by a rename of the same
-bytes: the two creations into layer 1, and `hardware_allocation.json` into layer 2. **R3's 10 credits are therefore
-kept**, and so are the developer's strategies and notes. The rename code is deleted at the close-out of the plan
-after next.
+bytes: the two creations into layer 1. The developer's strategies and notes are kept. The rename code is deleted at
+the close-out of the plan after next. *(`hardware_allocation.json` was a third file to move into layer 2 until
+§3.5. It now stays where it is, so R3's 10 credits are kept by not moving it.)*
+
+### 3.5 — Amendment (developer, 2026-10-21): the hardware credits are world state
+
+**The developer's decision, given after unit 3 was committed (`660603b`) and before any launch had moved a file:**
+"Reset world" must include the hardware credits. Outside DEV, hardware will be bought with the players' money, so a
+world reset must be able to return **every player's credits to 1, in the individual (private) pool**.
+
+- **`hardware_allocation.json` stays at `user://`**, on the wipe's delete list. **One delete list, so a format
+  bump resets the credits too** (D-27.8: "Reset world" and a bump share `WipeWorld`).
+- **The reset target needs no new code.** When the file is absent, `WalletInitializationService.EnsureHardwareAllocation`
+  bootstraps every node (`player`, `bot_1`…`bot_4`) at 1 individual-pool credit and 0 casino-pool. The wipe also
+  deletes `casino_pool_state.json`, so no pool ledger survives the credits it accounts for.
+- **It is under `WorldWriteGuard` again**, because it is world state again. Unit 3's durability fixes stay: the write is
+  atomic, and a bad read is preserved instead of throwing at boot. The two primitives move from `PlayerDataFiles` to
+  a neutral **`DurableFile`**, because a world file now uses them. `PlayerDataFiles` keeps only the player paths.
+- **Checked against the filesystem first (2026-10-21):** there was no `user://player/` folder yet, and both old files
+  were at their old paths. So the reversal is a code change only, with no file to move back.
+- **⚠ The constraint this hands P5.** It is no longer "credits that outlive their world"; that is solved. It is the
+  restart revert. **The checkpoint does not restore hardware credits** (verified at §3.4). Once P5 prices hardware in
+  SC, a purchase changes two things between blocks: the SC, which a restart reverts, and the credits, which it would
+  not. **P5 must give hardware a checkpoint restore path** (Pattern 2's first question). The note in P5's roadmap
+  entry is rewritten to say so.
 
 ---
 
@@ -242,11 +264,10 @@ made at build, recorded so unit 2 does not re-derive them:
   `DevTimeScaleSelector._requestRestored`. The clock keeps the DEV request for the whole process, so the first
   selector to load applies the saved request once.
 
-**Unit 3 (amended, §3.4):** `saved_betting_strategies.json` and `notepad_notes.json` move into
-`user://player/creations/`, and `hardware_allocation.json` into `user://player/preferences/`, by a one-time rename
-at startup (D-27.2 = a). `settings.json` lives in `preferences/` too. The two creations' names leave Pattern 2's
-exempt list, `hardware_allocation.json` leaves the wipe's delete list, and the path constants are updated in
-`DiceGame`, `NotepadService`, `HardwareAllocationRepository` and `WalletInitializationService`.
+**Unit 3 (amended, §3.4, §3.5):** `saved_betting_strategies.json` and `notepad_notes.json` move into
+`user://player/creations/` by a one-time rename at startup (D-27.2 = a). `settings.json` lives in `preferences/`.
+The two creations' names leave Pattern 2's exempt list, and the path constants are updated in `DiceGame` and
+`NotepadService`. `hardware_allocation.json` stays a world file at `user://` (§3.5).
 **Unit 3 also makes both creations writers atomic** (developer, 2026-10-21). `SavedBettingStrategyRepository.Persist`
 and `NotepadService.PersistNotes` both open the file with `FileAccess` in Write mode, which truncates it first: the
 INC-001 shape, which §3.3 rules out for the player class. Both become `.tmp` → flush → rename. Both also **swallow a
@@ -255,23 +276,23 @@ writes over the file. `NotepadService` catches silently and does the same. Both 
 preserved as `.corrupt`, the failure is printed with `GD.Print`, and nothing is written back over it.
 
 **✅ Unit 3 built 2026-10-21.**
-- **`PlayerDataFiles`** (`Scripts/Services/`) names the folder and its two layers, and holds the two durability
-  primitives every file in it uses: `WriteAtomically` (`.tmp`, flushed to the device, renamed; creates the folder)
-  and `MoveAsideAsCorrupt` (never overwrites an earlier `.corrupt`; returns null if the file cannot be moved, and
-  the caller then writes nothing that session). `UserSettingsService` now uses them too, so the answer to Pattern 2's
-  three questions is written **once** for the class, not in four writers.
-- **`LegacyPlayerFileRelocation`** moves the three files by `File.Move`, from `WorldGuardService` **before** the
+- **`PlayerDataFiles`** (`Scripts/Services/`) names the folder and its two layers. **`DurableFile`** holds the two
+  durability primitives: `WriteAtomically` (`.tmp`, flushed to the device, renamed; creates the folder) and
+  `MoveAsideAsCorrupt` (never overwrites an earlier `.corrupt`; returns null if the file cannot be moved, and the
+  caller then writes nothing that session). *(Both lived in `PlayerDataFiles` until §3.5, when a world file began
+  using them too.)* All four writers use them, so Pattern 2's durability answers are written **once**.
+- **`LegacyPlayerFileRelocation`** moves the two creations by `File.Move`, from `WorldGuardService` **before** the
   world guard. An absent source prints nothing. If source and destination both exist, it moves neither and says
   so. Its file header says to delete it at the close-out of the plan after next.
 - **Each path has one copy**, in its owner: `SavedBettingStrategyRepository.DefaultPath`, `NotepadService.SavePath`,
   `HardwareAllocationRepository.SavePath`. DiceGame's constant is deleted. `WalletInitializationService`'s copy
   now reads the repository's. The old paths survive only in the relocation's table.
-- **The hardware credits became player class, with three consequences** (the developer's decision, §3.4):
-  - `hardware_allocation.json` left the wipe's delete list.
-  - Its write is atomic.
-  - **It is no longer under `WorldWriteGuard`.** §3.3 exempts the class, and leaving the call would contradict it.
-    *Found while building:* a corrupt hardware file used to throw an uncaught `JsonException` at boot. It is now
-    moved aside, and `WalletInitializationService` bootstraps the initial allocation as on a first launch.
+- ~~**The hardware credits became player class**: off the wipe's delete list, off `WorldWriteGuard`.~~ **Corrected by
+  §3.5 in the next commit:** they are world state again. They are back on the delete list and back under the guard,
+  and the relocation moves only the two creations. **What unit 3 gave them stays:** an atomic write, and a corrupt
+  read that is preserved instead of throwing. *Found while building:* a corrupt hardware file used to throw an
+  uncaught `JsonException` at boot. It is now moved aside, and `WalletInitializationService` bootstraps the
+  initial allocation as on a first launch. The primitives moved from `PlayerDataFiles` to `DurableFile`.
 - **S4's tripwire, defined:** `grep -cE 'user://player/|PlayerDataFiles\.' Scripts/BlockchainPort/Simulation/NetworkRoot.cs`,
   **baseline 0**. *Two traps found writing it:*
   - **The slash is part of the pattern.** Without it, the grep counts `user://player_bank_account_state.json`, a
@@ -321,7 +342,7 @@ developer's file holds **13** strategies, all `GameId = "Dice"`.
 
 **Unit 5 (new, §3.4) — the User Settings scene:**
 - `SceneId.UserSettings`, added the three-step way (CLAUDE.md Scene Management), reached from MainMenu.
-- It shows each layer's contents (strategies and notes by count, the preferences, the hardware credits per node)
+- It shows each layer's contents (strategies and notes by count, the preferences)
   and the three actions, each behind a confirmation that names what will be deleted.
 - **Read `ProjectDesignManual.md` Ch. 29 before building it** if it holds a `ScrollContainer`. The Back button goes in
   a fixed footer outside any scroll (§29.10).
@@ -347,8 +368,8 @@ This is a functional plan, not a performance one, so the criteria are **counts o
 | **S3** | **A corrupt file fails loudly and harmlessly:** `settings.json.corrupt` exists, the load line says so, the game starts with defaults, and the next change writes a fresh `settings.json` | Claude corrupts the file before the developer's second launch (protocol step 4), then reads the files |
 | **S4** | **The world never sees `user://player/`:** 0 references from `ResetWorldIfIncompatible`; the sweep stays `TopDirectoryOnly` | a grep, baseline 0, rerun at close-out (the exact command is in unit 3's build note: it counts the literal path **with its slash** and the `PlayerDataFiles.` class, over the whole of `NetworkRoot.cs`). A real wipe will confirm it at the next `WorldFormatVersion` bump, and the plan does not wait for one |
 | **S5** | **The checkpoint never reverts a setting:** a setting changed between two blocks is still set after a restart, which reverts the world to the earlier block | the protocol changes a setting with the autobet stopped, then closes before the next block |
-| **S6** | **The one-time move keeps everything:** after the first launch, `creations/` holds the strategies and notes and `preferences/` holds `hardware_allocation.json`, **byte-identical** to the originals, and none remain at the old paths. **R3 still runs at 10 credits** | Claude hashes the files before and after. **Baseline, 2026-10-21 (SHA-256, first 16 hex):** `saved_betting_strategies.json` `10fab9ed593e7122`, 6,408 bytes · `hardware_allocation.json` `7a21a42a44c9d375`, 554 bytes (player 10 credits, `bot_1`…`bot_4` 1 each, all individual) · `notepad_notes.json` **does not exist**, so the move must treat an absent file as nothing to move, never as an error |
-| **S7** | **"Reset preferences" resets layer 2 only:** after the next launch the preferences are at their defaults and the hardware credits at their initial allocation; the creations and the world are untouched (same tip height, same files) | the request file, the deletion lines in `godot.log`, and the files themselves |
+| **S6** | **The one-time move keeps everything:** after the first launch, `creations/` holds the strategies (and the notes, if any), **byte-identical** to the originals, and none remain at the old paths. `hardware_allocation.json` is **unmoved and byte-identical** at `user://` (§3.5). **R3 still runs at 10 credits** | Claude hashes the files before and after. **Baseline, 2026-10-21 (SHA-256, first 16 hex):** `saved_betting_strategies.json` `10fab9ed593e7122`, 6,408 bytes · `hardware_allocation.json` `7a21a42a44c9d375`, 554 bytes (player 10 credits, `bot_1`…`bot_4` 1 each, all individual) · `notepad_notes.json` **does not exist**, so the move must treat an absent file as nothing to move, never as an error |
+| **S7** | **"Reset preferences" resets layer 2 only:** after the next launch the preferences are at their defaults; the creations and the world are untouched (same tip height, same files). *The hardware credits: per D-27.11* | the request file, the deletion lines in `godot.log`, and the files themselves |
 | **S8** | **"Reset world" runs the one `WipeWorld`** (a grep finds a single delete list), and **"Wipe everything" leaves `user://` holding nothing but the files it reports it could not delete** (expected: the session's open `godot.log` at most). **Both are tested only at a wipe the developer chooses, never on R3's world** | a grep now; at that wipe, the deletion lines in `godot.log` and a listing of `user://` |
 | **S9** | **The dropdown lists exactly the saved strategies, and loads exactly what typing the name loads** (unit 3b). With N strategies for `Dice` it lists **N** (13 today) and is **disabled at 0**. A Save under a new name lists **N+1 at once**, without leaving the scene; a Save over an existing name keeps **N**. A strategy chosen and loaded onto a bot or the player lands in that node's strategy values with the saved `Config` | the `[StrategyDropdown]` lines against a `node -e` count of the file; the `[StrategyLoad]` lines against the per-node strategy values unit 2 writes to `settings.json` |
 
@@ -391,8 +412,9 @@ come out of it untouched. So the file is moved **out of `user://`** for one laun
 
 | # | Decision | Proposed |
 |---|---|---|
-| **✅ D-27.1 — ANSWERED 2026-10-21** | Two player layers: **creations** (strategies, notes) persist; **preferences** (every other setting, **plus the hardware credits**) are easily reset. A **User Settings scene** manages both and offers a general wipe | §3.4 is the design |
-| **✅ D-27.2 — ANSWERED 2026-10-21** | (a), as recommended: move the existing files once. Now three files: the two creations and `hardware_allocation.json` | §3.4, unit 3 |
+| **✅ D-27.1 — ANSWERED 2026-10-21** | Two player layers: **creations** (strategies, notes) persist; **preferences** (every other setting) are easily reset. A **User Settings scene** manages both and offers a general wipe. *(The hardware credits were in the preferences until §3.5 made them world state, the same day)* | §3.4 is the design, §3.5 corrects it |
+| **✅ D-27.2 — ANSWERED 2026-10-21** | (a), as recommended: move the existing files once. The two creations (`hardware_allocation.json` was a third until §3.5) | §3.4, unit 3 |
+| **D-27.11 — OPEN** | **Does "Reset preferences" still reset the hardware credits?** §3.4 said yes, back when the credits were a preference | **Proposed: no.** They are world state now (§3.5), and outside DEV they are bought with money, so resetting the view preferences would destroy a paid-for asset while the world keeps the SC that bought it. That is the same mismatch §3.5 removes. "Reset world" and a format bump already reset them |
 | **D-27.7** | Every reset or wipe runs at the next launch, by a request file `WorldGuardService` performs first | yes: it is the only form a stale static cache cannot defeat (TL.3) |
 | **D-27.8** | "Reset world" and a format bump share one `WipeWorld` | yes: one delete list |
 | **✅ D-27.9 — ANSWERED 2026-10-21: YES** | **"Wipe everything" is the equivalent of deleting the whole user data folder**: identity files and `user://logs/` included, so the next launch is a first launch. The developer keeps the other two actions, **three in total**: Reset preferences, Reset world, Wipe everything | §3.4 item 3. *(Proposed was "no", keeping the identities; the developer chose the full wipe.)* |

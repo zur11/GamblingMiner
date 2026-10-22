@@ -130,7 +130,7 @@ namespace Scripts.Betting
 				// Was a warning followed by an empty list, which the next Save then wrote over the file: a bad read
 				// silently became the loss of every saved strategy. Now the file is kept as evidence (plan §3.3).
 				_strategies.Clear();
-				string target = PlayerDataFiles.MoveAsideAsCorrupt(_statePath);
+				string target = DurableFile.MoveAsideAsCorrupt(_statePath);
 				_persistBlocked = target == null;
 				GD.Print(target != null
 					? $"[SavedBettingStrategyRepository] could not read {_statePath} ({ex.Message}). It is preserved as {target}; the list starts empty."
@@ -149,7 +149,7 @@ namespace Scripts.Betting
 
 			try
 			{
-				PlayerDataFiles.WriteAtomically(_statePath, JsonSerializer.Serialize(_strategies, _jsonOptions));
+				DurableFile.WriteAtomically(_statePath, JsonSerializer.Serialize(_strategies, _jsonOptions));
 			}
 			catch (Exception ex)
 			{

@@ -11,15 +11,15 @@ namespace Scripts.Hardware;
 // Persists per-node hardware credit allocation (individual vs casino pool). Static repository following the
 // BotWalletRegistry pattern: CamelCase JSON.
 //
-// Mini-plan 27 (developer, 2026-10-21; plan §3.4) — the credits are PLAYER data, layer 2 (preferences): they
-// survive a world wipe and are reset with the preferences. They lived at user://hardware_allocation.json, on the
-// wipe's delete list, until LegacyPlayerFileRelocation moved them here. Being player class, the file is written
-// atomically, a bad read is preserved rather than thrown at boot, and it is not under WorldWriteGuard (§3.3: a
-// broken world must not stop a player-class write; exempt by class). ⚠ P5 must revisit this once hardware is
-// priced in world SC: credits that outlive the world that paid for them are then an inconsistency.
+// WORLD state, on the wipe's delete list (developer, 2026-10-21, mini-plan 27 §3.5): outside DEV, hardware is bought
+// with the players' money, so a world reset must take every node's credits back to the initial allocation (1 credit
+// each, individual pool), which is what WalletInitializationService bootstraps when this file is absent. An amendment
+// earlier the same day had made the credits a player preference; it was reversed before any file moved.
+//
+// Written atomically, and a bad read is preserved rather than thrown at boot (DurableFile; mini-plan 27 unit 3).
 public static class HardwareAllocationRepository
 {
-	public const string SavePath = PlayerDataFiles.PreferencesDir + "/hardware_allocation.json";
+	public const string SavePath = "user://hardware_allocation.json";
 	// Set when an unreadable file could not be moved aside: a save would then write over the only copy.
 	private static bool _persistBlocked;
 
@@ -85,7 +85,7 @@ public static class HardwareAllocationRepository
 			// Was an uncaught throw at boot. Once moved aside, the file is absent, so WalletInitializationService
 			// bootstraps the initial allocation exactly as on a first launch.
 			_snapshot = new HardwareAllocationSnapshot();
-			string? target = PlayerDataFiles.MoveAsideAsCorrupt(SavePath);
+			string? target = DurableFile.MoveAsideAsCorrupt(SavePath);
 			_persistBlocked = target == null;
 			GD.Print(target != null
 				? $"[HardwareAllocationRepository] could not read {SavePath} ({ex.Message}). It is preserved as {target}; the initial allocation is bootstrapped."
@@ -191,8 +191,9 @@ public static class HardwareAllocationRepository
 
 	private static void Save()
 	{
-		// No WorldWriteGuard call since mini-plan 27: this is player class (see the header). It was guarded while the
-		// credits were world state (mini-plan 15 A).
+		// Mini-plan 15 A — a session that could not load its world writes nothing world-shaped.
+		if (WorldWriteGuard.RefuseWrite(nameof(HardwareAllocationRepository))) return;
+
 		if (_persistBlocked)
 		{
 			GD.Print($"[HardwareAllocationRepository] not saved: {SavePath} could not be read or moved aside this session.");
@@ -204,7 +205,7 @@ public static class HardwareAllocationRepository
 		long writeBegin = System.Diagnostics.Stopwatch.GetTimestamp();
 		try
 		{
-			PlayerDataFiles.WriteAtomically(SavePath, payload);
+			DurableFile.WriteAtomically(SavePath, payload);
 		}
 		catch (Exception ex)
 		{

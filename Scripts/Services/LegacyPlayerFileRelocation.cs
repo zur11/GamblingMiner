@@ -1,15 +1,15 @@
 using Godot;
 using Scripts.Betting;
-using Scripts.Hardware;
 using System;
 using System.IO;
 #nullable enable
 
-// Mini-plan 27 unit 3 (D-27.2 = a) — moves the three player files that existed before user://player/ into it, ONCE,
+// Mini-plan 27 unit 3 (D-27.2 = a) — moves the two player files that existed before user://player/ into it, ONCE,
 // by a rename of the same bytes: not a format migration, so nothing is parsed and nothing can be lost in a rewrite.
+// (The hardware credits were a third until the developer made them world state again, §3.5, before any file moved.)
 //
-// Runs from WorldGuardService, before the world guard and before any other autoload, because the hardware file is
-// loaded by CalendarTimeService (#3) and must be read from its new home.
+// Runs from WorldGuardService, before the world guard and before any other autoload, so nothing reads a file from its
+// old home.
 //
 // ⚠ DELETE THIS FILE, and its call in WorldGuardService, at the close-out of the plan after next (plan §3.4): by
 // then every world that had the old files has launched once. The old paths below are its only copies.
@@ -19,7 +19,6 @@ public static class LegacyPlayerFileRelocation
 	{
 		("user://saved_betting_strategies.json", SavedBettingStrategyRepository.DefaultPath),
 		("user://notepad_notes.json", NotepadService.SavePath),
-		("user://hardware_allocation.json", HardwareAllocationRepository.SavePath),
 	};
 
 	public static void Run()

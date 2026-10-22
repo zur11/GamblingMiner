@@ -8226,10 +8226,10 @@ public partial class NetworkRoot : Node
 	//
 	// Mini-plan 27 — PLAYER files are spared by CLASS, not by this list: they live in the player folder (see
 	// PlayerDataFiles), which no named path, glob or sweep below reaches (the sweep is TopDirectoryOnly).
-	// saved_betting_strategies and notepad_notes moved there (creations), and so did hardware_allocation
-	// (preferences, the developer's decision of 2026-10-21), which is why it is no longer deleted here. Nothing in
-	// that folder may ever be named in this file, by literal path or through that class: the tripwire counts both
-	// forms in NetworkRoot.cs, baseline 0 (plan S4).
+	// saved_betting_strategies and notepad_notes moved there (creations). Nothing in that folder may ever be named in
+	// this file, by literal path or through that class: the tripwire counts both forms in NetworkRoot.cs, baseline 0
+	// (plan S4). The hardware credits are NOT player data: they are bought with world money, so they stay on this
+	// list and a wipe returns every node to the initial allocation (developer, 2026-10-21, plan §3.5).
 	private static void ResetWorldIfIncompatible()
 	{
 		int storedVersion = 0;
@@ -8295,8 +8295,9 @@ public partial class NetworkRoot : Node
 
 		// TL.3 gap fix (2026-07-07): hardware/pool/swap world state — found leaking across the timeline
 		// wipe during the canon-relaunch verification (alt-bought hardware, bot pool shares, and a casino
-		// pool ledger referencing blocks of the wiped chain all survived into the fresh canon world). The hardware
-		// credits left this list at mini-plan 27: they are player data now (see the note above this method).
+		// pool ledger referencing blocks of the wiped chain all survived into the fresh canon world). With the file
+		// gone, WalletInitializationService bootstraps every node at 1 individual-pool credit, 0 casino-pool.
+		DeleteIfExists(HardwareAllocationRepository.SavePath);
 		DeleteIfExists("user://casino_pool_state.json");
 		DeleteIfExists("user://casino_coin_swap_state.json");
 		DeleteIfExists("user://sc_monetary_ledger.json"); // ND.8c — added WITH the feature (the TL.3 maintenance rule)

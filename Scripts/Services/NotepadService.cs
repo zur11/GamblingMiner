@@ -58,7 +58,7 @@ public partial class NotepadService : Node
 		catch (Exception ex)
 		{
 			_notes = new Dictionary<string, string>();
-			string? target = PlayerDataFiles.MoveAsideAsCorrupt(SavePath);
+			string? target = DurableFile.MoveAsideAsCorrupt(SavePath);
 			_persistBlocked = target == null;
 			GD.Print(target != null
 				? $"[NotepadService] could not read {SavePath} ({ex.Message}). It is preserved as {target}; the notepad starts empty."
@@ -77,7 +77,7 @@ public partial class NotepadService : Node
 
 		try
 		{
-			PlayerDataFiles.WriteAtomically(SavePath, JsonSerializer.Serialize(_notes, JsonOptions));
+			DurableFile.WriteAtomically(SavePath, JsonSerializer.Serialize(_notes, JsonOptions));
 		}
 		catch (Exception ex)
 		{

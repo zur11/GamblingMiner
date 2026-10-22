@@ -58,7 +58,7 @@ public partial class UserSettingsService : Node
 
 	private SettingsFile _settings = new();
 	// Set when a corrupt file could not be moved aside: writing would then destroy the only copy of the evidence,
-	// so nothing is written this session (plan §3.3, INC-004). The atomic write is PlayerDataFiles.WriteAtomically.
+	// so nothing is written this session (plan §3.3, INC-004). The atomic write is DurableFile.WriteAtomically.
 	private bool _persistBlocked;
 
 #if DEBUG
@@ -253,10 +253,10 @@ public partial class UserSettingsService : Node
 	}
 
 	// Plan §3.3 — a bad file is moved aside and never overwritten, so the evidence survives; the game starts from
-	// defaults and the next change writes a fresh file (PlayerDataFiles.MoveAsideAsCorrupt).
+	// defaults and the next change writes a fresh file (DurableFile.MoveAsideAsCorrupt).
 	private void PreserveCorruptFile(string detail)
 	{
-		string? target = PlayerDataFiles.MoveAsideAsCorrupt(SettingsPath);
+		string? target = DurableFile.MoveAsideAsCorrupt(SettingsPath);
 		if (target != null)
 		{
 			GD.Print($"[UserSettings] could not read {SettingsPath} ({detail}). It is preserved as {target}; " +
@@ -282,7 +282,7 @@ public partial class UserSettingsService : Node
 		try
 		{
 			_settings.SettingsVersion = CurrentSettingsVersion;
-			PlayerDataFiles.WriteAtomically(SettingsPath, JsonSerializer.Serialize(_settings, JsonOptions));
+			DurableFile.WriteAtomically(SettingsPath, JsonSerializer.Serialize(_settings, JsonOptions));
 #if DEBUG
 			_writeCount++;
 #endif
