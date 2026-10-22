@@ -67,7 +67,12 @@ public partial class UserSettingsService : Node
 	private int _writeCount;
 #endif
 
-	public override void _Ready() => Load();
+	public override void _Ready()
+	{
+		Scripts.Diagnostics.BootProbe.Mark("last autoload (UserSettingsService) starts");
+		Load();
+		Scripts.Diagnostics.BootProbe.Mark("UserSettingsService done");
+	}
 
 	public override void _ExitTree() => ReportWriteCount();
 

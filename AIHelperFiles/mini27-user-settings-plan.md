@@ -15,7 +15,8 @@ Load).** Unit 3 also makes both creations writers atomic (developer, 2026-10-21;
 **Unit 1 ✅ built (§4). Unit 2 ✅ built (§5). Unit 3 ✅ built (§5), and corrected by §3.5 (the hardware credits stay
 in the world)**: the first launch after it moves the two creations (S6). **D-27.11 answered: "Reset preferences"
 does not touch the hardware credits.** **Unit 3b ✅ built (§5). Unit 4 ✅ built (§5). Unit 5 ✅ built (§5). Unit 6 ✅ built
-(§5).** Next: **the verification run**, in the order of §6.2 (launches A–D).
+(§5).** **Verification: launches A–C done, every prediction so far holds (§6.3).** Next: **launch D**, with
+`BootProbe` timing the boot the developer reported as slower (§6.3).
 
 **Branch:** `mini27-user-settings` (proposed, D-27.6).
 
@@ -533,6 +534,47 @@ load line and the file.
   - **Claude reads:** the `[Reset]` lines, an empty `preferences/`, and the unchanged strategies, tip height and
     hardware credits (S7).
 - **Not in this run:** "Reset world" and "Wipe everything" for real (S8), at a wipe the developer chooses.
+
+### 6.3 — Results (launches A–C, 2026-10-22; D pending)
+
+| # | Result |
+|---|---|
+| **S6** | **Holds.** Launch A's first line from the plan: `[PlayerFiles] moved user://saved_betting_strategies.json -> user://player/creations/… (6408 bytes, renamed, not rewritten)`. The moved file hashes `10fab9ed593e7122`, as at the baseline. Nothing remains at the old path, and `hardware_allocation.json` is unmoved and identical (`7a21a42a44c9d375`). |
+| **S1** | **Holds.** After launch A, `settings.json` held **9 keys**, each with the value set: `LatestOnly`, `PerBet`, speed `400` (4x), `5` credits, latest-only `true`, the player's base bet `0.12345678`, `strategyPanel.bot_2`, DEV scale `30` (3000X), balances hidden. The read-back at launch C: `[UserSettings] loaded 9 keys … (version 1)`. |
+| **S2** | **Holds.** Launch A: `19 changes, 19 writes, 5 sets to the current value`. Launch B: `2 changes, 2 writes`. Launch C: `0, 0, 0`. |
+| **S3** | **Holds.** The corrupt file was preserved byte-for-byte as `settings.json.corrupt`, and the failure was printed with the parser's message. The game started from defaults (Bet View back to Detailed; one press made it `LastTen`), and the next change wrote a fresh file. |
+| **S5** | **Holds** by construction of the run: no block was mined in any launch, and every setting survived the restarts that reverted the world. |
+| **S9** | **Holds.** 13 listed; 0 listed with the file moved out; **1** after the first "V1 probe" Save, still **1** after the second (an overwrite). Both loads logged (`'R2 L50' -> bot_2`, `'R1 0.5' -> player`). **A first comparison looked like a refutation and was not one:** `bot_2`'s persisted Insist switches read ON where R2 L50 stores OFF, and the player's read OFF where R1 0.5 stores ON. Both come from the code's own rules: `BuildBotStrategyConfig` forces a bot's Insist ON, and the panel reads an Insist without its stop amount as OFF (R1 0.5 has no stops). The prediction's comparison must be against what the RESOLVER applies, not against the stored record. That is Standing Convention 8, and it is the comparison that holds. |
+| **V1c (S7's half)** | The two cancelled dialogs wrote nothing (one `[Reset] requested` line, `ResetPreferences`); the request waits for launch D. |
+
+**Two process notes from the run, both Claude's:**
+- **A deletion ran before its guard had passed.** Between A and B, the script that moved the strategies file out
+  compared hashes with `sha256sum FILE`. On a path with backslashes, that prints a leading `\`, so the comparison
+  failed. The `rm` was not made conditional on it and ran anyway. **Nothing was lost.** The copy hashes to the
+  baseline in full (`10fab9ed…09e97bd3`) and parses with all 13 strategies, and the restore after B was checked
+  against that full hash before anything else. **Rule applied from then on: hash from stdin (`sha256sum < FILE`),
+  and a deletion runs only inside the branch where its check passed.**
+- The test's own `settings.json.corrupt` was moved to the scratchpad, not deleted.
+
+**The developer's report after launch C (2026-10-22): starting the game now takes "almost half a minute", more than
+double what it used to, not measured.** Checked first:
+- **The ANGLE fallback is not new.** It is present in the 2026-10-20 logs.
+- **The world has grown about 13%**, from height 3,496 (the last log before this plan) to 3,968, with a 22.5 MB
+  `chain.jsonl`. That is not double.
+- **This plan adds to the boot** three `FileExists` checks in `WorldGuardService`, the reset request when one is
+  pending, and a 1 KB JSON read. **None of it is timed.**
+- **A third candidate:** launching from the editor after a code change rebuilds the C# project before the engine
+  starts, and launch A was the first after this plan's commits.
+- **Nothing measured the boot**, because the scene-entry probe starts at a button press. So **`BootProbe`**
+  (DEBUG, `GD.Print`) marks six points in time since the engine's start:
+  - `WorldGuardService` start and end: the first autoload, and all this plan's added boot work.
+  - `UserSettingsService` start and end: the last autoload, new in this plan.
+  - MainMenu ready.
+  Whatever is felt beyond the last mark happened before the engine started.
+- **Prediction, registered before launch D:** WorldGuardService's span stays **under 50 ms** with a pending
+  "Reset preferences", and UserSettingsService's under 50 ms. If either is in seconds, this plan caused the
+  slowdown. If MainMenu's total is far below what the developer feels, the time is spent before the engine
+  starts, in the editor's rebuild and launch.
 
 ---
 

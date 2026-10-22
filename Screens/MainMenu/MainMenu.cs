@@ -36,6 +36,7 @@ public partial class MainMenu : Control
 		GetNode<Button>("%CentralBankBtn").Pressed              += () => _sceneManager?.Go(SceneManager.SceneId.CentralBank);
 		GetNode<Button>("%UserSettingsBtn").Pressed             += () => _sceneManager?.Go(SceneManager.SceneId.UserSettings);
 		GetNode<Button>("%ExitBtn").Pressed                     += OnExitPressed;
+		Scripts.Diagnostics.BootProbe.Mark("MainMenu ready");
 	}
 
 	// ── Mini-plan 23 A — Exit (D-20.1: a confirmation naming what a restart will restore) ─────────────────────────
