@@ -8217,7 +8217,7 @@ public partial class NetworkRoot : Node
 	}
 
 	// MAINTENANCE RULE (learned at TL.3, 2026-07-07): every NEW persisted world-state file MUST be added
-	// to this delete list when it ships — the TL.3 canon-relaunch verification found hardware credits,
+	// to the delete list (WipeWorld, below; one list since mini-plan 27) when it ships — the TL.3 canon-relaunch verification found hardware credits,
 	// casino-pool shares, and swap-desk state leaking across the timeline wipe because their files
 	// (hardware_allocation / casino_pool_state / casino_coin_swap_state — the last one created AFTER this
 	// list was written) were never listed. Deliberately SPARED, by design (identity data, not world state): the
@@ -8259,10 +8259,24 @@ public partial class NetworkRoot : Node
 			return;
 		}
 
-		GD.Print($"[NetworkRoot] World reset triggered (format {storedVersion} → {WorldFormatVersion}" +
-				 (timelineChanged ? $", timeline '{storedTimelineTag}' → '{TimelineConfig.Tag}'" : string.Empty) +
-				 "): resetting chain + clock + financial state (clean reset).");
+		WipeWorld($"format {storedVersion} → {WorldFormatVersion}" +
+				  (timelineChanged ? $", timeline '{storedTimelineTag}' → '{TimelineConfig.Tag}'" : string.Empty));
+	}
 
+	// Mini-plan 27 unit 4 (D-27.8) — THE world wipe, and the only one. Extracted unchanged in what it deletes from
+	// ResetWorldIfIncompatible, which calls it on a format or timeline mismatch; the player's "Reset world" request
+	// (PlayerResetRequest, performed by WorldGuardService before anything loads) calls it too. One delete list, so the
+	// two can never drift apart the way an enumerated list did (CLAUDE.md Pattern 2). It must run before any autoload
+	// has loaded a world file, which both callers guarantee. It ends by writing the two stamps, so the guard that runs
+	// after a requested wipe finds a compatible world and does nothing.
+	public static void WipeWorld(string reason)
+	{
+		GD.Print($"[NetworkRoot] World reset triggered ({reason}): resetting chain + clock + financial state (clean reset).");
+
+		// The version stamp goes FIRST and is rewritten LAST (the end of this method), so a wipe interrupted half-way
+		// leaves no stamp, and the guard sees an incompatible world at the next launch and finishes it. Without this, a
+		// requested wipe interrupted mid-list would leave a half-deleted world behind a compatible stamp.
+		DeleteIfExists(WorldVersionPath);
 		DeleteIfExists(StatePath);
 		// Mini-plan 14 B — the chain is world state in its own file now, so it is wiped with everything else
 		// (CLAUDE.md Pattern 2's third question). Its counters are reset below with the dirty flag.
@@ -8320,12 +8334,12 @@ public partial class NetworkRoot : Node
 		string blocksDirAbs = ProjectSettings.GlobalizePath(BlockchainDir);
 		if (System.IO.Directory.Exists(blocksDirAbs))
 			foreach (string staleFile in System.IO.Directory.GetFiles(blocksDirAbs, "blocks-*.json"))
-				try { System.IO.File.Delete(staleFile); } catch { /* best-effort */ }
+				DeleteAbsoluteLoudly(staleFile);
 
 		string userDirAbs = ProjectSettings.GlobalizePath("user://");
 		if (System.IO.Directory.Exists(userDirAbs))
 			foreach (string staleFile in System.IO.Directory.GetFiles(userDirAbs, "bet_history_*.jsonl"))
-				try { System.IO.File.Delete(staleFile); } catch { /* best-effort */ }
+				DeleteAbsoluteLoudly(staleFile);
 
 		// ── Repair/diagnostic siblings: swept by SUFFIX, because enumerating them does not hold ──────
 		// (2026-08-23) Three suffixes attach themselves to a state file and then outlive it: `.tmp` (the
@@ -8588,10 +8602,30 @@ public partial class NetworkRoot : Node
 		return chain;
 	}
 
+	// Mini-plan 27 unit 4 — both print each file they delete, and each one they could not: a wipe the player asked for
+	// must leave a record of what it took (plan §3.4), and a format bump gains the same record. A failure used to be
+	// silent. Only WipeWorld calls them; still best-effort per file, so one locked file cannot abort a world reset.
 	private static void DeleteIfExists(string userPath)
 	{
-		if (FileAccess.FileExists(userPath))
-			DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(userPath));
+		if (!FileAccess.FileExists(userPath))
+			return;
+		Error result = DirAccess.RemoveAbsolute(ProjectSettings.GlobalizePath(userPath));
+		GD.Print(result == Error.Ok
+			? $"[NetworkRoot]     deleted   {userPath}"
+			: $"[NetworkRoot]     NOT deleted  {userPath} ({result})");
+	}
+
+	private static void DeleteAbsoluteLoudly(string absolutePath)
+	{
+		try
+		{
+			System.IO.File.Delete(absolutePath);
+			GD.Print($"[NetworkRoot]     deleted   {System.IO.Path.GetFileName(absolutePath)}");
+		}
+		catch (Exception ex)
+		{
+			GD.Print($"[NetworkRoot]     NOT deleted  {System.IO.Path.GetFileName(absolutePath)} ({ex.Message})");
+		}
 	}
 
 	// INC-001 / D-15.26 — set when the world snapshot exists but cannot be read. Guards PersistStateToDisk
