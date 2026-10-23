@@ -5,8 +5,9 @@ Holdings Hub, and opens **R4**, a new test world whose strategies are fixed for 
 both on 2026-10-23, after mini-plan 28's close-out: "use the roster", and write this plan "following all your
 recommendations".
 
-**Status:** 📝 **SPECIFIED 2026-10-23.** Nothing built. Next: the **world reset W** (§4), which is also mini-plan 27's
-pending check S8. Then R4's first session (§5), then unit 1 (§6).
+**Status:** 🔄 **IN PROGRESS 2026-10-23.** **W is done: W1–W3 hold (§8.1)**, and that also ran mini-plan 27's S8
+"Reset world" half. The world is fresh and pre-genesis (115 blocks, 2009-03-21 04:17:51). Nothing built yet. Next:
+**R4's first session** (§5), then unit 1 (§6).
 
 **Branch:** `mini29-holdings-hub-r4` (proposed, D-29.1).
 
@@ -132,7 +133,22 @@ nothing to show.
 3. With the active-node selector, load **`R1 0.01` on `bot_1`**, **`R2 L100 SL5` on `bot_2`**, **`R4 L50 0.05` on
    `bot_3`**, **`R4 C10 0.1` on `bot_4`**, then select **`player`** and load **`R4 C90 0.1`**. Auto Recharge **ON**.
 4. DEV ⏩ Time: **9000X**. With `player` selected, press **AUTO**. The four bots start with it.
-5. Let it run for a time you choose, then **STOP** and exit the usual way. Tell me the session's real length.
+5. Let it run **80 real minutes** from AUTO (min 78, max 82), then **STOP** and exit the usual way. Tell me the
+   session's real length.
+
+**Session lengths, from a measured rate (added 2026-10-23, at the developer's request for a minimum and a maximum).**
+9000X caps a game day at **9.6 real seconds** (86,400 ÷ 9,000). R2, the same setup (every client at 1 credit, 9000X),
+ran at **9.64–9.76 s per game day** over its whole session: its `session_lifecycle_trace.csv` pairs game time with
+real time (2009-12-05 at 41.6 min, 2011-06-12 at 132.0 min, 2012-02-01 at 170.3 min). A session can run slower than
+that, never faster, so a stopwatch can undershoot a date but not overshoot it.
+- **Session 1 ends between 2010-07-26 and 2010-08-05.** By then the first three companies have been introduced
+  (2010-07-18, 07-24, 07-25), so their auctions are open. None can be founded before 2010-08-07, the first
+  introduction plus one 20-day window (`AuctionWindowMs`); R2's first founding came on 2010-09-07. **80 minutes** at
+  9.6–9.8 s per day lands on 2010-07-24 – 08-03. If it lands early, the auction step waits for a short session whose
+  length Claude computes from the date reached.
+- **Session 2 starts with the auction step** and runs to **at least 2011-06-30** (R4's minimum, D-29.6): about 335
+  game days, **~55 real minutes**. It has no hard maximum, but stopping by ~2011-09 (~70 minutes) keeps V-H's first
+  votes close to when the hub is built (§6).
 
 **Later sessions:** the strategies are saved per node in the preferences now (mini-plan 27), so they come back armed.
 Check that the five nodes show their strategies, then 9000X and AUTO. **Never change a strategy while R4 is open.** If
@@ -173,6 +189,36 @@ should record them is a question for Betting Statistics (17.B), roadmap item 4.
 ## 8. Results
 
 *(Filled in as the runs report: W, then one table per R4 session, then V-H.)*
+
+### 8.1 W — the reset (2026-10-23): W1, W2 and W3 hold
+
+**Which log is which launch** (each was identified by its content before any figure was read; Godot names a rotated log
+by its last write):
+
+| File | Launch | What it shows |
+|---|---|---|
+| `godot2026-10-23T15.18.58.log` | an extra open-and-exit of R3's world, before step 1 | 4,047 blocks loaded, `JournalRollback` dropped 0, `UserSettings` 0 writes. Harmless |
+| `godot2026-10-23T15.19.32.log` | **step 1**, the request | `[Reset] requested 'ResetWorld': it runs at the next launch, before anything loads.` |
+| `godot.log` | **step 2**, the reset + the bootstrap (15:19:33 → 15:20:27) | below |
+
+| # | Result | Evidence |
+|---|---|---|
+| **W1** ✅ | `WorldGuardService` performed the request (`[Reset] performing 'ResetWorld', requested 2026-10-23 20:19:27 UTC`) through `WipeWorld` ("the player's Reset world request"). **43 deletion lines:** 17 world files (the version stamp first, then `state.json`, `chain.jsonl`, the checkpoint, the clock and every money service, `hardware_allocation.json`), 8 of the 9 `WorldTracePaths` (`swap_desk_trace.csv` did not exist, and is listed only when present), and the 20 journal segments `bet_history_002310`–`002329`. No `.tmp` / `.corrupt` / `.prerepair` sibling existed. Then `[HistoricalBootstrap] First launch — mined genesis → 2009-03-21 04:17:51. Satoshi 111 blocks, Hal 3 blocks. E4 (10 BTC Satoshi→Hal): on-chain.` | `godot.log` |
+| **W2** ✅ | **All 11 hashes unchanged** (stdin `sha256sum`, first 16 hex): `saved_betting_strategies.json` `10fab9ed593e7122` · `settings.json` `749b1e4d92832838` · `rank_calibration_R3.csv` `f8174bc41ec2325e` · `bot_wallet_registry.json` `3803f1eaf2937dfe` · `wordlist_256.json` `8aef71a67a98eb44` · `wallet_state.json` `845128a05226ef8b` · `casino_wallet_state.json` `eea85a50580ff8be` · `satoshi_wallet_state.json` `2747c7160b258259` · `hal_wallet_state.json` `2aba60a0d44d4dc9` · `mike_hearn_wallet_state.json` `120e6e89df092828` · `world_timeline.stamp` `51bb9a965df368ec`. **`logs/` keeps every evidence file:** `M1_godot.log`, `M2_godot.log`, the `_F1/_M1/_M2` block, frame and send traces, `rank_calibration_R1_part1/_part2/R2/R3.csv`, `bet_cost_trace.csv` and the five `.old` files, and every `godot*.log`. The only `logs/` files deleted are the named `WorldTracePaths`, which the code lists as world state (`NetworkRoot.WorldTracePaths`). No `rank_calibration_trace.csv` exists, so R4's trace starts fresh with the current header | hashes and listing, 15:21 |
+| **W3** ✅ | **Chain:** `chain.jsonl` holds **115 blocks** (genesis + 111 Satoshi + 3 Hal), `state.json` stamps `ChainHeight 114` and the tip `001e7b67…`, the tip's timestamp is 2009-03-21 04:17:51 local, and `calendar_state.json`'s ticks decode to the same instant. `CompanyFoundings` is empty, and there is no `block_session_checkpoint.json`: the world is pre-genesis. **Balances:** `principal_balance_state.json` **40,000.00000000**, `bankroll_state.json` **0** (written at exit, 15:20:27). **Hardware:** `hardware_allocation.json` rewritten (`7a21a42a44c9d375` → `d9aa05c4e376f250`, "bootstrapped — 5 nodes, 1 individual + 0 casino credit each"), and it reads 1 credit for every node. **`world_format_version.txt` = 12** | the files and `godot.log` |
+
+**Also seen:**
+- The boot of a fresh world reached the main menu in **4.09 s**, of which `WorldGuardService` with the wipe took 155 ms.
+- The four casino bots' governance stances were **drawn anew** for this world, so they differ from R3's.
+- **`settings.json` was not rewritten** (`0 writes` in all three launches). It holds a strategy panel for **`player`
+  only** (base 0.02, +100% on loss: R3's last), none for the four bots, and a requested DEV time scale of **90**. So
+  step 3 of §5 must load all five strategies, and step 4 must set 9000X. Both are saved from then on.
+- **The two existing roster strategies were read from `saved_betting_strategies.json`:** `R1 0.01` (base 0.01, 0% / 0%,
+  no stops, chance 50) and `R2 L100 SL5` (base 0.01, +100% on loss, `StopOnLoss` 5 with insist-after-stop ON, so it
+  resumes after each cut, chance 50). Both match §3.2.
+
+**S8's "Reset world" half is now run** and is recorded in `mini27-user-settings-plan.md`. "Wipe everything" stays
+pending (§2).
 
 ## 9. Decisions at specification (the developer's)
 
