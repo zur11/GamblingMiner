@@ -6,8 +6,9 @@
 
 **Status:** 🔨 **IN PROGRESS.** Specified 2026-10-22. Unit 1 (§4) built 2026-10-23 (`c5b0e6d`). **M1 run
 2026-10-23 (§6.1): P2 refuted.** The minute is the derived-wallet rescan (82.8%), not the per-node validation
-(15.8%). **§5A amends unit 2 (F-2 fixed-base derivation + F-1 validate once) and awaits the developer's approval.**
-Next, once approved: §5A.5's offline harness, then unit 2, then M2.
+(15.8%). §5A amends unit 2 (approved, `0a39a5a`), with **F-3 added at the developer's choice**: cast miners'
+change goes back to their base address. **Offline harness run (§5A.6): P7 and P8 hold.** **Unit 2 built
+2026-10-23 (§5A.7): F-2 + F-1 + F-3 + the rescan counters + E3.** Next: **M2** (§6), then M3, then close-out.
 
 **Branch:** `mini28-boot-time` (proposed, D-28.1).
 
@@ -128,7 +129,7 @@ ExportRelease 0 warnings; locale detector 17/0/0/0, the 17 identical by content 
 - **E4, what the developer feels:** MainMenu ready since the engine started, reported but **not** a pass/fail figure,
   because it does not reproduce across launches. Predicted: below **15 s** without a rebuild.
 
-## 5A. Unit 2, amended from M1's attribution (2026-10-23) — awaiting the developer's approval
+## 5A. Unit 2, amended from M1's attribution (2026-10-23) — approved, with F-3 added at the developer's choice
 
 ### 5A.1 What M1 found, and what the code says about it
 
@@ -170,6 +171,29 @@ the code.
   node installs the chain through a path that takes that verdict. The length check and the pending copy stay per
   node, and an invalid chain is still refused everywhere.
 
+- **F-3, cast miners send their change back to their base address** *(added 2026-10-23 at the developer's choice,
+  option 2, after the attribution below)*. F-2 makes each derivation cheaper. F-3 stops the **count** from growing,
+  without which F-2 only postpones the next minute.
+  **Who makes the addresses** (R3's chain, ownership followed from the miners' coinbases, read-only): of 15,750
+  distinct addresses, **15,398 are change**. By sender: **cast miners 10,924 (69%)**, all from `TryCastSellFlow`
+  (the historical volume filler: real transactions per block ÷ 100, capped at 23 slots), companies 3,772 (24%),
+  the four miner bots 700 (4%), founders 2. Satoshi's coinbase rotation is inside the 309 coinbase/system
+  addresses. **14,206 addresses were received once and spent once.** New change addresses per year: 2010 → 91,
+  2012 → 1,258, 2013 → 2,651, 2015 → 4,763. At full blocks the ceiling is 23 × ~540 blocks ≈ 12,400 per in-game
+  year, every one of them paid again at every boot.
+  **The change:** `NodeAgent` gains `RotateChangeAddress` (default `true`) beside `RotateCoinbaseAddress`, and the
+  three change-producing send paths ask the node for its change address through one method. Cast miners, both at
+  boot and when registered mid-session, are set to `false`. They **keep** their `DerivedAddressWallet`: it still owns
+  and signs the 10,924 addresses already on the chain, so nothing already mined changes owner. Companies, the
+  player, the casino, the founders and the miner bots rotate exactly as before. **No format bump, no wipe:** blocks
+  already mined are untouched, and only change created after the change differs.
+  **What the player will see:** a cast miner's sell shows two outputs in the Block Explorer, the payment and the
+  change back to the sender's own base address. That is a real output of a real spend, and common in that era. It
+  is shown, **never filtered**: CLAUDE.md's rule against the deleted change-to-self filter stands, and its premise
+  ("every participant rotates") is reworded in this unit, as is §29.9.
+  **Projection, not a measurement:** with F-3 the yearly growth falls to the companies' and bots' share, about a
+  quarter of the above.
+
 **Declined or deferred, with reasons:**
 - **Running the 73 rescans in parallel:** deferred. The instrument (below) prints the largest wallet's share, so
   if E4 misses, that decision has its data.
@@ -190,6 +214,7 @@ the code.
 | **P6** | The rescan's work is the derivations. At boot it derives **D** addresses with **14,000 ≤ D ≤ 17,300**, `BuildUsedAddressSet` costs **< 2%** of the rescan, and the derivations **≥ 95%** | new DEBUG counters in the rescan (M2) |
 | **P7** | One F-2 derivation costs **≤ 25%** of the current one, measured side by side in one process over the same seeds | the offline harness first, then M2's E3 |
 | **P8** | F-2 is output-identical: **0 mismatches** | the offline harness (Step 16's vector shapes), then every boot derivation in M2 |
+| **P9** | After F-3, blocks mined in play carry **0 new cast-miner change addresses**, and cast-miner sells with change pay it to the sender's base address. Companies and miner bots **still create new change addresses (> 0)**, so the rotation that should remain did remain (Convention 11) | M3: Claude reads the chain's new blocks with the ownership walk above |
 
 ### 5A.4 Exit criteria (counts first)
 
@@ -203,6 +228,8 @@ the code.
   the old `ScalarMul` kept as a DEBUG reference, and their output are deleted at close-out (Convention 3).
 - **E4, reported, not pass/fail:** MainMenu ready since the engine started, launch 2. Predicted **< 20 s**, against
   M1's 57.9 s: the rescan near 44.7 × 0.25 ≈ 11 s at most, the loop ≈ 0.1 s, everything else ≈ 4.5 s as measured.
+- **E5 (F-3), read after a play run (M3):** P9. F-3 cannot be seen in a boot that mines nothing, so it does not
+  change M2's E2: the post-boot `state.json` is still byte-identical to M1's.
 
 ### 5A.5 Order
 
@@ -211,9 +238,71 @@ the code.
    `"sign:"` seeds, the empty seed, the edge scalars 1, 2, 3, 255, N−2, N−1) plus a few thousand more, and times
    both. P7 and P8 are read here first. **If either is refuted, F-2 is not built** and this section returns to the
    developer.
-2. Unit 2 in the repo: F-2, F-1, the rescan counters, the E3 switch, and the two stale cost comments. Builds, the
-   locale detector and the tripwire, stage, approval.
+2. Unit 2 in the repo: F-2, F-1, F-3, the rescan counters, the E3 switch, the two stale cost comments, and the
+   CLAUDE.md / §29.9 rewording. Builds, the locale detector and the tripwire, stage, approval.
 3. **M2**: the same two launches as M1. The second runs E3, so it is about a minute longer, once.
+4. **M3**, after M2 has been read: a play run long enough to mine **≥ 20 blocks** in R3's full-block era, then
+   Exit. It **advances R3's world**, which is why it comes after M2's byte comparison. Claude reads P9 from the new
+   blocks. The protocol, with every setting named, is given when M3 is due.
+
+### 5A.6 The offline harness (2026-10-23) — P7 and P8 hold; the design measured into its final shape
+
+A console project in the scratchpad compiled the current `Secp256k1.cs` (renamed `Secp256k1Old`) beside the F-2
+copy, in one process. **Identity:** 7,422 vectors, made of 300 seed-derived keys, 2,103 `" #r{i}"` seeds (three
+bases × indices 0…700), 3 `"sign:"` seeds, the empty seed, 13 edge scalars (1, 2, 3, 15, 16, 17, 255, 256, 2¹²⁸,
+2²⁵⁵, 15·16⁶³, N−2, N−1), one scalar with every nibble nonzero, one with every nibble F below N, and 5,000 random
+keys. Plus the k=1 known answer. **Timing:** the boot's shape (2,000 `" #r{i}"` keys), old and new interleaved in
+blocks of 200, three rounds, 6,000 calls each.
+
+| Variant | Mismatches | Table, once | Old ms/call | New ms/call | New / old |
+|---|---|---|---|---|---|
+| 4-bit windows (as §5A.2 specified), Release | 0 | 25 ms | 2.399 | 0.581 | **24.2%** |
+| 4-bit windows, Debug | 0 | 27 ms | 2.498 | 0.584 | **23.4%** |
+| 8-bit windows, Debug | 0 | 206 ms | 2.581 | 0.417 | 16.1% |
+| **8-bit windows + Euclid inversion, Debug** (built) | **0** | 185 ms | 2.846 / 2.923 / 2.889 | 0.255 / 0.252 / 0.261 | **8.9% / 8.6% / 9.0%** (three runs) |
+
+- **P8 holds:** 0 mismatches in every variant. The DEBUG reference kept for E3 also matches the old copy on all
+  7,422 vectors.
+- **P7 holds** for the design as specified (≤ 25%), **by a margin of under 2 points.** That is why two refinements
+  were measured before building. The one built is ~2.6× better than the specified one.
+  - **8-bit windows:** 32 additions instead of 64, from an 8,160-point table built once in ~0.2 s.
+  - **Extended-Euclid inversion:** measured separately at **0.023 ms against `ModPow`'s 0.223** per inverse, 3,000
+    inputs, 0 disagreements. Left in place, the single inversion was over half of the 8-bit path's cost.
+  - The old `ScalarMul` keeps `ModPow`, so the E3 reference is the untouched old path.
+- **The old per-derivation cost, 2.4–2.9 ms, agrees with the 2.6 ms M1 implied** from 44.7 s ÷ ~17,000. That
+  supports P6's count before M2 measures it.
+- **Expectation after the harness** (this is not a re-registration; E4's < 20 s stands as registered): ~17,000 ×
+  0.25 ms ≈ 4.3 s of rescan + 0.19 s of table + ~0.1 s of validation + ~4.5 s of everything else ≈ **9–10 s**.
+
+### 5A.7 Unit 2 as built (2026-10-23)
+
+- **F-2, `Secp256k1`:** `GetCompressedPublicKey` computes `ScalarMulG` from a lazily built `GTable` (`d·256^j·G`,
+  32 × 255 affine points, Jacobian build + one batch inversion). It uses mixed addition (`JacobianAddAffine`,
+  madd-2007-bl) and `JacobianToAffineByEuclid`. `ScalarMul` survives only behind the DEBUG
+  `GetCompressedPublicKeyByDoubleAndAdd`. The Step 16 performance note now carries mini-plan 28's correction.
+- **F-1, `BlockchainService`:** `TryReplaceChainWithVerdict(chain, pending, chainIsValid)`. It shares
+  `InstallChain` with `TryReplaceChain`, whose behaviour is unchanged. `ApplyStateFromSnapshot` validates once and
+  installs on the verdict.
+- **F-3, `NodeAgent` / `NetworkRoot`:** `RotateChangeAddress` (default `true`), `NextChangeAddress()`, and
+  `OnChangeAddressUsed()`. The three change-producing send paths (generic, casino, company dividends) use them.
+  `ApplyCastMinerChangePolicy` runs at both cast-miner registration points: the boot loop and
+  `RegisterCastMinerNode`.
+- **Instrument:** `RescanDerivedReceiveWallets` reports its chain pass and each wallet's derivations
+  (`DerivedAddressWallet.DerivedAddressCount`) to `BootProbe`, which prints one `[Boot] Rescan:` line. It is kept
+  after close-out (D-28.7).
+- **E3:** the DEBUG const `BootProbe.CompareOldPathsAtBoot = true`. `NetworkRoot.RunBootSideBySide` runs after the
+  world write and prints `[Boot] E3 F-1:` and `[Boot] E3 F-2:`. The second line is also E2's identity count
+  (`DerivedAddressWallet.CountMismatchesAgainst` over `CryptoUtils.DeriveGmAddressByDoubleAndAdd`). All of it goes
+  at close-out.
+- **Stale cost notes corrected (Convention 15):** `DefaultGapLimit` ("~20 SHA256") and the Step 16 note above
+  `RescanDerivedReceiveWallets` ("~8 s").
+- **Docs:** CLAUDE.md's change-to-self rule now says cast miners send change to their base on purpose, shown as a
+  real output (+70 characters, file at 86,948). §29.9 gained the F-3 paragraph.
+- **Convention 13 sweep**, for the retired premise "change never lands on the sender's base". No reader classifies
+  an output as a payment by comparing it to a base address. The wallet history counts the base as owned, so a
+  change-to-base output is netted out of "sent". The one self-change skip covers founders' scripted events only.
+- **Checks:** Debug and ExportRelease 0 warnings, 0 errors. Locale detector 17/0/0/0, the 17 identical by content to
+  `09cdb10`'s. Wipe tripwire 0. Every added `.cs` line is tab-indented.
 
 ## 6. Measurement — protocols (the developer runs them; watches nothing; Claude reads the files)
 
@@ -225,8 +314,10 @@ the code.
 3. **I** read `godot.log` from launch 2, plus launch 1 from its rotated copy, and copy both out of `user://logs/` as
    `M1_boot_*.log` in the scratchpad.
 
-**M2, after unit 2** (now §5A's unit 2, F-2 + F-1): the same two launches. The second launch also runs E3's
-side-by-side measurement, so it is about a minute longer, once.
+**M2, after unit 2** (now §5A's unit 2, F-2 + F-1 + F-3): the same two launches. `CompareOldPathsAtBoot` is a
+constant, so **both** launches run E3's side-by-side after the world write, each about 50 s longer (≈ 17,000 old
+derivations × ~2.6 ms + 73 validations × ~113 ms). Launch 1's figures are a second E3 reading. E4 is read from
+launch 2's "world: persisted; EnsureInitialized ends" mark plus what follows E3, i.e. MainMenu minus the E3 span.
 
 ### 6.1 M1 results (2026-10-23, R3's world, read from `godot.log` by Claude)
 
@@ -288,7 +379,7 @@ holds no wall-clock field, so a byte comparison is meaningful.
 | **D-28.2** | M2's side-by-side measurement (E3) makes one launch about a minute longer | yes: it is the only way to compare the two paths within one session |
 | **D-28.3** | The per-autoload marks and the `ChainIsValid` counter stay after close-out (DEBUG, compiled away in an export) | yes: the boot was unmeasured for a year, and nothing noticed it growing. The E3 switch is deleted |
 
-**Added by the §5A amendment (2026-10-23), open until the developer answers:**
+**Added by the §5A amendment (2026-10-23), approved by the developer the same day (D-28.8 by their own choice):**
 
 | # | Decision | Proposed |
 |---|---|---|
@@ -296,3 +387,4 @@ holds no wall-clock field, so a byte comparison is meaningful.
 | **D-28.5** | **F-1** is built in the same unit, on M1's measured 8.6 s | yes: it is now the second-largest step and a timed cause, not an inferred one |
 | **D-28.6** | Parallel rescans, a persisted wallet index, a lower gap limit and limb arithmetic are not built (§5A.2) | yes: parallelism and limb arithmetic stay as the next levers if E4 misses, with the data the instrument will print |
 | **D-28.7** | The rescan counters (derivations, chain-pass ms, largest wallet) stay after close-out like D-28.3's; the old `ScalarMul` reference and the E3 switch are deleted | yes |
+| **D-28.8** | **F-3**: cast miners' change returns to their base address (option 2); companies keep rotating | **decided by the developer, 2026-10-23**, in this plan. The policy is set by KIND, at the cast miners' two registration points. That is deliberate, and separate from D-16.6's rule that the *wallet* is attached by `HasSeed`, which is unchanged: cast miners keep their wallet |

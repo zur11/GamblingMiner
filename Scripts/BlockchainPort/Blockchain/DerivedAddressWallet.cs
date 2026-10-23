@@ -25,8 +25,10 @@ namespace GodotBlockchainPort.Blockchain;
 public sealed class DerivedAddressWallet
 {
 	// OQ-8.4 — BIP44 convention. Our strictly-sequential assignment means gaps should never occur, so
-	// this is a cheap safety margin: probed against a prebuilt used-address set, "scan 20 past the last
-	// hit" is ~20 SHA256 derivations, not 20 chain scans.
+	// this is a safety margin: probed against a prebuilt used-address set, "scan 20 past the last hit"
+	// is 20 derivations, not 20 chain scans. ⚠ A derivation is a secp256k1 scalar multiply, not a SHA256
+	// (this comment said "~20 SHA256" until mini-plan 28): 20 per wallet × 73 wallets was ~9% of the boot's
+	// rescan on R3's world. Kept at 20 deliberately (mini-plan 28 §5A.2); F-2 made each one cheaper.
 	public const int DefaultGapLimit = 20;
 
 	private readonly string _seedPhrase;
@@ -49,6 +51,22 @@ public sealed class DerivedAddressWallet
 	public HashSet<string> OwnedAddresses { get; private set; }
 
 	public string BaseAddress => DeriveAddress(0);
+
+	// Mini-plan 28 — how many addresses this wallet has derived (each one a secp256k1 multiply), for the boot's
+	// rescan counters. A count, never read by game logic.
+	public int DerivedAddressCount => _addressByIndex.Count;
+
+#if DEBUG
+	// Mini-plan 28 E3 — re-derives every address this wallet holds through `deriveReference` (the pre-F-2 path) and
+	// counts the ones that differ. The seed never leaves the wallet. Deleted at close-out with that reference.
+	public int CountMismatchesAgainst(Func<string, string> deriveReference)
+	{
+		int mismatches = 0;
+		foreach ((int index, string address) in _addressByIndex)
+			if (deriveReference(SeedForIndex(_seedPhrase, index)) != address) mismatches++;
+		return mismatches;
+	}
+#endif
 
 	private static string SeedForIndex(string seedPhrase, int i) => i == 0 ? seedPhrase : $"{seedPhrase} #r{i}";
 

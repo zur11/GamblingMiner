@@ -3322,6 +3322,14 @@ Each non-bot wallet (BTCWallet, CasinoFinances, FoundersWallets) has a **"Transa
 > 1274's nine-input bot bid appeared to lose 6.05 BTC), and a filter is only ever removable when the **last**
 > participant that can produce the hidden shape is migrated.
 >
+> **Mini-plan 28 F-3 (2026-10-23, D-28.8) — the shape is back, deliberately, and it is shown.** Cast miners now
+> send their change to their own base address (`NetworkRoot.ApplyCastMinerChangePolicy`, `NodeAgent.RotateChangeAddress`).
+> Their volume-filler sells had made 10,924 of the 15,750 addresses on R3's chain, every one re-derived at every
+> boot. They keep their `DerivedAddressWallet`, which still owns and signs the change addresses already mined.
+> A cast miner's sell therefore shows two outputs, the payment and the change back to the sender. That output is
+> real, so this section's own lesson says to show it: **nothing filters it, and nothing should.** Everyone else
+> (player, casino, founders, miner bots, companies) still rotates change.
+>
 > **What the removal check actually found (P16.2f):** the migration list everyone had been working from —
 > casino-miner bots, cast miners, companies, ghosts-excluded — was **incomplete**. **Passphrase wallets**
 > (`NetworkRoot.RegisterPassphraseWallet`) spend, had no `ReceiveWallet`, and were therefore the last

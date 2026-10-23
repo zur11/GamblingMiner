@@ -48,6 +48,28 @@ public static class CryptoUtils
 		}
 	}
 
+#if DEBUG
+	// Mini-plan 28 E3 — DeriveGmAddress through the pre-F-2 scalar multiply, so the boot can check and time every
+	// address it derived against the old path in one process. Deleted at close-out with that reference.
+	public static string DeriveGmAddressByDoubleAndAdd(string seedPhrase)
+	{
+		int attempt = 0;
+		while (true)
+		{
+			string input      = attempt == 0 ? seedPhrase : seedPhrase + ":" + attempt;
+			byte[] privateKey = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+
+			if (Secp256k1.IsValidPrivateKey(privateKey))
+			{
+				byte[] compPubKey = Secp256k1.GetCompressedPublicKeyByDoubleAndAdd(privateKey);
+				byte[] pubKeyHash = Ripemd160.Hash(SHA256.HashData(compPubKey));
+				return Bech32.Encode(Bech32.GameHrp, 0x00, pubKeyHash);
+			}
+			attempt++;
+		}
+	}
+#endif
+
 	// Returns the secp256k1 compressed public key (base64) for a seed phrase.
 	// Uses the identical private-key derivation path as DeriveGmAddress, so the returned
 	// pubkey always corresponds to the address that method produces for the same input.

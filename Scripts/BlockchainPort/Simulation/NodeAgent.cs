@@ -29,6 +29,22 @@ public sealed class NodeAgent
 	// ReceiveWallet is null.
 	public bool RotateCoinbaseAddress { get; set; } = true;
 
+	// Mini-plan 28 F-3 — gates whether a spend's CHANGE goes to a fresh derived address (true, the default: the
+	// player, casino, founders, miner bots, companies) or back to the base WalletAddress (false: cast miners, whose
+	// volume-filler sells made 69% of every address on R3's chain, each one re-derived at every boot). The wallet
+	// stays either way: it owns and signs the addresses already on the chain. Ignored when ReceiveWallet is null.
+	public bool RotateChangeAddress { get; set; } = true;
+
+	// The address a spend's change pays, and the frontier step after that spend is broadcast. Every change-producing
+	// send path goes through this pair, so the policy above has one place to live.
+	public string NextChangeAddress() =>
+		(RotateChangeAddress ? ReceiveWallet?.NextReceiveAddress() : null) ?? WalletAddress;
+
+	public void OnChangeAddressUsed()
+	{
+		if (RotateChangeAddress) ReceiveWallet?.MarkReceiveConsumed();
+	}
+
 	// Relative mining power for the weighted block lottery (Step 2). Default 1.0 for the player
 	// and bots; the founders controller drives Satoshi/Hal weights. Bet-driven player mining
 	// does not use this — it only governs RunWeightedBlockLottery (bootstrap / founder mining).

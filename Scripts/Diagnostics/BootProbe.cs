@@ -37,6 +37,81 @@ namespace Scripts.Diagnostics
 		// One entry per ChainIsValid call, in ms. ~73 at boot; nothing is appended outside DEBUG.
 		private static readonly List<double> _chainValidationMs = new();
 
+		// Mini-plan 28 unit 2 — the wallet rescan, split: its one chain pass, then each wallet's derivations.
+		private static double _rescanChainPassMs;
+		private static int _rescanUsedAddresses;
+		private static int _rescanWallets;
+		private static int _rescanDerivations;
+		private static double _rescanWalletMs;
+		private static string _largestWalletNodeId = string.Empty;
+		private static int _largestWalletDerivations;
+		private static double _largestWalletMs;
+
+#if DEBUG
+		/// <summary>
+		/// Mini-plan 28 E3 — when true, the boot ALSO runs the pre-fix paths after the new ones (73 extra ChainIsValid
+		/// calls, and every derived address re-derived by the old scalar multiply) and prints both from the same
+		/// process. About a minute longer, once. Deleted at close-out with its output and the old-path references
+		/// (Convention 3).
+		/// </summary>
+		public const bool CompareOldPathsAtBoot = true;
+
+		/// <summary>Total ms of every ChainIsValid so far, for E3's "new path" figure.</summary>
+		public static double ChainValidationTotalMs
+		{
+			get
+			{
+				double total = 0;
+				foreach (double ms in _chainValidationMs) total += ms;
+				return total;
+			}
+		}
+
+		public static int ChainValidationCalls => _chainValidationMs.Count;
+
+		/// <summary>The rescan's own derivations and their ms, for E3's per-derivation comparison.</summary>
+		public static (int derivations, double ms) RescanDerivationTotals => (_rescanDerivations, _rescanWalletMs);
+#endif
+
+		private static double MsSince(long startTicks) => (Stopwatch.GetTimestamp() - startTicks) * 1000.0 / Stopwatch.Frequency;
+
+		/// <summary>The rescan's one pass over the chain collecting every used address (BuildUsedAddressSet).</summary>
+		[Conditional("DEBUG")]
+		public static void NoteRescanChainPass(long startTicks, int usedAddresses)
+		{
+			_rescanChainPassMs += MsSince(startTicks);
+			_rescanUsedAddresses = usedAddresses;
+		}
+
+		/// <summary>One wallet's rescan: how many addresses it derived (each a secp256k1 multiply) and its ms.</summary>
+		[Conditional("DEBUG")]
+		public static void NoteWalletRescan(string nodeId, int derivations, long startTicks)
+		{
+			double ms = MsSince(startTicks);
+			_rescanWallets++;
+			_rescanDerivations += derivations;
+			_rescanWalletMs += ms;
+			if (derivations > _largestWalletDerivations)
+			{
+				_largestWalletNodeId = nodeId;
+				_largestWalletDerivations = derivations;
+				_largestWalletMs = ms;
+			}
+		}
+
+		[Conditional("DEBUG")]
+		public static void PrintRescanSummary()
+		{
+			double total = _rescanChainPassMs + _rescanWalletMs;
+			double chainShare = total > 0 ? _rescanChainPassMs / total : 0;
+			double perDerivation = _rescanDerivations > 0 ? _rescanWalletMs / _rescanDerivations : 0;
+			double largestShare = _rescanDerivations > 0 ? (double)_largestWalletDerivations / _rescanDerivations : 0;
+			GD.Print(string.Create(CultureInfo.InvariantCulture,
+				$"[Boot] Rescan: chain pass {_rescanChainPassMs:N1} ms ({chainShare:P1} of the rescan, {_rescanUsedAddresses} used addresses); " +
+				$"{_rescanWallets} wallets derived {_rescanDerivations} addresses in {_rescanWalletMs:N1} ms ({perDerivation:N3} ms each); " +
+				$"largest wallet {_largestWalletNodeId}: {_largestWalletDerivations} derivations ({largestShare:P1}), {_largestWalletMs:N1} ms"));
+		}
+
 		[Conditional("DEBUG")]
 		public static void Mark(string label)
 		{
