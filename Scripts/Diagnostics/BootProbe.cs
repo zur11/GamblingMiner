@@ -47,32 +47,6 @@ namespace Scripts.Diagnostics
 		private static int _largestWalletDerivations;
 		private static double _largestWalletMs;
 
-#if DEBUG
-		/// <summary>
-		/// Mini-plan 28 E3 — when true, the boot ALSO runs the pre-fix paths after the new ones (73 extra ChainIsValid
-		/// calls, and every derived address re-derived by the old scalar multiply) and prints both from the same
-		/// process. About a minute longer, once. Deleted at close-out with its output and the old-path references
-		/// (Convention 3).
-		/// </summary>
-		public const bool CompareOldPathsAtBoot = true;
-
-		/// <summary>Total ms of every ChainIsValid so far, for E3's "new path" figure.</summary>
-		public static double ChainValidationTotalMs
-		{
-			get
-			{
-				double total = 0;
-				foreach (double ms in _chainValidationMs) total += ms;
-				return total;
-			}
-		}
-
-		public static int ChainValidationCalls => _chainValidationMs.Count;
-
-		/// <summary>The rescan's own derivations and their ms, for E3's per-derivation comparison.</summary>
-		public static (int derivations, double ms) RescanDerivationTotals => (_rescanDerivations, _rescanWalletMs);
-#endif
-
 		private static double MsSince(long startTicks) => (Stopwatch.GetTimestamp() - startTicks) * 1000.0 / Stopwatch.Frequency;
 
 		/// <summary>The rescan's one pass over the chain collecting every used address (BuildUsedAddressSet).</summary>

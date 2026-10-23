@@ -64,22 +64,6 @@ public static class Secp256k1
 		return Compress(ScalarMulG(privateKey)); // mini-plan 28 F-2
 	}
 
-#if DEBUG
-	/// <summary>
-	/// Mini-plan 28 E3 — the pre-F-2 path (double-and-add, ModPow inverse), kept only so the boot can time and check
-	/// the two side by side in one process. Deleted at close-out with BootProbe.CompareOldPathsAtBoot (Convention 3).
-	/// </summary>
-	public static byte[] GetCompressedPublicKeyByDoubleAndAdd(byte[] privateKey)
-	{
-		BigInteger k = ToBigInteger(privateKey);
-		if (k <= BigInteger.Zero || k >= N)
-			throw new ArgumentOutOfRangeException(nameof(privateKey),
-				"Private key value is not in the valid secp256k1 range [1, N−1].");
-
-		return Compress(ScalarMul(Gx, Gy, k));
-	}
-#endif
-
 	// The 33-byte compressed encoding: 0x02/0x03 by the parity of y, then x big-endian.
 	private static byte[] Compress((BigInteger X, BigInteger Y) point)
 	{
@@ -171,23 +155,24 @@ public static class Secp256k1
 			if (digit != 0)
 				result = JacobianAddAffine(result, table[j * DigitsPerWindow + digit - 1]);
 		}
-		return JacobianToAffineByEuclid(result);
+		return JacobianToAffine(result);
 	}
 
-	// JacobianToAffine with the inverse taken by the extended Euclidean algorithm instead of Fermat's ModPow:
-	// measured 0.023 ms against 0.223 per inverse (mini-plan 28 harness), which left alone would be over half of a
-	// fixed-base multiply. Same value: the inverse mod a prime is unique.
-	private static (BigInteger X, BigInteger Y) JacobianToAffineByEuclid((BigInteger X, BigInteger Y, BigInteger Z) p)
+	// (X : Y : Z) → (X/Z², Y/Z³). The single modular inversion of a whole scalar multiply.
+	private static (BigInteger X, BigInteger Y) JacobianToAffine((BigInteger X, BigInteger Y, BigInteger Z) p)
 	{
 		if (p.Z.IsZero) return Infinity;
 
-		BigInteger zInv  = ModInverseByEuclid(p.Z);
+		BigInteger zInv  = ModInverse(p.Z);
 		BigInteger zInv2 = Mod(zInv * zInv, P);
 		return (Mod(p.X * zInv2, P), Mod(Mod(p.Y * zInv2, P) * zInv, P));
 	}
 
-	// a⁻¹ mod P by the extended Euclidean algorithm. a is nonzero mod P (a Z coordinate of a finite point).
-	private static BigInteger ModInverseByEuclid(BigInteger a)
+	// a⁻¹ mod P by the extended Euclidean algorithm; a is nonzero mod P. Until mini-plan 28 this was Fermat's
+	// a^(P−2) by ModPow: measured 0.223 ms against Euclid's 0.023 per inverse (mini-plan 28 harness, 3,000 inputs,
+	// 0 disagreements), which would have been over half of a fixed-base multiply. Same value: the inverse mod a
+	// prime is unique.
+	private static BigInteger ModInverse(BigInteger a)
 	{
 		BigInteger t = BigInteger.Zero, newT = BigInteger.One;
 		BigInteger r = P, newR = Mod(a, P);
@@ -228,7 +213,7 @@ public static class Secp256k1
 		}
 
 		var affine = new (BigInteger X, BigInteger Y)[n];
-		BigInteger inverse = ModInverse(running, P);
+		BigInteger inverse = ModInverse(running);
 		for (int i = n - 1; i >= 0; i--)
 		{
 			BigInteger zInv = i > 0 ? Mod(inverse * prefix[i - 1], P) : inverse;
@@ -269,23 +254,10 @@ public static class Secp256k1
 		return (x3, y3, z3);
 	}
 
-	// Computes k * P using double-and-add over Jacobian coordinates. Since mini-plan 28 F-2 only the DEBUG reference
-	// above calls it; it goes at close-out with that reference.
-	// For a 256-bit k this performs ~256 doublings and ~128 additions, then one inversion at the end.
-	private static (BigInteger X, BigInteger Y) ScalarMul(BigInteger px, BigInteger py, BigInteger k)
-	{
-		var result  = JacobianInfinity;
-		var current = (X: Mod(px, P), Y: Mod(py, P), Z: BigInteger.One);
-
-		while (k > BigInteger.Zero)
-		{
-			if (!k.IsEven)
-				result = JacobianAdd(result, current);
-			current = JacobianDouble(current);
-			k >>= 1;
-		}
-		return JacobianToAffine(result);
-	}
+	// The general double-and-add ScalarMul(P, k) that preceded the fixed-base table was deleted at mini-plan 28's
+	// close-out, with the DEBUG reference that compared the two at boot (0 mismatches over 17,164 R3 addresses and
+	// 7,422 harness vectors). Nothing multiplies any point but G. If something ever must, double-and-add over
+	// JacobianAdd/JacobianDouble below is the shape to restore.
 
 	// P1 + P2 in Jacobian coordinates ("add-2007-bl"). No modular inverse.
 	private static (BigInteger X, BigInteger Y, BigInteger Z) JacobianAdd(
@@ -338,24 +310,6 @@ public static class Secp256k1
 		BigInteger y3 = Mod(e * (d - x3) - 8 * c, P);
 		BigInteger z3 = Mod(2 * p.Y * p.Z, P);
 		return (x3, y3, z3);
-	}
-
-	// (X : Y : Z) → (X/Z², Y/Z³). The single modular inversion of the whole scalar multiply.
-	private static (BigInteger X, BigInteger Y) JacobianToAffine((BigInteger X, BigInteger Y, BigInteger Z) p)
-	{
-		if (p.Z.IsZero) return Infinity;
-
-		BigInteger zInv  = ModInverse(p.Z, P);
-		BigInteger zInv2 = Mod(zInv * zInv, P);
-		return (Mod(p.X * zInv2, P), Mod(Mod(p.Y * zInv2, P) * zInv, P));
-	}
-
-	// a⁻¹ mod p via Fermat's little theorem: a^(p−2) mod p.
-	// Valid because p is prime, so a^(p−1) ≡ 1 (Fermat), giving a * a^(p−2) ≡ 1.
-	private static BigInteger ModInverse(BigInteger a, BigInteger m = default)
-	{
-		if (m == default) m = P;
-		return BigInteger.ModPow(Mod(a, m), m - 2, m);
 	}
 
 	// Proper positive modulo: BigInteger % can return negative values in C# for negative operands.

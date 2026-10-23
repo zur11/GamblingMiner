@@ -56,18 +56,6 @@ public sealed class DerivedAddressWallet
 	// rescan counters. A count, never read by game logic.
 	public int DerivedAddressCount => _addressByIndex.Count;
 
-#if DEBUG
-	// Mini-plan 28 E3 — re-derives every address this wallet holds through `deriveReference` (the pre-F-2 path) and
-	// counts the ones that differ. The seed never leaves the wallet. Deleted at close-out with that reference.
-	public int CountMismatchesAgainst(Func<string, string> deriveReference)
-	{
-		int mismatches = 0;
-		foreach ((int index, string address) in _addressByIndex)
-			if (deriveReference(SeedForIndex(_seedPhrase, index)) != address) mismatches++;
-		return mismatches;
-	}
-#endif
-
 	private static string SeedForIndex(string seedPhrase, int i) => i == 0 ? seedPhrase : $"{seedPhrase} #r{i}";
 
 	// Derives (and caches) the gm1q... address at a given index.

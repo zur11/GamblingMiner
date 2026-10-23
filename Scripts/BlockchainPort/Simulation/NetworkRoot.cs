@@ -1321,55 +1321,8 @@ public partial class NetworkRoot : Node
 		PersistWorldNow(); // boot path: nothing will flush this for us
 		Scripts.Diagnostics.BootProbe.Mark("world: persisted; EnsureInitialized ends");
 		Scripts.Diagnostics.BootProbe.PrintChainValidationSummary("when the world has loaded");
-#if DEBUG
-		if (Scripts.Diagnostics.BootProbe.CompareOldPathsAtBoot) RunBootSideBySide();
-#endif
 		_isInitialized = true;
 	}
-
-#if DEBUG
-	// Mini-plan 28 E3 — a boot cannot be A/B'd across launches (Pattern 6 rule 3), so after the new paths have run,
-	// this runs the OLD ones in the same process and prints both: F-1 against 73 per-node validations, F-2 against
-	// every address re-derived by the pre-F-2 scalar multiply, which is also E2's identity check (0 mismatches).
-	// Runs after the world write, so nothing it does can reach a file. Deleted at close-out with
-	// BootProbe.CompareOldPathsAtBoot (Convention 3).
-	private static void RunBootSideBySide()
-	{
-		if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player) || player.Blockchain.Chain.Count < 2)
-		{
-			GD.Print("[Boot] E3 side-by-side skipped: no loaded chain");
-			return;
-		}
-
-		int newCalls = Scripts.Diagnostics.BootProbe.ChainValidationCalls;
-		double newValidationMs = Scripts.Diagnostics.BootProbe.ChainValidationTotalMs;
-		int oldCalls = SharedNodesById.Count;
-		long start = System.Diagnostics.Stopwatch.GetTimestamp();
-		for (int i = 0; i < oldCalls; i++) player.Blockchain.ChainIsValid(player.Blockchain.Chain);
-		double oldValidationMs = (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-		GD.Print(string.Create(CultureInfo.InvariantCulture,
-			$"[Boot] E3 F-1: new path {newCalls} validation(s) {newValidationMs:N1} ms; old path {oldCalls} validations " +
-			$"{oldValidationMs:N1} ms; new/old {newValidationMs / oldValidationMs:P1}"));
-
-		(int newDerivations, double newDerivationMs) = Scripts.Diagnostics.BootProbe.RescanDerivationTotals;
-		int oldDerivations = 0, mismatches = 0;
-		start = System.Diagnostics.Stopwatch.GetTimestamp();
-		foreach (NodeAgent node in SharedNodesById.Values)
-		{
-			if (node.ReceiveWallet == null) continue;
-			oldDerivations += node.ReceiveWallet.DerivedAddressCount;
-			mismatches += node.ReceiveWallet.CountMismatchesAgainst(CryptoUtils.DeriveGmAddressByDoubleAndAdd);
-		}
-		double oldDerivationMs = (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-		double newEach = newDerivations > 0 ? newDerivationMs / newDerivations : 0;
-		double oldEach = oldDerivations > 0 ? oldDerivationMs / oldDerivations : 0;
-		GD.Print(string.Create(CultureInfo.InvariantCulture,
-			$"[Boot] E3 F-2: new path {newDerivations} derivations {newDerivationMs:N1} ms ({newEach:N3} ms each); " +
-			$"old path {oldDerivations} derivations {oldDerivationMs:N1} ms ({oldEach:N3} ms each); " +
-			$"new/old per derivation {(oldEach > 0 ? newEach / oldEach : 0):P1}; mismatches {mismatches} of {oldDerivations}"));
-		Scripts.Diagnostics.BootProbe.Mark("world: E3 side-by-side done");
-	}
-#endif
 
 	private static NodeAgent CreateAndRegisterNode(string nodeId, BlockchainStateSnapshot? savedState = null)
 	{

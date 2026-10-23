@@ -1153,3 +1153,13 @@ Moved verbatim at mini-plan 27's close-out; the §6 item's box is ticked here. R
   | The four profiler toggles | each profiler's static `Enabled` | **session**, deliberately: their contract is OFF at every launch |
   | Anything a future options menu holds | `UserSettingsService` | player, **preference** |
 
+
+
+## From ▶ NEXT — the boot time, closed by mini-plan 28 (2026-10-23)
+
+Moved verbatim at mini-plan 28's close-out. Record of the work: `AIHelperFiles/mini28-boot-time-plan.md` (close-out §9) and
+`IMPLEMENTATION_STATUS.md`. **The boot went from 57.9 s to 8.6 s.**
+
+| # | Work | Where it is specified | Why here |
+|---|---|---|---|
+| **2b** | **The boot time** (§8 **T4.7**): attribute the ~55 s inside autoloads #2–#19 first, then fix the main cost | **`AIHelperFiles/mini28-boot-time-plan.md` (IN PROGRESS: M2 2026-10-23, boot 57.9 s → 8.6 s; next M3 for F-3, then close-out)**, branch `mini28-boot-time` · §8 T4.7 · mini-plan 27 §6.4 (the measurement) | **Inserted by the developer (2026-10-22)** after mini-plan 27 measured the boot at 57.7 s (59.4 s felt). A minute per launch is paid at every test, and that plan's verification alone took six |

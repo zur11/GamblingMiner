@@ -4,12 +4,14 @@
 **T4.7**, inserted by the developer on 2026-10-22 after mini-plan 27 measured the boot for the first time
 (`mini27-user-settings-plan.md` §6.4).
 
-**Status:** 🔨 **IN PROGRESS.** Specified 2026-10-22. Unit 1 (§4) built 2026-10-23 (`c5b0e6d`). **M1 run
+**Status:** ✅ **COMPLETE 2026-10-23** (§9). **The boot went from 57.9 s to 8.6 s.** The record of how it got there
+follows. Specified 2026-10-22. Unit 1 (§4) built 2026-10-23 (`c5b0e6d`). **M1 run
 2026-10-23 (§6.1): P2 refuted.** The minute is the derived-wallet rescan (82.8%), not the per-node validation
 (15.8%). §5A amends unit 2 (approved, `0a39a5a`), with **F-3 added at the developer's choice**: cast miners'
 change goes back to their base address. **Offline harness run (§5A.6): P7 and P8 hold.** **Unit 2 built
 2026-10-23 (§5A.7, `8912ae7`): F-2 + F-1 + F-3 + the rescan counters + E3.** **M2 run 2026-10-23 (§6.2): P6–P8 and
-E1–E3 hold; the boot is 57.9 s → 8.6 s (E4).** Next: **M3** (F-3's P9, a play run), then close-out.
+E1–E3 hold; the boot is 57.9 s → 8.6 s (E4).** **M3 run 2026-10-23 (§6.3): P9 refuted as worded (8 pre-F-3
+mempool transactions), holds for every spend created under F-3.** Closed out 2026-10-23 (§9).
 
 **Branch:** `mini28-boot-time` (proposed, D-28.1).
 
@@ -406,6 +408,46 @@ derivations at 0.261 ms against **2.423 ms** each by the old path, **0 mismatche
   The next levers stay as §5A.2 named them: parallel rescans (the largest wallet is only 4.0% of the work, so it
   would parallelize well) and limb arithmetic. Neither is needed at 8.6 s.
 
+### 6.3 M3 results (2026-10-23, R3's world advanced 3,968 → 4,047 blocks)
+
+Protocol: one launch, Dice Game, DEV time **9000X**, the strategy panel at its defaults (the preferences file was
+absent: S7's "Reset preferences" had removed it), AUTO for **11 min 47 s** by the developer's clock, STOP, Exit. Then
+one more boot, also Exit. Logs: the play session `godot2026-10-23T13.29.44.log` → scratchpad `M3_play.log`; the final
+boot `godot.log` → `M3_boot.log`. Pre-run copies of `chain.jsonl` and `state.json`: scratchpad `pre_M3/`. The new
+chain is append-only: its first 22,539,707 bytes equal the pre-run file. **79 blocks, 1,394 transactions.**
+
+The ownership walk (§5A.2's, from the miners' coinbases forward, 1 unresolved spend in the whole chain) over the 79
+new blocks:
+
+| Sender | Spends with change | Change to the sender's **base** | Change to a **new** address |
+|---|---|---|---|
+| Cast miners | 681 | **673** | **8** |
+| Companies | 611 | 0 | 599 (12 more went to addresses already used) |
+| Miner bots, player, founders, casino | 0 | — | — |
+
+**The 8 were all in the mempool saved with the world on 2026-10-20, before F-3.** Each of the 8 transaction ids is
+in the pre-run `state.json`'s `PlayerPendingTransactions` (20 entries). All 8 were mined in block 3969, the run's
+first block. Every cast-miner spend **created** under F-3 sent its change to the base: **673 of 673**.
+
+| # | Verdict | The reading |
+|---|---|---|
+| **P9** | ❌ **refuted as worded**; ✅ holds for every spend created under F-3 | "0 new cast-miner change addresses in blocks mined in play" read 8. The prediction forgot that a policy applies to what is **created** after it: transactions already pending were built under the old rule and carry it until mined. Under F-3: 673 / 673 to base, 0 new. **The "still rotates" half:** companies made 599 new addresses (> 0) ✅. The miner bots made no spend with change in these 79 blocks, so their half is **unobserved**, not confirmed |
+| **E5** | ✅ holds, with P9's qualification | the same reading |
+| **E2** (per node) | ✅ now counted | the final boot: **"chain installed on 73 of 73 nodes (verdict valid)"** |
+| Projection (§5A.2) | ❌ **refuted** | "yearly growth falls to about a quarter". These 79 blocks made 607 new addresses where the old rule would have made 1,280: **−52.6%, not −75%.** In R3's current era the companies make 47% of change spends; across the whole history they made 24% |
+
+**Reconciliation, which needs no assumption:** the final boot's rescan derived **17,771** addresses, against M2's
+17,164: **+607**, exactly the 599 + 8 new addresses the chain walk found. The rescan took 4,583 ms (0.258 ms each), the
+validation 1 call, MainMenu **10.0 s** (63,793 − E3's 53,764; the engine start alone was 3.5 s this time).
+**`[UtxoAssert]`** (every 25 blocks, a node's cached UTXO set against a full chain replay) **stayed silent** through
+the run, so the UTXO caches agree with the chain with change landing on base addresses. No integrity line, no
+`UNDECLARED` journal line, no error but the audio driver's `WASAPI` line.
+
+**Not exercised:** F-3's mid-session registration point (`RegisterCastMinerNode`). No cast miner spawned; the 3
+nodes beyond the boot's 73 were ghost miners (`forgotten_rig`, `anon_cpu_rig` mined one block each). Ghosts have no
+`ReceiveWallet`, so their change already lands on their only address. That path is covered by reading the code
+alone.
+
 ## 7. Out of scope
 
 - **T4.2, one canonical chain + one UTXO set.** F-1 removes the repeated validation, not the 73 copies, and not the
@@ -432,3 +474,90 @@ derivations at 0.261 ms against **2.423 ms** each by the old path, **0 mismatche
 | **D-28.6** | Parallel rescans, a persisted wallet index, a lower gap limit and limb arithmetic are not built (§5A.2) | yes: parallelism and limb arithmetic stay as the next levers if E4 misses, with the data the instrument will print |
 | **D-28.7** | The rescan counters (derivations, chain-pass ms, largest wallet) stay after close-out like D-28.3's; the old `ScalarMul` reference and the E3 switch are deleted | yes |
 | **D-28.8** | **F-3**: cast miners' change returns to their base address (option 2); companies keep rotating | **decided by the developer, 2026-10-23**, in this plan. The policy is set by KIND, at the cast miners' two registration points. That is deliberate, and separate from D-16.6's rule that the *wallet* is attached by `HasSeed`, which is unchanged: cast miners keep their wallet |
+
+## 9. Close-out (2026-10-23)
+
+**Mini-plan 28 is complete.** Branch `mini28-boot-time`, 6 commits. **The boot went from 57.9 s to 8.6 s** (MainMenu
+since the engine started, R3's world, launches without a rebuild, read from `godot.log`). After M3's 79 extra blocks
+it is 10.0 s. M2's 8.6 s is the like-for-like figure, against M1's 57.9 s on the same world.
+
+### 9.1 — What shipped
+
+- **The instrument (unit 1, kept: D-28.3, D-28.7).** `BootProbe` marks the start of every autoload's `_Ready`, each step
+  of `NetworkRoot.EnsureInitialized` with its counts, every `ChainIsValid` call (calls, total, min / median / max),
+  the chain install as "installed on X of N nodes", and the rescan's chain pass, derivations, and largest wallet. All
+  of it is `[Conditional("DEBUG")]` and printed with `GD.Print`. **The boot was unmeasured for a year and nothing
+  noticed it growing; every DEBUG boot now prints where its seconds went.**
+- **F-2, fixed-base key derivation (`Secp256k1`).** Every scalar multiply in the game is k·G. G's multiples are
+  tabulated once (`d·256^j·G`, 8,160 affine points, ~0.18 s per process). k·G is at most 32 mixed additions, and the
+  inverse is by extended Euclid. One derivation went from **2.42 ms to 0.26 ms** in-game. The output is identical:
+  0 mismatches over 17,164 real R3 addresses (M2, twice) and 7,422 harness vectors (re-run on the final file after
+  the old path was deleted). The general double-and-add `ScalarMul` and the `ModPow` inverse are deleted.
+- **F-1, validate once (`BlockchainService.TryReplaceChainWithVerdict`).** The world load validates the chain once
+  and installs it on all 73 nodes on that verdict: **8,564 ms → 224 ms.** The length check stays per node, and an
+  invalid chain is still refused everywhere.
+- **F-3, cast miners' change returns to their base address (D-28.8, the developer's choice).**
+  `NodeAgent.RotateChangeAddress` with `NextChangeAddress()` / `OnChangeAddressUsed()` is the one change policy for
+  the three send paths. `ApplyCastMinerChangePolicy` runs at both cast-miner registration points. On the 79 blocks M3
+  mined, it removed 673 of the 1,280 new addresses the old rule would have made. CLAUDE.md's change-to-self rule and
+  §29.9 now say this output is real and shown.
+- **Deleted at close-out (Convention 3):** E3's switch `CompareOldPathsAtBoot`, `RunBootSideBySide`, the DEBUG
+  references `GetCompressedPublicKeyByDoubleAndAdd`, `DeriveGmAddressByDoubleAndAdd` and `CountMismatchesAgainst`,
+  and the E3 accessors in `BootProbe`. `CryptoUtils.cs` is byte-identical to its pre-plan state.
+
+### 9.2 — Predictions, as they fell
+
+| # | Verdict |
+|---|---|
+| P1 | ✅ #3 held 99.4% of the autoload stretch |
+| **P2** | ❌ **refuted**: the per-node validation loop was 15.8% of the world load, not ≥ 70% |
+| P3, P4, V1 | ✅ 73 validations, one per node, within 2× of each other, and they added up to the loop |
+| **P5** | ❌ **refuted**: the derived-wallet rescan was 82.8% |
+| P6 | ✅ 17,164 derivations (14,000–17,300), 99.7% of the rescan |
+| P7 | ✅ 10.8% in-game (≤ 25%); the harness had read 8.6–9.0% |
+| P8 | ✅ 0 mismatches |
+| **P9** | ❌ **refuted as worded** (8 new cast-miner addresses, all from the mempool saved before F-3); ✅ for every spend created under F-3 (673 / 673) |
+| E1–E5 | ✅ (E4: 8.6 s against a predicted < 20 s) |
+| §5A.2's growth projection | ❌ **refuted**: −52.6% of new addresses in R3's era, not −75% |
+
+### 9.3 — Corrections made during the plan, each against the code
+
+- The plan's §2 structural reading named the validation loop. It was **right that the loop was redundant** (P3, P4,
+  V1) and **wrong that it was the minute**. The step §7 had put out of scope held the minute.
+- Step 16's cost note above `RescanDerivedReceiveWallets` ("~8 s") and `DefaultGapLimit`'s ("~20 SHA256") were
+  both stale. They are corrected in place, with the reason (Convention 15).
+- E3's switch is a constant, so **both** M2 launches ran the side-by-side, not one as §6 first said. That was
+  corrected before M2 ran.
+- E2's per-node chain length was **inferred** at M2 from the single verdict. The install mark now counts it, and
+  M3's boot read 73 of 73.
+
+### 9.4 — Lessons
+
+1. **A cost that scales with the world's history must be written per unit of history, never as a figure.** Step
+   16 wrote "~8 s" for a loop whose count was "every address the world has ever used". It was true the day it was
+   typed, and it stayed plausible for three months while it grew to 44.7 s. The per-unit figure (2.4 ms per
+   derivation before F-2, 0.26 after) is the one that stays true. This is Convention 15's case for a cost: the
+   frozen number was a *consequence* (count × unit cost), and it was written as if it were a constant.
+2. **Fix the count as well as the cost, when the count is unbounded.** F-2 alone would have bought time. On R3's
+   chain 97.8% of all addresses were one-time change, 69% of them made by background volume no player handles.
+   F-3 is what keeps F-2 from expiring. The question that found it was the developer's, not the instrument's:
+   *why are so many addresses being made?*
+3. **A policy applies to what is created after it, and saved state was created before.** P9 forgot the restored
+   mempool. Eight transactions built under the old rule were mined under the new one. Any rule about how
+   transactions are built has this tail, one mempool deep.
+4. **A thin margin is a reason to measure the next design, not to ship the specified one.** The specified 4-bit
+   table passed P7 by under 2 points. Two more harness runs, each minutes long, found a design 2.6× better: one
+   showed the inversion was half the remaining cost. Mini-plan 26 §12.3's lesson 1 held again: the code named a
+   cause, and only timing said how much it cost.
+
+### 9.5 — Handed on
+
+- **The rescan is still the largest step** (4.5 s of 8.6, 52%) and **still grows with history**, now mainly at the
+  companies' rate. The next levers, measured or named here: parallel rescans (the largest wallet is 4.0% of the work,
+  so it would parallelize well), and limb arithmetic in place of `BigInteger`. **Neither is scheduled**; at 8.6 s
+  the boot is no longer the cost of a test.
+- **The miner bots' change rotation went unobserved in M3** (no change-bearing spend in 79 blocks), and F-3's
+  mid-session registration point was not exercised. Both are covered by the code, not by a run.
+- From mini-plan 27, unchanged: S8's real wipe runs (at a wipe the developer chooses); deleting
+  `LegacyPlayerFileRelocation` at mini-plan 29's close-out; code-built UI controls into `.tscn` at Basic Mode's UI
+  refinement.
