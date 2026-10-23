@@ -1227,6 +1227,9 @@ public partial class NetworkRoot : Node
 			return;
 		}
 
+		// Mini-plan 28 unit 1 — "world: …" marks time each step of the world load (DEBUG, BootProbe).
+		Scripts.Diagnostics.BootProbe.Mark("world: EnsureInitialized starts");
+
 		// ND.10i suggestion 3 (2026-07-27) — DEV-only ladder self-check, stripped from release builds. The
 		// tier-2/tier-4 slope collision existed because two tables are read by ONE consumer and nobody had
 		// ever printed them side by side; this makes the next such collision announce itself at launch
@@ -1243,6 +1246,7 @@ public partial class NetworkRoot : Node
 
 		// Load saved state first so wallets can be restored before nodes are created.
 		BlockchainStateSnapshot? savedState = TryLoadSnapshot();
+		Scripts.Diagnostics.BootProbe.Mark($"world: self-check + compatibility guard + state.json loaded (snapshot {(savedState is null ? "absent" : "present")})");
 
 		SharedNodesById.Clear();
 		SharedNetwork.RegisterNode(CreateAndRegisterNode(PlayerNodeId, savedState));
@@ -1265,8 +1269,10 @@ public partial class NetworkRoot : Node
 		// NetworkPopulationScheduler each block, not hardware credits — no betting runners.
 		foreach (BotWalletRecord castMiner in BotWalletRegistry.CastMiners)
 		{
-			if (castMiner.HasFullWallet)
-				SharedNetwork.RegisterNode(CreateAndRegisterNode(castMiner.NodeId, savedState));
+			if (!castMiner.HasFullWallet) continue;
+			NodeAgent castNode = CreateAndRegisterNode(castMiner.NodeId, savedState);
+			ApplyCastMinerChangePolicy(castNode);
+			SharedNetwork.RegisterNode(castNode);
 		}
 
 		// Casino wallet node — keys derived deterministically from seed phrase each launch.
@@ -1295,11 +1301,15 @@ public partial class NetworkRoot : Node
 		RegisterFounderNode(WalletInitializationService.SatoshiWallet);
 		RegisterFounderNode(WalletInitializationService.HalWallet);
 		RegisterFounderNode(WalletInitializationService.MikeHearnWallet);
+		Scripts.Diagnostics.BootProbe.Mark($"world: {SharedNodesById.Count} nodes registered");
 
 		ApplyStateFromSnapshot(savedState);
+		Scripts.Diagnostics.BootProbe.Mark("world: rest of the snapshot applied");
 		NormalizeGenesisAcrossNodes();
 		EnsureSecondBlockBootstrapPendingTx();
+		Scripts.Diagnostics.BootProbe.Mark("world: genesis normalized + second-block bootstrap tx");
 		RescanDerivedReceiveWallets(); // Step 8.2 — position founders' fresh-coinbase frontier from the chain
+		Scripts.Diagnostics.BootProbe.Mark("world: derived receive wallets rescanned");
 		// The four casino miner-bots' governance identities (band / market category / greed) are drawn HERE,
 		// at world creation, rather than lazily at the first company vote — so the stances are printed and
 		// committed from the world's very first launch (developer request ahead of the P15.8 run) instead of
@@ -1307,7 +1317,10 @@ public partial class NetworkRoot : Node
 		// lands in a snapshot write (the PersistStateToDisk immediately below), which is the property the
 		// original lazy call site was protecting; the vote path keeps calling it as an idempotent safety net.
 		EnsureBotGovernancePreferences();
+		Scripts.Diagnostics.BootProbe.Mark("world: bot governance preferences");
 		PersistWorldNow(); // boot path: nothing will flush this for us
+		Scripts.Diagnostics.BootProbe.Mark("world: persisted; EnsureInitialized ends");
+		Scripts.Diagnostics.BootProbe.PrintChainValidationSummary("when the world has loaded");
 		_isInitialized = true;
 	}
 
@@ -1380,6 +1393,18 @@ public partial class NetworkRoot : Node
 		node.ReceiveWallet = new DerivedAddressWallet(record.SeedPhrase);
 		node.RotateCoinbaseAddress = false;
 	}
+
+	// Mini-plan 28 F-3 (D-28.8) — a cast miner's change returns to its base address. Set by KIND, at the cast miners'
+	// two registration points (boot and mid-session spawn), and deliberately NOT inside AttachDerivedWalletIfSeeded:
+	// that funnel decides whether a node has a WALLET, by seed and never by kind (D-16.6), and a cast miner still
+	// needs its wallet to own and sign the change addresses it made before this rule. This decides only where NEW
+	// change goes.
+	//
+	// Why cast miners: their TryCastSellFlow sells are the historical volume filler (real txs per block ÷ 100), and on
+	// R3's chain they made 10,924 of 15,750 addresses, every one re-derived at every boot (44.7 s of a 57.9 s boot).
+	// The player never handles their change, and in the Block Explorer the change-to-base output is shown as what it
+	// is: a real output of a real spend, never filtered (CLAUDE.md, §29.9).
+	private static void ApplyCastMinerChangePolicy(NodeAgent node) => node.RotateChangeAddress = false;
 
 	private static void RegisterFounderNode(FounderWalletState? founder)
 	{
@@ -1593,7 +1618,7 @@ public partial class NetworkRoot : Node
 		bool hasChange = change > 0m;
 		if (hasChange)
 		{
-			string changeAddr = sender.ReceiveWallet?.NextReceiveAddress() ?? sender.WalletAddress;
+			string changeAddr = sender.NextChangeAddress(); // mini-plan 28 F-3: fresh, or the base for cast miners
 			if (changeAddr == recipientAddress) changeAddr = sender.WalletAddress; // never merge change into the payee
 			outputs.Add(new TxOutput { Address = changeAddr, Amount = change });
 		}
@@ -1613,7 +1638,7 @@ public partial class NetworkRoot : Node
 		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
 		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.FanOut);
 		SharedNetwork.BroadcastTransaction(sender.NodeId, tx);
-		if (hasChange) sender.ReceiveWallet?.MarkReceiveConsumed(); // a fresh change address was used
+		if (hasChange) sender.OnChangeAddressUsed(); // a fresh change address was used (unless the node does not rotate)
 		Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.Sent,
 			chosen.Count, CountBaseAddressInputs(sender, chosen), outputs.Count);
 		return tx;
@@ -2027,7 +2052,7 @@ public partial class NetworkRoot : Node
 		bool    hasChange = change > 0m;
 		if (hasChange)
 		{
-			string changeAddr = casino.ReceiveWallet?.NextReceiveAddress() ?? casino.WalletAddress;
+			string changeAddr = casino.NextChangeAddress(); // mini-plan 28 F-3: the one change policy
 			outputs.Add(new TxOutput { Address = changeAddr, Amount = change });
 		}
 
@@ -2042,7 +2067,7 @@ public partial class NetworkRoot : Node
 		NotifyMempoolChanged(); // mini-plan 25 17.C.2 (D-17.1): the event, plus the probe's count
 		Scripts.Diagnostics.BlockCostProfiler.EnterSendStage(Scripts.Diagnostics.BlockCostProfiler.SendStage.FanOut);
 		SharedNetwork.BroadcastTransaction(casino.NodeId, tx);
-		if (hasChange) casino.ReceiveWallet?.MarkReceiveConsumed();
+		if (hasChange) casino.OnChangeAddressUsed();
 		Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.Sent,
 			chosen.Count, CountBaseAddressInputs(casino, chosen), outputs.Count);
 		return true;
@@ -5252,7 +5277,7 @@ public partial class NetworkRoot : Node
 		bool hasChange = change > 0m;
 		if (hasChange)
 		{
-			string changeAddr = company.ReceiveWallet?.NextReceiveAddress() ?? company.WalletAddress;
+			string changeAddr = company.NextChangeAddress(); // mini-plan 28 F-3: the one change policy
 			outputs.Add(new TxOutput { Address = changeAddr, Amount = change });
 		}
 
@@ -5274,7 +5299,7 @@ public partial class NetworkRoot : Node
 		SharedNetwork.BroadcastTransaction(company.NodeId, tx);
 		if (hasChange)
 		{
-			company.ReceiveWallet?.MarkReceiveConsumed();
+			company.OnChangeAddressUsed();
 		}
 
 		Scripts.Diagnostics.BlockCostProfiler.EndSend(Scripts.Diagnostics.BlockCostProfiler.SendOutcome.Sent,
@@ -7745,6 +7770,7 @@ public partial class NetworkRoot : Node
 		var node = new NodeAgent(nodeId, record.Address, record.SigningPublicKeyBase64!, record.SigningPrivateKeyBase64!, record.Secp256k1PublicKeyBase64!);
 		// P16.2c — a cast miner spawned mid-session is no less a UTXO citizen than one registered at boot.
 		AttachDerivedWalletIfSeeded(node, record);
+		ApplyCastMinerChangePolicy(node);
 		if (SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
 			node.Blockchain.TryReplaceChain(player.Blockchain.Chain, player.Blockchain.PendingTransactions);
 		SharedNetwork.RegisterNode(node);
@@ -7844,6 +7870,14 @@ public partial class NetworkRoot : Node
 	// unattributes change-held funds — the Step 8 bug at L6426); Secp256k1 was moved to Jacobian
 	// coordinates instead (34x, output-identical), which puts this loop at ~8 s. See Secp256k1.cs.
 	//
+	// ⚠ Mini-plan 28 (2026-10-23) — and "~8 s" then went stale exactly the way "~20 SHA256" had. ~21 derivations per
+	// wallet assumed a wallet's address count stays small; but every change output of a rotating wallet takes a fresh
+	// address, so the rescan derives one per address the world has EVER used. R3's chain (~2016): 15,750 addresses,
+	// 44.7 s of a 57.9 s boot. The count grows with history and the figure was written as a constant. Fixed twice:
+	// the cost (F-2, a fixed-base table in Secp256k1: ~9% of a derivation's old cost) and the count (F-3, cast
+	// miners' change back to their base address, ApplyCastMinerChangePolicy). BootProbe now prints this loop's
+	// derivations and ms at every DEBUG boot, so the next drift is a line in godot.log rather than a surprise.
+	//
 	// The general lesson, in the §39.16 register: a cost note is a MEASUREMENT or it is a guess wearing a
 	// measurement's clothes. "~20 SHA256" was never timed — and because it read as quantified, the number
 	// that mattered went unquestioned through the whole of P16.2. Time it, or say plainly that you did not.
@@ -7851,9 +7885,19 @@ public partial class NetworkRoot : Node
 	{
 		if (!SharedNodesById.TryGetValue(PlayerNodeId, out NodeAgent? player))
 			return;
+		long chainPassStart = System.Diagnostics.Stopwatch.GetTimestamp();
 		HashSet<string> used = BuildUsedAddressSet(player);
+		Scripts.Diagnostics.BootProbe.NoteRescanChainPass(chainPassStart, used.Count); // mini-plan 28 (DEBUG)
 		foreach (NodeAgent node in SharedNodesById.Values)
-			node.ReceiveWallet?.Rescan(used.Contains);
+		{
+			if (node.ReceiveWallet == null) continue;
+			long walletStart = System.Diagnostics.Stopwatch.GetTimestamp();
+			int derivedBefore = node.ReceiveWallet.DerivedAddressCount;
+			node.ReceiveWallet.Rescan(used.Contains);
+			Scripts.Diagnostics.BootProbe.NoteWalletRescan(node.NodeId,
+				node.ReceiveWallet.DerivedAddressCount - derivedBefore, walletStart);
+		}
+		Scripts.Diagnostics.BootProbe.PrintRescanSummary();
 	}
 
 	// Phase 8.1 (Step 8) — confirmed-balance aggregate across a derived-address set (a node's many
@@ -8749,6 +8793,8 @@ public partial class NetworkRoot : Node
 		// Mini-plan 14 B — the chain comes from its own file now, and the state file says which chain it
 		// belongs to. Both mismatch directions are handled here, and they are not symmetric.
 		snapshot.PlayerChain = LoadChainFromFile();
+		Scripts.Diagnostics.BootProbe.Mark($"world: chain.jsonl read ({snapshot.PlayerChain.Count} blocks, " +
+			$"{snapshot.PlayerChain.Sum(b => b.Transactions.Count)} transactions)");
 
 		int stampedHeight = snapshot.ChainHeight;
 		int loadedHeight = snapshot.PlayerChain.Count - 1;
@@ -8789,8 +8835,18 @@ public partial class NetworkRoot : Node
 
 		if (snapshot.PlayerChain.Count == 0) return;
 
+		Scripts.Diagnostics.BootProbe.Mark("world: chain checked against the state stamp");
+		// Mini-plan 28 F-1 — every node receives the SAME list, so its validity is decided once (M1: 73 validations,
+		// 8.6 s of the boot) and each node installs it on that verdict. Any node's service gives the same answer.
+		bool chainIsValid = SharedNodesById.Count > 0
+			&& SharedNodesById.Values.First().Blockchain.ChainIsValid(snapshot.PlayerChain);
+		int nodesInstalled = 0;
 		foreach (NodeAgent node in SharedNodesById.Values)
-			node.Blockchain.TryReplaceChain(snapshot.PlayerChain, snapshot.PlayerPendingTransactions);
+			if (node.Blockchain.TryReplaceChainWithVerdict(snapshot.PlayerChain, snapshot.PlayerPendingTransactions, chainIsValid))
+				nodesInstalled++;
+		// Mini-plan 28 M2 — the accepted count is E2's "every node holds the chain", counted rather than inferred.
+		Scripts.Diagnostics.BootProbe.Mark($"world: chain installed on {nodesInstalled} of {SharedNodesById.Count} nodes " +
+			$"(verdict {(chainIsValid ? "valid" : "INVALID")}; the TryReplaceChain loop)");
 
 		_lastMinedByNodeId = snapshot.LastMinedByNodeId;
 		_currentMinerStreak = snapshot.CurrentMinerStreak;

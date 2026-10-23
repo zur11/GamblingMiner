@@ -3322,6 +3322,14 @@ Each non-bot wallet (BTCWallet, CasinoFinances, FoundersWallets) has a **"Transa
 > 1274's nine-input bot bid appeared to lose 6.05 BTC), and a filter is only ever removable when the **last**
 > participant that can produce the hidden shape is migrated.
 >
+> **Mini-plan 28 F-3 (2026-10-23, D-28.8) — the shape is back, deliberately, and it is shown.** Cast miners now
+> send their change to their own base address (`NetworkRoot.ApplyCastMinerChangePolicy`, `NodeAgent.RotateChangeAddress`).
+> Their volume-filler sells had made 10,924 of the 15,750 addresses on R3's chain, every one re-derived at every
+> boot. They keep their `DerivedAddressWallet`, which still owns and signs the change addresses already mined.
+> A cast miner's sell therefore shows two outputs, the payment and the change back to the sender. That output is
+> real, so this section's own lesson says to show it: **nothing filters it, and nothing should.** Everyone else
+> (player, casino, founders, miner bots, companies) still rotates change.
+>
 > **What the removal check actually found (P16.2f):** the migration list everyone had been working from —
 > casino-miner bots, cast miners, companies, ghosts-excluded — was **incomplete**. **Passphrase wallets**
 > (`NetworkRoot.RegisterPassphraseWallet`) spend, had no `ReceiveWallet`, and were therefore the last
@@ -3706,6 +3714,14 @@ The engine is **already general** — `BuildAndBroadcastUtxoSpend` works for any
 - **Coinbase-address spread (full address non-reuse)** — the **cost driver** and the sustainability line. It is what multiplies the address universe (Satoshi alone ~220). Generalising it to all miners would be **historically wrong** (other early miners reused addresses) *and* would inflate the per-launch chain-rescan (D3, no persistence: `Rescan` derives SHA256 per index up to each rotating wallet's frontier+gap). **Keep it Satoshi-only** — simultaneously the faithful choice and the performance safeguard.
 
 **Verdict:** sustainable at a general level *as long as coinbase spread stays Satoshi-only*. The thing to watch as the chain grows is the launch-time chain-replay rescan (today O(chain) cached + O(addresses) derivation — comfortable at fractal scale); if it ever bites, cache the frontier/UTXO set per session and re-scan only on a real revert. **Casino caveat:** the casino sends far more often than the player (one pool-payout `SendFromCasino` per contributor per reward event), and each change-bearing send mints one fresh change address — so the casino's address count (and thus its share of the rescan cost) grows fastest of all participants. Acceptable at current scale; it is the first place the per-session-cache mitigation would pay off. (Also note: the UTXO model already limits the casino to roughly one funding-source consumption per block until confirmation — a second same-block payout needs a *second* confirmed UTXO — but this predates and is independent of change rotation.) A separate future note: there is **no block-weight model** (`SizeVBytes = 1` uniform), so a pathological many-input tx isn't penalised — a per-input cost or auto-consolidation in low-fee periods would be the real-Bitcoin answer if fragmentation ever grows large.
+
+> **⚠ Measured by mini-plan 28 (2026-10-23): the verdict named the wrong cost driver.** Coinbase spread stayed
+> Satoshi-only, as decided, and it is a small share (Satoshi's rotation is inside the 309 coinbase/system addresses
+> on R3's chain). **Change rotation drove the count:** 15,398 of 15,750 addresses were change. Once Step 16 P16.2
+> gave every bot, cast miner and company a seed, the heaviest change-maker was not the casino but the **cast
+> miners' volume filler** (69%). "Watch the launch-time rescan" came true: 44.7 s of a 57.9 s boot. The fixes went
+> to the cost (a fixed-base table for G) and the count (cast miners' change back to their base address), not to a
+> per-session cache. Record: `AIHelperFiles/mini28-boot-time-plan.md` §5A, §9; §40.7's sequel.
 
 ### 30.8 — What's deferred
 
@@ -5258,6 +5274,10 @@ Both halves of its reasoning were right — the chain pass really is shared, and
 Note also what the correct half bought: the prediction *"if that ever measures as material it is a T4 finding, never a reason to skip the rescan"* held exactly. The rescan is untouched; the primitive underneath it got faster. **When a documented cost comes true, re-read the note for the mitigation it already named** — it pointed at the right layer.
 
 This belongs to Chapter 40 rather than Chapter 30 because it is the same shape as §40.2: a component sized correctly for the hand-play premise (a handful of seeded wallets) meeting a phase that changed the premise, with no assertion anywhere to notice.
+
+**Sequel — the corrected note went stale too (mini-plan 28, 2026-10-23).** The fix above left the rescan at "~6–8 s". Three months later the boot was **57.9 s**, and the first instrument ever put on it (`BootProbe`) found **44.7 s in this same rescan**. Nothing had regressed: the measured per-derivation cost was still ~2.4 ms. The *count* had grown. Every change output of a rotating wallet takes a fresh address, so the rescan derives one per address the world has **ever used**. "~21 per wallet" was true for an unplayed world; R3's chain (~2016) held 15,750 addresses, 97.8% of them one-time change and 69% made by the cast miners' background volume. Fixed on both axes. The cost: a fixed-base table for G, extended-Euclid inversion, **0.26 ms** per derivation, output-identical. The count: cast miners send change to their base address. The boot is **8.6 s** (`mini28-boot-time-plan.md` §9).
+
+> **A cost that scales with the world's history must be written per unit of history, never as a figure.** "~8 s" was a consequence (count × unit cost) written as if it were a constant: the same failure as Convention 15's frozen prose numbers, and as invisible. And the note's own sentence held a second time: the rescan was right to exist, and the fix again went to the layer underneath it.
 
 ### 40.8 — The martingale level that could not happen: duplication has an amplifier (INC-002, 2026-08-06)
 

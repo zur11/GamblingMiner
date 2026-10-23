@@ -61,11 +61,15 @@ public static class Secp256k1
 			throw new ArgumentOutOfRangeException(nameof(privateKey),
 				"Private key value is not in the valid secp256k1 range [1, N−1].");
 
-		var (x, y) = ScalarMul(Gx, Gy, k);
+		return Compress(ScalarMulG(privateKey)); // mini-plan 28 F-2
+	}
 
+	// The 33-byte compressed encoding: 0x02/0x03 by the parity of y, then x big-endian.
+	private static byte[] Compress((BigInteger X, BigInteger Y) point)
+	{
 		byte[] result = new byte[33];
-		result[0] = y.IsEven ? (byte)0x02 : (byte)0x03;
-		ToBytes32(x).CopyTo(result, 1);
+		result[0] = point.Y.IsEven ? (byte)0x02 : (byte)0x03;
+		ToBytes32(point.X).CopyTo(result, 1);
 		return result;
 	}
 
@@ -97,6 +101,13 @@ public static class Secp256k1
 	// accumulator back to affine — 384 modexps become 1. Measured 127 ms → 4.2 ms per address (34x), so
 	// the boot rescan above drops from ~270 s to ~8 s.
 	//
+	// ⚠ Mini-plan 28 (2026-10-23): "~8 s" was true for ~1,900 derivations and did not stay true. Every coinbase
+	// Satoshi mines and every change output a rotating wallet makes takes a FRESH address, so the rescan derives
+	// one per address the world has ever used: 15,750 on R3's chain (~2016), measured at 44.7 s of a 57.9 s boot.
+	// A cost that scales with history has to be written per unit of history (here ~2.4 ms per derivation before
+	// F-2, ~0.25 after), never as a figure. The fixed-base table below is the fix for the cost; cast miners'
+	// change returning to their base address (NetworkRoot, F-3) is the fix for the count.
+	//
 	// The curve math is unchanged, so this is bit-for-bit output-identical: verified against the previous
 	// implementation over 311 vectors (300 seed-derived keys, the " #r{i}" / "sign:" seed shapes the
 	// wallet code actually produces, the empty seed, and the edge scalars 1, 2, 3, 255, N−2, N−1), plus
@@ -106,22 +117,147 @@ public static class Secp256k1
 	// Formulas are the standard ones from the Explicit-Formulas Database for short Weierstrass a = 0:
 	// "dbl-2009-l" (doubling) and "add-2007-bl" (addition).
 
-	// Computes k * P using double-and-add over Jacobian coordinates.
-	// For a 256-bit k this performs ~256 doublings and ~128 additions, then one inversion at the end.
-	private static (BigInteger X, BigInteger Y) ScalarMul(BigInteger px, BigInteger py, BigInteger k)
-	{
-		var result  = JacobianInfinity;
-		var current = (X: Mod(px, P), Y: Mod(py, P), Z: BigInteger.One);
+	// --- Fixed-base multiplication of G (mini-plan 28 F-2) ---
+	//
+	// Every scalar multiply in the game is k·G: GetCompressedPublicKey is the only caller, and it always multiplies
+	// the generator. The boot's wallet rescan does one per address the world has ever used (~17,000 on R3's world,
+	// mini-plan 28 §5A), so G's multiples are computed ONCE into a table and every k·G becomes a sum of entries.
+	//
+	// The scalar is read as its 32 bytes, k = Σ d_j·256^j with d_j in 0..255, and the table holds d·256^j·G for
+	// every j and every d = 1..255 (8,160 affine points, built once per process in ~0.2 s). k·G is then one mixed
+	// addition per nonzero byte, at most 32 and NO doublings, against ~256 doublings and ~128 additions for
+	// double-and-add; the final conversion inverts by extended Euclid rather than ModPow. Measured side by side in
+	// one process (mini-plan 28 harness, Debug, 6,000 calls): 0.25 ms against 2.85, 8.6–8.9% of the old cost. The
+	// 4-bit table (960 points) measured 23.4%, and with ModPow left in place the inversion alone was over half of
+	// what remained.
+	//
+	// Same curve, same field, the same standard formulas, so the result is bit-for-bit the one ScalarMul gives:
+	// 0 mismatches over 7,422 vectors (Step 16's seed shapes, " #r{i}" and "sign:" seeds, the empty seed, the edge
+	// scalars 1, 2, 3, 15, 16, 17, 255, 256, 2^128, 2^255, N−2, N−1, and 5,000 random keys), plus the k=1 known
+	// answer. No WorldFormatVersion bump, no reset. Edge cases, from the arithmetic: the windows are summed from
+	// the lowest up, so before window j the running sum is a scalar below 256^j, and the term added is at least
+	// 256^j. The two are never equal (no doubling case) and their sum never exceeds k < N (never the point at
+	// infinity). JacobianAddAffine still handles both, so the claim is not load-bearing.
+	private const int WindowCount = 32;
+	private const int DigitsPerWindow = 255;
 
-		while (k > BigInteger.Zero)
+	// Built on first use, once per process. Lazy<T>'s default mode is thread-safe.
+	private static readonly Lazy<(BigInteger X, BigInteger Y)[]> GTable = new(BuildGTable);
+
+	// k·G from the 32-byte big-endian scalar, already range-checked by the caller.
+	private static (BigInteger X, BigInteger Y) ScalarMulG(byte[] bigEndianScalar)
+	{
+		(BigInteger X, BigInteger Y)[] table = GTable.Value;
+		var result = JacobianInfinity;
+		for (int j = 0; j < WindowCount; j++)
 		{
-			if (!k.IsEven)
-				result = JacobianAdd(result, current);
-			current = JacobianDouble(current);
-			k >>= 1;
+			int digit = bigEndianScalar[31 - j];
+			if (digit != 0)
+				result = JacobianAddAffine(result, table[j * DigitsPerWindow + digit - 1]);
 		}
 		return JacobianToAffine(result);
 	}
+
+	// (X : Y : Z) → (X/Z², Y/Z³). The single modular inversion of a whole scalar multiply.
+	private static (BigInteger X, BigInteger Y) JacobianToAffine((BigInteger X, BigInteger Y, BigInteger Z) p)
+	{
+		if (p.Z.IsZero) return Infinity;
+
+		BigInteger zInv  = ModInverse(p.Z);
+		BigInteger zInv2 = Mod(zInv * zInv, P);
+		return (Mod(p.X * zInv2, P), Mod(Mod(p.Y * zInv2, P) * zInv, P));
+	}
+
+	// a⁻¹ mod P by the extended Euclidean algorithm; a is nonzero mod P. Until mini-plan 28 this was Fermat's
+	// a^(P−2) by ModPow: measured 0.223 ms against Euclid's 0.023 per inverse (mini-plan 28 harness, 3,000 inputs,
+	// 0 disagreements), which would have been over half of a fixed-base multiply. Same value: the inverse mod a
+	// prime is unique.
+	private static BigInteger ModInverse(BigInteger a)
+	{
+		BigInteger t = BigInteger.Zero, newT = BigInteger.One;
+		BigInteger r = P, newR = Mod(a, P);
+		while (!newR.IsZero)
+		{
+			BigInteger quotient = BigInteger.DivRem(r, newR, out BigInteger remainder);
+			(t, newT) = (newT, t - quotient * newT);
+			(r, newR) = (newR, remainder);
+		}
+		return t.Sign < 0 ? t + P : t;
+	}
+
+	// table[j·255 + d − 1] = d·256^j·G. Built in Jacobian coordinates, then converted to affine with ONE inversion
+	// (Montgomery's batch trick), so the lookups can use the cheaper mixed addition.
+	private static (BigInteger X, BigInteger Y)[] BuildGTable()
+	{
+		var jacobian = new (BigInteger X, BigInteger Y, BigInteger Z)[WindowCount * DigitsPerWindow];
+		var windowBase = (X: Gx, Y: Gy, Z: BigInteger.One); // 256^j·G
+		for (int j = 0; j < WindowCount; j++)
+		{
+			var multiple = windowBase;
+			for (int d = 1; d <= DigitsPerWindow; d++)
+			{
+				jacobian[j * DigitsPerWindow + d - 1] = multiple;
+				multiple = JacobianAdd(multiple, windowBase); // (d+1)·256^j·G
+			}
+			windowBase = multiple; // 256·256^j·G = 256^(j+1)·G
+		}
+
+		// Batch inversion: prefix[i] = Z_0·…·Z_i, one ModInverse of the last, then walk back.
+		int n = jacobian.Length;
+		var prefix = new BigInteger[n];
+		BigInteger running = BigInteger.One;
+		for (int i = 0; i < n; i++)
+		{
+			running = Mod(running * jacobian[i].Z, P);
+			prefix[i] = running;
+		}
+
+		var affine = new (BigInteger X, BigInteger Y)[n];
+		BigInteger inverse = ModInverse(running);
+		for (int i = n - 1; i >= 0; i--)
+		{
+			BigInteger zInv = i > 0 ? Mod(inverse * prefix[i - 1], P) : inverse;
+			inverse = Mod(inverse * jacobian[i].Z, P);
+			BigInteger zInv2 = Mod(zInv * zInv, P);
+			affine[i] = (Mod(jacobian[i].X * zInv2, P), Mod(Mod(jacobian[i].Y * zInv2, P) * zInv, P));
+		}
+		return affine;
+	}
+
+	// P1 + P2 where P2 is affine (Z2 = 1): "madd-2007-bl". No modular inverse, and fewer products than JacobianAdd.
+	private static (BigInteger X, BigInteger Y, BigInteger Z) JacobianAddAffine(
+		(BigInteger X, BigInteger Y, BigInteger Z) p1,
+		(BigInteger X, BigInteger Y) p2)
+	{
+		if (p1.Z.IsZero) return (p2.X, p2.Y, BigInteger.One);
+
+		BigInteger z1z1 = Mod(p1.Z * p1.Z, P);
+		BigInteger u2   = Mod(p2.X * z1z1, P);               // U2 = X2·Z1²
+		BigInteger s2   = Mod(Mod(p2.Y * p1.Z, P) * z1z1, P); // S2 = Y2·Z1³
+
+		if (u2 == p1.X)
+		{
+			// Same affine x: either the same point (double) or a vertical line (infinity).
+			return s2 == p1.Y ? JacobianDouble(p1) : JacobianInfinity;
+		}
+
+		BigInteger h  = Mod(u2 - p1.X, P);                   // H = U2 − X1
+		BigInteger hh = Mod(h * h, P);                       // HH = H²
+		BigInteger i  = Mod(4 * hh, P);                      // I = 4·HH
+		BigInteger j  = Mod(h * i, P);                       // J = H·I
+		BigInteger r  = Mod(2 * (s2 - p1.Y), P);             // r = 2(S2 − Y1)
+		BigInteger v  = Mod(p1.X * i, P);                    // V = X1·I
+		BigInteger x3 = Mod(r * r - j - 2 * v, P);
+		BigInteger y3 = Mod(r * (v - x3) - 2 * p1.Y * j, P);
+		BigInteger zh = Mod(p1.Z + h, P);
+		BigInteger z3 = Mod(zh * zh - z1z1 - hh, P);         // Z3 = (Z1+H)² − Z1² − HH
+		return (x3, y3, z3);
+	}
+
+	// The general double-and-add ScalarMul(P, k) that preceded the fixed-base table was deleted at mini-plan 28's
+	// close-out, with the DEBUG reference that compared the two at boot (0 mismatches over 17,164 R3 addresses and
+	// 7,422 harness vectors). Nothing multiplies any point but G. If something ever must, double-and-add over
+	// JacobianAdd/JacobianDouble below is the shape to restore.
 
 	// P1 + P2 in Jacobian coordinates ("add-2007-bl"). No modular inverse.
 	private static (BigInteger X, BigInteger Y, BigInteger Z) JacobianAdd(
@@ -174,24 +310,6 @@ public static class Secp256k1
 		BigInteger y3 = Mod(e * (d - x3) - 8 * c, P);
 		BigInteger z3 = Mod(2 * p.Y * p.Z, P);
 		return (x3, y3, z3);
-	}
-
-	// (X : Y : Z) → (X/Z², Y/Z³). The single modular inversion of the whole scalar multiply.
-	private static (BigInteger X, BigInteger Y) JacobianToAffine((BigInteger X, BigInteger Y, BigInteger Z) p)
-	{
-		if (p.Z.IsZero) return Infinity;
-
-		BigInteger zInv  = ModInverse(p.Z, P);
-		BigInteger zInv2 = Mod(zInv * zInv, P);
-		return (Mod(p.X * zInv2, P), Mod(Mod(p.Y * zInv2, P) * zInv, P));
-	}
-
-	// a⁻¹ mod p via Fermat's little theorem: a^(p−2) mod p.
-	// Valid because p is prime, so a^(p−1) ≡ 1 (Fermat), giving a * a^(p−2) ≡ 1.
-	private static BigInteger ModInverse(BigInteger a, BigInteger m = default)
-	{
-		if (m == default) m = P;
-		return BigInteger.ModPow(Mod(a, m), m - 2, m);
 	}
 
 	// Proper positive modulo: BigInteger % can return negative values in C# for negative operands.

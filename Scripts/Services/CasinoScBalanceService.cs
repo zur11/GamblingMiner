@@ -97,6 +97,7 @@ public partial class CasinoScBalanceService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(7, nameof(CasinoScBalanceService));
 		LoadState();
 		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		// Loan figures are deliberately NOT printed here: CentralBankService registers AFTER this service, so

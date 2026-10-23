@@ -72,6 +72,7 @@ public partial class CasinoClientLedgerService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(8, nameof(CasinoClientLedgerService));
 		LoadState();
 		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		EnsureCanonicalInitialDeposits();

@@ -109,13 +109,13 @@ small item (its 17.A2). Both rows, and the two §6 checklist items they closed, 
 25's measurement F1 inserted the new item 1, and the developer approved it with F1's commit. **That item 1, the
 per-block freeze, is ✅ DONE (mini-plan 26, 2026-10-20):** a block went from 4,858 ms to 416 ms in the same session.
 Its row is in `ROADMAP_ARCHIVE.md`. **Item 2, user settings persistence, is ✅ DONE (mini-plan 27, 2026-10-22).** Its
-row and the §6 item it closed are in `ROADMAP_ARCHIVE.md`. **The next item is 2b, the boot time**, which the developer
-inserted on 2026-10-22, before item 3. It is numbered 2b so that nothing below is renumbered: the numbers are kept
-as they were, because other documents cite them.
+row and the §6 item it closed are in `ROADMAP_ARCHIVE.md`. **Item 2b, the boot time, is ✅ DONE (mini-plan 28,
+2026-10-23): 57.9 s → 8.6 s.** The developer inserted it on 2026-10-22, before item 3, and numbered it 2b so that
+nothing below was renumbered (other documents cite the numbers). Its row is in `ROADMAP_ARCHIVE.md`. **The next item
+is 3, the Player Holdings Hub.**
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **2b** | **The boot time** (§8 **T4.7**): attribute the ~55 s inside autoloads #2–#19 first, then fix the main cost | §8 T4.7 · mini-plan 27 §6.4 (the measurement) | **Inserted by the developer (2026-10-22)** after mini-plan 27 measured the boot at 57.7 s (59.4 s felt). A minute per launch is paid at every test, and that plan's verification alone took six |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
@@ -619,7 +619,7 @@ signature (1.84 ms per input).
     secp256k1, then governance, auctions and the checkpoint, none above 20%. T4.2 remains the structural answer to
     the fan-out itself.
 
-**Status at 2026-10-12 — only T4.2 is open** *(and since 2026-10-22, T4.7, the boot time, below)*. The rest shipped, and their specifications and measurements
+**Status at 2026-10-12 — only T4.2 is open** *(T4.7, the boot time, opened 2026-10-22 and closed by mini-plan 28 on 2026-10-23)*. The rest shipped, and their specifications and measurements
 (T4.0, T4.0b, T4.1, T4.3–T4.6) are in `ROADMAP_ARCHIVE.md`:
 - **T4.6**, the per-block cost budget: mini-plan 13.
 - **T4.5**, the chain split out of the snapshot and appended, never rewritten: mini-plan 14.
@@ -632,9 +632,14 @@ signature (1.84 ms per input).
 
 The per-node `BlockchainService` is already acknowledged as vestigial — a comment in `NetworkRoot` says *"single-shared-chain design (every node already holds the same canonical chain via BroadcastBlock)"* (grep the phrase; this cited `~L5209` until 2026-08-23, by which point the line had moved ~900 lines — Standing Convention 15), and `RunConsensusRound` was deleted at T2 for the same reason. A single shared chain + one shared UTXO index, with `NodeAgent` reduced to identity + owned addresses, removes the 62× invalidation storm at its source and collapses `BroadcastBlock` to a no-op. **Blocked-by-design consideration:** per-node chains are the substrate the deferred **Divergent Chains / Fork Simulation** wants. The honest resolution is to make the shared chain the default and reintroduce per-node chains *deliberately* when forks ship, rather than paying for 62 unused copies for years.
 
-#### T4.7 — The boot takes about a minute, and 95% of it is unattributed (measured 2026-10-22)
+#### T4.7 — The boot takes about a minute, and 95% of it is unattributed (measured 2026-10-22) — ✅ DONE (mini-plan 28, 2026-10-23)
 
-**Status: open, measured, not split; scheduled as ▶ NEXT item 3 (mini-plan 28, developer 2026-10-22).** *(Committed
+**Status: ✅ DONE by mini-plan 28 (2026-10-23, `AIHelperFiles/mini28-boot-time-plan.md` §9): the boot is 8.6 s, from
+57.9 s.** The minute was the derived-wallet rescan (82.8%), one secp256k1 multiply per address the world has ever
+used, not the per-node validation (15.8%). Fixed by a fixed-base table for G (0.26 ms per derivation, from 2.42),
+validating the chain once, and cast miners' change returning to their base address. **What remains:** the rescan is
+4.5 s and still grows with history, at the companies' rate. Parallel rescans and limb arithmetic are named but not
+scheduled. *The text below is the entry as it stood when the plan began.* *(Committed
 first as "T4.3" in `18b6f59`. That number already belongs to the address → outpoint index, mini-plan 17, so this
 entry is T4.7, the next free number; Convention 16.)* The developer reported during mini-plan 27's verification that launching had
 grown to "almost half a minute". The first measurement (`Scripts/Diagnostics/BootProbe.cs`, R3's world at height

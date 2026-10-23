@@ -91,6 +91,7 @@ public partial class CalendarTimeService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(3, nameof(CalendarTimeService));
 		WordlistBootstrapper.EnsureWordlist();
 		WalletInitializationService.EnsureAll();
 

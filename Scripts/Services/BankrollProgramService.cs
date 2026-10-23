@@ -53,6 +53,7 @@ public partial class BankrollProgramService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(6, nameof(BankrollProgramService));
 		LoadState();
 		_ledger       = GetNodeOrNull<CasinoClientLedgerService>("/root/CasinoClientLedgerService");
 		_userStats    = GetNodeOrNull<UserStatsService>("/root/UserStatsService");

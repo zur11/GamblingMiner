@@ -84,6 +84,7 @@ public partial class ScMonetaryLedgerService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(11, nameof(ScMonetaryLedgerService));
 		LoadState();
 		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[ScMonetaryLedgerService] Ready — Circulation={TotalCirculation:F8} SC  Grants={TotalGenesisGrants:F8}  Debt={TotalDebtOutstanding:F8}  events={_events.Count}"));

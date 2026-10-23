@@ -55,6 +55,7 @@ public partial class UserStatsService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(2, nameof(UserStatsService));
 		AnnounceSentinelArming();
 		Stats = new UserBettingStats();
 		if (EnableHistoryPersistence)

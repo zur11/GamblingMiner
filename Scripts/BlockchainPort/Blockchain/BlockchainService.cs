@@ -838,7 +838,17 @@ public sealed class BlockchainService
 		return block.Difficulty > 0d ? block.Difficulty : InitialDifficulty;
 	}
 
+	// Mini-plan 28 unit 1 — every validation is counted and timed (DEBUG): the boot runs this once per node on the
+	// same list, and BootProbe's summary is what says how many times and at what cost.
 	public bool ChainIsValid(IReadOnlyList<Block> blockchain)
+	{
+		long validationStart = System.Diagnostics.Stopwatch.GetTimestamp();
+		bool valid = ValidateChain(blockchain);
+		Scripts.Diagnostics.BootProbe.NoteChainValidation(validationStart);
+		return valid;
+	}
+
+	private bool ValidateChain(IReadOnlyList<Block> blockchain)
 	{
 		if (blockchain.Count == 0)
 		{
@@ -1039,12 +1049,33 @@ public sealed class BlockchainService
 			return false;
 		}
 
+		InstallChain(newChain, newPendingTransactions);
+		return true;
+	}
+
+	// Mini-plan 28 F-1 — TryReplaceChain for a chain whose validity was decided ONCE by the caller, for the world
+	// load that hands the same list to every node. ChainIsValid's answer cannot differ between nodes, and running
+	// it per node was 73 × ~113 ms of the boot. `chainIsValid` must be ChainIsValid's verdict on THIS list,
+	// unmodified since. Everything else stays per node: a chain not longer than the node's is still refused, and an
+	// invalid one is refused everywhere, exactly as TryReplaceChain would.
+	public bool TryReplaceChainWithVerdict(List<Block> newChain, List<Transaction> newPendingTransactions, bool chainIsValid)
+	{
+		if (newChain.Count <= Chain.Count || !chainIsValid)
+		{
+			return false;
+		}
+
+		InstallChain(newChain, newPendingTransactions);
+		return true;
+	}
+
+	private void InstallChain(List<Block> newChain, List<Transaction> newPendingTransactions)
+	{
 		Chain.Clear();
 		Chain.AddRange(newChain);
 		PendingTransactions.Clear();
 		PendingTransactions.AddRange(newPendingTransactions);
 		_chainVersion++;
-		return true;
 	}
 
 	// A 64-hex double-SHA256 hash meets the target when, read as a 256-bit integer, it is ≤ 2²⁵⁶ / Difficulty

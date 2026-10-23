@@ -16,7 +16,11 @@ public partial class NotepadService : Node
 	// of the player's notes, so nothing is written (plan §3.3, INC-004).
 	private bool _persistBlocked;
 
-	public override void _Ready() => LoadNotes();
+	public override void _Ready()
+	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(15, nameof(NotepadService));
+		LoadNotes();
+	}
 
 	public IReadOnlyList<string> GetAllNames()
 	{

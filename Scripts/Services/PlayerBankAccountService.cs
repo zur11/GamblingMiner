@@ -80,6 +80,7 @@ public partial class PlayerBankAccountService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(9, nameof(PlayerBankAccountService));
 		LoadState();
 		_principalBalance = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");
 		_bankrollProgram  = GetNodeOrNull<BankrollProgramService>("/root/BankrollProgramService");

@@ -147,6 +147,7 @@ public partial class CasinoCoinSwapService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(10, nameof(CasinoCoinSwapService));
 		LoadState();
 		_casinoSc         = GetNodeOrNull<CasinoScBalanceService>("/root/CasinoScBalanceService");
 		_calendarTime     = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");

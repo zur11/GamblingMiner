@@ -31,6 +31,7 @@ public partial class BtcMarketDataService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(18, nameof(BtcMarketDataService));
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		LoadCsv();
 	}

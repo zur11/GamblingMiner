@@ -62,6 +62,7 @@ public partial class BankrollStateService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(4, nameof(BankrollStateService));
 		LoadState();
 	}
 
