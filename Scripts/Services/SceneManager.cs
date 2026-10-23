@@ -72,6 +72,9 @@ public partial class SceneManager : Node
 	public SceneId? PreviousScene { get; private set; }
 	private SceneId? _currentScene;
 
+	// Mini-plan 28 unit 1 — the boot's per-autoload mark, the only thing this needs a _Ready for (DEBUG).
+	public override void _Ready() => Scripts.Diagnostics.BootProbe.AutoloadStarts(14, nameof(SceneManager));
+
 	public void Go(SceneId scene)
 	{
 		PreviousScene = _currentScene;

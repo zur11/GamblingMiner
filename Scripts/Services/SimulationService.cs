@@ -318,6 +318,7 @@ public partial class SimulationService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(17, nameof(SimulationService));
 		_calendar = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		_userStats = GetNodeOrNull<UserStatsService>("/root/UserStatsService");
 		_principal = GetNodeOrNull<PrincipalBalanceService>("/root/PrincipalBalanceService");

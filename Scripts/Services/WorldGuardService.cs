@@ -16,7 +16,7 @@ public partial class WorldGuardService : Node
 {
 	public override void _Ready()
 	{
-		Scripts.Diagnostics.BootProbe.Mark("first autoload (WorldGuardService) starts");
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(1, nameof(WorldGuardService));
 		// Mini-plan 27 unit 4 — a reset the player requested in an earlier session (User Settings), performed before
 		// anything has loaded a file it deletes. It runs first because it is the player's explicit instruction. After a
 		// "Wipe everything" the two steps below meet an empty folder and behave exactly as on a first launch.

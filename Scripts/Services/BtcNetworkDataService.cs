@@ -75,6 +75,7 @@ public partial class BtcNetworkDataService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(19, nameof(BtcNetworkDataService));
 		_calendarTimeService = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		EnsureLoaded();
 	}

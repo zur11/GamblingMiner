@@ -4,8 +4,8 @@
 **T4.7**, inserted by the developer on 2026-10-22 after mini-plan 27 measured the boot for the first time
 (`mini27-user-settings-plan.md` §6.4).
 
-**Status:** 📝 **SPECIFIED 2026-10-22.** Nothing built. Next: **unit 1**, the instrument (§4), then measurement
-**M1** (§6).
+**Status:** 🔨 **IN PROGRESS.** Specified 2026-10-22. **Unit 1, the instrument (§4), built 2026-10-23.** Next:
+measurement **M1** (§6), then §5's decision rule on its data.
 
 **Branch:** `mini28-boot-time` (proposed, D-28.1).
 
@@ -86,6 +86,16 @@ rebuilds for 71 nodes), one validation would have to cost about 0.5–0.75 s for
 - **A `ChainIsValid` counter and timer** (DEBUG): calls, total, min / median / max per call, printed once when
   `EnsureInitialized` ends. It counts every call, not only the boot loop's, so a call from elsewhere shows up.
 - Everything prints with `GD.Print`, so `godot.log` receives it. The developer watches nothing.
+
+**As built (2026-10-23).** `BootProbe.AutoloadStarts(index, name)` is the first line of every autoload's `_Ready`,
+indexed by its position in `project.godot`; #1's and #20's mini-plan 27 start marks became the same call, and their
+"done" marks stay. `SceneManager` (#14) and `FoundersMiningService` (#16) had no `_Ready` and gained one holding only
+the mark. Inside `EnsureInitialized`, ten `world: …` marks: start · self-check + guard + `state.json` · nodes
+registered (count) · `chain.jsonl` read (blocks, transactions) · chain checked against the state stamp · **the
+`TryReplaceChain` loop** (node count) · rest of the snapshot applied · genesis + second-block tx · rescan ·
+governance · persisted. Each mark's `+ms` is its step. `ChainIsValid` is now a timed wrapper over the unchanged
+`ValidateChain`; `PrintChainValidationSummary` runs once, right after the "persisted" mark. Build: Debug and
+ExportRelease 0 warnings; locale detector 17/0/0/0, the 17 identical by content to `09cdb10`'s.
 
 ## 5. Unit 2 — the fix (Part B), conditional on M1
 

@@ -23,6 +23,7 @@ public partial class PrincipalBalanceService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(5, nameof(PrincipalBalanceService));
 		LoadState();
 	}
 

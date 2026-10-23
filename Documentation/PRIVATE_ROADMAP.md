@@ -115,7 +115,7 @@ as they were, because other documents cite them.
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **2b** | **The boot time** (§8 **T4.7**): attribute the ~55 s inside autoloads #2–#19 first, then fix the main cost | **`AIHelperFiles/mini28-boot-time-plan.md` (SPECIFIED 2026-10-22)**, branch `mini28-boot-time` · §8 T4.7 · mini-plan 27 §6.4 (the measurement) | **Inserted by the developer (2026-10-22)** after mini-plan 27 measured the boot at 57.7 s (59.4 s felt). A minute per launch is paid at every test, and that plan's verification alone took six |
+| **2b** | **The boot time** (§8 **T4.7**): attribute the ~55 s inside autoloads #2–#19 first, then fix the main cost | **`AIHelperFiles/mini28-boot-time-plan.md` (IN PROGRESS: unit 1 built 2026-10-23, next M1)**, branch `mini28-boot-time` · §8 T4.7 · mini-plan 27 §6.4 (the measurement) | **Inserted by the developer (2026-10-22)** after mini-plan 27 measured the boot at 57.7 s (59.4 s felt). A minute per launch is paid at every test, and that plan's verification alone took six |
 | **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
@@ -634,7 +634,7 @@ The per-node `BlockchainService` is already acknowledged as vestigial — a comm
 
 #### T4.7 — The boot takes about a minute, and 95% of it is unattributed (measured 2026-10-22)
 
-**Status: open, measured, not split; scheduled as ▶ NEXT item 2b, mini-plan 28 (SPECIFIED 2026-10-22,
+**Status: open, measured, not split; scheduled as ▶ NEXT item 2b, mini-plan 28 (IN PROGRESS 2026-10-23,
 `AIHelperFiles/mini28-boot-time-plan.md`).** *(Committed
 first as "T4.3" in `18b6f59`. That number already belongs to the address → outpoint index, mini-plan 17, so this
 entry is T4.7, the next free number; Convention 16.)* The developer reported during mini-plan 27's verification that launching had

@@ -26,6 +26,9 @@ public partial class FoundersMiningService : Node
 	public const string SatoshiNodeId = "satoshi";
 	public const string HalNodeId = "hal";
 
+	// Mini-plan 28 unit 1 — the boot's per-autoload mark, the only thing this needs a _Ready for (DEBUG).
+	public override void _Ready() => Scripts.Diagnostics.BootProbe.AutoloadStarts(16, nameof(FoundersMiningService));
+
 	// ── Satoshi targeting (step7 plan §2.2) ────────────────────────────────────
 	// 1% of his real ≈1.1M BTC. Spendable only — excludes the unspendable genesis 50 (OQ-8). The
 	// ~10% block share this implies is a HISTORICAL requirement, not a tunable (Q-A1).

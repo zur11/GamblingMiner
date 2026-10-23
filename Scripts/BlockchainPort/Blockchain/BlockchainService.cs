@@ -838,7 +838,17 @@ public sealed class BlockchainService
 		return block.Difficulty > 0d ? block.Difficulty : InitialDifficulty;
 	}
 
+	// Mini-plan 28 unit 1 — every validation is counted and timed (DEBUG): the boot runs this once per node on the
+	// same list, and BootProbe's summary is what says how many times and at what cost.
 	public bool ChainIsValid(IReadOnlyList<Block> blockchain)
+	{
+		long validationStart = System.Diagnostics.Stopwatch.GetTimestamp();
+		bool valid = ValidateChain(blockchain);
+		Scripts.Diagnostics.BootProbe.NoteChainValidation(validationStart);
+		return valid;
+	}
+
+	private bool ValidateChain(IReadOnlyList<Block> blockchain)
 	{
 		if (blockchain.Count == 0)
 		{

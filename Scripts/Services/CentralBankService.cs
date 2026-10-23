@@ -105,6 +105,7 @@ public partial class CentralBankService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(12, nameof(CentralBankService));
 		LoadState();
 		_calendarTime = GetNodeOrNull<CalendarTimeService>("/root/CalendarTimeService");
 		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[CentralBankService] Ready — clients={_accounts.Count}  Outstanding={TotalOutstandingDebt:F8} SC  LentAllTime={TotalLentAllTime:F8} SC"));

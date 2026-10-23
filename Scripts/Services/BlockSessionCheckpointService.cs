@@ -60,6 +60,7 @@ public partial class BlockSessionCheckpointService : Node
 
 	public override void _Ready()
 	{
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(13, nameof(BlockSessionCheckpointService));
 		LoadState();
 		if (CurrentSnapshot != null)
 			ApplyCheckpointToServices();

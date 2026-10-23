@@ -1227,6 +1227,9 @@ public partial class NetworkRoot : Node
 			return;
 		}
 
+		// Mini-plan 28 unit 1 — "world: …" marks time each step of the world load (DEBUG, BootProbe).
+		Scripts.Diagnostics.BootProbe.Mark("world: EnsureInitialized starts");
+
 		// ND.10i suggestion 3 (2026-07-27) — DEV-only ladder self-check, stripped from release builds. The
 		// tier-2/tier-4 slope collision existed because two tables are read by ONE consumer and nobody had
 		// ever printed them side by side; this makes the next such collision announce itself at launch
@@ -1243,6 +1246,7 @@ public partial class NetworkRoot : Node
 
 		// Load saved state first so wallets can be restored before nodes are created.
 		BlockchainStateSnapshot? savedState = TryLoadSnapshot();
+		Scripts.Diagnostics.BootProbe.Mark($"world: self-check + compatibility guard + state.json loaded (snapshot {(savedState is null ? "absent" : "present")})");
 
 		SharedNodesById.Clear();
 		SharedNetwork.RegisterNode(CreateAndRegisterNode(PlayerNodeId, savedState));
@@ -1295,11 +1299,15 @@ public partial class NetworkRoot : Node
 		RegisterFounderNode(WalletInitializationService.SatoshiWallet);
 		RegisterFounderNode(WalletInitializationService.HalWallet);
 		RegisterFounderNode(WalletInitializationService.MikeHearnWallet);
+		Scripts.Diagnostics.BootProbe.Mark($"world: {SharedNodesById.Count} nodes registered");
 
 		ApplyStateFromSnapshot(savedState);
+		Scripts.Diagnostics.BootProbe.Mark("world: rest of the snapshot applied");
 		NormalizeGenesisAcrossNodes();
 		EnsureSecondBlockBootstrapPendingTx();
+		Scripts.Diagnostics.BootProbe.Mark("world: genesis normalized + second-block bootstrap tx");
 		RescanDerivedReceiveWallets(); // Step 8.2 — position founders' fresh-coinbase frontier from the chain
+		Scripts.Diagnostics.BootProbe.Mark("world: derived receive wallets rescanned");
 		// The four casino miner-bots' governance identities (band / market category / greed) are drawn HERE,
 		// at world creation, rather than lazily at the first company vote — so the stances are printed and
 		// committed from the world's very first launch (developer request ahead of the P15.8 run) instead of
@@ -1307,7 +1315,10 @@ public partial class NetworkRoot : Node
 		// lands in a snapshot write (the PersistStateToDisk immediately below), which is the property the
 		// original lazy call site was protecting; the vote path keeps calling it as an idempotent safety net.
 		EnsureBotGovernancePreferences();
+		Scripts.Diagnostics.BootProbe.Mark("world: bot governance preferences");
 		PersistWorldNow(); // boot path: nothing will flush this for us
+		Scripts.Diagnostics.BootProbe.Mark("world: persisted; EnsureInitialized ends");
+		Scripts.Diagnostics.BootProbe.PrintChainValidationSummary("when the world has loaded");
 		_isInitialized = true;
 	}
 
@@ -8749,6 +8760,8 @@ public partial class NetworkRoot : Node
 		// Mini-plan 14 B — the chain comes from its own file now, and the state file says which chain it
 		// belongs to. Both mismatch directions are handled here, and they are not symmetric.
 		snapshot.PlayerChain = LoadChainFromFile();
+		Scripts.Diagnostics.BootProbe.Mark($"world: chain.jsonl read ({snapshot.PlayerChain.Count} blocks, " +
+			$"{snapshot.PlayerChain.Sum(b => b.Transactions.Count)} transactions)");
 
 		int stampedHeight = snapshot.ChainHeight;
 		int loadedHeight = snapshot.PlayerChain.Count - 1;
@@ -8789,8 +8802,10 @@ public partial class NetworkRoot : Node
 
 		if (snapshot.PlayerChain.Count == 0) return;
 
+		Scripts.Diagnostics.BootProbe.Mark("world: chain checked against the state stamp");
 		foreach (NodeAgent node in SharedNodesById.Values)
 			node.Blockchain.TryReplaceChain(snapshot.PlayerChain, snapshot.PlayerPendingTransactions);
+		Scripts.Diagnostics.BootProbe.Mark($"world: chain installed on {SharedNodesById.Count} nodes (the TryReplaceChain loop)");
 
 		_lastMinedByNodeId = snapshot.LastMinedByNodeId;
 		_currentMinerStreak = snapshot.CurrentMinerStreak;

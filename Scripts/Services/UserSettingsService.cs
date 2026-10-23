@@ -69,7 +69,7 @@ public partial class UserSettingsService : Node
 
 	public override void _Ready()
 	{
-		Scripts.Diagnostics.BootProbe.Mark("last autoload (UserSettingsService) starts");
+		Scripts.Diagnostics.BootProbe.AutoloadStarts(20, nameof(UserSettingsService));
 		Load();
 		Scripts.Diagnostics.BootProbe.Mark("UserSettingsService done");
 	}
