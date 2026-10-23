@@ -8887,9 +8887,13 @@ public partial class NetworkRoot : Node
 		// 8.6 s of the boot) and each node installs it on that verdict. Any node's service gives the same answer.
 		bool chainIsValid = SharedNodesById.Count > 0
 			&& SharedNodesById.Values.First().Blockchain.ChainIsValid(snapshot.PlayerChain);
+		int nodesInstalled = 0;
 		foreach (NodeAgent node in SharedNodesById.Values)
-			node.Blockchain.TryReplaceChainWithVerdict(snapshot.PlayerChain, snapshot.PlayerPendingTransactions, chainIsValid);
-		Scripts.Diagnostics.BootProbe.Mark($"world: chain installed on {SharedNodesById.Count} nodes (the TryReplaceChain loop)");
+			if (node.Blockchain.TryReplaceChainWithVerdict(snapshot.PlayerChain, snapshot.PlayerPendingTransactions, chainIsValid))
+				nodesInstalled++;
+		// Mini-plan 28 M2 — the accepted count is E2's "every node holds the chain", counted rather than inferred.
+		Scripts.Diagnostics.BootProbe.Mark($"world: chain installed on {nodesInstalled} of {SharedNodesById.Count} nodes " +
+			$"(verdict {(chainIsValid ? "valid" : "INVALID")}; the TryReplaceChain loop)");
 
 		_lastMinedByNodeId = snapshot.LastMinedByNodeId;
 		_currentMinerStreak = snapshot.CurrentMinerStreak;

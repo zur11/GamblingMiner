@@ -8,7 +8,8 @@
 2026-10-23 (§6.1): P2 refuted.** The minute is the derived-wallet rescan (82.8%), not the per-node validation
 (15.8%). §5A amends unit 2 (approved, `0a39a5a`), with **F-3 added at the developer's choice**: cast miners'
 change goes back to their base address. **Offline harness run (§5A.6): P7 and P8 hold.** **Unit 2 built
-2026-10-23 (§5A.7): F-2 + F-1 + F-3 + the rescan counters + E3.** Next: **M2** (§6), then M3, then close-out.
+2026-10-23 (§5A.7, `8912ae7`): F-2 + F-1 + F-3 + the rescan counters + E3.** **M2 run 2026-10-23 (§6.2): P6–P8 and
+E1–E3 hold; the boot is 57.9 s → 8.6 s (E4).** Next: **M3** (F-3's P9, a play run), then close-out.
 
 **Branch:** `mini28-boot-time` (proposed, D-28.1).
 
@@ -361,6 +362,49 @@ explicitly put out of scope ("key derivation and rescans, unless M1 refutes P5")
 **E2's oracle**, copied out after launch 2: `state.json` (2,028,773 bytes, sha256 `3bde89f98467ae50…`) into the
 scratchpad's `M1_oracle/`, and `chain.jsonl` hashed (`6bb5ed6f83138a78…`, unchanged since 2026-10-20). `state.json`
 holds no wall-clock field, so a byte comparison is meaningful.
+
+### 6.2 M2 results (2026-10-23, R3's world unchanged, read from `godot.log` by Claude)
+
+Launch 1 rebuilt (rotated to `godot2026-10-23T12.31.17.log`); launch 2 is `godot.log`, 12:32. Both are copied to the
+scratchpad as `M2_boot_launch1.log` / `M2_boot_launch2.log`. The developer timed launch 2 at **exactly 1 minute**.
+That is the boot **plus E3's 49.6 s** side-by-side, which only this plan's measurement runs. Figures are from
+**launch 2**; launch 1 is in brackets.
+
+| Span (launch 2) | M1 | **M2** |
+|---|---|---|
+| Engine start → autoload #1 | 3,427 | 2,613 |
+| `state.json` + guard | 126 | 126 |
+| 73 nodes registered | 76 | **241** *(includes building F-2's table on the first derivation; the harness measured 185 ms)* |
+| `chain.jsonl` read | 424 | 370 |
+| **The install loop** (F-1) | **8,564** | **224** [247] |
+| **The rescan** (F-2) | **44,746** | **4,486** [4,617] |
+| World persisted | 82 | 70 |
+| **`EnsureInitialized`** | **54,044** | **5,544** |
+| E3 side-by-side (M2 only) | — | 49,635 [48,556] |
+| MainMenu ready since engine start | **57,912** | 58,230 − 49,635 = **8,595** [59,378 − 48,556 = 10,821] |
+
+**The rescan line:** chain pass 11.6 ms (**0.3%** of the rescan, 15,750 used addresses); 73 wallets derived
+**17,164** addresses in 4,472.8 ms (**0.261 ms** each); largest wallet `artforz`, 687 derivations (**4.0%**),
+148.5 ms. **E3:** F-1 = new path 1 validation, 222.7 ms, against 73 old validations, 8,042.2 ms. F-2 = 17,164
+derivations at 0.261 ms against **2.423 ms** each by the old path, **0 mismatches of 17,164**.
+
+| # | Verdict | The reading |
+|---|---|---|
+| **P6** | ✅ holds | D = **17,164**, inside 14,000–17,300 (near the top: almost every chain address belongs to a wallet, and 73 × 21 = 1,533 are base/gap). Chain pass 0.3% (< 2%); derivations 99.7% (≥ 95%) |
+| **P7** | ✅ holds | **10.8%** [11.4%] per derivation in-game (≤ 25%). The harness said 8.6–9.0%; in-game the old path is the cheaper side of its range, 2.42 ms against 2.85 |
+| **P8** | ✅ holds | **0 mismatches of 17,164** in each launch, in-game, on R3's real wallets |
+| **E1** | ✅ holds | `ChainIsValid`: **1 call** at boot (73 → 1) |
+| **E2** | ✅ holds for what is persisted; per-node lengths now counted | the post-boot `state.json` is **byte-identical** to M1's oracle (`3bde89f9…`), `chain.jsonl` unchanged (`6bb5ed6f…`), no integrity line in either log. The per-node chain lengths were **not counted** by the instrument; it inferred them from the one verdict. The install mark now prints "installed on X of N" (added with these results), so M3's boots count it |
+| **E3** | ✅ holds | F-1 **2.8%** [3.0%] of the old loop (≤ 10%); F-2 **10.8%** [11.4%] (≤ 25%) |
+| **E4** | ✅ **8.6 s** [10.8 s on the rebuild launch] | predicted < 20 s; the harness expectation was 9–10 s. **M1 → M2: 57.9 s → 8.6 s, 6.7× faster.** Reported, not pass/fail |
+
+**Two readings worth keeping:**
+- **The one remaining validation costs 223 ms, twice M1's 113 ms median.** M1's own max was 203 ms, so this is the
+  first call's price (JIT, cold caches), not a slower validation. E3's 73 warm calls average 110 ms.
+- **What the boot is now:** the engine 2.6 s · the rescan 4.5 s (52%) · the chain read 0.4 s · everything else
+  ≈ 1.1 s. The rescan is still the largest step and still scales with history. F-3 slows its growth (P9, M3).
+  The next levers stay as §5A.2 named them: parallel rescans (the largest wallet is only 4.0% of the work, so it
+  would parallelize well) and limb arithmetic. Neither is needed at 8.6 s.
 
 ## 7. Out of scope
 
