@@ -116,7 +116,7 @@ is 3, the Player Holdings Hub.**
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
+| **3** | **Player Holdings Hub**, with **R4**, a test world whose strategies are fixed for the whole run | **`AIHelperFiles/mini29-holdings-hub-and-r4-plan.md` (SPECIFIED 2026-10-23)**, branch `mini29-holdings-hub-r4` · the hub's entry below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
 **Not scheduled (open, see their entries):** T4.2 (Step 17.D) · P9 unit tests · the bot treasury policy (waits on P5)
@@ -333,7 +333,7 @@ Candidate inputs (all already available, none requiring new state):
 
 ### Player Holdings Hub — one screen to claim, vote and find your companies (design + implement, after Step 16)
 
-**Status: recorded 2026-07-30, not yet scheduled.** Deliberately **not** in Step 16 (developer's call) — that step makes the votes worth casting and the dividends cheap to pay; this one makes them *findable*.
+**Status: recorded 2026-07-30; SPECIFIED as mini-plan 29 on 2026-10-23 (`AIHelperFiles/mini29-holdings-hub-and-r4-plan.md`): the index and the badge. The bidding preference below stays out of it, as its own plan after R4 closes.** Deliberately **not** in Step 16 (developer's call) — that step makes the votes worth casting and the dividends cheap to pay; this one makes them *findable*.
 
 **The problem, in the developer's words:** the only way to reach a company the player holds stock in is to hunt for it among all 40 in `BlockExplorer`'s Enroll Mode. Everything the player owns is scattered across a list dominated by companies they have nothing to do with.
 
