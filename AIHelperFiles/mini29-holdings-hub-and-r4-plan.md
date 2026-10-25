@@ -6,8 +6,9 @@ both on 2026-10-23, after mini-plan 28's close-out: "use the roster", and write 
 recommendations".
 
 **Status:** 🔄 **IN PROGRESS 2026-10-23.** **W is done: W1–W3 hold (§8.1)**, and that also ran mini-plan 27's S8
-"Reset world" half. The world is fresh and pre-genesis (115 blocks, 2009-03-21 04:17:51). Nothing built yet. Next:
-**R4's first session** (§5), then unit 1 (§6).
+"Reset world" half. **R4 session 1 is done (§8.2):** 2009-03-21 → 2010-08-02, h859. P1–P5 and P8 hold, **P6 is
+refuted as registered** (its measure, not the variance), and P7 reads outside its band at an interim point. Nothing
+built yet. Next: **session 2, starting with the auction step (§8.3)**, then unit 1 (§6).
 
 **Branch:** `mini29-holdings-hub-r4` (proposed, D-29.1).
 
@@ -192,8 +193,13 @@ should record them is a question for Betting Statistics (17.B), roadmap item 4.
 
 ### 8.1 W — the reset (2026-10-23): W1, W2 and W3 hold
 
-**Which log is which launch** (each was identified by its content before any figure was read; Godot names a rotated log
-by its last write):
+**Which log is which launch** (each was identified by its content before any figure was read). *Corrected 2026-10-23,
+after session 1: Godot names a rotated log by the moment it was **rotated**, i.e. the start of the next launch, not by
+its last write as first written here. `godot2026-10-23T19.31.12.log` holds this reset launch, byte for byte (10,988).
+The identification below was made by content, so no figure changes. Godot keeps `godot.log` plus four rotated
+copies, so each launch drops the oldest: session 1's launch dropped `godot2026-10-23T13.29.44.log` (R3's last
+session, whose tally was already in Step 17 §9.16). A `godot.log` worth keeping must be copied under its own name, as
+`M1_godot.log` was.*
 
 | File | Launch | What it shows |
 |---|---|---|
@@ -211,14 +217,79 @@ by its last write):
 - The boot of a fresh world reached the main menu in **4.09 s**, of which `WorldGuardService` with the wipe took 155 ms.
 - The four casino bots' governance stances were **drawn anew** for this world, so they differ from R3's.
 - **`settings.json` was not rewritten** (`0 writes` in all three launches). It holds a strategy panel for **`player`
-  only** (base 0.02, +100% on loss: R3's last), none for the four bots, and a requested DEV time scale of **90**. So
-  step 3 of §5 must load all five strategies, and step 4 must set 9000X. Both are saved from then on.
+  only** (base 0.02, +100% on loss: R3's last), none for the four bots. So step 3 of §5 must load all five
+  strategies, and they are saved from then on. *Corrected after session 1: its requested DEV time scale of **90** is
+  already 9000X. `DevTimeScaleSelector` stores the ladder's multiplier on the 100X base and labels it `mult × 100`,
+  so step 4 was a check, not a change.*
 - **The two existing roster strategies were read from `saved_betting_strategies.json`:** `R1 0.01` (base 0.01, 0% / 0%,
   no stops, chance 50) and `R2 L100 SL5` (base 0.01, +100% on loss, `StopOnLoss` 5 with insist-after-stop ON, so it
   resumes after each cut, chance 50). Both match §3.2.
 
 **S8's "Reset world" half is now run** and is recorded in `mini27-user-settings-plan.md`. "Wipe everything" stays
 pending (§2).
+
+### 8.2 R4, session 1 (2026-10-23): 2009-03-21 → 2010-08-02, chain 115 → 859
+
+**Setup, as run** (`godot.log`): three strategies saved (the dropdown went 13 → 16), then exactly five loads, `R1 0.01`
+→ `bot_1`, `R2 L100 SL5` → `bot_2`, `R4 L50 0.05` → `bot_3`, `R4 C10 0.1` → `bot_4`, `R4 C90 0.1` → `player`, then
+`[AutoBet] Start`. `settings.json` now holds all five panels, each matching §3.2, so later sessions come back armed.
+**No strategy changed during the session.**
+
+**Length:** AUTO ran **80:00 real minutes** (`session_lifecycle_trace.csv`: 00:45:38 → 02:05:38 UTC), covering
+**499.53 game days: 9.609 s per game day, 99.9% of 9000X**. It landed at **2010-08-02 16:55:51**, inside §5's window.
+The last block, h859, is at 14:38:22. The next launch restores to it (Pattern 2), so the player's 82 bets after it
+(the rollup's 431,590 against the trace's 431,508) are rolled back then.
+
+| Client | Bets | Wagered (SC) | `m` | Net (SC) | Expected −0.98% × W | z | BTC held | Empty-bankroll restarts |
+|---|---|---|---|---|---|---|---|---|
+| `bot_1` `R1 0.01` | 431,508 | 4,315.08 | **1.0000** | −33.65 | −42.29 | +1.33 | 4,186.06 | 0 |
+| `bot_2` `R2 L100 SL5` | 431,508 | 25,417.58 | **5.890** | −571.56 | | | 5,812.47 | 5 |
+| `bot_3` `R4 L50 0.05` | 431,508 | 42,526.89 | **1.971** | −395.57 | | | 4,397.12 | 4 |
+| `bot_4` `R4 C10 0.1` | 431,508 | 43,150.80 | **1.0000** | −493.97 | −422.88 | −0.36 | 4,178.37 | 5 |
+| `player` `R4 C90 0.1` | 431,508 | 43,150.80 | **1.0000** | −414.63 | −422.88 | +0.38 | 5,350.00 | 4 |
+
+z uses §3.3's σ = base × M × √(N·p·(1−p)): 6.51 (`bot_1`), 195.1 (`bot_4`), 21.7 (the player). Each restart is Auto
+Recharge reloading a 100 SC Bankroll after a stop for insufficient balance. The bet counts stay equal, so no restart
+cost a bet.
+
+| # | Verdict at session 1 | Measured |
+|---|---|---|
+| **R4-P1** | ✅ exact | 431,508 bets for all five. × 100 s = 499.43 days from the start, which lands on h859's timestamp within one bet. 0 gaps in `chainLength` |
+| **R4-P2** | ✅ | `m` = 1.0000 exactly for `bot_1`, `bot_4` and the player. **§9.16's open question is answered: a flat bettor is never clipped** |
+| **R4-P3** | ✅ | `bot_3` m = **1.971**, −1.4%, inside 1.94–2.06. It is below R2's 1.9988 at 1/5 the base, in the direction the prediction named, but not outside the band |
+| **R4-P4** | ✅ | `bot_2` m = **5.890**, inside 5–8 (R2: 6.16) |
+| **R4-P5** | ✅ | every flat client inside ±3σ: z = +1.33 / −0.36 / +0.38 |
+| **R4-P6** | ❌ **REFUTED as registered** | the sd of per-block Δnet is **6.823 (`bot_4`) against 0.926 (the player) = 7.37×**, outside 8.1–9.9. **The prediction's measure was wrong, not the variance:** bets per block swing almost as much as their mean (sd 559 against 581, 743 blocks), and both clients share the same drift of −0.00098 SC per bet, so a common term rides on that swing and compresses the ratio. **Post hoc, not a rescue:** with the drift removed and each block normalised by √(its own bets), the per-bet sd is 0.0332 (player, theory 0.0330) and 0.2929 (`bot_4`, theory 0.2971): **8.82×, −2.0% from 9.0**. Lesson: a per-block statistic inherits the variance of the block's size |
+| **R4-P7** | ⏳ registered over ~726,000 bets; **interim reading outside its band** | the player's longest losing run is **4** (band 5–8) and its longest winning run **110** (band 100–160), in both the rollup and the retained journal. The journal's last 201,593 bets give losing runs of 16,341 / 1,598 / 170 / 18 at lengths 1 / 2 / 3 / 4, each about a tenth of the previous: the 90% chance's own geometry. About 3.9 runs of 5 were expected over 431,590 bets, so none is a ~2% event, not a fault. Verdict at the run's end |
+| **R4-P8** | ✅ so far | all five bet to the end |
+
+**Integrity:** `godot.log` holds 0 exceptions, 0 `UNDECLARED` journal lines, and the UTXO assert is silent after ARMED.
+The journal has 0 duplicate ids, and no gap between consecutive player bets exceeds 100 s (the 100-second rule,
+across all four restarts).
+
+**Also seen, both pre-existing:**
+- `[HistoricalEvents] queued satoshi → mike_hearn 32,51 BTC` prints a **comma decimal**. That is the bare-hole residual
+  the locale detector cannot see (CLAUDE.md, Money Handling). R2's `godot.log` has the same 4 lines. It is a log line,
+  so fixing it is display-only and allowed under D-29.7, but it is outside this plan's units: recorded for a later fix.
+- `[R2] Difficulty is pricing UN-EXECUTABLE power` once, at block 422 (2009-10-14, Hal's fade). R2's log had 4 and
+  M1 2. It is a known transient.
+
+**Auctions at the end** (`casino_bot_bid_trace.csv`; `CompanyFoundings` empty): `non_miner_1` Bitcoin Market (leader
+136.50 BTC, `bot_3`), `non_miner_2` **Papa's Pizzeria** (25.92, `bot_1`), `non_miner_3` **ArtForz Cluster** (10.34,
+`bot_1`, last bid 2010-07-30). The non-miner ↔ company pairing is fixed by appearance order (`CompanyRoster`,
+D-ND8.37).
+
+### 8.3 The auction step (given 2026-10-23, at the start of session 2)
+
+Stock goes to the **top 10** donations by amount, and the **top 3** are the NST band (`REFERRAL_AUCTION.md` §1). In R2
+the same three companies closed with a 1st place of 1,150–2,021 BTC, a 3rd of 350–1,720 and a 10th of 5–40.
+The player holds 5,350 BTC. Two donations, sized to give the hub **both stake colours**:
+- **ArtForz Cluster: 2,000 BTC**, aiming at the NST band (gold border). That is R2's 2nd place for this company.
+- **Papa's Pizzeria: 200 BTC**, aiming at PST (silver border): R2's 6th–7th place, and 7× its 10th.
+
+That is 2,200 BTC plus two day-median fees, leaving ~3,150. Both are sent before AUTO in the same launch, because an
+unmined send is lost if the game restarts first (Pattern 2). The verdict comes from `CompanyFoundings` once each
+company is founded.
 
 ## 9. Decisions at specification (the developer's)
 
