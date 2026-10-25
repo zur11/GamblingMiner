@@ -5443,7 +5443,11 @@ public partial class NetworkRoot : Node
 	// and is not. Same "is this payment worth its fee" question ND.10e answered for the bots' auto-claims.
 	// The SINGLE source for every surface that advertises a claim — the BlockExplorer row button and
 	// CompanyDetails' Claim panel both read this, so a displayed signal cannot drift from the action.
-	public bool HasPlayerClaimableDividends(string nonMinerNodeId)
+	public bool HasPlayerClaimableDividends(string nonMinerNodeId) => HasPlayerClaimableDividendsStatic(nonMinerNodeId);
+
+	// Static twin, for consumers with no NetworkRoot Node in their scene (mini-plan 29: the StatusBar's holdings badge).
+	// The body above moved here unchanged, so the instance form and this one are the same predicate.
+	public static bool HasPlayerClaimableDividendsStatic(string nonMinerNodeId)
 	{
 		EnsureInitialized();
 		if (!_companyGovernance.TryGetValue(nonMinerNodeId, out CompanyGovernanceState? gov)
@@ -6791,7 +6795,18 @@ public partial class NetworkRoot : Node
 	public static string DescribeCompany(NonMinerDonationSummary summary) =>
 		string.IsNullOrEmpty(summary.CompanyId)
 			? summary.NonMinerNodeId
-			: $"{summary.CompanyDisplayName} ({summary.CompanyCurrencyBand}, {summary.CompanyMarketCategory})";
+			: FormatCompanyIdentity(summary.CompanyDisplayName, summary.CompanyCurrencyBand, summary.CompanyMarketCategory);
+
+	// Mini-plan 29 unit 1 — the same identity line for a reader holding a founding or a closure rather than a ledger
+	// summary (the Player Holdings hub). The summary's three fields are copied from this same roster record
+	// (ComputeAuctionLedger), so both forms share one format and cannot drift.
+	public static string DescribeCompany(string companyId, string nonMinerNodeId) =>
+		CompanyRoster.ByCompanyId(companyId) is CompanyRecord record
+			? FormatCompanyIdentity(record.DisplayName, record.CurrencyBand, record.MarketCategory)
+			: nonMinerNodeId;
+
+	private static string FormatCompanyIdentity(string displayName, string currencyBand, string marketCategory) =>
+		$"{displayName} ({currencyBand}, {marketCategory})";
 
 	// Referral auction ledger — Step 14 EB.2 rework (D-EB.4/5/6/7). Fully DERIVED from the canonical
 	// chain — no persisted state. Non-miners are introduced along the historical active-address curve
@@ -6864,6 +6879,15 @@ public partial class NetworkRoot : Node
 
 		return _companyFoundings.TryGetValue(summary.NonMinerNodeId, out CompanyFounding? founding) ? founding : null;
 	}
+
+	// Mini-plan 29 unit 1 — the founding records read by node id, without the ledger walk above (that lookup resolves an
+	// ADDRESS through ComputeAuctionLedger, a pass over the whole chain, on every call). A founding is added when its
+	// auction resolves and removed when the company is dissolved, so "has a founding" already means "founded and
+	// still alive": the same answer the address lookup gives for a Resolved company.
+	public static CompanyFounding? GetCompanyFoundingByNodeId(string nonMinerNodeId) =>
+		_companyFoundings.TryGetValue(nonMinerNodeId, out CompanyFounding? founding) ? founding : null;
+
+	public static List<CompanyFounding> GetCompanyFoundings() => _companyFoundings.Values.ToList();
 
 	// D-EB.7 / ND.5 — the qualifying-bidder identity split, shared by ComputeAuctionLedger (the ratchet
 	// walk) and SettleResolvedAuction (D-ND5.7's per-donor payout routing): the PLAYER (base + derived

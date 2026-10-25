@@ -6,6 +6,7 @@ using System.Linq;
 using GodotBlockchainPort.Simulation;
 using GodotBlockchainPort.Blockchain;
 using UI.StatusBar;
+using UI.CompanyRows;
 #nullable enable
 
 // Step 14 (ND.5c, D-ND5.9) — per-non-miner detail scene: the live top-10 tracked donation pool while the
@@ -38,9 +39,10 @@ public partial class AuctioningCompanyDetails : Control
 	// StyleBoxFlat overlay behind the content, mouse-transparent — Ch. 29-safe, never touches the layout.
 	private Panel _borderPanel = null!;
 	private StyleBoxFlat _borderStyle = null!;
-	private static readonly Color HoldingGold = new(0.85f, 0.65f, 0.13f);   // would mint NST
-	private static readonly Color HoldingSilver = new(0.75f, 0.75f, 0.78f); // would mint PST
-	private static readonly Color HoldingBlack = new(0.05f, 0.05f, 0.05f);  // no tracked slot
+	// One source since mini-plan 29 unit 1 (CompanyRowSignals), shared with BlockExplorer and the Holdings hub.
+	private static readonly Color HoldingGold = CompanyRowSignals.HoldingGold;     // would mint NST
+	private static readonly Color HoldingSilver = CompanyRowSignals.HoldingSilver; // would mint PST
+	private static readonly Color HoldingBlack = CompanyRowSignals.HoldingBlack;   // no tracked slot
 
 	// Mini-plan 25 (developer, 2026-10-19) — the auction COUNTDOWN in real time. It was measured against the chain TIP's
 	// timestamp, so it moved only when a block was mined, in steps of a whole block's time. It now reads the live game

@@ -9,7 +9,8 @@ recommendations".
 "Reset world" half. **R4 sessions 1–2 are done (§8.2, §8.4): 2009-03-21 → 2011-08-14, h1411, past R4's minimum
 date.** P1–P5, P7 and P8 hold. **P6 is refuted as registered** (its measure, not the variance). **P9 is registered**
 for `bot_1`'s +2.76σ win rate, to be tested on new bets only. The auction step landed (§8.3): the player holds NST in
-ArtForz Cluster and PST in Papa's Pizzeria. Nothing built yet. Next: **units 1–3 (§6)**, then V-H in the next session.
+ArtForz Cluster and PST in Papa's Pizzeria. **Units 1–3 are built (§6.1)**, display-only, staged for one commit.
+Next: **session 3 = V-H + R4 (§5)**, then close-out.
 
 **Branch:** `mini29-holdings-hub-r4` (proposed, D-29.1).
 
@@ -163,6 +164,18 @@ mined BTC.
 
 **Reading:** after every session Claude reads the trace and `godot.log`, and keeps a per-session table in §8.
 
+**Session 3 — V-H, then R4 continues (registered 2026-10-25, before the run).** Predictions, read afterwards from
+`godot.log` and `state.json`:
+- **H1/H2:** the first `[Holdings] hub:` block lists **exactly 2 rows**: `artforz_cluster nst=2983.24937140 pst=0
+  border=gold claim=True button='Claim →'` and `papas_pizzeria nst=0 pst=371.75400422 border=silver claim=True
+  button='Claim →'`, matching `CompanyFoundings`.
+- **H3:** the first `[Holdings] badge:` line reads `"Holdings: 2 waiting" (held 2 · votes 0 · claims 2)`. After the
+  claim at Papa's Pizzeria (step 4) it reads **1 waiting**, and during the run it returns to **2 waiting** when
+  Papa's next daily drip passes the fee. That return can only come from the `BlockAccepted` path, since the
+  developer is in DiceGame and no scene is entered.
+- **H4:** the developer's look (step 3).
+- **R4:** P1–P8 continue, and **P9's forward test** needs ≥ 430,000 new bets, about 80 real minutes at 9000X.
+
 ## 6. Units (display-only, built while R4 runs)
 
 - **Unit 1 — one source for a company's player signals.** Extract from `BlockExplorer`'s founded-company row: the
@@ -180,6 +193,45 @@ mined BTC.
 - **Unit 3 — the StatusBar badge.** A labelled button, never a bare number (CLAUDE.md, the StatusBar rule): "Holdings:
   N waiting", hidden at no holdings. It refreshes on `BlockAccepted`, and opens the hub.
 - **Verification V-H**, once the player holds stock in R4: H1–H4.
+
+### 6.1 As built (2026-10-25), display-only, one commit for the three units
+
+`dotnet build` and `-c ExportRelease` both at 0 warnings. Locale detector **17 / 0 / 0 / 0**, and the 17 hit lines are
+identical in content to `HEAD`'s. WipeWorld tripwire 0. No new persisted file, no new `_Process` override.
+
+- **Unit 1 — `UI/CompanyRows/CompanyRowSignals.cs`.** The explorer's colours, `StakeBorderColor`, the founding →
+  border mapping (`HoldingBorderColor`), `PendingWorkColor`, the button text, the ⚠ title prefix, `ApplyWorkState`,
+  `ApplyButtonBorder`, `BuildTitlePanel` and the dissolved-company row moved here **unchanged**. BlockExplorer
+  keeps no copy (grep: 0). **Beyond the plan, same rule:** the gold/silver/black constants also had copies in
+  CompanyDetails and AuctioningCompanyDetails, and those now alias the helper. The FBI line's amber/red rule
+  (`FbiWarningColor`) is shared with CompanyDetails. The explorer's founded rows now read the founding by node id
+  (`NetworkRoot.GetCompanyFoundingByNodeId`), the same record without **one whole-chain ledger walk per founded
+  row**: `GetCompanyFounding(address)` resolves the address through `ComputeAuctionLedger` on every call.
+- **Read-only additions to `NetworkRoot`:** `DescribeCompany(companyId, nodeId)`, which shares one format with the
+  summary form; `GetCompanyFoundingByNodeId` / `GetCompanyFoundings`; and `HasPlayerClaimableDividendsStatic`, the
+  static twin the StatusBar needs (the instance method delegates to it, so it is one predicate). Nothing that moves
+  money, mines or bids was touched (D-29.7).
+- **Unit 2 — `SceneId.PlayerHoldings`**, `Screens/PlayerHoldings/`, MainMenu's **"My Companies"** (after Block
+  Explorer). **Deviation from "built in code":** a `.tscn` skeleton holds the fixed layout, the ScTransactions shape
+  (Ch. 29 §29.10: `margin_bottom` 50, Pattern A scroll with `size_flags_vertical = 3`, the wheel chain on `PASS`,
+  the Back button in a fixed footer outside the scroll). Only the repeated rows are built in code, which is the case
+  the roadmap's "UI built in scenes" entry already separates out. Each row is the explorer's row (same helper calls)
+  plus what an index needs: the stake held, `Claimable now:` with CompanyDetails' own below-the-fee note, the FBI
+  warning, and a bank's lending line. The rows refresh on `BlockAccepted` through one `CallDeferred`. **Navigation:**
+  `SceneManager` remembers one step, which a hub → company → hub round trip would break, so the hub keeps a static
+  return target. **CompanyDetails is now origin-aware:** "← Back to My Companies" when the hub opened it, the
+  explorer otherwise.
+- **Unit 3 — the StatusBar badge**, a button on the LEFT of the bar (the right end overflows in some scenes), hidden
+  at no holdings, **"Holdings: N waiting"** in the rows' own four-state colour. N comes from
+  `CompanyRowSignals.TallyPlayerHoldings`, which the hub header also reads. It refreshes on `BlockAccepted` via one
+  `CallDeferred`, plus at `_Ready`: **no `_Process` work**.
+- **DEBUG instruments** (`[Conditional("DEBUG")]`, `GD.Print`): `[Holdings] hub: …` plus one `[Holdings]   <company> nst=…
+  pst=… border=… vote=… claim=… button='…'` line per row, printed when the rows change (H1, H2); `[Holdings] badge:
+  "…"` at each change of the badge (H3).
+- **Docs:** `SCENES.md` (inventory, navigation map, the badge's cadence row, the one-step-memory note). CLAUDE.md's two
+  scene counts are now written without a number (Convention 15: the count had just gone stale).
+- **Godot will create `.uid` files** for the two new scripts the first time the editor imports them. They are
+  committed at close-out.
 - **Close-out:** delete `Scripts/Services/LegacyPlayerFileRelocation.cs` and its call in `WorldGuardService`
   (mini-plan 27 scheduled it here). Then R4's results are written, whether R4 continues afterwards or not (D-29.6).
 

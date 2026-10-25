@@ -10,7 +10,7 @@
 
 ---
 
-## 1. The scene inventory — 26 ids, all verified (2026-08-21; `UserSettings` added 2026-10-21)
+## 1. The scene inventory — 27 ids, all verified (2026-08-21; `UserSettings` added 2026-10-21, `PlayerHoldings` 2026-10-25)
 
 Source of truth: `Scripts/Services/SceneManager.cs`. Every row was checked to resolve to an existing
 `.tscn`.
@@ -43,6 +43,7 @@ Source of truth: `Scripts/Services/SceneManager.cs`. Every row was checked to re
 | `WorldEconomy` | `Screens/WorldEconomy/WorldEconomy.tscn` |
 | `CentralBank` | `Screens/CentralBank/CentralBank.tscn` |
 | `UserSettings` | `Screens/UserSettings/UserSettings.tscn` |
+| `PlayerHoldings` | `Screens/PlayerHoldings/PlayerHoldings.tscn` |
 
 **Two names that do not match their folder, and both are deliberate:**
 
@@ -64,6 +65,9 @@ Three steps, in `Scripts/Services/SceneManager.cs`:
 
 `Go()` also records a one-deep `PreviousScene`, which is what makes origin-aware back navigation possible
 (`BetsHistoryExplorer` and `CasinoCoinSwaps` both use it, since each is reachable from more than one hub).
+**One deep is not enough for a round trip:** `PlayerHoldings` → `CompanyDetails` → back would leave the hub's
+`PreviousScene` pointing at `CompanyDetails`. So the hub keeps its own static return target, moved only by an entry
+from a third scene, and `CompanyDetails` returns to the hub only when the hub opened it (mini-plan 29).
 
 ## 3. The `StatusBar` component
 
@@ -95,6 +99,7 @@ the far end, `BTC Price: —` before Market Birth (2010-07-18) and `BTC Price: H
 | SC balances + clock | `_Process`, every frame | Cheap field reads; the clock genuinely needs real delta |
 | BTC price | Event only — `BtcMarketDataService.MarketDayChanged` | A daily step function |
 | BTC wallet | `NetworkRoot.BlockAccepted` (dirty flag drained next frame) **+ a 2 s fallback tick** | It runs one `AggregateSpendable` pass over the whole UTXO set — cheap at this cadence, ruinous per frame (§38.7). The block is the real edge; the fallback exists only because the player's own send drops spendable instantly, with no block to announce it. The static event is unsubscribed in `_ExitTree` |
+| **Holdings badge** (mini-plan 29) | `NetworkRoot.BlockAccepted` → one `CallDeferred` refresh, plus `_Ready` | A labelled button, **"Holdings: N waiting"**, on the LEFT beside the retention readout (the right end overflows in some scenes), **hidden while the player holds no stock**. N and its colour come from `CompanyRowSignals.TallyPlayerHoldings`, the hub header's own count. It adds **no `_Process` work**. Pressing it opens `PlayerHoldings` |
 
 `GetPlayerSpendableBalanceStatic()` is a **static** twin of the instance `GetNodeSpendableBalance`, because
 the StatusBar is instantiated in every screen and owns no `NetworkRoot` node (the
@@ -126,6 +131,8 @@ MainMenu
 │   └── CasinoCoinSwaps             → origin-aware back
 ├── CasinoCoinSwaps  [player-facing] → Main Menu     (Step 13 — the casino's SC↔BTC swap desk)
 ├── MartingaleCalculator (standalone, full screen) → Main Menu
+├── PlayerHoldings  [player-facing] → origin-aware back (mini-plan 29 — "My Companies"; also the StatusBar badge, from any scene)
+│   └── CompanyDetails              → PlayerHoldings (when opened from the hub; from anywhere else → BlockExplorer)
 ├── UserSettings  [player-facing]   → Main Menu      (mini-plan 27 — MainMenu's footer, beside Exit; the player's two layers + three resets, each closes the game)
 ├── WorldEconomy      [DEV]  → Main Menu            (Step 14 ND.8c — SC Monetary Ledger; ND.8b.6 company knobs)
 ├── CentralBank       [DEV]  → Main Menu            (Step 15 P15.1e — the FED's per-client loan accounts)
