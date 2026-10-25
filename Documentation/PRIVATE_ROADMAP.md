@@ -116,7 +116,7 @@ is 3, the Player Holdings Hub.**
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **3** | **Player Holdings Hub**, with **R4**, a test world whose strategies are fixed for the whole run | **`AIHelperFiles/mini29-holdings-hub-and-r4-plan.md` (IN PROGRESS 2026-10-23: the reset W holds; R4 session 1 done, to 2010-08-02)**, branch `mini29-holdings-hub-r4` · the hub's entry below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
+| **3** | **Player Holdings Hub**, with **R4**, a test world whose strategies are fixed for the whole run | **`AIHelperFiles/mini29-holdings-hub-and-r4-plan.md` (IN PROGRESS: the reset W holds; R4 sessions 1–2 done, to 2011-08-14; the player holds stock; units 1–3 next)**, branch `mini29-holdings-hub-r4` · the hub's entry below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
 **Not scheduled (open, see their entries):** T4.2 (Step 17.D) · P9 unit tests · the bot treasury policy (waits on P5)
@@ -440,6 +440,19 @@ cannot be seen, moved or styled in the Godot editor, and its position is a liter
 - Read `ProjectDesignManual.md` **Ch. 29** first: moving an absolutely positioned control into a container relayouts it.
 - **The inventory is a command, not a list** (Convention 15). Run it when the work starts:
   `grep -rlE 'new (Button|OptionButton|CheckButton|CheckBox|Label|LineEdit|RichTextLabel|SpinBox|HBoxContainer|VBoxContainer|GridContainer|PanelContainer|MarginContainer|ScrollContainer)\b' --include=*.cs Screens UI`
+
+### Refresh after an action — a screen shows the state its own action produced (BASIC MODE refinement)
+
+**Status: open, named 2026-10-25 by the developer (mini-plan 29, R4 session 2).** The developer wants this done as
+**its own plan, together with similar UI objectives**, not inside the plan that found it. Add each new case here as it
+is found, so the plan starts from a list.
+
+- **BTC Wallet → Send BTC.** After a Send, the form shows `Sent! [txid]` and clears the amount, but **its own
+  `Balance:` line keeps the value from when the panel opened**: it is written only in `EnterSendMode`, and
+  `RefreshBalances` (which does run on `MempoolChanged` / `BlockAccepted`) updates the base wallet's labels only. A
+  second send from the same panel therefore starts from a stale balance, and nothing in the form shows the pending
+  send. The fix shape is Pattern 6's: refresh the send panel's balance from the same event the base panel already
+  uses, never a new poll.
 
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 

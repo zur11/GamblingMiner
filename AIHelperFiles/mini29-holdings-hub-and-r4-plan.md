@@ -6,9 +6,10 @@ both on 2026-10-23, after mini-plan 28's close-out: "use the roster", and write 
 recommendations".
 
 **Status:** 🔄 **IN PROGRESS 2026-10-23.** **W is done: W1–W3 hold (§8.1)**, and that also ran mini-plan 27's S8
-"Reset world" half. **R4 session 1 is done (§8.2):** 2009-03-21 → 2010-08-02, h859. P1–P5 and P8 hold, **P6 is
-refuted as registered** (its measure, not the variance), and P7 reads outside its band at an interim point. Nothing
-built yet. Next: **session 2, starting with the auction step (§8.3)**, then unit 1 (§6).
+"Reset world" half. **R4 sessions 1–2 are done (§8.2, §8.4): 2009-03-21 → 2011-08-14, h1411, past R4's minimum
+date.** P1–P5, P7 and P8 hold. **P6 is refuted as registered** (its measure, not the variance). **P9 is registered**
+for `bot_1`'s +2.76σ win rate, to be tested on new bets only. The auction step landed (§8.3): the player holds NST in
+ArtForz Cluster and PST in Papa's Pizzeria. Nothing built yet. Next: **units 1–3 (§6)**, then V-H in the next session.
 
 **Branch:** `mini29-holdings-hub-r4` (proposed, D-29.1).
 
@@ -100,6 +101,7 @@ Edge 0.98%. Sources: the new `rank_calibration_trace.csv` (per block, per client
 | **R4-P6** | **Same expectation, ~9× the swing:** the standard deviation of per-block Δnet is **9.0× larger for `bot_4` than for the player** (M·√(p(1−p)) = 9.902 × 0.3 against 1.1002 × 0.3), ±10%. Over one game-year that is σ ≈ 167 SC against ≈ 19 SC, around the same expected −309 SC | outside 8.1–9.9× |
 | **R4-P7** | The player's (90%) longest losing run is **5–8** (≈ ln N ÷ ln 10), and its longest winning run is **100–160** (≈ ln N ÷ ln(1/0.9)), over ~726,000 bets | either outside its band |
 | **R4-P8** | No client is ruined: every client still bets at the run's end | a client with 0 bets in its last session |
+| **R4-P9** *(registered 2026-10-25, after session 2, and tested **only on bets made after h1411**)* | **`bot_1`'s win rate at 50% is fair.** After session 2 its win count is +2.76σ (§8.4), while the two other 50% clients read −0.71 and +1.39. A persistent bias of the observed size (+0.158 pp) would give **z ≈ +2.1 per 430,000 new bets**, while a fair die gives 0. **Forward z** = (wins − bets/2) ÷ √(bets/4), counted from the h1411 checkpoint's `ClientBetStats` (`bot_1`: **757,407 bets, 379,905 wins**) | the forward z over ≥ 430,000 new bets is **above +1.0**, the midpoint between the two hypotheses. Then the dice's source for `bot_1` is investigated |
 
 **Not a prediction, a setup step:** the player donates BTC to **at least two auctioning companies**, so that it holds
 NST or PST when they are founded. The step is given when the first auctions are open (§5). Without it, the hub has
@@ -259,7 +261,7 @@ cost a bet.
 | **R4-P3** | ✅ | `bot_3` m = **1.971**, −1.4%, inside 1.94–2.06. It is below R2's 1.9988 at 1/5 the base, in the direction the prediction named, but not outside the band |
 | **R4-P4** | ✅ | `bot_2` m = **5.890**, inside 5–8 (R2: 6.16) |
 | **R4-P5** | ✅ | every flat client inside ±3σ: z = +1.33 / −0.36 / +0.38 |
-| **R4-P6** | ❌ **REFUTED as registered** | the sd of per-block Δnet is **6.823 (`bot_4`) against 0.926 (the player) = 7.37×**, outside 8.1–9.9. **The prediction's measure was wrong, not the variance:** bets per block swing almost as much as their mean (sd 559 against 581, 743 blocks), and both clients share the same drift of −0.00098 SC per bet, so a common term rides on that swing and compresses the ratio. **Post hoc, not a rescue:** with the drift removed and each block normalised by √(its own bets), the per-bet sd is 0.0332 (player, theory 0.0330) and 0.2929 (`bot_4`, theory 0.2971): **8.82×, −2.0% from 9.0**. Lesson: a per-block statistic inherits the variance of the block's size |
+| **R4-P6** | ❌ **REFUTED as registered** | the sd of per-block Δnet is **6.823 (`bot_4`) against 0.926 (the player) = 7.37×**, outside 8.1–9.9. **The prediction's measure was wrong, not the variance:** bets per block swing almost as much as their mean (sd 559 against 581, 743 blocks), and both clients share the same drift of −0.00098 SC per bet, so a common term rides on that swing and compresses the ratio. **Post hoc, not a rescue:** with the drift removed and each block normalised by √(its own bets), the per-bet sd is 0.0332 (player, theory 0.0330) and 0.2929 (`bot_4`, theory 0.2971): **8.82×, −2.0% from 9.0**. Lesson: a per-block statistic inherits the variance of the block's size. *Corrected after session 2 (§8.4): that average of per-block z² weights a 3-bet block like a 1,500-bet one. The **pooled** estimator, √(Σ residual² ÷ Σ bets), is the correct one and gives **8.63×** for session 1, with the player at 0.0327 and `bot_4` at 0.2826* |
 | **R4-P7** | ⏳ registered over ~726,000 bets; **interim reading outside its band** | the player's longest losing run is **4** (band 5–8) and its longest winning run **110** (band 100–160), in both the rollup and the retained journal. The journal's last 201,593 bets give losing runs of 16,341 / 1,598 / 170 / 18 at lengths 1 / 2 / 3 / 4, each about a tenth of the previous: the 90% chance's own geometry. About 3.9 runs of 5 were expected over 431,590 bets, so none is a ~2% event, not a fault. Verdict at the run's end |
 | **R4-P8** | ✅ so far | all five bet to the end |
 
@@ -290,6 +292,60 @@ The player holds 5,350 BTC. Two donations, sized to give the hub **both stake co
 That is 2,200 BTC plus two day-median fees, leaving ~3,150. Both are sent before AUTO in the same launch, because an
 unmined send is lost if the game restarts first (Pattern 2). The verdict comes from `CompanyFoundings` once each
 company is founded.
+
+**Result: both landed exactly as aimed** (`state.json` `CompanyFoundings`):
+- **ArtForz Cluster** (founded 2010-08-28, h902): the player is **tier 3**, the last seat of the NST band, with **2,983.25
+  NST** (gold). Above it: `bot_2` 2,605.19 BTC (tiers 1/5) and `bot_3` 2,174.67 BTC.
+- **Papa's Pizzeria** (founded 2010-09-06, h914): the player is **tier 7** with **371.75 PST** (silver). Its top three
+  closed at 1,598 / 1,526 / 1,416 BTC.
+- These are the only two founded companies with 5 holders. The other nine have the four bots or fewer.
+
+### 8.4 R4, session 2 (2026-10-25): 2010-08-02 → 2011-08-14, chain 859 → 1,411
+
+**Launches:** `godot2026-10-25T09.26.30.log` holds a short launch, 09:14 → 09:26, that opened DiceGame and exited with no
+send and no bet. Its boot rolled the journal back to the h859 checkpoint, dropping the 82 bets after it, as §8.2
+said it would. `godot.log` is session 2. **Both sends** showed `Sent!` with a different id each (the developer).
+**No strategy was loaded or changed** (0 `StrategyLoad` lines): the five panels came back from `settings.json`.
+
+**Length:** AUTO ran **60:26 real minutes** (14:30:59 → 15:31:25 UTC; developer's stopwatch 1:00:21), covering **377.2
+game days at 9.612 s per day (99.9% of 9000X)**, to **2011-08-14 20:24**. The last block, h1411, is at 19:23:25.
+**R4 has passed its minimum date, 2011-06-30 (D-29.6).** The trace has 0 gaps in `chainLength` across both sessions
+and the restart, and h859 appears exactly once.
+
+| Client | S2 bets | S2 `m` | S2 net (SC) | S2 z | Cum. bets | Cum. `m` | Cum. net (SC) | Cum. z | Win rate (book) | Win z | BTC held | S2 empty-bankroll restarts |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bot_1` | 325,899 | 1.0000 | −16.78 | **+2.68** | 757,407 | **1.0000** | −50.43 | **+2.76** | 50.158% | **+2.76** | 313.97 | 0 |
+| `bot_2` | 325,899 | 6.438 | −297.52 | | 757,407 | **6.126** | −869.08 | | 49.959% | −0.71 | 444.11 | 5 |
+| `bot_3` | 325,899 | 1.985 | −395.99 | | 757,407 | **1.977** | −791.56 | | 50.080% | +1.39 | 392.41 | 3 |
+| `bot_4` | 325,899 | 1.0000 | −490.59 | −1.01 | 757,407 | **1.0000** | −984.56 | −0.94 | 9.968% | −0.94 | 657.39 | 4 |
+| `player` | 325,899 | 1.0000 | −294.85 | +1.34 | 757,407 | **1.0000** | −709.48 | +1.19 | 90.041% | +1.18 | 3,500.00 | 3 |
+
+The bots' BTC fell from ~4,200–5,800 to ~310–660: they spent it in the auctions. The player's went 5,350 → 3,500:
+2,200 donated, plus what it mined. Satoshi retired on **2011-04-26 with 11,007.50 BTC** (target 11,000), and the **FBI
+activated on 2011-06-15** (the UTXO assert now covers 74 nodes, not 73).
+
+| # | Verdict after session 2 | Measured |
+|---|---|---|
+| **R4-P1** | ✅ exact | 757,407 bets for all five. × 100 s = 876.63 days, which lands on h1411's timestamp |
+| **R4-P2** | ✅ | `m` = 1.0000 exactly, cumulative and per session, for all three flat clients |
+| **R4-P3** | ✅ | `bot_3` cumulative m = **1.977** (−1.2%); session 2 alone 1.985 |
+| **R4-P4** | ✅ | `bot_2` cumulative m = **6.126** (R2: 6.16); session 2 alone 6.438 |
+| **R4-P5** | ✅, **one client close to its bound** | cumulative z: player +1.19, `bot_4` −0.94, **`bot_1` +2.76**. The book's own counts (379,921 wins in 757,443 bets) reproduce its net to the satoshi, so the excess is in the rolls, not the arithmetic. The two other 50% clients don't share it (−0.71, +1.39). Across five fair clients, a largest \|z\| this high appears ~3% of the time. **Watched by R4-P9**, which only new data can decide |
+| **R4-P6** | ❌ **stays REFUTED as registered** | raw per-block ratio **7.38** in session 2, **7.37** cumulative. **Pooled per-bet ratio (post hoc): 8.82 in session 2, 8.72 cumulative**. Every component is within ±5% of theory: player 0.0344 / 0.0335 against 0.0330, `bot_4` 0.3035 / 0.2918 against 0.2971 |
+| **R4-P7** | ✅ **holds at its registered horizon** | the longest losing run is **5**, and the longest winning run **117**. Both runs of 5 came before bet #726,000: #637,198 on 2011-03-28 and #681,217 on 2011-05-18. The 117 run started 2011-04-08. The retained journal (207,449 bets, 2010-12-17 → 2011-08-15) gives losing runs of 16,644 / 1,660 / 164 / 20 / 2 at lengths 1–5, against an expected 16,803 / 1,680 / 168 / 17 / 1.7 (the last for ≥ 5) |
+| **R4-P8** | ✅ | all five bet to the end |
+
+**Integrity:** 0 exceptions, 0 `UNDECLARED` journal lines, the UTXO assert is silent, 0 duplicate journal ids, and no
+gap between player bets exceeds 100 s. One `[R2] Difficulty is pricing UN-EXECUTABLE power` line appears, at block
+1097 (2011-02), the known transient.
+
+**What the hub will have to show (read now, for V-H):** two holdings and **no open vote at either**. The player's
+votes there have been **auto-cast** (`WasAutoCast: true`, `PlayerPauseOnVotes` false). Both hold a **claimable
+dividend**: ArtForz 203.20 BTC + 10.14 SC, Papa's 1.77 BTC + 9.28 SC, with 0 claims made. FBI score 0 at both.
+**H3's badge should therefore read "Holdings: 2 waiting"**, until a claim or a new vote changes it.
+
+**Also noted, outside this plan** (the developer, 2026-10-25): after a Send, the BTC Wallet's send panel does not
+refresh. Recorded as a UI refinement item in `PRIVATE_ROADMAP.md` ("Refresh after an action").
 
 ## 9. Decisions at specification (the developer's)
 
