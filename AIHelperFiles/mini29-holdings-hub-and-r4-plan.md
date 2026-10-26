@@ -9,8 +9,10 @@ recommendations".
 "Reset world" half. **R4 sessions 1–2 are done (§8.2, §8.4): 2009-03-21 → 2011-08-14, h1411, past R4's minimum
 date.** P1–P5, P7 and P8 hold. **P6 is refuted as registered** (its measure, not the variance). **P9 is registered**
 for `bot_1`'s +2.76σ win rate, to be tested on new bets only. The auction step landed (§8.3): the player holds NST in
-ArtForz Cluster and PST in Papa's Pizzeria. **Units 1–3 are built (§6.1)**, display-only, staged for one commit.
-Next: **session 3 = V-H + R4 (§5)**, then close-out.
+ArtForz Cluster and PST in Papa's Pizzeria. **Units 1–3 are built (§6.1).** **Session 3 = V-H is done (§8.5), to
+2012-12-24:** H1, H2 and H4 hold, and **P9 holds** (forward z −1.15). H3's `BlockAccepted` refresh is untested,
+because DiceGame has no StatusBar. Next: **the developer's D-29.8** (a badge in DiceGame or not), **then V-H3 (§5)**,
+then close-out.
 
 **Branch:** `mini29-holdings-hub-r4` (proposed, D-29.1).
 
@@ -175,6 +177,16 @@ mined BTC.
   developer is in DiceGame and no scene is entered.
 - **H4:** the developer's look (step 3).
 - **R4:** P1–P8 continue, and **P9's forward test** needs ≥ 430,000 new bets, about 80 real minutes at 9000X.
+
+*Result (§8.5): H1, H2 and H4 hold. H3's return-to-2 could not be observed, because DiceGame has no StatusBar. That
+was a false premise in this protocol, which is why V-H3 below exists.*
+
+**V-H3 — the badge's `BlockAccepted` refresh, observed (registered before the run, the protocol depending on
+D-29.8).** Claim Papa's Pizzeria's dividend so the badge reads 1, then let the sim run with a StatusBar on screen.
+Papa's daily SC drip makes it claimable again within about one game day (~10 real seconds at 9000X). **Prediction:**
+a `[Holdings] badge: "Holdings: 2 waiting"` line is printed **while the run goes**, before the session's last
+`[Readout] … Hours -> Seconds` line (the STOP). Nothing else can print it there, since no scene is entered.
+**Refuted** if the line appears only after the STOP, or never.
 
 ## 6. Units (display-only, built while R4 runs)
 
@@ -399,6 +411,48 @@ dividend**: ArtForz 203.20 BTC + 10.14 SC, Papa's 1.77 BTC + 9.28 SC, with 0 cla
 **Also noted, outside this plan** (the developer, 2026-10-25): after a Send, the BTC Wallet's send panel does not
 refresh. Recorded as a UI refinement item in `PRIVATE_ROADMAP.md` ("Refresh after an action").
 
+### 8.5 R4, session 3 = V-H (2026-10-25): 2011-08-14 → 2012-12-24, chain 1,411 → 2,142
+
+**Launch:** one. `godot2026-10-25T17.44.52.log` is session 2's log, rotated at session 3's start, so `godot.log` is
+session 3. The developer: "everything looked in order with the new UI elements" (H4). **AUTO ran 80:18 real minutes**
+(22:48:08 → 00:08:26 UTC; developer's stopwatch 80:16), covering 497.8 game days at **9.68 s per day, 99.2% of
+9000X**. No strategy was loaded or changed. 0 exceptions, 0 `UNDECLARED`, the UTXO assert is silent, and 0 gaps in
+`chainLength` across all three sessions (h1411 appears once). The claim at Papa's Pizzeria is recorded in its
+`PlayerClaimHistory`: **1.76586494 BTC + 9.27799542 SC**, at h1411.
+
+**V-H:**
+
+| # | Verdict | Measured (`godot.log`, `state.json`) |
+|---|---|---|
+| **H1** | ✅ | the first `[Holdings] hub:` block lists **exactly the 2 predicted rows**: `artforz_cluster nst=2983.24937140 border=gold claim=True button='Claim →'` and `papas_pizzeria pst=371.75400422 border=silver claim=True button='Claim →'`, the two foundings that hold the player, and no other |
+| **H2** | ✅ | each row's border, work state and button come from the same `CompanyRowSignals` calls the explorer makes (§6.1, grep: two callers each). After the claim, the Papa's row reads `claim=False button='Details →'` |
+| **H3** | ⚠️ **two of three parts hold; the third was untestable as registered, by my error** | the badge read **"Holdings: 2 waiting"** at the Main Menu, and **"1 waiting"** right after the claim, as predicted. **The return to "2 waiting" did not come from `BlockAccepted`:** it was printed by the Main Menu's new StatusBar at the session's end (its `_Ready`). **The registered premise was false: DiceGame has no StatusBar** (24 scenes build one, and DiceGame is not among them). So during the 80-minute run no badge existed to refresh. The `BlockAccepted` path is **untested, not refuted**. It needs a run with the sim going while a StatusBar scene is open (§5, V-H3) |
+| **H4** | ✅ | the developer's look: in order |
+
+**R4, session 3 and cumulative** (`rank_calibration_trace.csv` rows 1296 → 2028; the checkpoint's `ClientBetStats`):
+
+| Client | S3 bets | S3 `m` | S3 net (SC) | S3 z | Cum. bets | Cum. `m` | Cum. net (SC) | Cum. z | Cum. win z (book) | BTC held |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `bot_1` | 429,538 | 1.0000 | −49.58 | −1.15 | 1,186,945 | **1.0000** | −100.01 | +1.51 | +1.51 | 561.27 |
+| `bot_2` | 429,538 | 6.208 | −589.51 | | 1,186,945 | **6.156** | −1,458.58 | | −0.94 | 958.42 |
+| `bot_3` | 429,538 | 1.974 | −388.54 | | 1,186,945 | **1.976** | −1,180.10 | | +0.45 | 989.30 |
+| `bot_4` | 429,538 | 1.0000 | −215.78 | +1.05 | 1,186,945 | **1.0000** | −1,200.34 | −0.11 | −0.11 | 1,196.61 |
+| `player` | 429,538 | 1.0000 | −402.35 | +0.90 | 1,186,945 | **1.0000** | −1,111.84 | +1.49 | +1.49 | 3,801.77 |
+
+| # | Verdict after session 3 | Measured |
+|---|---|---|
+| **R4-P1** | ✅ exact | 1,186,945 bets for all five; × 100 s lands on the last trace row (2012-12-23 23:00:23) |
+| **R4-P2** | ✅ | `m` = 1.0000 for the three flat clients, three sessions running |
+| **R4-P3 / P4** | ✅ | `bot_3` 1.976 (band 1.94–2.06), `bot_2` 6.156 (band 5–8) |
+| **R4-P5** | ✅ | cumulative z +1.51 / −0.11 / +1.49, all well inside ±3σ |
+| **R4-P6** | ❌ stays refuted as registered | raw per-block ratio 6.93 (S3) and 7.21 cumulative. Pooled per-bet ratio 8.34 (S3) and 8.58 cumulative. `bot_4`'s component holds at 0.2926 against 0.2971, but **the player's reads 0.0351, +6% above its 0.0330** this session, outside the ±5% §8.4 reported. That is post hoc and noted, not chased |
+| **R4-P7** | ✅ (closed at its horizon, §8.4) | still losing run 5 and winning run 117 at the checkpoint |
+| **R4-P8** | ✅ | all five bet to the end |
+| **R4-P9** | ✅ **holds: the excess was luck** | `bot_1`'s forward window (from the h1411 baseline to the h2142 checkpoint) holds **429,538 bets with 214,391 wins (49.912%): forward z −1.15**, against the refutation line of +1.0. The window is 462 bets short of the registered 430,000, but no outcome of those bets could change the verdict: even if all 462 were wins, z rises by at most 462 ÷ √(430,000/4) = +1.41, to +0.26. The cumulative z fell from +2.76 to **+1.51**, as a fair die predicts. The other forward z: `bot_2` −0.61, `bot_3` −1.11, `bot_4` +1.05 |
+
+**Also seen:** one `[R2] Difficulty is pricing UN-EXECUTABLE power` line, at block 1920, the known transient. The
+world holds 22 foundings and 0 dissolved companies. The player holds no stock beyond the two holdings above.
+
 ## 9. Decisions at specification (the developer's)
 
 | # | Decision | Proposed |
@@ -410,3 +464,4 @@ refresh. Recorded as a UI refinement item in `PRIVATE_ROADMAP.md` ("Refresh afte
 | **D-29.5** | The hub is an index plus a badge. Bulk toggles come later; the bidding preference is its own plan after R4 | yes |
 | **D-29.6** | R4 runs to at least 2011-06-30. The plan closes when V-H passes and R4 has reached that date. R4's world may continue afterwards as the next plans' playtest world | yes |
 | **D-29.7** | While R4 is open, only display-only code changes (§2's rule) | yes |
+| **D-29.8** *(opened 2026-10-25, after session 3)* | **Does DiceGame show the holdings badge?** It is the scene where a run happens, and it has no StatusBar, so a player betting there never sees "Holdings: N waiting", which is the hub's reason to exist (§1). | **Proposed: yes**, as a unit 4: the same badge control, built in code beside DiceGame's existing controls (Ch. 29: an absolutely positioned layout), display-only. V-H3 then reads its `BlockAccepted` refresh while the run goes. *Alternative:* no badge in DiceGame; V-H3 is then run with the hub open over a running sim |
