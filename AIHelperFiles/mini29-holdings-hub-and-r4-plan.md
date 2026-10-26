@@ -11,8 +11,8 @@ date.** P1–P5, P7 and P8 hold. **P6 is refuted as registered** (its measure, n
 for `bot_1`'s +2.76σ win rate, to be tested on new bets only. The auction step landed (§8.3): the player holds NST in
 ArtForz Cluster and PST in Papa's Pizzeria. **Units 1–3 are built (§6.1).** **Session 3 = V-H is done (§8.5), to
 2012-12-24:** H1, H2 and H4 hold, and **P9 holds** (forward z −1.15). H3's `BlockAccepted` refresh is untested,
-because DiceGame has no StatusBar. Next: **the developer's D-29.8** (a badge in DiceGame or not), **then V-H3 (§5)**,
-then close-out.
+because DiceGame has no StatusBar. **D-29.8 answered (A): unit 4 puts the badge and the player's BTC wallet in
+DiceGame (§6.1).** Next: **V-H3 (§5)**, then close-out.
 
 **Branch:** `mini29-holdings-hub-r4` (proposed, D-29.1).
 
@@ -182,11 +182,12 @@ mined BTC.
 was a false premise in this protocol, which is why V-H3 below exists.*
 
 **V-H3 — the badge's `BlockAccepted` refresh, observed (registered before the run, the protocol depending on
-D-29.8).** Claim Papa's Pizzeria's dividend so the badge reads 1, then let the sim run with a StatusBar on screen.
-Papa's daily SC drip makes it claimable again within about one game day (~10 real seconds at 9000X). **Prediction:**
-a `[Holdings] badge: "Holdings: 2 waiting"` line is printed **while the run goes**, before the session's last
-`[Readout] … Hours -> Seconds` line (the STOP). Nothing else can print it there, since no scene is entered.
-**Refuted** if the line appears only after the STOP, or never.
+D-29.8, answered A).** Claim Papa's Pizzeria's dividend so the badge reads 1, then run AUTO in DiceGame, whose
+badge is on screen. Papa's daily SC drip makes it claimable again within about one game day (~10 real seconds at
+9000X). **Prediction:** a line **`[Holdings] badge (DiceGame): "Holdings: 2 waiting"`** is printed **while the run
+goes**: after the session's `[AutoBet] Start` and before its last `[Readout] … Hours -> Seconds` line (the STOP).
+The host name rules out a scene entry, and no scene is entered during a run anyway. **Refuted** if that line
+appears only after the STOP, only with another host, or never.
 
 ## 6. Units (display-only, built while R4 runs)
 
@@ -243,7 +244,20 @@ identical in content to `HEAD`'s. WipeWorld tripwire 0. No new persisted file, n
 - **Docs:** `SCENES.md` (inventory, navigation map, the badge's cadence row, the one-step-memory note). CLAUDE.md's two
   scene counts are now written without a number (Convention 15: the count had just gone stale).
 - **Godot will create `.uid` files** for the two new scripts the first time the editor imports them. They are
-  committed at close-out.
+  committed at close-out. *(They appeared before session 3 and went into that commit.)*
+
+**Unit 4 (2026-10-25, D-29.8), display-only.** Both builds at 0 warnings. Locale detector 17 / 0 / 0 / 0, with the
+hit lines' hash unchanged. Tripwire 0. No new `_Process`.
+- **`UI/HoldingsBadge/HoldingsBadge.cs`**: the badge becomes one control, moved unchanged out of the StatusBar, so
+  every place it appears shows the same count and colour. It hides itself, refreshes itself on `BlockAccepted`
+  through one `CallDeferred`, opens the hub, and names its `Host` in the DEBUG line: `[Holdings] badge (<host>): …`.
+- **DiceGame** places it under the navigation column, the same width and font as those buttons (x 1392, y 288). The
+  left column, beside the SC balances, has no free band tall enough: `DepositBtn` fills y 275–337.
+- **DiceGame's BTC wallet line** (the developer's addition) sits under the badge (x 1392, y 336), in the StatusBar's
+  own orange and text (`StatusBar.BtcWalletColor` and `StatusBar.FormatBtcWallet`, now public, so the two read
+  alike). In DiceGame the player's BTC changes only with a block (the sends happen in other scenes), so
+  `BlockAccepted` alone drives it: one deferred UTXO pass per block, the call the StatusBar makes in every other
+  scene. Its cost was not timed.
 - **Close-out:** delete `Scripts/Services/LegacyPlayerFileRelocation.cs` and its call in `WorldGuardService`
   (mini-plan 27 scheduled it here). Then R4's results are written, whether R4 continues afterwards or not (D-29.6).
 
@@ -464,4 +478,4 @@ world holds 22 foundings and 0 dissolved companies. The player holds no stock be
 | **D-29.5** | The hub is an index plus a badge. Bulk toggles come later; the bidding preference is its own plan after R4 | yes |
 | **D-29.6** | R4 runs to at least 2011-06-30. The plan closes when V-H passes and R4 has reached that date. R4's world may continue afterwards as the next plans' playtest world | yes |
 | **D-29.7** | While R4 is open, only display-only code changes (§2's rule) | yes |
-| **D-29.8** *(opened 2026-10-25, after session 3)* | **Does DiceGame show the holdings badge?** It is the scene where a run happens, and it has no StatusBar, so a player betting there never sees "Holdings: N waiting", which is the hub's reason to exist (§1). | **Proposed: yes**, as a unit 4: the same badge control, built in code beside DiceGame's existing controls (Ch. 29: an absolutely positioned layout), display-only. V-H3 then reads its `BlockAccepted` refresh while the run goes. *Alternative:* no badge in DiceGame; V-H3 is then run with the hub open over a running sim |
+| **✅ D-29.8 — ANSWERED 2026-10-25: yes (A)** | **Does DiceGame show the holdings badge?** It is the scene where a run happens, and it has no StatusBar, so a player betting there never sees "Holdings: N waiting", which is the hub's reason to exist (§1). **The developer added: DiceGame should show the player's BTC wallet too** | Unit 4 (§6.1): the same badge control, and the BTC wallet line, built in code under DiceGame's navigation column, display-only. V-H3 reads the badge's `BlockAccepted` refresh while the run goes |

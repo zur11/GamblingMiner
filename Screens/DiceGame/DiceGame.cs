@@ -368,6 +368,7 @@ public partial class DiceGame : Control, IBetEventSource
 		// space runs from there to the canvas edge. The shipping control remains Mining Pools & Hardware.
 		var devCredits = new UI.DevPlayerCreditsSelector.DevPlayerCreditsSelector { Position = new Vector2(1752f, 563f) };
 		AddChild(devCredits);
+		BuildHoldingsAndBtcWallet();
 		Scripts.Diagnostics.SceneEntryProbe.Mark("devControls");
 		_session.OnStopped += OnSessionStopped;
 
@@ -2004,8 +2005,59 @@ public partial class DiceGame : Control, IBetEventSource
 		_userStatsService?.FlushHistory();
 	}
 
+	// Mini-plan 29 unit 4 (D-29.8) — DiceGame builds no StatusBar, so two figures that a run changes outside its own SC
+	// balances get a place here: the holdings badge, and the player's BTC wallet. Both go under the navigation column
+	// (OpenBetsExplorerBtn ends at y 278 and "Current app time:" starts at y 467, across x 1392–1812, with nothing
+	// placed between), the badge as one more navigation button of the same width and font, since it opens a scene.
+	// The left column, beside the SC balances, has no free band tall enough (DepositBtn fills y 275–337).
+	private const float NavColumnX = 1392f;
+	private Label _btcWalletLabel = null!;
+	private bool _btcWalletRefreshQueued;
+
+	private void BuildHoldingsAndBtcWallet()
+	{
+		var holdingsBadge = new UI.HoldingsBadge.HoldingsBadge
+		{
+			Host = "DiceGame",
+			Position = new Vector2(NavColumnX, 288f),
+			CustomMinimumSize = new Vector2(341f, 38f)
+		};
+		holdingsBadge.AddThemeFontSizeOverride("font_size", 16);
+		AddChild(holdingsBadge);
+
+		// The StatusBar's own colour and text (StatusBar.BtcWalletColor / FormatBtcWallet): money the player owns, in
+		// bitcoin orange, so it reads as the same figure the bar shows in every other scene.
+		_btcWalletLabel = new Label { Position = new Vector2(NavColumnX, 336f) };
+		_btcWalletLabel.AddThemeFontSizeOverride("font_size", 20);
+		_btcWalletLabel.AddThemeColorOverride("font_color", StatusBar.BtcWalletColor);
+		AddChild(_btcWalletLabel);
+
+		NetworkRoot.BlockAccepted += OnBlockAcceptedForBtcWallet;
+		RefreshBtcWallet();
+	}
+
+	// In DiceGame the player's BTC changes only with a block (a reward, or a send confirmed); the sends themselves are
+	// made in other scenes, and _Ready reads the wallet again on the way back. So BlockAccepted alone drives it, through
+	// one deferred refresh: one UTXO pass per block, the cost the StatusBar already pays in every other scene. Not
+	// timed here; it is the same call the bar makes.
+	private void OnBlockAcceptedForBtcWallet(Block _)
+	{
+		if (_btcWalletRefreshQueued) return;
+		_btcWalletRefreshQueued = true;
+		Callable.From(RefreshBtcWallet).CallDeferred();
+	}
+
+	private void RefreshBtcWallet()
+	{
+		_btcWalletRefreshQueued = false;
+		if (!IsInsideTree()) return;
+		_btcWalletLabel.Text = StatusBar.FormatBtcWallet(NetworkRoot.GetPlayerSpendableBalanceStatic());
+	}
+
 	public override void _ExitTree()
 	{
+		NetworkRoot.BlockAccepted -= OnBlockAcceptedForBtcWallet; // static event — must not outlive this scene
+
 		// A paced manual burst is mid-flight only if the player navigated away inside its ~1 second. Close it
 		// here rather than letting it die with the scene: the bets already settled are owed the clock tick and
 		// the bots their matching turn, and neither survives _Process going away. The bets not yet executed are

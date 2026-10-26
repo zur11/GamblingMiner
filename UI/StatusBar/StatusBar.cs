@@ -5,7 +5,6 @@ using GodotBlockchainPort.Blockchain;
 using GodotBlockchainPort.Simulation;
 using Scripts.Finance;
 using UI.Readouts;
-using UI.CompanyRows;
 
 namespace UI.StatusBar
 {
@@ -14,7 +13,8 @@ namespace UI.StatusBar
 		// The player's BTC holding is money they OWN; the ticker beside it is a market quote they don't.
 		// Bitcoin orange marks the wallet cell so the two can never be read as the same kind of figure
 		// (the wording — "BTC Wallet:" vs "BTC Price: … SC" — carries the rest).
-		private static readonly Color BtcWalletColor = new(0.97f, 0.58f, 0.10f);
+		// Public since mini-plan 29 unit 4: DiceGame, which builds no StatusBar, shows the same wallet in the same orange.
+		public static readonly Color BtcWalletColor = new(0.97f, 0.58f, 0.10f);
 
 		// One AggregateSpendable pass over the UTXO set — cheap at this cadence, ruinous per frame (§38.7).
 		// Mini-plan 25 17.C.3 — refreshed by EVENTS only, through a leading-edge throttle. BlockAccepted covers a
@@ -31,16 +31,6 @@ namespace UI.StatusBar
 		// Deliberately driven by the STATE (current != present), not by which scene is open — leaving those
 		// scenes restores the present, so the colour clears itself with no per-scene bookkeeping.
 		private static readonly Color ReplayClockColor = new(0.72f, 0.45f, 0.95f);
-
-		// Mini-plan 29 unit 3 — the holdings badge: "Holdings: N waiting", N = companies with a vote awaiting the player
-		// or a dividend a claim would pay, each counted once (CompanyRowSignals.TallyPlayerHoldings, the hub header's
-		// own count). A LABELLED control, never a bare number (the StatusBar rule). Hidden while the player holds no
-		// stock. It moves only with a block, so BlockAccepted queues one deferred refresh: no _Process work at all.
-		private Button _holdingsBadge;
-		private bool _holdingsRefreshQueued;
-		private SceneManager _sceneManager;
-		// H3's DEBUG line fires when the badge's state changes, not once per StatusBar: every scene builds its own bar.
-		private static string _lastLoggedBadge = string.Empty;
 
 		private Label _mainBalanceLabel;
 		private Label _bankrollLabel;
@@ -102,13 +92,12 @@ namespace UI.StatusBar
 			// unless a sim is running, so it costs nothing visually in normal play.
 			AddChild(new UI.SimRetentionReadout.SimRetentionReadout());
 
-			// Also LEFT of the balances, for the same reason as the readout above: a cell appended on the right falls
-			// off-screen in the scenes whose bar already overflows. Hidden until the player holds stock.
-			_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
-			_holdingsBadge = new Button { Visible = false, TooltipText = "Open My Companies" };
-			_holdingsBadge.AddThemeFontSizeOverride("font_size", 22);
-			_holdingsBadge.Pressed += () => _sceneManager?.Go(SceneManager.SceneId.PlayerHoldings);
-			AddChild(_holdingsBadge);
+			// Mini-plan 29 unit 3 — the holdings badge (UI.HoldingsBadge, shared with DiceGame). Also LEFT of the balances,
+			// for the same reason as the readout above: a cell appended on the right falls off-screen in the scenes whose
+			// bar already overflows. It hides itself until the player holds stock, and refreshes itself on BlockAccepted.
+			var holdingsBadge = new UI.HoldingsBadge.HoldingsBadge();
+			holdingsBadge.AddThemeFontSizeOverride("font_size", 22);
+			AddChild(holdingsBadge);
 
 			_mainBalanceLabel = BuildLabel();
 			_bankrollLabel = BuildLabel();
@@ -134,7 +123,6 @@ namespace UI.StatusBar
 			RefreshClock();
 			RefreshBtcBalance();
 			RefreshBtcTicker();
-			RefreshHoldingsBadge();
 		}
 
 		public override void _ExitTree()
@@ -225,58 +213,8 @@ namespace UI.StatusBar
 		// The player's own BTC holding, in every scene. BlockAccepted fires from inside HandleMinedBlock, so
 		// it only raises a dirty flag here — the UTXO pass runs on the next frame, never inside the block
 		// commit (the AuctioningCompanyDetails precedent).
-		private void OnBlockAccepted(Block block)
-		{
-			_btcBalanceDirty = true;
-
-			// Votes open and close, and dividends drip, only with a block. Deferred to the end of the frame, like the
-			// BTC cell's dirty flag, so nothing runs inside the block commit; the flag coalesces several blocks into one.
-			if (_holdingsRefreshQueued) return;
-			_holdingsRefreshQueued = true;
-			Callable.From(RefreshHoldingsBadge).CallDeferred();
-		}
-
+		private void OnBlockAccepted(Block block) => _btcBalanceDirty = true;
 		private void OnMempoolChanged() => _btcBalanceDirty = true;
-
-		private void RefreshHoldingsBadge()
-		{
-			_holdingsRefreshQueued = false;
-			if (_holdingsBadge == null || !IsInsideTree()) return;
-
-			CompanyRowSignals.HoldingsTally tally = CompanyRowSignals.TallyPlayerHoldings();
-			_holdingsBadge.Visible = tally.Held > 0;
-			if (tally.Held > 0)
-			{
-				_holdingsBadge.Text = $"Holdings: {tally.Waiting} waiting";
-				// The same four-state colour as the rows it points at: red a vote, green a claim, mocha both.
-				Color work = CompanyRowSignals.PendingWorkColor(tally.VotesWaiting > 0, tally.ClaimsWaiting > 0);
-				if (tally.Waiting > 0)
-				{
-					_holdingsBadge.AddThemeColorOverride("font_color", work);
-				}
-				else
-				{
-					_holdingsBadge.RemoveThemeColorOverride("font_color");
-				}
-
-				CompanyRowSignals.ApplyButtonBorder(_holdingsBadge, work);
-			}
-
-			LogBadgeIfChanged(tally);
-		}
-
-		// H3 (mini-plan 29 §3.4) — a line at each change of the badge, read afterwards from godot.log (GD.Print: the
-		// Output panel and the log file, CLAUDE.md "name the panel").
-		[System.Diagnostics.Conditional("DEBUG")]
-		private static void LogBadgeIfChanged(CompanyRowSignals.HoldingsTally tally)
-		{
-			string state = tally.Held > 0
-				? $"\"Holdings: {tally.Waiting} waiting\" (held {tally.Held} · votes {tally.VotesWaiting} · claims {tally.ClaimsWaiting})"
-				: "hidden (held 0)";
-			if (state == _lastLoggedBadge) return;
-			_lastLoggedBadge = state;
-			GD.Print($"[Holdings] badge: {state}");
-		}
 
 		private void RefreshBtcBalance()
 		{
@@ -286,9 +224,12 @@ namespace UI.StatusBar
 				return;
 			}
 
-			decimal btc = NetworkRoot.GetPlayerSpendableBalanceStatic();
-			_btcBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"BTC Wallet: {btc:N8}");
+			_btcBalanceLabel.Text = FormatBtcWallet(NetworkRoot.GetPlayerSpendableBalanceStatic());
 		}
+
+		// The wallet cell's text, shared with DiceGame's own wallet line (mini-plan 29 unit 4), so the two read alike.
+		public static string FormatBtcWallet(decimal btc) =>
+			string.Create(CultureInfo.InvariantCulture, $"BTC Wallet: {btc:N8}");
 
 		// Step 13 (MD.2 / D-13.3-b) — a compact, high-visibility BTC price cell. Refreshes only on
 		// MarketDayChanged (the price is a daily step function — zero per-frame cost), not from _Process.
