@@ -440,6 +440,17 @@ cannot be seen, moved or styled in the Godot editor, and its position is a liter
 - Read `ProjectDesignManual.md` **Ch. 29** first: moving an absolutely positioned control into a container relayouts it.
 - **The inventory is a command, not a list** (Convention 15). Run it when the work starts:
   `grep -rlE 'new (Button|OptionButton|CheckButton|CheckBox|Label|LineEdit|RichTextLabel|SpinBox|HBoxContainer|VBoxContainer|GridContainer|PanelContainer|MarginContainer|ScrollContainer)\b' --include=*.cs Screens UI`
+- **That command misses a control created from one of OUR classes** (found 2026-10-25, mini-plan 29): it matches
+  Godot's built-in types only. Run the second one too, which lists every instance of a project control
+  (`HoldingsBadge`, the DEV selectors, the retention readout) and the StatusBar in each scene:
+  `grep -rnE 'new UI\.|new StatusBar\(' --include=*.cs Screens UI`
+  These are reusable controls, so they become **instanced scenes** (`.tscn` per control), not inline nodes. The
+  StatusBar's placement is already a `%StatusBarPlaceholder` in most scenes.
+- **Named by the developer (2026-10-25), from mini-plan 29:** DiceGame's holdings badge and BTC wallet line
+  (`DiceGame.BuildHoldingsAndBtcWallet`, absolutely positioned under the navigation column), the badge control
+  itself (`UI/HoldingsBadge`), and the Player Holdings hub's rows (repeated rows → a row scene; the hub's fixed
+  layout is already a `.tscn`). The row helpers in `UI/CompanyRows/CompanyRowSignals` build the explorer's rows too,
+  so both move together.
 
 ### Refresh after an action — a screen shows the state its own action produced (BASIC MODE refinement)
 
