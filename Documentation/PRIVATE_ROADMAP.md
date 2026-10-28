@@ -101,7 +101,7 @@ Basic Mode is the smallest closed version of the game where the central loop wor
 > What shipped, and when, is `IMPLEMENTATION_STATUS.md`. `AIHelperFiles/IMPLEMENTATION_ROADMAP.md` is history (last
 > updated 2026-06-30, ends at Step 10); **the order below is the authoritative one.**
 
-### ▶ NEXT — the agreed working order (2026-10-12, updated 2026-10-20)
+### ▶ NEXT — the agreed working order (2026-10-12, updated 2026-10-28)
 
 Decided with the developer at mini-plan 24. Each item is its own plan, under the usual lifecycle (CLAUDE.md, Git
 Workflow). **Item 1 of 2026-10-12, Step 17.A + 17.C, is ✅ DONE (mini-plan 25, 2026-10-20)**, and so is the "Numbers"
@@ -118,7 +118,7 @@ DiceGame, and R4 run to 2013-01-30. Its row is in `ROADMAP_ARCHIVE.md`; the hub'
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
+| **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18), **and R4 adds it per strategy** (mini-plan 29 §10.3, closed 2026-10-28). **R4's world (2013-01-30, h2197) is the playtest world this item starts from** (D-29.6): the player holds NST in ArtForz Cluster and PST in Papa's Pizzeria, and every node keeps its saved R4 strategy |
 
 **Not scheduled (open, see their entries):** T4.2 (Step 17.D) · P9 unit tests · the bot treasury policy (waits on P5)
 · the machine-adaptive budget (needs a second machine) · T6 pass 2 · the Network Fee Option-B experiment.
@@ -278,6 +278,12 @@ Done when players have short-term and medium-term targets.
 > - **1-2-3-5 ≈ 29 levels**.
 >
 > Both fit 20–33. **The calibration series is closed; the design plan has its data.**
+>
+> **R4 (mini-plan 29, 2026-10-23 → 10-28, §10.3) confirmed `m` with every strategy fixed**, over 1,219,012 bets per
+> client: a flat bettor's `m` is **exactly 1.0000** (never clipped by a short bankroll, even at 10% chance); **+50% on
+> loss at base 0.05 gives 1.977** (R2's 2.000 at base 0.01, so the bankroll starts to bind at 5× the base, by −1%);
+> **a martingale stopped at 5 SC gives 6.15** (R2: 6.16). The formula above holds per strategy. Every net landed
+> within ±1.6σ of −edge × wagered.
 
 Goal: a progression ladder for casino participants (player, and notably **Miner Referrals**) that gates and scales rewards.
 
@@ -374,7 +380,9 @@ ND.10d rule).
   decay keep auctions from collapsing onto a few companies? Standing Convention 11's "assert the output varies" applies
   to the spread of founded companies.
 
-**Must not land while a rank-calibration run is open** (mini-plan 25 §9.10): it changes how bots spend BTC.
+**Must not land while a rank-calibration run is open** (mini-plan 25 §9.10): it changes how bots spend BTC. *(R4, the
+last such run, closed on 2026-10-28 with mini-plan 29, so nothing blocks it today. The rule still holds for any
+future calibration run.)*
 
 ### Why 60,000 was unreachable, and what was declined (measured 2026-10-07)
 
@@ -473,6 +481,15 @@ is found, so the plan starts from a list.
 **What it is:** a player-facing screen that picks a **strategy** and shows that strategy's own figures — max martingale level, max bet, bets, net P/L, streaks — instead of the lifetime totals `BetsHistoryExplorer` shows.
 
 **Why it is the right place to design the epoch key.** Mini-plan 02's rollup (D-M2.11) is deliberately **global** in v1; segmenting it needed a boundary definition, and the honest answer was "design that against the screen that needs it rather than guess now". This is that screen. When it is built, two decisions land with it: (a) the fingerprint must cover everything that changes what a *level means* — base bet, both progression percents, both stop amounts, both Insist switches; and (b) storing that fingerprint **per record** versus only per summary decides whether history can ever be re-segmented after the fact. Cheaper to decide with the screen in front of you than in the abstract.
+
+**Evidence for (b), handed on by mini-plan 29 (§7, 2026-10-28).** R3's totals per client were exact, but **which
+strategy produced them was lost** (Step 17 plan §9.16): the strategies changed across sessions, and nothing recorded
+the split. R4 could attribute its figures only by **forbidding** a strategy change for four sessions. A game that
+records the split would not need that. Two more facts for the design round:
+- only the player has a full rollup with segments by chance (`bet_stats_rollup.json`);
+- the bots have totals only (`casino_client_ledger.json`, `BetStats`).
+
+So the question includes whether the bots get a per-strategy split too.
 
 **Already available to build on:** `BetsHistoryExplorer`'s chance-to-win selector (mini-plan 02) is the same idea one axis smaller — filter the history by a strategy dimension, drive the summary figures from the filtered view, and offer an option only from the moment its first bet exists. Its time-aware option list is the pattern to copy. And **max martingale level** is free at settle time from `BaseBetSession.ProgressionTriggerStreak` (D-M2.10) — it is not the same quantity as INC-002's "max consecutive losses" and must not be conflated with it.
 
