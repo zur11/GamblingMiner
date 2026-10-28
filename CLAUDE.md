@@ -546,7 +546,7 @@ would think to open a doc:
 
 ## Scene Management — index
 
-Full inventory (26 `SceneId`s, every path verified), the navigation map and the `StatusBar` component: **`Documentation/SCENES.md`**.
+Full inventory (every `SceneId`, its path verified), the navigation map and the `StatusBar` component: **`Documentation/SCENES.md`**.
 
 **Every scene transition goes through `SceneManager`.** All paths live in one place and call sites use a compile-time-safe enum — there are no `ChangeSceneToFile` calls outside the service, and it must stay that way.
 
@@ -574,7 +574,7 @@ Detailed design documents are in `Documentation/`:
 
 | File | Contents |
 |---|---|
-| `SCENES.md` | **Scenes & navigation in full** — the 26-id inventory generated from `SceneManager` with every path verified, the rebuilt navigation map, the `StatusBar` component, and a record of three claims the old section made that the code contradicts. Extracted and **rebuilt** from this file at 7,470 characters (Dep-01 D2.3) |
+| `SCENES.md` | **Scenes & navigation in full** — the inventory of every `SceneManager.SceneId` with its path verified, the rebuilt navigation map, the `StatusBar` component, and a record of three claims the old section made that the code contradicts. Extracted and **rebuilt** from this file at 7,470 characters (Dep-01 D2.3) |
 | `ARCHITECTURE.md` | **The core game systems and data models in full** — Dice, betting strategy, sessions, the execution pipeline, blockchain/mining, and the finance/blockchain/history models. Extracted from this file at 16,696 characters (Dep-01 D2.2). This file keeps only the one-line index in **Core Game Systems — index**, plus the three embedded rules that say what *not* to write |
 | `DEV_ENVIRONMENT.md` | **The machine this project is built on** — why there is no Python and what to use instead, PowerShell 5.1's traps, the allowlist audit that left `node -e` as the only open-tail interpreter rule, and the PowerShell-7 deferral. Extracted from this file at 5,590 characters (mini-plan 19 D); CLAUDE.md keeps only the three facts that cost a cycle before you would think to open a doc |
 | `DESIGN_OVERVIEW.md` | Target design per system with implementation status labels |

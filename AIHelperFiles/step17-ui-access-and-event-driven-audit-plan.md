@@ -1638,6 +1638,33 @@ developer's 20–33. **Enough to start the Rank System's design plan**; that pla
 mining question it could answer is answered. Its world is not reused for R2 (INC-006's fix needs a wipe,
 §10).
 
+### 9.16 — R3 final tally (2026-10-23, at its world reset by mini-plan 29)
+
+R3's world was played on after §9.15 for mini-plans 26, 27 and 28's verification runs, then reset by mini-plan 29 for
+R4. Its whole life: **2009-03-21 → ~2016-06, 4,047 blocks.** Read at the reset from the client book
+(`casino_client_ledger.json`, the bots) and the lifetime rollup (`bet_stats_rollup.json`, the player). The trace is
+archived as `user://logs/rank_calibration_R3.csv` (sha256 `f8174bc41ec2325e…`).
+
+| Client | Credits | Bets | Wins | Wagered (SC) | Net P/L (SC) | P/L ÷ wagered | Avg bet (SC) |
+|---|---|---|---|---|---|---|---|
+| `player` | 10 | 23,296,624 | 11,648,548 | 2,166,133.21 | −22,211.99788400 | −1.025% | 0.0930 |
+| `bot_1` | 1 | 2,278,909 | 1,139,390 | 42,327.65 | −389.986656 | −0.921% | 0.0186 |
+| `bot_2` | 1 | 2,278,909 | 1,139,498 | 213,244.75 | −2,049.032016 | −0.961% | 0.0936 |
+| `bot_3` | 1 | 2,278,909 | 1,139,584 | 962,974.71 | −9,146.14228 | −0.950% | 0.4226 |
+| `bot_4` | 1 | 2,278,909 | 1,139,417 | 3,779,015.21 | −36,855.588252 | −0.975% | 1.6583 |
+
+- **The player's extras** (the rollup, all at 50% chance): largest bet and largest loss 655.36 SC, largest win
+  321.26 SC, longest losing run 26, longest winning run 23, peak profit 12.98 SC, maximum drawdown −22,545.80 SC. It
+  ended with **17,300.00 SC Main Balance + 488.00 Bankroll + 0 in the bank**, and held **no company stock**: all 33
+  foundings' holdings belong to the four bots.
+- **Every client lost close to the 0.98% edge**, and every win rate is 50.0%.
+- **⚠ The averages do not match §9.14's strategies.** A flat `R1 0.01` cannot average 0.0186, and flat `R1 0.1` /
+  `R1 0.5` / `R1 2` averaged 6–17% below their base. The likeliest reading, not verified: the strategies changed
+  during the sessions after §9.15 (mini-plan 27's verification loaded others, and M3 ran the player on the panel's
+  default +100% on loss). Bets clipped to a short bankroll could also pull a flat average below its base. **The game records no per-strategy split:** the client book and the rollup are per client, so these
+  totals are exact and their attribution to strategies is lost. R4 (mini-plan 29) fixes each client's strategy for
+  the whole run for exactly this reason.
+
 ---
 
 ## 10. INC-006 — bots keyed by address in the auction (found 2026-10-16)

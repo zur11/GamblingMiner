@@ -21,9 +21,8 @@ public partial class WorldGuardService : Node
 		// anything has loaded a file it deletes. It runs first because it is the player's explicit instruction. After a
 		// "Wipe everything" the two steps below meet an empty folder and behave exactly as on a first launch.
 		PlayerResetRequest.PerformPending();
-		// Mini-plan 27 unit 3 — the player files are in user://player/ before anything reads them, and out of the
-		// guard's reach before it runs. Deleted with LegacyPlayerFileRelocation (see that file).
-		LegacyPlayerFileRelocation.Run();
+		// (Mini-plan 27's one-time move of the two player creations into user://player/ ran here until mini-plan 29's
+		// close-out deleted it, every world having launched once since.)
 		NetworkRoot.RunWorldCompatibilityGuard();
 		Scripts.Diagnostics.BootProbe.Mark("WorldGuardService done");
 	}

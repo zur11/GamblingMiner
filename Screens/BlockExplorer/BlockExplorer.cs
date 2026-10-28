@@ -9,6 +9,7 @@ using GodotBlockchainPort.Blockchain;
 using Scripts.Hardware;
 using UI.StatusBar;
 using UI.NotepadPopup;
+using UI.CompanyRows;
 #nullable enable
 
 public partial class BlockExplorer : Control
@@ -67,26 +68,8 @@ public partial class BlockExplorer : Control
 	private Label _enrollModeSummaryLabel = null!;
 	private VBoxContainer _enrollModeRowsVBox = null!;
 
-	// ND.9b (extended 2026-07-22) — the same holding-keyed border colours CompanyDetails uses, applied
-	// here around each FOUNDED company's title: gold when the player holds NST, silver PST, black neither.
-	// ND.10f (2026-07-23) — the identical three colours now also frame each STILL-OPEN auction pool's
-	// title, keyed on the PROJECTED stake (what would be minted if the pool closed at the current block).
-	private static readonly Color HoldingGold = new(0.85f, 0.65f, 0.13f);
-	private static readonly Color HoldingSilver = new(0.75f, 0.75f, 0.78f);
-	private static readonly Color HoldingBlack = new(0.05f, 0.05f, 0.05f);
-
-	// ND.10h (2026-07-23, D-ND10h.1) — the founded row's PENDING-WORK colours. A different axis from the
-	// stake borders above: those say "what do I own here?", these say "what must I do here?" — a gold
-	// border beside a green Claim → reads "you hold NST and have a dividend waiting". They share only the
-	// convention that BLACK MEANS NOTHING, which is why the idle button is black-bordered rather than bare.
-	private static readonly Color WorkRed = new(1f, 0.3f, 0.3f);      // #FF4D4D — board vote pending (unchanged)
-	private static readonly Color WorkGreen = new(0.3f, 0.85f, 0.48f); // #4DD97A — dividends waiting
-	// MOCHA (both). NOT an RGB average of the two above — that gives #A6C364, a muddy yellow-green, the
-	// opposite of the requested "mixed like pigments". Pigment mixing is SUBTRACTIVE: in CMY,
-	// #FF4D4D → (0, .70, .70) and #4DD97A → (.70, .15, .52); summed and clamped → (.70, .85, 1.0) → #4D2600,
-	// a deep brown. That is the correct HUE but unreadable as a font colour on a dark theme, so the shipped
-	// constant keeps the hue and lifts the value for legibility. Do not "correct" this toward yellow.
-	private static readonly Color WorkMocha = new(0.75f, 0.52f, 0.32f); // #C08552
+	// The row signals — stake borders, the pending-work colours and button, the dissolved-company row — live in
+	// UI.CompanyRows.CompanyRowSignals since mini-plan 29 unit 1, shared with the Player Holdings hub.
 
 	// Mini-plan 25 17.C.2 (BlockExplorer) — what this page shows, and what moves it. It was rebuilt EVERY real second by a
 	// timer: 63 nodes' balances (a UTXO pass each, in Network Status), the address directory, and with Auction Mode on,
@@ -311,7 +294,7 @@ public partial class BlockExplorer : Control
 			{
 				_countdownRows.Add((rowLabel, prefix, s.WindowCloseUnixMs));
 			}
-			row.AddChild(BuildTitlePanel(rowLabel, StakeBorderColor(_networkRoot.GetPlayerProjectedStake(s))));
+			row.AddChild(CompanyRowSignals.BuildTitlePanel(rowLabel, CompanyRowSignals.StakeBorderColor(_networkRoot.GetPlayerProjectedStake(s))));
 
 			// D-ND5.2 — the details button appears ONLY once this non-miner has received at least one
 			// qualifying bid (a leader exists); a never-bid-on entry has nothing to show yet.
@@ -347,7 +330,8 @@ public partial class BlockExplorer : Control
 				// and nothing to act on. Give it its own terminal row rather than an empty "Details →".
 				if (NetworkRoot.IsCompanyClosed(s.NonMinerNodeId))
 				{
-					_enrollModeRowsVBox.AddChild(BuildClosedCompanyRow(s));
+					_enrollModeRowsVBox.AddChild(CompanyRowSignals.BuildClosedCompanyRow(
+						NetworkRoot.DescribeCompany(s), NetworkRoot.GetCompanyClosure(s.NonMinerNodeId)));
 					continue;
 				}
 
@@ -365,38 +349,17 @@ public partial class BlockExplorer : Control
 				var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
 				var rowLabel = new Label
 				{
-					// The ⚠ prefix stays the dedicated, unambiguous channel for "your ballot is pausing the
-					// game" — colour is never the only signal (§22.15).
-					Text = votePending
-						? $"⚠ BOARD VOTE PENDING — {NetworkRoot.DescribeCompany(s)}  | {founder}"
-						: $"{NetworkRoot.DescribeCompany(s)}  | {founder}",
+					Text = CompanyRowSignals.FoundedRowTitle($"{NetworkRoot.DescribeCompany(s)}  | {founder}", votePending),
 					MouseFilter = MouseFilterEnum.Pass
 				};
-				// D-ND10h.5 — the text carries the state too: a blocking vote outranks a non-blocking claim.
-				var detailsBtn = new Button
-				{
-					Text = votePending ? "Vote →" : canClaim ? "Claim →" : "Details →"
-				};
-				// D-ND10h.4 — label and button always share the state colour, so the row is scannable
-				// without the eye having to land on the button.
-				Color workColor = PendingWorkColor(votePending, canClaim);
-				if (votePending || canClaim)
-				{
-					rowLabel.AddThemeColorOverride("font_color", workColor);
-					detailsBtn.AddThemeColorOverride("font_color", workColor);
-				}
+				// The button's text, the shared state colour and its border: one call, the hub's too (mini-plan 29).
+				var detailsBtn = new Button();
+				CompanyRowSignals.ApplyWorkState(rowLabel, detailsBtn, votePending, canClaim);
 
-				ApplyButtonBorder(detailsBtn, workColor);
-
-				// ND.9b (2026-07-22) — a holding-keyed coloured border around the company TITLE (same
-				// gold/silver/black scheme as CompanyDetails). Independent of the vote-pending red text —
-				// both signals coexist (red = "your ballot is blocking play", border = "your stake here").
-				CompanyFounding? founding = _networkRoot.GetCompanyFounding(s.NonMinerAddress);
-				CompanyShareHolding? playerHolding = founding?.Holdings.FirstOrDefault(h => h.HolderId == "player");
-				Color borderColor = playerHolding is { Nst: > 0m } ? HoldingGold
-					: playerHolding is { Pst: > 0m } ? HoldingSilver
-					: HoldingBlack;
-				row.AddChild(BuildTitlePanel(rowLabel, borderColor));
+				// The stake border around the title. Read by node id: the founding is the same record the address
+				// lookup returned for this Resolved company, without a chain walk per row (mini-plan 29 unit 1).
+				CompanyFounding? founding = NetworkRoot.GetCompanyFoundingByNodeId(s.NonMinerNodeId);
+				row.AddChild(CompanyRowSignals.BuildTitlePanel(rowLabel, CompanyRowSignals.HoldingBorderColor(founding)));
 
 				string nonMinerAddress = s.NonMinerAddress;
 				detailsBtn.Pressed += () => OnOpenCompanyDetails(nonMinerAddress);
@@ -404,107 +367,6 @@ public partial class BlockExplorer : Control
 				_enrollModeRowsVBox.AddChild(row);
 			}
 		}
-	}
-
-	// Step 15 P15.5d (D-15.15) — the terminal row for a dissolved company: WHEN it closed, WHY, and — the
-	// part that matters to the player — what they lost with it. Deliberately has NO action button: the
-	// tokens are destroyed and there is nothing left to vote on or claim (§39.12).
-	private Control BuildClosedCompanyRow(NonMinerDonationSummary s)
-	{
-		CompanyClosure? closure = NetworkRoot.GetCompanyClosure(s.NonMinerNodeId);
-		string when = closure == null
-			? string.Empty
-			: $" on {DateTimeOffset.FromUnixTimeMilliseconds(closure.ClosedAtUnixMs).LocalDateTime:yyyy-MM-dd}";
-		string why = closure?.Reason == NetworkRoot.ClosureReasonFbiSeizure ? "seized by the FBI" : "closed — debt default";
-
-		string lost = string.Empty;
-		if (closure is { PlayerNstAtClosure: > 0m } or { PlayerPstAtClosure: > 0m })
-		{
-			string kind = closure.PlayerNstAtClosure > 0m ? "NST" : "PST";
-			decimal amount = closure.PlayerNstAtClosure > 0m ? closure.PlayerNstAtClosure : closure.PlayerPstAtClosure;
-			lost = string.Create(CultureInfo.InvariantCulture, $"   |   you lost {amount:N0} {kind}");
-			if (closure.PlayerUnclaimedBtcAtClosure > 0m || closure.PlayerUnclaimedScAtClosure > 0m)
-			{
-				lost += string.Create(CultureInfo.InvariantCulture,
-					$" + {closure.PlayerUnclaimedBtcAtClosure:N8} BTC / {closure.PlayerUnclaimedScAtClosure:N2} SC unclaimed");
-			}
-		}
-
-		var label = new Label
-		{
-			Text = $"✗ {NetworkRoot.DescribeCompany(s)}  | {why}{when}{lost}",
-			MouseFilter = MouseFilterEnum.Pass
-		};
-		label.AddThemeColorOverride("font_color", ClosedCompanyGrey);
-		// Black border: a dissolved company is a stake you no longer hold (§22.15's vocabulary).
-		return BuildTitlePanel(label, HoldingBlack);
-	}
-
-	private static readonly Color ClosedCompanyGrey = new Color(0.55f, 0.55f, 0.55f);
-
-	// ND.10f — the projected-stake → border-colour mapping, shared by the open-auction rows above and (by
-	// the same three constants) the founded rows: gold NST, silver PST, black nothing.
-	private static Color StakeBorderColor(PlayerAuctionStake stake) => stake switch
-	{
-		PlayerAuctionStake.Nst => HoldingGold,
-		PlayerAuctionStake.Pst => HoldingSilver,
-		_ => HoldingBlack
-	};
-
-	// ND.10h — the four-state pending-work colour. A pure function of the CURRENT state: voting clears the
-	// vote flag and claiming clears the claimable, so nothing about what the player did last visit needs to
-	// be remembered (no history record, no persisted state, no event — it is re-evaluated each refresh).
-	private static Color PendingWorkColor(bool votePending, bool canClaim) =>
-		votePending && canClaim ? WorkMocha
-		: votePending ? WorkRed
-		: canClaim ? WorkGreen
-		: HoldingBlack;
-
-	// ND.10h (D-ND10h.2) — the state colour as a border on the button itself. A Button has FOUR stylebox
-	// states; overriding only "normal" makes the border vanish on hover, which reads as a rendering bug —
-	// so all four get their own duplicate. (ND.10f's BuildTitlePanel is the neighbouring precedent but is a
-	// PanelContainer wrapper, which a Button cannot reuse without swallowing its own click styling.)
-	private static void ApplyButtonBorder(Button button, Color borderColor)
-	{
-		foreach (string state in new[] { "normal", "hover", "pressed", "focus" })
-		{
-			StyleBox? existing = button.GetThemeStylebox(state);
-			var style = existing?.Duplicate() as StyleBoxFlat ?? new StyleBoxFlat { BgColor = new Color(0, 0, 0, 0) };
-			style.BorderColor = borderColor;
-			style.BorderWidthLeft = 2;
-			style.BorderWidthTop = 2;
-			style.BorderWidthRight = 2;
-			style.BorderWidthBottom = 2;
-			button.AddThemeStyleboxOverride(state, style);
-		}
-	}
-
-	// ND.10f — hoisted from the founded-rows loop (ND.9b) so both row kinds build an identical bordered
-	// title: a transparent-centre StyleBoxFlat around the label, mouse-transparent so the wheel still
-	// reaches the enclosing scroll (Ch. 29).
-	private static PanelContainer BuildTitlePanel(Label titleLabel, Color borderColor)
-	{
-		var titleStyle = new StyleBoxFlat
-		{
-			BgColor = new Color(0, 0, 0, 0),
-			BorderColor = borderColor,
-			BorderWidthLeft = 2,
-			BorderWidthTop = 2,
-			BorderWidthRight = 2,
-			BorderWidthBottom = 2,
-			CornerRadiusTopLeft = 4,
-			CornerRadiusTopRight = 4,
-			CornerRadiusBottomLeft = 4,
-			CornerRadiusBottomRight = 4,
-			ContentMarginLeft = 8,
-			ContentMarginRight = 8,
-			ContentMarginTop = 3,
-			ContentMarginBottom = 3
-		};
-		var titlePanel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Pass };
-		titlePanel.AddThemeStyleboxOverride("panel", titleStyle);
-		titlePanel.AddChild(titleLabel);
-		return titlePanel;
 	}
 
 	// The auction countdown, one source for the rebuild and the tick. At zero it says so: an auction resolves on the first

@@ -5,7 +5,9 @@ first open item ("User settings persistence — a real design, which does not ex
 Mini-plan 26 (the per-block freeze, `mini26-per-block-freeze-plan.md`) closed item 1 on 2026-10-21.
 
 **Status:** ✅ **COMPLETE 2026-10-22. Close-out: §9.** Every prediction run holds (S1–S3, S5–S7, S9), S4 and S8's
-code half were measured, and S8's run waits for a wipe the developer chooses. *The history below is kept as written:*
+code half were measured, and S8's run waits for a wipe the developer chooses. **2026-10-23: S8's "Reset world" half
+was run, and holds** (mini-plan 29's step W, `mini29-holdings-hub-and-r4-plan.md` §8.1). "Wipe everything" is still
+pending. *The history below is kept as written:*
 📝 **SPECIFIED 2026-10-21 (`668ff18`), amended the same day with the developer's answers (§3.4, §8).**
 D-27.1 is answered with **two player layers** plus a **User Settings scene**, and D-27.2 with the recommendation.
 **§3.4 governs where it differs from §3.1–§3.3 and §5, and §3.5 (the hardware credits are world state) governs
@@ -695,7 +697,7 @@ under `user://player/`, which no world wipe can reach.
 | **Functional** | S1 (9/9 keys, read back), S2 (writes = changes, 3 launches), S3, S5, S6 (byte-identical), S7, S9 | — |
 | **Measured in code** | S4 (tripwire 0), S8's code half (one wipe, two callers) | — |
 | **Boot** | UserSettingsService < 50 ms (0.6) · WorldGuardService < 50 ms in E (15.2) | **WorldGuardService < 50 ms in D (90.1 ms**, with a pending reset, right after a rebuild) |
-| **Deferred** | **S8's run**: "Reset world" and "Wipe everything" at a wipe the developer chooses, never on R3 | |
+| **Deferred** | **S8's run**: "Reset world" and "Wipe everything" at a wipe the developer chooses, never on R3. **"Reset world" ran 2026-10-23 and holds** (one `WipeWorld`, 43 deletion lines, every exempt file byte-identical: mini-plan 29 §8.1). "Wipe everything" is still pending | |
 
 ### 9.3 — Corrections made during the plan, each against the code
 
@@ -727,8 +729,8 @@ under `user://player/`, which no world wipe can reach.
 | What | Where it goes |
 |---|---|
 | **The boot: ~55 s unattributed inside autoloads #2–#19** (57.7 s to MainMenu; 59.4 s felt) | `PRIVATE_ROADMAP.md` §8 **T4.7**, scheduled as ▶ NEXT **item 2b** (developer, 2026-10-22). `BootProbe` is ready for it |
-| **S8's run** | the next wipe the developer chooses (rename `rank_calibration_trace.csv` first, and copy anything to keep out of `user://` before a "Wipe everything") |
-| **Delete `LegacyPlayerFileRelocation`** and its call | the close-out of the plan after next |
+| **S8's run** | the next wipe the developer chooses (rename `rank_calibration_trace.csv` first, and copy anything to keep out of `user://` before a "Wipe everything"). **"Reset world" half: run 2026-10-23 and holds (mini-plan 29 §8.1); "Wipe everything" still pending** |
+| **Delete `LegacyPlayerFileRelocation`** and its call | the close-out of the plan after next. **✅ Done at mini-plan 29's close-out (2026-10-28)**, after the old paths were checked absent |
 | **P5 must give hardware a checkpoint restore path** once it is priced in SC | `PRIVATE_ROADMAP.md` P5, its mini-plan 27 note |
 | **Moving code-built controls into scenes** | `PRIVATE_ROADMAP.md` "UI built in scenes" (BASIC MODE refinement) |
 | The working order | ▶ NEXT: **item 2b, the boot time**, then item 3, the Player Holdings Hub |

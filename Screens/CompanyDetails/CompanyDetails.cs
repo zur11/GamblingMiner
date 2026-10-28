@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using GodotBlockchainPort.Simulation;
 using UI.StatusBar;
+using UI.CompanyRows;
 #nullable enable
 
 // Step 14 (ND.8b.4, D-ND8.16) — the per-FOUNDED-company scene: the founding/stock-distribution summary
@@ -37,7 +38,7 @@ public partial class CompanyDetails : Control
 
 	// P16.8e — same red as BlockExplorer's "board vote pending" row (§22.16), so the locator and the row it
 	// points at are visibly the same signal.
-	private static readonly Color WorkRed = new(1f, 0.3f, 0.3f);
+	private static readonly Color WorkRed = CompanyRowSignals.WorkRed;
 	private VBoxContainer _infoVBox = null!;
 	private VBoxContainer _actionVBox = null!;
 
@@ -46,9 +47,10 @@ public partial class CompanyDetails : Control
 	// it sits behind the content, mouse-transparent, and never touches the scroll/footer layout).
 	private Panel _borderPanel = null!;
 	private StyleBoxFlat _borderStyle = null!;
-	private static readonly Color HoldingGold = new(0.85f, 0.65f, 0.13f);   // NST
-	private static readonly Color HoldingSilver = new(0.75f, 0.75f, 0.78f); // PST
-	private static readonly Color HoldingBlack = new(0.05f, 0.05f, 0.05f);  // none
+	// One source since mini-plan 29 unit 1 (CompanyRowSignals), shared with BlockExplorer and the Holdings hub.
+	private static readonly Color HoldingGold = CompanyRowSignals.HoldingGold;     // NST
+	private static readonly Color HoldingSilver = CompanyRowSignals.HoldingSilver; // PST
+	private static readonly Color HoldingBlack = CompanyRowSignals.HoldingBlack;   // none
 
 	// The action panels are rebuilt ONLY when this signature changes (open-vote identity + holding
 	// class), so the player's in-progress SpinBox/OptionButton edits survive the info refresh.
@@ -106,7 +108,13 @@ public partial class CompanyDetails : Control
 
 		BuildBorderOverlay();
 
-		GetNode<Button>("%BackBtn").Pressed += () => _sceneManager?.Go(SceneManager.SceneId.BlockExplorer);
+		// Mini-plan 29 — origin-aware: a company opened from the Player Holdings hub returns there; from anywhere else
+		// (the explorer, or AuctioningCompanyDetails forwarding a company that just resolved) it returns to the
+		// explorer, as before. Read once here: nothing on this page navigates to itself, so PreviousScene is stable.
+		bool fromHoldings = _sceneManager?.PreviousScene == SceneManager.SceneId.PlayerHoldings;
+		var backBtn = GetNode<Button>("%BackBtn");
+		if (fromHoldings) backBtn.Text = "← Back to My Companies";
+		backBtn.Pressed += () => _sceneManager?.Go(fromHoldings ? SceneManager.SceneId.PlayerHoldings : SceneManager.SceneId.BlockExplorer);
 
 		_nonMinerAddress = PendingNonMinerAddress ?? string.Empty;
 		if (string.IsNullOrEmpty(_nonMinerAddress))
@@ -471,12 +479,8 @@ public partial class CompanyDetails : Control
 		{
 			_infoVBox.AddChild(new HSeparator());
 			var fbiLabel = new Label { Text = fbiWarning, AutowrapMode = TextServer.AutowrapMode.Word };
-			// Amber while the file grows, red once flagged — the same "colour is never the only signal"
-			// rule as §22.15: the text says which state it is.
-			fbiLabel.AddThemeColorOverride("font_color",
-				gov.InvestigationScore >= NetworkRoot.InvestigationFlagThreshold
-					? new Color(1f, 0.4f, 0.4f)
-					: new Color(1f, 0.75f, 0.3f));
+			// Amber while the file grows, red once flagged — one rule, shared with the Holdings hub's rows.
+			fbiLabel.AddThemeColorOverride("font_color", CompanyRowSignals.FbiWarningColor(gov.InvestigationScore));
 			_infoVBox.AddChild(fbiLabel);
 		}
 

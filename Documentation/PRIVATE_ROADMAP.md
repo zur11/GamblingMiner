@@ -111,12 +111,13 @@ per-block freeze, is ✅ DONE (mini-plan 26, 2026-10-20):** a block went from 4,
 Its row is in `ROADMAP_ARCHIVE.md`. **Item 2, user settings persistence, is ✅ DONE (mini-plan 27, 2026-10-22).** Its
 row and the §6 item it closed are in `ROADMAP_ARCHIVE.md`. **Item 2b, the boot time, is ✅ DONE (mini-plan 28,
 2026-10-23): 57.9 s → 8.6 s.** The developer inserted it on 2026-10-22, before item 3, and numbered it 2b so that
-nothing below was renumbered (other documents cite the numbers). Its row is in `ROADMAP_ARCHIVE.md`. **The next item
-is 3, the Player Holdings Hub.**
+nothing below was renumbered (other documents cite the numbers). Its row is in `ROADMAP_ARCHIVE.md`. **Item 3, the
+Player Holdings Hub, is ✅ DONE (mini-plan 29, 2026-10-28):** "My Companies", its badge in the StatusBar and in
+DiceGame, and R4 run to 2013-01-30. Its row is in `ROADMAP_ARCHIVE.md`; the hub's entry below keeps what is still open.
+**The next item is 4.**
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **3** | **Player Holdings Hub** | below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
 **Not scheduled (open, see their entries):** T4.2 (Step 17.D) · P9 unit tests · the bot treasury policy (waits on P5)
@@ -333,7 +334,7 @@ Candidate inputs (all already available, none requiring new state):
 
 ### Player Holdings Hub — one screen to claim, vote and find your companies (design + implement, after Step 16)
 
-**Status: recorded 2026-07-30, not yet scheduled.** Deliberately **not** in Step 16 (developer's call) — that step makes the votes worth casting and the dividends cheap to pay; this one makes them *findable*.
+**Status: recorded 2026-07-30. The index and the badge ✅ SHIPPED by mini-plan 29 (2026-10-28, `AIHelperFiles/mini29-holdings-hub-and-r4-plan.md` §10): "My Companies", one row per holding from the explorer's own row helper (`UI/CompanyRows/CompanyRowSignals`), and "Holdings: N waiting" in the StatusBar and in DiceGame (`UI/HoldingsBadge`). Still open here: the bulk pause/abstain toggles (a second step, D-29.5), and the bidding preference below, now its own plan with a design round. R4 closed with mini-plan 29, so it no longer holds that plan back. Not scheduled ahead of ▶ NEXT item 4.** Deliberately **not** in Step 16 (developer's call) — that step makes the votes worth casting and the dividends cheap to pay; this one makes them *findable*.
 
 **The problem, in the developer's words:** the only way to reach a company the player holds stock in is to hunt for it among all 40 in `BlockExplorer`'s Enroll Mode. Everything the player owns is scattered across a list dominated by companies they have nothing to do with.
 
@@ -440,6 +441,30 @@ cannot be seen, moved or styled in the Godot editor, and its position is a liter
 - Read `ProjectDesignManual.md` **Ch. 29** first: moving an absolutely positioned control into a container relayouts it.
 - **The inventory is a command, not a list** (Convention 15). Run it when the work starts:
   `grep -rlE 'new (Button|OptionButton|CheckButton|CheckBox|Label|LineEdit|RichTextLabel|SpinBox|HBoxContainer|VBoxContainer|GridContainer|PanelContainer|MarginContainer|ScrollContainer)\b' --include=*.cs Screens UI`
+- **That command misses a control created from one of OUR classes** (found 2026-10-25, mini-plan 29): it matches
+  Godot's built-in types only. Run the second one too, which lists every instance of a project control
+  (`HoldingsBadge`, the DEV selectors, the retention readout) and the StatusBar in each scene:
+  `grep -rnE 'new UI\.|new StatusBar\(' --include=*.cs Screens UI`
+  These are reusable controls, so they become **instanced scenes** (`.tscn` per control), not inline nodes. The
+  StatusBar's placement is already a `%StatusBarPlaceholder` in most scenes.
+- **Named by the developer (2026-10-25), from mini-plan 29:** DiceGame's holdings badge and BTC wallet line
+  (`DiceGame.BuildHoldingsAndBtcWallet`, absolutely positioned under the navigation column), the badge control
+  itself (`UI/HoldingsBadge`), and the Player Holdings hub's rows (repeated rows → a row scene; the hub's fixed
+  layout is already a `.tscn`). The row helpers in `UI/CompanyRows/CompanyRowSignals` build the explorer's rows too,
+  so both move together.
+
+### Refresh after an action — a screen shows the state its own action produced (BASIC MODE refinement)
+
+**Status: open, named 2026-10-25 by the developer (mini-plan 29, R4 session 2).** The developer wants this done as
+**its own plan, together with similar UI objectives**, not inside the plan that found it. Add each new case here as it
+is found, so the plan starts from a list.
+
+- **BTC Wallet → Send BTC.** After a Send, the form shows `Sent! [txid]` and clears the amount, but **its own
+  `Balance:` line keeps the value from when the panel opened**: it is written only in `EnterSendMode`, and
+  `RefreshBalances` (which does run on `MempoolChanged` / `BlockAccepted`) updates the base wallet's labels only. A
+  second send from the same panel therefore starts from a stale balance, and nothing in the form shows the pending
+  send. The fix shape is Pattern 6's: refresh the send panel's balance from the same event the base panel already
+  uses, never a new poll.
 
 ### Betting Statistics scene — per-strategy figures (design open, BASIC MODE objective)
 

@@ -83,6 +83,14 @@ size_flags_horizontal = 0
 theme_override_font_sizes/font_size = 26
 text = "Block Explorer"
 
+[node name="PlayerHoldingsBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(420, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 26
+text = "My Companies"
+
 [node name="BankrollProgrammerBtn" type="Button" parent="RootMargin/RootVBox/ButtonsScroll/ButtonsVBox"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(420, 0)

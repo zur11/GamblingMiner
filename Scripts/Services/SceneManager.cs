@@ -31,6 +31,7 @@ public partial class SceneManager : Node
 		WorldEconomy,
 		CentralBank,
 		UserSettings, // mini-plan 27 unit 5 — the player's two layers and the three resets
+		PlayerHoldings, // mini-plan 29 unit 2 — "My Companies": every company the player holds stock in
 	}
 
 	private static readonly Dictionary<SceneId, string> Paths = new()
@@ -61,6 +62,7 @@ public partial class SceneManager : Node
 		[SceneId.WorldEconomy]              = "res://Screens/WorldEconomy/WorldEconomy.tscn",
 		[SceneId.CentralBank]               = "res://Screens/CentralBank/CentralBank.tscn",
 		[SceneId.UserSettings]              = "res://Screens/UserSettings/UserSettings.tscn",
+		[SceneId.PlayerHoldings]            = "res://Screens/PlayerHoldings/PlayerHoldings.tscn",
 	};
 
 	// Overlay stack: scenes added on top without replacing the current scene.

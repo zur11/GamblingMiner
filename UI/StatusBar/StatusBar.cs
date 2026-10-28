@@ -13,7 +13,8 @@ namespace UI.StatusBar
 		// The player's BTC holding is money they OWN; the ticker beside it is a market quote they don't.
 		// Bitcoin orange marks the wallet cell so the two can never be read as the same kind of figure
 		// (the wording — "BTC Wallet:" vs "BTC Price: … SC" — carries the rest).
-		private static readonly Color BtcWalletColor = new(0.97f, 0.58f, 0.10f);
+		// Public since mini-plan 29 unit 4: DiceGame, which builds no StatusBar, shows the same wallet in the same orange.
+		public static readonly Color BtcWalletColor = new(0.97f, 0.58f, 0.10f);
 
 		// One AggregateSpendable pass over the UTXO set — cheap at this cadence, ruinous per frame (§38.7).
 		// Mini-plan 25 17.C.3 — refreshed by EVENTS only, through a leading-edge throttle. BlockAccepted covers a
@@ -90,6 +91,13 @@ namespace UI.StatusBar
 			// on the right left it off-screen in the scenes whose bar already overflows. It hides itself
 			// unless a sim is running, so it costs nothing visually in normal play.
 			AddChild(new UI.SimRetentionReadout.SimRetentionReadout());
+
+			// Mini-plan 29 unit 3 — the holdings badge (UI.HoldingsBadge, shared with DiceGame). Also LEFT of the balances,
+			// for the same reason as the readout above: a cell appended on the right falls off-screen in the scenes whose
+			// bar already overflows. It hides itself until the player holds stock, and refreshes itself on BlockAccepted.
+			var holdingsBadge = new UI.HoldingsBadge.HoldingsBadge();
+			holdingsBadge.AddThemeFontSizeOverride("font_size", 22);
+			AddChild(holdingsBadge);
 
 			_mainBalanceLabel = BuildLabel();
 			_bankrollLabel = BuildLabel();
@@ -216,9 +224,12 @@ namespace UI.StatusBar
 				return;
 			}
 
-			decimal btc = NetworkRoot.GetPlayerSpendableBalanceStatic();
-			_btcBalanceLabel.Text = string.Create(CultureInfo.InvariantCulture, $"BTC Wallet: {btc:N8}");
+			_btcBalanceLabel.Text = FormatBtcWallet(NetworkRoot.GetPlayerSpendableBalanceStatic());
 		}
+
+		// The wallet cell's text, shared with DiceGame's own wallet line (mini-plan 29 unit 4), so the two read alike.
+		public static string FormatBtcWallet(decimal btc) =>
+			string.Create(CultureInfo.InvariantCulture, $"BTC Wallet: {btc:N8}");
 
 		// Step 13 (MD.2 / D-13.3-b) — a compact, high-visibility BTC price cell. Refreshes only on
 		// MarketDayChanged (the price is a daily step function — zero per-frame cost), not from _Process.
