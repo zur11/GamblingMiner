@@ -7,7 +7,7 @@ using System.Text.Json;
 public partial class NotepadService : Node
 {
 	// Mini-plan 27 — a player CREATION (layer 1, plan §3.4): it survives every reset except "Wipe everything".
-	// It lived at user://notepad_notes.json until LegacyPlayerFileRelocation moved it here.
+	// It lived at user://notepad_notes.json until mini-plan 27 moved it here, once.
 	public const string SavePath = PlayerDataFiles.CreationsDir + "/notepad_notes.json";
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 

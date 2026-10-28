@@ -52,14 +52,16 @@ registration order.
 ### `WorldGuardService`
 **Location**: `Scripts/Services/WorldGuardService.cs`
 
-**Since mini-plan 27 it runs three steps, in this order, all before any other autoload loads a file:**
+**It runs two steps, in this order, both before any other autoload loads a file:**
 1. **`PlayerResetRequest.PerformPending()`**: a reset the player requested from the User Settings scene in an earlier
    session. Reset preferences empties `user://player/preferences/`; Reset world calls `NetworkRoot.WipeWorld`;
    Wipe everything deletes every file under `user://`. Each is at most once (the request is deleted before it
    runs) and prints every file it deletes.
-2. **`LegacyPlayerFileRelocation.Run()`**: the one-time move of the two creations into `user://player/creations/`.
-   It is deleted at the close-out of the plan after mini-plan 27.
-3. The guard, below.
+2. The guard, below.
+
+*(From mini-plan 27 to mini-plan 29's close-out (2026-10-28) a third step sat between them,
+`LegacyPlayerFileRelocation.Run()`, the one-time move of the two creations into `user://player/creations/`. It was
+deleted once every world had launched with it.)*
 
 Deliberately the **FIRST** autoload: its original job is running `NetworkRoot.RunWorldCompatibilityGuard()` (format-version OR timeline-tag mismatch ⇒ full clean world reset, D-13.7) **before any other autoload can load a `user://` state file into a static cache** — a file deleted after being loaded survives in memory and re-persists, which is how alt-timeline hardware/pool state once leaked across a timeline wipe (TL.3 incident). Keep it first; see `Documentation/ProjectDesignManual.md` Ch. 35 §35.1.
 

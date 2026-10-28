@@ -730,7 +730,7 @@ under `user://player/`, which no world wipe can reach.
 |---|---|
 | **The boot: ~55 s unattributed inside autoloads #2–#19** (57.7 s to MainMenu; 59.4 s felt) | `PRIVATE_ROADMAP.md` §8 **T4.7**, scheduled as ▶ NEXT **item 2b** (developer, 2026-10-22). `BootProbe` is ready for it |
 | **S8's run** | the next wipe the developer chooses (rename `rank_calibration_trace.csv` first, and copy anything to keep out of `user://` before a "Wipe everything"). **"Reset world" half: run 2026-10-23 and holds (mini-plan 29 §8.1); "Wipe everything" still pending** |
-| **Delete `LegacyPlayerFileRelocation`** and its call | the close-out of the plan after next |
+| **Delete `LegacyPlayerFileRelocation`** and its call | the close-out of the plan after next. **✅ Done at mini-plan 29's close-out (2026-10-28)**, after the old paths were checked absent |
 | **P5 must give hardware a checkpoint restore path** once it is priced in SC | `PRIVATE_ROADMAP.md` P5, its mini-plan 27 note |
 | **Moving code-built controls into scenes** | `PRIVATE_ROADMAP.md` "UI built in scenes" (BASIC MODE refinement) |
 | The working order | ▶ NEXT: **item 2b, the boot time**, then item 3, the Player Holdings Hub |

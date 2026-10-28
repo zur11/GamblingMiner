@@ -560,4 +560,4 @@ it is 10.0 s. M2's 8.6 s is the like-for-like figure, against M1's 57.9 s on the
   mid-session registration point was not exercised. Both are covered by the code, not by a run.
 - From mini-plan 27, unchanged: S8's real wipe runs (at a wipe the developer chooses); deleting
   `LegacyPlayerFileRelocation` at mini-plan 29's close-out; code-built UI controls into `.tscn` at Basic Mode's UI
-  refinement.
+  refinement. *(2026-10-28: the deletion is done, and S8's "Reset world" half ran; mini-plan 29 §10.)*

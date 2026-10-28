@@ -9,7 +9,7 @@ namespace Scripts.Betting
 	public sealed class SavedBettingStrategyRepository
 	{
 		// Mini-plan 27 — a player CREATION (layer 1, plan §3.4): it survives every reset except "Wipe everything".
-		// It lived at user://saved_betting_strategies.json until LegacyPlayerFileRelocation moved it here.
+		// It lived at user://saved_betting_strategies.json until mini-plan 27 moved it here, once.
 		public const string DefaultPath = PlayerDataFiles.CreationsDir + "/saved_betting_strategies.json";
 
 		private readonly string _statePath;

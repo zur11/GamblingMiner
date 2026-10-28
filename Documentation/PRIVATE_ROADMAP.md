@@ -111,12 +111,13 @@ per-block freeze, is ✅ DONE (mini-plan 26, 2026-10-20):** a block went from 4,
 Its row is in `ROADMAP_ARCHIVE.md`. **Item 2, user settings persistence, is ✅ DONE (mini-plan 27, 2026-10-22).** Its
 row and the §6 item it closed are in `ROADMAP_ARCHIVE.md`. **Item 2b, the boot time, is ✅ DONE (mini-plan 28,
 2026-10-23): 57.9 s → 8.6 s.** The developer inserted it on 2026-10-22, before item 3, and numbered it 2b so that
-nothing below was renumbered (other documents cite the numbers). Its row is in `ROADMAP_ARCHIVE.md`. **The next item
-is 3, the Player Holdings Hub.**
+nothing below was renumbered (other documents cite the numbers). Its row is in `ROADMAP_ARCHIVE.md`. **Item 3, the
+Player Holdings Hub, is ✅ DONE (mini-plan 29, 2026-10-28):** "My Companies", its badge in the StatusBar and in
+DiceGame, and R4 run to 2013-01-30. Its row is in `ROADMAP_ARCHIVE.md`; the hub's entry below keeps what is still open.
+**The next item is 4.**
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
-| **3** | **Player Holdings Hub**, with **R4**, a test world whose strategies are fixed for the whole run | **`AIHelperFiles/mini29-holdings-hub-and-r4-plan.md` (IN PROGRESS: the reset W holds; R4 sessions 1–2 done, to 2011-08-14; the player holds stock; units 1–3 built; V-H run to 2012-12-24, H3's refresh still to observe)**, branch `mini29-holdings-hub-r4` · the hub's entry below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18) |
 
 **Not scheduled (open, see their entries):** T4.2 (Step 17.D) · P9 unit tests · the bot treasury policy (waits on P5)
@@ -333,7 +334,7 @@ Candidate inputs (all already available, none requiring new state):
 
 ### Player Holdings Hub — one screen to claim, vote and find your companies (design + implement, after Step 16)
 
-**Status: recorded 2026-07-30; SPECIFIED as mini-plan 29 on 2026-10-23 (`AIHelperFiles/mini29-holdings-hub-and-r4-plan.md`): the index and the badge. The bidding preference below stays out of it, as its own plan after R4 closes.** Deliberately **not** in Step 16 (developer's call) — that step makes the votes worth casting and the dividends cheap to pay; this one makes them *findable*.
+**Status: recorded 2026-07-30. The index and the badge ✅ SHIPPED by mini-plan 29 (2026-10-28, `AIHelperFiles/mini29-holdings-hub-and-r4-plan.md` §10): "My Companies", one row per holding from the explorer's own row helper (`UI/CompanyRows/CompanyRowSignals`), and "Holdings: N waiting" in the StatusBar and in DiceGame (`UI/HoldingsBadge`). Still open here: the bulk pause/abstain toggles (a second step, D-29.5), and the bidding preference below, now its own plan with a design round. R4 closed with mini-plan 29, so it no longer holds that plan back. Not scheduled ahead of ▶ NEXT item 4.** Deliberately **not** in Step 16 (developer's call) — that step makes the votes worth casting and the dividends cheap to pay; this one makes them *findable*.
 
 **The problem, in the developer's words:** the only way to reach a company the player holds stock in is to hunt for it among all 40 in `BlockExplorer`'s Enroll Mode. Everything the player owns is scattered across a list dominated by companies they have nothing to do with.
 

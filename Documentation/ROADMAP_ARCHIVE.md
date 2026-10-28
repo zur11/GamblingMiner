@@ -1163,3 +1163,14 @@ Moved verbatim at mini-plan 28's close-out. Record of the work: `AIHelperFiles/m
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
 | **2b** | **The boot time** (§8 **T4.7**): attribute the ~55 s inside autoloads #2–#19 first, then fix the main cost | **`AIHelperFiles/mini28-boot-time-plan.md` (IN PROGRESS: M2 2026-10-23, boot 57.9 s → 8.6 s; next M3 for F-3, then close-out)**, branch `mini28-boot-time` · §8 T4.7 · mini-plan 27 §6.4 (the measurement) | **Inserted by the developer (2026-10-22)** after mini-plan 27 measured the boot at 57.7 s (59.4 s felt). A minute per launch is paid at every test, and that plan's verification alone took six |
+
+## From ▶ NEXT — the Player Holdings Hub, closed by mini-plan 29 (2026-10-28)
+
+Moved verbatim at mini-plan 29's close-out. Record of the work: `AIHelperFiles/mini29-holdings-hub-and-r4-plan.md`
+(close-out §10) and `IMPLEMENTATION_STATUS.md`. **The hub ("My Companies"), its badge in the StatusBar and in
+DiceGame, and R4 run to 2013-01-30.** The hub's own roadmap entry stays in `PRIVATE_ROADMAP.md` §5 for what is still
+open (the bidding preference, the bulk toggles).
+
+| # | Work | Where it is specified | Why here |
+|---|---|---|---|
+| **3** | **Player Holdings Hub**, with **R4**, a test world whose strategies are fixed for the whole run | **`AIHelperFiles/mini29-holdings-hub-and-r4-plan.md` (IN PROGRESS: the reset W holds; R4 sessions 1–2 done, to 2011-08-14; the player holds stock; units 1–3 built; V-H run to 2012-12-24, H3's refresh still to observe)**, branch `mini29-holdings-hub-r4` · the hub's entry below in this section | The highest engagement-per-line change available, promoted by Step 16's playtest |

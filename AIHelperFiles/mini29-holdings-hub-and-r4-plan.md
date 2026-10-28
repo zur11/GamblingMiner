@@ -5,7 +5,10 @@ Holdings Hub, and opens **R4**, a new test world whose strategies are fixed for 
 both on 2026-10-23, after mini-plan 28's close-out: "use the roster", and write this plan "following all your
 recommendations".
 
-**Status:** 🔄 **IN PROGRESS 2026-10-23.** **W is done: W1–W3 hold (§8.1)**, and that also ran mini-plan 27's S8
+**Status:** ✅ **COMPLETE 2026-10-28. Close-out: §10.** The hub, its badge (StatusBar and DiceGame) and DiceGame's BTC
+wallet line shipped. H1–H4 hold (H3 in full at V-H3, §8.6). R4 ran to 2013-01-30 (h2197): every prediction but P6
+held, and P9 shows `bot_1`'s early excess was luck. `LegacyPlayerFileRelocation` is deleted. *The history below is
+kept as written:* 🔄 **IN PROGRESS 2026-10-23.** **W is done: W1–W3 hold (§8.1)**, and that also ran mini-plan 27's S8
 "Reset world" half. **R4 sessions 1–2 are done (§8.2, §8.4): 2009-03-21 → 2011-08-14, h1411, past R4's minimum
 date.** P1–P5, P7 and P8 hold. **P6 is refuted as registered** (its measure, not the variance). **P9 is registered**
 for `bot_1`'s +2.76σ win rate, to be tested on new bets only. The auction step landed (§8.3): the player holds NST in
@@ -466,6 +469,118 @@ session 3. The developer: "everything looked in order with the new UI elements" 
 
 **Also seen:** one `[R2] Difficulty is pricing UN-EXECUTABLE power` line, at block 1920, the known transient. The
 world holds 22 foundings and 0 dissolved companies. The player holds no stock beyond the two holdings above.
+
+### 8.6 V-H3 (2026-10-28): the badge's `BlockAccepted` refresh, observed ✅
+
+**Launches:** two. `godot2026-10-28T16.55.16.log` holds a launch on 2026-10-25 at 21:33, the developer's look at unit
+4 ("very well placed"): DiceGame was opened and closed, with no bet and no write. Its boot rolled back the 558 bets
+after h2142, as designed. `godot.log` is V-H3: **AUTO ran 6:02** (21:58:08 → 22:04:10 UTC), 2012-12-23 →
+2013-01-30, h2142 → h2197.
+
+| Step | Logged |
+|---|---|
+| Main Menu | `[Holdings] badge (StatusBar): "Holdings: 2 waiting"` |
+| The hub, then the claim at Papa's | the hub's 2 rows as in §8.5; then `badge (StatusBar): "Holdings: 1 waiting"` and Papa's `claim=False button='Details →'`. Recorded in `PlayerClaimHistory`: **4.15468318 BTC + 197.88347905 SC** |
+| DiceGame, `[AutoBet] Start` (line 95) | — |
+| **line 107, two blocks into the run** | **`[Holdings] badge (DiceGame): "Holdings: 2 waiting" (held 2 · votes 0 · claims 2)`** |
+| the STOP (line 368) | — |
+
+**H3 now holds in full:** the return to 2 was printed by the DiceGame badge, between `[AutoBet] Start` and the STOP,
+with no scene entered. The developer: the claim notices looked right "from every scene, as expected". 0 exceptions,
+0 chain gaps, and 1,219,012 bets for every client.
+
+## 10. Close-out (2026-10-28)
+
+**Mini-plan 29 is ✅ COMPLETE.** Branch `mini29-holdings-hub-r4`. **The hub exists and has been verified on a player
+who really holds stock**, and R4 produced the first world in this project where every client's figures can be
+attributed to one known strategy.
+
+### 10.1 — What shipped
+
+- **The Player Holdings hub, "My Companies"** (`SceneId.PlayerHoldings`, from the Main Menu and from the badge): one
+  row per company the player holds stock in, plus terminal rows for dissolved ones. Each row is the explorer's own
+  row, the stake held, the claimable dividend, and the FBI and bank lines. It refreshes on `BlockAccepted` and is
+  Ch. 29-compliant.
+- **`UI/CompanyRows/CompanyRowSignals`:** one source for a company row's player signals, read by the explorer and the
+  hub (and, for the colours and the FBI rule, by CompanyDetails and AuctioningCompanyDetails). The explorer no longer
+  walks the whole chain once per founded row.
+- **`UI/HoldingsBadge`, "Holdings: N waiting":** one control, in the StatusBar and in DiceGame (D-29.8). It is hidden
+  at no holdings, coloured like the rows, refreshes on `BlockAccepted`, and adds no `_Process` work.
+- **DiceGame's BTC wallet line** (the developer's addition), in the StatusBar's colour and text.
+- **Navigation:** the hub keeps its own return target across a company round trip, and CompanyDetails returns to
+  the hub when the hub opened it.
+- **Read-only `NetworkRoot` accessors:** `DescribeCompany(companyId, nodeId)`, `GetCompanyFoundingByNodeId` /
+  `GetCompanyFoundings`, and `HasPlayerClaimableDividendsStatic`.
+- **Deleted:** `LegacyPlayerFileRelocation` and its call in `WorldGuardService`, as mini-plan 27 scheduled. Before
+  deleting, the old paths were checked absent on this machine.
+- **No economy code changed while R4 was open (D-29.7).** Every unit was display-only.
+
+### 10.2 — Predictions, as they fell
+
+| | Held | Refuted |
+|---|---|---|
+| **W (the reset)** | W1, W2, W3 | — |
+| **The hub** | H1, H2, H4; **H3 in full at V-H3** | — *(H3's first protocol rested on a false premise, DiceGame having a StatusBar; recorded in §8.5)* |
+| **R4** | P1 (exact, every session), P2, P3, P4, P5, P7 (at its horizon), P8, **P9 (forward z −1.05 over 461,605 bets)** | **P6 as registered**: the per-block measure inherits the block size's variance (7.2–7.4 against 8.1–9.9). Per bet, the ratio is 8.6–8.8 |
+
+### 10.3 — R4's tally at the plan's close (h2197, 2013-01-30; four sessions, 3.86 game-years)
+
+| Client | Strategy | Bets | Wagered (SC) | `m` | Net (SC) | Net / wagered | Win-rate z | BTC held |
+|---|---|---|---|---|---|---|---|---|
+| `bot_1` | `R1 0.01` | 1,219,012 | 12,190.12 | 1.0000 | −102.71 | −0.84% | +1.53 | 733.10 |
+| `bot_2` | `R2 L100 SL5` | 1,219,012 | 74,985.53 | 6.151 | −1,317.86 | −1.76% | −0.79 | 1,212.71 |
+| `bot_3` | `R4 L50 0.05` | 1,219,012 | 120,487.40 | 1.977 | −1,285.93 | −1.07% | +0.40 | 1,156.96 |
+| `bot_4` | `R4 C10 0.1` | 1,219,012 | 121,901.20 | 1.0000 | −1,318.60 | −1.08% | −0.38 | 1,299.37 |
+| `player` | `R4 C90 0.1` | 1,219,012 | 121,901.20 | 1.0000 | −1,145.12 | −0.94% | +1.43 | 3,805.93 |
+
+`bot_4` and the player wagered the same SC at the same expected loss, and **landed 173 SC apart**, about 0.5σ of
+`bot_4`'s own swing. **R4's calibration data closes here.** Its world continues as the next plans' playtest world
+(D-29.6), and **R4 no longer counts as an open calibration run**, which is what kept the bots' bidding preference
+out (§2).
+
+### 10.4 — Corrections made during the plan, each against the code
+
+1. **H3's first protocol assumed DiceGame had a StatusBar.** It has none: 24 scenes build one, and DiceGame is not
+   among them. The prediction could not have passed or failed. Unit 4 then put the badge there (D-29.8).
+2. **P6's measure was wrong, not the variance**; the pooled per-bet estimator replaced a first one that weighted a
+   3-bet block like a 1,500-bet one (§8.2's own correction).
+3. **Godot names a rotated log by its rotation time**, not by its last write, and keeps five. One R3 log rotated out
+   during this plan; its tally had already been written.
+4. **"90" in `settings.json` is 9000X** (the ladder's multiplier on a 100X base). The first session's protocol called
+   it a value to change.
+5. **A scene count in CLAUDE.md went stale the day a scene was added**, and is now written without a number
+   (Convention 15).
+6. **The UI-in-scenes inventory command matched Godot's types only.** A second command finds the project's own
+   controls (`PRIVATE_ROADMAP.md`).
+
+### 10.5 — Lessons
+
+1. **A protocol's premise is a claim about the code, and it can be checked before the run.** "The developer is in
+   DiceGame, so the badge's refresh is what prints the line" assumed a badge existed there. One grep (`new
+   StatusBar()`) would have caught it. **Before registering a prediction that a path will fire during a run,
+   confirm the path exists in the scene where the run happens.**
+2. **A per-block statistic inherits the variance of the block's size.** Two clients with the same drift per bet
+   share a term that rides on that variance, and it compresses any ratio of their swings. Measure per bet, and pool
+   by weight.
+3. **One step of navigation memory cannot carry a round trip.** A hub that opens a detail page needs its own return
+   target, or Back returns to the page it just left.
+4. **An inventory written as a type list misses the project's own types.** A command is still better than a list
+   (Convention 15), but it has to search for what the code creates, not for what Godot ships.
+
+### 10.6 — Handed on
+
+| What | Where it goes |
+|---|---|
+| **The casino bots' bidding preference** ("prefer companies with more BTC received"), unblocked now that R4 is closed | Its own plan, with a design round (`PRIVATE_ROADMAP.md`, the hub's entry). Not scheduled ahead of item 4 |
+| **Bulk management of the per-company pause/abstain toggles** from the hub (D-29.5) | The hub's roadmap entry, a second step |
+| **Refresh after an action** (the BTC Wallet's send panel) | `PRIVATE_ROADMAP.md`, its own UI plan with similar cases |
+| **The hub's rows, the badge, DiceGame's two new lines into scenes** | `PRIVATE_ROADMAP.md` "UI built in scenes" (Basic Mode refinement) |
+| **`[HistoricalEvents] queued … 32,51 BTC`**, a comma decimal in a log line (the detector's known bare-hole residual) | A display-only fix, whenever the locale residuals are next touched |
+| **"Wipe everything"**, S8's other half | Still at a wipe the developer chooses. Rename `rank_calibration_trace.csv` (e.g. `rank_calibration_R4.csv`) first |
+| **The player's per-bet P6 component read +6% in session 3** (post hoc) | Noted, not chased |
+| The working order | ▶ NEXT **item 4**: Betting Statistics 17.B, then the Basic Mode economy with design rounds |
+
+---
 
 ## 9. Decisions at specification (the developer's)
 
