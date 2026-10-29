@@ -9,7 +9,7 @@ the tracking of bets, SC and each set's figures (§8). **§8's integration, P-GN
 with P-GN.6 an overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work.
 **Unit 1 is done (§10.1):** the squares and the rule are in `Scripts/Numerology/`, with each set's own figures
 (D-GN.20), and `Tools/SigilHarness` confirms Pr-2 to Pr-4. **Unit 2 is done (§10.2):** `PlayerSigilProgress` holds the
-progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Unit 4 is built (§10.4):** the overlay, awaiting the developer's first look. **Unit 5's protocol is written (§10.5): M1 (two hardware phases) and M2, Pr-1 and Pr-5 to Pr-9. Next: the developer runs it; Claude reads the logs.**
+progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Unit 4 is built (§10.4):** the overlay, awaiting the developer's first look. **Unit 5's protocol is written (§10.5): M1 (three phases, accelerating from 1 credit at 100X) and M2, Pr-1 and Pr-5 to Pr-9. Next: the developer runs it; Claude reads the logs.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -474,7 +474,7 @@ From §5–§7's Node model. A build that misses them is checked against the mod
 | Pr-6 | *(unit 5)* After a restart, the progress restored at boot is **identical** to the last block's checkpoint of the previous session — not to where the run ended, since bets after the last block are reverted by design | Any difference ⇒ a capture or restore bug; it blocks the close-out |
 | Pr-7 | *(unit 5)* With "Stop on Sigil Set Completed" ON, an autobet run stops **on the bet that completes a set pass** — after ~28 bets on average at 95% (3 hits × ≈ 9.5 bets), and almost never after more than 200 | A stop on any other bet, or no stop ⇒ a wiring bug in the stop |
 | Pr-8 | *(unit 5)* With a flat bet of 0.01 SC, a completed sigil's SC wagered is **exactly 0.01 × its bets** | Any other figure ⇒ the D-GN.19 tracking drifts |
-| Pr-9 | *(unit 5, added 2026-10-29 before any run)* A set's game time grows by **`100 / credits` game-seconds per bet** — 10 s at 10 credits, 2 s at 50 — whatever the DEV time scale; the idle time between two runs is never counted | Off by more than 2% ⇒ the D-GN.20 time tracking does not measure what it claims; idle time in a set ⇒ its "game time passes only as bets are simulated" premise is false |
+| Pr-9 | *(unit 5, added 2026-10-29 before any run)* A set's game time grows by **`100 / credits` game-seconds per bet** — 100 s at 1 credit, 10 s at 10, 2 s at 50 — whatever the DEV time scale; the idle time between two runs is never counted | Off by more than 2% ⇒ the D-GN.20 time tracking does not measure what it claims; idle time in a set ⇒ its "game time passes only as bets are simulated" premise is false |
 
 **In game time:** the violet Aquarius Sigil is ≈ 8,100 bets ≈ 810,000 game-seconds ≈ 9.4 game-days at one hardware
 credit; the seven complete planets, ≈ 3.3 million bets ≈ 10 game-years at one credit — fewer with more credits.
@@ -632,34 +632,51 @@ The harness checks `Describe` carries the figures, in invariant format.
 
 **The protocol — two sessions, each run set by a bet count or by the stop, never by watching.** *Revised before any
 run (2026-10-29) at the developer's request to change hardware too: phase M1-B and Pr-9 were added, and each set's
-game-seconds joined the log line.* Hardware is set with DiceGame's **DEV credits selector** (beside "Credits in use";
-it writes through the shop's own calls) and the speed with the **DEV time-scale selector**. One credit is one bet per
-100 game-seconds tick, so bets land `100 / credits` game-seconds apart; the time scale changes how fast that happens
-in real time, **not** the game time between bets.
+game-seconds joined the log line. Revised twice more, still before any run, at the developer's direction: the speeds
+are named by the selector's own labels, 100X–9000X (the earlier "×10" and "×30" were 1000X and 3000X), and M1 now
+starts at the base pace — 1 credit at 100X — and accelerates credits and speed phase by phase.* Hardware is set with
+DiceGame's **DEV credits selector** (beside "Credits in use"; it writes through the shop's own calls) and the speed
+with the **DEV time-scale selector**. One credit is one bet per 100 game-seconds tick, so bets land `100 / credits`
+game-seconds apart; the time scale changes how fast that happens in real time — one credit is one bet per real second
+at 100X, so the demand is `credits × scale / 100` bets per real second — **not** the game time between bets.
 
-*Session M1 — phase A: Pr-1, Pr-5, Pr-8, Pr-9 at 10 credits.*
+**Why phase A is 600 bets:** at 1 credit and 100X the game makes one bet per real second, so the 12,000 bets M1 needs
+would take 3 h 20 min. 600 bets are 10 real minutes — exactly the canonical autobet target, *10 real minutes = 16 h
+40 m in-game* (600 × 100 game-seconds) — and the faster phases carry Aquarius to completion. Pr-1 counts bets, not
+time, so it is unaffected by the phases as long as the chance stays at 95.
+
+*Session M1 — the strategy, set once (steps 1–3).*
 
 1. In the Godot editor, run the game (F5) — a fresh process, so the boot line records where Aquarius starts.
 2. Open **DiceGame** with the **player** as the active node.
-3. Hardware: DEV credits **`10 cr`** · DEV time scale **×10** (≈ 100 bets per real second).
-4. Strategy: **Bet amount `0.01`** · Increase on loss **blank** · Increase on win **blank** · **Number of bets
-   `12000`** · Stop on profit **blank** · Stop on loss **blank** · **Stop Block OFF** · **Stop Set OFF** · **Auto
-   Recharge ON** · **Chance `95`** · **Low**.
-5. Press **AUTO**. Its own count ends it after 12,000 bets (Pr-1's upper bound, 8,900, plus margin), ~2 minutes.
+3. Strategy: **Bet amount `0.01`** · Increase on loss **blank** · Increase on win **blank** · Stop on profit **blank**
+   · Stop on loss **blank** · **Stop Block OFF** · **Stop Set OFF** · **Auto Recharge ON** · **Chance `95`** · **Low**.
+   It stays like this for all of M1; only the hardware, the speed and the bet count change.
 
-*Session M1 — phase B: Pr-9 at 50 credits and another speed (the game stays open).*
+*Phase A — the base pace (Pr-9 at 100 s a bet).*
 
-6. When the button reads AUTO again: DEV credits **`50 cr`** · DEV time scale **×30**. Everything else unchanged,
-   **Number of bets `6000`** included.
-7. Press **AUTO**. It ends by its count, in seconds.
-8. When it reads AUTO again, **close the game window**.
+4. DEV credits **`1 cr`** · DEV time scale **`100X`** · **Number of bets `600`**. Press **AUTO**. It ends by its
+   count after ~10 real minutes (16 h 40 m in-game).
+
+*Phase B — ten times the credits, ten times the speed (Pr-9 at 10 s a bet).*
+
+5. When the button reads AUTO again: DEV credits **`10 cr`** · DEV time scale **`1000X`** · **Number of bets
+   `3000`**. Press **AUTO**. ≈ 100 bets per real second, so ~30 seconds.
+
+*Phase C — the top (Pr-9 at 2 s a bet; Aquarius completes here or in B).*
+
+6. When it reads AUTO again: DEV credits **`50 cr`** · DEV time scale **`9000X`** · **Number of bets `8400`**
+   (12,000 in all). Press **AUTO**. The demand is ≈ 4,500 bets per real second; the simulation may throttle it, which
+   changes nothing measured here.
+7. When it reads AUTO again, **close the game window**.
 
 *Session M2 — Pr-6, Pr-7.*
 
-9. Run the game again (F5) and open **DiceGame**. Check the DEV credits selector reads **`50 cr`**; set it if not.
-10. The same strategy, except **Number of bets `0`** and **Stop Set ON**.
-11. Press **AUTO**. It should stop by itself within seconds. Then **close the game window**.
-12. Say "done". **Claude reads** `user://logs/godot.log` (M2) and the log Godot rotated aside at M2's launch (M1).
+8. Run the game again (F5) and open **DiceGame**. Check the DEV credits selector reads **`50 cr`** and the time scale
+   **`9000X`**; set them if not.
+9. The same strategy, except **Number of bets `0`** and **Stop Set ON**. Press **AUTO**. It should stop by itself
+   within seconds. Then **close the game window**.
+10. Say "done". **Claude reads** `user://logs/godot.log` (M2) and the log Godot rotated aside at M2's launch (M1).
 
 If a board vote opens, play pauses until the player votes, as always: vote, then press AUTO again.
 
@@ -673,11 +690,11 @@ If a board vote opens, play pauses until the player votes, as always: vote, then
 - **Pr-6:** M2's `restored at boot` line, after the dash, is identical to M1's **last** `[Sigil] checkpoint` line.
 - **Pr-7:** M2 holds exactly one `STOP on set completed (autobet)` line, and the `pass complete` line printed on the
   same bet carries the same state; the bets between the boot line and the stop are counted from the two `bets=` fields.
-- **Pr-9:** phase A is Aquarius's whole life (if it started fresh), so its `game-days × 86,400 / (bets − 1)` should be
-  10 s. Phase B lies wholly in Capricorn: phase A ended on the 12,000th bet after boot, so Capricorn's bets at the
-  boundary are `12,000 − N` (N = Aquarius's bets). Between two `pass complete` lines on the same side of that boundary,
-  `Δ seconds / Δ bets` (summed over Capricorn's sets) should be 10 s in A and 2 s in B. Across the boundary, the idle
-  time between the two runs must **not** appear in any set.
+- **Pr-9:** the phases end on the 600th, 3,600th and 12,000th bet after boot. A `pass complete` line's position is
+  the sigil's `bets=` (plus Aquarius's N once Capricorn is being drawn), so each line falls in a known phase. Between
+  two lines of the same sigil in the same phase, `Δ seconds / Δ bets` — seconds summed over the sigil's sets — should be
+  **100 s in A, 10 s in B, 2 s in C**. Across a phase boundary, the idle time between the two runs must **not** appear
+  in any set.
 
 **Deferred to just before the close-out (developer, 2026-10-29):** the first look at the overlay (§10.4).
 
