@@ -114,10 +114,12 @@ row and the §6 item it closed are in `ROADMAP_ARCHIVE.md`. **Item 2b, the boot 
 nothing below was renumbered (other documents cite the numbers). Its row is in `ROADMAP_ARCHIVE.md`. **Item 3, the
 Player Holdings Hub, is ✅ DONE (mini-plan 29, 2026-10-28):** "My Companies", its badge in the StatusBar and in
 DiceGame, and R4 run to 2013-01-30. Its row is in `ROADMAP_ARCHIVE.md`; the hub's entry below keeps what is still open.
-**The next item is 4.**
+**The developer inserted item 3b on 2026-10-28, Graphic Numerology, pausing the run of technical plans; it is
+numbered 3b so that nothing below is renumbered. The next item is 3b, then 4.**
 
 | # | Work | Where it is specified | Why here |
 |---|---|---|---|
+| **3b** | **Graphic Numerology — 📝 SPECIFIED 2026-10-28.** The player draws the planetary squares' zodiac sigils by betting in `DiceGame`: each roll's digital root moves a running value, and a win that lands on the sigil's next number draws it. Balanced to cost the same at every chance; Saturn first, each complete planet unlocking the next | `AIHelperFiles/graphic_numerology-plan.md`, branch `graphic_numerology` | **The developer's choice**: a new goal from the developer's other project, *Numerología Gráfica*, taken up before the Basic Mode economy |
 | **4** | **Betting Statistics (17.B)**, then the **Basic Mode economy** — P2's warning, P5, P6 repayment, P7, P8 and the **Casino Rank System** — each with a design round first (the Rank's as a **design plan of its own** before its implementation plan) | Step 17 plan §6.1 (17.B) · the P-items below | **17.B's gate is met:** the developer suspended it until 17.A and 17.C were built **and tested**, and mini-plan 25 did both. **The Rank's calibration data is gathered** (mini-plan 25 §9, runs R1–R3, closed 2026-10-18), **and R4 adds it per strategy** (mini-plan 29 §10.3, closed 2026-10-28). **R4's world (2013-01-30, h2197) is the playtest world this item starts from** (D-29.6): the player holds NST in ArtForz Cluster and PST in Papa's Pizzeria, and every node keeps its saved R4 strategy |
 
 **Not scheduled (open, see their entries):** T4.2 (Step 17.D) · P9 unit tests · the bot treasury policy (waits on P5)
