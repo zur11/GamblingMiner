@@ -6,7 +6,8 @@ in `PRIVATE_ROADMAP.md`: bringing the developer's other project, *Numerología G
 **Status:** 📝 **SPECIFIED 2026-10-28.** The design is decided, D-GN.1–D-GN.19: the zodiac sigils (§4), the drawing
 rule, balanced at the same cost at every chance (§5–§6), the Low/High choice (§6.3), the order of the sigils (§7) and
 the tracking of bets and SC (§8). **§8's integration, P-GN.1–P-GN.7, is approved (2026-10-29)**, with P-GN.6 an
-overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work. **Next: unit 1.**
+overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work. **Unit 1 is done (§10.1): the squares and the rule are
+in `Scripts/Numerology/`, and the harness confirms Pr-2 to Pr-4. Next: unit 2, the state and the hook.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -458,6 +459,30 @@ Each unit is a stage → ask → commit loop on this branch.
 4. **The panel** — P-GN.6.
 5. **Measurement** — a numbered protocol for Pr-1 in game, read afterwards from the logs and the checkpoint.
 6. **Review with the developer** — repetition incentives, unlock alternatives and bots (D-GN.18), then close-out.
+
+### 10.1 Unit 1 — done (2026-10-29)
+
+**Built:** `Scripts/Numerology/` — `PlanetarySquares` (the one declaration of the squares and their sigil names; each
+square asserts it is magic when built, so a transcription typo throws at first use), `SigilRules` (the rule, with
+`ApplyBet` returning a `SigilBetOutcome` flag set: hit, silhouette, line, set pass completed, set finished, sigil
+completed, pass restarted) and `SigilProgressState` (plain data for the checkpoint in unit 2). A set is finished when
+`Σ passes / chance ≥ 1` **in exact rationals** — in floating point, three passes at 3% sum to 0.999… and the set would
+never finish. `dotnet build` clean; locale detector at its baseline, 17 / 0 / 0 / 0.
+
+**Harness** (a scratch console project compiling the game's own `Scripts/Numerology/*.cs`, `Money.cs` and
+`DiceEngine.cs`, so every roll is the game's; not in the repository): **all checks pass.**
+
+- The squares: the seven magic constants; Aquarius, Capricorn and both Moon paths cell by cell against the source
+  guide; Capricorn's target order 1-4-7-2-5-8-3-6-9; the day/night reflection (§3.4) for all seven squares.
+- The rule: the first roll sets V; a chance change restarts the pass and keeps V; the D-GN.12 worked example (V 3 +
+  roll 8 spells 38, miss, V → 2; V 2 + roll 73 spells 21, hit); D-GN.19 counts bets and SC.
+- **Exact completion:** Aquarius at a constant `c` takes exactly `3c` set passes at 3%, 7%, 50% and 95%.
+- **Pr-2 holds:** hits / wins = 0.1113 over 300,000 wins at 50% (1/9 = 0.1111).
+- **Pr-3 and Pr-4 hold:** all fourteen sigils, in unlock order, at 1% Low, 1% High, 5% Low, 5% alternating, 50% Low
+  and 95% High, 6 runs each (12.5 s). Every sigil finishes at every setting, and from Mars up every cell is within
+  15% of the prediction (worst 14.1%). At 5% and above the spread is within ~8%; the widest cells are at 1%, where a
+  violet sigil is a single pass and 6 runs leave ~6% (1σ) of sampling noise. Moon, for example: predicted 533,700 —
+  519,190 · 554,528 · 550,444 · 541,680 · 532,951 · 531,071 across the six settings.
 
 A win is a contiguous roll range (`DiceEngine.GetWinningRange`), and only a range of **at least nine consecutive
 rolls** holds every digital root. Below 9%, some units digits can never be the root of a winning roll — at 1%, Low wins
