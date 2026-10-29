@@ -16,6 +16,10 @@ namespace Scripts.Betting
 		public decimal? StopOnLoss { get; init; }
 		public bool StopOnBlockMined { get; init; }
 
+		// Graphic Numerology (D-GN.10): stop when a sigil set pass completes — the one moment the chance can change
+		// without throwing away a pass in progress (D-GN.9). Player only; a bot draws no sigil.
+		public bool StopOnSigilSetCompleted { get; init; }
+
 		// Insisting = reset the progression to base and keep going instead of stopping. One switch per stop:
 		// without it, a strategy that only grows would be capped by whichever stop it happens to reach.
 		public bool InsistAfterStopOnProfit { get; init; }

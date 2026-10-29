@@ -924,6 +924,7 @@ public partial class SimulationService : Node
 		// rather than being quietly absorbed by a neighbour.
 		Scripts.Diagnostics.BetCostProfiler.BeginBet();
 
+		var sigilOutcome = Scripts.Numerology.SigilBetOutcome.None;
 		try
 		{
 			var (_, betEvent, _) = _session.ExecuteNext(_config.Chance, _config.BetHigh, tsUtc);
@@ -932,6 +933,7 @@ public partial class SimulationService : Node
 			if (_config.IsPlayerActive)
 			{
 				_userStats?.OnBetExecutedRegisterBet(_config.GameId, betEvent, UserStatsService.SourceSimulation);
+				sigilOutcome = Scripts.Numerology.PlayerSigilProgress.LastOutcome;   // this bet's, registered just above
 			}
 			Scripts.Diagnostics.BetCostProfiler.Mark(Scripts.Diagnostics.BetCostProfiler.Segment.RegisterBet);
 		}
@@ -986,6 +988,15 @@ public partial class SimulationService : Node
 				FreezeCalendarAtBlockStop();
 			}
 			Scripts.Diagnostics.FrameCostProfiler.EndBlockWork();
+		}
+
+		// Graphic Numerology (D-GN.10): stop between two set passes, where a chance change costs nothing. After the
+		// block path, so a block stop on the same bet keeps its reason; from the session, never the panel (D-M2.8).
+		if ((sigilOutcome & Scripts.Numerology.SigilBetOutcome.SetPassCompleted) != 0
+			&& _session.IsRunning
+			&& _session.SessionConfig?.StopOnSigilSetCompleted == true)
+		{
+			_session.Stop(IBettingStrategy.StopReason.StopOnSigilSetCompleted);
 		}
 		// The block path gets its OWN segment, separate from the attempt above. Both readings are honest and
 		// they answer different questions: amortised over thousands of bets this is a few µs (the cost every

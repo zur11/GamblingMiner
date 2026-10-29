@@ -192,6 +192,8 @@ namespace Scripts.Betting
 					StopOnProfit = strategy.Config?.StopOnProfit,
 					StopOnLoss = strategy.Config?.StopOnLoss,
 					StopOnBlockMined = strategy.Config?.StopOnBlockMined ?? false,
+					// A strategy saved before Graphic Numerology carries no flag and loads with it OFF (personal file).
+					StopOnSigilSetCompleted = strategy.Config?.StopOnSigilSetCompleted ?? false,
 					// Strategies saved before the stops were split carry neither flag, so they load with both
 					// Insist switches OFF. No migration by design (mini-plan 01, D-M1.5): this is a personal
 					// file, not world state.

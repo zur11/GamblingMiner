@@ -68,6 +68,8 @@ namespace UI.StrategyControlPanel
 		private Button _insistAfterStopOnProfitToggle;
 		[Export]
 		private Button _insistAfterStopOnLossToggle;
+		[Export]
+		private Button _stopOnSigilSetCompletedToggle;
 
 		private double _lastStopOnBlockMinedPressAt;
 		private double _lastInsistOnProfitPressAt;
@@ -117,6 +119,7 @@ namespace UI.StrategyControlPanel
 		}
 
 		public bool StopOnBlockMinedEnabled => _stopOnBlockMinedToggle?.ButtonPressed ?? false;
+		public bool StopOnSigilSetCompletedEnabled => _stopOnSigilSetCompletedToggle?.ButtonPressed ?? false;
 		public bool AutoRechargeEnabled => _autoRechargeToggle?.ButtonPressed ?? true;
 		// Each insist switch is gated on ITS OWN stop amount — insisting on a stop that is not armed is
 		// meaningless. In bot strategy mode both are forced ON (see ApplyStrategyModeRestrictions).
@@ -165,6 +168,7 @@ namespace UI.StrategyControlPanel
 			_stopOnLossInput.Text = FormatOptionalDecimal(config.StopOnLoss);
 			_stopOnBlockMinedToggle.ButtonPressed = config.StopOnBlockMined;
 			_stopOnBlockMinedToggle.Text = config.StopOnBlockMined ? "Stop Block: ON" : "Stop Block: OFF";
+			SetStopOnSigilSetCompleted(config.StopOnSigilSetCompleted);
 			_autoRechargeToggle.ButtonPressed = autoRechargeEnabled;
 			_autoRechargeToggle.Text = autoRechargeEnabled ? "Auto Recharge: ON" : "Auto Recharge: OFF";
 			_insistAfterStopOnProfitToggle.ButtonPressed = config.InsistAfterStopOnProfit;
@@ -189,6 +193,7 @@ namespace UI.StrategyControlPanel
 			_stopOnLossInput.Text = string.Empty;
 			_stopOnBlockMinedToggle.ButtonPressed = false;
 			_stopOnBlockMinedToggle.Text = "Stop Block: OFF";
+			SetStopOnSigilSetCompleted(false);
 			_autoRechargeToggle.ButtonPressed = true;
 			_autoRechargeToggle.Text = "Auto Recharge: ON";
 			_insistAfterStopOnProfitToggle.ButtonPressed = false;
@@ -321,6 +326,7 @@ namespace UI.StrategyControlPanel
 			_stopOnLossInput.TextChanged += _ => OnProfitOrLossStopInputChanged();
 			_numberOfBetsInput.TextChanged += _ => OnStrategyInputChanged();
 			_stopOnBlockMinedToggle.Pressed += OnStopOnBlockMinedTogglePressed;
+			_stopOnSigilSetCompletedToggle.Pressed += OnStopOnSigilSetCompletedTogglePressed;
 			_autoRechargeToggle.Pressed += OnAutoRechargeTogglePressed;
 			_insistAfterStopOnProfitToggle.Pressed += OnInsistAfterStopOnProfitTogglePressed;
 			_insistAfterStopOnLossToggle.Pressed += OnInsistAfterStopOnLossTogglePressed;
@@ -397,6 +403,25 @@ namespace UI.StrategyControlPanel
 				() => StopOnBlockMinedDoubleClicked?.Invoke()
 			);
 			StrategyConfigChanged?.Invoke();
+		}
+
+		// Graphic Numerology (D-GN.10). Unlike Stop Block it sets no manual-bet gate, so it has no double click: the
+		// stop only has to end the run or the burst at a set boundary, and the next click is the player's to make.
+		private void OnStopOnSigilSetCompletedTogglePressed()
+		{
+			SetStopOnSigilSetCompleted(!_botStrategyMode && _stopOnSigilSetCompletedToggle.ButtonPressed);
+			StrategyConfigChanged?.Invoke();
+		}
+
+		private void SetStopOnSigilSetCompleted(bool enabled)
+		{
+			if (_stopOnSigilSetCompletedToggle == null)
+			{
+				return;
+			}
+
+			_stopOnSigilSetCompletedToggle.ButtonPressed = enabled;
+			_stopOnSigilSetCompletedToggle.Text = enabled ? "Stop Set: ON" : "Stop Set: OFF";
 		}
 
 		private void OnAutoRechargeTogglePressed()
@@ -539,6 +564,16 @@ namespace UI.StrategyControlPanel
 				_stopOnBlockMinedToggle.Disabled = _runLocked || _botStrategyMode;
 			}
 
+			// A bot draws no sigil, so the stop is OFF and locked for it, like Stop Block.
+			if (_stopOnSigilSetCompletedToggle != null)
+			{
+				if (_botStrategyMode)
+				{
+					SetStopOnSigilSetCompleted(false);
+				}
+				_stopOnSigilSetCompletedToggle.Disabled = _runLocked || _botStrategyMode;
+			}
+
 			if (_autoRechargeToggle != null)
 			{
 				if (_botStrategyMode)
@@ -599,6 +634,7 @@ namespace UI.StrategyControlPanel
 				StopOnProfit = ParsePositiveDecimal(_stopOnProfitInput.Text),
 				StopOnLoss = ParsePositiveDecimal(_stopOnLossInput.Text),
 				StopOnBlockMined = !_botStrategyMode && StopOnBlockMinedEnabled,
+				StopOnSigilSetCompleted = !_botStrategyMode && StopOnSigilSetCompletedEnabled,
 				InsistAfterStopOnProfit = InsistAfterStopOnProfitEnabled,
 				InsistAfterStopOnLoss = InsistAfterStopOnLossEnabled
 			};

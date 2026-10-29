@@ -9,7 +9,7 @@ the tracking of bets, SC and each set's figures (§8). **§8's integration, P-GN
 with P-GN.6 an overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work.
 **Unit 1 is done (§10.1):** the squares and the rule are in `Scripts/Numerology/`, with each set's own figures
 (D-GN.20), and `Tools/SigilHarness` confirms Pr-2 to Pr-4. **Unit 2 is done (§10.2):** `PlayerSigilProgress` holds the
-progress, fed by every player bet and committed by the block checkpoint. **Next: unit 3, the stop.**
+progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Next: unit 4, the overlay.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -446,6 +446,15 @@ sigil's completion and what remains, in percent, and compares the sets with each
 bets or time — as shares of the sigil. *(Developer, 2026-10-29.)* Completion counts completed passes only, since the
 pass in progress can still be lost to a chance change (D-GN.9); the overlay shows that pass separately.
 
+**D-GN.21 — the overlay shows V's arithmetic, bet by bet, so the player can follow it.** Each bet appears as an
+operation: the current V, a **−** (loss) or **+** (win), the roll's digital root **in red on a loss and in green on a
+win**, and the resulting V — which is then the left-hand side of the next bet's operation, so the line reads as a
+chain. *(Developer, 2026-10-29; built in unit 4, the overlay.)* Details to settle when it is built: at 1–9% a win adds
+`L + r`, not `r` (D-GN.13), so the operation must show the streak too (e.g. `V + (L + r)`); a two-digit target is
+checked against V **before** the bet beside the root (D-GN.12), so the readout should mark a hit on the spelled
+number, not on the new V; and at autobet rate bets arrive far faster than the eye, so the chain is a **sampled**
+readout (§29.13, `ReadoutSampling`), never a log of every bet.
+
 **P-GN.7 — bots are out of the first build** (D-GN.18). They are Dice-only and their bets already pass through
 `SimulationService`, so joining later looks cheap; whether it is, is a question for after the tests.
 
@@ -540,6 +549,29 @@ which is the truth for a player who has drawn nothing — so **no format bump, a
 
 **Not yet verified in game:** that a restart after a mined block restores the progress, and that a restart before any
 block resets it. The overlay (unit 4) is what will make it visible; the measurement protocol (unit 5) includes it.
+
+### 10.3 Unit 3 — done (2026-10-29)
+
+**Built: "Stop on Sigil Set Completed" (P-GN.5, D-GN.10).** `BettingStrategyConfig.StopOnSigilSetCompleted`, with a
+new `StopReason.StopOnSigilSetCompleted` (appended, so no existing reason changes number). Every place that rebuilds a
+config field by field carries it — DiceGame's player, bot (forced OFF: a bot draws no sigil) and calculator builders,
+the panel's `BuildConfig`, and the saved-strategy repository (a strategy saved before it loads with it OFF). The
+panel's toggle, **"Stop Set: ON/OFF"**, sits in the grid's third row beside "Bankroll reload", where the row already
+existed, so the panel does not grow; it locks during a run and in bot strategy mode, like Stop Block.
+
+**Where it fires — both paths, after the bet's mining attempt, from the session (D-M2.8):** `SimulationService`'s
+player autobet tick and `DiceGame.ExecuteBet`, each reading the outcome `PlayerSigilProgress` recorded for that bet
+when it was registered. After the mining attempt, so a block stop on the same bet keeps its own reason and its
+calendar freeze. A manual burst ends with the session, as it does on any stop.
+
+**Two differences from Stop Block, deliberate:** it sets **no manual-bet gate** — the gate exists so a block stop is
+not clicked past by accident, and a set stop only has to end the run at a set boundary; and it does **not freeze the
+calendar** — that freeze puts the clock on a block's instant, and a set boundary has none, exactly like the profit and
+loss stops. Docs: `ARCHITECTURE.md` (the config's stops), `GLOSSARY.md`.
+
+**Not testable in the harness** (the stop lives in Godot code); verified by `dotnet build` only. The in-game check is
+in unit 5's protocol: a run at a fixed chance with the stop ON must end on the bet whose outcome carries
+`SetPassCompleted`.
 
 A win is a contiguous roll range (`DiceEngine.GetWinningRange`), and only a range of **at least nine consecutive
 rolls** holds every digital root. Below 9%, some units digits can never be the root of a winning roll — at 1%, Low wins

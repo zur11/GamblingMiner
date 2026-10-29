@@ -1204,6 +1204,7 @@ public partial class DiceGame : Control, IBetEventSource
 			StopOnProfit = config.StopOnProfit,
 			StopOnLoss = config.StopOnLoss,
 			StopOnBlockMined = config.StopOnBlockMined,
+			StopOnSigilSetCompleted = config.StopOnSigilSetCompleted,
 			InsistAfterStopOnProfit = config.InsistAfterStopOnProfit,
 			InsistAfterStopOnLoss = config.InsistAfterStopOnLoss
 		};
@@ -1228,6 +1229,7 @@ public partial class DiceGame : Control, IBetEventSource
 			StopOnProfit = config.StopOnProfit,
 			StopOnLoss = config.StopOnLoss,
 			StopOnBlockMined = false,
+			StopOnSigilSetCompleted = false,   // a bot draws no sigil
 			InsistAfterStopOnProfit = true,
 			InsistAfterStopOnLoss = true
 		};
@@ -2251,9 +2253,11 @@ public partial class DiceGame : Control, IBetEventSource
 				_session.ExecuteNext(chance, isHigh, effectiveTimestampUtc);
 
 			BetExecuted?.Invoke(GameId, betEvent);
+			var sigilOutcome = Scripts.Numerology.SigilBetOutcome.None;
 			if (IsPlayerActive())
 			{
 				_userStatsService?.OnBetExecutedRegisterBet(GameId, betEvent, UserStatsService.SourceDiceGame);
+				sigilOutcome = Scripts.Numerology.PlayerSigilProgress.LastOutcome;   // this bet's, registered just above
 			}
 			else
 			{
@@ -2279,6 +2283,14 @@ public partial class DiceGame : Control, IBetEventSource
 				_activeNodeId,
 				_session?.SessionConfig?.StopOnBlockMined ?? false,
 				_session);
+			// Graphic Numerology (D-GN.10): stop between two set passes, where a chance change costs nothing. After
+			// the mining attempt, so a block stop on the same bet keeps its reason; from the session (D-M2.8).
+			if ((sigilOutcome & Scripts.Numerology.SigilBetOutcome.SetPassCompleted) != 0
+				&& _session is { IsRunning: true }
+				&& _session.SessionConfig?.StopOnSigilSetCompleted == true)
+			{
+				_session.Stop(IBettingStrategy.StopReason.StopOnSigilSetCompleted);
+			}
 			if (!suppressClockAdvance)
 				AdvanceClockForBet();
 
@@ -2535,6 +2547,7 @@ public partial class DiceGame : Control, IBetEventSource
 			StopOnProfit = uiConfig.StopOnProfit,
 			StopOnLoss = uiConfig.StopOnLoss,
 			StopOnBlockMined = uiConfig.StopOnBlockMined,
+			StopOnSigilSetCompleted = uiConfig.StopOnSigilSetCompleted,
 			InsistAfterStopOnProfit = uiConfig.InsistAfterStopOnProfit,
 			InsistAfterStopOnLoss = uiConfig.InsistAfterStopOnLoss
 		};
