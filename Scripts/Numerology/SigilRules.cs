@@ -249,7 +249,7 @@ namespace Scripts.Numerology
 		}
 
 		// One line for godot.log (unit 5's measurement reads it afterwards): the sigil, its counters, V and the target,
-		// the pass in progress, and every set as passes / completion / restarts.
+		// the pass in progress, and every set as passes / completion / restarts / bets / game-seconds.
 		public static string Describe(SigilProgressState state)
 		{
 			if (state.AllComplete)
@@ -259,7 +259,7 @@ namespace Scripts.Numerology
 			var sets = new StringBuilder();
 			foreach (var set in state.Sets)
 				sets.Append(string.Create(CultureInfo.InvariantCulture,
-					$" [{set.PassesCompleted}p {SetCompletion(set) * 100:F1}% r{set.PassRestarts} {set.BetsPlaced}b]"));
+					$" [{set.PassesCompleted}p {SetCompletion(set) * 100:F1}% r{set.PassRestarts} {set.BetsPlaced}b {set.GameSeconds:F0}s]"));
 			return string.Create(CultureInfo.InvariantCulture,
 				$"{square.SigilName(PlanetarySquares.KindOfSigil(state.SigilIndex))}: bets={state.BetsPlaced} sc={state.ScWagered:F8} " +
 				$"v={state.V} streak={state.LossStreak} target={CurrentTarget(state)} pass={state.Step}@{state.PassChance} " +
