@@ -50,6 +50,9 @@ public partial class BlockSessionCheckpointService : Node
 		// It matters MORE than most: it is a running total, so a rollup left ahead of the journal after a
 		// crash could never be corrected by any later scan. Null in a pre-mini03 checkpoint → keep loaded.
 		public Scripts.User.BetStatsRollup BetStatsRollup { get; set; }
+		// Graphic Numerology (D-GN.11): the player's sigil progress. It writes no file of its own, so this snapshot is
+		// its only commit. Null in a checkpoint from before it existed → fresh progress (the player has drawn nothing).
+		public Scripts.Numerology.SigilProgressState SigilProgress { get; set; }
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -94,6 +97,7 @@ public partial class BlockSessionCheckpointService : Node
 			?.ResetToPreGenesisDefaults(); // Step 12 (SF.0.8): bank → 0, settings default, history cleared
 		GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")
 			?.ResetToPreGenesisDefaults(); // Step 13 (SW.0): reserves 0, fee 10%, floor OFF, history cleared
+		Scripts.Numerology.PlayerSigilProgress.ResetToPreGenesisDefaults(); // Graphic Numerology: nothing drawn yet
 
 		// ND.8c note: ScMonetaryLedgerService.ResetToPreGenesisDefaults() runs at the END of this method
 		// (after the calendar reset below) so its re-registered genesis-grant events carry the player-start
@@ -170,6 +174,7 @@ public partial class BlockSessionCheckpointService : Node
 			?.RestoreFromCheckpoint(CurrentSnapshot.ScMonetaryLedgerState); // null DTO (legacy) → init from live state
 			// (must run AFTER the CentralBankService restore above — the live-state init and the reconcile
 			//  both read the FED's casino account, P15.1c)
+		Scripts.Numerology.PlayerSigilProgress.RestoreFromCheckpoint(CurrentSnapshot.SigilProgress); // null → fresh progress
 
 		// Restored BEFORE the bet-history rollback just below (at boot since mini-plan 22 B; it used to wait for the
 		// first DiceGame entry). The rollback does not re-derive the rollup from the journal (mini-plan 08 D1), so
@@ -290,6 +295,7 @@ public partial class BlockSessionCheckpointService : Node
 			CentralBankState = GetNodeOrNull<CentralBankService>("/root/CentralBankService")?.CaptureCheckpointState(),
 			BetStatsRollup = GetNodeOrNull<UserStatsService>("/root/UserStatsService")?.CaptureRollupSnapshot()
 				?? previousRollup,
+			SigilProgress = Scripts.Numerology.PlayerSigilProgress.CaptureForCheckpoint(),
 			CapturedAtUtc = DateTime.UtcNow
 		};
 

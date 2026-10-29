@@ -171,7 +171,7 @@ Block Mined? → BTC Reward + Checkpoint → Manage Bankroll / Strategies → Re
 
 ## Key Architecture — Autoload Services
 
-**20 autoloads** are registered in `project.godot`, plus one pure static controller in the same layer.
+**20 autoloads** are registered in `project.godot`, plus two pure static classes in the same layer.
 They persist across every scene. **How to access one — and why their registration ORDER is
 load-bearing — is Important Patterns §5**, not this chapter.
 
@@ -202,6 +202,7 @@ only for the one you need. Order below is registration order.
 | 19 | `BtcNetworkDataService` | The historical BTC network daily dataset, plus every derived accessor built on it (era-standard power, cast-size target, tx/block target, the fee schedule it pushes into `NetworkFeePolicy`) |
 | 20 | `UserSettingsService` | The player's **preferences** (`user://player/preferences/settings.json`): one typed get/set per setting, null = never set (the default stays in the scene). Never checkpoint-reverted, never wiped with the world. Last by decision: it depends on no service and only scenes read it |
 | — | `NetworkPopulationScheduler` | **Not an autoload** — a `static class` driven per-frame by #17. The historical network's visible cast + invisible mass, and the ghost attribution of their blocks |
+| — | `PlayerSigilProgress` | **Not an autoload** — a `static class` fed every player bet by #2 and committed only by #13's checkpoint. The player's Graphic Numerology sigil progress |
 ---
 
 ## Core Game Systems — index

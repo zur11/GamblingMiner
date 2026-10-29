@@ -5,10 +5,11 @@ in `PRIVATE_ROADMAP.md`: bringing the developer's other project, *Numerología G
 
 **Status:** 📝 **SPECIFIED 2026-10-28.** The design is decided, D-GN.1–D-GN.20: the zodiac sigils (§4), the drawing
 rule, balanced at the same cost at every chance (§5–§6), the Low/High choice (§6.3), the order of the sigils (§7) and
-the tracking of bets, SC and each set's figures (§8). **§8's integration, P-GN.1–P-GN.7, is approved (2026-10-29)**, with P-GN.6 an
-overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work. **Unit 1 is done (§10.1): the squares and the rule are
-in `Scripts/Numerology/`, with each set's own figures (D-GN.20), and `Tools/SigilHarness` confirms Pr-2 to Pr-4.
-Next: unit 2, the state and the hook.**
+the tracking of bets, SC and each set's figures (§8). **§8's integration, P-GN.1–P-GN.7, is approved (2026-10-29)**,
+with P-GN.6 an overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work.
+**Unit 1 is done (§10.1):** the squares and the rule are in `Scripts/Numerology/`, with each set's own figures
+(D-GN.20), and `Tools/SigilHarness` confirms Pr-2 to Pr-4. **Unit 2 is done (§10.2):** `PlayerSigilProgress` holds the
+progress, fed by every player bet and committed by the block checkpoint. **Next: unit 3, the stop.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -397,6 +398,9 @@ already register each settled bet in `UserStatsService.OnBetExecutedRegisterBet`
 `SimulationService.ClientBetSettled`: that event fires *after* `CaptureCheckpoint`, so the bet that mines a block
 would be missing from that block's checkpoint — a lying figure under Pattern 2. `BetTransactionEvent` already carries
 everything the rule reads: `IsWin`, `Roll`, `Chance`, `IsHigh`, `BetAmount`.
+*Built (unit 2) as one call **inside** `UserStatsService.OnBetExecutedRegisterBet` rather than two beside it: both
+paths funnel through that method, and its only other route, `RegisterSource`, has no callers by design — so one line
+covers both, and a third caller cannot forget it (the reasoning `CaptureCheckpoint`'s balance flush already uses).*
 
 **P-GN.4 — a state owner, committed only by the checkpoint.** A new autoload (the 21st) owns the progress in memory
 and fires a typed event when a hit, a set or a sigil changes something (Pattern 1) — **not on every bet**, although V
@@ -405,6 +409,11 @@ restored from, the block checkpoint, with a pre-genesis default (Pattern 2's fir
 answers the third (`WipeWorld`) and the eager-writer guard (`WorldWriteGuard`) by construction. *Why no own file:*
 mini-plan 08 measured a per-bet balance write at 66% of a bet's cost. Its registration slot is chosen deliberately
 before `BlockSessionCheckpointService` (Important Patterns §5).
+*Built (unit 2) as a **static class, `PlayerSigilProgress`, not an autoload**. An autoload the checkpoint restores
+must be declared before it, at #13, which would renumber #13–#20: eight `BootProbe.AutoloadStarts` indices, the
+CLAUDE.md and SERVICES.md tables, and every document that cites "#13". A static owner the checkpoint pushes into is
+the project's existing alternative (`NetworkRoot`'s world state; `NetworkPopulationScheduler`): no `_Ready`, so no
+order to break, and Godot-free, so the harness tests it. Everything else in P-GN.4 holds as written.*
 
 **P-GN.5 — "Stop on Sigil Set Completed" (D-GN.10)** as a field of `BettingStrategyConfig` beside `StopOnBlockMined`,
 saved with the strategy (`SavedBettingStrategy`), offered in the strategy panel, and **read from the session in a
@@ -511,6 +520,26 @@ the way in:
 - **A new check, 6:** an Aquarius run at one bet per 100 game-seconds, with a forced chance change: the sets' bets,
   SC and game time add up exactly to the sigil's, and every set ends at 100%. One run: 48 passes per set, 1 restart,
   bets split 32.7% / 31.6% / 35.7%, 2.96 / 2.86 / 3.24 game-days.
+
+### 10.2 Unit 2 — done (2026-10-29)
+
+**Built:** `Scripts/Numerology/PlayerSigilProgress` — the static owner (P-GN.4, as amended): the live state, a
+`Changed` event and `LastOutcome`. **Fed** by one line in `UserStatsService.OnBetExecutedRegisterBet` (P-GN.3, as
+amended). **Committed** by `BlockSessionCheckpointService`: `Snapshot.SigilProgress` is captured as a copy at every
+block, restored at boot, and reset pre-genesis; a checkpoint from before this field existed restores fresh progress,
+which is the truth for a player who has drawn nothing — so **no format bump, and R4's world stays playable.** Docs:
+`SERVICES.md` has its section; CLAUDE.md's autoload table has its row.
+
+**Harness, new checks 7 and 8 — all pass:**
+
+- **The checkpoint round trip.** 3,000 bets registered, `Changed` fired 177 times and never for a bet that changed
+  nothing; the captured copy does not move when 500 more bets change the live state; restoring it reproduces the
+  block's state byte for byte (as JSON); a null snapshot restores fresh progress.
+- **Cost:** **39.1–47.8 ns and 0.00 bytes allocated per bet** (5,000,000 bets at 50%, two runs). Measured in the
+  harness, outside Godot — **not measured in game.**
+
+**Not yet verified in game:** that a restart after a mined block restores the progress, and that a restart before any
+block resets it. The overlay (unit 4) is what will make it visible; the measurement protocol (unit 5) includes it.
 
 A win is a contiguous roll range (`DiceEngine.GetWinningRange`), and only a range of **at least nine consecutive
 rolls** holds every digital root. Below 9%, some units digits can never be the root of a winning roll — at 1%, Low wins

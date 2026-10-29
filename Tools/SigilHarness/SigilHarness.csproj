@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="..\..\Scripts\Numerology\*.cs" />
     <Compile Include="..\..\Scripts\Finance\Money.cs" />
+    <Compile Include="..\..\Scripts\Finance\BetTransactionEvent.cs" />
     <Compile Include="..\..\Scripts\Dice\DiceEngine.cs" />
     <Compile Include="..\..\Scripts\Dice\DiceResult.cs" />
   </ItemGroup>

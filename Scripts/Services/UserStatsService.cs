@@ -273,6 +273,11 @@ public partial class UserStatsService : Node
 
 		Stats.RegisterBet(gameId, bet);
 		EmitStatsChangedIfNeeded();
+
+		// Graphic Numerology (P-GN.3): every player bet draws on the sigil. Here, rather than at the two call sites,
+		// because both funnel through this method before their mining attempt — so the bet that mines a block is in
+		// that block's checkpoint, and a third caller cannot forget it.
+		Scripts.Numerology.PlayerSigilProgress.RegisterPlayerBet(bet);
 	}
 
 	public void RegisterDeposit(decimal amount, decimal balanceAfter, DateTime timestampUtc)

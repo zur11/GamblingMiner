@@ -183,5 +183,53 @@ Console.WriteLine("\n6. Per-set tracking (D-GN.20): the sets add up to the sigil
 	Check(SigilRules.SigilCompletion(st) == 0.0 && st.SigilIndex == 1, "the next sigil (Capricorn) starts at 0%");
 }
 
+Console.WriteLine("\n7. The checkpoint round trip (P-GN.4, D-GN.11)");
+{
+	string Json(SigilProgressState s) => System.Text.Json.JsonSerializer.Serialize(s);
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	var outcomes = new List<SigilBetOutcome>();
+	PlayerSigilProgress.Changed += outcomes.Add;
+	var t0 = new DateTime(2009, 3, 21, 0, 0, 0, DateTimeKind.Utc);
+	for (int b = 0; b < 3000; b++)
+	{
+		var res = engine.Play(1m, 50, false);
+		PlayerSigilProgress.RegisterPlayerBet(new Scripts.Finance.BetTransactionEvent(
+			1m, 0m, 0m, 0m, res.IsWin, res.Roll, 50, res.Multiplier, false, t0.AddSeconds(100 * b)));
+	}
+	var block = PlayerSigilProgress.CaptureForCheckpoint();
+	string atBlock = Json(block);
+	Check(PlayerSigilProgress.State.BetsPlaced == 3000 && outcomes.Count > 0 && outcomes.All(o => o != SigilBetOutcome.None),
+		$"3,000 bets registered; Changed fired {outcomes.Count} times, never for a bet that changed nothing");
+	for (int b = 0; b < 500; b++)
+		PlayerSigilProgress.RegisterPlayerBet(new Scripts.Finance.BetTransactionEvent(
+			1m, 0m, 0m, 0m, true, 1, 50, 1.98m, false, t0.AddSeconds(100 * (3000 + b))));
+	Check(Json(block) == atBlock, "the captured snapshot does not move with the live state");
+	PlayerSigilProgress.RestoreFromCheckpoint(block);
+	Check(Json(PlayerSigilProgress.State) == atBlock, "a restart restores exactly the block's state");
+	PlayerSigilProgress.RestoreFromCheckpoint(null);
+	Check(PlayerSigilProgress.State.BetsPlaced == 0 && PlayerSigilProgress.State.SigilIndex == 0 && PlayerSigilProgress.State.Sets.Count == 3,
+		"a checkpoint from before Graphic Numerology restores fresh progress");
+	PlayerSigilProgress.Changed -= outcomes.Add;
+}
+
+Console.WriteLine("\n8. Cost per bet (the rule runs on every player bet)");
+{
+	const int Bets = 5_000_000;
+	var rng = new Random(1);
+	var rolls = new int[Bets];
+	for (int i = 0; i < Bets; i++) rolls[i] = rng.Next(0, 100);
+	var st = SigilRules.NewProgress();
+	var t0 = new DateTime(2009, 3, 21, 0, 0, 0, DateTimeKind.Utc);
+	for (int i = 0; i < 100_000; i++) SigilRules.ApplyBet(st, rolls[i], rolls[i] < 50, 50, 1m, t0.AddSeconds(i));   // warm-up
+	long bytesBefore = GC.GetAllocatedBytesForCurrentThread();
+	var timer = Stopwatch.StartNew();
+	for (int i = 0; i < Bets; i++) SigilRules.ApplyBet(st, rolls[i], rolls[i] < 50, 50, 1m, t0.AddSeconds(100_000 + i));
+	timer.Stop();
+	double ns = timer.Elapsed.TotalMilliseconds * 1e6 / Bets;
+	double bytes = (double)(GC.GetAllocatedBytesForCurrentThread() - bytesBefore) / Bets;
+	Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {ns:F1} ns and {bytes:F2} bytes allocated per bet, mean of {Bets:N0} bets at 50%"));
+	Check(bytes < 8, "an ordinary bet allocates nothing (what is allocated comes from completed passes and sigils)");
+}
+
 Console.WriteLine(failures == 0 ? "\nALL CHECKS PASS" : $"\n{failures} CHECK(S) FAILED");
 return failures;

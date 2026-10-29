@@ -38,9 +38,10 @@ Order is load-bearing — see `CLAUDE.md` Important Patterns §5.
 | 19 | `BtcNetworkDataService` | this file |
 | 20 | `UserSettingsService` | this file |
 
-`NetworkPopulationScheduler` (last section below) is **not** in that list — it is a pure `static
-class` driven per-frame by `SimulationService`, documented here because it belongs to the same
-layer. `HistoricalBootstrapService`, `HistoricalEventScheduler`, `WalletInitializationService`,
+`NetworkPopulationScheduler` and `PlayerSigilProgress` (the last two sections below) are **not** in
+that list — each is a pure `static class`, the first driven per-frame by `SimulationService`, the
+second fed every player bet and restored by `BlockSessionCheckpointService` — documented here because
+they belong to the same layer. `HistoricalBootstrapService`, `HistoricalEventScheduler`, `WalletInitializationService`,
 `WordlistBootstrapper` and `TimelineConfig` also live in `Scripts/Services/` without being
 autoloads; they are documented where the systems they serve are.
 
@@ -385,4 +386,15 @@ Two hybrid layers make up the historical network (P-14.A):
 - **Automated transaction layer** (Step 14 ND.3/ND.4a, `NetworkRoot.ScheduleBotTransactionsAfterBlock`, not part of this service but driven by its data): a **fullness-parity budget** (`owed = max(0, GetTargetTxPerBlock(date) + fractionalCarry − pendingOrganicTxs)`, ND.4a-fixed to cancel organic demand BEFORE flooring) fills the mempool toward the historical tx/block target — organic traffic (player sends, swap legs, pool payouts) always counts first, automation only tops up the remainder, under-shooting accepted rather than synthetic filler (D-14.2). Two INDEPENDENT rotation cycles fill that budget/their own separate cadence (ND.4a, revised at ND.4b — see the Referral Auction canonical decision + ProjectDesignManual Ch. 22 §22.7 for the auction-specific cycle): **cast sell-flow** (`TryCastSellFlow`, historical-budget-governed, fair random rotation among `BotWalletRegistry.CastMiners`) and **non-miner↔non-miner exchanges** (`TryNonMinerExchanges`, real UTXO sends between funded holders, same budget). The **casino-miner-bots'** (`bot_1..4`) own donation/bid cycle (`TryCasinoBotDonation`) is INDEPENDENT of this budget entirely — see the Referral Auction entry below.
 - DEV telemetry: `user://logs/network_population_trace.csv` (one row per live block — decades, cast target/powered/power-each, invisible power, player+bot/founder/total power, tx target, pending txs, spawned-this-block node id).
 - See `AIHelperFiles/step14-historical-network-population-scheduler-plan.md` (the full plan, all rounds) and `Documentation/ProjectDesignManual.md` Ch. 36.
+
+### `PlayerSigilProgress`
+**Location**: `Scripts/Numerology/PlayerSigilProgress.cs`
+
+The player's **Graphic Numerology** progress — the zodiac sigils drawn by betting (`AIHelperFiles/graphic_numerology-plan.md`). A plain `static class`, **not a `Node` and not registered in `project.godot`**, holding one `SigilProgressState` in memory; the rule itself is `SigilRules`, the squares `PlanetarySquares`.
+
+- **Fed:** every player bet, by `UserStatsService.OnBetExecutedRegisterBet` — the sink both player bet paths already pass through, before their mining attempt, so the bet that mines a block is in that block's checkpoint.
+- **Persisted only by the checkpoint** (Pattern 2): `BlockSessionCheckpointService` captures a copy into `Snapshot.SigilProgress` at every block, restores it at boot, and resets it pre-genesis. **It writes no file of its own**, so `NetworkRoot.WipeWorld` and `WorldWriteGuard` have nothing of it to cover. A checkpoint from before it existed (null) restores fresh progress — the player has drawn nothing.
+- **Why static and not an autoload:** it has no `_Ready` and so no registration order to keep; an autoload restored by the checkpoint would have had to be declared before #13, renumbering #13–#20.
+- **Event:** `Changed` fires when a bet changed what the sigil overlay draws (a hit, a restart, a completed pass) and on a restore — **not** on every bet, although V moves on every bet. `LastOutcome` is what the latest bet did.
+- **Cost:** ~40–48 ns and no allocation per ordinary bet, measured by `Tools/SigilHarness` outside Godot (2026-10-29).
 

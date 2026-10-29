@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace Scripts.Numerology
 {
@@ -37,6 +38,7 @@ namespace Scripts.Numerology
 
 		public List<CompletedSigilRecord> Completed { get; set; } = new();
 
+		[JsonIgnore]
 		public bool AllComplete => SigilIndex >= PlanetarySquares.SigilCount;
 	}
 
