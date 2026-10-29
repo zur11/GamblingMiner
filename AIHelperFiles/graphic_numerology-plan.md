@@ -6,7 +6,7 @@ in `PRIVATE_ROADMAP.md`: bringing the developer's other project, *Numerología G
 **Status:** 📝 **SPECIFIED 2026-10-28.** The design is decided, D-GN.1–D-GN.18: the zodiac sigils (§4), the drawing
 rule, balanced at the same cost at every chance (§5–§6), the Low/High choice (§6.3) and the order of the sigils (§7).
 §8 proposes the integration (P-GN.1–P-GN.7, **not yet approved**), §9 registers the predictions and §10 the order of
-work. **Next: the developer reviews §8, then unit 1.** Two readings in D-GN.13 await confirmation (§6.2).
+work. **Next: the developer reviews §8, then unit 1.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -301,8 +301,8 @@ seven, with the same numbers, as many again.
 immediately before the win, and `s = L + r`. A two-digit target hits when `V` before the bet is the tens digit **and
 `root(s)` is the units digit**. Hit or miss, `V` then moves on to `root(V + s)` — so at these chances every win moves
 V by `s`, and the 1-digit and round-ten targets compare that V. Losses, and every chance of 10% and above, are
-unchanged. *(Developer, 2026-10-28. Two readings of ours, to confirm: that V moves by `s` on a hit too, and that the
-1-digit targets also use it.)*
+unchanged. *(Developer, 2026-10-28, including the two readings the simulation used and the developer then confirmed:
+V moves by `s` on a hit too, and the 1-digit and round-ten targets compare that V.)*
 
 **Measured (2026-10-28, Node, violet cost = one pass × `c`; Aquarius 400 runs, Sagittarius 60, Eclipsed Cancer 8):**
 
