@@ -123,7 +123,8 @@ MainMenu
 │   │   └── BetsHistoryExplorer         → origin-aware back
 │   ├── BTCWallet                       (the player's BTC wallet + send)
 │   ├── BTCPoolsAndHardwareShop         (hardware credits + individual vs casino pool)
-│   └── MartingaleCalculator            (POPUP, inline — no SceneId; the standalone is a separate screen)
+│   ├── MartingaleCalculator            (POPUP, inline — no SceneId; the standalone is a separate screen)
+│   └── SigilOverlay                    (POPUP, inline — no SceneId; Graphic Numerology, the "Sigils" button)
 ├── ScFinances  [player-facing]     → Main Menu      (Step 12 — the player's SC-flows hub)
 │   ├── ScTransactions              → ScFinances
 │   ├── BetsHistoryExplorer         → origin-aware back

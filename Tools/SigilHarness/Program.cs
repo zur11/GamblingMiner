@@ -84,10 +84,17 @@ Console.WriteLine("\n2. Rule details");
 	s2.SigilIndex = 12; s2.Sets = Enumerable.Range(0, 9).Select(_ => new SigilSetProgress()).ToList();   // Eclipsed Cancer
 	s2.SetIndex = 2; s2.Step = 2; s2.PassChance = 50; s2.V = 3;   // diurnal set 3 is 19-27: step 2 → target 21
 	Check(SigilRules.CurrentTarget(s2) == 21, "target 21 set up");
-	o = SigilRules.ApplyBet(s2, 8, true, 50, 1m, DateTime.UnixEpoch);
+	o = SigilRules.ApplyBet(s2, 8, true, 50, 1m, DateTime.UnixEpoch, out var st1);
 	Check((o & SigilBetOutcome.Hit) == 0 && s2.V == 2, "V 3 + roll 8 spells 38: miss, V → 2");
-	o = SigilRules.ApplyBet(s2, 73, true, 50, 1m, DateTime.UnixEpoch);
+	Check(st1 == new SigilStep(3, true, 8, 0, 2, 21, 38, false), $"its V-chain step reads 3 + 8 = 2, spells 38 ({st1})");
+	o = SigilRules.ApplyBet(s2, 73, true, 50, 1m, DateTime.UnixEpoch, out var st2);
 	Check((o & SigilBetOutcome.LineDrawn) != 0 && s2.V == 3, "V 2 + roll 73 (root 1) spells 21: hit, V → 3");
+	Check(st2 == new SigilStep(2, true, 1, 0, 3, 21, 21, true), $"its V-chain step reads 2 + 1 = 3, spells 21, HIT ({st2})");
+	SigilRules.ApplyBet(s2, 47, false, 50, 1m, DateTime.UnixEpoch, out var st3);
+	Check(st3 == new SigilStep(3, false, 2, 0, 1, 22, 0, false), $"a loss reads 3 - 2 = 1 ({st3})");
+	var s3 = SigilRules.NewProgress(); s3.V = 4; s3.LossStreak = 6;
+	SigilRules.ApplyBet(s3, 3, true, 5, 1m, DateTime.UnixEpoch, out var st4);
+	Check(st4.Streak == 6 && st4.VAfter == 4, $"at 5% a win adds the streak: 4 + (6 + 3) = 4 ({st4})");
 }
 
 Console.WriteLine("\n3. Exact completion: a set at chance c takes exactly c passes (D-GN.8, rationals)");
@@ -204,8 +211,13 @@ Console.WriteLine("\n7. The checkpoint round trip (P-GN.4, D-GN.11)");
 		PlayerSigilProgress.RegisterPlayerBet(new Scripts.Finance.BetTransactionEvent(
 			1m, 0m, 0m, 0m, true, 1, 50, 1.98m, false, t0.AddSeconds(100 * (3000 + b))));
 	Check(Json(block) == atBlock, "the captured snapshot does not move with the live state");
+	var recent = new SigilStep[8];
+	int got = PlayerSigilProgress.CopyRecentSteps(recent, 8);
+	Check(got == 8 && recent.All(s => s.IsWin && s.Root == 1) && recent.Take(7).Zip(recent.Skip(1)).All(p => p.First.VAfter == p.Second.VBefore),
+		"the V chain holds the latest 8 operations, oldest first, each starting where the previous one ended");
 	PlayerSigilProgress.RestoreFromCheckpoint(block);
 	Check(Json(PlayerSigilProgress.State) == atBlock, "a restart restores exactly the block's state");
+	Check(PlayerSigilProgress.CopyRecentSteps(recent, 8) == 0, "a restore empties the chain");
 	PlayerSigilProgress.RestoreFromCheckpoint(null);
 	Check(PlayerSigilProgress.State.BetsPlaced == 0 && PlayerSigilProgress.State.SigilIndex == 0 && PlayerSigilProgress.State.Sets.Count == 3,
 		"a checkpoint from before Graphic Numerology restores fresh progress");

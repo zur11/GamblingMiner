@@ -9,7 +9,7 @@ the tracking of bets, SC and each set's figures (§8). **§8's integration, P-GN
 with P-GN.6 an overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work.
 **Unit 1 is done (§10.1):** the squares and the rule are in `Scripts/Numerology/`, with each set's own figures
 (D-GN.20), and `Tools/SigilHarness` confirms Pr-2 to Pr-4. **Unit 2 is done (§10.2):** `PlayerSigilProgress` holds the
-progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Next: unit 4, the overlay.**
+progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Unit 4 is built (§10.4):** the overlay, awaiting the developer's first look. **Next: unit 5, the measurement.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -572,6 +572,41 @@ loss stops. Docs: `ARCHITECTURE.md` (the config's stops), `GLOSSARY.md`.
 **Not testable in the harness** (the stop lives in Godot code); verified by `dotnet build` only. The in-game check is
 in unit 5's protocol: a run at a fixed chance with the stop ON must end on the bet whose outcome carries
 `SetPassCompleted`.
+
+### 10.4 Unit 4 — the overlay, built (2026-10-29); awaiting the developer's first look
+
+**Built: `Screens/SigilOverlay/`** — `SigilOverlay` (the controller) and `SigilCanvas` (the drawing), instanced in
+`DiceGame.tscn` beside the Martingale calculator and opened by a **"Sigils"** button placed in the scene file
+(not in code, per the roadmap's "UI built in scenes"), under DiceGame's BTC wallet line in the navigation column
+(x 1392, y 382–420 — the free band between that line and "Current app time" at y 467). Chapter 29 was read first;
+the overlay has no `ScrollContainer`: two Pattern-B labels (the sets table and the completed sigils) scroll
+themselves, each in its own label (§29.2), keeping their scroll across refreshes with a padded last line (§29.3),
+and the Close button sits in a fixed footer, 100 px above the canvas bottom (§29.10, §29.11).
+
+- **The drawing (`SigilCanvas`):** the square on a day, night or eclipse ground — **placeholder colours** for the
+  textures still to be made — with its numbers faint; each set in the colour of its latest completed pass, violet
+  when finished (D-GN.8); the set in progress as a faint silhouette in its pass's colour with the lines already hit
+  solid on top; green and red circles at each drawn set's start and end; the next target ringed. Colour:
+  `hue = (95 − c) / 94 × 0.76` — 95% red, ~48% green, 1% violet. **Repainted only on `PlayerSigilProgress.Changed`.**
+- **The figures:** the next target and what it needs; V and the loss streak; the pass in progress (and that a chance
+  change loses it); the sigil's completion and what remains (D-GN.20); bets, SC wagered and game time; the planet's
+  running total while its nocturnal sigil is drawn; a table of the sets — passes, completion, bets and their share,
+  game-days, restarts; and the completed sigils, with a planet's total once both are drawn (D-GN.19).
+- **The V chain (D-GN.21):** the latest 8 bets as `V − r = V'` (loss, root red) or `V + r = V'` (win, root green),
+  `V + (L + r)` with the streak at 1–9%, "spells 38, target 21" for a two-digit target, and **HIT** on a hit. Fed by a
+  16-entry ring in `PlayerSigilProgress` that `SigilRules.ApplyBet` fills through a new `out SigilStep` (O(1), no
+  allocation); emptied by a restore. Each set also records `LastPassChance`.
+- **Cost:** hidden, it does nothing (`SetProcess(false)`). Open, it repaints at 4 Hz and only if the bet count moved
+  or the drawing changed; counters floored by `CounterQuantizer` (§29.13), SC and game-days to the decimals the
+  quantum can carry. Recorded in §38.5's table (26 overrides now).
+
+**Verified:** `dotnet build` clean; locale detector 17 / 0 / 0 / 0; the two live-clock detectors 0 / 1 (the overlay
+renders no clock); the harness passes, with new checks pinning `SigilStep` to the worked examples (`3 + 8 = 2, spells
+38`; `2 + 1 = 3, spells 21, HIT`; a loss; a 5% win adding the streak) and the ring (8 latest, each starting where the
+previous ended; a restore empties it). *One harness check failed on its first run, and the check was the fault
+(Standing Convention 16): it read the ring after a restore that empties it by design.*
+
+**Not yet seen in game.** Layout, fonts and colours are unverified until the developer opens it.
 
 A win is a contiguous roll range (`DiceEngine.GetWinningRange`), and only a range of **at least nine consecutive
 rolls** holds every digital root. Below 9%, some units digits can never be the root of a winning roll — at 1%, Low wins

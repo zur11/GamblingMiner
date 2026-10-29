@@ -19,6 +19,20 @@ namespace Scripts.Numerology
 		AllSigilsCompleted = 128
 	}
 
+	// One bet's operation on V, as the overlay's V chain shows it (D-GN.21): V before, then + or − the root (plus the loss
+	// streak a win at 1–9% adds, D-GN.13), then V after. VBefore 0 = the sigil's first roll, which sets V. Spelled is the
+	// number V-before-and-root spelled for a two-digit target (D-GN.12), 0 when the target is not of that kind.
+	public readonly record struct SigilStep(
+		int VBefore,
+		bool IsWin,
+		int Root,
+		int Streak,
+		int VAfter,
+		int Target,
+		int Spelled,
+		bool Hit
+	);
+
 	// Graphic Numerology — the drawing rule (AIHelperFiles/graphic_numerology-plan.md §5–§7, P-GN.2). No Godot, no I/O,
 	// no allocation on an ordinary bet: it runs on every player bet, at autobet rate.
 	public static class SigilRules
@@ -57,8 +71,20 @@ namespace Scripts.Numerology
 			int chance,
 			decimal betAmount,
 			DateTime timestampUtc
+		) => ApplyBet(state, roll, isWin, chance, betAmount, timestampUtc, out _);
+
+		// The same, also reporting the operation the bet performed on V — what the overlay's V chain shows (D-GN.21).
+		public static SigilBetOutcome ApplyBet(
+			SigilProgressState state,
+			int roll,
+			bool isWin,
+			int chance,
+			decimal betAmount,
+			DateTime timestampUtc,
+			out SigilStep step
 		)
 		{
+			step = default;
 			if (state.AllComplete)
 				return SigilBetOutcome.None;
 
@@ -89,25 +115,29 @@ namespace Scripts.Numerology
 			}
 
 			int r = RootOf(roll);
+			int target = CurrentTarget(state);
+			int vBefore = state.V;
 
 			if (!isWin)
 			{
-				state.V = state.V == 0 ? r : Wrap(state.V - r);
+				state.V = vBefore == 0 ? r : Wrap(vBefore - r);
 				state.LossStreak++;
+				step = new SigilStep(vBefore, false, r, 0, state.V, target, 0, false);
 				return outcome;
 			}
 
-			int s = chance <= LossStreakMaxChance ? state.LossStreak + r : r;
+			int streak = chance <= LossStreakMaxChance ? state.LossStreak : 0;
+			int s = streak + r;
 			state.LossStreak = 0;
-			int vBefore = state.V;
 			state.V = vBefore == 0 ? RootOf(s) : Wrap(vBefore + s);
 
-			int target = CurrentTarget(state);
-			bool hit = target <= 9 || target % 10 == 0
+			bool spells = target > 9 && target % 10 != 0;
+			bool hit = !spells
 				// 1–9 and the round tens (10 behaves as 1 … 80 as 8) compare V after the bet (D-GN.12).
 				? state.V == (target <= 9 ? target : target / 10)
 				// Every other two-digit target: V before the bet beside the root of the win spells it.
 				: vBefore == target / 10 && RootOf(s) == target % 10;
+			step = new SigilStep(vBefore, true, r, streak, state.V, target, spells && vBefore != 0 ? vBefore * 10 + RootOf(s) : 0, hit);
 
 			if (!hit)
 				return outcome;
@@ -136,6 +166,7 @@ namespace Scripts.Numerology
 			var set = state.Sets[state.SetIndex];
 			set.PassesByChance[state.PassChance] = set.PassesByChance.GetValueOrDefault(state.PassChance) + 1;
 			set.PassesCompleted++;
+			set.LastPassChance = state.PassChance;
 			state.Step = 0;
 			state.PassChance = 0;
 

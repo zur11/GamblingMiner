@@ -192,6 +192,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private Button _openCalendarNavigatorBtn;
 	private Button _openBetsExplorerBtn;
 	private MartingaleCalculator _martingaleCalculator;
+	private SigilOverlay _sigilOverlay;   // Graphic Numerology (P-GN.6), opened over this screen like the calculator
 
 	// --- Game components ---
 	// (The 100-cell PreviousWinnerNumbersGrid export was removed by mini-plan 25 17.A2: DiceGame's Numbers views are the
@@ -286,6 +287,7 @@ public partial class DiceGame : Control, IBetEventSource
 		_saveStrategyBtn = GetNode<Button>("%SaveStrategyBtn");
 		_loadStrategyBtn = GetNode<Button>("%LoadStrategyBtn");
 		_martingaleCalculator = GetNode<MartingaleCalculator>("%MartingaleCalculator");
+		_sigilOverlay = GetNode<SigilOverlay>("%SigilOverlay");
 		_financialStats = GetNode<FinancialBettingStats>("%FinancialBettingStats");
 		_sceneManager = GetNodeOrNull<SceneManager>("/root/SceneManager");
 
@@ -311,6 +313,8 @@ public partial class DiceGame : Control, IBetEventSource
 		_saveStrategyBtn.Pressed += OnSaveStrategyPressed;
 		_loadStrategyBtn.Pressed += OnLoadStrategyPressed;
 		_martingaleCalculator.CloseRequested += OnCalculatorCloseRequested;
+		GetNode<Button>("%OpenSigilsBtn").Pressed += () => _sigilOverlay.Open();
+		_sigilOverlay.CloseRequested += () => _sigilOverlay.Close();
 		_wallet.BalanceDeltaChanged += OnBalanceDeltaChanged;
 		_wallet.BalanceDeltaChanged += (_, _) => _bankrollStateService?.SetBalance(_wallet.Balance);
 		_betHistoryContainer.SubscribeTo(this);

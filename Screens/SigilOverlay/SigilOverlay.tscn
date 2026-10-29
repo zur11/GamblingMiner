@@ -1,0 +1,119 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Screens/SigilOverlay/SigilOverlay.cs" id="1_sgovl"]
+[ext_resource type="Script" path="res://Screens/SigilOverlay/SigilCanvas.cs" id="2_sgcnv"]
+
+[node name="SigilOverlay" type="Control"]
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+script = ExtResource("1_sgovl")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.72)
+
+[node name="Panel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -900.0
+offset_top = -500.0
+offset_right = 900.0
+offset_bottom = 440.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="Panel"]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 24
+
+[node name="VBox" type="VBoxContainer" parent="Panel/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="SigilTitle" type="Label" parent="Panel/MarginContainer/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "Sigil"
+
+[node name="Body" type="HBoxContainer" parent="Panel/MarginContainer/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 24
+
+[node name="SigilCanvas" type="Control" parent="Panel/MarginContainer/VBox/Body"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(760, 760)
+layout_mode = 2
+mouse_filter = 2
+script = ExtResource("2_sgcnv")
+
+[node name="Details" type="VBoxContainer" parent="Panel/MarginContainer/VBox/Body"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12
+
+[node name="SigilStatusLabel" type="RichTextLabel" parent="Panel/MarginContainer/VBox/Body/Details"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 220)
+layout_mode = 2
+theme_override_font_sizes/normal_font_size = 20
+theme_override_font_sizes/bold_font_size = 20
+bbcode_enabled = true
+scroll_active = false
+
+[node name="SigilSetsLabel" type="RichTextLabel" parent="Panel/MarginContainer/VBox/Body/Details"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_font_sizes/normal_font_size = 19
+theme_override_font_sizes/bold_font_size = 19
+bbcode_enabled = true
+
+[node name="SigilChainLabel" type="RichTextLabel" parent="Panel/MarginContainer/VBox/Body/Details"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 240)
+layout_mode = 2
+theme_override_font_sizes/normal_font_size = 20
+theme_override_font_sizes/bold_font_size = 20
+bbcode_enabled = true
+scroll_active = false
+
+[node name="SigilCompletedLabel" type="RichTextLabel" parent="Panel/MarginContainer/VBox/Body/Details"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 100)
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_font_sizes/normal_font_size = 18
+theme_override_font_sizes/bold_font_size = 18
+bbcode_enabled = true
+
+[node name="Footer" type="HBoxContainer" parent="Panel/MarginContainer/VBox"]
+layout_mode = 2
+alignment = 2
+
+[node name="CloseSigilsButton" type="Button" parent="Panel/MarginContainer/VBox/Footer"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 48)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Close"

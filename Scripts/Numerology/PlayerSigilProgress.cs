@@ -26,9 +26,33 @@ namespace Scripts.Numerology
 		// that mines a block is inside that block's checkpoint.
 		public static void RegisterPlayerBet(BetTransactionEvent bet)
 		{
-			LastOutcome = SigilRules.ApplyBet(State, bet.Roll, bet.IsWin, bet.Chance, bet.BetAmount, bet.Timestamp);
+			int sigilIndex = State.SigilIndex;
+			LastOutcome = SigilRules.ApplyBet(State, bet.Roll, bet.IsWin, bet.Chance, bet.BetAmount, bet.Timestamp, out SigilStep step);
+			if (sigilIndex < PlanetarySquares.SigilCount)
+			{
+				_recentSteps[_recentNext] = step;
+				_recentNext = (_recentNext + 1) % RecentStepCapacity;
+				if (_recentCount < RecentStepCapacity) _recentCount++;
+			}
+
 			if (LastOutcome != SigilBetOutcome.None)
 				Changed?.Invoke(LastOutcome);
+		}
+
+		// D-GN.21 — the latest bets' operations on V, for the overlay's chain. A fixed ring written in place: O(1) and no
+		// allocation per bet. In memory only — a restart starts the chain empty, which is honest: it shows bets, not state.
+		public const int RecentStepCapacity = 16;
+		private static readonly SigilStep[] _recentSteps = new SigilStep[RecentStepCapacity];
+		private static int _recentNext;
+		private static int _recentCount;
+
+		// Copies the latest `count` operations into `buffer`, oldest first; returns how many it copied.
+		public static int CopyRecentSteps(SigilStep[] buffer, int count)
+		{
+			int n = Math.Min(Math.Min(count, _recentCount), buffer.Length);
+			for (int i = 0; i < n; i++)
+				buffer[i] = _recentSteps[(_recentNext - n + i + RecentStepCapacity) % RecentStepCapacity];
+			return n;
 		}
 
 		// A copy: the live state keeps changing after the block, and the snapshot must describe the block.
@@ -40,6 +64,7 @@ namespace Scripts.Numerology
 		{
 			State = snapshot == null ? SigilRules.NewProgress() : Clone(snapshot);
 			LastOutcome = SigilBetOutcome.None;
+			_recentCount = 0;   // the chain described the world before the restore
 			Changed?.Invoke(SigilBetOutcome.None);
 		}
 

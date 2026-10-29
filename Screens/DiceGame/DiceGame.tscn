@@ -1,10 +1,11 @@
-[gd_scene load_steps=6 format=3 uid="uid://c711y35rvk5gf"]
+[gd_scene load_steps=7 format=3 uid="uid://c711y35rvk5gf"]
 
 [ext_resource type="Script" uid="uid://xajt8o8kkn0y" path="res://Screens/DiceGame/DiceGame.cs" id="1_k3ff0"]
 [ext_resource type="PackedScene" uid="uid://cc4mcdfki2u7r" path="res://Screens/DiceGame/BetHistoryUi/BetHistoryContainer.tscn" id="3_usic0"]
 [ext_resource type="PackedScene" uid="uid://c2crwe1sryeto" path="res://UI/FinancialBettingStats/FinancialBettingStats.tscn" id="5_ne2vn"]
 [ext_resource type="PackedScene" uid="uid://drs5mewqvl7kt" path="res://UI/StrategyControlPanel/StrategyControlPanel.tscn" id="6_8x8ps"]
 [ext_resource type="PackedScene" path="res://Screens/MartingaleCalculator/MartingaleCalculator.tscn" id="7_k23np"]
+[ext_resource type="PackedScene" path="res://Screens/SigilOverlay/SigilOverlay.tscn" id="8_sgovl"]
 
 [node name="DiceGame" type="Control" node_paths=PackedStringArray("_betHistoryContainer", "_previousWinnerNumbersGrid", "_strategyPanel")]
 layout_mode = 3
@@ -333,6 +334,16 @@ offset_bottom = 46.0
 theme_override_font_sizes/font_size = 19
 text = "Martingale Calc"
 
+[node name="OpenSigilsBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 1392.0
+offset_top = 382.0
+offset_right = 1733.0
+offset_bottom = 420.0
+theme_override_font_sizes/font_size = 19
+text = "Sigils"
+
 [node name="OpenCalendarNavigatorBtn" type="Button" parent="."]
 unique_name_in_owner = true
 layout_mode = 0
@@ -399,5 +410,9 @@ offset_right = 348.19995
 offset_bottom = -6.76001
 
 [node name="MartingaleCalculator" parent="." instance=ExtResource("7_k23np")]
+unique_name_in_owner = true
+layout_mode = 1
+
+[node name="SigilOverlay" parent="." instance=ExtResource("8_sgovl")]
 unique_name_in_owner = true
 layout_mode = 1

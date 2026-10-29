@@ -55,6 +55,9 @@ namespace Scripts.Numerology
 		public double GameSeconds { get; set; }
 		public int PassesCompleted { get; set; }
 		public int PassRestarts { get; set; }
+
+		// The chance of its latest completed pass — the colour an unfinished set is drawn in (D-GN.8). 0 = none yet.
+		public int LastPassChance { get; set; }
 	}
 
 	public sealed class CompletedSigilRecord

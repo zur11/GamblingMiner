@@ -46,6 +46,11 @@ namespace Scripts.Numerology
 
 		public string SigilName(SigilKind kind) => kind == SigilKind.Diurnal ? DiurnalSigilName : NocturnalSigilName;
 
+		// A luminary's missing domicile is filled by its own sign, eclipsed (D-GN.3): the Sun's night, the Moon's day.
+		// The overlay's background is day, night or eclipse accordingly.
+		public bool IsEclipsed(SigilKind kind) =>
+			(Planet == "Sun" && kind == SigilKind.Nocturnal) || (Planet == "Moon" && kind == SigilKind.Diurnal);
+
 		// The number at step `step` of set `set` (both 0-based), in drawing order (D-GN.6, D-GN.17).
 		// Diurnal set g: (g−1)·n + 1 … g·n. Nocturnal set g: g, g + n … g + (n−1)·n. Computed, not stored: it runs on
 		// every bet.
