@@ -278,6 +278,28 @@ public partial class UserStatsService : Node
 		// because both funnel through this method before their mining attempt — so the bet that mines a block is in
 		// that block's checkpoint, and a third caller cannot forget it.
 		Scripts.Numerology.PlayerSigilProgress.RegisterPlayerBet(bet);
+		var sigilOutcome = Scripts.Numerology.PlayerSigilProgress.LastOutcome;
+		if (sigilOutcome != Scripts.Numerology.SigilBetOutcome.None)
+			LogSigilOutcome(sigilOutcome);
+	}
+
+	// Graphic Numerology (unit 5) — what godot.log gets, for a measurement read afterwards. A completed sigil always; a
+	// completed pass or a restart only in DEBUG, since at 95% that is a line every ~28 bets.
+	private static void LogSigilOutcome(Scripts.Numerology.SigilBetOutcome outcome)
+	{
+		var state = Scripts.Numerology.PlayerSigilProgress.State;
+		if ((outcome & Scripts.Numerology.SigilBetOutcome.SigilCompleted) != 0 && state.Completed.Count > 0)
+			GD.Print("[Sigil] SIGIL COMPLETE — " + Scripts.Numerology.SigilRules.Describe(state.Completed[^1]));
+		LogSigilPassOrRestart(outcome, state);
+	}
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	private static void LogSigilPassOrRestart(Scripts.Numerology.SigilBetOutcome outcome, Scripts.Numerology.SigilProgressState state)
+	{
+		if ((outcome & Scripts.Numerology.SigilBetOutcome.SetPassCompleted) != 0)
+			GD.Print("[Sigil] pass complete — " + Scripts.Numerology.SigilRules.Describe(state));
+		else if ((outcome & Scripts.Numerology.SigilBetOutcome.PassRestarted) != 0)
+			GD.Print("[Sigil] pass restarted (chance changed) — " + Scripts.Numerology.SigilRules.Describe(state));
 	}
 
 	public void RegisterDeposit(decimal amount, decimal balanceAfter, DateTime timestampUtc)

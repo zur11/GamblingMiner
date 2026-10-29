@@ -98,6 +98,7 @@ public partial class BlockSessionCheckpointService : Node
 		GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")
 			?.ResetToPreGenesisDefaults(); // Step 13 (SW.0): reserves 0, fee 10%, floor OFF, history cleared
 		Scripts.Numerology.PlayerSigilProgress.ResetToPreGenesisDefaults(); // Graphic Numerology: nothing drawn yet
+		GD.Print("[Sigil] pre-genesis reset at boot — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.State));
 
 		// ND.8c note: ScMonetaryLedgerService.ResetToPreGenesisDefaults() runs at the END of this method
 		// (after the calendar reset below) so its re-registered genesis-grant events carry the player-start
@@ -175,6 +176,8 @@ public partial class BlockSessionCheckpointService : Node
 			// (must run AFTER the CentralBankService restore above — the live-state init and the reconcile
 			//  both read the FED's casino account, P15.1c)
 		Scripts.Numerology.PlayerSigilProgress.RestoreFromCheckpoint(CurrentSnapshot.SigilProgress); // null → fresh progress
+		GD.Print("[Sigil] restored at boot" + (CurrentSnapshot.SigilProgress == null ? " (no sigil progress in this checkpoint: fresh)" : "")
+			+ " — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.State));
 
 		// Restored BEFORE the bet-history rollback just below (at boot since mini-plan 22 B; it used to wait for the
 		// first DiceGame entry). The rollback does not re-derive the rollup from the journal (mini-plan 08 D1), so
@@ -301,6 +304,7 @@ public partial class BlockSessionCheckpointService : Node
 
 		SaveState();
 		Scripts.Diagnostics.RankCalibrationTrace.WriteBlockRow(CurrentSnapshot);   // DEBUG-only, mini-plan 25 §9
+		GD.Print("[Sigil] checkpoint — " + Scripts.Numerology.SigilRules.Describe(CurrentSnapshot.SigilProgress));
 		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[Checkpoint] CAPTURED — PlayerBankroll={CurrentSnapshot.BankrollBalance:F8}  PlayerMain={CurrentSnapshot.PrincipalBalance:F8}  CasinoMain={CurrentSnapshot.CasinoScMainBalance:F8}  CasinoBankroll={CurrentSnapshot.CasinoScBankroll:F8}"));
 	}
 

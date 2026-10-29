@@ -997,6 +997,7 @@ public partial class SimulationService : Node
 			&& _session.SessionConfig?.StopOnSigilSetCompleted == true)
 		{
 			_session.Stop(IBettingStrategy.StopReason.StopOnSigilSetCompleted);
+			GD.Print("[Sigil] STOP on set completed (autobet) — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.State));
 		}
 		// The block path gets its OWN segment, separate from the attempt above. Both readings are honest and
 		// they answer different questions: amortised over thousands of bets this is a few µs (the cost every

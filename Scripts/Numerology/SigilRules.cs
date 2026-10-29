@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Numerics;
+using System.Text;
 using Scripts.Finance;
 
 namespace Scripts.Numerology
@@ -243,6 +246,36 @@ namespace Scripts.Numerology
 			foreach (var set in state.Sets)
 				sum += SetCompletion(set);
 			return sum / state.Sets.Count;
+		}
+
+		// One line for godot.log (unit 5's measurement reads it afterwards): the sigil, its counters, V and the target,
+		// the pass in progress, and every set as passes / completion / restarts.
+		public static string Describe(SigilProgressState state)
+		{
+			if (state.AllComplete)
+				return string.Create(CultureInfo.InvariantCulture, $"all sigils complete ({state.Completed.Count})");
+
+			var square = PlanetarySquares.PlanetOfSigil(state.SigilIndex);
+			var sets = new StringBuilder();
+			foreach (var set in state.Sets)
+				sets.Append(string.Create(CultureInfo.InvariantCulture,
+					$" [{set.PassesCompleted}p {SetCompletion(set) * 100:F1}% r{set.PassRestarts} {set.BetsPlaced}b]"));
+			return string.Create(CultureInfo.InvariantCulture,
+				$"{square.SigilName(PlanetarySquares.KindOfSigil(state.SigilIndex))}: bets={state.BetsPlaced} sc={state.ScWagered:F8} " +
+				$"v={state.V} streak={state.LossStreak} target={CurrentTarget(state)} pass={state.Step}@{state.PassChance} " +
+				$"completed={state.Completed.Count} sets:{sets}");
+		}
+
+		public static string Describe(CompletedSigilRecord record)
+		{
+			var square = PlanetarySquares.PlanetOfSigil(record.SigilIndex);
+			var sets = new StringBuilder();
+			foreach (var set in record.Sets)
+				sets.Append(string.Create(CultureInfo.InvariantCulture,
+					$" [{set.PassesCompleted}p r{set.PassRestarts} {set.BetsPlaced}b {string.Join(",", set.PassesByChance.Select(p => $"{p.Value}@{p.Key}"))}]"));
+			return string.Create(CultureInfo.InvariantCulture,
+				$"{square.SigilName(PlanetarySquares.KindOfSigil(record.SigilIndex))}: bets={record.BetsPlaced} sc={record.ScWagered:F8} " +
+				$"game-days={record.Sets.Sum(s => s.GameSeconds) / 86400:F2} sets:{sets}");
 		}
 
 		private static void StartSigil(SigilProgressState state, int sigilIndex)

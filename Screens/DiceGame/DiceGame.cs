@@ -2294,6 +2294,7 @@ public partial class DiceGame : Control, IBetEventSource
 				&& _session.SessionConfig?.StopOnSigilSetCompleted == true)
 			{
 				_session.Stop(IBettingStrategy.StopReason.StopOnSigilSetCompleted);
+				GD.Print("[Sigil] STOP on set completed (DiceGame) — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.State));
 			}
 			if (!suppressClockAdvance)
 				AdvanceClockForBet();

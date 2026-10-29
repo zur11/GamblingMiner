@@ -9,7 +9,7 @@ the tracking of bets, SC and each set's figures (§8). **§8's integration, P-GN
 with P-GN.6 an overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work.
 **Unit 1 is done (§10.1):** the squares and the rule are in `Scripts/Numerology/`, with each set's own figures
 (D-GN.20), and `Tools/SigilHarness` confirms Pr-2 to Pr-4. **Unit 2 is done (§10.2):** `PlayerSigilProgress` holds the
-progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Unit 4 is built (§10.4):** the overlay, awaiting the developer's first look. **Next: unit 5, the measurement.**
+progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Unit 4 is built (§10.4):** the overlay, awaiting the developer's first look. **Unit 5's protocol is written (§10.5): M1 and M2, Pr-1 and Pr-5 to Pr-8. Next: the developer runs it; Claude reads the logs.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -470,6 +470,10 @@ From §5–§7's Node model. A build that misses them is checked against the mod
 | Pr-2 | At 10% and above, a single-digit target is hit on **≈ 1 win in 9** | Checked by the harness over ≥ 100,000 simulated wins |
 | Pr-3 | Low and High cost the same, and so do the diurnal and nocturnal sigils of a planet | Harness: within sampling noise |
 | Pr-4 | At 1–9% every sigil finishes, at the same cost as above 9% (D-GN.13) | Harness: Moon at 1%, 2%, 5% finishes |
+| Pr-5 | *(registered 2026-10-29, unit 5)* At a constant 95%, a violet Aquarius has **exactly 95 passes in each set, all at 95%, and 0 restarts** | Any other count ⇒ the in-game rule differs from the harness's; the harness already shows exactly `c` |
+| Pr-6 | *(unit 5)* After a restart, the progress restored at boot is **identical** to the last block's checkpoint of the previous session — not to where the run ended, since bets after the last block are reverted by design | Any difference ⇒ a capture or restore bug; it blocks the close-out |
+| Pr-7 | *(unit 5)* With "Stop on Sigil Set Completed" ON, an autobet run stops **on the bet that completes a set pass** — after ~28 bets on average at 95% (3 hits × ≈ 9.5 bets), and almost never after more than 200 | A stop on any other bet, or no stop ⇒ a wiring bug in the stop |
+| Pr-8 | *(unit 5)* With a flat bet of 0.01 SC, a completed sigil's SC wagered is **exactly 0.01 × its bets** | Any other figure ⇒ the D-GN.19 tracking drifts |
 
 **In game time:** the violet Aquarius Sigil is ≈ 8,100 bets ≈ 810,000 game-seconds ≈ 9.4 game-days at one hardware
 credit; the seven complete planets, ≈ 3.3 million bets ≈ 10 game-years at one credit — fewer with more credits.
@@ -606,7 +610,56 @@ renders no clock); the harness passes, with new checks pinning `SigilStep` to th
 previous ended; a restore empties it). *One harness check failed on its first run, and the check was the fault
 (Standing Convention 16): it read the ring after a restore that empties it by design.*
 
-**Not yet seen in game.** Layout, fonts and colours are unverified until the developer opens it.
+**Not yet seen in game.** Layout, fonts and colours are unverified until the developer opens it. **The developer
+deferred that look to just before the close-out (2026-10-29).**
+
+### 10.5 Unit 5 — the measurement protocol (2026-10-29)
+
+**Instrumentation, so the run can be read afterwards** (the developer watches nothing while it goes). `GD.Print` lines
+in `godot.log`, each carrying `SigilRules.Describe` — the sigil, bets, SC, V, the loss streak, the target, the pass in
+progress, and every set as passes / completion / restarts / bets:
+
+| Line | When | Build |
+|---|---|---|
+| `[Sigil] checkpoint — …` | every block capture, beside `[Checkpoint] CAPTURED` | always |
+| `[Sigil] restored at boot — …` / `[Sigil] pre-genesis reset at boot — …` | at boot | always |
+| `[Sigil] SIGIL COMPLETE — …` | a sigil completes; each set also lists its passes by chance (`95@95`) | always |
+| `[Sigil] STOP on set completed (autobet \| DiceGame) — …` | the set stop fires | always |
+| `[Sigil] pass complete — …` / `[Sigil] pass restarted (chance changed) — …` | each pass, each restart | DEBUG only — at 95% a line every ~28 bets |
+
+The harness checks `Describe` carries the figures, in invariant format.
+
+**The protocol — two sessions, each set by a bet count or a stop, never by watching:**
+
+*Session M1 — Pr-1, Pr-5, Pr-8, and the checkpoint lines Pr-6 needs.*
+
+1. In the Godot editor, run the game (F5) — a fresh process, so the boot line records where Aquarius starts.
+2. Open **DiceGame** with the **player** as the active node.
+3. Set: **Bet amount `0.01`** · Increase on loss **blank** · Increase on win **blank** · **Number of bets `12000`** ·
+   Stop on profit **blank** · Stop on loss **blank** · **Stop Block OFF** · **Stop Set OFF** · **Auto Recharge ON** ·
+   **Chance `95`** · **Low**. Leave the speed and the hardware as they are: the run is set by its bet count.
+4. Press **AUTO**. Its own count ends it after 12,000 bets (Pr-1's upper bound, 8,900, plus margin).
+5. When the button reads AUTO again, **close the game window**.
+
+*Session M2 — Pr-6, Pr-7.*
+
+6. Run the game again (F5) and open **DiceGame**.
+7. The same settings, except **Number of bets `0`** and **Stop Set ON**.
+8. Press **AUTO**. It should stop by itself within seconds. Then **close the game window**.
+9. Say "done". **Claude reads** `user://logs/godot.log` (M2) and the log Godot rotated aside at M2's launch (M1).
+
+**How each prediction is read:**
+
+- **Pr-1:** M1's `SIGIL COMPLETE — Aquarius Sigil: bets=N`. If M1's boot line shows Aquarius **fresh** (bets=0, every
+  set 0p), N is compared with 7,300–8,900 directly. If not, the bets after boot are compared with what the boot state
+  had left: `Σ sets 95·(1 − completion) passes × 3 hits × 900/95 bets`.
+- **Pr-5:** the same line, every set `95p r0 … 95@95` (fresh start only); and **no** `pass restarted` line in M1.
+- **Pr-8:** the same line, `sc = 0.01 × bets` exactly.
+- **Pr-6:** M2's `restored at boot` line, after the dash, is identical to M1's **last** `[Sigil] checkpoint` line.
+- **Pr-7:** M2 holds exactly one `STOP on set completed (autobet)` line, and the `pass complete` line printed on the
+  same bet carries the same state; the bets between the boot line and the stop are counted from the two `bets=` fields.
+
+**Deferred to just before the close-out (developer, 2026-10-29):** the first look at the overlay (§10.4).
 
 A win is a contiguous roll range (`DiceEngine.GetWinningRange`), and only a range of **at least nine consecutive
 rolls** holds every digital root. Below 9%, some units digits can never be the root of a winning roll — at 1%, Low wins

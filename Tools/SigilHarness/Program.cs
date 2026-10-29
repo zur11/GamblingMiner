@@ -188,6 +188,14 @@ Console.WriteLine("\n6. Per-set tracking (D-GN.20): the sets add up to the sigil
 		Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
 			$"  {i + 1,3}  {s.PassesCompleted,6}  {s.PassRestarts,8}  {s.BetsPlaced,8:N0}  {(double)s.BetsPlaced / rec.BetsPlaced,6:P1}  {s.GameSeconds / 86400,12:F2}"));
 	Check(SigilRules.SigilCompletion(st) == 0.0 && st.SigilIndex == 1, "the next sigil (Capricorn) starts at 0%");
+	// The godot.log lines unit 5 reads: they must carry the figures the analysis needs, in invariant format.
+	string completed = SigilRules.Describe(rec), live = SigilRules.Describe(st);
+	Console.WriteLine("  log: SIGIL COMPLETE — " + completed);
+	Console.WriteLine("  log: " + live);
+	Check(completed.StartsWith("Aquarius Sigil: bets=" + rec.BetsPlaced) && completed.Contains("@40") && completed.Contains("@50")
+		&& live.StartsWith("Capricorn Sigil: bets=0 ")
+		&& completed.Contains("sc=" + rec.ScWagered.ToString("F8", CultureInfo.InvariantCulture) + " ") && live.Contains("sc=0.00000000 "),
+		"Describe() carries the sigil, its bets and each set's passes by chance, invariant (no decimal comma)");
 }
 
 Console.WriteLine("\n7. The checkpoint round trip (P-GN.4, D-GN.11)");
