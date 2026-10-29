@@ -3,11 +3,12 @@
 **Series note:** a full plan, not a mini-plan. It pauses the run of technical mini-plans (25–29) to open a new goal
 in `PRIVATE_ROADMAP.md`: bringing the developer's other project, *Numerología Gráfica*, into the game.
 
-**Status:** 📝 **SPECIFIED 2026-10-28.** The design is decided, D-GN.1–D-GN.19: the zodiac sigils (§4), the drawing
+**Status:** 📝 **SPECIFIED 2026-10-28.** The design is decided, D-GN.1–D-GN.20: the zodiac sigils (§4), the drawing
 rule, balanced at the same cost at every chance (§5–§6), the Low/High choice (§6.3), the order of the sigils (§7) and
-the tracking of bets and SC (§8). **§8's integration, P-GN.1–P-GN.7, is approved (2026-10-29)**, with P-GN.6 an
+the tracking of bets, SC and each set's figures (§8). **§8's integration, P-GN.1–P-GN.7, is approved (2026-10-29)**, with P-GN.6 an
 overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work. **Unit 1 is done (§10.1): the squares and the rule are
-in `Scripts/Numerology/`, and the harness confirms Pr-2 to Pr-4. Next: unit 2, the state and the hook.**
+in `Scripts/Numerology/`, with each set's own figures (D-GN.20), and `Tools/SigilHarness` confirms Pr-2 to Pr-4.
+Next: unit 2, the state and the hook.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -428,6 +429,14 @@ two sigils.** "Bets placed" counts every player bet while that sigil is the one 
 first roll to its completion. Both figures are part of the persisted progress (D-GN.11), and the bet count is what the
 in-game measurement reads against §9. *(Developer, 2026-10-29; "attempts" read as bets.)*
 
+**D-GN.20 — every set keeps its own figures, and the overlay compares them.** For each set: the **passes** it took to
+reach violet, the **bets** placed and **SC** wagered while it was the set being drawn, the **game time** between those
+bets, and the **restarts** a chance change cost it. The sigil's figures are the sum of its sets, and a completed sigil
+keeps each set's figures, so the sets can be compared after the fact. The overlay shows, **live**, each set's and the
+sigil's completion and what remains, in percent, and compares the sets with each other — which took more passes,
+bets or time — as shares of the sigil. *(Developer, 2026-10-29.)* Completion counts completed passes only, since the
+pass in progress can still be lost to a chance change (D-GN.9); the overlay shows that pass separately.
+
 **P-GN.7 — bots are out of the first build** (D-GN.18). They are Dice-only and their bets already pass through
 `SimulationService`, so joining later looks cheap; whether it is, is a question for after the tests.
 
@@ -483,6 +492,25 @@ never finish. `dotnet build` clean; locale detector at its baseline, 17 / 0 / 0 
   15% of the prediction (worst 14.1%). At 5% and above the spread is within ~8%; the widest cells are at 1%, where a
   violet sigil is a single pass and 6 runs leave ~6% (1σ) of sampling noise. Moon, for example: predicted 533,700 —
   519,190 · 554,528 · 550,444 · 541,680 · 532,951 · 531,071 across the six settings.
+
+**Unit 1b — the per-set figures (D-GN.20) and the harness in the repository (2026-10-29).** `SigilSetProgress` now
+carries each set's bets, SC, game time, passes and restarts; `CompletedSigilRecord` keeps the sets, its start and its
+completion; `SigilRules.SigilCompletion` gives the live percentage. A bet's game time is the gap since the previous
+bet, credited to the set it lands on — game time passes only as bets are simulated (the 100-second rule), so the gaps
+add up to the sigil's time.
+
+The harness is now **`Tools/SigilHarness`** (`dotnet run -c Release` in its folder), excluded from the game build by
+`GamblingMiner.csproj`'s `Compile Remove="Tools\**\*.cs"` and from the Godot editor by a `.gdignore`. Two changes on
+the way in:
+
+- **The tolerance of the Pr-3 / Pr-4 check was the thing that was wrong (Standing Convention 16).** A fixed 15% was
+  ~1.5σ for Aries at 1%, where a violet sigil is one pass: it passed twice by luck (worst 14.1% both times) and would
+  have failed about half its runs with the rule correct. It is now 4σ, with σ computed for each cell from its own
+  expected noise (each target hit `c` times; a geometric's sd ≈ its mean). Four runs: worst 2.11σ, 2.72σ, 2.38σ,
+  2.73σ, each time in a different cell — noise, not bias.
+- **A new check, 6:** an Aquarius run at one bet per 100 game-seconds, with a forced chance change: the sets' bets,
+  SC and game time add up exactly to the sigil's, and every set ends at 100%. One run: 48 passes per set, 1 restart,
+  bets split 32.7% / 31.6% / 35.7%, 2.96 / 2.86 / 3.24 game-days.
 
 A win is a contiguous roll range (`DiceEngine.GetWinningRange`), and only a range of **at least nine consecutive
 rolls** holds every digital root. Below 9%, some units digits can never be the root of a winning roll — at 1%, Low wins

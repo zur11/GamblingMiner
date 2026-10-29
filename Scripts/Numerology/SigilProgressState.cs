@@ -31,6 +31,10 @@ namespace Scripts.Numerology
 		public long BetsPlaced { get; set; }
 		public decimal ScWagered { get; set; }
 
+		// Game time of this sigil's first bet and of its latest one (D-GN.20). Default = no bet yet.
+		public DateTime StartedAtUtc { get; set; }
+		public DateTime LastBetAtUtc { get; set; }
+
 		public List<CompletedSigilRecord> Completed { get; set; } = new();
 
 		public bool AllComplete => SigilIndex >= PlanetarySquares.SigilCount;
@@ -41,6 +45,14 @@ namespace Scripts.Numerology
 		// Completed passes, by the chance they were drawn at. The set is finished when Σ passes / chance ≥ 1 (D-GN.8).
 		public Dictionary<int, int> PassesByChance { get; set; } = new();
 		public bool Finished { get; set; }
+
+		// D-GN.20: what this set cost — every bet placed while it was the set being drawn, the SC those bets wagered,
+		// the game time between them, its completed passes at any chance, and the passes a chance change threw away.
+		public long BetsPlaced { get; set; }
+		public decimal ScWagered { get; set; }
+		public double GameSeconds { get; set; }
+		public int PassesCompleted { get; set; }
+		public int PassRestarts { get; set; }
 	}
 
 	public sealed class CompletedSigilRecord
@@ -49,7 +61,11 @@ namespace Scripts.Numerology
 		public long BetsPlaced { get; set; }
 		public decimal ScWagered { get; set; }
 
-		// Game time — the timestamp of the bet that completed it (Pattern 2), never wall-clock.
+		// Game time — the timestamps of its first bet and of the bet that completed it (Pattern 2), never wall-clock.
+		public DateTime StartedAtUtc { get; set; }
 		public DateTime CompletedAtUtc { get; set; }
+
+		// Each set's final figures, kept so the sets can be compared after the sigil is done (D-GN.20).
+		public List<SigilSetProgress> Sets { get; set; } = new();
 	}
 }

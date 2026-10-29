@@ -63,8 +63,20 @@ namespace Scripts.Numerology
 				return SigilBetOutcome.None;
 
 			var outcome = SigilBetOutcome.None;
+			var currentSet = state.Sets[state.SetIndex];
 			state.BetsPlaced++;
 			state.ScWagered = Money.Normalize(state.ScWagered + betAmount);
+			currentSet.BetsPlaced++;
+			currentSet.ScWagered = Money.Normalize(currentSet.ScWagered + betAmount);
+
+			// The time since the previous bet belongs to the set this bet lands on. Game time passes only as bets are
+			// simulated (the 100-second rule), so the gaps add up to the time the sigil took. A negative gap would be a
+			// rewound clock; it is not counted rather than subtracted.
+			if (state.LastBetAtUtc == default)
+				state.StartedAtUtc = timestampUtc;
+			else if (timestampUtc > state.LastBetAtUtc)
+				currentSet.GameSeconds += (timestampUtc - state.LastBetAtUtc).TotalSeconds;
+			state.LastBetAtUtc = timestampUtc;
 
 			// D-GN.9: a pass belongs to one chance; a change before it completes sends the target back to the set's
 			// first number. V is untouched — only a new sigil resets it. Low ↔ High is NOT a change (D-GN.14).
@@ -72,6 +84,7 @@ namespace Scripts.Numerology
 			{
 				state.Step = 0;
 				state.PassChance = 0;
+				currentSet.PassRestarts++;
 				outcome |= SigilBetOutcome.PassRestarted;
 			}
 
@@ -122,6 +135,7 @@ namespace Scripts.Numerology
 			var outcome = SigilBetOutcome.SetPassCompleted;
 			var set = state.Sets[state.SetIndex];
 			set.PassesByChance[state.PassChance] = set.PassesByChance.GetValueOrDefault(state.PassChance) + 1;
+			set.PassesCompleted++;
 			state.Step = 0;
 			state.PassChance = 0;
 
@@ -148,7 +162,9 @@ namespace Scripts.Numerology
 				SigilIndex = state.SigilIndex,
 				BetsPlaced = state.BetsPlaced,
 				ScWagered = state.ScWagered,
-				CompletedAtUtc = timestampUtc
+				StartedAtUtc = state.StartedAtUtc,
+				CompletedAtUtc = timestampUtc,
+				Sets = state.Sets   // StartSigil gives the next sigil a fresh list, so this one is no longer written
 			});
 			outcome |= SigilBetOutcome.SigilCompleted;
 
@@ -185,6 +201,19 @@ namespace Scripts.Numerology
 			return set.Finished ? 1.0 : Math.Min(sum, 1.0);
 		}
 
+		// For display only: the sigil's completion, 0–1 — its sets weigh the same, as each needs the same passes.
+		// Counts completed passes only; the pass in progress can still be lost to a chance change.
+		public static double SigilCompletion(SigilProgressState state)
+		{
+			if (state.AllComplete || state.Sets.Count == 0)
+				return state.AllComplete ? 1.0 : 0.0;
+
+			double sum = 0;
+			foreach (var set in state.Sets)
+				sum += SetCompletion(set);
+			return sum / state.Sets.Count;
+		}
+
 		private static void StartSigil(SigilProgressState state, int sigilIndex)
 		{
 			state.SigilIndex = sigilIndex;
@@ -195,6 +224,8 @@ namespace Scripts.Numerology
 			state.PassChance = 0;
 			state.BetsPlaced = 0;
 			state.ScWagered = 0m;
+			state.StartedAtUtc = default;
+			state.LastBetAtUtc = default;
 			state.Sets = new List<SigilSetProgress>();
 			if (state.AllComplete)
 				return;

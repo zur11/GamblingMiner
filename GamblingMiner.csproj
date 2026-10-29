@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="Screens\Shared\MartingaleCalculatorSnapshot\**\*.cs" />
+    <Compile Remove="Tools\**\*.cs" />
   </ItemGroup>
 </Project>

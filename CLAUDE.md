@@ -564,7 +564,7 @@ Full inventory (every `SceneId`, its path verified), the navigation map and the 
 
 ## Testing
 
-**Status**: _[Pending — no test framework configured yet. Document test approach here once established.]_
+**Status**: no test framework yet (P9). **One harness exists:** `Tools/SigilHarness` checks `Scripts/Numerology/` against the Graphic Numerology plan's predictions — run `dotnet run -c Release` in its folder. It compiles the game files it needs by `Compile Include`; `GamblingMiner.csproj` excludes `Tools/**/*.cs` from the game build.
 
 ---
 

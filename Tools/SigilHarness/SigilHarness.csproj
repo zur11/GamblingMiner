@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Graphic Numerology harness (AIHelperFiles/graphic_numerology-plan.md §10.1). Compiles the game's own rule files,
+       DiceEngine included, so every roll follows the game's rules. Run from this folder: dotnet run -c Release
+       Kept out of the game build by GamblingMiner.csproj's Compile Remove, and out of the Godot editor by .gdignore. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <Optimize>true</Optimize>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Scripts\Numerology\*.cs" />
+    <Compile Include="..\..\Scripts\Finance\Money.cs" />
+    <Compile Include="..\..\Scripts\Dice\DiceEngine.cs" />
+    <Compile Include="..\..\Scripts\Dice\DiceResult.cs" />
+  </ItemGroup>
+</Project>
