@@ -3,10 +3,10 @@
 **Series note:** a full plan, not a mini-plan. It pauses the run of technical mini-plans (25–29) to open a new goal
 in `PRIVATE_ROADMAP.md`: bringing the developer's other project, *Numerología Gráfica*, into the game.
 
-**Status:** 📝 **SPECIFIED 2026-10-28.** The design is decided, D-GN.1–D-GN.18: the zodiac sigils (§4), the drawing
-rule, balanced at the same cost at every chance (§5–§6), the Low/High choice (§6.3) and the order of the sigils (§7).
-§8 proposes the integration (P-GN.1–P-GN.7, **not yet approved**), §9 registers the predictions and §10 the order of
-work. **Next: the developer reviews §8, then unit 1.**
+**Status:** 📝 **SPECIFIED 2026-10-28.** The design is decided, D-GN.1–D-GN.19: the zodiac sigils (§4), the drawing
+rule, balanced at the same cost at every chance (§5–§6), the Low/High choice (§6.3), the order of the sigils (§7) and
+the tracking of bets and SC (§8). **§8's integration, P-GN.1–P-GN.7, is approved (2026-10-29)**, with P-GN.6 an
+overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work. **Next: unit 1.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -244,7 +244,8 @@ restarts by itself: a strategy carries one fixed `WinningChance`, and its progre
 chance.
 
 **D-GN.11 — sigil progress is player state under the checkpoint rule (Pattern 2).** Persisted: every completed sigil
-**with the SC wagered completing it** (D-GN.16 adds the per-planet total), and every sigil in progress (V, the target, each set's accumulated passes and the
+**with the SC wagered and the bets placed completing it** (D-GN.16 and D-GN.19 add the per-planet totals), and every
+sigil in progress (V, the target, each set's accumulated passes and the
 pass in progress with its chance). A restart reverts it to the last mined block, like every other player-facing value;
 a player who resumes **at the same chance** continues the pass from that point. *(Developer, 2026-10-28.)* Pattern 2's
 three questions apply to the store when it is built: a `BlockSessionCheckpointService` restore path, a
@@ -370,10 +371,11 @@ same**, and a complete planet costs twice its diurnal sigil: Saturn ≈ 16,200 b
 
 ---
 
-## 8. Integration — proposals (not yet approved)
+## 8. Integration — approved
 
-The design above (§3–§7) is decided. **This section is Claude's proposal for how it enters the code, for the developer
-to approve or change unit by unit.** Each proposal names the code it relies on, read on 2026-10-28.
+The design above (§3–§7) is decided. **This section is how it enters the code. Claude proposed P-GN.1–P-GN.7, and the
+developer approved all seven on 2026-10-29, amending P-GN.6 and adding the tracking of D-GN.19.** Each proposal names
+the code it relies on, read on 2026-10-28.
 
 **P-GN.1 — one canonical declaration of the squares.** A static C# class holds the seven squares and their zodiac
 names; constants, groups, set lists and target orders are **derived** from it, never written twice (Standing
@@ -406,11 +408,24 @@ before `BlockSessionCheckpointService` (Important Patterns §5).
 saved with the strategy (`SavedBettingStrategy`), offered in the strategy panel, and **read from the session in a
 running path, never from the panel** (D-M2.8, the rule `StopOnBlockMined` already follows in both paths).
 
-**P-GN.6 — the sigil panel in `DiceGame`.** The square's grid, the set silhouette, the drawn lines in the colour of
-their chance, the current target, V (and L at 1–9%), each set's completed passes as a counter (D-GN.8), and the SC
-wagered. The day / night / eclipse backgrounds are textures still to be made. **`ProjectDesignManual.md` Chapter 29 is
-read before the scene is built.** The colour map: hue moves linearly over the 95 chances, red at 95%, green near 48%,
-violet at 1%; the exact hues are a build detail.
+**P-GN.6 — the sigil overlay over `DiceGame`, built like the Martingale calculator** *(amended by the developer,
+2026-10-29)*. It covers the DiceGame screen, so each sigil has room to be drawn large with its details live, and it is
+closed in one click to carry on playing. The pattern to follow is `MartingaleCalculator`: its own scene
+(`Screens/MartingaleCalculator/`), instanced in `DiceGame.tscn` with a unique name and hidden at start; DiceGame opens
+it from a button with `Open()` and closes it on its `CloseRequested` signal. **While hidden it does no work** — the
+calculator checks `IsVisibleInTree()` and builds lazily (mini-plan 21 E) — which matters more here, since the state it
+shows changes on every bet. The progress lives in the service (P-GN.4), so closing the overlay loses nothing.
+
+It shows: the square's grid, the set silhouette, the drawn lines in the colour of their chance, the current target,
+V (and L at 1–9%), each set's completed passes as a counter (D-GN.8), and the tracking of D-GN.19. The day / night /
+eclipse backgrounds are textures still to be made. **`ProjectDesignManual.md` Chapter 29 is read before the scene is
+built.** The colour map: hue moves linearly over the 95 chances, red at 95%, green near 48%, violet at 1%; the exact
+hues are a build detail.
+
+**D-GN.19 — each sigil tracks the bets placed on it and the SC wagered on it; a complete planet shows the sum of its
+two sigils.** "Bets placed" counts every player bet while that sigil is the one being drawn, won or lost, from its
+first roll to its completion. Both figures are part of the persisted progress (D-GN.11), and the bet count is what the
+in-game measurement reads against §9. *(Developer, 2026-10-29; "attempts" read as bets.)*
 
 **P-GN.7 — bots are out of the first build** (D-GN.18). They are Dice-only and their bets already pass through
 `SimulationService`, so joining later looks cheap; whether it is, is a question for after the tests.
