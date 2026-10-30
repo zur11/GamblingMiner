@@ -9,7 +9,9 @@ the tracking of bets, SC and each set's figures (§8). **§8's integration, P-GN
 with P-GN.6 an overlay like the Martingale calculator. §9 registers the predictions and §10 the order of work.
 **Unit 1 is done (§10.1):** the squares and the rule are in `Scripts/Numerology/`, with each set's own figures
 (D-GN.20), and `Tools/SigilHarness` confirms Pr-2 to Pr-4. **Unit 2 is done (§10.2):** `PlayerSigilProgress` holds the
-progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Unit 4 is built (§10.4):** the overlay, awaiting the developer's first look. **Unit 5's protocol is written (§10.5): M1 (three phases, accelerating from 1 credit at 100X) and M2, Pr-1 and Pr-5 to Pr-9. Next: the developer runs it; Claude reads the logs.**
+progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Unit 4 is built (§10.4):** the overlay, awaiting the developer's first look. **Unit 5 is measured (§10.5): Pr-1 and Pr-5 to Pr-9 hold** (Aquarius violet at 8,297 bets), with three findings
+recorded there. **Next: the overlay changes from the developer's notes on phase A (colour as progress, a clear per
+round, a preview of the next pass) — the colour rule awaits a decision — then unit 6.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -695,6 +697,41 @@ If a board vote opens, play pauses until the player votes, as always: vote, then
   two lines of the same sigil in the same phase, `Δ seconds / Δ bets` — seconds summed over the sigil's sets — should be
   **100 s in A, 10 s in B, 2 s in C**. Across a phase boundary, the idle time between the two runs must **not** appear
   in any set.
+
+#### Results — M1 and M2 (run 2026-10-29)
+
+Read by Claude from `godot2026-10-29T19.22.09.log` (M1, rotated aside at M2's launch), `godot.log` (M2) and
+`session_lifecycle_trace.csv` (each run's start and stop in game time). M1's boot line shows Aquarius **fresh**
+(`bets=0`, every set `0p`), so Pr-1 is read directly. Neither session holds a `pass restarted` line.
+
+| | Predicted | Measured | Verdict |
+|---|---|---|---|
+| Pr-1 | 8,100 bets, one run within 7,300–8,900 | **8,297** (+2.4%, ≈ +0.8σ) | holds |
+| Pr-5 | every set `95p r0 … 95@95` | `[95p r0 2806b 95@95] [95p r0 2929b 95@95] [95p r0 2562b 95@95]`; 0 restart lines | holds |
+| Pr-8 | `sc = 0.01 × bets` | `sc=82.97000000` for 8,297 bets | holds |
+| Pr-6 | M2's restore = M1's last checkpoint | identical after the dash: `bets=502 … [7p 7.4% r0 156b 15500s] [6p 6.3% r0 194b 19400s] [6p 6.3% r0 152b 15200s]` | holds |
+| Pr-7 | stops on the pass-completing bet, ~28 bets | one `STOP on set completed (autobet)` line, same state as the `pass complete` line at `bets=523` — **21 bets** after the restore; trace reason `StopOnSigilSetCompleted` | holds |
+| Pr-9 | 100 / 10 / 2 s a bet within a phase; idle time never counted | every Δ between two lines of one phase is **exactly** 100.00, 10.00 or 2.00; the ~3 real hours between phases A and B count **0** | holds, one residual (2 below) |
+
+**Three findings beyond the predictions:**
+
+1. **Phase B ran 1,000 bets, not 3,000** — inferred from the data, not asked: the trace has B lasting 10,013.8
+   game-seconds (18:25:48.042 → 21:12:41.825), 1,000 bets at 10 s plus finding 2's tail, and the pace changes from
+   10 s to 2 s between Aquarius's lines at bets 1,598 and 1,617. The boundaries were 600 / 1,600 / 10,000, not
+   600 / 3,600 / 12,000. No prediction depends on it: Aquarius completed in C either way, and Capricorn's last line
+   (`bets=1691`) fits 10,000 in all.
+2. **A run's stop carries up to one frame of world time into the next run's first gap.** The first bet of B came
+   11.35 s after A's last (not 10 s), the first of C ≈ 15.8 s after B's last (not 2 s). The surplus is one rendered
+   frame at the old run's scale: the trace stops A 1.347 game-seconds after its 600th bet (≈ 13.5 ms at 100X), B
+   13.783 s after its last (≈ 13.8 ms at 1000X) and C 171.4 s after its 8,400th (≈ 19 ms at 9000X). That frame is
+   world time the bots really simulated, not idle time, so Pr-9's premise stands; the residual is at most one frame
+   per run boundary — 15 s of Aquarius's 83,309. **Recorded, not fixed.**
+3. **The violet Aquarius was reverted by the restart — Pattern 2 as written, with a consequence for unit 6.** M1's
+   only checkpoints were at Aquarius bets 152, 497 and 502, all in phase A; no capture happened in the ~7.5 game-hours
+   of B and C (at A's rate, 3 in 16.7 h, about 1.3 were expected, so none is a ~26% outcome, not an anomaly). M2
+   therefore restored `bets=502`, and 8,297 bets of finished sigil are gone. Blocks come per game-time while bets per
+   game-time scale with credits, so **the more hardware, the more sigil progress rides uncommitted between blocks** —
+   at 50 credits, thousands of bets. A question for unit 6: whether the overlay should show how much is uncommitted.
 
 **Deferred to just before the close-out (developer, 2026-10-29):** the first look at the overlay (§10.4).
 
