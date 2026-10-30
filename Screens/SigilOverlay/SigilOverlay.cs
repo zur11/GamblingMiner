@@ -27,8 +27,17 @@ public partial class SigilOverlay : Control
 	private const string WinColor = "#4cc46a";
 	private const string MutedColor = "#9a9a9a";
 
+	private const string WarningColor = "#ff9a3c";
+
+	// The chance the player's NEXT bet will use (D-GN.22's preview): DiceGame supplies it — the running autobet's own
+	// chance while one runs (D-M2.8: a run is read from its session), the panel's otherwise, null when a bot is the
+	// active node and the player is not running (the panel then shows the bot's chance, which says nothing here).
+	public Func<int?> NextChanceProvider { get; set; }
+
 	private Label _title;
 	private SigilCanvas _canvas;
+	private SigilColorStrip _strip;
+	private RichTextLabel _previewLabel;
 	private RichTextLabel _statusLabel;
 	private RichTextLabel _setsLabel;
 	private RichTextLabel _chainLabel;
@@ -47,6 +56,8 @@ public partial class SigilOverlay : Control
 	{
 		_title = GetNode<Label>("%SigilTitle");
 		_canvas = GetNode<SigilCanvas>("%SigilCanvas");
+		_strip = GetNode<SigilColorStrip>("%SigilColorStrip");
+		_previewLabel = GetNode<RichTextLabel>("%SigilPreviewLabel");
 		_statusLabel = GetNode<RichTextLabel>("%SigilStatusLabel");
 		_setsLabel = GetNode<RichTextLabel>("%SigilSetsLabel");
 		_chainLabel = GetNode<RichTextLabel>("%SigilChainLabel");
@@ -131,9 +142,13 @@ public partial class SigilOverlay : Control
 			_statusLabel.Text = "Every planet is complete.";
 			_setsLabel.Text = string.Empty;
 			_chainLabel.Text = string.Empty;
-			SetTextKeepingScroll(_completedLabel, BuildCompleted(state));
+			_previewLabel.Text = string.Empty;
+			_strip.SetSteps(SigilRules.ColorSteps, -1);
+			SetTextKeepingScroll(_completedLabel, BuildCompleted(state), 3);
 			return;
 		}
+
+		_previewLabel.Text = BuildPreview(state, NextChanceProvider?.Invoke());
 
 		var square = PlanetarySquares.PlanetOfSigil(state.SigilIndex);
 		var kind = PlanetarySquares.KindOfSigil(state.SigilIndex);
@@ -147,10 +162,50 @@ public partial class SigilOverlay : Control
 		long secondsQuantum = _secondsQuantizer.NoteSample((long)sigilSeconds);
 
 		_statusLabel.Text = BuildStatus(state, square, kind, betsQuantum, satoshiQuantum, sigilSeconds, secondsQuantum);
-		SetTextKeepingScroll(_setsLabel, BuildSets(state, square, kind, betsQuantum, satoshiQuantum, sigilSeconds, secondsQuantum));
+		// One trailing line is enough for the sets: a small square's table then fits without a scroll at all.
+		SetTextKeepingScroll(_setsLabel, BuildSets(state, square, kind, betsQuantum, satoshiQuantum, sigilSeconds, secondsQuantum), 1);
 		_chainLabel.Text = BuildChain();
-		SetTextKeepingScroll(_completedLabel, BuildCompleted(state));
+		SetTextKeepingScroll(_completedLabel, BuildCompleted(state), 3);
 	}
+
+	// D-GN.22 — under the strip: where the set being drawn stands, where a pass at the chance the next bet will use takes
+	// it, and — when a pass is partly drawn at another chance — that betting now restarts THAT PASS alone. Every pass
+	// already completed stays; the new chance adds its own share on top of them (D-GN.8, D-GN.9).
+	private string BuildPreview(SigilProgressState state, int? nextChance)
+	{
+		var set = state.Sets[state.SetIndex];
+		int now = SigilRules.ColorStep(set);
+		string setName = string.Create(CultureInfo.InvariantCulture, $"[b]Set {state.SetIndex + 1}[/b]");
+		string standing = now == 0
+			? $"{setName}: no colour yet"
+			: string.Create(CultureInfo.InvariantCulture, $"{setName}: colour {Step(now)} of {SigilRules.ColorSteps}");
+
+		if (nextChance is not int chance)
+		{
+			_strip.SetSteps(now, -1);
+			return standing + $"\n[color={MutedColor}]Make the player the active node to preview the next pass.[/color]";
+		}
+
+		int after = SigilRules.ColorStepAfterPass(set, chance);
+		_strip.SetSteps(now, after);
+		string verb = state.Step > 0 && chance == state.PassChance ? "the pass in progress takes it to" : "a pass at that chance takes it to";
+		var sb = new StringBuilder(string.Create(CultureInfo.InvariantCulture,
+			$"{standing}  ·  next bet at [b]{chance}%[/b]: {verb} {Step(after)}"));
+
+		if (state.Step > 0 && chance != state.PassChance)
+		{
+			string numbers = state.Step == 1 ? "number hit at {0}% is lost" : "numbers hit at {0}% are lost";
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"\n[color={WarningColor}]Betting at {chance}% restarts this pass: its {state.Step} {string.Format(CultureInfo.InvariantCulture, numbers, state.PassChance)}. " +
+				$"The set keeps every pass already completed.[/color]"));
+		}
+
+		return sb.ToString();
+	}
+
+	private static string Step(int step) => step == 0
+		? "-"
+		: string.Create(CultureInfo.InvariantCulture, $"[color=#{SigilCanvas.ColorForStep(step).ToHtml(false)}][b]{step}[/b][/color]");
 
 	private static string BuildStatus(SigilProgressState state, PlanetarySquare square, SigilKind kind,
 		long betsQuantum, long satoshiQuantum, double sigilSeconds, long secondsQuantum)
@@ -169,10 +224,10 @@ public partial class SigilOverlay : Control
 
 		if (state.Step > 0)
 		{
-			string color = SigilCanvas.ColorForChance(state.PassChance).ToHtml(false);
+			string color = SigilCanvas.ColorForStep(SigilRules.ColorStepAfterPass(state.Sets[state.SetIndex], state.PassChance)).ToHtml(false);
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"Pass in progress: set {state.SetIndex + 1}, {state.Step} of {square.N} numbers, at [color=#{color}]{state.PassChance}%[/color]"));
-			sb.Append($"   [color={MutedColor}](lost if the chance changes)[/color]\n");
+			sb.Append($"   [color={MutedColor}](this pass alone is lost if the chance changes)[/color]\n");
 		}
 		else
 		{
@@ -203,8 +258,8 @@ public partial class SigilOverlay : Control
 	private static string BuildSets(SigilProgressState state, PlanetarySquare square, SigilKind kind,
 		long betsQuantum, long satoshiQuantum, double sigilSeconds, long secondsQuantum)
 	{
-		var sb = new StringBuilder("[b]Sets[/b]\n[table=8]");
-		foreach (string header in new[] { "Set", "Numbers", "Passes", "Done", "Bets", "Bets %", "Game days", "Restarts" })
+		var sb = new StringBuilder("[b]Sets[/b]\n[table=9]");
+		foreach (string header in new[] { "Set", "Numbers", "Passes", "Done", "Colour", "Bets", "Bets %", "Game days", "Restarts" })
 			sb.Append($"[cell][color={MutedColor}]{header}[/color]   [/cell]");
 
 		for (int set = 0; set < state.Sets.Count; set++)
@@ -212,9 +267,8 @@ public partial class SigilOverlay : Control
 			var progress = state.Sets[set];
 			bool current = set == state.SetIndex;
 			string numbers = string.Join("-", Enumerable.Range(0, square.N).Select(k => square.NumberAt(kind, set, k)));
-			string color = progress.Finished
-				? SigilCanvas.ColorForChance(1).ToHtml(false)
-				: progress.LastPassChance > 0 ? SigilCanvas.ColorForChance(progress.LastPassChance).ToHtml(false) : "bbbbbb";
+			int step = SigilRules.ColorStep(progress);
+			string color = step > 0 ? SigilCanvas.ColorForStep(step).ToHtml(false) : "bbbbbb";
 			// The set being drawn is the only row whose figures move with every bet; it takes the sampled quanta.
 			string bets = current ? CounterQuantizer.Format(progress.BetsPlaced, betsQuantum)
 				: progress.BetsPlaced.ToString("N0", CultureInfo.InvariantCulture);
@@ -225,7 +279,7 @@ public partial class SigilOverlay : Control
 
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"[cell]{mark}{set + 1}   [/cell][cell]{numbers}   [/cell][cell]{progress.PassesCompleted}   [/cell]" +
-				$"[cell][color=#{color}]{SigilRules.SetCompletion(progress) * 100:F1}%[/color]   [/cell][cell]{bets}   [/cell]" +
+				$"[cell][color=#{color}]{SigilRules.SetCompletion(progress) * 100:F1}%[/color]   [/cell][cell]{Step(step)}   [/cell][cell]{bets}   [/cell]" +
 				$"[cell]{share:F1}%   [/cell][cell]{days}   [/cell][cell]{progress.PassRestarts}[/cell]"));
 		}
 
@@ -326,11 +380,13 @@ public partial class SigilOverlay : Control
 	}
 
 	// Setting Text resets a RichTextLabel's scroll; keep it, and pad the last line clear of the edge (§29.3, traps 4–5).
-	private static void SetTextKeepingScroll(RichTextLabel label, string text)
+	// The padding is itself content: too much makes a table that fits scroll anyway, by the padding's own height — what
+	// hid the sets' header in the developer's first look (three lines of padding under a three-row table).
+	private static void SetTextKeepingScroll(RichTextLabel label, string text, int padLines)
 	{
 		VScrollBar scroll = label.GetVScrollBar();
 		double position = scroll.Value;
-		label.Text = text + "\n\n\n";
+		label.Text = text + new string('\n', padLines);
 		scroll.Value = position;
 	}
 }

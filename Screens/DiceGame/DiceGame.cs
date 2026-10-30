@@ -313,6 +313,12 @@ public partial class DiceGame : Control, IBetEventSource
 		_saveStrategyBtn.Pressed += OnSaveStrategyPressed;
 		_loadStrategyBtn.Pressed += OnLoadStrategyPressed;
 		_martingaleCalculator.CloseRequested += OnCalculatorCloseRequested;
+		// D-GN.22's preview: the chance the player's next bet will use — the running autobet's (D-M2.8), else the
+		// panel's while the player is the active node; a bot's panel says nothing about the player's sigil.
+		_sigilOverlay.NextChanceProvider = () =>
+			_simulationService?.IsRunning == true && _simulationService.CurrentConfig != null
+				? _simulationService.CurrentConfig.Chance
+				: IsPlayerActive() ? (int)_chanceSlider.Value : null;
 		GetNode<Button>("%OpenSigilsBtn").Pressed += () => _sigilOverlay.Open();
 		_sigilOverlay.CloseRequested += () => _sigilOverlay.Close();
 		_wallet.BalanceDeltaChanged += OnBalanceDeltaChanged;

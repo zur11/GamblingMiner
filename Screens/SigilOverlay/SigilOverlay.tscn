@@ -1,7 +1,8 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://Screens/SigilOverlay/SigilOverlay.cs" id="1_sgovl"]
 [ext_resource type="Script" path="res://Screens/SigilOverlay/SigilCanvas.cs" id="2_sgcnv"]
+[ext_resource type="Script" path="res://Screens/SigilOverlay/SigilColorStrip.cs" id="3_sgstr"]
 
 [node name="SigilOverlay" type="Control"]
 visible = false
@@ -59,12 +60,33 @@ layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 24
 
-[node name="SigilCanvas" type="Control" parent="Panel/MarginContainer/VBox/Body"]
+[node name="Drawing" type="VBoxContainer" parent="Panel/MarginContainer/VBox/Body"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SigilCanvas" type="Control" parent="Panel/MarginContainer/VBox/Body/Drawing"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(760, 760)
+custom_minimum_size = Vector2(620, 620)
 layout_mode = 2
 mouse_filter = 2
 script = ExtResource("2_sgcnv")
+
+[node name="SigilColorStrip" type="Control" parent="Panel/MarginContainer/VBox/Body/Drawing"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(620, 40)
+layout_mode = 2
+mouse_filter = 2
+script = ExtResource("3_sgstr")
+
+[node name="SigilPreviewLabel" type="RichTextLabel" parent="Panel/MarginContainer/VBox/Body/Drawing"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(620, 84)
+layout_mode = 2
+mouse_filter = 2
+theme_override_font_sizes/normal_font_size = 18
+theme_override_font_sizes/bold_font_size = 18
+bbcode_enabled = true
+scroll_active = false
 
 [node name="Details" type="VBoxContainer" parent="Panel/MarginContainer/VBox/Body"]
 layout_mode = 2
@@ -73,7 +95,7 @@ theme_override_constants/separation = 12
 
 [node name="SigilStatusLabel" type="RichTextLabel" parent="Panel/MarginContainer/VBox/Body/Details"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 220)
+custom_minimum_size = Vector2(0, 190)
 layout_mode = 2
 theme_override_font_sizes/normal_font_size = 20
 theme_override_font_sizes/bold_font_size = 20
@@ -91,7 +113,7 @@ bbcode_enabled = true
 
 [node name="SigilChainLabel" type="RichTextLabel" parent="Panel/MarginContainer/VBox/Body/Details"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 240)
+custom_minimum_size = Vector2(0, 270)
 layout_mode = 2
 theme_override_font_sizes/normal_font_size = 20
 theme_override_font_sizes/bold_font_size = 20

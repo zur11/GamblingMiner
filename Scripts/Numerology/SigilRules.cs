@@ -213,17 +213,68 @@ namespace Scripts.Numerology
 		// short forever (the Standing Convention 9 trap: a threshold on the noise of a division).
 		private static bool IsFinished(SigilSetProgress set)
 		{
+			var (numerator, denominator) = Progress(set);
+			return numerator >= denominator;
+		}
+
+		// A set's progress, Σ passes / chance, as an exact fraction: what IsFinished and the colour steps both read.
+		private static (BigInteger Numerator, BigInteger Denominator) Progress(SigilSetProgress set)
+		{
 			BigInteger numerator = 0, denominator = 1;
 			foreach (var (chance, passes) in set.PassesByChance)
-			{
-				numerator = numerator * chance + passes * denominator;
-				denominator *= chance;
-				var gcd = BigInteger.GreatestCommonDivisor(numerator, denominator);
-				numerator /= gcd;
-				denominator /= gcd;
-			}
+				(numerator, denominator) = Add(numerator, denominator, passes, chance);
+			return (numerator, denominator);
+		}
 
-			return numerator >= denominator;
+		private static (BigInteger, BigInteger) Add(BigInteger numerator, BigInteger denominator, int passes, int chance)
+		{
+			numerator = numerator * chance + passes * denominator;
+			denominator *= chance;
+			var gcd = BigInteger.GreatestCommonDivisor(numerator, denominator);
+			return gcd.IsZero ? (numerator, denominator) : (numerator / gcd, denominator / gcd);
+		}
+
+		// D-GN.22 — the colour is the set's progress on a 95-step rainbow: step = ⌊95 × Σ passes / chance⌋, the whole
+		// 95ths completed — 0 before any pass, 1 red … 95 violet. Rounding DOWN makes 95 mean finished and nothing else
+		// (⌊95p⌋ = 95 ⇔ p ≥ 1), and every pass reaches at least step 1 (the smallest pass, at 95%, is exactly 1/95).
+		// Computed from the same exact fraction as IsFinished, so the colour and the verdict can never disagree, and a
+		// step never goes down: passes are only ever added.
+		public const int ColorSteps = 95;
+
+		public static int ColorStep(SigilSetProgress set)
+		{
+			var (numerator, denominator) = Progress(set);
+			return set.Finished ? ColorSteps : StepOf(numerator, denominator);
+		}
+
+		// The step the set would reach with one more pass at this chance — the overlay's preview of the next pass.
+		public static int ColorStepAfterPass(SigilSetProgress set, int chance)
+		{
+			if (set.Finished)
+				return ColorSteps;
+			var (numerator, denominator) = Progress(set);
+			(numerator, denominator) = Add(numerator, denominator, 1, chance);
+			return StepOf(numerator, denominator);
+		}
+
+		private static int StepOf(BigInteger numerator, BigInteger denominator) =>
+			numerator >= denominator ? ColorSteps : (int)(ColorSteps * numerator / denominator);   // integer division floors
+
+		// D-GN.22 — the canvas shows one ROUND at a time: a round is one pass on every unfinished set, in the order the
+		// passes already cycle (D-GN.8). Within a round the sets already passed have one pass more than the rest, so
+		// this needs no stored state; when every unfinished set has the same count, the round has ended and the canvas
+		// is clear. A finished set is not part of any round (it stays drawn, violet).
+		public static bool PassedThisRound(SigilProgressState state, int setIndex)
+		{
+			var set = state.Sets[setIndex];
+			if (set.Finished)
+				return false;
+
+			int fewest = int.MaxValue;
+			foreach (var other in state.Sets)
+				if (!other.Finished && other.PassesCompleted < fewest)
+					fewest = other.PassesCompleted;
+			return set.PassesCompleted > fewest;
 		}
 
 		// For display only: how far a set is towards finished, 0–1.

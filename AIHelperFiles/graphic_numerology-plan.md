@@ -10,8 +10,8 @@ with P-GN.6 an overlay like the Martingale calculator. §9 registers the predict
 **Unit 1 is done (§10.1):** the squares and the rule are in `Scripts/Numerology/`, with each set's own figures
 (D-GN.20), and `Tools/SigilHarness` confirms Pr-2 to Pr-4. **Unit 2 is done (§10.2):** `PlayerSigilProgress` holds the
 progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Unit 4 is built (§10.4):** the overlay, awaiting the developer's first look. **Unit 5 is measured (§10.5): Pr-1 and Pr-5 to Pr-9 hold** (Aquarius violet at 8,297 bets), with three findings
-recorded there. **Next: the overlay changes from the developer's notes on phase A (colour as progress, a clear per
-round, a preview of the next pass) — the colour rule awaits a decision — then unit 6.**
+recorded there. **D-GN.22 is built (§10.6):** the colour is the set's progress in 95 steps, the canvas draws one
+round at a time, and a strip previews the next pass. **Next: the developer's look at the overlay, then unit 6.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -224,12 +224,14 @@ amounts the player does not control.
 ### 5.4 Colour, level and the restart — D-GN.7 to D-GN.10
 
 **D-GN.7 — the chance of the bets sets the colour, on a 95-step rainbow:** 1% violet, ~48% green, 95% red. **Violet is
-the top.** A sigil drawn at 1% is drawn once; at 95%, 95 times. *(Developer, 2026-10-28.)*
+the top.** A sigil drawn at 1% is drawn once; at 95%, 95 times. *(Developer, 2026-10-28.)* **Amended by D-GN.22
+(2026-10-29): the colour is the set's PROGRESS on the same rainbow, not the chance of its latest pass** — the two agree
+on a set's first pass only at 95% and 1%; the chance now decides how far each pass moves the colour.
 
 **D-GN.8 = B, balanced — a set needs as many complete passes as the chance it is drawn at.** A pass completed at chance
 `c` adds `1/c` of the set; **the set is finished when the sum over its completed passes reaches 1**, and then it is
-violet. Under a mix of chances, the colour of a pass in progress is its chance's colour, and completion is shown
-separately (e.g. a counter). Finished sets are skipped: the passes cycle through the unfinished sets in order until all
+violet. ~~Under a mix of chances, the colour of a pass in progress is its chance's colour, and completion is shown
+separately (e.g. a counter).~~ *Superseded by D-GN.22: the colour **is** the completion.* Finished sets are skipped: the passes cycle through the unfinished sets in order until all
 are finished — the whole sigil violet. *(Developer, 2026-10-28; alternative A, a linear level, was rejected because it
 did not balance — at ~48% it was 20–30× faster than at either extreme.)*
 
@@ -457,6 +459,28 @@ checked against V **before** the bet beside the root (D-GN.12), so the readout s
 number, not on the new V; and at autobet rate bets arrive far faster than the eye, so the chain is a **sampled**
 readout (§29.13, `ReadoutSampling`), never a log of every bet.
 
+**D-GN.22 — the colour shows the set's progress, and the canvas draws one round at a time.** *(Developer, 2026-10-29,
+from the first look at phase A; amends D-GN.7.)* Four parts:
+
+1. **Colour = progress, in 95 numbered steps, 1 red … 95 violet:** `step = ⌊95 × Σ passes / chance⌋`, the whole 95ths
+   completed, computed from the **same exact fraction** that decides a set is finished (D-GN.8) — so step 95 means
+   finished and nothing else, and a step never goes down. **The chance still decides the colour, through how far a
+   pass moves it:** a pass at `c` adds `95 / c` steps — 1 at 95%, 1.0106 at 94%, 1.9 at 50%, 9.5 at 10%, 95 at 1% — on
+   top of whatever the set already holds, at whatever chances those passes were drawn. *The developer first described
+   a pass at 94% adding 2/95 (a linear `(96 − c) / 95`); shown that it makes ~48% about 24× cheaper than either
+   extreme — the rejected alternative A of D-GN.8 — they kept `1 / c` (2026-10-29).* Rounding **down**, not up: up
+   showed a single 94% pass a whole step past a 95% one for 1% more progress, and needed a cap to keep 95 for finished.
+2. **One round at a time.** A round is one pass on every unfinished set, in D-GN.8's cycle. During a round the sets
+   already passed show in their new colour, the set being drawn shows its silhouette faint with the numbers hit solid
+   on top, and the rest are clear; when the round ends the canvas clears and the next one draws one colour further
+   along. **Finished sets stay drawn, violet.** No state is stored for it: within a round the sets already passed hold
+   one pass more than the rest (`SigilRules.PassedThisRound`).
+3. **The preview of the next pass.** Under the canvas, a strip of the 95 steps: bright up to the set's step, half-bright
+   to where a pass at the next bet's chance would take it (gold mark), dim beyond. The next bet's chance is the running
+   autobet's (D-M2.8), else the panel's — so moving the chance slider and opening the overlay previews that setup.
+4. **The warning names what is actually lost** (D-GN.9 unchanged): when a pass is partly drawn and the next bet's chance
+   differs, *that pass's* numbers are lost; every completed pass stays, and the new chance adds its own share on top.
+
 **P-GN.7 — bots are out of the first build** (D-GN.18). They are Dice-only and their bets already pass through
 `SimulationService`, so joining later looks cheap; whether it is, is a question for after the tests.
 
@@ -595,6 +619,7 @@ and the Close button sits in a fixed footer, 100 px above the canvas bottom (§2
   when finished (D-GN.8); the set in progress as a faint silhouette in its pass's colour with the lines already hit
   solid on top; green and red circles at each drawn set's start and end; the next target ringed. Colour:
   `hue = (95 − c) / 94 × 0.76` — 95% red, ~48% green, 1% violet. **Repainted only on `PlayerSigilProgress.Changed`.**
+  *(Colour and layout revised by D-GN.22 — see §10.6.)*
 - **The figures:** the next target and what it needs; V and the loss streak; the pass in progress (and that a chance
   change loses it); the sigil's completion and what remains (D-GN.20); bets, SC wagered and game time; the planet's
   running total while its nocturnal sigil is drawn; a table of the sets — passes, completion, bets and their share,
@@ -732,6 +757,33 @@ Read by Claude from `godot2026-10-29T19.22.09.log` (M1, rotated aside at M2's la
    therefore restored `bets=502`, and 8,297 bets of finished sigil are gone. Blocks come per game-time while bets per
    game-time scale with credits, so **the more hardware, the more sigil progress rides uncommitted between blocks** —
    at 50 credits, thousands of bets. A question for unit 6: whether the overlay should show how much is uncommitted.
+
+### 10.6 The developer's notes on phase A — D-GN.22 built (2026-10-29)
+
+From a screenshot taken mid-run, at Aquarius bet 600. **What was wrong, and why:**
+
+- **"The lines stay red."** All 23 passes were at 95%, and the colour was the chance of a set's latest pass (D-GN.7),
+  so it could not move without a chance change. → D-GN.22.1, colour = progress.
+- **"Why white dots?"** The faint silhouette of the set in progress drew its start/end circles at 30% alpha, which on
+  the day ground reads as white. Now a circle is drawn only when its number is hit, always solid.
+- **The faint silhouette was invisible:** the set in progress was also drawn solid in its previous pass's colour, on
+  top of it. The round clear (D-GN.22.2) removes the old drawing, so the silhouette shows.
+- **The V chain's last line was clipped:** 9 lines of ~28 px in a 240 px label. Now 270 px.
+- **The sets table's header was scrolled off:** three padding lines under a three-row table made it scroll by their
+  own height. `SetTextKeepingScroll` now takes the padding per label — one line for the sets.
+
+**What was built.** `SigilRules.ColorStep` / `ColorStepAfterPass` / `PassedThisRound`, reading `IsFinished`'s exact
+fraction (now `Progress`); `SigilCanvas` drawing by round and by step (`ColorForStep` replaces `ColorForChance`); a new
+`SigilColorStrip` (no `_Process`: it repaints when `SetSteps` changes a step); a preview label; a **Colour** column in
+the sets table; DiceGame's `NextChanceProvider`. **Layout:** the canvas went from 760 to 620 px to make room for the
+strip (40) and the preview (84) beneath it in a left column of the same 760 px; the status label 220 → 190, the chain
+240 → 270. The right column's minimum is 756 px, under the canvas column's 760, so the panel and its footer do not move.
+
+**Verified:** `dotnet build` clean; locale detector 17 / 0 / 0 / 0; the harness passes with a new section 9: the worked
+steps (1 at 95% → 1; 1 at 94% → 1, 94 of them → 95; 1 at 50% → 1, 2 → 3; 10% → 9; 2% → 47; 1% → 95; 2 at 3% → 63,
+3 at 3% → 95 exactly; 1/2 + 1/3 + 1/7 + 1/43 = 1805/1806 → 94, never 95), the preview, and — over 162 passes at mixed
+chances — steps never falling, 95 ⇔ finished, every preview coming true, and the round invariants holding. **Not yet
+seen in game:** part of the deferred first look.
 
 **Deferred to just before the close-out (developer, 2026-10-29):** the first look at the overlay (§10.4).
 

@@ -251,5 +251,69 @@ Console.WriteLine("\n8. Cost per bet (the rule runs on every player bet)");
 	Check(bytes < 8, "an ordinary bet allocates nothing (what is allocated comes from completed passes and sigils)");
 }
 
+Console.WriteLine("\n9. Colour steps and rounds (D-GN.22): the colour is the set's progress, 1 red … 95 violet");
+{
+	SigilSetProgress With(params (int Passes, int Chance)[] passes)
+	{
+		var set = new SigilSetProgress();
+		foreach (var (p, c) in passes) set.PassesByChance[c] = set.PassesByChance.GetValueOrDefault(c) + p;
+		return set;
+	}
+	int Step(params (int, int)[] passes) => SigilRules.ColorStep(With(passes));
+
+	Check(Step() == 0, "no pass yet → step 0 (nothing drawn)");
+	Check(Step((1, 95)) == 1 && Step((2, 95)) == 2 && Step((94, 95)) == 94, "at 95%: one step per pass — 1, 2 … 94");
+	Check(Step((1, 94)) == 1 && Step((2, 94)) == 2 && Step((94, 94)) == 95, "at 94%: 1/94 = 1.0106/95 a pass → 1, 2 … and 94 passes finish (exactly 1)");
+	Check(Step((1, 50)) == 1 && Step((2, 50)) == 3 && Step((1, 10)) == 9 && Step((1, 2)) == 47 && Step((1, 1)) == 95,
+		"one pass: 50% → 1 (1.9/95), two → 3 (3.8) · 10% → 9 (9.5) · 2% → 47 (47.5) · 1% → 95");
+	Check(Step((10, 95), (1, 10)) == 19, "passes add over what is there: 10 at 95% + 1 at 10% = 19.5/95 → step 19");
+	Check(Step((2, 3)) == 63, "two passes at 3% = 2/3 → 63.33/95 → step 63");
+	Check(Step((3, 3)) == 95, "three passes at 3% = exactly 1 → 95 (a float sum would read 0.999… and stop at 94)");
+
+	// Step 95 means finished, and only that: the colour reads the verdict's own exact fraction.
+	Check(Step((94, 95), (1, 94)) == 95, "94 at 95% + 1 at 94% = 8931/8930, past 1 → 95");
+	var notQuite = With((1, 2), (1, 3), (1, 7), (1, 43));   // 1/2 + 1/3 + 1/7 + 1/43 = 1805/1806
+	Check(SigilRules.ColorStep(notQuite) == 94, "1/2 + 1/3 + 1/7 + 1/43 = 1805/1806, short of 1 → 94, never 95");
+	notQuite.Finished = false;
+	Check(SigilRules.ColorStepAfterPass(notQuite, 95) == 95 && SigilRules.ColorStepAfterPass(With((1, 95)), 95) == 2
+		&& SigilRules.ColorStepAfterPass(With(), 50) == 1 && SigilRules.ColorStepAfterPass(With((1, 50)), 50) == 3,
+		"the preview equals the step after one more pass");
+
+	// Over real play at mixed chances: steps never go down, 95 ⇔ finished, the preview of each completed pass came
+	// true, and the round invariants hold after every pass.
+	var rng = new Random(7);
+	var st = SigilRules.NewProgress();
+	var last = new int[3];
+	bool monotone = true, ninetyFive = true, previewTrue = true, roundOk = true;
+	int passesSeen = 0;
+	while (st.Completed.Count == 0)
+	{
+		int chance = new[] { 95, 80, 50, 20, 9, 3 }[rng.Next(6)];
+		for (int b = 0; b < 400 && st.Completed.Count == 0; b++)
+		{
+			int setIndex = st.SetIndex;
+			int predicted = SigilRules.ColorStepAfterPass(st.Sets[setIndex], chance);
+			var res = engine.Play(1m, chance, rng.Next(2) == 0);
+			var o = SigilRules.ApplyBet(st, res.Roll, res.IsWin, chance, 1m, DateTime.UnixEpoch);
+			if ((o & SigilBetOutcome.SetPassCompleted) == 0 || (o & SigilBetOutcome.SigilCompleted) != 0)
+				continue;
+			passesSeen++;
+			int now = SigilRules.ColorStep(st.Sets[setIndex]);
+			previewTrue &= now == predicted;
+			for (int i = 0; i < 3; i++)
+			{
+				int s = SigilRules.ColorStep(st.Sets[i]);
+				monotone &= s >= last[i];
+				ninetyFive &= (s == 95) == st.Sets[i].Finished;
+				last[i] = s;
+			}
+			var open = st.Sets.Where(x => !x.Finished).Select(x => x.PassesCompleted).ToList();
+			roundOk &= open.Max() - open.Min() <= 1 && !SigilRules.PassedThisRound(st, st.SetIndex);
+		}
+	}
+	Check(monotone && ninetyFive && previewTrue && roundOk, string.Create(CultureInfo.InvariantCulture,
+		$"over {passesSeen} passes at mixed chances: steps never fall, 95 ⇔ finished, every preview came true, rounds hold"));
+}
+
 Console.WriteLine(failures == 0 ? "\nALL CHECKS PASS" : $"\n{failures} CHECK(S) FAILED");
 return failures;

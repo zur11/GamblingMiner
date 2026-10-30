@@ -16,10 +16,11 @@ public partial class SigilCanvas : Control
 
 	public SigilProgressState State { get; set; }
 
-	// The rainbow of D-GN.7: 95% red … ~48% green … 1% violet, one hue step per chance.
-	public static Color ColorForChance(int chance)
+	// The 95-step rainbow of D-GN.22: step 1 red … ~48 green … 95 violet. The step is the set's progress
+	// (SigilRules.ColorStep), not the chance of its latest pass.
+	public static Color ColorForStep(int step)
 	{
-		float t = (95 - Mathf.Clamp(chance, 1, 95)) / 94f;
+		float t = (Mathf.Clamp(step, 1, SigilRules.ColorSteps) - 1) / (float)(SigilRules.ColorSteps - 1);
 		return Color.FromHsv(t * 0.76f, 0.85f, 0.95f);
 	}
 
@@ -67,27 +68,23 @@ public partial class SigilCanvas : Control
 			return origin + new Vector2((col + 0.5f) * cell, (row + 0.5f) * cell);
 		}
 
+		// One round at a time (D-GN.22): a finished set stays drawn, violet; a set already passed in this round shows in
+		// the colour of its progress; the set being drawn shows its silhouette faint, in the colour this pass will earn,
+		// and the numbers already hit solid on top; every other set is clear until its turn. When the round ends the
+		// canvas clears, and the next round draws again one colour further along.
 		float width = Mathf.Max(3f, cell * 0.07f);
 		for (int set = 0; set < n; set++)
 		{
 			var progress = state.Sets[set];
-			bool inProgress = set == state.SetIndex && state.Step > 0;
-
-			// A finished set is violet; an unfinished one carries the colour of its latest completed pass (D-GN.8);
-			// a set with neither, and no pass in progress, is not drawn — its silhouette appears with its first hit.
-			if (progress.Finished || progress.LastPassChance > 0)
+			if (progress.Finished || SigilRules.PassedThisRound(state, set))
 			{
-				Color color = progress.Finished ? ColorForChance(1) : ColorForChance(progress.LastPassChance);
-				DrawSet(square, kind, set, n, color, width, Center);
+				DrawSet(square, kind, set, n, ColorForStep(SigilRules.ColorStep(progress)), width, Center, n);
 			}
-
-			if (inProgress)
+			else if (set == state.SetIndex && state.Step > 0)
 			{
-				// The silhouette in the colour this pass will earn, faint; the lines already hit, solid on top.
-				Color passColor = ColorForChance(state.PassChance);
-				DrawSet(square, kind, set, n, new Color(passColor, 0.30f), width, Center);
-				for (int k = 1; k < state.Step; k++)
-					DrawLine(Center(square.NumberAt(kind, set, k - 1)), Center(square.NumberAt(kind, set, k)), passColor, width, true);
+				Color passColor = ColorForStep(SigilRules.ColorStepAfterPass(progress, state.PassChance));
+				DrawSet(square, kind, set, n, new Color(passColor, 0.30f), width, Center, 0);
+				DrawSet(square, kind, set, state.Step, passColor, width, Center, state.Step);
 			}
 		}
 
@@ -96,14 +93,18 @@ public partial class SigilCanvas : Control
 		DrawArc(Center(target), cell * 0.38f, 0f, Mathf.Tau, 48, new Color(1f, 0.85f, 0.2f), Mathf.Max(2f, cell * 0.04f), true);
 	}
 
-	private void DrawSet(PlanetarySquare square, SigilKind kind, int set, int n, Color color, float width,
-		System.Func<int, Vector2> center)
+	// The set's path through its first `upTo` numbers, and its start (green) and end (red) circles once they are hit —
+	// `hits` numbers of the set have been: n for a drawn set, 0 for a silhouette alone.
+	private void DrawSet(PlanetarySquare square, SigilKind kind, int set, int upTo, Color color, float width,
+		System.Func<int, Vector2> center, int hits)
 	{
-		for (int k = 1; k < n; k++)
+		for (int k = 1; k < upTo; k++)
 			DrawLine(center(square.NumberAt(kind, set, k - 1)), center(square.NumberAt(kind, set, k)), color, width, true);
 
 		float radius = width * 1.6f;
-		DrawCircle(center(square.NumberAt(kind, set, 0)), radius, new Color(StartCircle, color.A));
-		DrawCircle(center(square.NumberAt(kind, set, n - 1)), radius, new Color(EndCircle, color.A));
+		if (hits >= 1)
+			DrawCircle(center(square.NumberAt(kind, set, 0)), radius, StartCircle);
+		if (hits >= square.N)
+			DrawCircle(center(square.NumberAt(kind, set, square.N - 1)), radius, EndCircle);
 	}
 }
