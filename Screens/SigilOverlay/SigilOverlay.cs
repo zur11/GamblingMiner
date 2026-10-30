@@ -188,16 +188,18 @@ public partial class SigilOverlay : Control
 
 		int after = SigilRules.ColorStepAfterPass(set, chance);
 		_strip.SetSteps(now, after);
-		string verb = state.Step > 0 && chance == state.PassChance ? "the pass in progress takes it to" : "a pass at that chance takes it to";
+		// Each sentence sized to one line of the 620 px column, the warning to two: three lines in all, which the label
+		// holds. The first draft wrapped its first sentence and pushed the warning's end out of sight (§10.6, L4).
+		string pass = state.Step > 0 && chance == state.PassChance ? "this pass" : "the next pass";
 		var sb = new StringBuilder(string.Create(CultureInfo.InvariantCulture,
-			$"{standing}  ·  next bet at [b]{chance}%[/b]: {verb} {Step(after)}"));
+			$"{standing}  ·  at [b]{chance}%[/b], {pass} takes it to {Step(after)}"));
 
 		if (state.Step > 0 && chance != state.PassChance)
 		{
-			string numbers = state.Step == 1 ? "number hit at {0}% is lost" : "numbers hit at {0}% are lost";
+			string numbers = state.Step == 1 ? "number" : "numbers";
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
-				$"\n[color={WarningColor}]Betting at {chance}% restarts this pass: its {state.Step} {string.Format(CultureInfo.InvariantCulture, numbers, state.PassChance)}. " +
-				$"The set keeps every pass already completed.[/color]"));
+				$"\n[color={WarningColor}]Betting at {chance}% restarts this pass and loses its {state.Step} {numbers} hit at {state.PassChance}%. " +
+				$"Completed passes stay.[/color]"));
 		}
 
 		return sb.ToString();

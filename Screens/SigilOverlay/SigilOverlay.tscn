@@ -73,14 +73,14 @@ script = ExtResource("2_sgcnv")
 
 [node name="SigilColorStrip" type="Control" parent="Panel/MarginContainer/VBox/Body/Drawing"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(620, 40)
+custom_minimum_size = Vector2(620, 34)
 layout_mode = 2
 mouse_filter = 2
 script = ExtResource("3_sgstr")
 
 [node name="SigilPreviewLabel" type="RichTextLabel" parent="Panel/MarginContainer/VBox/Body/Drawing"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(620, 84)
+custom_minimum_size = Vector2(620, 90)
 layout_mode = 2
 mouse_filter = 2
 theme_override_font_sizes/normal_font_size = 18

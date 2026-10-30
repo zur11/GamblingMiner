@@ -11,7 +11,8 @@ with P-GN.6 an overlay like the Martingale calculator. §9 registers the predict
 (D-GN.20), and `Tools/SigilHarness` confirms Pr-2 to Pr-4. **Unit 2 is done (§10.2):** `PlayerSigilProgress` holds the
 progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Unit 4 is built (§10.4):** the overlay, awaiting the developer's first look. **Unit 5 is measured (§10.5): Pr-1 and Pr-5 to Pr-9 hold** (Aquarius violet at 8,297 bets), with three findings
 recorded there. **D-GN.22 is built (§10.6):** the colour is the set's progress in 95 steps, the canvas draws one
-round at a time, and a strip previews the next pass. **Next: the developer's look at the overlay, then unit 6.**
+round at a time, and a strip previews the next pass; the developer's look (L1–L4) passed, bar a clipped warning, now
+fixed. **Next: unit 6.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -784,6 +785,33 @@ steps (1 at 95% → 1; 1 at 94% → 1, 94 of them → 95; 1 at 50% → 1, 2 → 
 3 at 3% → 95 exactly; 1/2 + 1/3 + 1/7 + 1/43 = 1805/1806 → 94, never 95), the preview, and — over 162 passes at mixed
 chances — steps never falling, 95 ⇔ finished, every preview coming true, and the round invariants holding. **Not yet
 seen in game:** part of the deferred first look.
+
+**The look protocol (L1–L4), predictions first.** A visual check, so the developer reports with screenshots; nothing
+here needs a log. The world boots at M1's last checkpoint (M2 mined no block): Aquarius `bets=502`, sets `7p / 6p /
+6p` at 95%, set 2 next, target 4, no pass in progress. The game-space predictions below follow from that state.
+
+- **L1 — at boot, chance 95, before any bet.** Set 1 (1-2-3) drawn solid in step 7 (red), green circle on 1, red on 3;
+  sets 2 and 3 clear; the ring on 4. Table colours 7 / 6 / 6. Strip: white mark at 6, gold at 7. Preview: *"Set 2:
+  colour 6 of 95 · next bet at 95%: a pass at that chance takes it to 7"*. No warning.
+- **L2 — chance moved, no bet.** At 10%: *"takes it to 15"* (6 + 9.5 = 15.5), strip half-bright from 7 to 15. At 1%:
+  *"takes it to 95"*. No warning (no pass in progress).
+- **L3 — watched live at 1 credit, 100X, 95%.** About one bet a second, ~28 a pass. (a) The first hit on 4: set 2's
+  silhouette faint in step 7, a solid green circle on 4. (b) The hit on 5: the 4→5 segment solid. (c) The hit on 6:
+  set 2 solid in step 7 with its red circle; the ring moves to 7. (d) Set 3 the same. (e) **When set 3 completes the
+  canvas clears entirely** (all three sets at 7 passes) and set 1's next silhouette comes in step 8. Throughout, the V
+  chain shows all 8 lines and the sets table its header.
+- **L4 — the warning.** Stopped with a pass in progress, the chance set to 50%: an orange *"Betting at 50% restarts
+  this pass: its N number(s) hit at 95% … lost. The set keeps every pass already completed."* Back to 95%: no warning,
+  *"the pass in progress takes it to …"*.
+
+**Results (developer, 2026-10-29, eight screenshots):** **L1, L2 and L3 hold as predicted** — the boot drawing, table
+and strip (6 → 7); the preview at 10% (15) and 1% (95); the silhouette on the hit on 4, the solid 4→5 segment, and the
+clear canvas once set 3 completed, set 1 then drawing in step 8 with every set at 7 / 7.4%. The V chain showed all 8
+lines and the table its header in every shot. **L4 failed on layout, not on logic:** the warning was right (shown at
+50% with 2 numbers in progress, gone back at 95%) but its end was cut — the first sentence wrapped to two lines in the
+620 px column, so the text needed four lines in a label sized for three. Fixed by shortening both (*"at 50%, the next
+pass takes it to 8"*; *"Betting at 50% restarts this pass and loses its 2 numbers hit at 95%. Completed passes
+stay."*) and moving 6 px from the strip (40 → 34) to the label (84 → 90). **Not re-seen in game.**
 
 **Deferred to just before the close-out (developer, 2026-10-29):** the first look at the overlay (§10.4).
 
