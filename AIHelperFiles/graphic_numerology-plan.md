@@ -12,7 +12,10 @@ with P-GN.6 an overlay like the Martingale calculator. §9 registers the predict
 progress, fed by every player bet and committed by the block checkpoint. **Unit 3 is done (§10.3):** "Stop on Sigil Set Completed". **Unit 4 is built (§10.4):** the overlay, awaiting the developer's first look. **Unit 5 is measured (§10.5): Pr-1 and Pr-5 to Pr-9 hold** (Aquarius violet at 8,297 bets), with three findings
 recorded there. **D-GN.22 is built (§10.6):** the colour is the set's progress in 95 steps, the canvas draws one
 round at a time, and a strip previews the next pass; the developer's look (L1–L4) passed, bar a clipped warning, now
-fixed. **Next: unit 6.**
+fixed. **Unit 6's review is done (2026-11-01):** it produced the closing decisions D-GN.23 to D-GN.27 (§8.1) — violet
+×100, one of each sigil, one slot, the levels — and `AIHelperFiles/sigil_benefits-proposal.md` for the next plan.
+**Next: units 7 to 10 (§10) — ×100 and levels; the collection and the slot; its screen; the measurement, Pr-10 to Pr-14
+— then close-out.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -229,6 +232,8 @@ the top.** A sigil drawn at 1% is drawn once; at 95%, 95 times. *(Developer, 202
 (2026-10-29): the colour is the set's PROGRESS on the same rainbow, not the chance of its latest pass** — the two agree
 on a set's first pass only at 95% and 1%; the chance now decides how far each pass moves the colour.
 
+*(D-GN.23, 2026-11-01: every pass count and cost below is now ×100 — the balance is unchanged, the size is not.)*
+
 **D-GN.8 = B, balanced — a set needs as many complete passes as the chance it is drawn at.** A pass completed at chance
 `c` adds `1/c` of the set; **the set is finished when the sum over its completed passes reaches 1**, and then it is
 violet. ~~Under a mix of chances, the colour of a pass in progress is its chance's colour, and completion is shown
@@ -359,6 +364,9 @@ knows nothing of the sigil. **Measured (Node, Sagittarius 5%, 300 runs each):** 
 
 ## 7. The order of the sigils
 
+*(D-GN.26, 2026-11-01: the player now chooses what to draw, so the order below — D-GN.16's and D-GN.18's — no longer
+binds. A planet's two sigils still make its complete figure, D-GN.27.)*
+
 **D-GN.16 — within a planet, the diurnal sigil comes first and the nocturnal second; drawing both completes the
 planet's sigil.** Saturn: the Aquarius Sigil, then the Capricorn Sigil ⇒ **the complete Saturn Sigil**. The SC wagered
 is totalled for each sigil and for the two together. *(Developer, 2026-10-28.)* Each sigil is a new sigil for §5.2, so
@@ -482,6 +490,50 @@ from the first look at phase A; amends D-GN.7.)* Four parts:
 4. **The warning names what is actually lost** (D-GN.9 unchanged): when a pass is partly drawn and the next bet's chance
    differs, *that pass's* numbers are lost; every completed pass stays, and the new chance adds its own share on top.
 
+### 8.1 The closing decisions — D-GN.23 to D-GN.27 (developer, 2026-11-01)
+
+The developer's five changes to finish this plan, after the look at D-GN.22. The benefits these levels will unlock are
+a proposal for the next plan: `AIHelperFiles/sigil_benefits-proposal.md`.
+
+**D-GN.23 — violet costs exactly 100× what it did.** A pass at chance `c` now adds `1 / (PassesPerChance × c)` of its
+set, the symbol being `SigilRules.PassesPerChance`, so a set takes 100 passes at 1% and `100 × c` at chance `c`. The
+balance of D-GN.8 is untouched: every chance still costs the same. **Consequences:** every violet figure in §6–§7 and
+§9 is multiplied — Aquarius at any chance is 810,000 bets, not 8,100 (`Predicted(n) × PassesPerChance` in the harness;
+table in the proposal's §5). A single pass no longer moves the colour at most chances: at 95%, a level now takes 100
+passes. So the overlay must show the progress **inside** a level — how many more passes to the next one, and more
+decimals in "Done" — or a whole round would look like nothing happened (the Convention 11 reflex).
+
+**D-GN.24 — one sigil of each class exists in the whole game.** Fourteen items, each obtainable once, by purchase or by
+receipt; owning is permanent, and there is no second copy. **The player deduces which combine:** nothing states a pair
+outright. Each item's name, shape, colour and description make it clear, and its description may name its planet and
+its sky, which is how the deduction is made; the collection is listed alphabetically, not by planet, so that the layout
+does not give pairs away. **Acquisition in this plan is a free, DEV-marked button** (developer's choice, 2026-11-01),
+like the DEV Buy Hardware; prices and channels belong to the next plan. Polished item art comes with the Basic Version
+polish; this plan's items are functional, with the shape drawn from the sigil itself.
+
+**D-GN.25 — one sigil slot, for now, and the player chooses what it holds at any time**, including during an autobet:
+the next bet draws the new sigil. **Switching loses only the pass in progress** — the numbers hit so far in the set
+being drawn, exactly what a chance change loses (D-GN.9, counted the same way in `PassRestarts`). *"If a set is
+incomplete, the progress in that set is lost"* is read this way, because the plan already calls a partly drawn pass
+"restarting the set", and the alternative — every pass of an unfinished set — would contradict *"everything else is
+kept"*. Each owned sigil keeps its own passes, figures, V and loss streak while it waits. **Time spent on another sigil
+is not that sigil's time:** D-GN.20's game seconds count only while it is in the slot. **All of it is committed by the
+next mined block, as everything is (Pattern 2):** a restart before one reverts the switch and the bets after it. The
+slot may be empty, as it is in a new world, and then a bet draws nothing.
+
+**D-GN.26 — the automatic order is retired.** With a chosen slot, finishing a sigil no longer moves on by itself: a
+violet sigil stays in the slot and takes no more progress until the player chooses another. **D-GN.18's unlock order
+and D-GN.16's "diurnal first" stop being rules**; `CompletedSigilRecord` and `AllComplete` go with them (Convention 3),
+since each owned sigil now carries its own completion. Whether an order returns as a gate on *acquiring* sigils is a
+question for the next plan.
+
+**D-GN.27 — a sigil's level is the lowest level among its sets, and a combined figure's is the lower of its two
+sigils'.** A level is the D-GN.22 step, `SigilRules.MaxLevel` being violet. *The highest level all the sets share* is
+the lowest of them, since a set at level 10 has also passed level 4. **Combined figures are the planet's two sigils**
+(D-GN.16's *complete Saturn Sigil*); one exists from the moment the player owns both and the lower of them reaches
+level 1, which is when it first appears in the collection. Sigil A at 10 and sigil B at 4 make a figure at 4. Nothing
+reads a level for a benefit yet: this plan builds and displays the levels; the next one spends them.
+
 **P-GN.7 — bots are out of the first build** (D-GN.18). They are Dice-only and their bets already pass through
 `SimulationService`, so joining later looks cheap; whether it is, is a question for after the tests.
 
@@ -502,6 +554,11 @@ From §5–§7's Node model. A build that misses them is checked against the mod
 | Pr-7 | *(unit 5)* With "Stop on Sigil Set Completed" ON, an autobet run stops **on the bet that completes a set pass** — after ~28 bets on average at 95% (3 hits × ≈ 9.5 bets), and almost never after more than 200 | A stop on any other bet, or no stop ⇒ a wiring bug in the stop |
 | Pr-8 | *(unit 5)* With a flat bet of 0.01 SC, a completed sigil's SC wagered is **exactly 0.01 × its bets** | Any other figure ⇒ the D-GN.19 tracking drifts |
 | Pr-9 | *(unit 5, added 2026-10-29 before any run)* A set's game time grows by **`100 / credits` game-seconds per bet** — 100 s at 1 credit, 10 s at 10, 2 s at 50 — whatever the DEV time scale; the idle time between two runs is never counted | Off by more than 2% ⇒ the D-GN.20 time tracking does not measure what it claims; idle time in a set ⇒ its "game time passes only as bets are simulated" premise is false |
+| Pr-10 | *(registered 2026-11-01, before any ×100 code)* Violet Aquarius at **95%** in game costs **810,000 bets** (D-GN.23). 85,500 hits, so one run's 1σ is ≈ 0.34% | One run outside **802,000–818,000** (±1%, ~3σ) ⇒ the code and the model disagree |
+| Pr-11 | *(2026-11-01)* At a constant 95%, that sigil has **exactly 9,500 passes in each set**, all at 95%. Its level is `MaxLevel` only when it is complete, and always the lowest of its sets' (D-GN.27) | Any other count, or a level above a set's ⇒ a rule bug |
+| Pr-12 | *(2026-11-01)* Switching the slot with a pass in progress changes exactly: that sigil's `Step` and `PassChance` to 0 and its set's `PassRestarts` by +1. Its passes, V and loss streak survive, and on returning, the game seconds of its sets have not grown by the time it was out (D-GN.25) | Any other difference ⇒ the switch loses more, or less, than the rule says |
+| Pr-13 | *(2026-11-01)* A restart after a mined block restores what is owned, the slot and every sigil's progress exactly; a restart before one reverts any switch and acquisition made since | Any difference ⇒ a capture or restore bug; it blocks the close-out |
+| Pr-14 | *(2026-11-01)* An ordinary bet still allocates **0 bytes** and costs the same order as Unit 1's ~40–50 ns, with the equipped sigil reached without a search | An allocation, or a cost several times higher ⇒ the per-bet path regressed |
 
 **In game time:** the violet Aquarius Sigil is ≈ 8,100 bets ≈ 810,000 game-seconds ≈ 9.4 game-days at one hardware
 credit; the seven complete planets, ≈ 3.3 million bets ≈ 10 game-years at one credit — fewer with more credits.
@@ -517,7 +574,17 @@ Each unit is a stage → ask → commit loop on this branch.
 3. **The stop** — P-GN.5.
 4. **The panel** — P-GN.6.
 5. **Measurement** — a numbered protocol for Pr-1 in game, read afterwards from the logs and the checkpoint.
-6. **Review with the developer** — repetition incentives, unlock alternatives and bots (D-GN.18), then close-out.
+6. **Review with the developer** — repetition incentives, unlock alternatives and bots (D-GN.18): **done 2026-11-01.**
+   It produced D-GN.23 to D-GN.27 (§8.1) and the proposal for the next plan.
+7. **×100 and levels** — D-GN.23 and D-GN.27's arithmetic: `PassesPerChance`, the levels, the passes to the next level,
+   the overlay's readouts. The harness can no longer draw every sigil to violet in every setting (11.8 billion bets), so
+   its cost table measures one-hundredth of violet — `c` passes per set, the same bets and the same noise as before —
+   and exact completion is checked to full violet where it is cheap.
+8. **The collection and the slot** — D-GN.24 to D-GN.26: the state, acquiring, equipping, the switch, the checkpoint.
+   The snapshot's field is renamed, so an existing checkpoint restores an empty collection, the same way one from
+   before this plan restored fresh progress; no format bump or wipe. Only test progress is lost.
+9. **The collection's screen** — the fourteen items, their shape, description and DEV button; the combined figures.
+10. **Measurement** — Pr-10 to Pr-14, then close-out.
 
 ### 10.1 Unit 1 — done (2026-10-29)
 
