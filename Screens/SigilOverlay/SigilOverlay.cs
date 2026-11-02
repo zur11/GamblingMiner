@@ -16,6 +16,8 @@ using UI.Readouts;
 //   • the counters (bets, SC, game time) and the V chain move on EVERY bet, so they are SAMPLED at a fixed cadence
 //     while the overlay is open, and the counters are floored to what that cadence can carry (§29.13,
 //     CounterQuantizer). Hidden, it does no work at all: processing is off.
+// It holds two views over one footer: the sigil being drawn, and the collection (SigilCollectionView). Only the one showing
+// is painted; the collection opens first when the slot is empty, since nothing can be drawn until something is chosen.
 public partial class SigilOverlay : Control
 {
 	[Signal]
@@ -43,14 +45,20 @@ public partial class SigilOverlay : Control
 	private RichTextLabel _chainLabel;
 	private RichTextLabel _completedLabel;
 
-	private readonly CounterQuantizer _betsQuantizer = new();
-	private readonly CounterQuantizer _satoshiQuantizer = new();
-	private readonly CounterQuantizer _secondsQuantizer = new();
+	private Control _body;
+	private SigilCollectionView _collectionView;
+	private Button _collectionToggle;
+
+	private CounterQuantizer _betsQuantizer = new();
+	private CounterQuantizer _satoshiQuantizer = new();
+	private CounterQuantizer _secondsQuantizer = new();
 	private readonly SigilStep[] _chain = new SigilStep[ChainLines];
 
 	private double _sinceRepaint;
 	private long _paintedBets = -1;
 	private bool _drawingDirty = true;
+	private bool _showingCollection;
+	private bool _collectionDirty;
 
 	public override void _Ready()
 	{
@@ -62,6 +70,11 @@ public partial class SigilOverlay : Control
 		_setsLabel = GetNode<RichTextLabel>("%SigilSetsLabel");
 		_chainLabel = GetNode<RichTextLabel>("%SigilChainLabel");
 		_completedLabel = GetNode<RichTextLabel>("%SigilCompletedLabel");
+		_body = GetNode<Control>("Panel/MarginContainer/VBox/Body");
+		_collectionView = GetNode<SigilCollectionView>("%SigilCollectionView");
+		_collectionToggle = GetNode<Button>("%CollectionToggleButton");
+		_collectionToggle.Pressed += () => ShowView(!_showingCollection);
+		_collectionView.SigilPlayed += () => ShowView(false);
 		GetNode<Button>("%CloseSigilsButton").Pressed += OnClosePressed;
 
 		// Opaque, like the calculator's panel (mini-plan 21 E): DiceGame's bet list must not show through.
@@ -90,16 +103,41 @@ public partial class SigilOverlay : Control
 		// Above every control DiceGame builds in code after this node, for drawing and for input (as the calculator).
 		MoveToFront();
 		Visible = true;
-		_drawingDirty = true;
-		_paintedBets = -1;
-		Repaint();
+		ShowView(PlayerSigilProgress.Equipped == null);
 		SetProcess(true);
 	}
 
 	public void Close()
 	{
+		_collectionView.CancelPending();
 		Visible = false;
 		SetProcess(false);
+	}
+
+	private void ShowView(bool collection)
+	{
+		_showingCollection = collection;
+		_body.Visible = !collection;
+		_collectionView.Visible = collection;
+		_collectionView.CancelPending();
+		_collectionToggle.Text = collection ? "Back to the sigil" : "Collection";
+		// With an empty slot there is no sigil to go back to.
+		_collectionToggle.Disabled = collection && PlayerSigilProgress.Equipped == null;
+
+		if (collection)
+		{
+			_collectionDirty = false;
+			_collectionView.Refresh();
+			return;
+		}
+
+		_drawingDirty = true;
+		_paintedBets = -1;
+		// Another sigil, or a long gap: the next sample's step says nothing about the bet rate.
+		_betsQuantizer = new CounterQuantizer();
+		_satoshiQuantizer = new CounterQuantizer();
+		_secondsQuantizer = new CounterQuantizer();
+		Repaint();
 	}
 
 	private void OnClosePressed()
@@ -108,9 +146,13 @@ public partial class SigilOverlay : Control
 		Close();
 	}
 
-	private void OnSigilChanged(SigilBetOutcome _)
+	private void OnSigilChanged(SigilBetOutcome outcome)
 	{
 		_drawingDirty = true;   // picked up by the next sampled repaint; nothing happens while hidden
+		// None = an acquisition, a switch or a restore. Of a bet's outcomes the collection shows only the level, so a hit
+		// repaints none of its fourteen thumbnails.
+		if (outcome == SigilBetOutcome.None || (outcome & (SigilBetOutcome.LevelReached | SigilBetOutcome.SigilCompleted)) != 0)
+			_collectionDirty = true;
 	}
 
 	public override void _Process(double delta)
@@ -120,6 +162,18 @@ public partial class SigilOverlay : Control
 			return;
 
 		_sinceRepaint = 0;
+		if (_showingCollection)
+		{
+			if (_collectionDirty)
+			{
+				_collectionDirty = false;
+				_collectionView.Refresh();
+			}
+
+			_collectionView.SamplePending();
+			return;
+		}
+
 		if (_drawingDirty || (PlayerSigilProgress.Equipped?.BetsPlaced ?? -1) != _paintedBets)
 			Repaint();
 	}
@@ -139,7 +193,7 @@ public partial class SigilOverlay : Control
 		if (state == null)
 		{
 			_title.Text = "The sigil slot is empty";
-			_statusLabel.Text = "A bet draws nothing until a sigil is in the slot.";
+			_statusLabel.Text = "A bet draws nothing until a sigil from the collection is in the slot.";
 			_setsLabel.Text = string.Empty;
 			_chainLabel.Text = string.Empty;
 			_previewLabel.Text = string.Empty;

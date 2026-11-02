@@ -552,5 +552,46 @@ Console.WriteLine("\n10. Pr-12: owning, the slot and the switch (D-GN.24, D-GN.2
 	PlayerSigilProgress.ResetToPreGenesisDefaults();
 }
 
+Console.WriteLine("\n11. The collection's text: the order and the descriptions give no pair away (D-GN.24)");
+{
+	var ordered = PlanetarySquares.SigilsByName.Select(PlanetarySquares.NameOfSigil).ToList();
+	Check(string.Join(", ", ordered) == "Aquarius Sigil, Aries Sigil, Cancer Sigil, Capricorn Sigil, Eclipsed Cancer Sigil, Eclipsed Leo Sigil, Gemini Sigil, Leo Sigil, Libra Sigil, Pisces Sigil, Sagittarius Sigil, Scorpio Sigil, Taurus Sigil, Virgo Sigil",
+		"fourteen items, alphabetical by displayed name");
+	// Not asserted: that no pair sits side by side. The alphabet itself puts Pisces beside Sagittarius, and the rule is
+	// alphabetical, not "scattered" (plan §10.9).
+
+	// The test reads each DESCRIPTION, never a name: "Eclipsed Leo Sigil" holds "Leo Sigil" by D-GN.3, and that is fixed.
+	// A sign's bare word covers both forms of its name, so no description may hold any of the twelve.
+	var signs = Enumerable.Range(0, PlanetarySquares.SigilCount)
+		.Select(i => PlanetarySquares.NameOfSigil(i).Replace("Eclipsed ", "").Replace(" Sigil", ""))
+		.Distinct().ToList();
+	string[] pairWords = { "pair", "partner", "combin", "counterpart", "twin", "other", "both", "together" };
+	bool Reveals(string description) =>
+		signs.Concat(pairWords).Any(word => description.Contains(word, StringComparison.OrdinalIgnoreCase));
+
+	// Convention 16: a check that cannot fail proves nothing, so it must catch these first.
+	Check(signs.Count == 12 && signs.Contains("Leo") && signs.Contains("Cancer"), "twelve sign words, Leo and Cancer among them");
+	Check(Reveals("The Sun's square. Pairs with Leo.") && Reveals("Drawn with the Eclipsed Cancer Sigil") && Reveals("Aries, by day") && Reveals("The other half of a figure"),
+		"the check flags a description that names a sign or speaks of a pair");
+
+	bool anyReveals = false, allNameTheirPlanetAndSky = true;
+	var descriptions = new List<string>();
+	for (int i = 0; i < PlanetarySquares.SigilCount; i++)
+	{
+		string description = SigilRules.DescriptionOf(i);
+		descriptions.Add(description);
+		var square = PlanetarySquares.PlanetOfSigil(i);
+		var kind = PlanetarySquares.KindOfSigil(i);
+		string sky = square.IsEclipsed(kind) ? "in eclipse" : kind == SigilKind.Diurnal ? "by day" : "by night";
+		anyReveals |= Reveals(description);
+		allNameTheirPlanetAndSky &= description.Contains(square.Planet) && description.Contains(sky);
+		Console.WriteLine($"        {PlanetarySquares.NameOfSigil(i),-22} {description}");
+	}
+	Check(!anyReveals, "no description names a sign, its partner included, or speaks of a pair");
+	Check(allNameTheirPlanetAndSky, "every description names its planet and its sky, which is how the deduction is made");
+	Check(descriptions.Distinct().Count() == PlanetarySquares.SigilCount, "no two descriptions are the same");
+	Check(descriptions.Max(d => d.Length) <= 66, $"the longest fits the card's two reserved lines ({descriptions.Max(d => d.Length)} characters)");
+}
+
 Console.WriteLine(failures == 0 ? "\nALL CHECKS PASS" : $"\n{failures} CHECK(S) FAILED");
 return failures;

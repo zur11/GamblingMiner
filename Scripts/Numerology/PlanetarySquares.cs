@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Scripts.Numerology
 {
@@ -100,6 +101,13 @@ namespace Scripts.Numerology
 		public static PlanetarySquare PlanetOfSigil(int sigilIndex) => All[sigilIndex / 2];
 
 		public static SigilKind KindOfSigil(int sigilIndex) => (SigilKind)(sigilIndex % 2);
+
+		public static string NameOfSigil(int sigilIndex) => PlanetOfSigil(sigilIndex).SigilName(KindOfSigil(sigilIndex));
+
+		// The collection's order (D-GN.24): alphabetical by displayed name, never by planet, so the layout does not give the
+		// pairs away. Ordinal, so no machine's locale can reorder it. Declared after All, which it reads.
+		public static readonly IReadOnlyList<int> SigilsByName =
+			Enumerable.Range(0, SigilCount).OrderBy(NameOfSigil, StringComparer.Ordinal).ToArray();
 
 		private static IReadOnlyList<PlanetarySquare> Build()
 		{

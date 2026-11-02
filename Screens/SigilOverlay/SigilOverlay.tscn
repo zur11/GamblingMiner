@@ -1,8 +1,9 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://Screens/SigilOverlay/SigilOverlay.cs" id="1_sgovl"]
 [ext_resource type="Script" path="res://Screens/SigilOverlay/SigilCanvas.cs" id="2_sgcnv"]
 [ext_resource type="Script" path="res://Screens/SigilOverlay/SigilColorStrip.cs" id="3_sgstr"]
+[ext_resource type="Script" path="res://Screens/SigilOverlay/SigilCollectionView.cs" id="4_sgcol"]
 
 [node name="SigilOverlay" type="Control"]
 visible = false
@@ -129,9 +130,100 @@ theme_override_font_sizes/normal_font_size = 18
 theme_override_font_sizes/bold_font_size = 18
 bbcode_enabled = true
 
+[node name="SigilCollectionView" type="VBoxContainer" parent="Panel/MarginContainer/VBox"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 10
+script = ExtResource("4_sgcol")
+
+[node name="SlotRow" type="HBoxContainer" parent="Panel/MarginContainer/VBox/SigilCollectionView"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="SigilSlotLabel" type="RichTextLabel" parent="Panel/MarginContainer/VBox/SigilCollectionView/SlotRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 64)
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_font_sizes/normal_font_size = 20
+theme_override_font_sizes/bold_font_size = 20
+bbcode_enabled = true
+scroll_active = false
+
+[node name="ConfirmPlayButton" type="Button" parent="Panel/MarginContainer/VBox/SigilCollectionView/SlotRow"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(180, 48)
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_font_sizes/font_size = 20
+text = "Play anyway"
+
+[node name="CancelPlayButton" type="Button" parent="Panel/MarginContainer/VBox/SigilCollectionView/SlotRow"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(130, 48)
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_font_sizes/font_size = 20
+text = "Cancel"
+
+[node name="CollectionScroll" type="ScrollContainer" parent="Panel/MarginContainer/VBox/SigilCollectionView"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="CollectionList" type="VBoxContainer" parent="Panel/MarginContainer/VBox/SigilCollectionView/CollectionScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme_override_constants/separation = 10
+
+[node name="SigilCollectionGrid" type="GridContainer" parent="Panel/MarginContainer/VBox/SigilCollectionView/CollectionScroll/CollectionList"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme_override_constants/h_separation = 12
+theme_override_constants/v_separation = 8
+columns = 2
+
+[node name="CombinedHeader" type="Label" parent="Panel/MarginContainer/VBox/SigilCollectionView/CollectionScroll/CollectionList"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+mouse_filter = 1
+theme_override_font_sizes/font_size = 24
+text = "Combined figures"
+
+[node name="CombinedGrid" type="GridContainer" parent="Panel/MarginContainer/VBox/SigilCollectionView/CollectionScroll/CollectionList"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme_override_constants/h_separation = 12
+theme_override_constants/v_separation = 8
+columns = 2
+
+[node name="BottomPad" type="Control" parent="Panel/MarginContainer/VBox/SigilCollectionView/CollectionScroll/CollectionList"]
+custom_minimum_size = Vector2(0, 20)
+layout_mode = 2
+mouse_filter = 1
+
 [node name="Footer" type="HBoxContainer" parent="Panel/MarginContainer/VBox"]
 layout_mode = 2
+theme_override_constants/separation = 12
 alignment = 2
+
+[node name="CollectionToggleButton" type="Button" parent="Panel/MarginContainer/VBox/Footer"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(260, 48)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Collection"
 
 [node name="CloseSigilsButton" type="Button" parent="Panel/MarginContainer/VBox/Footer"]
 unique_name_in_owner = true

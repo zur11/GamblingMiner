@@ -10,7 +10,7 @@ public partial class SigilCanvas : Control
 	private static readonly Color DayBackground = new(0.80f, 0.88f, 0.98f);
 	private static readonly Color NightBackground = new(0.06f, 0.08f, 0.20f);
 	private static readonly Color EclipseBackground = new(0.10f, 0.06f, 0.05f);
-	private static readonly Color EclipseRim = new(1.00f, 0.55f, 0.15f);
+	public static readonly Color EclipseRim = new(1.00f, 0.55f, 0.15f);
 	private static readonly Color StartCircle = new(0.20f, 0.75f, 0.30f);   // a set's first number (source convention)
 	private static readonly Color EndCircle = new(0.85f, 0.20f, 0.20f);     // its last
 
@@ -23,6 +23,10 @@ public partial class SigilCanvas : Control
 		float t = (Mathf.Clamp(level, 1, SigilRules.MaxLevel) - 1) / (float)(SigilRules.MaxLevel - 1);
 		return Color.FromHsv(t * 0.76f, 0.85f, 0.95f);
 	}
+
+	// The sky a sigil is drawn on, day, night or eclipse. The collection's thumbnails share it.
+	public static Color GroundFor(PlanetarySquare square, SigilKind kind) =>
+		square.IsEclipsed(kind) ? EclipseBackground : kind == SigilKind.Nocturnal ? NightBackground : DayBackground;
 
 	public override void _Draw()
 	{
@@ -39,9 +43,8 @@ public partial class SigilCanvas : Control
 		bool night = kind == SigilKind.Nocturnal;
 		bool eclipsed = square.IsEclipsed(kind);
 
-		Color background = eclipsed ? EclipseBackground : night ? NightBackground : DayBackground;
 		Color ink = night || eclipsed ? new Color(1f, 1f, 1f, 0.35f) : new Color(0f, 0f, 0f, 0.35f);
-		DrawRect(new Rect2(origin, new Vector2(side, side)), background);
+		DrawRect(new Rect2(origin, new Vector2(side, side)), GroundFor(square, kind));
 		if (eclipsed)
 			DrawRect(new Rect2(origin, new Vector2(side, side)), EclipseRim, false, 4f);
 

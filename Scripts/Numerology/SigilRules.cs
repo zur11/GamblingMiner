@@ -341,6 +341,20 @@ namespace Scripts.Numerology
 			return sum / state.Sets.Count;
 		}
 
+		// D-GN.24 — what the collection says of a sigil: its planet and its sky, which is what the player deduces the pairs
+		// from, and the shape of its sets. Never a partner's name, nor a sign at all: "Eclipsed Leo" holds its partner's, so
+		// the only safe description is one that names none (the harness checks this text, not the names, which D-GN.3 fixes).
+		public static string DescriptionOf(int sigilIndex)
+		{
+			var square = PlanetarySquares.PlanetOfSigil(sigilIndex);
+			var kind = PlanetarySquares.KindOfSigil(sigilIndex);
+			string planet = square.Planet is "Sun" or "Moon" ? "The " + square.Planet : square.Planet;
+			string sky = square.IsEclipsed(kind) ? "in eclipse" : kind == SigilKind.Diurnal ? "by day" : "by night";
+			int step = kind == SigilKind.Diurnal ? 1 : square.N;   // D-GN.2
+			return string.Create(CultureInfo.InvariantCulture,
+				$"{planet}'s square, {sky}: {square.N} sets of {square.N} numbers, counting by {step}.");
+		}
+
 		// One line for godot.log (the measurements read it afterwards): the sigil, its counters, V and the target, the pass in
 		// progress, and every set as passes / level / completion / restarts / bets / game-seconds. Null = the empty slot.
 		public static string Describe(SigilProgressState state)

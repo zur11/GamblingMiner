@@ -15,8 +15,9 @@ round at a time, and a strip previews the next pass; the developer's look (L1–
 fixed. **Unit 6's review is done (2026-11-01):** it produced the closing decisions D-GN.23 to D-GN.27 (§8.1) — violet
 ×100, one of each sigil, one slot, the levels — and `AIHelperFiles/sigil_benefits-proposal.md` for the next plan.
 **Unit 7 is done (§10.7):** ×100 and the levels. **Unit 8 is done (§10.8):** the collection and the slot, in state and
-rules; the harness confirms Pr-12, Pr-13's round trip and Pr-14. **Next: units 9 and 10 (§10) — the collection's screen;
-the measurement, Pr-10 to Pr-14 in game — then close-out.**
+rules; the harness confirms Pr-12, Pr-13's round trip and Pr-14. **Unit 9 is built (§10.9):** the collection's screen,
+with the DEV Acquire and Play buttons, not yet seen in game. **Next: unit 10 (§10) — the measurement, Pr-10 to Pr-14 in
+game, with the first look at units 7 and 9 — then close-out.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -957,6 +958,55 @@ another sigil, and no regression is claimed or denied from it.*
 
 **Verified:** `dotnet build` clean; locale detector 17 / 0 / 0 / 0; the harness passes. **Not seen in
 game, and not measurable there until unit 9.**
+
+### 10.9 Unit 9 — the collection's screen, built (2026-11-02)
+
+**Built.** A second view inside the overlay, `SigilCollectionView`, over the same footer, which gains a "Collection" /
+"Back to the sigil" button. The overlay opens on it when the slot is empty and on the drawing otherwise; pressing Play
+goes on to the drawing. Fourteen cards in two columns, in `PlanetarySquares.SigilsByName`'s order (ordinal, so no locale
+can reorder it). Each has its name, a `SigilThumbnail`, its level in that level's colour (grey "Not owned" otherwise),
+`SigilRules.DescriptionOf`, and either **Acquire [DEV]** or **Play**. Below them, the combined figures that exist.
+
+**Layout (Ch. 29).** Pattern A, because the items hold buttons: a `ScrollContainer` with `size_flags_vertical = 3`
+between a fixed slot line and the footer, which stays outside it. Every control inside passes the wheel. Seven rows of
+about 124 px make about 920 px against about 680 px of room, so **it scrolls by design**. The description's two lines are
+reserved rather than measured, because a wrapped `Label` reports its height late. No `fit_content` label is involved.
+The slot line is 64 px, two lines at its font: the longest warning, 142 characters at about 10.5 px each in the 1,418 px
+left beside its buttons, wraps once. *These heights are arithmetic, not measurements; §10.6's clipped warning was the
+same kind of figure, and the first look is what checks them.*
+
+**The Play warning.** With a pass in progress, Play asks first: the slot line names the pass (*"Playing the Libra Sigil
+loses the Aquarius Sigil's pass in progress: set 2, 2 of 3 numbers hit at 95%. Its completed passes stay."*), beside
+**Play anyway** and **Cancel**. With none in progress it switches at once. A running autobet moves the pass while the
+warning waits, so the warning is sampled at the overlay's 4 Hz, and says *"loses nothing right now"* when that is true.
+What is lost is read at the moment of the confirmation, not of the first press.
+
+**The cost.** No new `_Process`; §38.5's row now says what the existing one does in this view. The cards repaint on an
+acquisition, a switch, a restore or a level, never on a hit, and a thumbnail only when its colour changes. **Not timed:**
+at the ~4,200 bets a second of the last run, Aquarius reaches about 1.5 levels a real second (285 in 810,000 bets), each
+paying for fourteen `Find`s and the owned sigils' `SigilLevel`, and none of it runs unless this view is showing. That
+this is negligible is a judgement from those counts, not a measurement.
+
+**The log lines, for Pr-12 and Pr-13.** `[Sigil] acquired — <name> — <Describe(collection)>` and `[Sigil] switched — <from>
+→ <to>, <LOST a pass in progress: …, or nothing lost> — before: <Describe(leaving)> — after: <Describe(collection)>`. **The
+`before:` part is beyond the brief:** Pr-12 needs the leaving sigil's state on both sides of the switch, and without it
+the only earlier reading could be thousands of bets old. Both are `GD.Print`, from the Godot-side handlers.
+
+**The descriptions, and a check that was wrong.** *"Saturn's square, by day: 3 sets of 3 numbers, counting by 1."* No
+description names any sign, not merely its partner's: "Eclipsed Leo" holds "Leo", so any sign word risks it. The new
+harness section 11 tests that on the description text, against twelve sign words and a list of pair words, and first
+proves it can fail on four bad examples (Convention 16). **It also carried a check of mine, that no pair sits side by
+side, and that check failed: the alphabet itself puts Pisces beside Sagittarius.** The check asked for more than the
+decision does, since D-GN.24 says alphabetical, not scattered, so it was removed and the order kept. In the two-column
+grid, Cancer also sits directly above Eclipsed Cancer and Eclipsed Leo directly above Leo, which their names say anyway.
+**For the developer to judge on seeing it.** Combined figures: their cards hold no text and their header stays hidden
+until `HasCombinedFigure`, so nothing is there to read before then.
+
+**Verified:** `dotnet build` clean; locale detector 17 / 0 / 0 / 0; the harness passes. **Not seen in game, none of it:**
+the screen, the scroll, the wheel, the thumbnails, the warning and the log lines have only been compiled. **The switch
+during an autobet is reasoned, not run:** no `Task.Run`, `Thread` or `Parallel` in `SimulationService` or
+`UserStatsService`, so a handler runs between bets. Unit 10 runs it. The new scripts have no `.uid` yet; Godot writes them on
+its next run.
 
 **Deferred to just before the close-out (developer, 2026-10-29):** the first look at the overlay (§10.4).
 
