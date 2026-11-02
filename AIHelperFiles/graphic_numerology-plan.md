@@ -14,8 +14,8 @@ recorded there. **D-GN.22 is built (§10.6):** the colour is the set's progress 
 round at a time, and a strip previews the next pass; the developer's look (L1–L4) passed, bar a clipped warning, now
 fixed. **Unit 6's review is done (2026-11-01):** it produced the closing decisions D-GN.23 to D-GN.27 (§8.1) — violet
 ×100, one of each sigil, one slot, the levels — and `AIHelperFiles/sigil_benefits-proposal.md` for the next plan.
-**Next: units 7 to 10 (§10) — ×100 and levels; the collection and the slot; its screen; the measurement, Pr-10 to Pr-14
-— then close-out.**
+**Unit 7 is done (§10.7):** ×100 and the levels. **Next: units 8 to 10 (§10) — the collection and the slot; its screen;
+the measurement, Pr-10 to Pr-14 — then close-out.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -879,6 +879,31 @@ lines and the table its header in every shot. **L4 failed on layout, not on logi
 620 px column, so the text needed four lines in a label sized for three. Fixed by shortening both (*"at 50%, the next
 pass takes it to 8"*; *"Betting at 50% restarts this pass and loses its 2 numbers hit at 95%. Completed passes
 stay."*) and moving 6 px from the strip (40 → 34) to the label (84 → 90). **Not re-seen in game.**
+
+### 10.7 Unit 7 — ×100 and levels, done (2026-11-01)
+
+**Built.** `SigilRules.PassesPerChance` enters the one fraction everything reads (`Progress`), so finishing, levels and
+the display cannot disagree. The D-GN.22 "colour step" is now named what the developer calls it, a **level**:
+`SetLevel`, `SetLevelAfterPass`, `MaxLevel`, `ColorForLevel`. New: `PassesToNextLevel`, exact in integers;
+`SigilLevel` and `CombinedLevel` (D-GN.27), displayed but read by nothing else yet. `LastPassChance` is deleted, its
+last reader having gone with D-GN.22 (Convention 3).
+
+**The overlay after ×100.** At most chances a pass no longer changes a level, so the text under the strip gives the
+passes to the next one (*"Set 2: level 6 of 95 · at 95%, 100 passes to level 7"*), "Done" and the sigil's completion
+went from one decimal to two, and the status line leads with the sigil's level. The strip's gold mark now appears only
+when the very next pass reaches a new level. **Level 0, the state of a new sigil for its first 100 rounds at 95%, draws
+as level 1's red:** red is where every set starts.
+
+**The harness.** Drawing every sigil to violet in every setting would be 11.8 billion bets, so section 5 measures `c`
+passes per set, one-`PassesPerChance`-th of violet, the same bets and noise as before: every cell within 4σ (worst
+2.91σ). Section 3 checks exact completion to full violet — Aquarius at 1%, 3%, 7%, 50% and 95%, 796,693–836,811 bets,
+exactly `3 × PassesPerChance × c` passes — and Cancer at 1%: 900 passes, 52,708,141 bets against 53,370,000. Section 9
+is rewritten for levels: the worked cases, 2,000 random sets where exactly `PassesToNextLevel` passes reach a higher
+level and one fewer does not, the developer's example (10 and 4 combine at 4), and 14,205 passes at mixed chances to
+violet. Cost: 56.9 ns and 0 bytes a bet. A full run takes 27 s.
+
+**Verified:** `dotnet build` clean; locale detector 17 / 0 / 0 / 0; the harness passes. **Not seen in game**, and still
+linear: the automatic move to the next sigil stays until unit 8. **Not measured:** Pr-10 and Pr-11 wait for unit 10.
 
 **Deferred to just before the close-out (developer, 2026-10-29):** the first look at the overlay (§10.4).
 

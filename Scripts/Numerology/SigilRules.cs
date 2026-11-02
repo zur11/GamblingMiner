@@ -44,10 +44,10 @@ namespace Scripts.Numerology
 		// consecutive rolls cannot hold every digital root.
 		public const int LossStreakMaxChance = 9;
 
-		public static SigilProgressState NewProgress()
+		public static SigilProgressState NewProgress(int sigilIndex = 0)
 		{
 			var state = new SigilProgressState();
-			StartSigil(state, 0);
+			StartSigil(state, sigilIndex);
 			return state;
 		}
 
@@ -169,7 +169,6 @@ namespace Scripts.Numerology
 			var set = state.Sets[state.SetIndex];
 			set.PassesByChance[state.PassChance] = set.PassesByChance.GetValueOrDefault(state.PassChance) + 1;
 			set.PassesCompleted++;
-			set.LastPassChance = state.PassChance;
 			state.Step = 0;
 			state.PassChance = 0;
 
@@ -209,56 +208,87 @@ namespace Scripts.Numerology
 			return outcome;
 		}
 
-		// Σ passes / chance ≥ 1, in exact rationals. A floating sum would leave three passes at 3% at 0.999… — one pass
-		// short forever (the Standing Convention 9 trap: a threshold on the noise of a division).
+		// D-GN.23 — a pass at chance c adds 1 / (PassesPerChance × c) of its set: the factor multiplies the cost of violet
+		// and leaves the balance between chances exactly as it was (D-GN.8).
+		public const int PassesPerChance = 100;
+
+		// Σ passes / (PassesPerChance × chance) ≥ 1, in exact rationals. A floating sum would stop a hair under 1 and leave
+		// the set one pass short forever (the Standing Convention 9 trap: a threshold on the noise of a division).
 		private static bool IsFinished(SigilSetProgress set)
 		{
 			var (numerator, denominator) = Progress(set);
 			return numerator >= denominator;
 		}
 
-		// A set's progress, Σ passes / chance, as an exact fraction: what IsFinished and the colour steps both read.
+		// A set's progress as an exact fraction: what IsFinished and the levels both read.
 		private static (BigInteger Numerator, BigInteger Denominator) Progress(SigilSetProgress set)
 		{
 			BigInteger numerator = 0, denominator = 1;
 			foreach (var (chance, passes) in set.PassesByChance)
-				(numerator, denominator) = Add(numerator, denominator, passes, chance);
+				(numerator, denominator) = Add(numerator, denominator, passes, PassesPerChance * chance);
 			return (numerator, denominator);
 		}
 
-		private static (BigInteger, BigInteger) Add(BigInteger numerator, BigInteger denominator, int passes, int chance)
+		// Adds passes / passValue to the fraction, reduced.
+		private static (BigInteger, BigInteger) Add(BigInteger numerator, BigInteger denominator, int passes, int passValue)
 		{
-			numerator = numerator * chance + passes * denominator;
-			denominator *= chance;
+			numerator = numerator * passValue + passes * denominator;
+			denominator *= passValue;
 			var gcd = BigInteger.GreatestCommonDivisor(numerator, denominator);
-			return gcd.IsZero ? (numerator, denominator) : (numerator / gcd, denominator / gcd);
+			return (numerator / gcd, denominator / gcd);
 		}
 
-		// D-GN.22 — the colour is the set's progress on a 95-step rainbow: step = ⌊95 × Σ passes / chance⌋, the whole
-		// 95ths completed — 0 before any pass, 1 red … 95 violet. Rounding DOWN makes 95 mean finished and nothing else
-		// (⌊95p⌋ = 95 ⇔ p ≥ 1), and every pass reaches at least step 1 (the smallest pass, at 95%, is exactly 1/95).
-		// Computed from the same exact fraction as IsFinished, so the colour and the verdict can never disagree, and a
-		// step never goes down: passes are only ever added.
-		public const int ColorSteps = 95;
+		// D-GN.22 — a set's level is its progress on a 95-step rainbow: ⌊MaxLevel × progress⌋, the whole steps completed —
+		// 1 red … MaxLevel violet. 0 until the first whole step, which since D-GN.23 takes many passes at most chances.
+		// Rounding DOWN makes MaxLevel mean finished and nothing else (⌊95p⌋ = 95 ⇔ p ≥ 1). Computed from the same exact
+		// fraction as IsFinished, so the level and the verdict can never disagree, and it never goes down: passes are
+		// only ever added.
+		public const int MaxLevel = 95;
 
-		public static int ColorStep(SigilSetProgress set)
+		public static int SetLevel(SigilSetProgress set)
 		{
 			var (numerator, denominator) = Progress(set);
-			return set.Finished ? ColorSteps : StepOf(numerator, denominator);
+			return set.Finished ? MaxLevel : LevelOf(numerator, denominator);
 		}
 
-		// The step the set would reach with one more pass at this chance — the overlay's preview of the next pass.
-		public static int ColorStepAfterPass(SigilSetProgress set, int chance)
+		// The level the set would reach with one more pass at this chance — the overlay's preview.
+		public static int SetLevelAfterPass(SigilSetProgress set, int chance)
 		{
 			if (set.Finished)
-				return ColorSteps;
+				return MaxLevel;
 			var (numerator, denominator) = Progress(set);
-			(numerator, denominator) = Add(numerator, denominator, 1, chance);
-			return StepOf(numerator, denominator);
+			(numerator, denominator) = Add(numerator, denominator, 1, PassesPerChance * chance);
+			return LevelOf(numerator, denominator);
 		}
 
-		private static int StepOf(BigInteger numerator, BigInteger denominator) =>
-			numerator >= denominator ? ColorSteps : (int)(ColorSteps * numerator / denominator);   // integer division floors
+		// How many more passes at this chance reach the next level; 0 for a finished set. What the overlay shows between
+		// levels, since most passes no longer change one (D-GN.23): the smallest k with progress + k / (PassesPerChance ×
+		// chance) ≥ (level + 1) / MaxLevel, in integers.
+		public static int PassesToNextLevel(SigilSetProgress set, int chance)
+		{
+			if (set.Finished)
+				return 0;
+			var (numerator, denominator) = Progress(set);
+			var needed = ((LevelOf(numerator, denominator) + 1) * denominator - MaxLevel * numerator) * (PassesPerChance * chance);
+			var scale = MaxLevel * denominator;
+			return (int)((needed + scale - 1) / scale);
+		}
+
+		// D-GN.27 — a sigil's level is the highest all its sets share, which is the lowest of them; a combined figure's is
+		// the highest its two sigils share, the lower of the two. What the benefits of the next plan will read.
+		public static int SigilLevel(SigilProgressState state)
+		{
+			int lowest = MaxLevel;
+			foreach (var set in state.Sets)
+				lowest = Math.Min(lowest, SetLevel(set));
+			return lowest;
+		}
+
+		public static int CombinedLevel(SigilProgressState first, SigilProgressState second) =>
+			Math.Min(SigilLevel(first), SigilLevel(second));
+
+		private static int LevelOf(BigInteger numerator, BigInteger denominator) =>
+			numerator >= denominator ? MaxLevel : (int)(MaxLevel * numerator / denominator);   // integer division floors
 
 		// D-GN.22 — the canvas shows one ROUND at a time: a round is one pass on every unfinished set, in the order the
 		// passes already cycle (D-GN.8). Within a round the sets already passed have one pass more than the rest, so
@@ -282,7 +312,7 @@ namespace Scripts.Numerology
 		{
 			double sum = 0;
 			foreach (var (chance, passes) in set.PassesByChance)
-				sum += (double)passes / chance;
+				sum += (double)passes / (PassesPerChance * chance);
 			return set.Finished ? 1.0 : Math.Min(sum, 1.0);
 		}
 
@@ -310,7 +340,7 @@ namespace Scripts.Numerology
 			var sets = new StringBuilder();
 			foreach (var set in state.Sets)
 				sets.Append(string.Create(CultureInfo.InvariantCulture,
-					$" [{set.PassesCompleted}p {SetCompletion(set) * 100:F1}% r{set.PassRestarts} {set.BetsPlaced}b {set.GameSeconds:F0}s]"));
+					$" [{set.PassesCompleted}p L{SetLevel(set)} {SetCompletion(set) * 100:F3}% r{set.PassRestarts} {set.BetsPlaced}b {set.GameSeconds:F0}s]"));
 			return string.Create(CultureInfo.InvariantCulture,
 				$"{square.SigilName(PlanetarySquares.KindOfSigil(state.SigilIndex))}: bets={state.BetsPlaced} sc={state.ScWagered:F8} " +
 				$"v={state.V} streak={state.LossStreak} target={CurrentTarget(state)} pass={state.Step}@{state.PassChance} " +

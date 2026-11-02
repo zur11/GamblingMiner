@@ -16,11 +16,11 @@ public partial class SigilCanvas : Control
 
 	public SigilProgressState State { get; set; }
 
-	// The 95-step rainbow of D-GN.22: step 1 red … ~48 green … 95 violet. The step is the set's progress
-	// (SigilRules.ColorStep), not the chance of its latest pass.
-	public static Color ColorForStep(int step)
+	// The rainbow of D-GN.22, one hue per level: 1 red … ~48 green … SigilRules.MaxLevel violet. Level 0 draws as level 1:
+	// red is where every set starts.
+	public static Color ColorForLevel(int level)
 	{
-		float t = (Mathf.Clamp(step, 1, SigilRules.ColorSteps) - 1) / (float)(SigilRules.ColorSteps - 1);
+		float t = (Mathf.Clamp(level, 1, SigilRules.MaxLevel) - 1) / (float)(SigilRules.MaxLevel - 1);
 		return Color.FromHsv(t * 0.76f, 0.85f, 0.95f);
 	}
 
@@ -69,20 +69,20 @@ public partial class SigilCanvas : Control
 		}
 
 		// One round at a time (D-GN.22): a finished set stays drawn, violet; a set already passed in this round shows in
-		// the colour of its progress; the set being drawn shows its silhouette faint, in the colour this pass will earn,
+		// the colour of its level; the set being drawn shows its silhouette faint, in the colour this pass will earn,
 		// and the numbers already hit solid on top; every other set is clear until its turn. When the round ends the
-		// canvas clears, and the next round draws again one colour further along.
+		// canvas clears, and the next round draws again, a colour further along whenever a level was reached.
 		float width = Mathf.Max(3f, cell * 0.07f);
 		for (int set = 0; set < n; set++)
 		{
 			var progress = state.Sets[set];
 			if (progress.Finished || SigilRules.PassedThisRound(state, set))
 			{
-				DrawSet(square, kind, set, n, ColorForStep(SigilRules.ColorStep(progress)), width, Center, n);
+				DrawSet(square, kind, set, n, ColorForLevel(SigilRules.SetLevel(progress)), width, Center, n);
 			}
 			else if (set == state.SetIndex && state.Step > 0)
 			{
-				Color passColor = ColorForStep(SigilRules.ColorStepAfterPass(progress, state.PassChance));
+				Color passColor = ColorForLevel(SigilRules.SetLevelAfterPass(progress, state.PassChance));
 				DrawSet(square, kind, set, n, new Color(passColor, 0.30f), width, Center, 0);
 				DrawSet(square, kind, set, state.Step, passColor, width, Center, state.Step);
 			}

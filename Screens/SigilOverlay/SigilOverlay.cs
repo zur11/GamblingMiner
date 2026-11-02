@@ -143,7 +143,7 @@ public partial class SigilOverlay : Control
 			_setsLabel.Text = string.Empty;
 			_chainLabel.Text = string.Empty;
 			_previewLabel.Text = string.Empty;
-			_strip.SetSteps(SigilRules.ColorSteps, -1);
+			_strip.SetLevels(SigilRules.MaxLevel, -1);
 			SetTextKeepingScroll(_completedLabel, BuildCompleted(state), 3);
 			return;
 		}
@@ -168,31 +168,30 @@ public partial class SigilOverlay : Control
 		SetTextKeepingScroll(_completedLabel, BuildCompleted(state), 3);
 	}
 
-	// D-GN.22 — under the strip: where the set being drawn stands, where a pass at the chance the next bet will use takes
-	// it, and — when a pass is partly drawn at another chance — that betting now restarts THAT PASS alone. Every pass
-	// already completed stays; the new chance adds its own share on top of them (D-GN.8, D-GN.9).
+	// D-GN.22 — under the strip: where the set being drawn stands, how many passes at the chance the next bet will use
+	// reach its next level (D-GN.23: most passes reach none), and — when a pass is partly drawn at another chance — that
+	// betting now restarts THAT PASS alone. Every pass already completed stays; the new chance adds its own share on top
+	// of them (D-GN.8, D-GN.9).
 	private string BuildPreview(SigilProgressState state, int? nextChance)
 	{
 		var set = state.Sets[state.SetIndex];
-		int now = SigilRules.ColorStep(set);
-		string setName = string.Create(CultureInfo.InvariantCulture, $"[b]Set {state.SetIndex + 1}[/b]");
-		string standing = now == 0
-			? $"{setName}: no colour yet"
-			: string.Create(CultureInfo.InvariantCulture, $"{setName}: colour {Step(now)} of {SigilRules.ColorSteps}");
+		int now = SigilRules.SetLevel(set);
+		string standing = string.Create(CultureInfo.InvariantCulture,
+			$"[b]Set {state.SetIndex + 1}[/b]: level {Level(now)} of {SigilRules.MaxLevel}");
 
 		if (nextChance is not int chance)
 		{
-			_strip.SetSteps(now, -1);
+			_strip.SetLevels(now, -1);
 			return standing + $"\n[color={MutedColor}]Make the player the active node to preview the next pass.[/color]";
 		}
 
-		int after = SigilRules.ColorStepAfterPass(set, chance);
-		_strip.SetSteps(now, after);
+		_strip.SetLevels(now, SigilRules.SetLevelAfterPass(set, chance));
 		// Each sentence sized to one line of the 620 px column, the warning to two: three lines in all, which the label
 		// holds. The first draft wrapped its first sentence and pushed the warning's end out of sight (§10.6, L4).
-		string pass = state.Step > 0 && chance == state.PassChance ? "this pass" : "the next pass";
+		int passes = SigilRules.PassesToNextLevel(set, chance);
+		string toNext = passes == 1 ? "1 pass" : string.Create(CultureInfo.InvariantCulture, $"{passes:N0} passes");
 		var sb = new StringBuilder(string.Create(CultureInfo.InvariantCulture,
-			$"{standing}  ·  at [b]{chance}%[/b], {pass} takes it to {Step(after)}"));
+			$"{standing}  ·  at [b]{chance}%[/b], {toNext} to level {Level(now + 1)}"));
 
 		if (state.Step > 0 && chance != state.PassChance)
 		{
@@ -205,9 +204,8 @@ public partial class SigilOverlay : Control
 		return sb.ToString();
 	}
 
-	private static string Step(int step) => step == 0
-		? "-"
-		: string.Create(CultureInfo.InvariantCulture, $"[color=#{SigilCanvas.ColorForStep(step).ToHtml(false)}][b]{step}[/b][/color]");
+	private static string Level(int level) =>
+		string.Create(CultureInfo.InvariantCulture, $"[color=#{SigilCanvas.ColorForLevel(level).ToHtml(false)}][b]{level}[/b][/color]");
 
 	private static string BuildStatus(SigilProgressState state, PlanetarySquare square, SigilKind kind,
 		long betsQuantum, long satoshiQuantum, double sigilSeconds, long secondsQuantum)
@@ -226,7 +224,7 @@ public partial class SigilOverlay : Control
 
 		if (state.Step > 0)
 		{
-			string color = SigilCanvas.ColorForStep(SigilRules.ColorStepAfterPass(state.Sets[state.SetIndex], state.PassChance)).ToHtml(false);
+			string color = SigilCanvas.ColorForLevel(SigilRules.SetLevelAfterPass(state.Sets[state.SetIndex], state.PassChance)).ToHtml(false);
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
 				$"Pass in progress: set {state.SetIndex + 1}, {state.Step} of {square.N} numbers, at [color=#{color}]{state.PassChance}%[/color]"));
 			sb.Append($"   [color={MutedColor}](this pass alone is lost if the chance changes)[/color]\n");
@@ -239,7 +237,7 @@ public partial class SigilOverlay : Control
 
 		double done = SigilRules.SigilCompletion(state);
 		sb.Append(string.Create(CultureInfo.InvariantCulture,
-			$"[b]{done * 100:F1}%[/b] complete  ·  {(1 - done) * 100:F1}% to go   [color={MutedColor}](completed passes only)[/color]\n"));
+			$"[b]Level[/b] {Level(SigilRules.SigilLevel(state))} of {SigilRules.MaxLevel}  ·  [b]{done * 100:F2}%[/b] complete  ·  {(1 - done) * 100:F2}% to go   [color={MutedColor}](completed passes only)[/color]\n"));
 		sb.Append(string.Create(CultureInfo.InvariantCulture,
 			$"Bets: {CounterQuantizer.Format(state.BetsPlaced, betsQuantum)}   ·   SC wagered: {FormatSc(state.ScWagered, satoshiQuantum)} SC   ·   Game time: {FormatDays(sigilSeconds, secondsQuantum)} days"));
 
@@ -261,7 +259,7 @@ public partial class SigilOverlay : Control
 		long betsQuantum, long satoshiQuantum, double sigilSeconds, long secondsQuantum)
 	{
 		var sb = new StringBuilder("[b]Sets[/b]\n[table=9]");
-		foreach (string header in new[] { "Set", "Numbers", "Passes", "Done", "Colour", "Bets", "Bets %", "Game days", "Restarts" })
+		foreach (string header in new[] { "Set", "Numbers", "Passes", "Done", "Level", "Bets", "Bets %", "Game days", "Restarts" })
 			sb.Append($"[cell][color={MutedColor}]{header}[/color]   [/cell]");
 
 		for (int set = 0; set < state.Sets.Count; set++)
@@ -269,8 +267,8 @@ public partial class SigilOverlay : Control
 			var progress = state.Sets[set];
 			bool current = set == state.SetIndex;
 			string numbers = string.Join("-", Enumerable.Range(0, square.N).Select(k => square.NumberAt(kind, set, k)));
-			int step = SigilRules.ColorStep(progress);
-			string color = step > 0 ? SigilCanvas.ColorForStep(step).ToHtml(false) : "bbbbbb";
+			int level = SigilRules.SetLevel(progress);
+			string color = SigilCanvas.ColorForLevel(level).ToHtml(false);
 			// The set being drawn is the only row whose figures move with every bet; it takes the sampled quanta.
 			string bets = current ? CounterQuantizer.Format(progress.BetsPlaced, betsQuantum)
 				: progress.BetsPlaced.ToString("N0", CultureInfo.InvariantCulture);
@@ -280,8 +278,8 @@ public partial class SigilOverlay : Control
 			string mark = current ? "> " : "";
 
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
-				$"[cell]{mark}{set + 1}   [/cell][cell]{numbers}   [/cell][cell]{progress.PassesCompleted}   [/cell]" +
-				$"[cell][color=#{color}]{SigilRules.SetCompletion(progress) * 100:F1}%[/color]   [/cell][cell]{Step(step)}   [/cell][cell]{bets}   [/cell]" +
+				$"[cell]{mark}{set + 1}   [/cell][cell]{numbers}   [/cell][cell]{progress.PassesCompleted:N0}   [/cell]" +
+				$"[cell][color=#{color}]{SigilRules.SetCompletion(progress) * 100:F2}%[/color]   [/cell][cell]{Level(level)}   [/cell][cell]{bets}   [/cell]" +
 				$"[cell]{share:F1}%   [/cell][cell]{days}   [/cell][cell]{progress.PassRestarts}[/cell]"));
 		}
 

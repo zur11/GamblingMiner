@@ -34,6 +34,7 @@ CompletedSigilRecord DrawOne(SigilProgressState st, int chance, Func<long, bool>
 	return (k1, k2);
 }
 
+// Bets for one-PassesPerChance-th of violet: c passes per set at chance c. Violet is this × SigilRules.PassesPerChance.
 double Predicted(int n) { var (k1, k2) = Targets(n); return 900.0 * k1 + 8100.0 * k2; }
 
 // One run's standard deviation, as a share of the prediction. Each target is hit c times; the bets to one hit are
@@ -97,12 +98,22 @@ Console.WriteLine("\n2. Rule details");
 	Check(st4.Streak == 6 && st4.VAfter == 4, $"at 5% a win adds the streak: 4 + (6 + 3) = 4 ({st4})");
 }
 
-Console.WriteLine("\n3. Exact completion: a set at chance c takes exactly c passes (D-GN.8, rationals)");
-foreach (int c in new[] { 3, 7, 50, 95 })
+Console.WriteLine("\n3. Exact completion: a set at chance c takes exactly PassesPerChance × c passes (D-GN.8, D-GN.23, rationals)");
+foreach (int c in new[] { 1, 3, 7, 50, 95 })
 {
 	var st = SigilRules.NewProgress(); long passes = 0;
-	DrawOne(st, c, _ => false, ref passes);
-	Check(passes == 3L * c, $"Aquarius at {c}%: {passes} set passes (expected {3 * c})");
+	var rec = DrawOne(st, c, _ => false, ref passes);
+	long expected = 3L * SigilRules.PassesPerChance * c;
+	Check(passes == expected && rec.Sets.All(s => s.PassesCompleted == SigilRules.PassesPerChance * c),
+		string.Create(CultureInfo.InvariantCulture, $"Aquarius at {c}%: {passes:N0} set passes (expected {expected:N0}), {rec.BetsPlaced:N0} bets"));
+}
+{
+	// The largest square at the rarest chance: D-GN.13's loss streak is what makes this finish at all.
+	var st = SigilRules.NewProgress(13); long passes = 0;
+	var sw13 = Stopwatch.StartNew();
+	var rec = DrawOne(st, 1, _ => false, ref passes);
+	Check(passes == 9L * SigilRules.PassesPerChance, string.Create(CultureInfo.InvariantCulture,
+		$"{PlanetarySquares.PlanetOfSigil(13).SigilName(PlanetarySquares.KindOfSigil(13))} at 1%: {passes:N0} set passes, {rec.BetsPlaced:N0} bets ({sw13.Elapsed.TotalSeconds:F1} s)"));
 }
 
 Console.WriteLine("\n4. Pr-2: a 1-digit target is hit on ≈ 1 win in 9 (≥ 10%)");
@@ -121,7 +132,9 @@ Console.WriteLine("\n4. Pr-2: a 1-digit target is hit on ≈ 1 win in 9 (≥ 10%
 		string.Create(CultureInfo.InvariantCulture, $"hits / wins = {rate:F4} (1/9 = {1.0 / 9:F4}) over {wins:N0} wins"));
 }
 
-Console.WriteLine("\n5. Pr-3 / Pr-4: violet cost per sigil, every planet in unlock order (bets placed, D-GN.19 record)");
+// Every sigil to violet in every setting would be 11.8 billion bets at ×100 (D-GN.23). The balance is a property of a pass,
+// so the table measures c passes per set: one-PassesPerChance-th of violet, the same bets and the same noise as before it.
+Console.WriteLine("\n5. Pr-3 / Pr-4: cost of c passes per set — one-hundredth of violet — per sigil (bets placed, D-GN.19 record)");
 var sw = Stopwatch.StartNew();
 var settings = new (int Chance, string Side, Func<long, bool> High)[]
 {
@@ -132,14 +145,17 @@ const int Runs = 6;
 var means = new double[settings.Length, PlanetarySquares.SigilCount];
 for (int i = 0; i < settings.Length; i++)
 	for (int run = 0; run < Runs; run++)
-	{
-		var st = SigilRules.NewProgress(); long passes = 0;
-		while (!st.AllComplete)
+		for (int k = 0; k < PlanetarySquares.SigilCount; k++)
 		{
-			var rec = DrawOne(st, settings[i].Chance, settings[i].High, ref passes);
-			means[i, rec.SigilIndex] += rec.BetsPlaced / (double)Runs;
+			var st = SigilRules.NewProgress(k);
+			long target = (long)st.Sets.Count * settings[i].Chance, passes = 0, bet = 0;
+			while (passes < target)
+			{
+				var res = engine.Play(1m, settings[i].Chance, settings[i].High(bet++));
+				if ((SigilRules.ApplyBet(st, res.Roll, res.IsWin, settings[i].Chance, 1m, DateTime.UnixEpoch) & SigilBetOutcome.SetPassCompleted) != 0) passes++;
+			}
+			means[i, k] += st.BetsPlaced / (double)Runs;
 		}
-	}
 Console.Write("  sigil                       predicted");
 foreach (var s in settings) Console.Write($"{s.Chance + "% " + s.Side,13}");
 Console.WriteLine();
@@ -159,7 +175,7 @@ for (int k = 0; k < PlanetarySquares.SigilCount; k++)
 	}
 	Console.WriteLine();
 }
-// A fixed percentage tolerance was flaky: at 1% a violet sigil is one pass and 6 runs leave ~10% noise on Aries.
+// A fixed percentage tolerance was flaky: at 1% this is one pass per set, and 6 runs leave ~10% noise on Aries.
 Check(worst < 4.0, string.Create(CultureInfo.InvariantCulture,
 	$"every cell within 4σ of the prediction, σ from the cell's own expected noise (worst {worst:F2}σ, {worstCell}; {Runs} runs per cell)"));
 Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  ({sw.Elapsed.TotalSeconds:F1} s)"));
@@ -251,7 +267,7 @@ Console.WriteLine("\n8. Cost per bet (the rule runs on every player bet)");
 	Check(bytes < 8, "an ordinary bet allocates nothing (what is allocated comes from completed passes and sigils)");
 }
 
-Console.WriteLine("\n9. Colour steps and rounds (D-GN.22): the colour is the set's progress, 1 red … 95 violet");
+Console.WriteLine("\n9. Levels and rounds (D-GN.22, D-GN.23, D-GN.27): a set's level is its progress, 1 red … MaxLevel violet");
 {
 	SigilSetProgress With(params (int Passes, int Chance)[] passes)
 	{
@@ -259,60 +275,93 @@ Console.WriteLine("\n9. Colour steps and rounds (D-GN.22): the colour is the set
 		foreach (var (p, c) in passes) set.PassesByChance[c] = set.PassesByChance.GetValueOrDefault(c) + p;
 		return set;
 	}
-	int Step(params (int, int)[] passes) => SigilRules.ColorStep(With(passes));
+	int Level(params (int, int)[] passes) => SigilRules.SetLevel(With(passes));
 
-	Check(Step() == 0, "no pass yet → step 0 (nothing drawn)");
-	Check(Step((1, 95)) == 1 && Step((2, 95)) == 2 && Step((94, 95)) == 94, "at 95%: one step per pass — 1, 2 … 94");
-	Check(Step((1, 94)) == 1 && Step((2, 94)) == 2 && Step((94, 94)) == 95, "at 94%: 1/94 = 1.0106/95 a pass → 1, 2 … and 94 passes finish (exactly 1)");
-	Check(Step((1, 50)) == 1 && Step((2, 50)) == 3 && Step((1, 10)) == 9 && Step((1, 2)) == 47 && Step((1, 1)) == 95,
-		"one pass: 50% → 1 (1.9/95), two → 3 (3.8) · 10% → 9 (9.5) · 2% → 47 (47.5) · 1% → 95");
-	Check(Step((10, 95), (1, 10)) == 19, "passes add over what is there: 10 at 95% + 1 at 10% = 19.5/95 → step 19");
-	Check(Step((2, 3)) == 63, "two passes at 3% = 2/3 → 63.33/95 → step 63");
-	Check(Step((3, 3)) == 95, "three passes at 3% = exactly 1 → 95 (a float sum would read 0.999… and stop at 94)");
+	Check(SigilRules.PassesPerChance == 100 && SigilRules.MaxLevel == 95, "the figures below are written for PassesPerChance 100 and MaxLevel 95");
+	Check(Level() == 0 && Level((99, 95)) == 0, "no pass, and 99 passes at 95%, are still level 0");
+	Check(Level((100, 95)) == 1 && Level((200, 95)) == 2 && Level((9400, 95)) == 94, "at 95%: one level per 100 passes — 1, 2 … 94");
+	Check(Level((1, 1)) == 0 && Level((2, 1)) == 1 && Level((99, 1)) == 94 && Level((100, 1)) == 95, "at 1%: 1 pass is 0.95 of a level → 0; 2 → 1; 99 → 94; 100 → 95");
+	Check(Level((52, 50)) == 0 && Level((53, 50)) == 1, "at 50%: 52 passes are 0.988 of a level → 0; 53 → 1");
+	Check(Level((9400, 94)) == 95 && Level((9399, 94)) == 94, "at 94%: exactly 9,400 passes finish, one fewer does not");
+	Check(Level((1000, 95), (100, 10)) == 19, "passes add over what is there: 1,000 at 95% + 100 at 10% = 19.5 levels → 19");
+	Check(Level((200, 3)) == 63, "200 passes at 3% = 2/3 → 63.33 levels → 63");
+	Check(Level((300, 3)) == 95, "300 passes at 3% = exactly 1 → 95 (a float sum would read 0.999… and stop at 94)");
+	Check(Level((9400, 95), (100, 94)) == 95, "9,400 at 95% + 100 at 94% = 8931/8930, past 1 → 95");
 
-	// Step 95 means finished, and only that: the colour reads the verdict's own exact fraction.
-	Check(Step((94, 95), (1, 94)) == 95, "94 at 95% + 1 at 94% = 8931/8930, past 1 → 95");
-	var notQuite = With((1, 2), (1, 3), (1, 7), (1, 43));   // 1/2 + 1/3 + 1/7 + 1/43 = 1805/1806
-	Check(SigilRules.ColorStep(notQuite) == 94, "1/2 + 1/3 + 1/7 + 1/43 = 1805/1806, short of 1 → 94, never 95");
-	notQuite.Finished = false;
-	Check(SigilRules.ColorStepAfterPass(notQuite, 95) == 95 && SigilRules.ColorStepAfterPass(With((1, 95)), 95) == 2
-		&& SigilRules.ColorStepAfterPass(With(), 50) == 1 && SigilRules.ColorStepAfterPass(With((1, 50)), 50) == 3,
-		"the preview equals the step after one more pass");
+	// MaxLevel means finished, and only that: the level reads the verdict's own exact fraction.
+	var notQuite = With((100, 2), (100, 3), (100, 7), (100, 43));   // 1/2 + 1/3 + 1/7 + 1/43 = 1805/1806
+	Check(SigilRules.SetLevel(notQuite) == 94, "1/2 + 1/3 + 1/7 + 1/43 = 1805/1806, short of 1 → 94, never 95");
+	Check(SigilRules.SetLevelAfterPass(With((99, 95)), 95) == 1 && SigilRules.SetLevelAfterPass(With((98, 95)), 95) == 0
+		&& SigilRules.SetLevelAfterPass(With(), 1) == 0 && SigilRules.SetLevelAfterPass(With((1, 1)), 1) == 1,
+		"the preview equals the level after one more pass");
 
-	// Over real play at mixed chances: steps never go down, 95 ⇔ finished, the preview of each completed pass came
-	// true, and the round invariants hold after every pass.
+	Check(SigilRules.PassesToNextLevel(With(), 95) == 100 && SigilRules.PassesToNextLevel(With((60, 95)), 95) == 40
+		&& SigilRules.PassesToNextLevel(With(), 1) == 2 && SigilRules.PassesToNextLevel(With((1, 1)), 1) == 1
+		&& SigilRules.PassesToNextLevel(With((100, 95)), 1) == 2 && SigilRules.PassesToNextLevel(new SigilSetProgress { Finished = true }, 50) == 0,
+		"passes to the next level: 100 · 40 at 95%; 2 · 1 at 1%; 2 at 1% from level 1; 0 when finished");
+	var rngLevels = new Random(11);
+	bool nextExact = true;
+	int[] chances = { 95, 94, 80, 50, 33, 20, 9, 7, 3, 2, 1 };
+	for (int i = 0; i < 2000; i++)
+	{
+		var set = With((rngLevels.Next(200), chances[rngLevels.Next(chances.Length)]), (rngLevels.Next(200), chances[rngLevels.Next(chances.Length)]));
+		int level = SigilRules.SetLevel(set), chance = chances[rngLevels.Next(chances.Length)];
+		if (level == SigilRules.MaxLevel) continue;
+		int k = SigilRules.PassesToNextLevel(set, chance);
+		var before = With(); foreach (var (c, p) in set.PassesByChance) before.PassesByChance[c] = p;
+		before.PassesByChance[chance] = before.PassesByChance.GetValueOrDefault(chance) + k - 1;
+		var after = With(); foreach (var (c, p) in before.PassesByChance) after.PassesByChance[c] = p;
+		after.PassesByChance[chance]++;
+		nextExact &= k >= 1 && SigilRules.SetLevel(before) == level && SigilRules.SetLevel(after) > level;
+	}
+	Check(nextExact, "over 2,000 random sets: exactly that many passes reach a higher level, one fewer does not");
+
+	// D-GN.27: a sigil's level is its lowest set's; a combined figure's is the lower sigil's. 100 passes at 95% are a level.
+	SigilProgressState AtLevels(int sigil, params int[] levels)
+	{
+		var st = SigilRules.NewProgress(sigil);
+		for (int i = 0; i < levels.Length; i++) st.Sets[i].PassesByChance[95] = levels[i] * 100;
+		return st;
+	}
+	var a = AtLevels(0, 10, 12, 30); var b = AtLevels(1, 4, 40, 90);
+	Check(SigilRules.SigilLevel(a) == 10 && SigilRules.SigilLevel(b) == 4, "a sigil's level is its lowest set's: 10-12-30 → 10, 4-40-90 → 4");
+	Check(SigilRules.CombinedLevel(a, b) == 4 && SigilRules.CombinedLevel(b, a) == 4, "the developer's example: sigil A at 10 and sigil B at 4 combine at 4");
+	Check(SigilRules.SigilLevel(SigilRules.NewProgress()) == 0, "a fresh sigil is level 0");
+
+	// Over real play at mixed chances, to violet: levels never go down, MaxLevel ⇔ finished, every preview comes true, a
+	// sigil's level is the lowest of its sets', and the round invariants hold after every pass.
 	var rng = new Random(7);
 	var st = SigilRules.NewProgress();
 	var last = new int[3];
-	bool monotone = true, ninetyFive = true, previewTrue = true, roundOk = true;
+	bool monotone = true, top = true, previewTrue = true, roundOk = true, lowest = true;
 	int passesSeen = 0;
 	while (st.Completed.Count == 0)
 	{
 		int chance = new[] { 95, 80, 50, 20, 9, 3 }[rng.Next(6)];
-		for (int b = 0; b < 400 && st.Completed.Count == 0; b++)
+		for (int b2 = 0; b2 < 2000 && st.Completed.Count == 0; b2++)
 		{
 			int setIndex = st.SetIndex;
-			int predicted = SigilRules.ColorStepAfterPass(st.Sets[setIndex], chance);
+			int predicted = SigilRules.SetLevelAfterPass(st.Sets[setIndex], chance);
 			var res = engine.Play(1m, chance, rng.Next(2) == 0);
 			var o = SigilRules.ApplyBet(st, res.Roll, res.IsWin, chance, 1m, DateTime.UnixEpoch);
 			if ((o & SigilBetOutcome.SetPassCompleted) == 0 || (o & SigilBetOutcome.SigilCompleted) != 0)
 				continue;
 			passesSeen++;
-			int now = SigilRules.ColorStep(st.Sets[setIndex]);
-			previewTrue &= now == predicted;
+			previewTrue &= SigilRules.SetLevel(st.Sets[setIndex]) == predicted;
 			for (int i = 0; i < 3; i++)
 			{
-				int s = SigilRules.ColorStep(st.Sets[i]);
-				monotone &= s >= last[i];
-				ninetyFive &= (s == 95) == st.Sets[i].Finished;
-				last[i] = s;
+				int l = SigilRules.SetLevel(st.Sets[i]);
+				monotone &= l >= last[i];
+				top &= (l == SigilRules.MaxLevel) == st.Sets[i].Finished;
+				last[i] = l;
 			}
+			lowest &= SigilRules.SigilLevel(st) == last.Min();
 			var open = st.Sets.Where(x => !x.Finished).Select(x => x.PassesCompleted).ToList();
 			roundOk &= open.Max() - open.Min() <= 1 && !SigilRules.PassedThisRound(st, st.SetIndex);
 		}
 	}
-	Check(monotone && ninetyFive && previewTrue && roundOk, string.Create(CultureInfo.InvariantCulture,
-		$"over {passesSeen} passes at mixed chances: steps never fall, 95 ⇔ finished, every preview came true, rounds hold"));
+	Check(monotone && top && previewTrue && roundOk && lowest, string.Create(CultureInfo.InvariantCulture,
+		$"over {passesSeen:N0} passes at mixed chances: levels never fall, {SigilRules.MaxLevel} ⇔ finished, every preview came true, the sigil's level is its lowest set's, rounds hold"));
 }
 
 Console.WriteLine(failures == 0 ? "\nALL CHECKS PASS" : $"\n{failures} CHECK(S) FAILED");

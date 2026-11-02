@@ -44,7 +44,8 @@ namespace Scripts.Numerology
 
 	public sealed class SigilSetProgress
 	{
-		// Completed passes, by the chance they were drawn at. The set is finished when Σ passes / chance ≥ 1 (D-GN.8).
+		// Completed passes, by the chance they were drawn at. The set is finished when
+		// Σ passes / (SigilRules.PassesPerChance × chance) ≥ 1 (D-GN.8, D-GN.23).
 		public Dictionary<int, int> PassesByChance { get; set; } = new();
 		public bool Finished { get; set; }
 
@@ -55,9 +56,6 @@ namespace Scripts.Numerology
 		public double GameSeconds { get; set; }
 		public int PassesCompleted { get; set; }
 		public int PassRestarts { get; set; }
-
-		// The chance of its latest completed pass — the colour an unfinished set is drawn in (D-GN.8). 0 = none yet.
-		public int LastPassChance { get; set; }
 	}
 
 	public sealed class CompletedSigilRecord
