@@ -11,7 +11,7 @@ the symbolism of its planet and zodiac sign. Mechanics of the sigils themselves 
 
 ## 1. Fixed by the developer (2026-11-01)
 
-These are recorded as D-GN.23 to D-GN.27 in `graphic_numerology-plan.md`; the proposal is built on them.
+These are recorded as D-GN.23 to D-GN.30 in `graphic_numerology-plan.md`; the proposal is built on them.
 
 - **Violet costs 100× what the measured rule cost** (`SigilRules.PassesPerChance`): 100 passes per set at 1%, `100 × c`
   at chance `c`. See §5 for what that does to every figure.
@@ -21,6 +21,11 @@ These are recorded as D-GN.23 to D-GN.27 in `graphic_numerology-plan.md`; the pr
   in progress, and it is committed by the next mined block like everything else.
 - **A sigil's level is the highest level all its sets share** — the lowest of its sets. This is what unlocks benefits.
 - **A combined figure's level is the highest both sigils share** — the lower of the two. Level 10 + level 4 = level 4.
+- **That level only opens the planetary sigil's levels; each must then be activated** (2026-11-02, D-GN.30): level `k`
+  takes `k` whole passes through both sigils, drawn one after the other, once both hold level `k`. Whether each level's
+  price adds to the last (OQ-GN.1) is open in the plan's §8.2.
+- **A complete sigil cannot be played** (D-GN.28): only an activation draws it again. This is a first answer to the old
+  question of why anyone would repeat a sigil (D-GN.18).
 
 Levels run 1 (red) to `SigilRules.MaxLevel` (violet). So levels are already the answer to *"how does a benefit grow?"*;
 §6 keeps only what they do not settle.
@@ -53,8 +58,9 @@ proposal mirrors that:
 
 - **A day sigil gives a TOOL:** something the player uses.
 - **A night sigil gives a PROTECTION or a way of SEEING.**
-- **A combined figure gives the stronger form of the two**, at the combined level. Discovering it is the reward for
-  working out which two sigils belong together.
+- **A combined figure gives the stronger form of the two.** Discovering it is the reward for working out which two
+  sigils belong together. *At which level is §6's question 8: this line said "the combined level" until D-GN.30 gave the
+  planetary sigil an activated level of its own.*
 
 Names and pairs follow `PlanetarySquares.All` (the developer's domicile table), which is not always the textbook
 assignment: Virgo is the day sigil of Mercury here, Gemini the night one.
@@ -125,7 +131,7 @@ Cosmetics fit every level: the day, night and eclipse textures still to be made,
 
 Costs are `Predicted(n) × PassesPerChance` from the harness: the same at every chance, by design (D-GN.8). A set of
 figures for sizing benefits, not a promise: each is a mean, and a combined figure costs **twice** the sigil, since both
-must reach the level. Real time assumes 100X, where 99 credits (`MaxAutoBetBaseAps`) make 99 bets a real second.
+must reach the level, **plus the price of activating it** (D-GN.30, table in the plan's §8.2). Real time assumes 100X, where 99 credits (`MaxAutoBetBaseAps`) make 99 bets a real second.
 
 | Planet (n) | One sigil to violet (bets) | One level (bets) | One sigil to violet at 99 credits (real time) |
 |---|---|---|---|
@@ -160,6 +166,9 @@ cost, so a level on Saturn and a level on the Moon are not the same achievement.
 6. **Uncommitted progress.** Should the overlay show how much sigil progress rides on the next block? At high credits
    it is a lot: in the 2026-10-29 measurement a whole violet Aquarius was lost to a restart (plan §10.5).
 7. **More slots** ("only one for now"): earned how, and what would a second slot change in question 2?
+8. **Which level does a combined benefit read?** D-GN.30 separates the combined level (what can be activated) from the
+   activated level (what has been). The word "activate" suggests the benefit reads the second, so that an unactivated
+   figure gives nothing. Not decided.
 
 ---
 
