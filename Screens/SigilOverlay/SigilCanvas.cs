@@ -27,8 +27,8 @@ public partial class SigilCanvas : Control
 	public override void _Draw()
 	{
 		var state = State;
-		if (state == null || state.AllComplete)
-			return;
+		if (state == null)
+			return;   // the slot is empty
 
 		var square = PlanetarySquares.PlanetOfSigil(state.SigilIndex);
 		var kind = PlanetarySquares.KindOfSigil(state.SigilIndex);
@@ -88,9 +88,12 @@ public partial class SigilCanvas : Control
 			}
 		}
 
-		// The next number to hit, ringed.
-		int target = SigilRules.CurrentTarget(state);
-		DrawArc(Center(target), cell * 0.38f, 0f, Mathf.Tau, 48, new Color(1f, 0.85f, 0.2f), Mathf.Max(2f, cell * 0.04f), true);
+		// The next number to hit, ringed. A complete sigil has none (D-GN.26): every set above is drawn, violet.
+		if (!state.IsComplete)
+		{
+			int target = SigilRules.CurrentTarget(state);
+			DrawArc(Center(target), cell * 0.38f, 0f, Mathf.Tau, 48, new Color(1f, 0.85f, 0.2f), Mathf.Max(2f, cell * 0.04f), true);
+		}
 	}
 
 	// The set's path through its first `upTo` numbers, and its start (green) and end (red) circles once they are hit —

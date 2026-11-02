@@ -284,20 +284,21 @@ public partial class UserStatsService : Node
 	}
 
 	// Graphic Numerology (unit 5) — what godot.log gets, for a measurement read afterwards. A completed sigil always; a
-	// completed pass or a restart only in DEBUG, since at 95% that is a line every ~28 bets.
+	// level reached or a restart only in DEBUG. A level rather than a pass since D-GN.23: at 95% a violet Aquarius is 28,500
+	// passes, a line every ~28 bets, against 95 levels per set whatever the chance.
 	private static void LogSigilOutcome(Scripts.Numerology.SigilBetOutcome outcome)
 	{
-		var state = Scripts.Numerology.PlayerSigilProgress.State;
-		if ((outcome & Scripts.Numerology.SigilBetOutcome.SigilCompleted) != 0 && state.Completed.Count > 0)
-			GD.Print("[Sigil] SIGIL COMPLETE — " + Scripts.Numerology.SigilRules.Describe(state.Completed[^1]));
-		LogSigilPassOrRestart(outcome, state);
+		var state = Scripts.Numerology.PlayerSigilProgress.Equipped;
+		if ((outcome & Scripts.Numerology.SigilBetOutcome.SigilCompleted) != 0)
+			GD.Print("[Sigil] SIGIL COMPLETE — " + Scripts.Numerology.SigilRules.DescribeCompleted(state));
+		LogSigilLevelOrRestart(outcome, state);
 	}
 
 	[System.Diagnostics.Conditional("DEBUG")]
-	private static void LogSigilPassOrRestart(Scripts.Numerology.SigilBetOutcome outcome, Scripts.Numerology.SigilProgressState state)
+	private static void LogSigilLevelOrRestart(Scripts.Numerology.SigilBetOutcome outcome, Scripts.Numerology.SigilProgressState state)
 	{
-		if ((outcome & Scripts.Numerology.SigilBetOutcome.SetPassCompleted) != 0)
-			GD.Print("[Sigil] pass complete — " + Scripts.Numerology.SigilRules.Describe(state));
+		if ((outcome & Scripts.Numerology.SigilBetOutcome.LevelReached) != 0)
+			GD.Print("[Sigil] level reached — " + Scripts.Numerology.SigilRules.Describe(state));
 		else if ((outcome & Scripts.Numerology.SigilBetOutcome.PassRestarted) != 0)
 			GD.Print("[Sigil] pass restarted (chance changed) — " + Scripts.Numerology.SigilRules.Describe(state));
 	}

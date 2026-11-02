@@ -91,10 +91,10 @@ namespace Scripts.Numerology
 	// Copied from the developer's Numerología Gráfica project (web/sigilos.html, CUADRADOS), where every value is verified.
 	public static class PlanetarySquares
 	{
-		// Unlock order (D-GN.18): smallest to largest. Index = planet index.
+		// Smallest to largest. Index = planet index. Since D-GN.26 this is no order of play, only of declaration.
 		public static readonly IReadOnlyList<PlanetarySquare> All = Build();
 
-		// Two sigils per planet, diurnal first (D-GN.16): sigil index = planet index × 2 + kind.
+		// Two sigils per planet: sigil index = planet index × 2 + kind.
 		public static int SigilCount => All.Count * 2;
 
 		public static PlanetarySquare PlanetOfSigil(int sigilIndex) => All[sigilIndex / 2];

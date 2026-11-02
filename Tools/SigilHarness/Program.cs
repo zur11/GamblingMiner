@@ -13,19 +13,23 @@ void Check(bool ok, string what) { Console.WriteLine((ok ? "  PASS  " : "  FAIL 
 string Cell(PlanetarySquare q, int number) { var (r, c) = q.PositionOf(number); return $"{(char)('A' + c)}{r + 1}"; }
 string Path(PlanetarySquare q, SigilKind k, int set) => string.Join("-", Enumerable.Range(0, q.N).Select(s => Cell(q, q.NumberAt(k, set, s))));
 
-// Bets until the sigil currently being drawn completes, at a fixed chance and side policy. Returns its record.
-CompletedSigilRecord DrawOne(SigilProgressState st, int chance, Func<long, bool> high, ref long setPasses)
+// Bets until this sigil completes, at a fixed chance and side policy.
+SigilProgressState DrawOne(SigilProgressState st, int chance, Func<long, bool> high, ref long setPasses)
 {
-	int start = st.Completed.Count;
 	long bet = 0;
-	while (st.Completed.Count == start)
+	while (!st.IsComplete)
 	{
 		var res = engine.Play(1m, chance, high(bet++));
 		var o = SigilRules.ApplyBet(st, res.Roll, res.IsWin, chance, 1m, DateTime.UnixEpoch);
 		if ((o & SigilBetOutcome.SetPassCompleted) != 0) setPasses++;
 	}
-	return st.Completed[start];
+	return st;
 }
+
+Scripts.Finance.BetTransactionEvent Bet(int roll, bool isWin, int chance, DateTime when) =>
+	new(1m, 0m, 0m, 0m, isWin, roll, chance, 1m, false, when);
+
+string Json<T>(T value) => System.Text.Json.JsonSerializer.Serialize(value);
 
 (int K1, int K2) Targets(int n)
 {
@@ -125,7 +129,7 @@ Console.WriteLine("\n4. Pr-2: a 1-digit target is hit on ≈ 1 win in 9 (≥ 10%
 		var o = SigilRules.ApplyBet(st, res.Roll, res.IsWin, 50, 1m, DateTime.UnixEpoch);
 		if (res.IsWin) wins++;
 		if ((o & SigilBetOutcome.Hit) != 0) hits++;
-		if (st.SigilIndex != 0) st = SigilRules.NewProgress();   // stay on Aquarius: all its targets are 1-digit
+		if (st.IsComplete) st = SigilRules.NewProgress();   // stay on Aquarius: all its targets are 1-digit
 	}
 	double rate = (double)hits / wins;
 	Check(Math.Abs(rate - 1.0 / 9) < 0.003,
@@ -186,14 +190,14 @@ Console.WriteLine("\n6. Per-set tracking (D-GN.20): the sets add up to the sigil
 	var st = SigilRules.NewProgress();
 	var t0 = new DateTime(2009, 3, 21, 0, 0, 0, DateTimeKind.Utc);
 	long bet = 0;
-	while (st.Completed.Count == 0)
+	while (!st.IsComplete)
 	{
 		int chance = bet < 2000 ? 40 : 50;
 		var res = engine.Play(1m, chance, false);
 		SigilRules.ApplyBet(st, res.Roll, res.IsWin, chance, 0.5m, t0.AddSeconds(100 * bet));
 		bet++;
 	}
-	var rec = st.Completed[0];
+	var rec = st;
 	Check(rec.Sets.Sum(s => s.BetsPlaced) == rec.BetsPlaced && rec.BetsPlaced == bet, $"set bets add up to the sigil's ({rec.BetsPlaced} bets)");
 	Check(rec.Sets.Sum(s => s.ScWagered) == rec.ScWagered && rec.ScWagered == 0.5m * bet, "set SC adds up to the sigil's");
 	Check(Math.Abs(rec.Sets.Sum(s => s.GameSeconds) - 100.0 * (bet - 1)) < 1e-6 && rec.CompletedAtUtc - rec.StartedAtUtc == TimeSpan.FromSeconds(100 * (bet - 1)),
@@ -203,68 +207,130 @@ Console.WriteLine("\n6. Per-set tracking (D-GN.20): the sets add up to the sigil
 	foreach (var (s, i) in rec.Sets.Select((s, i) => (s, i)))
 		Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
 			$"  {i + 1,3}  {s.PassesCompleted,6}  {s.PassRestarts,8}  {s.BetsPlaced,8:N0}  {(double)s.BetsPlaced / rec.BetsPlaced,6:P1}  {s.GameSeconds / 86400,12:F2}"));
-	Check(SigilRules.SigilCompletion(st) == 0.0 && st.SigilIndex == 1, "the next sigil (Capricorn) starts at 0%");
-	// The godot.log lines unit 5 reads: they must carry the figures the analysis needs, in invariant format.
-	string completed = SigilRules.Describe(rec), live = SigilRules.Describe(st);
+	Check(SigilRules.SigilCompletion(st) == 1.0 && SigilRules.SigilLevel(st) == SigilRules.MaxLevel && st.SigilIndex == 0,
+		"a complete sigil stays itself, at 100% and MaxLevel: nothing moves on by itself (D-GN.26)");
+	var frozen = Json(st);
+	var after = SigilRules.ApplyBet(st, 1, true, 50, 1m, t0.AddSeconds(100 * bet), out var stepAfter);
+	Check(after == SigilBetOutcome.None && stepAfter == default && Json(st) == frozen, "a bet on a complete sigil returns None and changes nothing");
+	// The godot.log lines the measurements read: they must carry the figures the analysis needs, in invariant format.
+	string completed = SigilRules.DescribeCompleted(rec), done = SigilRules.Describe(st), fresh = SigilRules.Describe(SigilRules.NewProgress(1));
 	Console.WriteLine("  log: SIGIL COMPLETE — " + completed);
-	Console.WriteLine("  log: " + live);
+	Console.WriteLine("  log: " + done);
+	Console.WriteLine("  log: " + fresh);
 	Check(completed.StartsWith("Aquarius Sigil: bets=" + rec.BetsPlaced) && completed.Contains("@40") && completed.Contains("@50")
-		&& live.StartsWith("Capricorn Sigil: bets=0 ")
-		&& completed.Contains("sc=" + rec.ScWagered.ToString("F8", CultureInfo.InvariantCulture) + " ") && live.Contains("sc=0.00000000 "),
-		"Describe() carries the sigil, its bets and each set's passes by chance, invariant (no decimal comma)");
+		&& done.StartsWith("Aquarius Sigil: level=" + SigilRules.MaxLevel + " ") && done.Contains(" target=complete ")
+		&& fresh.StartsWith("Capricorn Sigil: level=0 bets=0 ") && fresh.Contains(" target=1 ")
+		&& completed.Contains("sc=" + rec.ScWagered.ToString("F8", CultureInfo.InvariantCulture) + " ") && fresh.Contains("sc=0.00000000 "),
+		"Describe() carries the sigil, its level, its bets and each set's passes by chance, invariant (no decimal comma)");
+	Check(SigilRules.Describe((SigilProgressState)null) == "slot empty"
+		&& SigilRules.Describe(new SigilCollectionState()) == "slot=empty owned=0", "Describe() reads an empty slot and an empty collection");
 }
 
-Console.WriteLine("\n7. The checkpoint round trip (P-GN.4, D-GN.11)");
+Console.WriteLine("\n7. Pr-13: the checkpoint round trip (P-GN.4, D-GN.11, D-GN.25)");
 {
-	string Json(SigilProgressState s) => System.Text.Json.JsonSerializer.Serialize(s);
 	PlayerSigilProgress.ResetToPreGenesisDefaults();
 	var outcomes = new List<SigilBetOutcome>();
 	PlayerSigilProgress.Changed += outcomes.Add;
 	var t0 = new DateTime(2009, 3, 21, 0, 0, 0, DateTimeKind.Utc);
+	PlayerSigilProgress.Acquire(0);
+	PlayerSigilProgress.Acquire(1);
+	PlayerSigilProgress.Equip(0);
+	outcomes.Clear();
 	for (int b = 0; b < 3000; b++)
 	{
 		var res = engine.Play(1m, 50, false);
-		PlayerSigilProgress.RegisterPlayerBet(new Scripts.Finance.BetTransactionEvent(
-			1m, 0m, 0m, 0m, res.IsWin, res.Roll, 50, res.Multiplier, false, t0.AddSeconds(100 * b)));
+		PlayerSigilProgress.RegisterPlayerBet(Bet(res.Roll, res.IsWin, 50, t0.AddSeconds(100 * b)));
 	}
 	var block = PlayerSigilProgress.CaptureForCheckpoint();
 	string atBlock = Json(block);
-	Check(PlayerSigilProgress.State.BetsPlaced == 3000 && outcomes.Count > 0 && outcomes.All(o => o != SigilBetOutcome.None),
+	Check(PlayerSigilProgress.Equipped.BetsPlaced == 3000 && outcomes.Count > 0 && outcomes.All(o => o != SigilBetOutcome.None),
 		$"3,000 bets registered; Changed fired {outcomes.Count} times, never for a bet that changed nothing");
 	for (int b = 0; b < 500; b++)
-		PlayerSigilProgress.RegisterPlayerBet(new Scripts.Finance.BetTransactionEvent(
-			1m, 0m, 0m, 0m, true, 1, 50, 1.98m, false, t0.AddSeconds(100 * (3000 + b))));
+		PlayerSigilProgress.RegisterPlayerBet(Bet(1, true, 50, t0.AddSeconds(100 * (3000 + b))));
 	Check(Json(block) == atBlock, "the captured snapshot does not move with the live state");
 	var recent = new SigilStep[8];
 	int got = PlayerSigilProgress.CopyRecentSteps(recent, 8);
 	Check(got == 8 && recent.All(s => s.IsWin && s.Root == 1) && recent.Take(7).Zip(recent.Skip(1)).All(p => p.First.VAfter == p.Second.VBefore),
 		"the V chain holds the latest 8 operations, oldest first, each starting where the previous one ended");
+
+	// After the block: another acquisition and a switch, then bets on the other sigil. The restart reverts all of it.
+	PlayerSigilProgress.Acquire(2);
+	PlayerSigilProgress.Equip(1);
+	for (int b = 0; b < 500; b++)
+	{
+		var res = engine.Play(1m, 50, false);
+		PlayerSigilProgress.RegisterPlayerBet(Bet(res.Roll, res.IsWin, 50, t0.AddSeconds(100 * (3500 + b))));
+	}
 	PlayerSigilProgress.RestoreFromCheckpoint(block);
-	Check(Json(PlayerSigilProgress.State) == atBlock, "a restart restores exactly the block's state");
+	Check(Json(PlayerSigilProgress.Collection) == atBlock, "a restart restores exactly what is owned, the slot and every sigil's progress");
+	Check(!PlayerSigilProgress.IsOwned(2) && PlayerSigilProgress.Equipped.SigilIndex == 0 && PlayerSigilProgress.Find(1).BetsPlaced == 0,
+		"and so reverts the acquisition, the switch and the bets made since the block");
 	Check(PlayerSigilProgress.CopyRecentSteps(recent, 8) == 0, "a restore empties the chain");
+	Check(ReferenceEquals(PlayerSigilProgress.Equipped, PlayerSigilProgress.Find(0)) && !ReferenceEquals(PlayerSigilProgress.Equipped, block.Owned[0]),
+		"the cached slot is the restored list's own object, not the snapshot's: a bet after a restore counts in what the next block captures");
+	PlayerSigilProgress.RegisterPlayerBet(Bet(50, false, 50, t0.AddSeconds(100 * 3000)));
+	Check(PlayerSigilProgress.CaptureForCheckpoint().Owned[0].BetsPlaced == 3001 && block.Owned[0].BetsPlaced == 3000, "so the next capture carries it, and the old snapshot does not");
+
 	PlayerSigilProgress.RestoreFromCheckpoint(null);
-	Check(PlayerSigilProgress.State.BetsPlaced == 0 && PlayerSigilProgress.State.SigilIndex == 0 && PlayerSigilProgress.State.Sets.Count == 3,
-		"a checkpoint from before Graphic Numerology restores fresh progress");
+	Check(PlayerSigilProgress.Collection.Owned.Count == 0 && PlayerSigilProgress.Equipped == null && PlayerSigilProgress.Collection.EquippedSigilIndex == null,
+		"a checkpoint from before the collection existed restores an empty one");
+	var fromEmptyJson = System.Text.Json.JsonSerializer.Deserialize<SigilCollectionState>("{}");
+	Check(fromEmptyJson.Owned.Count == 0 && fromEmptyJson.EquippedSigilIndex == null, "a fresh collection is empty, with an empty slot (D-GN.25)");
 	PlayerSigilProgress.Changed -= outcomes.Add;
 }
 
-Console.WriteLine("\n8. Cost per bet (the rule runs on every player bet)");
+Console.WriteLine("\n8. Pr-14: cost per bet, the rule and its one caller (every player bet runs both)");
 {
 	const int Bets = 5_000_000;
 	var rng = new Random(1);
-	var rolls = new int[Bets];
-	for (int i = 0; i < Bets; i++) rolls[i] = rng.Next(0, 100);
-	var st = SigilRules.NewProgress();
 	var t0 = new DateTime(2009, 3, 21, 0, 0, 0, DateTimeKind.Utc);
-	for (int i = 0; i < 100_000; i++) SigilRules.ApplyBet(st, rolls[i], rolls[i] < 50, 50, 1m, t0.AddSeconds(i));   // warm-up
+	// Built first and reused: a real event per bet is the bet path's own allocation, not this one's. The clock runs backwards
+	// once per 65,536 bets, which costs a comparison and credits nothing.
+	var events = new Scripts.Finance.BetTransactionEvent[1 << 16];
+	for (int i = 0; i < events.Length; i++) { int roll = rng.Next(0, 100); events[i] = Bet(roll, roll < 50, 50, t0.AddSeconds(i)); }
+
+	// The rule alone, on the largest sigil: 5,000,000 bets at 50% leave it far from complete, whereas Aquarius would complete
+	// after ~810,000 and spend the rest on the one-line early return, reading as a third of the cost (D-GN.26 did that).
+	var st = SigilRules.NewProgress(PlanetarySquares.SigilCount - 1);
+	for (int i = 0; i < 100_000; i++) { var e = events[i & 0xFFFF]; SigilRules.ApplyBet(st, e.Roll, e.IsWin, e.Chance, e.BetAmount, e.Timestamp, out _); }   // warm-up
 	long bytesBefore = GC.GetAllocatedBytesForCurrentThread();
 	var timer = Stopwatch.StartNew();
-	for (int i = 0; i < Bets; i++) SigilRules.ApplyBet(st, rolls[i], rolls[i] < 50, 50, 1m, t0.AddSeconds(100_000 + i));
+	for (int i = 0; i < Bets; i++) { var e = events[i & 0xFFFF]; SigilRules.ApplyBet(st, e.Roll, e.IsWin, e.Chance, e.BetAmount, e.Timestamp, out _); }
 	timer.Stop();
 	double ns = timer.Elapsed.TotalMilliseconds * 1e6 / Bets;
 	double bytes = (double)(GC.GetAllocatedBytesForCurrentThread() - bytesBefore) / Bets;
-	Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {ns:F1} ns and {bytes:F2} bytes allocated per bet, mean of {Bets:N0} bets at 50%"));
-	Check(bytes < 8, "an ordinary bet allocates nothing (what is allocated comes from completed passes and sigils)");
+	Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  the rule alone: {ns:F1} ns and {bytes:F2} bytes per bet, mean of {Bets:N0} bets at 50%"));
+	Check(bytes < 8, "an ordinary bet allocates nothing (what is allocated comes from completed passes)");
+
+	// The same sigil through its one caller, in the worst case for a search: all fourteen owned, the last one in the slot.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	for (int k = 0; k < PlanetarySquares.SigilCount; k++) PlayerSigilProgress.Acquire(k);
+	PlayerSigilProgress.Equip(PlanetarySquares.SigilCount - 1);
+	for (int i = 0; i < 100_000; i++) PlayerSigilProgress.RegisterPlayerBet(events[i & 0xFFFF]);
+	bytesBefore = GC.GetAllocatedBytesForCurrentThread();
+	timer.Restart();
+	for (int i = 0; i < Bets; i++) PlayerSigilProgress.RegisterPlayerBet(events[i & 0xFFFF]);
+	timer.Stop();
+	double nsEquipped = timer.Elapsed.TotalMilliseconds * 1e6 / Bets;
+	bytes = (double)(GC.GetAllocatedBytesForCurrentThread() - bytesBefore) / Bets;
+	Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  through PlayerSigilProgress, 14 owned, the last in the slot: {nsEquipped:F1} ns and {bytes:F2} bytes per bet"));
+	Check(bytes < 8, "the equipped path allocates nothing either");
+	Check(nsEquipped < ns * 2, string.Create(CultureInfo.InvariantCulture, $"the slot adds little to the rule, compared within this run: {nsEquipped / ns:F2}×"));
+
+	var snapshotTimer = Stopwatch.StartNew();
+	var snapshot = PlayerSigilProgress.CaptureForCheckpoint();
+	Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+		$"  one capture with 14 owned: {snapshotTimer.Elapsed.TotalMilliseconds:F2} ms, {Json(snapshot).Length:N0} characters (per block, not per bet; not asserted)"));
+
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	bytesBefore = GC.GetAllocatedBytesForCurrentThread();
+	timer.Restart();
+	for (int i = 0; i < Bets; i++) PlayerSigilProgress.RegisterPlayerBet(events[i & 0xFFFF]);
+	timer.Stop();
+	double nsEmpty = timer.Elapsed.TotalMilliseconds * 1e6 / Bets;
+	bytes = (double)(GC.GetAllocatedBytesForCurrentThread() - bytesBefore) / Bets;
+	Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  an empty slot: {nsEmpty:F1} ns and {bytes:F2} bytes per bet"));
+	Check(bytes == 0 && PlayerSigilProgress.LastOutcome == SigilBetOutcome.None, "an empty slot allocates nothing and reports nothing");
 }
 
 Console.WriteLine("\n9. Levels and rounds (D-GN.22, D-GN.23, D-GN.27): a set's level is its progress, 1 red … MaxLevel violet");
@@ -335,10 +401,10 @@ Console.WriteLine("\n9. Levels and rounds (D-GN.22, D-GN.23, D-GN.27): a set's l
 	var last = new int[3];
 	bool monotone = true, top = true, previewTrue = true, roundOk = true, lowest = true;
 	int passesSeen = 0;
-	while (st.Completed.Count == 0)
+	while (!st.IsComplete)
 	{
 		int chance = new[] { 95, 80, 50, 20, 9, 3 }[rng.Next(6)];
-		for (int b2 = 0; b2 < 2000 && st.Completed.Count == 0; b2++)
+		for (int b2 = 0; b2 < 2000 && !st.IsComplete; b2++)
 		{
 			int setIndex = st.SetIndex;
 			int predicted = SigilRules.SetLevelAfterPass(st.Sets[setIndex], chance);
@@ -362,6 +428,128 @@ Console.WriteLine("\n9. Levels and rounds (D-GN.22, D-GN.23, D-GN.27): a set's l
 	}
 	Check(monotone && top && previewTrue && roundOk && lowest, string.Create(CultureInfo.InvariantCulture,
 		$"over {passesSeen:N0} passes at mixed chances: levels never fall, {SigilRules.MaxLevel} ⇔ finished, every preview came true, the sigil's level is its lowest set's, rounds hold"));
+
+	// What the DEBUG log prints since D-GN.23: a pass adds at most 0.95 of a level, so no pass jumps one and each set
+	// reaches every level exactly once, whatever the chance.
+	foreach (int chance in new[] { 95, 50, 1 })
+	{
+		var counted = SigilRules.NewProgress();
+		long reached = 0;
+		while (!counted.IsComplete)
+		{
+			var res = engine.Play(1m, chance, false);
+			if ((SigilRules.ApplyBet(counted, res.Roll, res.IsWin, chance, 1m, DateTime.UnixEpoch) & SigilBetOutcome.LevelReached) != 0) reached++;
+		}
+		Check(reached == 3L * SigilRules.MaxLevel, string.Create(CultureInfo.InvariantCulture,
+			$"LevelReached at {chance}%: {reached} times over {counted.Sets.Sum(s => s.PassesCompleted):N0} passes (3 sets × {SigilRules.MaxLevel})"));
+	}
+}
+
+Console.WriteLine("\n10. Pr-12: owning, the slot and the switch (D-GN.24, D-GN.25, D-GN.26)");
+{
+	var t0 = new DateTime(2009, 3, 21, 0, 0, 0, DateTimeKind.Utc);
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	long tick = 0;
+	DateTime Now() => t0.AddSeconds(100 * tick++);
+	void PlayUntil(Func<bool> done)
+	{
+		while (!done())
+		{
+			var res = engine.Play(1m, 50, false);
+			PlayerSigilProgress.RegisterPlayerBet(Bet(res.Roll, res.IsWin, 50, Now()));
+		}
+	}
+
+	// An empty slot, and owning.
+	PlayerSigilProgress.RegisterPlayerBet(Bet(10, true, 50, Now()));
+	Check(PlayerSigilProgress.Equipped == null && PlayerSigilProgress.LastOutcome == SigilBetOutcome.None && PlayerSigilProgress.CopyRecentSteps(new SigilStep[1], 1) == 0,
+		"a bet with an empty slot draws nothing");
+	Check(PlayerSigilProgress.Acquire(0) && PlayerSigilProgress.Equipped == null, "acquiring does not fill the slot");
+	string before = Json(PlayerSigilProgress.Find(0));
+	Check(!PlayerSigilProgress.Acquire(0) && PlayerSigilProgress.Collection.Owned.Count == 1 && Json(PlayerSigilProgress.Find(0)) == before, "one of each: a second acquisition does nothing (D-GN.24)");
+	Check(!PlayerSigilProgress.Acquire(-1) && !PlayerSigilProgress.Acquire(PlanetarySquares.SigilCount), "there are no sigils outside the fourteen");
+	Check(!PlayerSigilProgress.Equip(1) && PlayerSigilProgress.Equipped == null, "a sigil not owned cannot enter the slot");
+	PlayerSigilProgress.Acquire(1);
+	var changes = new List<SigilBetOutcome>();
+	PlayerSigilProgress.Changed += changes.Add;
+	Check(PlayerSigilProgress.Equip(0) && PlayerSigilProgress.Equipped.SigilIndex == 0 && PlayerSigilProgress.Collection.EquippedSigilIndex == 0 && changes.Count == 1,
+		"equipping fills the slot and fires Changed once");
+
+	// The switch, with a pass in progress: exactly Step, PassChance, that set's PassRestarts and the forgotten last bet.
+	PlayUntil(() => PlayerSigilProgress.Equipped.Step > 0 && PlayerSigilProgress.Equipped.Sets.Sum(s => s.PassesCompleted) >= 3);
+	var aquarius = PlayerSigilProgress.Equipped;
+	int restartsBefore = aquarius.Sets[aquarius.SetIndex].PassRestarts, setBefore = aquarius.SetIndex;
+	var expected = System.Text.Json.JsonSerializer.Deserialize<SigilProgressState>(Json(aquarius));
+	expected.Step = 0;
+	expected.PassChance = 0;
+	expected.Sets[setBefore].PassRestarts++;
+	expected.LastBetAtUtc = default;
+	int vBefore = aquarius.V, streakBefore = aquarius.LossStreak;
+	Check(!PlayerSigilProgress.Equip(0) && aquarius.Step > 0, "equipping the sigil already in the slot changes nothing: it is not a switch");
+	changes.Clear();
+	Check(PlayerSigilProgress.Equip(1) && Json(aquarius) == Json(expected), "the switch changes exactly: Step and PassChance to 0, that set's PassRestarts +1, and the last bet forgotten");
+	Check(aquarius.V == vBefore && aquarius.LossStreak == streakBefore && aquarius.Sets[setBefore].PassRestarts == restartsBefore + 1 && aquarius.SetIndex == setBefore,
+		"V, the loss streak and the set being drawn wait with it");
+	Check(PlayerSigilProgress.CopyRecentSteps(new SigilStep[1], 1) == 0 && changes.Count == 1 && PlayerSigilProgress.LastOutcome == SigilBetOutcome.None,
+		"the switch empties the V chain, fires Changed once and leaves no outcome behind");
+
+	// While it is out: nothing of it moves, and the other sigil starts from its own first roll.
+	string whileOut = Json(aquarius);
+	var capricorn = PlayerSigilProgress.Equipped;
+	PlayerSigilProgress.RegisterPlayerBet(Bet(47, true, 50, Now()));
+	Check(capricorn.V == 2 && PlayerSigilProgress.CopyRecentSteps(new SigilStep[1], 1) == 1, "the sigil now in the slot starts from its own first roll");
+	PlayUntil(() => capricorn.BetsPlaced >= 1000 && capricorn.Step == 0);
+	Check(Json(aquarius) == whileOut, "a sigil out of the slot does not move");
+
+	// The time trap: what it credits on returning.
+	double secondsBefore = aquarius.Sets.Sum(s => s.GameSeconds);
+	var startedBefore = aquarius.StartedAtUtc;
+	long betsBefore = aquarius.BetsPlaced;
+	restartsBefore = capricorn.Sets.Sum(s => s.PassRestarts);
+	string capricornBefore = Json(capricorn);
+	Check(PlayerSigilProgress.Equip(0) && capricorn.Sets.Sum(s => s.PassRestarts) == restartsBefore, "leaving with no pass in progress restarts nothing");
+	PlayerSigilProgress.RegisterPlayerBet(Bet(50, false, 50, Now()));
+	Check(aquarius.BetsPlaced == betsBefore + 1 && aquarius.Sets.Sum(s => s.GameSeconds) == secondsBefore && aquarius.StartedAtUtc == startedBefore,
+		string.Create(CultureInfo.InvariantCulture, $"its first bet back credits none of the ≈ {capricorn.BetsPlaced * 100:N0} game-seconds it was out, and its start stays"));
+	PlayerSigilProgress.RegisterPlayerBet(Bet(50, false, 50, Now()));
+	Check(aquarius.Sets.Sum(s => s.GameSeconds) == secondsBefore + 100, "its second bet back credits the 100 game-seconds since its first");
+
+	// D-GN.26: complete, it stays in the slot, and the slot can still be changed.
+	var fired = SigilBetOutcome.None;
+	void Collect(SigilBetOutcome o) => fired |= o;
+	PlayerSigilProgress.Changed += Collect;
+	PlayUntil(() => aquarius.IsComplete);
+	PlayerSigilProgress.Changed -= Collect;
+	Check((fired & SigilBetOutcome.SigilCompleted) != 0 && PlayerSigilProgress.Equipped == aquarius && aquarius.SigilIndex == 0 && SigilRules.SigilLevel(aquarius) == SigilRules.MaxLevel,
+		string.Create(CultureInfo.InvariantCulture, $"a sigil completed at {aquarius.BetsPlaced:N0} bets stays in the slot, violet (D-GN.26)"));
+	Check(aquarius.CompletedAtUtc != default && aquarius.Step == 0 && aquarius.PassChance == 0, "it carries its own completion");
+	string violet = Json(aquarius);
+	changes.Clear();
+	var ring = new SigilStep[4];
+	int ringBefore = PlayerSigilProgress.CopyRecentSteps(ring, 4);
+	var lastBefore = ring[ringBefore - 1];
+	PlayerSigilProgress.RegisterPlayerBet(Bet(10, true, 50, Now()));
+	PlayerSigilProgress.CopyRecentSteps(ring, 4);
+	Check(Json(aquarius) == violet && PlayerSigilProgress.LastOutcome == SigilBetOutcome.None && changes.Count == 0 && ring[ringBefore - 1] == lastBefore,
+		"a bet on it changes nothing: no progress, no outcome, no event, nothing in the V chain");
+	Check(PlayerSigilProgress.Equip(1) && aquarius.CompletedAtUtc != default && PlayerSigilProgress.Equip(0) && PlayerSigilProgress.Equipped.IsComplete,
+		"a complete sigil leaves and returns still complete");
+	PlayerSigilProgress.Changed -= changes.Add;
+
+	// The pair, and the moment it may be shown (D-GN.24, D-GN.27).
+	bool pairs = true;
+	for (int k = 0; k < PlanetarySquares.SigilCount; k++)
+		pairs &= SigilRules.PartnerOf(SigilRules.PartnerOf(k)) == k && SigilRules.PartnerOf(k) != k
+			&& PlanetarySquares.PlanetOfSigil(k) == PlanetarySquares.PlanetOfSigil(SigilRules.PartnerOf(k));
+	Check(pairs, "every sigil's partner is the other sigil of its planet");
+	var one = SigilRules.NewProgress(0); var two = SigilRules.NewProgress(1);
+	Check(!SigilRules.HasCombinedFigure(one, null) && !SigilRules.HasCombinedFigure(null, two) && !SigilRules.HasCombinedFigure(one, two),
+		"no combined figure while a sigil is not owned, or both are at level 0");
+	foreach (var set in one.Sets) set.PassesByChance[95] = 100;
+	Check(!SigilRules.HasCombinedFigure(one, two), "nor with one at level 1 and the other at 0");
+	foreach (var set in two.Sets) set.PassesByChance[95] = 100;
+	Check(SigilRules.HasCombinedFigure(one, two) && SigilRules.CombinedLevel(one, two) == 1, "it exists when the lower of the two reaches level 1");
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
 }
 
 Console.WriteLine(failures == 0 ? "\nALL CHECKS PASS" : $"\n{failures} CHECK(S) FAILED");

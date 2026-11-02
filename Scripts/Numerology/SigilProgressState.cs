@@ -4,12 +4,22 @@ using System.Text.Json.Serialization;
 
 namespace Scripts.Numerology
 {
-	// The player's Graphic Numerology progress (D-GN.11). Plain data with public setters so the block checkpoint can
-	// capture and restore it whole; SigilRules is the only code that changes it.
+	// What the player holds (D-GN.24, D-GN.25): the sigils owned, at most one of each, and the one in the slot. Plain data so
+	// the block checkpoint can capture and restore it whole. A fresh object is the truth of a new world: nothing owned, an
+	// empty slot.
+	public sealed class SigilCollectionState
+	{
+		public List<SigilProgressState> Owned { get; set; } = new();
+
+		// The sigil in the slot, by its index in PlanetarySquares; null = the slot is empty, and a bet draws nothing.
+		public int? EquippedSigilIndex { get; set; }
+	}
+
+	// One owned sigil's progress (D-GN.11). Plain data with public setters so the block checkpoint can capture and restore
+	// it whole; SigilRules is the only code that changes it.
 	public sealed class SigilProgressState
 	{
-		// The sigil being drawn, in unlock order (PlanetarySquares.PlanetOfSigil / KindOfSigil).
-		// PlanetarySquares.SigilCount means every sigil is complete.
+		// Which sigil this is (PlanetarySquares.PlanetOfSigil / KindOfSigil).
 		public int SigilIndex { get; set; }
 
 		// The running value, 1–9 (D-GN.5). 0 = this sigil has had no roll yet; its first roll sets V.
@@ -28,18 +38,19 @@ namespace Scripts.Numerology
 
 		public List<SigilSetProgress> Sets { get; set; } = new();
 
-		// D-GN.19: every player bet placed while this sigil is being drawn, won or lost, and the SC it wagered.
+		// D-GN.19: every player bet placed while this sigil is in the slot, won or lost, and the SC it wagered.
 		public long BetsPlaced { get; set; }
 		public decimal ScWagered { get; set; }
 
-		// Game time of this sigil's first bet and of its latest one (D-GN.20). Default = no bet yet.
+		// Game time (Pattern 2), never wall-clock. StartedAtUtc: its first bet ever. LastBetAtUtc: its latest bet since it
+		// last entered the slot, default until then, so the time it spent out of the slot is never its time (D-GN.25).
+		// CompletedAtUtc: the bet that finished its last set, default until then (D-GN.26).
 		public DateTime StartedAtUtc { get; set; }
 		public DateTime LastBetAtUtc { get; set; }
-
-		public List<CompletedSigilRecord> Completed { get; set; } = new();
+		public DateTime CompletedAtUtc { get; set; }
 
 		[JsonIgnore]
-		public bool AllComplete => SigilIndex >= PlanetarySquares.SigilCount;
+		public bool IsComplete => CompletedAtUtc != default;
 	}
 
 	public sealed class SigilSetProgress
@@ -50,25 +61,12 @@ namespace Scripts.Numerology
 		public bool Finished { get; set; }
 
 		// D-GN.20: what this set cost — every bet placed while it was the set being drawn, the SC those bets wagered,
-		// the game time between them, its completed passes at any chance, and the passes a chance change threw away.
+		// the game time between them, its completed passes at any chance, and the passes a chance change or a switch
+		// threw away.
 		public long BetsPlaced { get; set; }
 		public decimal ScWagered { get; set; }
 		public double GameSeconds { get; set; }
 		public int PassesCompleted { get; set; }
 		public int PassRestarts { get; set; }
-	}
-
-	public sealed class CompletedSigilRecord
-	{
-		public int SigilIndex { get; set; }
-		public long BetsPlaced { get; set; }
-		public decimal ScWagered { get; set; }
-
-		// Game time — the timestamps of its first bet and of the bet that completed it (Pattern 2), never wall-clock.
-		public DateTime StartedAtUtc { get; set; }
-		public DateTime CompletedAtUtc { get; set; }
-
-		// Each set's final figures, kept so the sets can be compared after the sigil is done (D-GN.20).
-		public List<SigilSetProgress> Sets { get; set; } = new();
 	}
 }

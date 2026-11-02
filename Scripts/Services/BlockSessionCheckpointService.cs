@@ -50,9 +50,10 @@ public partial class BlockSessionCheckpointService : Node
 		// It matters MORE than most: it is a running total, so a rollup left ahead of the journal after a
 		// crash could never be corrected by any later scan. Null in a pre-mini03 checkpoint → keep loaded.
 		public Scripts.User.BetStatsRollup BetStatsRollup { get; set; }
-		// Graphic Numerology (D-GN.11): the player's sigil progress. It writes no file of its own, so this snapshot is
-		// its only commit. Null in a checkpoint from before it existed → fresh progress (the player has drawn nothing).
-		public Scripts.Numerology.SigilProgressState SigilProgress { get; set; }
+		// Graphic Numerology (D-GN.11, D-GN.24): the sigils the player owns, the slot and each sigil's progress. It writes
+		// no file of its own, so this snapshot is its only commit. Null in a checkpoint from before the collection existed
+		// (the field was renamed, so its old single progress is simply not read) → an empty collection.
+		public Scripts.Numerology.SigilCollectionState SigilCollection { get; set; }
 		public DateTime CapturedAtUtc { get; set; }
 	}
 
@@ -98,7 +99,7 @@ public partial class BlockSessionCheckpointService : Node
 		GetNodeOrNull<CasinoCoinSwapService>("/root/CasinoCoinSwapService")
 			?.ResetToPreGenesisDefaults(); // Step 13 (SW.0): reserves 0, fee 10%, floor OFF, history cleared
 		Scripts.Numerology.PlayerSigilProgress.ResetToPreGenesisDefaults(); // Graphic Numerology: nothing drawn yet
-		GD.Print("[Sigil] pre-genesis reset at boot — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.State));
+		GD.Print("[Sigil] pre-genesis reset at boot — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.Collection));
 
 		// ND.8c note: ScMonetaryLedgerService.ResetToPreGenesisDefaults() runs at the END of this method
 		// (after the calendar reset below) so its re-registered genesis-grant events carry the player-start
@@ -175,9 +176,9 @@ public partial class BlockSessionCheckpointService : Node
 			?.RestoreFromCheckpoint(CurrentSnapshot.ScMonetaryLedgerState); // null DTO (legacy) → init from live state
 			// (must run AFTER the CentralBankService restore above — the live-state init and the reconcile
 			//  both read the FED's casino account, P15.1c)
-		Scripts.Numerology.PlayerSigilProgress.RestoreFromCheckpoint(CurrentSnapshot.SigilProgress); // null → fresh progress
-		GD.Print("[Sigil] restored at boot" + (CurrentSnapshot.SigilProgress == null ? " (no sigil progress in this checkpoint: fresh)" : "")
-			+ " — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.State));
+		Scripts.Numerology.PlayerSigilProgress.RestoreFromCheckpoint(CurrentSnapshot.SigilCollection); // null → an empty collection
+		GD.Print("[Sigil] restored at boot" + (CurrentSnapshot.SigilCollection == null ? " (no sigil collection in this checkpoint: empty)" : "")
+			+ " — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.Collection));
 
 		// Restored BEFORE the bet-history rollback just below (at boot since mini-plan 22 B; it used to wait for the
 		// first DiceGame entry). The rollback does not re-derive the rollup from the journal (mini-plan 08 D1), so
@@ -298,13 +299,13 @@ public partial class BlockSessionCheckpointService : Node
 			CentralBankState = GetNodeOrNull<CentralBankService>("/root/CentralBankService")?.CaptureCheckpointState(),
 			BetStatsRollup = GetNodeOrNull<UserStatsService>("/root/UserStatsService")?.CaptureRollupSnapshot()
 				?? previousRollup,
-			SigilProgress = Scripts.Numerology.PlayerSigilProgress.CaptureForCheckpoint(),
+			SigilCollection = Scripts.Numerology.PlayerSigilProgress.CaptureForCheckpoint(),
 			CapturedAtUtc = DateTime.UtcNow
 		};
 
 		SaveState();
 		Scripts.Diagnostics.RankCalibrationTrace.WriteBlockRow(CurrentSnapshot);   // DEBUG-only, mini-plan 25 §9
-		GD.Print("[Sigil] checkpoint — " + Scripts.Numerology.SigilRules.Describe(CurrentSnapshot.SigilProgress));
+		GD.Print("[Sigil] checkpoint — " + Scripts.Numerology.SigilRules.Describe(CurrentSnapshot.SigilCollection));
 		GD.Print(string.Create(CultureInfo.InvariantCulture, $"[Checkpoint] CAPTURED — PlayerBankroll={CurrentSnapshot.BankrollBalance:F8}  PlayerMain={CurrentSnapshot.PrincipalBalance:F8}  CasinoMain={CurrentSnapshot.CasinoScMainBalance:F8}  CasinoBankroll={CurrentSnapshot.CasinoScBankroll:F8}"));
 	}
 

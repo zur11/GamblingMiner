@@ -14,8 +14,9 @@ recorded there. **D-GN.22 is built (§10.6):** the colour is the set's progress 
 round at a time, and a strip previews the next pass; the developer's look (L1–L4) passed, bar a clipped warning, now
 fixed. **Unit 6's review is done (2026-11-01):** it produced the closing decisions D-GN.23 to D-GN.27 (§8.1) — violet
 ×100, one of each sigil, one slot, the levels — and `AIHelperFiles/sigil_benefits-proposal.md` for the next plan.
-**Unit 7 is done (§10.7):** ×100 and the levels. **Next: units 8 to 10 (§10) — the collection and the slot; its screen;
-the measurement, Pr-10 to Pr-14 — then close-out.**
+**Unit 7 is done (§10.7):** ×100 and the levels. **Unit 8 is done (§10.8):** the collection and the slot, in state and
+rules; the harness confirms Pr-12, Pr-13's round trip and Pr-14. **Next: units 9 and 10 (§10) — the collection's screen;
+the measurement, Pr-10 to Pr-14 in game — then close-out.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -514,9 +515,8 @@ polish; this plan's items are functional, with the shape drawn from the sigil it
 **D-GN.25 — one sigil slot, for now, and the player chooses what it holds at any time**, including during an autobet:
 the next bet draws the new sigil. **Switching loses only the pass in progress** — the numbers hit so far in the set
 being drawn, exactly what a chance change loses (D-GN.9, counted the same way in `PassRestarts`). *"If a set is
-incomplete, the progress in that set is lost"* is read this way, because the plan already calls a partly drawn pass
-"restarting the set", and the alternative — every pass of an unfinished set — would contradict *"everything else is
-kept"*. Each owned sigil keeps its own passes, figures, V and loss streak while it waits. **Time spent on another sigil
+incomplete, the progress in that set is lost"* means this, **confirmed by the developer on 2026-11-01**: only the partly
+drawn pass; completed passes stay. Each owned sigil keeps its own passes, figures, V and loss streak while it waits. **Time spent on another sigil
 is not that sigil's time:** D-GN.20's game seconds count only while it is in the slot. **All of it is committed by the
 next mined block, as everything is (Pattern 2):** a restart before one reverts the switch and the bets after it. The
 slot may be empty, as it is in a new world, and then a bet draws nothing.
@@ -904,6 +904,59 @@ violet. Cost: 56.9 ns and 0 bytes a bet. A full run takes 27 s.
 
 **Verified:** `dotnet build` clean; locale detector 17 / 0 / 0 / 0; the harness passes. **Not seen in game**, and still
 linear: the automatic move to the next sigil stays until unit 8. **Not measured:** Pr-10 and Pr-11 wait for unit 10.
+
+### 10.8 Unit 8 — the collection and the slot, done (2026-11-02)
+
+**Built.** `SigilCollectionState` holds `Owned` and a nullable `EquippedSigilIndex`, and a fresh one is the truth of a
+new world: nothing owned, an empty slot. `SigilProgressState` is now one sigil's record and carries its own
+`CompletedAtUtc`. `PlayerSigilProgress` caches `Equipped`, refreshed on equip and on restore, with `Acquire`, `Equip`,
+`Find` and `IsOwned` beside it. The checkpoint's field is `SigilCollection`, so an older checkpoint restores an empty
+collection. **Deleted (Convention 3):** `CompletedSigilRecord`, `Completed`, `AllComplete`, `StartSigil`, and
+`AllSigilsCompleted`, which nothing read. **The time trap:** `SigilRules.LeaveSlot` forgets `LastBetAtUtc`, and the
+first-bet test is now `StartedAtUtc == default`.
+
+**Defaults this unit chose, for the developer to overrule:** acquiring does not equip; there is no "unequip", since a
+slot is empty only until the first equip. **Planet totals wait for the combined figure.** The overlay's *"Saturn so far
+… (with the Aquarius Sigil)"* appears when `SigilRules.HasCombinedFigure` holds (both owned, the lower at level 1), not
+at the moment both are owned. It states the pair, and D-GN.27 gives that one moment; a second, earlier one would have
+been a reveal with no decision behind it. Any owned pair counts, not only a finished first sigil.
+
+**The trap that was not there.** The brief expected `CurrentTarget` to go out of range on a complete sigil. It cannot
+now: with `StartSigil(next)` gone, `SigilIndex` never reaches 14. It returns a valid and meaningless number instead,
+so its readers check `IsComplete`: the canvas draws no ring, `Describe` prints `target=complete`, the preview says
+*Complete* where it would have said "to level 96", and no row of the sets table is marked as the set being drawn.
+
+**The pass line became a level line (decided before the run, as the brief asked).** At 95% a violet Aquarius has 28,500
+passes, about 150 lines a real second at 4,200 bets a second, each carrying every set. A new outcome,
+`SigilBetOutcome.LevelReached`, drives `[Sigil] level reached — …` in DEBUG instead of `pass complete` (§10.5's table
+predates this). A pass adds at most 0.95 of a level, so each set reaches every level exactly once, at any chance: 285
+lines for Aquarius, against 28,500, and the harness counts exactly that at 95%, 50% and 1%. **Pr-9-style readings use
+these lines:** two of them in one phase still give `Δ seconds / Δ bets`, since each carries every set's bets and
+seconds. **The stop's own `STOP on set completed` line carries the state Pr-7's reading compared against `pass complete`.**
+`Describe` gained `level=` and lost `completed=`; `Describe(SigilCollectionState)` prints the slot and every owned
+sigil on **one line**, so Pr-13 compares a restore against a checkpoint as text.
+
+**Not built here:** the `[Sigil]` lines for an acquisition and a switch. No Godot code calls `Acquire` or `Equip` until
+unit 9's buttons, and `Scripts/Numerology/` stays free of Godot for the harness's sake. Until unit 9 the overlay shows
+*"The sigil slot is empty"*, and **no bet in the game can draw a sigil**.
+
+**The harness, rewritten for the new shape.** Section 7 is Pr-13, including a switch and an acquisition after the block
+being reverted, and the cached slot being the restored list's own object rather than the snapshot's. Section 10 is new
+and is Pr-12, by comparing the sigil's JSON with a copy edited by hand to hold exactly the predicted differences; it
+also covers one-of-each, the sigil out of the slot not moving, the first bet back crediting none of the time away and
+the second crediting its 100 s, and a complete sigil taking no progress and returning still complete.
+
+**Pr-14, measured in the harness, and a bug in the measurement.** `LevelReached` costs a second exact fraction per
+pass. Compared within one run, on Cancer at 50%: the rule alone **64.4 ns**, through `PlayerSigilProgress` with fourteen
+owned and the last in the slot **75.9 ns** (1.18×), **0.00 bytes** in both; an empty slot **4.1 ns**, 0 bytes. One capture
+with fourteen owned, each nearly fresh: 0.94 ms, once per block. *The section's old form had drawn Aquarius for all
+5,000,000 bets and first printed 23.0 ns: D-GN.26 completes it near bet 810,000, and the rest of the run measured the
+early return. Against that flattering figure the slot looked 5× dearer than the rule. Both now read one sigil, one list
+of events. Per Pattern 6's third instrument rule, 64.4 is not comparable with unit 7's 56.9 from another session and
+another sigil, and no regression is claimed or denied from it.*
+
+**Verified:** `dotnet build` clean; locale detector 17 / 0 / 0 / 0; the harness passes. **Not seen in
+game, and not measurable there until unit 9.**
 
 **Deferred to just before the close-out (developer, 2026-10-29):** the first look at the overlay (§10.4).
 

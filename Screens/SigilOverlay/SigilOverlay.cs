@@ -120,14 +120,14 @@ public partial class SigilOverlay : Control
 			return;
 
 		_sinceRepaint = 0;
-		if (_drawingDirty || PlayerSigilProgress.State.BetsPlaced != _paintedBets)
+		if (_drawingDirty || (PlayerSigilProgress.Equipped?.BetsPlaced ?? -1) != _paintedBets)
 			Repaint();
 	}
 
 	private void Repaint()
 	{
-		var state = PlayerSigilProgress.State;
-		_paintedBets = state.BetsPlaced;
+		var state = PlayerSigilProgress.Equipped;
+		_paintedBets = state?.BetsPlaced ?? -1;
 
 		if (_drawingDirty)
 		{
@@ -136,15 +136,15 @@ public partial class SigilOverlay : Control
 			_canvas.QueueRedraw();
 		}
 
-		if (state.AllComplete)
+		if (state == null)
 		{
-			_title.Text = "All fourteen sigils are drawn";
-			_statusLabel.Text = "Every planet is complete.";
+			_title.Text = "The sigil slot is empty";
+			_statusLabel.Text = "A bet draws nothing until a sigil is in the slot.";
 			_setsLabel.Text = string.Empty;
 			_chainLabel.Text = string.Empty;
 			_previewLabel.Text = string.Empty;
-			_strip.SetLevels(SigilRules.MaxLevel, -1);
-			SetTextKeepingScroll(_completedLabel, BuildCompleted(state), 3);
+			_strip.SetLevels(0, -1);
+			SetTextKeepingScroll(_completedLabel, BuildCompleted(), 3);
 			return;
 		}
 
@@ -153,19 +153,18 @@ public partial class SigilOverlay : Control
 		var square = PlanetarySquares.PlanetOfSigil(state.SigilIndex);
 		var kind = PlanetarySquares.KindOfSigil(state.SigilIndex);
 		string sky = square.IsEclipsed(kind) ? "eclipse" : kind == SigilKind.Diurnal ? "day" : "night";
-		_title.Text = string.Create(CultureInfo.InvariantCulture,
-			$"{square.SigilName(kind)}  —  {square.Planet}, {sky}  ·  sigil {state.SigilIndex + 1} of {PlanetarySquares.SigilCount}");
+		_title.Text = string.Create(CultureInfo.InvariantCulture, $"{square.SigilName(kind)}  —  {square.Planet}, {sky}");
 
 		long betsQuantum = _betsQuantizer.NoteSample(state.BetsPlaced);
 		long satoshiQuantum = _satoshiQuantizer.NoteSample(ToSatoshis(state.ScWagered));
 		double sigilSeconds = state.Sets.Sum(s => s.GameSeconds);
 		long secondsQuantum = _secondsQuantizer.NoteSample((long)sigilSeconds);
 
-		_statusLabel.Text = BuildStatus(state, square, kind, betsQuantum, satoshiQuantum, sigilSeconds, secondsQuantum);
+		_statusLabel.Text = BuildStatus(state, square, betsQuantum, satoshiQuantum, sigilSeconds, secondsQuantum);
 		// One trailing line is enough for the sets: a small square's table then fits without a scroll at all.
 		SetTextKeepingScroll(_setsLabel, BuildSets(state, square, kind, betsQuantum, satoshiQuantum, sigilSeconds, secondsQuantum), 1);
 		_chainLabel.Text = BuildChain();
-		SetTextKeepingScroll(_completedLabel, BuildCompleted(state), 3);
+		SetTextKeepingScroll(_completedLabel, BuildCompleted(), 3);
 	}
 
 	// D-GN.22 — under the strip: where the set being drawn stands, how many passes at the chance the next bet will use
@@ -174,6 +173,12 @@ public partial class SigilOverlay : Control
 	// of them (D-GN.8, D-GN.9).
 	private string BuildPreview(SigilProgressState state, int? nextChance)
 	{
+		if (state.IsComplete)
+		{
+			_strip.SetLevels(SigilRules.MaxLevel, -1);
+			return string.Create(CultureInfo.InvariantCulture, $"[b]Complete[/b]: every set at level {Level(SigilRules.MaxLevel)} of {SigilRules.MaxLevel}");
+		}
+
 		var set = state.Sets[state.SetIndex];
 		int now = SigilRules.SetLevel(set);
 		string standing = string.Create(CultureInfo.InvariantCulture,
@@ -207,10 +212,18 @@ public partial class SigilOverlay : Control
 	private static string Level(int level) =>
 		string.Create(CultureInfo.InvariantCulture, $"[color=#{SigilCanvas.ColorForLevel(level).ToHtml(false)}][b]{level}[/b][/color]");
 
-	private static string BuildStatus(SigilProgressState state, PlanetarySquare square, SigilKind kind,
+	private static string BuildStatus(SigilProgressState state, PlanetarySquare square,
 		long betsQuantum, long satoshiQuantum, double sigilSeconds, long secondsQuantum)
 	{
 		var sb = new StringBuilder();
+		if (state.IsComplete)
+		{
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"[b]Complete[/b]   [color={MutedColor}]it takes no more progress; bets draw nothing until another sigil is in the slot[/color]\n"));
+			AppendFigures(sb, state, square, betsQuantum, satoshiQuantum, sigilSeconds, secondsQuantum);
+			return sb.ToString();
+		}
+
 		int target = SigilRules.CurrentTarget(state);
 		string how = target <= 9
 			? "a win that leaves V on it"
@@ -235,24 +248,29 @@ public partial class SigilOverlay : Control
 				$"Set {state.SetIndex + 1} waits for its first number, which draws its silhouette\n"));
 		}
 
+		AppendFigures(sb, state, square, betsQuantum, satoshiQuantum, sigilSeconds, secondsQuantum);
+		return sb.ToString();
+	}
+
+	private static void AppendFigures(StringBuilder sb, SigilProgressState state, PlanetarySquare square,
+		long betsQuantum, long satoshiQuantum, double sigilSeconds, long secondsQuantum)
+	{
 		double done = SigilRules.SigilCompletion(state);
 		sb.Append(string.Create(CultureInfo.InvariantCulture,
 			$"[b]Level[/b] {Level(SigilRules.SigilLevel(state))} of {SigilRules.MaxLevel}  ·  [b]{done * 100:F2}%[/b] complete  ·  {(1 - done) * 100:F2}% to go   [color={MutedColor}](completed passes only)[/color]\n"));
 		sb.Append(string.Create(CultureInfo.InvariantCulture,
 			$"Bets: {CounterQuantizer.Format(state.BetsPlaced, betsQuantum)}   ·   SC wagered: {FormatSc(state.ScWagered, satoshiQuantum)} SC   ·   Game time: {FormatDays(sigilSeconds, secondsQuantum)} days"));
 
-		// D-GN.19: a planet's two sigils add up; while the nocturnal one is drawn, show the diurnal's figures beside it.
-		if (kind == SigilKind.Nocturnal)
+		// D-GN.19: a planet's two sigils add up. Naming the other one states the pair, which the player is left to deduce
+		// (D-GN.24), so it waits for the moment the combined figure exists (D-GN.27).
+		int partnerIndex = SigilRules.PartnerOf(state.SigilIndex);
+		var partner = PlayerSigilProgress.Find(partnerIndex);
+		if (SigilRules.HasCombinedFigure(state, partner))
 		{
-			var diurnal = state.Completed.LastOrDefault(c => c.SigilIndex == state.SigilIndex - 1);
-			if (diurnal != null)
-			{
-				sb.Append(string.Create(CultureInfo.InvariantCulture,
-					$"\n[color={MutedColor}]{square.Planet} so far: {diurnal.BetsPlaced + state.BetsPlaced:N0} bets · {diurnal.ScWagered + state.ScWagered:N2} SC (with the {square.DiurnalSigilName})[/color]"));
-			}
+			string partnerName = square.SigilName(PlanetarySquares.KindOfSigil(partnerIndex));
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"\n[color={MutedColor}]{square.Planet} so far: {partner.BetsPlaced + state.BetsPlaced:N0} bets · {partner.ScWagered + state.ScWagered:N2} SC (with the {partnerName})[/color]"));
 		}
-
-		return sb.ToString();
 	}
 
 	private static string BuildSets(SigilProgressState state, PlanetarySquare square, SigilKind kind,
@@ -265,7 +283,7 @@ public partial class SigilOverlay : Control
 		for (int set = 0; set < state.Sets.Count; set++)
 		{
 			var progress = state.Sets[set];
-			bool current = set == state.SetIndex;
+			bool current = set == state.SetIndex && !state.IsComplete;
 			string numbers = string.Join("-", Enumerable.Range(0, square.N).Select(k => square.NumberAt(kind, set, k)));
 			int level = SigilRules.SetLevel(progress);
 			string color = SigilCanvas.ColorForLevel(level).ToHtml(false);
@@ -324,31 +342,30 @@ public partial class SigilOverlay : Control
 		return sb.ToString();
 	}
 
-	private static string BuildCompleted(SigilProgressState state)
+	private static string BuildCompleted()
 	{
-		if (state.Completed.Count == 0)
-			return "[b]Completed sigils[/b]\n[color=" + MutedColor + "]None yet. The Aquarius Sigil comes first.[/color]";
+		var complete = PlayerSigilProgress.Collection.Owned.Where(s => s.IsComplete).OrderBy(s => s.CompletedAtUtc).ToList();
+		if (complete.Count == 0)
+			return "[b]Completed sigils[/b]\n[color=" + MutedColor + "]None yet.[/color]";
 
 		var sb = new StringBuilder("[b]Completed sigils[/b]\n");
-		foreach (var record in state.Completed)
+		foreach (var sigil in complete)
 		{
-			var square = PlanetarySquares.PlanetOfSigil(record.SigilIndex);
-			var kind = PlanetarySquares.KindOfSigil(record.SigilIndex);
-			double days = record.Sets.Sum(s => s.GameSeconds) / 86400;
-			int passes = record.Sets.Sum(s => s.PassesCompleted);
+			var square = PlanetarySquares.PlanetOfSigil(sigil.SigilIndex);
+			var kind = PlanetarySquares.KindOfSigil(sigil.SigilIndex);
+			double days = sigil.Sets.Sum(s => s.GameSeconds) / 86400;
+			int passes = sigil.Sets.Sum(s => s.PassesCompleted);
 			sb.Append(string.Create(CultureInfo.InvariantCulture,
-				$"{square.SigilName(kind)}: {record.BetsPlaced:N0} bets · {record.ScWagered:N2} SC · {passes} passes · {days:F2} game-days · " +
-				$"{record.StartedAtUtc.ToLocalTime():yyyy-MM-dd} → {record.CompletedAtUtc.ToLocalTime():yyyy-MM-dd}\n"));
+				$"{square.SigilName(kind)}: {sigil.BetsPlaced:N0} bets · {sigil.ScWagered:N2} SC · {passes:N0} passes · {days:F2} game-days · " +
+				$"{sigil.StartedAtUtc.ToLocalTime():yyyy-MM-dd} → {sigil.CompletedAtUtc.ToLocalTime():yyyy-MM-dd}\n"));
 
-			// Both sigils of a planet drawn: the planet is complete, and its figures are the sum of the two (D-GN.19).
-			if (kind == SigilKind.Nocturnal)
+			// Both sigils of a planet drawn: the planet is complete, and its figures are the sum of the two (D-GN.19). Under
+			// whichever of the two finished second.
+			var partner = complete.FirstOrDefault(s => s.SigilIndex == SigilRules.PartnerOf(sigil.SigilIndex));
+			if (partner != null && complete.IndexOf(partner) < complete.IndexOf(sigil))
 			{
-				var diurnal = state.Completed.FirstOrDefault(c => c.SigilIndex == record.SigilIndex - 1);
-				if (diurnal != null)
-				{
-					sb.Append(string.Create(CultureInfo.InvariantCulture,
-						$"[b]{square.Planet} complete: {diurnal.BetsPlaced + record.BetsPlaced:N0} bets · {diurnal.ScWagered + record.ScWagered:N2} SC[/b]\n"));
-				}
+				sb.Append(string.Create(CultureInfo.InvariantCulture,
+					$"[b]{square.Planet} complete: {partner.BetsPlaced + sigil.BetsPlaced:N0} bets · {partner.ScWagered + sigil.ScWagered:N2} SC[/b]\n"));
 			}
 		}
 
