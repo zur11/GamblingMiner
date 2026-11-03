@@ -916,6 +916,12 @@ public partial class SimulationService : Node
 			return;
 		}
 
+		// Graphic Numerology (D-GN.31): no bet is placed on a finished sigil the player chose to stop on.
+		if (_config.IsPlayerActive && UserStatsService.RefusePlayerBetForSigil(_session, "autobet"))
+		{
+			return;
+		}
+
 		DateTime tsUtc = SettleTimestampUtc();
 
 		// Mini-plan 08 P1 — segment timing, DEBUG-only and disarmed by default (Scripts/Diagnostics/
@@ -990,14 +996,11 @@ public partial class SimulationService : Node
 			Scripts.Diagnostics.FrameCostProfiler.EndBlockWork();
 		}
 
-		// Graphic Numerology (D-GN.10): stop between two set passes, where a chance change costs nothing. After the
-		// block path, so a block stop on the same bet keeps its reason; from the session, never the panel (D-M2.8).
-		if ((sigilOutcome & Scripts.Numerology.SigilBetOutcome.SetPassCompleted) != 0
-			&& _session.IsRunning
-			&& _session.SessionConfig?.StopOnSigilSetCompleted == true)
+		// Graphic Numerology (D-GN.10, D-GN.31, D-GN.32): after the block path, so a block stop on the same bet keeps its
+		// reason. The session's flags are read from the session, never the panel (D-M2.8).
+		if (_config.IsPlayerActive && _session.IsRunning)
 		{
-			_session.Stop(IBettingStrategy.StopReason.StopOnSigilSetCompleted);
-			GD.Print("[Sigil] STOP on set completed (autobet) — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.Equipped));
+			UserStatsService.StopPlayerSessionForSigil(_session, sigilOutcome, "autobet");
 		}
 		// The block path gets its OWN segment, separate from the attempt above. Both readings are honest and
 		// they answer different questions: amortised over thousands of bets this is a few µs (the cost every

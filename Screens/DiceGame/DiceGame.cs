@@ -193,6 +193,7 @@ public partial class DiceGame : Control, IBetEventSource
 	private Button _openBetsExplorerBtn;
 	private MartingaleCalculator _martingaleCalculator;
 	private SigilOverlay _sigilOverlay;   // Graphic Numerology (P-GN.6), opened over this screen like the calculator
+	private Label _sigilWarningLabel;     // D-GN.31: why levels are not advancing, or why a bet is refused
 
 	// --- Game components ---
 	// (The 100-cell PreviousWinnerNumbersGrid export was removed by mini-plan 25 17.A2: DiceGame's Numbers views are the
@@ -379,6 +380,7 @@ public partial class DiceGame : Control, IBetEventSource
 		var devCredits = new UI.DevPlayerCreditsSelector.DevPlayerCreditsSelector { Position = new Vector2(1752f, 563f) };
 		AddChild(devCredits);
 		BuildHoldingsAndBtcWallet();
+		BuildSigilStatus();
 		Scripts.Diagnostics.SceneEntryProbe.Mark("devControls");
 		_session.OnStopped += OnSessionStopped;
 
@@ -776,8 +778,48 @@ public partial class DiceGame : Control, IBetEventSource
 
 	// Composes the two independent button locks: only the player node may bet (bot-active lock, see the
 	// node-selector load path), and a pending board vote suspends betting entirely (D-ND8.18).
-	private void ApplyBettingControlsAvailability() =>
+	private void ApplyBettingControlsAvailability()
+	{
 		_strategyPanel.SetBettingControlsEnabled(IsPlayerActive() && !NetworkRoot.IsAwaitingPlayerVote);
+		RefreshSigilWarning();   // the player's sigil says nothing about a bot's bets, and this is where the active node lands
+	}
+
+	// Graphic Numerology (D-GN.31) — why levels are not advancing, or why a bet is refused. The label is in the scene, its two
+	// lines reserved in its height: every text here wraps at most once, and a wrapped Label reports its height late (plan §10.6).
+	private void BuildSigilStatus()
+	{
+		_sigilWarningLabel = GetNode<Label>("%SigilWarningLabel");
+		Scripts.Numerology.PlayerSigilProgress.Changed += OnSigilChanged;
+		RefreshSigilWarning();
+	}
+
+	// Fired on hits at bet rate; only an acquisition, a switch, a restore or a completion can move this line.
+	private void OnSigilChanged(Scripts.Numerology.SigilBetOutcome outcome)
+	{
+		if (outcome == Scripts.Numerology.SigilBetOutcome.None
+			|| (outcome & Scripts.Numerology.SigilBetOutcome.SigilCompleted) != 0)
+		{
+			RefreshSigilWarning();
+		}
+	}
+
+	private void RefreshSigilWarning()
+	{
+		if (_sigilWarningLabel == null)
+		{
+			return;
+		}
+
+		var equipped = Scripts.Numerology.PlayerSigilProgress.Equipped;
+		string text = !IsPlayerActive() || !Scripts.Numerology.PlayerSigilProgress.DrawsNothing
+			? string.Empty
+			: Scripts.Numerology.PlayerSigilProgress.MustChooseSigil
+				? "The " + Scripts.Numerology.SigilRules.NameOf(equipped) + (equipped.IsPlanetary ? " is at its highest open level." : " is complete.")
+					+ " Open Sigils and choose another to keep betting."
+				: "Levels are not advancing: no incomplete sigil is in the slot.";
+		_sigilWarningLabel.Text = text;
+		_sigilWarningLabel.Visible = text.Length > 0;
+	}
 
 	// --- Eventos UI ---
 	private void OnHighLowToggled()
@@ -1215,6 +1257,7 @@ public partial class DiceGame : Control, IBetEventSource
 			StopOnLoss = config.StopOnLoss,
 			StopOnBlockMined = config.StopOnBlockMined,
 			StopOnSigilSetCompleted = config.StopOnSigilSetCompleted,
+			StopOnSigilLevelAcquired = config.StopOnSigilLevelAcquired,
 			InsistAfterStopOnProfit = config.InsistAfterStopOnProfit,
 			InsistAfterStopOnLoss = config.InsistAfterStopOnLoss
 		};
@@ -1240,6 +1283,7 @@ public partial class DiceGame : Control, IBetEventSource
 			StopOnLoss = config.StopOnLoss,
 			StopOnBlockMined = false,
 			StopOnSigilSetCompleted = false,   // a bot draws no sigil
+			StopOnSigilLevelAcquired = false,
 			InsistAfterStopOnProfit = true,
 			InsistAfterStopOnLoss = true
 		};
@@ -1257,6 +1301,13 @@ public partial class DiceGame : Control, IBetEventSource
 		// Only the player bets; bots are configured but never bet directly.
 		if (!IsPlayerActive())
 			return;
+
+		// D-GN.31: the warning already on screen says why. The buttons stay enabled: a run must never lose its STOP to this.
+		if (Scripts.Numerology.PlayerSigilProgress.MustChooseSigil)
+		{
+			GD.Print("[Sigil] bet refused (manual): a finished sigil is in the slot");
+			return;
+		}
 
 		if (!_strategyPanel.TryGetValidBet(out _))
 		{
@@ -1403,6 +1454,14 @@ public partial class DiceGame : Control, IBetEventSource
 		if (running && !IsPlayerActive())
 		{
 			_strategyPanel.SetAutoRunning(false);
+			return;
+		}
+
+		// D-GN.31: the warning already on screen says why.
+		if (running && Scripts.Numerology.PlayerSigilProgress.MustChooseSigil)
+		{
+			_strategyPanel.SetAutoRunning(false);
+			GD.Print("[Sigil] bet refused (AUTO): a finished sigil is in the slot");
 			return;
 		}
 
@@ -2069,6 +2128,7 @@ public partial class DiceGame : Control, IBetEventSource
 	public override void _ExitTree()
 	{
 		NetworkRoot.BlockAccepted -= OnBlockAcceptedForBtcWallet; // static event — must not outlive this scene
+		Scripts.Numerology.PlayerSigilProgress.Changed -= OnSigilChanged; // the same
 
 		// A paced manual burst is mid-flight only if the player navigated away inside its ~1 second. Close it
 		// here rather than letting it die with the scene: the bets already settled are owed the clock tick and
@@ -2246,6 +2306,12 @@ public partial class DiceGame : Control, IBetEventSource
 			return;
 		}
 
+		// Graphic Numerology (D-GN.31): no bet is placed on a finished sigil the player chose to stop on.
+		if (IsPlayerActive() && UserStatsService.RefusePlayerBetForSigil(_session, "DiceGame"))
+		{
+			return;
+		}
+
 		int chance = (int)_chanceSlider.Value;
 		bool isHigh = _highLowToggleBtn.ButtonPressed;
 		DateTime effectiveTimestampUtc = timestampUtc
@@ -2293,14 +2359,11 @@ public partial class DiceGame : Control, IBetEventSource
 				_activeNodeId,
 				_session?.SessionConfig?.StopOnBlockMined ?? false,
 				_session);
-			// Graphic Numerology (D-GN.10): stop between two set passes, where a chance change costs nothing. After
-			// the mining attempt, so a block stop on the same bet keeps its reason; from the session (D-M2.8).
-			if ((sigilOutcome & Scripts.Numerology.SigilBetOutcome.SetPassCompleted) != 0
-				&& _session is { IsRunning: true }
-				&& _session.SessionConfig?.StopOnSigilSetCompleted == true)
+			// Graphic Numerology (D-GN.10, D-GN.31, D-GN.32): after the mining attempt, so a block stop on the same bet keeps
+			// its reason. The session's flags are read from the session (D-M2.8).
+			if (IsPlayerActive() && _session is { IsRunning: true })
 			{
-				_session.Stop(IBettingStrategy.StopReason.StopOnSigilSetCompleted);
-				GD.Print("[Sigil] STOP on set completed (DiceGame) — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.Equipped));
+				UserStatsService.StopPlayerSessionForSigil(_session, sigilOutcome, "DiceGame");
 			}
 			if (!suppressClockAdvance)
 				AdvanceClockForBet();
@@ -2559,6 +2622,7 @@ public partial class DiceGame : Control, IBetEventSource
 			StopOnLoss = uiConfig.StopOnLoss,
 			StopOnBlockMined = uiConfig.StopOnBlockMined,
 			StopOnSigilSetCompleted = uiConfig.StopOnSigilSetCompleted,
+			StopOnSigilLevelAcquired = uiConfig.StopOnSigilLevelAcquired,
 			InsistAfterStopOnProfit = uiConfig.InsistAfterStopOnProfit,
 			InsistAfterStopOnLoss = uiConfig.InsistAfterStopOnLoss
 		};

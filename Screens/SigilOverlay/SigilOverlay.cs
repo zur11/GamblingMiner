@@ -48,6 +48,8 @@ public partial class SigilOverlay : Control
 	private Control _body;
 	private SigilCollectionView _collectionView;
 	private Button _collectionToggle;
+	private Button _autoSwitchToggle;
+	private UserSettingsService _settings;
 
 	private CounterQuantizer _betsQuantizer = new();
 	private CounterQuantizer _satoshiQuantizer = new();
@@ -59,6 +61,7 @@ public partial class SigilOverlay : Control
 	private bool _drawingDirty = true;
 	private bool _showingCollection;
 	private bool _collectionDirty;
+	private SigilProgressState _paintedState;
 
 	public override void _Ready()
 	{
@@ -75,6 +78,9 @@ public partial class SigilOverlay : Control
 		_collectionToggle = GetNode<Button>("%CollectionToggleButton");
 		_collectionToggle.Pressed += () => ShowView(!_showingCollection);
 		_collectionView.SigilPlayed += () => ShowView(false);
+		_settings = GetNodeOrNull<UserSettingsService>("/root/UserSettingsService");
+		_autoSwitchToggle = GetNode<Button>("%AutoSwitchToggleButton");
+		_autoSwitchToggle.Pressed += OnAutoSwitchPressed;
 		GetNode<Button>("%CloseSigilsButton").Pressed += OnClosePressed;
 
 		// Opaque, like the calculator's panel (mini-plan 21 E): DiceGame's bet list must not show through.
@@ -88,8 +94,26 @@ public partial class SigilOverlay : Control
 		});
 
 		PlayerSigilProgress.Changed += OnSigilChanged;
+		// D-GN.31: this scene comes with DiceGame, and every bet starts from there, so the preference reaches the rule first.
+		ApplyAutoSwitch(_settings?.GetSigilAutoSwitch() ?? false);
 		Visible = false;
 		SetProcess(false);
+	}
+
+	private void OnAutoSwitchPressed()
+	{
+		bool enabled = !PlayerSigilProgress.AutoSwitchOnCompletion;
+		_settings?.SetSigilAutoSwitch(enabled);
+		ApplyAutoSwitch(enabled);
+		GD.Print("[Sigil] on completion: " + (enabled ? "auto-switch" : "stop") + " — " + SigilRules.Describe(PlayerSigilProgress.Collection));
+	}
+
+	private void ApplyAutoSwitch(bool enabled)
+	{
+		var before = PlayerSigilProgress.Equipped;
+		if (PlayerSigilProgress.SetAutoSwitchOnCompletion(enabled))
+			GD.Print("[Sigil] auto-switched — " + SigilRules.NameOf(before) + " → " + SigilRules.NameOf(PlayerSigilProgress.Equipped) + " — " + SigilRules.Describe(PlayerSigilProgress.Collection));
+		_autoSwitchToggle.Text = enabled ? "Sigil completed: Auto-switch" : "Sigil completed: Stop";
 	}
 
 	public override void _ExitTree()
@@ -183,6 +207,15 @@ public partial class SigilOverlay : Control
 		var state = PlayerSigilProgress.Equipped;
 		_paintedBets = state?.BetsPlaced ?? -1;
 
+		// An automatic switch changes the record without a ShowView (D-GN.31), and the quantizers would span the two.
+		if (state != _paintedState)
+		{
+			_paintedState = state;
+			_betsQuantizer = new CounterQuantizer();
+			_satoshiQuantizer = new CounterQuantizer();
+			_secondsQuantizer = new CounterQuantizer();
+		}
+
 		if (_drawingDirty)
 		{
 			_drawingDirty = false;
@@ -199,6 +232,12 @@ public partial class SigilOverlay : Control
 			_previewLabel.Text = string.Empty;
 			_strip.SetLevels(0, -1);
 			SetTextKeepingScroll(_completedLabel, BuildCompleted(), 3);
+			return;
+		}
+
+		if (state.IsPlanetary)
+		{
+			RepaintPlanetary(state);
 			return;
 		}
 
@@ -219,6 +258,111 @@ public partial class SigilOverlay : Control
 		SetTextKeepingScroll(_setsLabel, BuildSets(state, square, kind, betsQuantum, satoshiQuantum, sigilSeconds, secondsQuantum), 1);
 		_chainLabel.Text = BuildChain();
 		SetTextKeepingScroll(_completedLabel, BuildCompleted(), 3);
+	}
+
+	// D-GN.30 — the same layout for a planetary sigil's own record. The canvas and the V chain read it as they are; the words
+	// are its own, since its sets carry no level and its figures are not either sigil's (OQ-GN.3).
+	private void RepaintPlanetary(SigilProgressState state)
+	{
+		var square = PlanetarySquares.PlanetOfSigil(state.SigilIndex);
+		_previewLabel.Text = BuildPlanetaryPreview(state, NextChanceProvider?.Invoke());
+		_title.Text = string.Create(CultureInfo.InvariantCulture, $"{square.PlanetarySigilName}  —  both of its sigils, one after the other");
+
+		long betsQuantum = _betsQuantizer.NoteSample(state.BetsPlaced);
+		long satoshiQuantum = _satoshiQuantizer.NoteSample(ToSatoshis(state.ScWagered));
+		double seconds = state.Sets.Sum(s => s.GameSeconds);
+		long secondsQuantum = _secondsQuantizer.NoteSample((long)seconds);
+
+		_statusLabel.Text = BuildPlanetaryStatus(state, square, betsQuantum, satoshiQuantum, seconds, secondsQuantum);
+		SetTextKeepingScroll(_setsLabel, BuildPlanetarySets(state, square, betsQuantum, secondsQuantum), 1);
+		_chainLabel.Text = BuildChain();
+		SetTextKeepingScroll(_completedLabel, BuildCompleted(), 3);
+	}
+
+	// Three lines at most, as BuildPreview: the two-line warning replaces the second line, not adds to it (§10.6, L4).
+	private string BuildPlanetaryPreview(SigilProgressState state, int? nextChance)
+	{
+		_strip.SetLevels(state.ActivatedLevel, -1);
+		if (state.IsComplete)
+		{
+			return string.Create(CultureInfo.InvariantCulture,
+				$"[b]Activated[/b] {Level(state.ActivatedLevel)} of {SigilRules.MaxLevel}: the highest open now.\n[color={MutedColor}]Raise both sigils to open the next level.[/color]");
+		}
+
+		var (paid, cost) = SigilRules.NextLevelProgress(state);
+		var sb = new StringBuilder(string.Create(CultureInfo.InvariantCulture,
+			$"[b]Level[/b] {Level(state.ActivatedLevel + 1)}: {paid:F2} of {cost} whole passes  ·  activated {state.ActivatedLevel} of {SigilRules.MaxLevel}"));
+
+		if (nextChance is int chance && state.Step > 0 && chance != state.PassChance)
+		{
+			string numbers = state.Step == 1 ? "number" : "numbers";
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"\n[color={WarningColor}]Betting at {chance}% restarts this pass and loses its {state.Step} {numbers} hit at {state.PassChance}%. Completed passes stay.[/color]"));
+		}
+		else if (nextChance is int value)
+		{
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"\n[color={MutedColor}]At {value}%, a whole pass through both counts {(double)SigilRules.ActivationFullValueChance / value:F2}.[/color]"));
+		}
+
+		return sb.ToString();
+	}
+
+	private static string BuildPlanetaryStatus(SigilProgressState state, PlanetarySquare square,
+		long betsQuantum, long satoshiQuantum, double seconds, long secondsQuantum)
+	{
+		var sb = new StringBuilder();
+		if (state.IsComplete)
+		{
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"[b]Highest open level reached[/b]   [color={MutedColor}]it takes no more progress; bets draw nothing until another sigil is in the slot[/color]\n"));
+		}
+		else
+		{
+			int target = SigilRules.CurrentTarget(state);
+			var (kind, set) = SigilRules.PlanetarySet(square.N, state.SetIndex);
+			sb.Append(string.Create(CultureInfo.InvariantCulture, $"[b]Next target: {target}[/b]   [color={MutedColor}]{DescribeTarget(target)}[/color]\n"));
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"V: [b]{(state.V == 0 ? "—" : state.V.ToString(CultureInfo.InvariantCulture))}[/b]     Loss streak: {state.LossStreak}\n"));
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"Drawing the [b]{square.SigilName(kind)}[/b], set {set + 1} of {square.N}: "));
+			sb.Append(state.Step > 0
+				? string.Create(CultureInfo.InvariantCulture,
+					$"{state.Step} of {square.N} numbers at {state.PassChance}%   [color={MutedColor}](a switch or a chance change loses this pass alone)[/color]\n")
+				: "it waits for its first number\n");
+		}
+
+		sb.Append(string.Create(CultureInfo.InvariantCulture,
+			$"Bets: {CounterQuantizer.Format(state.BetsPlaced, betsQuantum)}   ·   SC wagered: {FormatSc(state.ScWagered, satoshiQuantum)} SC   ·   Game time: {FormatDays(seconds, secondsQuantum)} days\n"));
+		sb.Append($"[color={MutedColor}]Its own record: neither sigil's passes, V or level move while this draws.[/color]");
+		return sb.ToString();
+	}
+
+	private static string BuildPlanetarySets(SigilProgressState state, PlanetarySquare square, long betsQuantum, long secondsQuantum)
+	{
+		var sb = new StringBuilder("[b]Sets, in the order they are drawn[/b]\n[table=7]");
+		foreach (string header in new[] { "Sigil", "Set", "Numbers", "Passes", "Bets", "Game days", "Restarts" })
+			sb.Append($"[cell][color={MutedColor}]{header}[/color]   [/cell]");
+
+		for (int index = 0; index < state.Sets.Count; index++)
+		{
+			var progress = state.Sets[index];
+			var (kind, set) = SigilRules.PlanetarySet(square.N, index);
+			bool current = index == state.SetIndex && !state.IsComplete;
+			string numbers = string.Join("-", Enumerable.Range(0, square.N).Select(k => square.NumberAt(kind, set, k)));
+			string bets = current ? CounterQuantizer.Format(progress.BetsPlaced, betsQuantum)
+				: progress.BetsPlaced.ToString("N0", CultureInfo.InvariantCulture);
+			string days = current ? FormatDays(progress.GameSeconds, secondsQuantum)
+				: (progress.GameSeconds / 86400).ToString("F2", CultureInfo.InvariantCulture);
+			string mark = current ? "> " : "";
+
+			sb.Append(string.Create(CultureInfo.InvariantCulture,
+				$"[cell]{mark}{square.SigilName(kind)}   [/cell][cell]{set + 1}   [/cell][cell]{numbers}   [/cell][cell]{progress.PassesCompleted:N0}   [/cell]" +
+				$"[cell]{bets}   [/cell][cell]{days}   [/cell][cell]{progress.PassRestarts}[/cell]"));
+		}
+
+		sb.Append("[/table]");
+		return sb.ToString();
 	}
 
 	// D-GN.22 — under the strip: where the set being drawn stands, how many passes at the chance the next bet will use
@@ -279,13 +423,7 @@ public partial class SigilOverlay : Control
 		}
 
 		int target = SigilRules.CurrentTarget(state);
-		string how = target <= 9
-			? "a win that leaves V on it"
-			: target % 10 == 0
-				? string.Create(CultureInfo.InvariantCulture, $"behaves as {target / 10}: a win that leaves V on {target / 10}")
-				: string.Create(CultureInfo.InvariantCulture,
-					$"V = {target / 10} before a win whose root is {target % 10} (at 1–9%, the loss streak adds to the roll)");
-		sb.Append(string.Create(CultureInfo.InvariantCulture, $"[b]Next target: {target}[/b]   [color={MutedColor}]{how}[/color]\n"));
+		sb.Append(string.Create(CultureInfo.InvariantCulture, $"[b]Next target: {target}[/b]   [color={MutedColor}]{DescribeTarget(target)}[/color]\n"));
 		sb.Append(string.Create(CultureInfo.InvariantCulture,
 			$"V: [b]{(state.V == 0 ? "—" : state.V.ToString(CultureInfo.InvariantCulture))}[/b]     Loss streak: {state.LossStreak}\n"));
 
@@ -305,6 +443,13 @@ public partial class SigilOverlay : Control
 		AppendFigures(sb, state, square, betsQuantum, satoshiQuantum, sigilSeconds, secondsQuantum);
 		return sb.ToString();
 	}
+
+	private static string DescribeTarget(int target) => target <= 9
+		? "a win that leaves V on it"
+		: target % 10 == 0
+			? string.Create(CultureInfo.InvariantCulture, $"behaves as {target / 10}: a win that leaves V on {target / 10}")
+			: string.Create(CultureInfo.InvariantCulture,
+				$"V = {target / 10} before a win whose root is {target % 10} (at 1–9%, the loss streak adds to the roll)");
 
 	private static void AppendFigures(StringBuilder sb, SigilProgressState state, PlanetarySquare square,
 		long betsQuantum, long satoshiQuantum, double sigilSeconds, long secondsQuantum)

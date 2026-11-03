@@ -218,6 +218,17 @@ layout_mode = 2
 theme_override_constants/separation = 12
 alignment = 2
 
+[node name="AutoSwitchToggleButton" type="Button" parent="Panel/MarginContainer/VBox/Footer"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(440, 48)
+layout_mode = 2
+tooltip_text = "What happens when the sigil in the slot completes.
+Stop: the run stops, and bets wait until you choose another sigil.
+Auto-switch: the slot takes the sigil you own that you have played least.
+Either way, with nothing else to play, bets run on and draw nothing."
+theme_override_font_sizes/font_size = 24
+text = "Sigil completed: Stop"
+
 [node name="CollectionToggleButton" type="Button" parent="Panel/MarginContainer/VBox/Footer"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(260, 48)

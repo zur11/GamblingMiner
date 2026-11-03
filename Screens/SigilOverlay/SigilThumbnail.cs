@@ -7,7 +7,7 @@ using Scripts.Numerology;
 public partial class SigilThumbnail : Control
 {
 	private const int NoSigil = -1;
-	private static readonly Color CombinedBackground = new(0.11f, 0.11f, 0.13f);
+	public static readonly Color CombinedBackground = new(0.11f, 0.11f, 0.13f);
 
 	private int _first = NoSigil;
 	private int _second = NoSigil;

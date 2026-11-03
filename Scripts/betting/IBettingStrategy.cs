@@ -11,7 +11,9 @@ namespace Scripts.Betting
 			ManualStop,
 			CounterCountReached,
 			InvalidBetAmount,
-			StopOnSigilSetCompleted   // appended, so the values above keep their numbers
+			StopOnSigilSetCompleted,   // appended, so the values above keep their numbers
+			StopOnSigilCompleted,
+			StopOnSigilLevelAcquired
 		}
 
 		decimal CalculateNextBet(

@@ -13,14 +13,32 @@ namespace Scripts.Numerology
 
 		// The sigil in the slot, by its index in PlanetarySquares; null = the slot is empty, and a bet draws nothing.
 		public int? EquippedSigilIndex { get; set; }
+
+		// D-GN.30 — the planetary sigils begun, one record each, in the order begun. A checkpoint from before them carries
+		// neither field, and so restores nothing activated and no activation in the slot: the truth, not a guess
+		// (Standing Convention 5).
+		public List<SigilProgressState> Planetary { get; set; } = new();
+
+		// The planetary sigil in the slot, by planet index. One slot (D-GN.25): at most one of the two fields holds a value.
+		public int? EquippedPlanetIndex { get; set; }
 	}
 
-	// One owned sigil's progress (D-GN.11). Plain data with public setters so the block checkpoint can capture and restore
-	// it whole; SigilRules is the only code that changes it.
+	// One owned sigil's progress (D-GN.11), or a planetary sigil's own record (D-GN.30, OQ-GN.3). Plain data with public
+	// setters so the block checkpoint can capture and restore it whole; SigilRules is the only code that changes it.
 	public sealed class SigilProgressState
 	{
-		// Which sigil this is (PlanetarySquares.PlanetOfSigil / KindOfSigil).
+		// Which sigil this is (PlanetarySquares.PlanetOfSigil / KindOfSigil). On a planetary record, its planet's diurnal
+		// sigil, which names the planet and nothing else: read IsPlanetary before reading the kind.
 		public int SigilIndex { get; set; }
+
+		// D-GN.30 — this record draws both of a planet's sigils. Its Sets then hold 2n sets, the diurnal sigil's and then the
+		// nocturnal's, which is the order the passes run in (D-GN.33); SigilRules.PlanetarySet maps one back to its sigil.
+		public bool IsPlanetary { get; set; }
+
+		// The levels of the planetary sigil activated so far, and the highest open when this record last entered the slot:
+		// the combined level then, which cannot move while it stays, since only the record in the slot takes bets.
+		public int ActivatedLevel { get; set; }
+		public int LevelLimit { get; set; }
 
 		// The running value, 1–9 (D-GN.5). 0 = this sigil has had no roll yet; its first roll sets V.
 		public int V { get; set; }
@@ -44,7 +62,8 @@ namespace Scripts.Numerology
 
 		// Game time (Pattern 2), never wall-clock. StartedAtUtc: its first bet ever. LastBetAtUtc: its latest bet since it
 		// last entered the slot, default until then, so the time it spent out of the slot is never its time (D-GN.25).
-		// CompletedAtUtc: the bet that finished its last set, default until then (D-GN.26).
+		// CompletedAtUtc: the bet that finished its last set, default until then (D-GN.26). On a planetary record, the bet
+		// that reached LevelLimit, cleared when it enters the slot again with a higher limit (D-GN.33).
 		public DateTime StartedAtUtc { get; set; }
 		public DateTime LastBetAtUtc { get; set; }
 		public DateTime CompletedAtUtc { get; set; }

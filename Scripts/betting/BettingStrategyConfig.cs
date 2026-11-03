@@ -20,6 +20,9 @@ namespace Scripts.Betting
 		// without throwing away a pass in progress (D-GN.9). Player only; a bot draws no sigil.
 		public bool StopOnSigilSetCompleted { get; init; }
 
+		// Graphic Numerology (D-GN.32): stop when a sigil gains one of its levels, zodiac or planetary. Player only.
+		public bool StopOnSigilLevelAcquired { get; init; }
+
 		// Insisting = reset the progression to base and keep going instead of stopping. One switch per stop:
 		// without it, a strategy that only grows would be capped by whichever stop it happens to reach.
 		public bool InsistAfterStopOnProfit { get; init; }

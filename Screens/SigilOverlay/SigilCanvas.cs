@@ -1,7 +1,8 @@
 using Godot;
 using Scripts.Numerology;
 
-// Graphic Numerology — the sigil being drawn, on its planetary square (plan §3.2, D-GN.6 to D-GN.8, P-GN.6).
+// Graphic Numerology — the sigil being drawn, on its planetary square (plan §3.2, D-GN.6 to D-GN.8, P-GN.6). A planetary
+// record draws both of its sigils on one neutral ground, the figure the collection's combined card shows (D-GN.33).
 // Repainted only when the drawing changes (SigilOverlay calls QueueRedraw on PlayerSigilProgress.Changed): lines move
 // on a hit, a restart or a completed pass, never on an ordinary bet.
 public partial class SigilCanvas : Control
@@ -40,11 +41,12 @@ public partial class SigilCanvas : Control
 		float side = Mathf.Min(Size.X, Size.Y);
 		float cell = side / n;
 		var origin = new Vector2((Size.X - side) / 2f, (Size.Y - side) / 2f);
+		bool planetary = state.IsPlanetary;
 		bool night = kind == SigilKind.Nocturnal;
-		bool eclipsed = square.IsEclipsed(kind);
+		bool eclipsed = !planetary && square.IsEclipsed(kind);
 
-		Color ink = night || eclipsed ? new Color(1f, 1f, 1f, 0.35f) : new Color(0f, 0f, 0f, 0.35f);
-		DrawRect(new Rect2(origin, new Vector2(side, side)), GroundFor(square, kind));
+		Color ink = planetary || night || eclipsed ? new Color(1f, 1f, 1f, 0.35f) : new Color(0f, 0f, 0f, 0.35f);
+		DrawRect(new Rect2(origin, new Vector2(side, side)), planetary ? SigilThumbnail.CombinedBackground : GroundFor(square, kind));
 		if (eclipsed)
 			DrawRect(new Rect2(origin, new Vector2(side, side)), EclipseRim, false, 4f);
 
@@ -74,20 +76,23 @@ public partial class SigilCanvas : Control
 		// One round at a time (D-GN.22): a finished set stays drawn, violet; a set already passed in this round shows in
 		// the colour of its level; the set being drawn shows its silhouette faint, in the colour this pass will earn,
 		// and the numbers already hit solid on top; every other set is clear until its turn. When the round ends the
-		// canvas clears, and the next round draws again, a colour further along whenever a level was reached.
+		// canvas clears, and the next round draws again, a colour further along whenever a level was reached. A planetary
+		// round is both sigils (D-GN.33), one colour, the level it is activating; at its limit the whole figure stays drawn.
 		float width = Mathf.Max(3f, cell * 0.07f);
-		for (int set = 0; set < n; set++)
+		Color activating = ColorForLevel(state.IsComplete ? state.ActivatedLevel : state.ActivatedLevel + 1);
+		for (int index = 0; index < state.Sets.Count; index++)
 		{
-			var progress = state.Sets[set];
-			if (progress.Finished || SigilRules.PassedThisRound(state, set))
+			var progress = state.Sets[index];
+			var (setKind, set) = planetary ? SigilRules.PlanetarySet(n, index) : (kind, index);
+			if (progress.Finished || SigilRules.PassedThisRound(state, index) || (planetary && state.IsComplete))
 			{
-				DrawSet(square, kind, set, n, ColorForLevel(SigilRules.SetLevel(progress)), width, Center, n);
+				DrawSet(square, setKind, set, n, planetary ? activating : ColorForLevel(SigilRules.SetLevel(progress)), width, Center, n);
 			}
-			else if (set == state.SetIndex && state.Step > 0)
+			else if (index == state.SetIndex && state.Step > 0)
 			{
-				Color passColor = ColorForLevel(SigilRules.SetLevelAfterPass(progress, state.PassChance));
-				DrawSet(square, kind, set, n, new Color(passColor, 0.30f), width, Center, 0);
-				DrawSet(square, kind, set, state.Step, passColor, width, Center, state.Step);
+				Color passColor = planetary ? activating : ColorForLevel(SigilRules.SetLevelAfterPass(progress, state.PassChance));
+				DrawSet(square, setKind, set, n, new Color(passColor, 0.30f), width, Center, 0);
+				DrawSet(square, setKind, set, state.Step, passColor, width, Center, state.Step);
 			}
 		}
 

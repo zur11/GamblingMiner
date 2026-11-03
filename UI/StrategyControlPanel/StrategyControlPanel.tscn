@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://cfmss1rvb3k1p" path="res://UI/StrategyControlPanel/StrategyControlPanel.cs" id="1_lmglg"]
 
-[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increaseOnLossPercentInput", "_increaseOnWinPercentInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_autoRechargeToggle", "_insistAfterStopOnProfitToggle", "_insistAfterStopOnLossToggle", "_stopOnSigilSetCompletedToggle")]
+[node name="StrategyControlPanel" type="Control" node_paths=PackedStringArray("_betOnceBtn", "_autoBetToggle", "_autoPauseResumeToggle", "_maxBetAmountBtn", "_minBetAmountBtn", "_x2BetAmountBtn", "_divBy2BetAmountBtn", "_betAmountInput", "_increaseOnLossPercentInput", "_increaseOnWinPercentInput", "_numberOfBetsInput", "_stopOnProfitInput", "_stopOnLossInput", "_stopOnBlockMinedToggle", "_autoRechargeToggle", "_insistAfterStopOnProfitToggle", "_insistAfterStopOnLossToggle", "_stopOnSigilSetCompletedToggle", "_stopOnSigilLevelAcquiredToggle")]
 layout_mode = 3
 anchor_right = 0.536
 anchor_bottom = 0.41400003
@@ -26,6 +26,7 @@ _stopOnProfitInput = NodePath("VBoxContainer/GridContainer/StopOnProfitContainer
 _stopOnLossInput = NodePath("VBoxContainer/GridContainer/StopOnLossContainer/StopOnLossInput")
 _stopOnBlockMinedToggle = NodePath("VBoxContainer/GridContainer/StopOnBlockMinedContainer/StopOnBlockMinedToggle")
 _stopOnSigilSetCompletedToggle = NodePath("VBoxContainer/GridContainer/StopOnSigilSetCompletedContainer/StopOnSigilSetCompletedToggle")
+_stopOnSigilLevelAcquiredToggle = NodePath("VBoxContainer/GridContainer/StopOnSigilLevelAcquiredContainer/StopOnSigilLevelAcquiredToggle")
 _autoRechargeToggle = NodePath("VBoxContainer/GridContainer/AutoRechargeContainer/AutoRechargeToggle")
 _insistAfterStopOnProfitToggle = NodePath("VBoxContainer/GridContainer/InsistAfterStopOnProfitContainer/InsistAfterStopOnProfitToggle")
 _insistAfterStopOnLossToggle = NodePath("VBoxContainer/GridContainer/InsistAfterStopOnLossContainer/InsistAfterStopOnLossToggle")
@@ -270,3 +271,20 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 30
 toggle_mode = true
 text = "Stop Set: OFF"
+
+[node name="StopOnSigilLevelAcquiredContainer" type="VBoxContainer" parent="VBoxContainer/GridContainer"]
+layout_mode = 2
+
+[node name="StopOnSigilLevelAcquiredText" type="Label" parent="VBoxContainer/GridContainer/StopOnSigilLevelAcquiredContainer"]
+layout_mode = 2
+tooltip_text = "Stop on Sigil Level Acquired: the run stops when a sigil gains one of its 95 levels, zodiac or planetary."
+mouse_filter = 1
+theme_override_font_sizes/font_size = 35
+text = "Stop on sigil level"
+
+[node name="StopOnSigilLevelAcquiredToggle" type="Button" parent="VBoxContainer/GridContainer/StopOnSigilLevelAcquiredContainer"]
+layout_mode = 2
+tooltip_text = "Stop on Sigil Level Acquired: the run stops when a sigil gains one of its 95 levels, zodiac or planetary."
+theme_override_font_sizes/font_size = 30
+toggle_mode = true
+text = "Stop Level: OFF"

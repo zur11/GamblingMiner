@@ -16,10 +16,12 @@ fixed. **Unit 6's review is done (2026-11-01):** it produced the closing decisio
 ×100, one of each sigil, one slot, the levels — and `AIHelperFiles/sigil_benefits-proposal.md` for the next plan.
 **Unit 7 is done (§10.7):** ×100 and the levels. **Unit 8 is done (§10.8):** the collection and the slot, in state and
 rules; the harness confirms Pr-12, Pr-13's round trip and Pr-14. **Unit 9 is built (§10.9):** the collection's screen,
-with the DEV Acquire and Play buttons, not yet seen in game. **The developer then added D-GN.28 to D-GN.30 (§8.2,
-2026-11-02):** a complete sigil cannot be played, a temporary notice at level 1 on a pair, and the planetary sigil's
-activation. **Next: unit 10 (§10) — builds them, once the developer has answered OQ-GN.1 to OQ-GN.4 (§8.2); then unit 11, the
-measurement, Pr-10 to Pr-19 in game with the first look at units 7, 9 and 10; then close-out.**
+with the DEV Acquire and Play buttons, not yet seen in game. **The developer then added D-GN.28 to D-GN.38 (§8.2,
+2026-11-02):** a complete sigil cannot be played, a temporary notice at level 1 on a pair, the planetary sigil's
+activation, what happens when a sigil completes, and stops on each level acquired. **Unit 10 is built (§10.10), not yet seen in game;** Pr-18
+was refuted as written, the model being what was wrong. **The developer then overruled part of it (D-GN.34 to D-GN.38): the price is now a
+fractal of the zodiac sigils, 100 × c whole passes for all 95 levels, each set carrying its own level.** **Next: unit 10b builds those; then unit 11, the measurement, Pr-10 to Pr-22 in
+game with the first look at units 7, 9, 10 and 10b; then close-out.**
 
 **Branch:** `graphic_numerology` (created 2026-10-28 off `main` at `0888105`, at the developer's request, before the
 plan was written — the lifecycle's step 1 otherwise creates it on approval; the name is the developer's, not the
@@ -542,8 +544,7 @@ reads a level for a benefit yet: this plan builds and displays the levels; the n
 
 ### 8.2 The planetary sigil — D-GN.28 to D-GN.30 (developer, 2026-11-02)
 
-The developer's overrule and new mechanic, given after unit 9's commit and before anyone had seen that screen. **Decided
-but not built:** unit 10 builds them (§10). Until then a complete sigil can still be played, as unit 9 left it.
+The developer's overrule and new mechanic, given after unit 9's commit and before anyone had seen that screen. **Unit 10 built them (§10.10); D-GN.34 to D-GN.38, at the end of this section, overrule parts of what follows, and unit 10b builds those.**
 
 **D-GN.28 — a complete sigil cannot be played.** *Overrules unit 9's default (§10.9), and limits D-GN.25's "any time".*
 There is nothing to gain by it. Its card offers no Play, and `PlayerSigilProgress.Equip` refuses it, so the rule holds in
@@ -573,6 +574,7 @@ when the player chooses to activate one:
 2. **The drawing:** both sigils are drawn **one after the other**.
 3. **The price:** level 1 takes **1 whole pass through both sigils**, level 2 takes 2, and so on up to `MaxLevel`, which
    takes `MaxLevel`. A whole pass through a sigil is one pass on every one of its sets, what D-GN.22 calls a round.
+   ***Overruled by D-GN.34:*** *`PassesPerChance × c` whole passes for all 95 levels, every level alike. The definition of a whole pass stands.*
 
 So **the combined level says what can be activated, and the activated level is what has been.** Sigil A at 10 and sigil B
 at 4 make a figure at 4 (D-GN.27), and with nothing activated its levels 1 to 4 are open.
@@ -580,28 +582,137 @@ at 4 make a figure at 4 (D-GN.27), and with nothing activated its levels 1 to 4 
 **The cost, for sizing (mean bets, from the harness's `Predicted(n)`, constant 95%):** one round of one sigil is
 `Predicted(n) / 95`, so one pass through both is `2 × Predicted(n) / 95` — **170.5 bets on Saturn, 11,236 on the Moon**.
 
-**Open — decided by the developer before unit 10 builds. Each carries the default unit 10 takes if told to go on:**
+**Answered by the developer, 2026-11-02: all four at their defaults, and OQ-GN.4's answer also brought D-GN.31 to D-GN.33, below. Unit 10
+built that. The developer then replaced OQ-GN.1 and OQ-GN.2's answers with D-GN.34's fractal, so neither the table nor the `95 / c` below
+is the rule any more; they stay as what unit 10's code does until unit 10b.**
 
-- **OQ-GN.1 — does the price add up?** Three readings of the same sentence, and they differ by a factor of 48:
+- **OQ-GN.1 — does the price add up? Yes, reading A** (*"vamos con default, 48% más"*): each level in order, each costing
+  its own `k`.
 
   | Reading | Saturn, all 95 levels at 95% | Moon | Against drawing both sigils to violet |
   |---|---|---|---|
-  | **A. Each level in order, each costing its own `k`** (1 + 2 + … + 95 = 4,560 passes) — *the default: "activate one of the 95 levels" reads as separate acts* | 777,600 bets | 51,235,200 bets | **48%** on top |
-  | B. Any open level directly for `k`, skipping the rest (95 passes to the top) | 16,200 | 1,067,400 | 1% |
-  | C. `k` passes in total to reach level `k`, so each new level costs one more (95 passes to the top) | 16,200 | 1,067,400 | 1% |
+  | **A. Each level in order, each costing its own `k`** (1 + 2 + … + 95 = 4,560 passes) — **chosen** | 777,600 bets | 51,235,200 bets | **48%** on top |
+  | B. Any open level directly for `k`, skipping the rest (95 passes to the top) — declined | 16,200 | 1,067,400 | 1% |
+  | C. `k` passes in total to reach level `k`, so each new level costs one more (95 passes to the top) — declined | 16,200 | 1,067,400 | 1% |
 
-- **OQ-GN.2 — does the chance matter?** A pass at 1% costs 95× one at 95% (§5–§6), so if every pass counts as one, **no
-  one has a reason to activate below 95%**, and the plan's founding balance (D-GN.8) stops at the door of this mechanic.
-  **Default: keep the balance. A pass at chance `c` counts `95 / c` passes**, in the same exact fractions as `Progress`:
-  level `k` is `k` passes at 95%, exactly as the developer stated it, while one pass at 1% is worth 95. D-GN.9 holds as
-  it stands: a pass belongs to one chance.
-- **OQ-GN.3 — does activating feed the sigils?** **Default: no.** It has its own record, passes, bets, SC and game time
-  (D-GN.19, D-GN.20) and its own V, starting fresh like any new sigil (§5.2). Each sigil's own passes, V and level do not
-  move. It has to work this way for level 95 at least: both sigils are violet then, and take no progress (D-GN.26).
-- **OQ-GN.4 — does it use the slot?** **Default: yes, there is one slot (D-GN.25).** Starting an activation is a switch,
-  losing only the slot sigil's pass in progress, with the same warning; leaving it loses only the activation's pass in
-  progress, and its completed passes stay. **Diurnal sigil first, then nocturnal**: the order D-GN.16 already states,
-  here only so that the drawing is deterministic.
+- **OQ-GN.2 — does the chance matter? Yes** (*"el chance sí tiene que importar"*). A pass at 1% costs 95× one at 95%
+  (§5–§6), so **a pass at chance `c` counts `95 / c` passes**, in the same exact fractions as `Progress`: level `k` is `k`
+  passes at 95%, exactly as the developer stated it, while one pass at 1% is worth 95. D-GN.9 holds as it stands: a pass
+  belongs to one chance.
+- **OQ-GN.3 — does activating feed the sigils? No.** It has its own record, passes, bets, SC and game time (D-GN.19,
+  D-GN.20) and its own V, starting fresh like any new sigil (§5.2). Each sigil's own passes, V and level do not move. It
+  has to work this way for level 95 at least: both sigils are violet then, and take no progress (D-GN.26).
+- **OQ-GN.4 — does it use the slot? Yes, there is one slot (D-GN.25).** Starting an activation is a switch, losing only
+  the slot sigil's pass in progress, with the same warning; leaving it loses only the activation's pass in progress, and its
+  completed passes stay. **Diurnal sigil first, then nocturnal.**
+
+**D-GN.31 — what a completion does: a toggle in the sigil overlay** (developer, 2026-11-02). *A completion* is a zodiac
+sigil finishing, or a planetary sigil reaching the highest level open to it. Until the Basic Mode polish (the objective in
+`PRIVATE_ROADMAP.md`), the player chooses between two modes, and the choice is a preference, not world state:
+
+- **Stop on Sigil Completed** *(the default until D-GN.35)*: the run stops on the completing bet, with a message to choose another
+  sigil. **Bets are refused, manual and autobet alike, until the slot changes.** Player active node only: a bot draws no
+  sigil, and its bets are never refused.
+- **Automatic switch:** the slot takes **the least played sigil the player owns**: the fewest `BetsPlaced` among owned
+  incomplete zodiac sigils, the collection's alphabetical order breaking a tie. The run goes on. **It never starts an
+  activation:** D-GN.30 says that runs only when the player chooses it, and the developer's words are "un nuevo sigilo".
+  ***Overruled by D-GN.35:*** *it does, and it is the default.*
+- **In both modes, with nothing else to play, the stop does not fire and nothing is refused:** bets run and draw nothing,
+  and **a warning on `DiceGame` says levels are not advancing because no incomplete sigil is in the slot.** That is what
+  keeps a player with only finished sigils from freezing the clock, which only bets can move. *Nothing else to play* means no
+  owned incomplete sigil and, for Stop's refusal, no open activation either, since the player could choose that by hand.
+  The warning's condition is literal: an empty slot shows it too. ***D-GN.36:*** *it is a DEV warning.*
+
+An acquisition, or turning the toggle to automatic, while a complete sigil sits in the slot also takes the least played
+sigil. This is the one narrow exception to "acquiring does not auto-equip" (§10.8), and it is the developer's *"(cuando lo
+tenga)"*. An empty slot stays empty: nothing was completed, so there is nothing to change from.
+
+**D-GN.32 — Stop on Sigil Level Acquired, a real switch in `DiceGame`'s strategy panel, beside Stop Set** (developer,
+2026-11-02). OFF by default, saved with a strategy, read from the session (D-M2.8), locked OFF for a bot. It stops on the bet
+that raises a sigil's level, one of its 95: a zodiac sigil's own level (D-GN.27, the lowest of its sets, so a set rising
+without lifting the lowest does not stop it) or a planetary sigil's activated level. **It has nothing to do with D-GN.31**,
+and the two coincide only where a level is also a completion: level 95, and a planetary sigil's highest open level.
+
+**D-GN.33 — the planetary figure: strict alternation, and one activation runs on through the open levels** (developer,
+2026-11-02). Every whole pass draws **all of one sigil's sets, then all of the other's, never the same sigil twice in a
+row**: diurnal set 1 … n, nocturnal set 1 … n, again. The canvas builds the complete planetary figure on one ground, both
+sigils on it, and clears when the whole pass ends. *The developer's stop fires at "el nivel máximo que puede conseguir", so
+an activation does not end at each level:* it continues to the next open one, and stops only when the gate shuts.
+
+**Two consequences unit 10 decided, for the developer to overrule** *(both overruled by D-GN.34, which has no need of either)*. *(1) A level is credited only when a whole pass ends*,
+so that no level can be earned without the complete figure: at 1% on Saturn, a single set pass is worth 95/6 whole passes,
+and crediting it at once would activate levels from one set of one sigil, against what the developer asked. *(2) What a
+whole pass overpays carries forward:* the value is cumulative and exact, level `L` being paid once it reaches `L(L+1)/2`.
+So one whole pass at 1% (worth 95) reaches level 13 (91) if the gate allows, and what the gate holds back stays paid for,
+credited at the end of a later whole pass. Dropping it would make low chances cost more than the balance says (OQ-GN.2).
+
+### The developer's answers to unit 10's questions — D-GN.34 to D-GN.38 (2026-11-02)
+
+Given after unit 10 was staged, against the seven points it asked the developer to check. **Decided, not built: unit 10b builds them (§10).
+Until then the code does what §10.10 describes, the price included.** The harness still tests that price, and passes against it.
+
+**D-GN.34 — the planetary sigil is a fractal of the zodiac sigils.** *Overrules OQ-GN.1's reading A, D-GN.30's price, OQ-GN.2's `95 / c`,
+and D-GN.33's two consequences. The developer first read as one level per 100 whole passes, then settled it on 2026-11-03: **100 whole passes at
+1% for all 95 levels.*** So the planetary sigil is priced exactly as a set is (D-GN.23): **`PassesPerChance × c` whole passes through both
+sigils, one after the other, for the whole 95 levels**: 100 at 1%, 1,000 at 10%, 5,000 at 50%, 9,500 at 95%, which at 95% is 100 whole passes a
+level. Every level costs the same. It starts at the open level, which is always 1 at first, and continues to the next, up to level 95. D-GN.30's
+gate stands: level `k` needs both sigils at level `k` or more.
+
+| Mean bets, from `Predicted(n)` | Bets | Real time at the last run's ~4,200 bets a second | Game time, 1 credit (100 s a bet) | 10 credits | 50 credits | 99 credits |
+|---|---|---|---|---|---|---|
+| Aquarius Sigil, violet | 810,000 | 3.2 minutes | 2.6 years | 94 days | 19 days | 9.5 days |
+| Cancer Sigil, violet | 53,370,000 | 3.5 hours | 169 years | 16.9 years | 3.4 years | 1.7 years |
+| Saturn, planetary sigil alone, violet | 1,620,000 | 6.4 minutes | 5.1 years | 188 days | 38 days | 19 days |
+| **Saturn from nothing:** both its sigils, then the planetary | 3,240,000 | 12.9 minutes | 10.3 years | 1.0 year | 75 days | 38 days |
+| Moon, planetary sigil alone, violet | 106,740,000 | 7.1 hours | 338 years | 33.8 years | 6.8 years | 3.4 years |
+| **Moon from nothing:** both its sigils, then the planetary | 213,480,000 | 14.1 hours | 676 years | 67.6 years | 13.5 years | 6.8 years |
+| One planetary level: Saturn / Moon | 17,053 / 1,123,579 | 4 seconds / 4.5 minutes | 20 days / 3.6 years | 2 days / 130 days | 9.5 hours / 26 days | 4.8 hours / 13 days |
+
+*Arithmetic: a planetary sigil's violet is `200 × Predicted(n)`, whatever the chance, the cost of drawing both its sigils to violet, so **activating
+everything doubles the planet: 100% on top, against reading A's 48% and the first fractal reading's 9,500%**. The gate makes the "from nothing" rows the
+real ones, since level 95 needs both sigils violet. `Predicted` is approximate (§10.10): the exact chain at 95% reads Saturn's violet 1,619,358 and the
+Moon's 106,815,981. The real-time column is one measured rate on the developer's machine, and the rate falls with what else the frame does.*
+
+**The rule, for unit 10b: a planetary record is a sigil of 2n sets, under the same rule.** Each set carries its own progress and level through
+`Progress`, `SetLevel`, `SetLevelAfterPass` and `PassesToNextLevel`, and the planetary sigil's level is the lowest of its sets' (D-GN.27). A pass at
+chance `c` adds `1 / (PassesPerChance × c)` of its set, exact as ever. **That is what "fractal" comes to in the code:** `CompletePlanetaryPass`,
+`LevelsPaidFor`, `ActivationFullValueChance`, `WholePassesPaid`, `NextLevelProgress` and the stored `ActivatedLevel` all go (Convention 3), and
+`SigilLevel` loses its planetary branch. **Three differences remain, and only three:**
+
+- **The sets keep cycling in order, all of them, even past 100%:** no set is marked `Finished` and none is skipped until the record ends. Otherwise, with mixed
+  chances, one sigil's sets could finish first and the other sigil would then repeat alone, which D-GN.33 forbids.
+- **The record ends at its limit:** when `SigilLevel` reaches `LevelLimit`, it takes `CompletedAtUtc`, and a later activation clears it.
+- **The names and the canvas's ground**, as now.
+
+**A level now rises on the bet that lifts the lowest set.** At a constant chance that is the last set of a whole pass, since every set holds the same count. With mixed
+chances it can be another set, the one that was behind. Every set has then reached the level, so the figure is complete at that level either way. *This replaces
+unit 10's "credited only when a whole pass ends", and with it the question of overpayment:* no pass adds a whole level, so none can jump one. What a set holds past the gate
+simply stays in its progress, and it is the record's own, as a set's always was. D-GN.33's alternation and its running on through the open levels both stand, and the
+developer's answer confirms the second.
+
+**D-GN.35 — Auto-switch includes activations, and it is the default.** *Amends D-GN.31 and D-GN.30's "only when the player chooses".* **The
+toggle starts with Stop off**, that is, on Auto-switch. The choice, **a provisional default for the Basic Mode polish to design properly:** the
+least played owned incomplete sigil as before, and the open activation with the lowest activated level, the alphabetical planet on a tie;
+**between the two, the activation only if its activated level is strictly below that sigil's level: at the same level, always the zodiac sigil.**
+With no zodiac sigil left, the activation. *Nothing else to play* now means no owned incomplete sigil and no open activation, in both modes.
+
+**D-GN.36 — "Levels are not advancing" is a DEV warning.** Marked `[DEV]` and shown only in a DEBUG build. **The game is to be designed so
+that the player always has a sigil to draw**, or, without one, is not told about sigils, or is told along with a way to get one, depending on
+the stage: `PRIVATE_ROADMAP.md`, *Sigils in the historical narrative*. Stop mode's message to choose another sigil is not this warning, and stays.
+
+**D-GN.37 — the notice is a temporary button.** *Amends D-GN.29's label.* Pressing "Activate Saturn Sigil" does what the combined card's
+Activate does, its warning included when a pass is in progress; on `DiceGame` it opens the overlay on the collection first. **That press's
+target is this plan's default, for the developer to overrule.** A second planet's notice within the 10 minutes replaces the first: confirmed.
+
+**D-GN.38 — Stop Set becomes Stop on Set Level Acquired, on zodiac and planetary sigils alike.** *Overrules D-GN.10's trigger, and Pr-7.* It stops on the bet that
+raises a **set's** level (`LevelReached`), no longer on every completed pass. Stop on Sigil Level Acquired (D-GN.32) stays beside it, on the sigil's level. The reason
+D-GN.10 gave still holds, since a level rises at the end of a pass, where a chance change costs nothing.
+
+**On a planetary sigil (developer, 2026-11-03) it fires only in the last whole pass of those a level needs, on each set, so that the player watches the line of that level
+painted set by set.** At 95%, a level is 100 whole passes: nothing fires for 99 of them, and the 100th stops on every one of its 2n sets, six on Saturn, 18 on the Moon. This is
+not a rule of its own: it is what D-GN.34's per-set levels do at a constant chance, each set reaching the level on its own pass of that same whole pass, and the canvas already
+paints a passed set in its level's colour. At 1%, where one whole pass is 0.95 of a level, nearly every whole pass does this. The panel reads "Stop on set level" / "Stop Set
+Level: OFF", and the field and `StopReason` are renamed; a strategy saved with the old flag loads with it OFF, as a personal file does (no migration).
 
 **Defaults that need no answer unless the developer objects:** the notice fires once for each planet, at level 1 only, as
 stated, not at each later level. The activated level is committed by the block like everything else, in the checkpoint's
@@ -625,7 +736,7 @@ From §5–§7's Node model. A build that misses them is checked against the mod
 | Pr-4 | At 1–9% every sigil finishes, at the same cost as above 9% (D-GN.13) | Harness: Moon at 1%, 2%, 5% finishes |
 | Pr-5 | *(registered 2026-10-29, unit 5)* At a constant 95%, a violet Aquarius has **exactly 95 passes in each set, all at 95%, and 0 restarts** | Any other count ⇒ the in-game rule differs from the harness's; the harness already shows exactly `c` |
 | Pr-6 | *(unit 5)* After a restart, the progress restored at boot is **identical** to the last block's checkpoint of the previous session — not to where the run ended, since bets after the last block are reverted by design | Any difference ⇒ a capture or restore bug; it blocks the close-out |
-| Pr-7 | *(unit 5)* With "Stop on Sigil Set Completed" ON, an autobet run stops **on the bet that completes a set pass** — after ~28 bets on average at 95% (3 hits × ≈ 9.5 bets), and almost never after more than 200 | A stop on any other bet, or no stop ⇒ a wiring bug in the stop |
+| Pr-7 | *(unit 5; its trigger is overruled by D-GN.38, see Pr-22)* With "Stop on Sigil Set Completed" ON, an autobet run stops **on the bet that completes a set pass** — after ~28 bets on average at 95% (3 hits × ≈ 9.5 bets), and almost never after more than 200 | A stop on any other bet, or no stop ⇒ a wiring bug in the stop |
 | Pr-8 | *(unit 5)* With a flat bet of 0.01 SC, a completed sigil's SC wagered is **exactly 0.01 × its bets** | Any other figure ⇒ the D-GN.19 tracking drifts |
 | Pr-9 | *(unit 5, added 2026-10-29 before any run)* A set's game time grows by **`100 / credits` game-seconds per bet** — 100 s at 1 credit, 10 s at 10, 2 s at 50 — whatever the DEV time scale; the idle time between two runs is never counted | Off by more than 2% ⇒ the D-GN.20 time tracking does not measure what it claims; idle time in a set ⇒ its "game time passes only as bets are simulated" premise is false |
 | Pr-10 | *(registered 2026-11-01, before any ×100 code)* Violet Aquarius at **95%** in game costs **810,000 bets** (D-GN.23). 85,500 hits, so one run's 1σ is ≈ 0.34% | One run outside **802,000–818,000** (±1%, ~3σ) ⇒ the code and the model disagree |
@@ -635,9 +746,12 @@ From §5–§7's Node model. A build that misses them is checked against the mod
 | Pr-14 | *(2026-11-01)* An ordinary bet still allocates **0 bytes** and costs the same order as Unit 1's ~40–50 ns, with the equipped sigil reached without a search | An allocation, or a cost several times higher ⇒ the per-bet path regressed |
 | Pr-15 | *(registered 2026-11-02, before any code for §8.2)* `Equip` on a complete sigil returns false and changes nothing, and its card has no Play. A sigil completing in the slot stays there, and can leave but not return (D-GN.28) | Any return ⇒ the rule lives on the button alone, or not at all |
 | Pr-16 | *(2026-11-02)* The notice fires **exactly once per planet**, on the bet that takes the lower of the two sigils to level 1, never on an acquisition (a new sigil is at level 0, so owning cannot raise the lower), and ends when the game clock passes that bet's timestamp + 600 s (D-GN.29) | A second firing, one on any other bet, or an end at any other game time ⇒ an edge or clock bug. **Harness for the edge; the display in game, at 100X, where it lasts 6 real seconds** |
-| Pr-17 | *(2026-11-02)* Level `k` cannot start while the combined level is below `k`, and at a constant 95% takes **exactly `k` passes through both sigils: `2 × n × k` set passes**, and no other activated level moves (D-GN.30) | Any other count ⇒ a rule bug. **The price under OQ-GN.1's default; restate here, before the code, if the developer chooses otherwise** |
-| Pr-18 | *(2026-11-02)* At 95%, level `k`'s mean cost is `k × 2 × Predicted(n) / 95` bets: 170.5 × `k` on Saturn. While activating, **neither sigil's own passes, V, level or figures move** (OQ-GN.3's default) | Harness: outside 4σ, the bar section 5 uses ⇒ the code and the model disagree; a sigil's JSON changing ⇒ a leak between the records |
+| Pr-17 | *(2026-11-02; **restated for D-GN.34 before its code, 2026-11-03**)* Level `k` cannot start while the combined level is below `k`. At a constant chance `c`, all 95 levels take **exactly `PassesPerChance × c` whole passes: `2 × n × PassesPerChance × c` set passes**, 100 whole passes at 1% and 9,500 at 95%; each level is reached exactly as a set reaches it (at 95%, one per 100 whole passes), and no other planet's sigil moves. *As first registered: `k` whole passes for level `k`, which unit 10's harness confirmed and D-GN.34 retired* | Any other count ⇒ a rule bug |
+| Pr-18 | *(2026-11-02; **restated for D-GN.34 before its code, 2026-11-03**)* The planetary sigil's violet costs `200 × Predicted(n)` bets on average at every chance, 1,620,000 on Saturn, the exact chain of §10.10 refining the figure; a whole pass at 95% stays 170.5 bets on Saturn. While activating, **neither sigil's own passes, V, level or figures move** (OQ-GN.3's default) | Harness: outside 4σ, the bar section 5 uses ⇒ the code and the model disagree; a sigil's JSON changing ⇒ a leak between the records. **Refuted as first written, by the model (§10.10):** `Predicted` is up to 2.2% off on the larger squares; the code matches an exact chain, which the harness tests against. The second half holds |
 | Pr-19 | *(2026-11-02)* A restart after a mined block restores the activated levels and an activation in progress exactly; a restart before one reverts them (Pattern 2, extending Pr-13). An ordinary bet with no activation running costs as Pr-14 says: the notice's edge is read only behind `LevelReached` | Any difference ⇒ a capture or restore bug, or the per-bet path regressed |
+| Pr-20 | *(registered 2026-11-02; **restated for D-GN.34 before its code, 2026-11-03**)* **The order and the level (D-GN.33, D-GN.34):** at any chance, mixed ones and past a set's 100% included, an activation's set passes run diurnal 1 … n, nocturnal 1 … n, repeating, never the same sigil twice in a row. The planetary level is always the lowest of its 2n sets' and rises one at a time, exactly `MaxLevel` times over the record's life; at a constant chance, on the bet that ends a whole pass. A mix pays in exact fractions | Any other order, a level above a set's, a jump, or a fraction lost ⇒ a rule bug. Harness |
+| Pr-21 | *(2026-11-02; **amended for D-GN.35 before its code**)* **The completion and the level stop (D-GN.31, D-GN.32).** Stop mode with something else to play: the run stops on the completing bet, and the next bet of either path is refused until the slot changes. Automatic: the slot takes the owned incomplete sigil with the fewest bets, alphabetical on a tie, **or, since D-GN.35, the open activation with the lowest activated level if that is strictly below the sigil's level**; at the same level, the sigil. **Automatic is the default.** Nothing else to play, open activations now counted: no stop, no refusal, and the warning's condition holds. The level stop's outcome fires exactly `MaxLevel` times over a sigil's life at any chance, and on every activated level | Any other firing or choice ⇒ a rule bug. **Harness for the rule; the panel, the toggle, the refusal and the warning in game** |
+| Pr-22 | *(registered 2026-11-02, before any code for D-GN.36 to D-GN.38; **amended 2026-11-03**)* **Stop on Set Level Acquired** fires on exactly the bets `LevelReached` holds: `n × MaxLevel` times over a zodiac sigil's life at any chance, 285 on Aquarius, and `2n × MaxLevel` on a planetary sigil, 570 on Saturn, never on a mere completed pass. **At 95% on Saturn its firings come in six, one per set, all inside the 100th whole pass of each level.** **The notice's button** does what the combined card's Activate does, warning included, and is gone with the notice. **The warning** shows `[DEV]` in a DEBUG build, and in a release build nothing | Any other firing ⇒ a rule bug; a warning in a release build ⇒ D-GN.36 missed. **Harness for the stop's firings; the rest in game, and the release half only by reading the guard, since no release build is run** |
 
 **In game time:** the violet Aquarius Sigil is ≈ 8,100 bets ≈ 810,000 game-seconds ≈ 9.4 game-days at one hardware
 credit; the seven complete planets, ≈ 3.3 million bets ≈ 10 game-years at one credit — fewer with more credits.
@@ -664,8 +778,11 @@ Each unit is a stage → ask → commit loop on this branch.
    before this plan restored fresh progress; no format bump or wipe. Only test progress is lost.
 9. **The collection's screen** — the fourteen items, their shape, description and DEV button; the combined figures.
 10. **The planetary sigil** *(added 2026-11-02; until then this number was the measurement)* — D-GN.28 to D-GN.30, §8.2:
-    the refusal, the notice, the activation and its record, with harness sections for Pr-15 to Pr-19.
-11. **Measurement** — Pr-10 to Pr-19, with the first look at units 7, 9 and 10, then close-out.
+    the refusal, the notice, the activation and its record, what a completion does (D-GN.31) and the level stop (D-GN.32),
+    with harness sections for Pr-15 to Pr-21.
+    **10b.** *(added 2026-11-02)* **The developer's answers to unit 10** — D-GN.34 to D-GN.38: the fractal price, Auto-switch with activations and
+    as the default, the DEV warning, the notice as a button, Stop on Set Level Acquired.
+11. **Measurement** — Pr-10 to Pr-22, with the first look at units 7, 9, 10 and 10b, then close-out.
 
 ### 10.1 Unit 1 — done (2026-10-29)
 
@@ -1092,6 +1209,99 @@ scripts' `.uid` files on its next run, and they came in with the commit after th
 unit 10 changes the card, `Equip`, and harness section 10, which still asserts that such a sigil *"leaves and returns"*.
 
 **Deferred to just before the close-out (developer, 2026-10-29):** the first look at the overlay (§10.4).
+
+### 10.10 Unit 10 — the planetary sigil, built (2026-11-02)
+
+**Built:** D-GN.28 to D-GN.33 (§8.2), with the developer's answers recorded there before any code. OQ-GN.1 to OQ-GN.3 took their
+defaults, so Pr-17 and Pr-18 were not restated; OQ-GN.4 brought D-GN.31 to D-GN.33 and Pr-20 and Pr-21.
+
+**One record, not a copy.** A planetary sigil is a `SigilProgressState` with `IsPlanetary` and 2n sets, the diurnal sigil's then
+the nocturnal's. Everything `ApplyBet` does on a bet (V, the streak, D-GN.9's restart, D-GN.19's and D-GN.20's figures, `LeaveSlot`)
+is the same code, and the sets running in list order **is** the alternation of D-GN.33: there is no second path that could repeat
+a sigil. Only the end of a pass differs (`CompletePlanetaryPass`), plus one branch in `CurrentTarget`. `CompletedAtUtc` means *at
+its limit* on this record, so every "a complete record takes no progress" reader, the stop's flag included, needed no new case.
+
+**The gate is read when the record enters the slot** (`LevelLimit`), which keeps the rule free of the collection. It cannot go
+stale: the combined level moves only when a sigil is drawn, and that takes the record out of the slot.
+
+**The readers of `PlayerSigilProgress.Equipped` (Convention 13), all of them checked:**
+
+| Reader | What it assumed | Now |
+|---|---|---|
+| `UserStatsService.LogSigilOutcome` | the slot holds what this bet drew | reads `LastDrawn`: **an automatic switch happens inside the bet**, and the slot's sigil would have printed as the one completed. Planetary lines of their own |
+| The two `STOP on set completed` lines | the same | one `UserStatsService.StopPlayerSessionForSigil`, reading `LastDrawn` |
+| Overlay `Repaint` | a sigil's levels and kind | `RepaintPlanetary`, its own words; the V chain as it is |
+| `SigilCanvas` | one kind, n sets | maps each of the 2n sets through `PlanetarySet`, on the combined figure's ground |
+| Collection: card, slot line, warning, `DescribePass` | a sigil's name | `NameOf`; the pass names which sigil it is in |
+| `SigilLevel` | sets hold progress | a planetary record returns its activated level, rather than a plausible figure from passes that mean something else |
+| `SigilCompletion`, `SetLevel`, `DescribeCompleted` | sets hold progress | **no planetary path reaches them**, checked by grep |
+
+**"Stop on Sigil Set Completed" during an activation: it fires, on each set pass.** Its reason is unchanged (D-GN.10): between two
+set passes a chance change costs nothing, and that holds here as much as on a sigil.
+
+**The notice's edge needs no record of having fired.** A sigil's level rises one at a time, since no pass adds a whole level, so the
+bet with `SigilLevelAcquired` that leaves its sigil on 1 with the partner at 1 or more is exactly the lower going 0 → 1. A level is
+reached once in a world, and a restart that reverts it reverts the firing with it. Read only behind that flag, so an ordinary bet
+pays nothing. **If a second planet reaches level 1 within the 10 minutes, it replaces the first** (one notice at a time; a default,
+for the developer to overrule). **The notice is not a button:** the label reads as one, and clicking does nothing. The brief asked
+for a label, so this is for the developer to judge on seeing it.
+
+**Manual play, the question §8.2 left open: read in the code.** The clock moves by one fixed `GameSecondsPerManualBet` per press,
+however many bets the press's credits fire (`AdvanceClockForBet`, once at `FinishManualBurst`), and not between presses:
+`CalendarTimeService._Process` returns while `IsRunning` is false, and only an autobet sets it. So **in manual play a notice lasts 6
+presses at any credit count, and it holds on screen indefinitely between them**, as it does after a stopped autobet.
+
+**The refusal leaves the buttons enabled.** `SetBettingControlsEnabled` disables AUTO, and AUTO is also STOP: a lock composed there
+could take STOP away from a paused run, which the code's own comments forbid. So the press does nothing and the warning on screen
+says why; both bet paths also refuse at the bet itself (`RefusePlayerBetForSigil`), which covers a restart no button began.
+
+**The preference reaches the rule from the overlay's `_Ready`.** `Scripts/Numerology/` cannot read `UserSettingsService`, and the
+overlay comes with `DiceGame`, where every run starts, so it is set before any bet can be. `SetAutoSwitchOnCompletion` then also moves
+a finished sigil on, if the toggle says so.
+
+**The new DiceGame controls are in the scene**, `SigilNotice` and `SigilWarningLabel` in `DiceGame.tscn`, not built in code: the
+roadmap's *UI built in scenes* item says code-built controls are not how this UI should be designed, and these two had no reason to
+add to it. They sit in the free block under `BlockchainStatusValue` (y 732) and right of the bet history (x 1255), clear of the
+bottom band. The notice has its own `_Process`, on only while it shows: the new row in §38.5.
+
+**Pr-18 was REFUTED as written, and the model was what was wrong.** Raised to 40 runs a planet, Jupiter read low on all three
+repeats (5.03σ, 2.20σ, 3.84σ) and Mars low on all three (3.01σ, 2.43σ, 4.01σ), so the rule applied: find which disagrees before
+tuning. **At 12 runs it had passed, at 3.27σ.** An exact Markov chain over V, written to the game's roll rule, settles it. Per whole
+pass at 95%, Jupiter: `Predicted` 1,212.6, exact 1,185.9, measured 1,183.3. Mars: 2,595.8, 2,563.3, 2,568.7. Saturn: 170.5, 170.5,
+171.0. **`Predicted` treats targets as independent, and they are not:** a hit leaves V known, and hitting 10 leaves V on 1, which is
+exactly what 11 asks for. **The activation's cost is its two sigils' cost apart**, in the chain and in the code, so nothing here
+leaks; the zodiac sigils carry the same approximation. The harness now tests against the chain, which it can pass only if the code draws what the rule says, and prints all seven:
+
+| One whole pass, 95% | Saturn | Jupiter | Mars | Sun | Venus | Mercury | Moon |
+|---|---|---|---|---|---|---|---|
+| Exact ÷ `Predicted` | 0.9996 | 0.9780 | 0.9875 | 0.9955 | 1.0023 | 0.9979 | 1.0007 |
+
+So §8.2's figures hold to the precision they were sized at: **Saturn's 95 levels are 777,292 bets exact (777,600 stated), the Moon's
+51,271,671 (51,235,200).** Pr-10's ±1% around Aquarius is untouched by a 0.04% difference. **Section 5 still tests against
+`Predicted`**, with too few runs for this to show as a rule, but it did trip once: 4.02σ, Libra at 1% Low, in one of the six full
+runs of this unit whose section 5 was read. No code it measures changed, and its chain would be its own exercise (the streak at 1–9%), so it is
+reported here rather than fixed. A harness run that fails only on that cell is this; run it again.
+
+**A check of mine was wrong, twice, in one shape.** Two tests raised a gate directly while the finished record sat in the slot, where
+play cannot, and `StartActivation` rightly refused. Both then waited forever on a record taking no progress. **The rule was right and
+the test was what hung**, for over nine minutes the first time. `PlayChance` now throws after 50 million bets.
+
+**The harness:** sections 12 to 17, Pr-15 to Pr-21, each first proving its check can fail. Section 10's *"leaves and returns"* became
+D-GN.28's own assertion. About a minute a run. **Cost, compared within one run:** the rule alone on Cancer 68.7 ns, through the slot
+79.0 ns (1.15×), an empty slot 5.4 ns, an activation's ordinary bet on the Moon 96.7 ns, all at 0.00 bytes; a finished sigil in the
+slot with nothing else to play also allocates nothing, so the clock can run on at full rate. An earlier run of the same code read
+102.8 and 106.5 ns, for no reason looked into, so per Pattern 6's third rule none of these is evidence against another session's.
+
+**Verified:** `dotnet build` clean; locale detector 17 / 0 / 0 / 0; the harness passes. **Not seen in game, none of it:** the panel's
+new switch and its fit in the grid, the footer's toggle, the combined card's button, the planetary drawing, the notice and the warning
+have only been compiled. **Their layout figures are arithmetic, not measurements**: the status label's six lines in 190 px, the preview's three
+in 90 px, the warning's two lines in 590 px. **Untimed:** the collection view's cost at bet rate, as §10.9 said, and `RefreshSigilWarning`,
+which runs only on a slot change or a completion.
+
+**Overruled afterwards (developer, 2026-11-02), before any of it was seen:** D-GN.34 to D-GN.38, §8.2. **What this section says of the price, the one-record shortcut `CompletePlanetaryPass`, the
+`LevelsPaidFor` value, the jump to level 13, the overpayment, a level credited only at a whole pass's end, Auto-switch never starting an activation, Stop as the default, the warning for
+everyone, the label that is not a button, and Stop Set firing on each pass, all describe this unit's code and not the rule any more.** Unit 10b
+changes them. The exact chain, the readers table, the single record of 2n sets, the alternation and the refusal's enabled buttons all stand.
 
 *Removed from here on 2026-10-29: two paragraphs of the old "§6.2 Open — D-GN.13" text. That rewrite replaced only the
 section's heading, its body stayed behind, and every later section was inserted above it, so it drifted to the end of

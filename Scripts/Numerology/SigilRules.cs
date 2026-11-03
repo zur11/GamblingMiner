@@ -19,7 +19,18 @@ namespace Scripts.Numerology
 		SetPassCompleted = 16,   // "Stop on Sigil Set Completed" stops here (D-GN.10)
 		SetFinished = 32,
 		SigilCompleted = 64,
-		LevelReached = 128       // the pass raised its set's level (D-GN.22) — what the DEBUG log prints, since a pass no longer does
+		LevelReached = 128,      // the pass raised its set's level (D-GN.22) — what the DEBUG log prints, since a pass no longer does
+		SigilLevelAcquired = 256 // the pass raised the SIGIL's level, or a planetary sigil's activated one: "Stop on Sigil Level Acquired" (D-GN.32)
+	}
+
+	// Which stop a player bet asks for, if any (D-GN.10, D-GN.31, D-GN.32). The engines map it to their session's StopReason;
+	// SigilRules cannot name that type, since the harness compiles this folder without the betting code.
+	public enum SigilStop
+	{
+		None,
+		SigilCompleted,
+		LevelAcquired,
+		SetCompleted
 	}
 
 	// One bet's operation on V, as the overlay's V chain shows it (D-GN.21): V before, then + or − the root (plus the loss
@@ -53,6 +64,25 @@ namespace Scripts.Numerology
 			return state;
 		}
 
+		// D-GN.30 — a planetary sigil's own record, starting fresh like any new sigil (OQ-GN.3): 2n sets, one list, so the
+		// drawing rule below needs no second copy and its V runs through both sigils.
+		public static SigilProgressState NewPlanetaryProgress(int planetIndex)
+		{
+			var state = new SigilProgressState { SigilIndex = planetIndex * 2, IsPlanetary = true };
+			int sets = PlanetarySquares.All[planetIndex].N * 2;
+			for (int i = 0; i < sets; i++)
+				state.Sets.Add(new SigilSetProgress());
+			return state;
+		}
+
+		// A planetary record's set, as its sigil and that sigil's own set: the diurnal sigil's sets come first (D-GN.33).
+		public static (SigilKind Kind, int Set) PlanetarySet(int n, int setIndex) =>
+			setIndex < n ? (SigilKind.Diurnal, setIndex) : (SigilKind.Nocturnal, setIndex - n);
+
+		public static string NameOf(SigilProgressState state) => state.IsPlanetary
+			? PlanetarySquares.PlanetOfSigil(state.SigilIndex).PlanetarySigilName
+			: PlanetarySquares.NameOfSigil(state.SigilIndex);
+
 		// D-GN.25 — a sigil leaves the slot. It loses the pass in progress, exactly what a chance change loses (D-GN.9), and
 		// nothing else: V and the loss streak wait with it. Its latest bet is forgotten, so the next bet after it returns
 		// credits no game time for the time it was out. Returns whether a pass was lost.
@@ -81,6 +111,12 @@ namespace Scripts.Numerology
 		public static int CurrentTarget(SigilProgressState state)
 		{
 			var square = PlanetarySquares.PlanetOfSigil(state.SigilIndex);
+			if (state.IsPlanetary)
+			{
+				var (kind, set) = PlanetarySet(square.N, state.SetIndex);
+				return square.NumberAt(kind, set, state.Step);
+			}
+
 			return square.NumberAt(PlanetarySquares.KindOfSigil(state.SigilIndex), state.SetIndex, state.Step);
 		}
 
@@ -178,7 +214,7 @@ namespace Scripts.Numerology
 			if (state.Step < PlanetarySquares.PlanetOfSigil(state.SigilIndex).N)
 				return outcome;
 
-			return outcome | CompletePass(state, timestampUtc);
+			return outcome | (state.IsPlanetary ? CompletePlanetaryPass(state, timestampUtc) : CompletePass(state, timestampUtc));
 		}
 
 		private static SigilBetOutcome CompletePass(SigilProgressState state, DateTime timestampUtc)
@@ -193,8 +229,19 @@ namespace Scripts.Numerology
 			state.Step = 0;
 			state.PassChance = 0;
 
-			if (LevelOf(numerator, denominator) > levelBefore)
+			int levelAfter = LevelOf(numerator, denominator);
+			if (levelAfter > levelBefore)
+			{
 				outcome |= SigilBetOutcome.LevelReached;
+				// A set's level is not the sigil's (D-GN.27): this one rose past the others' lowest, or it did not.
+				int lowestOther = MaxLevel;
+				foreach (var other in state.Sets)
+					if (other != set)
+						lowestOther = Math.Min(lowestOther, SetLevel(other));
+				if (Math.Min(levelAfter, lowestOther) > Math.Min(levelBefore, lowestOther))
+					outcome |= SigilBetOutcome.SigilLevelAcquired;
+			}
+
 			if (numerator >= denominator)
 			{
 				set.Finished = true;
@@ -216,6 +263,104 @@ namespace Scripts.Numerology
 			// A complete sigil stays where it is, violet, until the player chooses another (D-GN.26).
 			state.CompletedAtUtc = timestampUtc;
 			return outcome | SigilBetOutcome.SigilCompleted;
+		}
+
+		// D-GN.33 — the passes run through every set in order, so the sigils alternate by construction and neither repeats:
+		// diurnal 1 … n, nocturnal 1 … n, again. A level is credited only here, when a whole pass ends, so none can be earned
+		// without the complete figure. Reaching the limit is this record's completion: it stays, taking no progress, until
+		// the player chooses another (D-GN.31), and the combined level cannot rise before then, since nothing else takes bets.
+		private static SigilBetOutcome CompletePlanetaryPass(SigilProgressState state, DateTime timestampUtc)
+		{
+			var outcome = SigilBetOutcome.SetPassCompleted;
+			var set = state.Sets[state.SetIndex];
+			set.PassesByChance[state.PassChance] = set.PassesByChance.GetValueOrDefault(state.PassChance) + 1;
+			set.PassesCompleted++;
+			state.Step = 0;
+			state.PassChance = 0;
+			state.SetIndex = (state.SetIndex + 1) % state.Sets.Count;
+			if (state.SetIndex != 0)
+				return outcome;
+
+			int reached = Math.Min(state.LevelLimit, LevelsPaidFor(state));
+			if (reached > state.ActivatedLevel)
+			{
+				state.ActivatedLevel = reached;
+				outcome |= SigilBetOutcome.LevelReached | SigilBetOutcome.SigilLevelAcquired;
+			}
+
+			if (state.ActivatedLevel >= state.LevelLimit)
+			{
+				state.CompletedAtUtc = timestampUtc;
+				outcome |= SigilBetOutcome.SigilCompleted;
+			}
+
+			return outcome;
+		}
+
+		// D-GN.30, OQ-GN.2 — the chance a whole pass counts as exactly one: a pass at chance c counts 95 / c, keeping the
+		// balance of D-GN.8 inside this mechanic.
+		public const int ActivationFullValueChance = 95;
+
+		// D-GN.33 — the levels the whole passes so far have paid for. Level k costs k whole passes (OQ-GN.1, reading A), so
+		// level L is paid at L(L+1)/2, and the value is cumulative, so what a pass overpays carries forward. Each set pass is
+		// 1/(2n) of a whole pass. Exact fractions, as Progress: a floating sum would stop a hair under the target (Standing
+		// Convention 9). Read only when a whole pass ends.
+		private static int LevelsPaidFor(SigilProgressState state)
+		{
+			BigInteger numerator = 0, denominator = 1;
+			foreach (var set in state.Sets)
+				foreach (var (chance, passes) in set.PassesByChance)
+					(numerator, denominator) = Add(numerator, denominator, passes * ActivationFullValueChance, chance * state.Sets.Count);
+
+			int level = 0;
+			while (level < MaxLevel && 2 * numerator >= (level + 1) * (level + 2) * denominator)
+				level++;
+			return level;
+		}
+
+		// For display only: the whole passes this record has paid, counted at their value.
+		public static double WholePassesPaid(SigilProgressState state)
+		{
+			double sum = 0;
+			foreach (var set in state.Sets)
+				foreach (var (chance, passes) in set.PassesByChance)
+					sum += (double)passes * ActivationFullValueChance / (chance * state.Sets.Count);
+			return sum;
+		}
+
+		// For display only: how far into the level being activated, and what that level costs. Can read above the cost when an
+		// earlier pass overpaid and the gate held the credit back.
+		public static (double Paid, int Cost) NextLevelProgress(SigilProgressState state)
+		{
+			int activated = state.ActivatedLevel;
+			return (WholePassesPaid(state) - activated * (activated + 1) / 2.0, activated + 1);
+		}
+
+		// D-GN.30's gate: the next level of a planet's sigil that can be activated, 0 when none is open. Both sigils must hold at
+		// least that level, which is what the combined level says. A null is a sigil not owned, or a planetary sigil not begun.
+		public static int NextOpenLevel(SigilProgressState first, SigilProgressState second, SigilProgressState planetary)
+		{
+			int activated = planetary?.ActivatedLevel ?? 0;
+			return HasCombinedFigure(first, second) && activated < CombinedLevel(first, second) ? activated + 1 : 0;
+		}
+
+		// D-GN.29 — the notice lasts this long in game time, and is still live at exactly this long.
+		public const int NoticeGameSeconds = 600;
+
+		public static bool NoticeIsLive(DateTime firedAtUtc, DateTime nowUtc) =>
+			nowUtc <= firedAtUtc.AddSeconds(NoticeGameSeconds);
+
+		// D-GN.31 — the automatic switch's choice until the Basic Mode polish: the owned incomplete sigil with the fewest bets,
+		// the collection's order breaking a tie. Never an activation: D-GN.30 runs only when the player chooses it. Null when
+		// there is none. A search, for a completion or a button, never an ordinary bet.
+		public static SigilProgressState LeastPlayed(SigilCollectionState collection)
+		{
+			SigilProgressState least = null;
+			foreach (int sigilIndex in PlanetarySquares.SigilsByName)
+				foreach (var sigil in collection.Owned)
+					if (sigil.SigilIndex == sigilIndex && !sigil.IsComplete && (least == null || sigil.BetsPlaced < least.BetsPlaced))
+						least = sigil;
+			return least;
 		}
 
 		// D-GN.23 — a pass at chance c adds 1 / (PassesPerChance × c) of its set: the factor multiplies the cost of violet
@@ -280,8 +425,13 @@ namespace Scripts.Numerology
 
 		// D-GN.27 — a sigil's level is the highest all its sets share, which is the lowest of them; a combined figure's is
 		// the highest its two sigils share, the lower of the two. What the benefits of the next plan will read.
+		// A planetary record's level is what it has activated: its sets hold passes at their value (D-GN.33), not progress
+		// towards violet.
 		public static int SigilLevel(SigilProgressState state)
 		{
+			if (state.IsPlanetary)
+				return state.ActivatedLevel;
+
 			int lowest = MaxLevel;
 			foreach (var set in state.Sets)
 				lowest = Math.Min(lowest, SetLevel(set));
@@ -362,27 +512,36 @@ namespace Scripts.Numerology
 			if (state == null)
 				return "slot empty";
 
-			var square = PlanetarySquares.PlanetOfSigil(state.SigilIndex);
 			var sets = new StringBuilder();
 			foreach (var set in state.Sets)
-				sets.Append(string.Create(CultureInfo.InvariantCulture,
-					$" [{set.PassesCompleted}p L{SetLevel(set)} {SetCompletion(set) * 100:F3}% r{set.PassRestarts} {set.BetsPlaced}b {set.GameSeconds:F0}s]"));
+				sets.Append(state.IsPlanetary
+					? string.Create(CultureInfo.InvariantCulture, $" [{set.PassesCompleted}p r{set.PassRestarts} {set.BetsPlaced}b {set.GameSeconds:F0}s]")
+					: string.Create(CultureInfo.InvariantCulture,
+						$" [{set.PassesCompleted}p L{SetLevel(set)} {SetCompletion(set) * 100:F3}% r{set.PassRestarts} {set.BetsPlaced}b {set.GameSeconds:F0}s]"));
 			string target = state.IsComplete ? "complete" : CurrentTarget(state).ToString(CultureInfo.InvariantCulture);
+			string level = state.IsPlanetary
+				? string.Create(CultureInfo.InvariantCulture, $"activated={state.ActivatedLevel} limit={state.LevelLimit}")
+				: string.Create(CultureInfo.InvariantCulture, $"level={SigilLevel(state)}");
 			return string.Create(CultureInfo.InvariantCulture,
-				$"{square.SigilName(PlanetarySquares.KindOfSigil(state.SigilIndex))}: level={SigilLevel(state)} bets={state.BetsPlaced} sc={state.ScWagered:F8} " +
-				$"v={state.V} streak={state.LossStreak} target={target} pass={state.Step}@{state.PassChance} sets:{sets}");
+				$"{NameOf(state)}: {level} bets={state.BetsPlaced} sc={state.ScWagered:F8} " +
+				$"v={state.V} streak={state.LossStreak} target={target} pass={state.Step}@{state.PassChance} set={state.SetIndex + 1} sets:{sets}");
 		}
 
-		// The whole collection on one line, each owned sigil as above: what a checkpoint commits and a boot restores, so the
-		// two can be compared as text (Pr-13). Owned in the order acquired.
+		// The whole collection on one line, each owned sigil as above and then each planetary sigil begun: what a checkpoint
+		// commits and a boot restores, so the two can be compared as text (Pr-13, Pr-19). Owned in the order acquired.
 		public static string Describe(SigilCollectionState collection)
 		{
-			string slot = collection.EquippedSigilIndex is int index
-				? PlanetarySquares.PlanetOfSigil(index).SigilName(PlanetarySquares.KindOfSigil(index))
-				: "empty";
-			var sb = new StringBuilder(string.Create(CultureInfo.InvariantCulture, $"slot={slot} owned={collection.Owned.Count}"));
+			string slot = collection.EquippedPlanetIndex is int planet
+				? PlanetarySquares.All[planet].PlanetarySigilName
+				: collection.EquippedSigilIndex is int index
+					? PlanetarySquares.NameOfSigil(index)
+					: "empty";
+			var sb = new StringBuilder(string.Create(CultureInfo.InvariantCulture,
+				$"slot={slot} owned={collection.Owned.Count} planetary={collection.Planetary.Count}"));
 			foreach (var sigil in collection.Owned)
 				sb.Append(" | ").Append(Describe(sigil));
+			foreach (var planetary in collection.Planetary)
+				sb.Append(" | ").Append(Describe(planetary));
 			return sb.ToString();
 		}
 

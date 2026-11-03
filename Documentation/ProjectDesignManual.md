@@ -4545,7 +4545,7 @@ from the code at the close-out.* Full record, per scene and with every measureme
 `AIHelperFiles/step17-ui-access-and-event-driven-audit-plan.md` §0.2 and §5.5.
 
 **Every `_Process` override under `Screens/` and `UI/` (25 at the close-out; 26 since Graphic Numerology's
-`SigilOverlay`, 2026-10-29), and why each one is there:**
+`SigilOverlay`, 2026-10-29; 27 since its `SigilNoticeView`, 2026-11-02), and why each one is there:**
 
 | Kind | Scenes | What its `_Process` does |
 |---|---|---|
@@ -4555,6 +4555,7 @@ from the code at the close-out.* Full record, per scene and with every measureme
 | **Event-driven: the override only consumes flags** | `StatusBar` (BTC cell), `ScFinances`, `ScTransactions`, `CasinoGamblingFinances`, `CasinoCoinSwaps`, `ClientsTransactions`, `ClientsBetsHistory` (rows), `CentralBank`, `CompanyDetails`, `BTCWallet`, `CasinoFinances`, `FoundersWallets`, `BotsBtcWallets` (+ `CompaniesWallets`, `CastMinerWallets`), `BTCPoolsAndHardwareShop`, `BlockExplorer`, `BotPlayHistory` (bot list) | an event sets a dirty flag, and the frame rebuilds through a throttle: a **leading-edge** one (rebuild on the first frame after the old interval has passed since the last rebuild) or a **coalescer** (batch for a fixed interval after the first event). At rest: **0 rebuilds a second**, measured, against 0.2–1/s before |
 | Live-clock samplers (§29.13) | inside `StatusBar`, `ScFinances`, `CasinoGamblingFinances`, `AuctioningCompanyDetails`, `BotPlayHistory`, `ClientsBetsHistory` | the measured clock cadence, not a refresh |
 | Sampled counters, only while open (§29.13) | `SigilOverlay` (Graphic Numerology) | at 4 Hz, and only while the overlay is visible (`SetProcess` off when hidden): repaints when the sigil's bet count moved or `PlayerSigilProgress.Changed` marked the drawing dirty; counters floored by `CounterQuantizer`. The drawing itself is repainted only on that event. **With the collection view showing it paints only that view:** the cards when `Changed` reported an acquisition, a switch, a restore or a level, never a hit, and at each sample a Play warning that is waiting, since it names the pass as it stands |
+| Hybrid edge, only while showing (Pattern 6) | `SigilNoticeView` (Graphic Numerology, on `DiceGame` and the collection) | one date comparison per frame, and only while a notice shows (`SetProcess` off otherwise), to hide it when the game clock passes its 600 s. **It is shown by `PlayerSigilProgress.NoticeFired`, never by this:** at 9000X a notice lives about 4 frames, so a sample could miss it whole. A view entering the tree asks whether one is live, since the bet may have run with no scene watching |
 | **Kept by decision** | `StatusBar`'s 10 Hz balances (mini-plan 15 B: "money may not sit still"), `CalendarsNavigator` (its per-frame repaint of a frozen selection, D-17.2: left as it is) | — |
 
 **Five lessons the migration paid for, each with its case in the plan:**

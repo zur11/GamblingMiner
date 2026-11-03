@@ -223,7 +223,7 @@ Console.WriteLine("\n6. Per-set tracking (D-GN.20): the sets add up to the sigil
 		&& completed.Contains("sc=" + rec.ScWagered.ToString("F8", CultureInfo.InvariantCulture) + " ") && fresh.Contains("sc=0.00000000 "),
 		"Describe() carries the sigil, its level, its bets and each set's passes by chance, invariant (no decimal comma)");
 	Check(SigilRules.Describe((SigilProgressState)null) == "slot empty"
-		&& SigilRules.Describe(new SigilCollectionState()) == "slot=empty owned=0", "Describe() reads an empty slot and an empty collection");
+		&& SigilRules.Describe(new SigilCollectionState()) == "slot=empty owned=0 planetary=0", "Describe() reads an empty slot and an empty collection");
 }
 
 Console.WriteLine("\n7. Pr-13: the checkpoint round trip (P-GN.4, D-GN.11, D-GN.25)");
@@ -532,8 +532,8 @@ Console.WriteLine("\n10. Pr-12: owning, the slot and the switch (D-GN.24, D-GN.2
 	PlayerSigilProgress.CopyRecentSteps(ring, 4);
 	Check(Json(aquarius) == violet && PlayerSigilProgress.LastOutcome == SigilBetOutcome.None && changes.Count == 0 && ring[ringBefore - 1] == lastBefore,
 		"a bet on it changes nothing: no progress, no outcome, no event, nothing in the V chain");
-	Check(PlayerSigilProgress.Equip(1) && aquarius.CompletedAtUtc != default && PlayerSigilProgress.Equip(0) && PlayerSigilProgress.Equipped.IsComplete,
-		"a complete sigil leaves and returns still complete");
+	Check(PlayerSigilProgress.Equip(1) && aquarius.CompletedAtUtc != default && !PlayerSigilProgress.Equip(0) && PlayerSigilProgress.Equipped.SigilIndex == 1,
+		"a complete sigil leaves and, since D-GN.28, does not return");
 	PlayerSigilProgress.Changed -= changes.Add;
 
 	// The pair, and the moment it may be shown (D-GN.24, D-GN.27).
@@ -593,5 +593,671 @@ Console.WriteLine("\n11. The collection's text: the order and the descriptions g
 	Check(descriptions.Max(d => d.Length) <= 66, $"the longest fits the card's two reserved lines ({descriptions.Max(d => d.Length)} characters)");
 }
 
+// ─── Unit 10 (plan §8.2): every section below first proves its check can fail (Standing Convention 16). ───
+
+// A pair at the given levels, owned, with the Saturn squares' set progress written directly (section 10's way: a real gate
+// is about 8,500 bets each). 100 passes at 95% are one level.
+void OwnPair(int planet, int firstLevel, int secondLevel)
+{
+	foreach (var (sigil, level) in new[] { (planet * 2, firstLevel), (planet * 2 + 1, secondLevel) })
+	{
+		PlayerSigilProgress.Acquire(sigil);
+		foreach (var set in PlayerSigilProgress.Find(sigil).Sets)
+			set.PassesByChance[95] = level * 100;
+	}
+}
+
+// Plays real bets at a chance until the condition holds, stamping 100 game-seconds apart.
+long Tick = 0;
+var T0 = new DateTime(2009, 3, 21, 0, 0, 0, DateTimeKind.Utc);
+DateTime NextBetTime() => T0.AddSeconds(100 * Tick++);
+void PlayChance(int chance, Func<bool> done)
+{
+	long guard = 0;
+	while (!done())
+	{
+		if (++guard > 50_000_000)
+			throw new InvalidOperationException("PlayChance: the condition never held; is the record in the slot taking no progress?");
+		var res = engine.Play(1m, chance, false);
+		PlayerSigilProgress.RegisterPlayerBet(Bet(res.Roll, res.IsWin, chance, NextBetTime()));
+	}
+}
+
+Console.WriteLine("\n12. Pr-15: a complete sigil cannot be played (D-GN.28)");
+{
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	PlayerSigilProgress.Acquire(0);
+	PlayerSigilProgress.Acquire(1);
+	PlayerSigilProgress.Equip(0);
+	foreach (var set in PlayerSigilProgress.Find(0).Sets) { set.PassesByChance[95] = 9499; set.PassesCompleted = 9499; }
+	var aquarius = PlayerSigilProgress.Find(0);
+	PlayChance(95, () => aquarius.IsComplete);
+	Check(PlayerSigilProgress.Equipped == aquarius, "a sigil completing in the slot stays there");
+	Check(PlayerSigilProgress.Equip(1) && PlayerSigilProgress.Equipped.SigilIndex == 1, "it can leave");
+
+	// The refusal changes nothing at all: the whole collection as text, and the slot's cached record.
+	string before = Json(PlayerSigilProgress.Collection);
+	var ringBuffer = new SigilStep[1];
+	int changed = 0;
+	void Count(SigilBetOutcome _) => changed++;
+	PlayerSigilProgress.Changed += Count;
+	bool refused = !PlayerSigilProgress.Equip(0);
+	PlayerSigilProgress.Changed -= Count;
+	Check(refused && Json(PlayerSigilProgress.Collection) == before && PlayerSigilProgress.Equipped.SigilIndex == 1 && changed == 0, "once out it does not return: Equip returns false, changes nothing and fires nothing");
+
+	// Convention 16: this JSON comparison must notice a one-field change.
+	var altered = PlayerSigilProgress.CaptureForCheckpoint();
+	altered.EquippedSigilIndex = 0;
+	Check(Json(altered) != before, "the comparison above notices the slot moving (it can fail)");
+
+	// A restore is not the player's action: a sigil complete in the slot comes back in the slot.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	PlayerSigilProgress.Acquire(0);
+	PlayerSigilProgress.Equip(0);
+	foreach (var set in PlayerSigilProgress.Find(0).Sets) { set.PassesByChance[95] = 9499; set.PassesCompleted = 9499; }
+	aquarius = PlayerSigilProgress.Find(0);
+	PlayChance(95, () => aquarius.IsComplete);
+	var snapshot = PlayerSigilProgress.CaptureForCheckpoint();
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	PlayerSigilProgress.RestoreFromCheckpoint(snapshot);
+	Check(PlayerSigilProgress.Equipped?.SigilIndex == 0 && PlayerSigilProgress.Equipped.IsComplete, "RestoreFromCheckpoint still restores a complete sigil that was in the slot");
+}
+
+Console.WriteLine("\n13. Pr-16: the notice fires once per planet, at level 1, and lasts 600 game-seconds (D-GN.29)");
+{
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	var fired = new List<(int Planet, DateTime At)>();
+	void OnFired(int planet) => fired.Add((planet, PlayerSigilProgress.LastDrawn.LastBetAtUtc));
+	PlayerSigilProgress.NoticeFired += OnFired;
+
+	// Owning both, with the partner at level 5, fires nothing: a new sigil is at level 0.
+	OwnPair(0, 5, 0);
+	Check(fired.Count == 0 && PlayerSigilProgress.NoticePlanetAt(T0) == -1, "owning both fires nothing, even with one far along");
+
+	// Convention 16: the edge must be able to fire at all, and on the bet that lifts the lower, by watching one reach it.
+	var capricorn = PlayerSigilProgress.Find(1);
+	foreach (var set in capricorn.Sets) { set.PassesByChance[95] = 99; set.PassesCompleted = 99; }
+	PlayerSigilProgress.Equip(1);
+	int betsBeforeEdge = 0;
+	bool lowerWasZero = true;
+	long seen = 0;
+	while (fired.Count == 0 && seen < 100_000)
+	{
+		lowerWasZero &= SigilRules.CombinedLevel(PlayerSigilProgress.Find(0), capricorn) == 0;
+		var res = engine.Play(1m, 95, false);
+		PlayerSigilProgress.RegisterPlayerBet(Bet(res.Roll, res.IsWin, 95, NextBetTime()));
+		betsBeforeEdge++;
+		seen++;
+	}
+	Check(fired.Count == 1 && fired[0].Planet == 0, $"it fired, for Saturn, on bet {betsBeforeEdge} of this sigil's last three passes");
+	Check(lowerWasZero && SigilRules.CombinedLevel(PlayerSigilProgress.Find(0), capricorn) == 1, "on exactly the bet that took the lower from 0 to 1");
+
+	// The end: live at +600, gone just past it.
+	DateTime firedAt = fired[0].At;
+	Check(PlayerSigilProgress.NoticePlanetAt(firedAt.AddSeconds(SigilRules.NoticeGameSeconds)) == 0, "still live at exactly the bet's timestamp + 600 s");
+	Check(PlayerSigilProgress.NoticePlanetAt(firedAt.AddSeconds(SigilRules.NoticeGameSeconds + 1)) == -1, "gone once the clock passes it");
+
+	// Never again for this planet, whichever sigil moves.
+	foreach (var set in capricorn.Sets) { set.PassesByChance[95] = 199; set.PassesCompleted = 199; }
+	PlayChance(95, () => SigilRules.SigilLevel(capricorn) == 2);
+	PlayerSigilProgress.Equip(0);
+	var aquarius = PlayerSigilProgress.Find(0);
+	foreach (var set in aquarius.Sets) { set.PassesByChance[95] = 599; set.PassesCompleted = 599; }
+	PlayChance(95, () => SigilRules.SigilLevel(aquarius) == 6);
+	Check(fired.Count == 1, "no second firing as either sigil rises further");
+
+	// One sigil alone reaching level 1 is not the pair's edge, and neither is its partner reaching it first.
+	fired.Clear();
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	PlayerSigilProgress.Acquire(2);
+	PlayerSigilProgress.Equip(2);
+	var sagittarius = PlayerSigilProgress.Find(2);
+	foreach (var set in sagittarius.Sets) { set.PassesByChance[95] = 99; set.PassesCompleted = 99; }
+	PlayChance(95, () => SigilRules.SigilLevel(sagittarius) == 1);
+	Check(fired.Count == 0, "a sigil reaching level 1 with its partner not owned fires nothing");
+	PlayerSigilProgress.Acquire(3);
+	Check(fired.Count == 0, "and acquiring the partner afterwards fires nothing");
+	PlayerSigilProgress.Equip(3);
+	var pisces = PlayerSigilProgress.Find(3);
+	foreach (var set in pisces.Sets) { set.PassesByChance[95] = 99; set.PassesCompleted = 99; }
+	PlayChance(95, () => SigilRules.SigilLevel(pisces) == 1);
+	Check(fired.Count == 1 && fired[0].Planet == 1, "the partner then reaching level 1 fires it, for Jupiter");
+
+	// A restart reverts it: no notice restored, and the bet that raises the level fires it again.
+	var older = PlayerSigilProgress.CaptureForCheckpoint();
+	PlayerSigilProgress.RestoreFromCheckpoint(older);
+	Check(PlayerSigilProgress.NoticePlanetAt(fired[0].At) == -1, "a notice live at a restore is not restored");
+	PlayerSigilProgress.NoticeFired -= OnFired;
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+}
+
+Console.WriteLine("\n14. Pr-17, Pr-20: the gate, the price and the alternation (D-GN.30, D-GN.33)");
+{
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	Check(PlayerSigilProgress.NextOpenLevel(0) == 0 && !PlayerSigilProgress.StartActivation(0), "nothing owned: the gate is shut");
+	PlayerSigilProgress.Acquire(0);
+	PlayerSigilProgress.Acquire(1);
+	Check(!PlayerSigilProgress.StartActivation(0), "both owned at level 0: still shut");
+	OwnPair(0, 10, 4);
+	Check(PlayerSigilProgress.NextOpenLevel(0) == 1, "the developer's example: sigils at 10 and 4 open level 1");
+	OwnPair(1, 3, 3);   // another planet's, to see it does not move
+	Check(!PlayerSigilProgress.StartActivation(-1) && !PlayerSigilProgress.StartActivation(PlanetarySquares.All.Count), "no planet outside the seven");
+
+	string sigilsBefore = Json(PlayerSigilProgress.Find(0)) + Json(PlayerSigilProgress.Find(1));
+	Check(PlayerSigilProgress.StartActivation(0), "starting");
+	var saturnRecord = PlayerSigilProgress.Equipped;
+	Check(saturnRecord.IsPlanetary && saturnRecord.Sets.Count == 6 && saturnRecord.LevelLimit == 4 && saturnRecord.V == 0, "its own record: both sigils' 6 sets, the limit the combined level, V fresh (OQ-GN.3)");
+	Check(!PlayerSigilProgress.StartActivation(0), "it cannot start again while it is in the slot");
+
+	// The order of the targets, read off the rule: diurnal 1-2-3, 4-5-6, 7-8-9, then nocturnal 1-4-7, 2-5-8, 3-6-9, then again.
+	var expectedTargets = new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 4, 7, 2, 5, 8, 3, 6, 9 };
+	var seenTargets = new List<int>();
+	var seenSets = new List<int>();
+	var levelAtPass = new List<(int Pass, int Level)>();
+	int passes = 0;
+	bool creditOnlyAtEnd = true;
+	while (saturnRecord.ActivatedLevel < 4)
+	{
+		int target = SigilRules.CurrentTarget(saturnRecord);
+		int setBefore = saturnRecord.SetIndex;
+		var res = engine.Play(1m, 95, false);
+		int levelBefore = saturnRecord.ActivatedLevel;
+		PlayerSigilProgress.RegisterPlayerBet(Bet(res.Roll, res.IsWin, 95, NextBetTime()));
+		var o = PlayerSigilProgress.LastOutcome;
+		if ((o & SigilBetOutcome.Hit) != 0)
+			seenTargets.Add(target);
+		if ((o & SigilBetOutcome.SetPassCompleted) != 0)
+		{
+			passes++;
+			seenSets.Add(setBefore);
+			if (saturnRecord.ActivatedLevel != levelBefore) levelAtPass.Add((passes, saturnRecord.ActivatedLevel));
+		}
+		creditOnlyAtEnd &= saturnRecord.ActivatedLevel == levelBefore || passes % 6 == 0;
+	}
+
+	// Convention 16: the expected orders are compared as sequences, and a swapped order must read as different.
+	var swapped = new[] { 1, 4, 7, 2, 5, 8, 3, 6, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+	bool OrderOk(IEnumerable<int> seen2, int[] expected) => seen2.Take(36).SequenceEqual(expected.Concat(expected));
+	Check(OrderOk(seenTargets, expectedTargets) && !OrderOk(seenTargets, swapped),
+		"the targets run diurnal 1-2-3 4-5-6 7-8-9, then nocturnal 1-4-7 2-5-8 3-6-9, again; the same check rejects the opposite order");
+	Check(seenSets.Select((s, i) => s == i % 6).All(x => x), $"over {seenSets.Count} set passes every one follows set 0 … 5 in order, so neither sigil repeats");
+	bool notAlternating = new[] { 0, 1, 2, 0, 1, 2 }.Select((s, i) => s == i % 6).All(x => x);
+	Check(!notAlternating, "a run that repeats the diurnal sigil fails that check (it can fail)");
+
+	// Pr-17: exactly k whole passes per level: 6, 12, 18, 24 set passes, 60 in all for the four levels.
+	Check(levelAtPass.SequenceEqual(new[] { (6, 1), (18, 2), (36, 3), (60, 4) }),
+		"at 95%: level 1 after 1 whole pass (6 set passes), 2 after 2 more, 3 after 3 more, 4 after 4 more: " + string.Join(" ", levelAtPass));
+	Check(creditOnlyAtEnd, "a level moves only on a bet ending a whole pass (Pr-20)");
+	Check(saturnRecord.IsComplete && (PlayerSigilProgress.LastOutcome & SigilBetOutcome.SigilCompleted) != 0, "reaching the limit is its completion: it continued through 1, 2, 3 and stopped at 4 (D-GN.33)");
+	Check(Json(PlayerSigilProgress.Find(0)) + Json(PlayerSigilProgress.Find(1)) == sigilsBefore, "and neither sigil's own record moved (Pr-18's second half)");
+	Check(PlayerSigilProgress.FindPlanetary(1) == null, "no other activated level moved: Jupiter's was never begun");
+	Check(PlayerSigilProgress.NextOpenLevel(0) == 0 && !PlayerSigilProgress.StartActivation(0), "the gate is now shut at 4 of 4");
+
+	// A complete planetary record takes no progress, whatever is bet.
+	string parked = Json(saturnRecord);
+	PlayerSigilProgress.RegisterPlayerBet(Bet(1, true, 95, NextBetTime()));
+	Check(Json(saturnRecord) == parked && PlayerSigilProgress.LastOutcome == SigilBetOutcome.None, "at the limit a bet changes nothing");
+
+	// Raising the sigils reopens the gate, and the record resumes at the next level with its passes kept.
+	PlayerSigilProgress.Equip(1);
+	foreach (var set in PlayerSigilProgress.Find(1).Sets) set.PassesByChance[95] = 500;
+	Check(PlayerSigilProgress.NextOpenLevel(0) == 5 && PlayerSigilProgress.StartActivation(0) && !saturnRecord.IsComplete && saturnRecord.ActivatedLevel == 4 && saturnRecord.LevelLimit == 5,
+		"the lower rising to 5 opens level 5: same record, level kept, no longer complete");
+
+	// Leaving costs only the pass in progress.
+	PlayChance(95, () => saturnRecord.Step > 0 && saturnRecord.SetIndex == 2);
+	int setPassesBefore = saturnRecord.Sets.Sum(s => s.PassesCompleted);
+	int restartsBefore = saturnRecord.Sets[2].PassRestarts;
+	var expected = System.Text.Json.JsonSerializer.Deserialize<SigilProgressState>(Json(saturnRecord));
+	expected.Step = 0;
+	expected.PassChance = 0;
+	expected.Sets[2].PassRestarts = restartsBefore + 1;
+	expected.LastBetAtUtc = default;
+	Check(PlayerSigilProgress.Equip(1) && Json(saturnRecord) == Json(expected) && saturnRecord.Sets.Sum(s => s.PassesCompleted) == setPassesBefore,
+		"leaving loses the pass in progress and nothing else");
+	Check(PlayerSigilProgress.StartActivation(0) && saturnRecord.SetIndex == 2 && saturnRecord.Step == 0, "and it resumes at the same set of the same whole pass");
+
+	// Pr-20: at 1%, one whole pass on Saturn is worth 95, which pays level 13 (91) and not 14 (105), and no level before its end.
+	void Fractional(int limit, out int levelAfterOnePass, out SigilProgressState record)
+	{
+		PlayerSigilProgress.ResetToPreGenesisDefaults();
+		OwnPair(0, limit, limit);
+		PlayerSigilProgress.StartActivation(0);
+		record = PlayerSigilProgress.Equipped;
+		var r = record;
+		int passes1 = 0;
+		bool midPass = false;
+		while (passes1 < 6)
+		{
+			var res = engine.Play(1m, 1, false);
+			PlayerSigilProgress.RegisterPlayerBet(Bet(res.Roll, res.IsWin, 1, NextBetTime()));
+			if ((PlayerSigilProgress.LastOutcome & SigilBetOutcome.SetPassCompleted) != 0)
+			{
+				passes1++;
+				midPass |= passes1 < 6 && r.ActivatedLevel != 0;
+			}
+		}
+		Check(!midPass, $"at 1%, gate at {limit}: nothing is credited during the first whole pass, though one set pass is worth 95/6");
+		levelAfterOnePass = r.ActivatedLevel;
+	}
+	Fractional(95, out int reachedOpen, out _);
+	Check(reachedOpen == 13, $"at 1% with the gate open, one whole pass reaches level 13 (91 ≤ 95 < 105): {reachedOpen}");
+	Fractional(4, out int reachedShut, out var heldBack);
+	Check(reachedShut == 4 && heldBack.IsComplete && SigilRules.WholePassesPaid(heldBack) == 95d, $"with the gate at 4 it stops at 4, and all 95 stay paid for: {SigilRules.WholePassesPaid(heldBack)}");
+	PlayerSigilProgress.Equip(1);
+	foreach (var sigil in new[] { 0, 1 })
+		foreach (var set in PlayerSigilProgress.Find(sigil).Sets) set.PassesByChance[95] = 9000;
+	PlayerSigilProgress.StartActivation(0);
+	PlayChance(95, () => heldBack.ActivatedLevel > 4);
+	Check(heldBack.ActivatedLevel == 13 && heldBack.Sets.Sum(s => s.PassesCompleted) == 12, $"what the gate held back is credited at the end of the next whole pass, not lost: level {heldBack.ActivatedLevel}");
+
+	// Exact fractions: 3% and 7% in one whole pass, compared in integers. Three sets at 3% and three at 7% pay exactly
+	// 3 × 95/(6×3) + 3 × 95/(6×7) = 95/6 + 95/14 = 22.619…, so level 6 (21) and not 7 (28).
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	OwnPair(0, 95, 95);
+	PlayerSigilProgress.StartActivation(0);
+	var mixed = PlayerSigilProgress.Equipped;
+	for (int i = 0; i < 6; i++)
+	{
+		int chance = i < 3 ? 3 : 7;
+		int before = mixed.Sets.Sum(s => s.PassesCompleted);
+		PlayChance(chance, () => mixed.Sets.Sum(s => s.PassesCompleted) > before);
+	}
+	Check(mixed.ActivatedLevel == 6, $"mixed chances in one whole pass, 3% then 7%, pay 22.62 → level 6: {mixed.ActivatedLevel}");
+
+	// Convention 9's trap: 95 passes at 95% on each of a whole pass's sets sum to exactly T(13) = 91? A value that lands
+	// exactly on a target must count. 91 whole passes at 95% pay exactly T(13).
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	OwnPair(0, 95, 95);
+	PlayerSigilProgress.StartActivation(0);
+	var exactly = PlayerSigilProgress.Equipped;
+	foreach (var set in exactly.Sets) { set.PassesByChance[95] = 90; set.PassesCompleted = 90; }
+	PlayChance(95, () => exactly.Sets[5].PassesCompleted == 91);
+	Check(exactly.ActivatedLevel == 13, $"a value landing exactly on a target counts: 91 whole passes at 95% are level 13: {exactly.ActivatedLevel}");
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	OwnPair(0, 95, 95);
+	PlayerSigilProgress.StartActivation(0);
+	var shortOf = PlayerSigilProgress.Equipped;
+	foreach (var set in shortOf.Sets) { set.PassesByChance[95] = 89; set.PassesCompleted = 89; }
+	PlayChance(95, () => shortOf.Sets[5].PassesCompleted == 90);
+	Check(shortOf.ActivatedLevel == 12, $"and one short does not: 90 whole passes are level 12: {shortOf.ActivatedLevel}");
+
+	// The whole of level 95: a record reaching MaxLevel stays complete and the gate never opens past it.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	OwnPair(0, 95, 95);
+	PlayerSigilProgress.StartActivation(0);
+	var top = PlayerSigilProgress.Equipped;
+	foreach (var set in top.Sets) { set.PassesByChance[95] = 4559; set.PassesCompleted = 4559; }
+	PlayChance(95, () => top.IsComplete);
+	Check(top.ActivatedLevel == SigilRules.MaxLevel && top.Sets.All(s => s.PassesCompleted == 4560) && PlayerSigilProgress.NextOpenLevel(0) == 0,
+		"4,560 whole passes at 95% reach level 95 (OQ-GN.1, reading A: 1 + 2 + … + 95), and nothing opens past it");
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+}
+
+Console.WriteLine("\n15. Pr-18: the mean cost, and what activating does not touch (OQ-GN.3)");
+{
+	foreach (int planet in new[] { 0, 1, 2 })
+	{
+		var square = PlanetarySquares.All[planet];
+		const int WholePasses = 60;
+		var costs = new List<double>();
+		const int CostRuns = 40;
+		bool neverMoved = true;
+		for (int run = 0; run < CostRuns; run++)
+		{
+			PlayerSigilProgress.ResetToPreGenesisDefaults();
+			OwnPair(planet, 95, 95);
+			string before = Json(PlayerSigilProgress.Find(planet * 2)) + Json(PlayerSigilProgress.Find(planet * 2 + 1));
+			PlayerSigilProgress.StartActivation(planet);
+			var record = PlayerSigilProgress.Equipped;
+			PlayChance(95, () => record.Sets[^1].PassesCompleted == WholePasses);
+			costs.Add(record.BetsPlaced);
+			neverMoved &= Json(PlayerSigilProgress.Find(planet * 2)) + Json(PlayerSigilProgress.Find(planet * 2 + 1)) == before;
+		}
+
+		// Against the exact chain, not Predicted: at this precision Predicted itself misses, by -2.2% on Jupiter (plan §10.10).
+		// It treats targets as independent, but a hit leaves V known: 10 leaves V on 1, which is just what 11 asks for.
+		var both = ExactChain.Targets(square, SigilKind.Diurnal).Concat(ExactChain.Targets(square, SigilKind.Nocturnal)).ToList();
+		double predicted = WholePasses * ExactChain.CycleCost(both, 95);
+		double twoApart = WholePasses * (ExactChain.CycleCost(ExactChain.Targets(square, SigilKind.Diurnal), 95) + ExactChain.CycleCost(ExactChain.Targets(square, SigilKind.Nocturnal), 95));
+		double mean = costs.Average();
+		// A pass through both sigils is 2 × Targets(n) hits; each is geometric, sd ≈ mean, so the same sum as RelativeSd.
+		var (k1, k2) = Targets(square.N);
+		double m1 = 900.0 / 95, m2 = 8100.0 / 95;
+		double sd = Math.Sqrt(WholePasses * 2 * (k1 * m1 * m1 + k2 * m2 * m2) / CostRuns);
+		double sigmas = Math.Abs(mean - predicted) / sd;
+		Check(sigmas <= 4, string.Create(CultureInfo.InvariantCulture,
+			$"{square.Planet}: {WholePasses} whole passes at 95% cost {mean:N0} bets on average of {CostRuns} runs, the exact chain says {predicted:N0} ({sigmas:F2}σ, bar 4σ); Predicted says {WholePasses * 2 * Predicted(square.N) / 95:N0}"));
+		Check(Math.Abs(predicted - twoApart) / predicted < 0.001, string.Create(CultureInfo.InvariantCulture,
+			$"  an activation costs what its two sigils cost apart: {predicted:N0} against {twoApart:N0} in the same chain"));
+		// Convention 16: the same bar must reject a mean 25% off, and the sigils' JSON must have been able to differ.
+		Check(Math.Abs(predicted * 1.25 - predicted) / sd > 4, string.Create(CultureInfo.InvariantCulture, $"  the bar rejects a cost 25% off ({Math.Abs(predicted * 0.25) / sd:F1}σ)"));
+		Check(neverMoved, "  neither sigil's own passes, V, level or figures moved");
+	}
+	Check(Math.Round(2 * Predicted(3) / 95, 1) == 170.5, "one pass through both on Saturn is the 170.5 bets §8.2 states, rounded: 2 × Predicted(3) / 95");
+	foreach (var q in PlanetarySquares.All)
+	{
+		double exactBoth = ExactChain.CycleCost(ExactChain.Targets(q, SigilKind.Diurnal).Concat(ExactChain.Targets(q, SigilKind.Nocturnal)).ToList(), 95);
+		double modelBoth = 2 * Predicted(q.N) / 95;
+		Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+			$"        {q.Planet,-8} one whole pass at 95%: exact {exactBoth:N1} bets, Predicted {modelBoth:N1}, ratio {exactBoth / modelBoth:F4}; all 95 levels: exact {exactBoth * 4560:N0}, Predicted {modelBoth * 4560:N0}"));
+	}
+
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	OwnPair(0, 95, 95);
+	string withoutBets = Json(PlayerSigilProgress.Find(0));
+	PlayerSigilProgress.Find(0).V = 3;
+	Check(withoutBets != Json(PlayerSigilProgress.Find(0)), "a sigil's V moving would have shown in that comparison (it can fail)");
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+}
+
+Console.WriteLine("\n16. Pr-19: the checkpoint carries activations, and an ordinary bet still costs as Pr-14 says");
+{
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	OwnPair(0, 8, 8);
+	PlayerSigilProgress.StartActivation(0);
+	var record = PlayerSigilProgress.Equipped;
+	PlayChance(95, () => record.ActivatedLevel >= 2 && record.Step > 0);
+	var snapshot = PlayerSigilProgress.CaptureForCheckpoint();
+	string atBlock = SigilRules.Describe(snapshot);
+	string jsonAtBlock = Json(snapshot);
+
+	// After the block: an activated level, and a switch.
+	var bets = record.BetsPlaced;
+	PlayChance(95, () => record.ActivatedLevel >= 3);
+	PlayerSigilProgress.Acquire(4);
+	PlayerSigilProgress.Equip(4);
+	Check(SigilRules.Describe(PlayerSigilProgress.Collection) != atBlock, "the state after the block differs, as text (the comparison can fail)");
+
+	PlayerSigilProgress.RestoreFromCheckpoint(snapshot);
+	Check(SigilRules.Describe(PlayerSigilProgress.Collection) == atBlock, "a restore reproduces the checkpoint as text, activated levels and the activation in progress included");
+	Check(Json(PlayerSigilProgress.Collection) == jsonAtBlock, "and exactly as JSON");
+	Check(atBlock.Contains("slot=Saturn Sigil") && atBlock.Contains("activated=2") && atBlock.Contains("limit=8") && atBlock.Contains("planetary=1"), "the text names the activation and its level: " + atBlock[..atBlock.IndexOf(" | ", StringComparison.Ordinal)]);
+	var restored = PlayerSigilProgress.Equipped;
+	Check(restored.IsPlanetary && restored == PlayerSigilProgress.FindPlanetary(0) && restored != snapshot.Planetary[0], "the cached slot is the restored list's own record, not the snapshot's");
+	PlayerSigilProgress.RegisterPlayerBet(Bet(10, true, 95, NextBetTime()));
+	Check(restored.BetsPlaced == bets + 1, "and the activation carries on drawing from there");
+	Check(Json(snapshot) == jsonAtBlock, "drawing on after a restore does not touch the snapshot");
+
+	// An older checkpoint carries no activation fields: nothing activated (Convention 5).
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	PlayerSigilProgress.Acquire(0);
+	PlayerSigilProgress.Equip(0);
+	string olderJson = Json(PlayerSigilProgress.Collection)
+		.Replace(",\"Planetary\":[],\"EquippedPlanetIndex\":null", "")
+		.Replace("\"IsPlanetary\":false,\"ActivatedLevel\":0,\"LevelLimit\":0,", "");
+	Check(!olderJson.Contains("Planetary") && !olderJson.Contains("ActivatedLevel"), "a checkpoint written before the activation carries no such fields");
+	PlayerSigilProgress.RestoreFromCheckpoint(System.Text.Json.JsonSerializer.Deserialize<SigilCollectionState>(olderJson));
+	Check(PlayerSigilProgress.Collection.Planetary.Count == 0 && PlayerSigilProgress.Collection.EquippedPlanetIndex == null && PlayerSigilProgress.Equipped?.SigilIndex == 0, "and restores nothing activated, its slot intact");
+
+	// The cost: section 8's measurement, on the largest sigil, within this run. Reaches for the fields an ordinary bet reads.
+	const int Bets = 3_000_000;
+	var rng = new Random(5);
+	var t0 = new DateTime(2009, 3, 21, 0, 0, 0, DateTimeKind.Utc);
+	var events = new Scripts.Finance.BetTransactionEvent[65536];
+	for (int i = 0; i < events.Length; i++) { int roll = rng.Next(0, 100); events[i] = Bet(roll, roll < 50, 50, t0.AddSeconds(i)); }
+
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	for (int k = 0; k < PlanetarySquares.SigilCount; k++) PlayerSigilProgress.Acquire(k);
+	PlayerSigilProgress.Equip(PlanetarySquares.SigilCount - 1);
+	for (int i = 0; i < 100_000; i++) PlayerSigilProgress.RegisterPlayerBet(events[i & 0xFFFF]);
+	long bytesBefore = GC.GetAllocatedBytesForCurrentThread();
+	var timer = Stopwatch.StartNew();
+	for (int i = 0; i < Bets; i++) PlayerSigilProgress.RegisterPlayerBet(events[i & 0xFFFF]);
+	timer.Stop();
+	double ns = timer.Elapsed.TotalMilliseconds * 1e6 / Bets;
+	double bytes = (double)(GC.GetAllocatedBytesForCurrentThread() - bytesBefore) / Bets;
+	Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  a sigil's ordinary bet, no activation running: {ns:F1} ns and {bytes:F2} bytes"));
+	Check(bytes < 8, "it allocates nothing beyond what completed passes do");
+
+	// The same on an activation, for comparison within this run.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	OwnPair(6, 95, 95);
+	PlayerSigilProgress.StartActivation(6);
+	var moon = PlayerSigilProgress.Equipped;
+	for (int i = 0; i < 100_000; i++) PlayerSigilProgress.RegisterPlayerBet(events[i & 0xFFFF]);
+	bytesBefore = GC.GetAllocatedBytesForCurrentThread();
+	timer.Restart();
+	for (int i = 0; i < Bets; i++) PlayerSigilProgress.RegisterPlayerBet(events[i & 0xFFFF]);
+	timer.Stop();
+	double nsActivation = timer.Elapsed.TotalMilliseconds * 1e6 / Bets;
+	bytes = (double)(GC.GetAllocatedBytesForCurrentThread() - bytesBefore) / Bets;
+	Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  an activation's ordinary bet, the Moon at 50%: {nsActivation:F1} ns and {bytes:F2} bytes"));
+	Check(bytes < 8 && !moon.IsComplete, "and the activation's path allocates nothing either, and was still drawing");
+
+	// A slot holding a finished sigil, on every later bet: an early return, with nothing searched.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	PlayerSigilProgress.Acquire(0);
+	PlayerSigilProgress.Equip(0);
+	foreach (var set in PlayerSigilProgress.Find(0).Sets) { set.PassesByChance[95] = 9499; set.PassesCompleted = 9499; }
+	var finished = PlayerSigilProgress.Find(0);
+	PlayChance(95, () => finished.IsComplete);
+	bytesBefore = GC.GetAllocatedBytesForCurrentThread();
+	for (int i = 0; i < Bets; i++) { PlayerSigilProgress.RegisterPlayerBet(events[i & 0xFFFF]); _ = PlayerSigilProgress.MustChooseSigil; }
+	Check(GC.GetAllocatedBytesForCurrentThread() == bytesBefore, "with a finished sigil in the slot and nothing else to play, a bet allocates nothing: the clock can run on at full rate");
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+}
+
+Console.WriteLine("\n17. Pr-21: what a completion does, and the level stop (D-GN.31, D-GN.32)");
+{
+	void Finish(SigilProgressState sigil)
+	{
+		foreach (var set in sigil.Sets) { set.PassesByChance[95] = 9499; set.PassesCompleted = 9499; }
+		PlayChance(95, () => sigil.IsComplete);
+	}
+
+	// Stop mode, something else to play.
+	PlayerSigilProgress.SetAutoSwitchOnCompletion(false);
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	PlayerSigilProgress.Acquire(0);
+	PlayerSigilProgress.Acquire(2);
+	PlayerSigilProgress.Equip(0);
+	var aquarius = PlayerSigilProgress.Find(0);
+	Check(!PlayerSigilProgress.MustChooseSigil && !PlayerSigilProgress.DrawsNothing, "drawing: nothing to choose, no warning");
+	Check(PlayerSigilProgress.StopFor(SigilBetOutcome.None, true, true) == SigilStop.None, "and no stop on a bet that did nothing, with both switches on");
+	Finish(aquarius);
+	Check(PlayerSigilProgress.MustChooseSigil && PlayerSigilProgress.DrawsNothing && PlayerSigilProgress.Equipped == aquarius, "Stop mode: the completing bet leaves it in the slot, and the player must choose");
+	Check(PlayerSigilProgress.StopFor(PlayerSigilProgress.LastOutcome, false, false) == SigilStop.SigilCompleted, "the stop fires with both switches off: it is not one of them");
+	Check(PlayerSigilProgress.Equip(2) && !PlayerSigilProgress.MustChooseSigil && !PlayerSigilProgress.DrawsNothing, "changing the slot lifts the refusal");
+
+	// Stop mode, nothing else to play: no stop, no refusal, and the warning's condition.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	PlayerSigilProgress.Acquire(0);
+	PlayerSigilProgress.Equip(0);
+	aquarius = PlayerSigilProgress.Find(0);
+	Finish(aquarius);
+	Check(!PlayerSigilProgress.MustChooseSigil && PlayerSigilProgress.DrawsNothing, "only that sigil owned: no refusal, so the clock cannot freeze; the warning's condition holds");
+	Check(PlayerSigilProgress.StopFor(PlayerSigilProgress.LastOutcome, false, false) == SigilStop.None, "and no stop");
+	PlayerSigilProgress.Acquire(2);
+	Check(PlayerSigilProgress.MustChooseSigil && PlayerSigilProgress.Equipped == aquarius, "acquiring something to play then asks for the choice, in Stop mode, without changing the slot");
+
+	// An open activation counts as something else to play in Stop mode.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	OwnPair(0, 95, 95);
+	foreach (int s in new[] { 0, 1 }) { var sigil = PlayerSigilProgress.Find(s); foreach (var set in sigil.Sets) { set.PassesCompleted = 9500; set.Finished = true; } sigil.CompletedAtUtc = T0; }
+	PlayerSigilProgress.RestoreFromCheckpoint(PlayerSigilProgress.CaptureForCheckpoint());
+	Check(!PlayerSigilProgress.Equip(0) && PlayerSigilProgress.Equipped == null, "both Saturn sigils finished: neither can be played");
+	Check(PlayerSigilProgress.DrawsNothing && !PlayerSigilProgress.MustChooseSigil, "an empty slot is the warning's condition too, and never a refusal: nothing was completed");
+	Check(PlayerSigilProgress.StartActivation(0), "yet the activation can start: both violet is what D-GN.30's last level needs");
+
+	// Automatic: the least played, alphabetical on a tie, never an activation.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	PlayerSigilProgress.SetAutoSwitchOnCompletion(true);
+	foreach (int s in new[] { 0, 8, 2, 4 }) PlayerSigilProgress.Acquire(s);
+	Check(PlayerSigilProgress.Equipped == null, "automatic mode leaves an empty slot empty: nothing was completed");
+	PlayerSigilProgress.Equip(0);
+	PlayerSigilProgress.Find(8).BetsPlaced = 500;
+	PlayerSigilProgress.Find(2).BetsPlaced = 40;
+	PlayerSigilProgress.Find(4).BetsPlaced = 7;
+	aquarius = PlayerSigilProgress.Find(0);
+	Finish(aquarius);
+	var completingOutcome = PlayerSigilProgress.LastOutcome;
+	Check(PlayerSigilProgress.Equipped.SigilIndex == 4 && !PlayerSigilProgress.MustChooseSigil && !PlayerSigilProgress.DrawsNothing, "automatic: the slot takes the owned incomplete sigil with the fewest bets (7, not 40 or 500)");
+	Check(PlayerSigilProgress.LastDrawn == aquarius && (completingOutcome & SigilBetOutcome.SigilCompleted) != 0, "the bet still reports the sigil it completed, so the log line cannot describe the next one");
+	Check(PlayerSigilProgress.StopFor(completingOutcome, false, false) == SigilStop.None, "and the run goes on");
+	// A tie: alphabetical by displayed name. Aries (4) before Sagittarius (2), which before Libra (8) would be wrong either way.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	foreach (int s in new[] { 2, 8, 4, 0 }) PlayerSigilProgress.Acquire(s);
+	PlayerSigilProgress.Equip(0);
+	aquarius = PlayerSigilProgress.Find(0);
+	Finish(aquarius);
+	Check(PlayerSigilProgress.Equipped.SigilIndex == 4, $"a tie goes to the first by name, whatever the order acquired: {PlanetarySquares.NameOfSigil(PlayerSigilProgress.Equipped.SigilIndex)}");
+
+	// It never starts an activation.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	OwnPair(1, 5, 5);
+	PlayerSigilProgress.Acquire(0);
+	foreach (int s in new[] { 2, 3 }) { var sigil = PlayerSigilProgress.Find(s); foreach (var set in sigil.Sets) { set.PassesCompleted = 9500; set.Finished = true; set.PassesByChance[95] = 9500; } sigil.CompletedAtUtc = T0; }
+	PlayerSigilProgress.RestoreFromCheckpoint(PlayerSigilProgress.CaptureForCheckpoint());
+	PlayerSigilProgress.Equip(0);
+	aquarius = PlayerSigilProgress.Find(0);
+	Finish(aquarius);
+	Check(PlayerSigilProgress.NextOpenLevel(1) > 0 && PlayerSigilProgress.Equipped == aquarius && PlayerSigilProgress.FindPlanetary(1) == null, "automatic with only an open activation left: it stays, and starts no activation");
+	Check(!PlayerSigilProgress.MustChooseSigil && PlayerSigilProgress.DrawsNothing, "no refusal, in automatic mode, and the warning's condition holds");
+	PlayerSigilProgress.SetAutoSwitchOnCompletion(false);
+	Check(PlayerSigilProgress.MustChooseSigil, "turning it back to Stop asks for the choice, since the activation could be chosen by hand");
+	PlayerSigilProgress.SetAutoSwitchOnCompletion(true);
+
+	// Acquiring, or turning the toggle on, with a finished sigil waiting ("cuando lo tenga").
+	Check(PlayerSigilProgress.Acquire(8) && PlayerSigilProgress.Equipped.SigilIndex == 8, "automatic: acquiring while a finished sigil waits takes the new one");
+	PlayerSigilProgress.SetAutoSwitchOnCompletion(false);
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	PlayerSigilProgress.Acquire(0);
+	PlayerSigilProgress.Acquire(4);
+	PlayerSigilProgress.Equip(0);
+	aquarius = PlayerSigilProgress.Find(0);
+	Finish(aquarius);
+	Check(PlayerSigilProgress.Equipped == aquarius && PlayerSigilProgress.SetAutoSwitchOnCompletion(true) && PlayerSigilProgress.Equipped.SigilIndex == 4, "turning the toggle on moves on at once");
+	Check(!PlayerSigilProgress.SetAutoSwitchOnCompletion(true), "setting it to what it is does nothing");
+	PlayerSigilProgress.SetAutoSwitchOnCompletion(false);
+
+	// A planetary sigil reaching its limit is a completion like a sigil finishing.
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+	OwnPair(0, 1, 1);
+	PlayerSigilProgress.Acquire(4);
+	PlayerSigilProgress.StartActivation(0);
+	var planetary = PlayerSigilProgress.Equipped;
+	PlayChance(95, () => planetary.IsComplete);
+	var limitOutcome = PlayerSigilProgress.LastOutcome;
+	Check((limitOutcome & SigilBetOutcome.SigilCompleted) != 0 && PlayerSigilProgress.MustChooseSigil, "a planetary sigil at its highest open level asks for the same choice, in Stop mode");
+	Check((limitOutcome & SigilBetOutcome.SigilLevelAcquired) != 0, "and that bet was a level acquired too: the two coincide there (D-GN.32)");
+	PlayerSigilProgress.ResetToPreGenesisDefaults();
+
+	// The level stop: exactly MaxLevel times a sigil's life at any chance, and the set's level alone never fires it.
+	foreach (int chance in new[] { 95, 50, 1 })
+	{
+		var counted = SigilRules.NewProgress();
+		long acquired = 0, reached = 0;
+		int lastLevel = 0;
+		bool everyRiseFlagged = true, noOtherFlagged = true;
+		while (!counted.IsComplete)
+		{
+			var res = engine.Play(1m, chance, false);
+			var o = SigilRules.ApplyBet(counted, res.Roll, res.IsWin, chance, 1m, DateTime.UnixEpoch);
+			bool flagged = (o & SigilBetOutcome.SigilLevelAcquired) != 0;
+			if ((o & SigilBetOutcome.LevelReached) != 0) reached++;
+			if (flagged) acquired++;
+			if ((o & SigilBetOutcome.SetPassCompleted) != 0)
+			{
+				int level = SigilRules.SigilLevel(counted);
+				everyRiseFlagged &= level == lastLevel || flagged;
+				noOtherFlagged &= level != lastLevel || !flagged;
+				lastLevel = level;
+			}
+		}
+		Check(acquired == SigilRules.MaxLevel && reached == 3L * SigilRules.MaxLevel && everyRiseFlagged && noOtherFlagged,
+			$"at {chance}%: {acquired} levels acquired against {reached} set levels reached, flagged on exactly the bets the sigil's level rose");
+	}
+
+	// Convention 16: the same counting flags a set's rise that does not lift the lowest, if the rule were read from LevelReached.
+	Check(3L * SigilRules.MaxLevel != SigilRules.MaxLevel, "counting by LevelReached instead would read 285, not 95 (the check above can fail)");
+
+	// The priority, on one bet: the block path comes first in the engines; here a level before a set, and a choice before both.
+	Check(PlayerSigilProgress.StopFor(SigilBetOutcome.SetPassCompleted | SigilBetOutcome.LevelReached | SigilBetOutcome.SigilLevelAcquired, true, true) == SigilStop.LevelAcquired, "a level is reported before a set");
+	Check(PlayerSigilProgress.StopFor(SigilBetOutcome.SetPassCompleted | SigilBetOutcome.LevelReached | SigilBetOutcome.SigilLevelAcquired, false, true) == SigilStop.SetCompleted, "with the level switch off, the set");
+	Check(PlayerSigilProgress.StopFor(SigilBetOutcome.SetPassCompleted | SigilBetOutcome.LevelReached, true, false) == SigilStop.None, "a set's level alone does not stop the level switch: it is the sigil's (D-GN.32)");
+}
+
 Console.WriteLine(failures == 0 ? "\nALL CHECKS PASS" : $"\n{failures} CHECK(S) FAILED");
 return failures;
+
+// The exact mean cost of a repeating list of targets at a chance above LossStreakMaxChance, Low, by the game's roll rule: a
+// Markov chain over V (1–9). Exists because Predicted treats targets as independent, which on the larger squares is wrong in
+// the second digit (plan §10.10). A check against this can pass only if the code draws what the rule says.
+static class ExactChain
+{
+	private static int Root(int x) => x % 9 == 0 ? 9 : x % 9;
+	private static int Wrap(int x) { int m = ((x % 9) + 9) % 9; return m == 0 ? 9 : m; }
+
+	public static List<int> Targets(PlanetarySquare q, SigilKind k) =>
+		Enumerable.Range(0, q.N).SelectMany(set => Enumerable.Range(0, q.N).Select(s => q.NumberAt(k, set, s))).ToList();
+
+	private static double[] Solve(double[,] a, double[] b)
+	{
+		int n = b.Length;
+		for (int i = 0; i < n; i++)
+		{
+			int p = i;
+			for (int r = i + 1; r < n; r++) if (Math.Abs(a[r, i]) > Math.Abs(a[p, i])) p = r;
+			for (int c = 0; c < n; c++) (a[i, c], a[p, c]) = (a[p, c], a[i, c]);
+			(b[i], b[p]) = (b[p], b[i]);
+			for (int r = 0; r < n; r++)
+			{
+				if (r == i) continue;
+				double f = a[r, i] / a[i, i];
+				if (f == 0) continue;
+				for (int c = i; c < n; c++) a[r, c] -= f * a[i, c];
+				b[r] -= f * b[i];
+			}
+		}
+		return Enumerable.Range(0, n).Select(i => b[i] / a[i, i]).ToArray();
+	}
+
+	// One target: the mean bets to the hit from each V, and where V lands on the hit.
+	private static (double[] Mean, double[,] Exit) Step(int target, int chance)
+	{
+		var stay = new double[9, 9];
+		var hit = new double[9, 9];
+		for (int v = 1; v <= 9; v++)
+			for (int roll = 0; roll < 100; roll++)
+			{
+				int r = Root(roll);
+				if (roll >= chance) { stay[v - 1, Wrap(v - r) - 1] += 0.01; continue; }
+				int after = Wrap(v + r);
+				bool spells = target > 9 && target % 10 != 0;
+				bool isHit = !spells ? after == (target <= 9 ? target : target / 10) : v == target / 10 && r == target % 10;
+				(isHit ? hit : stay)[v - 1, after - 1] += 0.01;
+			}
+
+		var a = new double[9, 9];
+		for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) a[i, j] = (i == j ? 1 : 0) - stay[i, j];
+		var mean = Solve((double[,])a.Clone(), Enumerable.Repeat(1.0, 9).ToArray());
+		var exit = new double[9, 9];
+		for (int col = 0; col < 9; col++)
+		{
+			var x = Solve((double[,])a.Clone(), Enumerable.Range(0, 9).Select(i => hit[i, col]).ToArray());
+			for (int i = 0; i < 9; i++) exit[i, col] = x[i];
+		}
+		return (mean, exit);
+	}
+
+	// The long-run mean bets per cycle of the list, from V's stationary distribution at the cycle's start.
+	public static double CycleCost(IReadOnlyList<int> targets, int chance)
+	{
+		var steps = targets.Select(t => Step(t, chance)).ToList();
+		var d = Enumerable.Repeat(1.0 / 9, 9).ToArray();
+		double cost = 0;
+		for (int cycle = 0; cycle < 400; cycle++)
+		{
+			cost = 0;
+			foreach (var (mean, exit) in steps)
+			{
+				cost += Enumerable.Range(0, 9).Sum(i => d[i] * mean[i]);
+				var next = new double[9];
+				for (int i = 0; i < 9; i++) for (int j = 0; j < 9; j++) next[j] += d[i] * exit[i, j];
+				d = next;
+			}
+		}
+		return cost;
+	}
+}

@@ -71,6 +71,9 @@ namespace UI.StrategyControlPanel
 		[Export]
 		private Button _stopOnSigilSetCompletedToggle;
 
+		[Export]
+		private Button _stopOnSigilLevelAcquiredToggle;
+
 		private double _lastStopOnBlockMinedPressAt;
 		private double _lastInsistOnProfitPressAt;
 		private double _lastInsistOnLossPressAt;
@@ -120,6 +123,7 @@ namespace UI.StrategyControlPanel
 
 		public bool StopOnBlockMinedEnabled => _stopOnBlockMinedToggle?.ButtonPressed ?? false;
 		public bool StopOnSigilSetCompletedEnabled => _stopOnSigilSetCompletedToggle?.ButtonPressed ?? false;
+		public bool StopOnSigilLevelAcquiredEnabled => _stopOnSigilLevelAcquiredToggle?.ButtonPressed ?? false;
 		public bool AutoRechargeEnabled => _autoRechargeToggle?.ButtonPressed ?? true;
 		// Each insist switch is gated on ITS OWN stop amount — insisting on a stop that is not armed is
 		// meaningless. In bot strategy mode both are forced ON (see ApplyStrategyModeRestrictions).
@@ -169,6 +173,7 @@ namespace UI.StrategyControlPanel
 			_stopOnBlockMinedToggle.ButtonPressed = config.StopOnBlockMined;
 			_stopOnBlockMinedToggle.Text = config.StopOnBlockMined ? "Stop Block: ON" : "Stop Block: OFF";
 			SetStopOnSigilSetCompleted(config.StopOnSigilSetCompleted);
+			SetStopOnSigilLevelAcquired(config.StopOnSigilLevelAcquired);
 			_autoRechargeToggle.ButtonPressed = autoRechargeEnabled;
 			_autoRechargeToggle.Text = autoRechargeEnabled ? "Auto Recharge: ON" : "Auto Recharge: OFF";
 			_insistAfterStopOnProfitToggle.ButtonPressed = config.InsistAfterStopOnProfit;
@@ -194,6 +199,7 @@ namespace UI.StrategyControlPanel
 			_stopOnBlockMinedToggle.ButtonPressed = false;
 			_stopOnBlockMinedToggle.Text = "Stop Block: OFF";
 			SetStopOnSigilSetCompleted(false);
+			SetStopOnSigilLevelAcquired(false);
 			_autoRechargeToggle.ButtonPressed = true;
 			_autoRechargeToggle.Text = "Auto Recharge: ON";
 			_insistAfterStopOnProfitToggle.ButtonPressed = false;
@@ -327,6 +333,7 @@ namespace UI.StrategyControlPanel
 			_numberOfBetsInput.TextChanged += _ => OnStrategyInputChanged();
 			_stopOnBlockMinedToggle.Pressed += OnStopOnBlockMinedTogglePressed;
 			_stopOnSigilSetCompletedToggle.Pressed += OnStopOnSigilSetCompletedTogglePressed;
+			_stopOnSigilLevelAcquiredToggle.Pressed += OnStopOnSigilLevelAcquiredTogglePressed;
 			_autoRechargeToggle.Pressed += OnAutoRechargeTogglePressed;
 			_insistAfterStopOnProfitToggle.Pressed += OnInsistAfterStopOnProfitTogglePressed;
 			_insistAfterStopOnLossToggle.Pressed += OnInsistAfterStopOnLossTogglePressed;
@@ -422,6 +429,24 @@ namespace UI.StrategyControlPanel
 
 			_stopOnSigilSetCompletedToggle.ButtonPressed = enabled;
 			_stopOnSigilSetCompletedToggle.Text = enabled ? "Stop Set: ON" : "Stop Set: OFF";
+		}
+
+		// Graphic Numerology (D-GN.32), the same shape: it ends the run or the burst, and the next click is the player's.
+		private void OnStopOnSigilLevelAcquiredTogglePressed()
+		{
+			SetStopOnSigilLevelAcquired(!_botStrategyMode && _stopOnSigilLevelAcquiredToggle.ButtonPressed);
+			StrategyConfigChanged?.Invoke();
+		}
+
+		private void SetStopOnSigilLevelAcquired(bool enabled)
+		{
+			if (_stopOnSigilLevelAcquiredToggle == null)
+			{
+				return;
+			}
+
+			_stopOnSigilLevelAcquiredToggle.ButtonPressed = enabled;
+			_stopOnSigilLevelAcquiredToggle.Text = enabled ? "Stop Level: ON" : "Stop Level: OFF";
 		}
 
 		private void OnAutoRechargeTogglePressed()
@@ -574,6 +599,15 @@ namespace UI.StrategyControlPanel
 				_stopOnSigilSetCompletedToggle.Disabled = _runLocked || _botStrategyMode;
 			}
 
+			if (_stopOnSigilLevelAcquiredToggle != null)
+			{
+				if (_botStrategyMode)
+				{
+					SetStopOnSigilLevelAcquired(false);
+				}
+				_stopOnSigilLevelAcquiredToggle.Disabled = _runLocked || _botStrategyMode;
+			}
+
 			if (_autoRechargeToggle != null)
 			{
 				if (_botStrategyMode)
@@ -635,6 +669,7 @@ namespace UI.StrategyControlPanel
 				StopOnLoss = ParsePositiveDecimal(_stopOnLossInput.Text),
 				StopOnBlockMined = !_botStrategyMode && StopOnBlockMinedEnabled,
 				StopOnSigilSetCompleted = !_botStrategyMode && StopOnSigilSetCompletedEnabled,
+				StopOnSigilLevelAcquired = !_botStrategyMode && StopOnSigilLevelAcquiredEnabled,
 				InsistAfterStopOnProfit = InsistAfterStopOnProfitEnabled,
 				InsistAfterStopOnLoss = InsistAfterStopOnLossEnabled
 			};

@@ -35,6 +35,7 @@ public partial class UserSettingsService : Node
 	public static class Keys
 	{
 		public const string DiceBetView = "diceGame.betView";
+		public const string SigilAutoSwitch = "diceGame.sigilAutoSwitch";
 		public const string ExplorerPace = "betsExplorer.pace";
 		public const string ExplorerSpeed = "betsExplorer.speed";
 		public const string ExplorerPerBetCredits = "betsExplorer.perBetCredits";
@@ -84,6 +85,15 @@ public partial class UserSettingsService : Node
 	{
 		DiceGameSection section = _settings.DiceGame ??= new DiceGameSection();
 		Change(Keys.DiceBetView, section.BetView, value, () => section.BetView = value);
+	}
+
+	// Graphic Numerology (D-GN.31): when a sigil completes, take the least played one, or stop. Null = stop, the default.
+	public bool? GetSigilAutoSwitch() => _settings.DiceGame?.SigilAutoSwitch;
+
+	public void SetSigilAutoSwitch(bool value)
+	{
+		DiceGameSection section = _settings.DiceGame ??= new DiceGameSection();
+		Change(Keys.SigilAutoSwitch, section.SigilAutoSwitch, value, () => section.SigilAutoSwitch = value);
 	}
 
 	// --- BetsHistoryExplorer --------------------------------------------------------------------------------------
@@ -369,6 +379,7 @@ public partial class UserSettingsService : Node
 	internal sealed class DiceGameSection
 	{
 		public string? BetView { get; set; }
+		public bool? SigilAutoSwitch { get; set; }
 	}
 
 	internal sealed class BetsExplorerSection

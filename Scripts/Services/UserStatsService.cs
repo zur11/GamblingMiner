@@ -56,6 +56,7 @@ public partial class UserStatsService : Node
 	public override void _Ready()
 	{
 		Scripts.Diagnostics.BootProbe.AutoloadStarts(2, nameof(UserStatsService));
+		Scripts.Numerology.PlayerSigilProgress.NoticeFired += OnSigilNoticeFired;   // an autoload: it never unsubscribes
 		AnnounceSentinelArming();
 		Stats = new UserBettingStats();
 		if (EnableHistoryPersistence)
@@ -288,10 +289,52 @@ public partial class UserStatsService : Node
 	// passes, a line every ~28 bets, against 95 levels per set whatever the chance.
 	private static void LogSigilOutcome(Scripts.Numerology.SigilBetOutcome outcome)
 	{
-		var state = Scripts.Numerology.PlayerSigilProgress.Equipped;
+		// The record this bet drew: the slot may already hold the next sigil (D-GN.31), and these lines describe this one.
+		var state = Scripts.Numerology.PlayerSigilProgress.LastDrawn;
+		var collection = Scripts.Numerology.PlayerSigilProgress.Collection;
+		if (state.IsPlanetary && (outcome & Scripts.Numerology.SigilBetOutcome.SigilLevelAcquired) != 0)
+			GD.Print("[Sigil] level activated — " + Scripts.Numerology.SigilRules.NameOf(state) + " at " + state.ActivatedLevel + " — " + Scripts.Numerology.SigilRules.Describe(collection));
 		if ((outcome & Scripts.Numerology.SigilBetOutcome.SigilCompleted) != 0)
-			GD.Print("[Sigil] SIGIL COMPLETE — " + Scripts.Numerology.SigilRules.DescribeCompleted(state));
+			GD.Print(state.IsPlanetary
+				? "[Sigil] PLANETARY AT ITS HIGHEST OPEN LEVEL — " + Scripts.Numerology.SigilRules.Describe(state)
+				: "[Sigil] SIGIL COMPLETE — " + Scripts.Numerology.SigilRules.DescribeCompleted(state));
+		if (state != Scripts.Numerology.PlayerSigilProgress.Equipped)
+			GD.Print("[Sigil] auto-switched — " + Scripts.Numerology.SigilRules.NameOf(state) + " → " + Scripts.Numerology.SigilRules.NameOf(Scripts.Numerology.PlayerSigilProgress.Equipped) + " — " + Scripts.Numerology.SigilRules.Describe(collection));
 		LogSigilLevelOrRestart(outcome, state);
+	}
+
+	// D-GN.29 — fired inside the bet. Printed for the measurement; the scenes draw it from the same event.
+	private static void OnSigilNoticeFired(int planetIndex) =>
+		GD.Print("[Sigil] notice fired — Activate " + Scripts.Numerology.PlanetarySquares.All[planetIndex].PlanetarySigilName + " — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.Collection));
+
+	// Graphic Numerology (D-GN.10, D-GN.31, D-GN.32) — the stop a player bet asks for, for both bet paths, which differ only
+	// in the name they log. Called only while the session runs and the player is the active node: a bot draws no sigil.
+	public static void StopPlayerSessionForSigil(Scripts.Sessions.BaseBetSession session, Scripts.Numerology.SigilBetOutcome outcome, string path)
+	{
+		var config = session.SessionConfig;
+		var stop = Scripts.Numerology.PlayerSigilProgress.StopFor(outcome, config?.StopOnSigilLevelAcquired == true, config?.StopOnSigilSetCompleted == true);
+		if (stop == Scripts.Numerology.SigilStop.None)
+			return;
+
+		var (reason, what) = stop switch
+		{
+			Scripts.Numerology.SigilStop.SigilCompleted => (Scripts.Betting.IBettingStrategy.StopReason.StopOnSigilCompleted, "sigil completed"),
+			Scripts.Numerology.SigilStop.LevelAcquired => (Scripts.Betting.IBettingStrategy.StopReason.StopOnSigilLevelAcquired, "level acquired"),
+			_ => (Scripts.Betting.IBettingStrategy.StopReason.StopOnSigilSetCompleted, "set completed")
+		};
+		session.Stop(reason);
+		GD.Print("[Sigil] STOP on " + what + " (" + path + ") — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.LastDrawn));
+	}
+
+	// D-GN.31 — the gate both bet paths pass before a bet. Returns whether the bet was refused, which also ends the session.
+	public static bool RefusePlayerBetForSigil(Scripts.Sessions.BaseBetSession session, string path)
+	{
+		if (!Scripts.Numerology.PlayerSigilProgress.MustChooseSigil)
+			return false;
+
+		session.Stop(Scripts.Betting.IBettingStrategy.StopReason.StopOnSigilCompleted);
+		GD.Print("[Sigil] bet refused (" + path + "): a finished sigil is in the slot — " + Scripts.Numerology.SigilRules.Describe(Scripts.Numerology.PlayerSigilProgress.Equipped));
+		return true;
 	}
 
 	[System.Diagnostics.Conditional("DEBUG")]

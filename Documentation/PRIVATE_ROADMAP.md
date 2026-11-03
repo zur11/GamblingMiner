@@ -435,6 +435,30 @@ speed its frame cannot hold, and the readout would again promise what does not r
 measured delivery instead of a constant is the known answer; it needs a second machine, or a deliberate
 throttle to stand in for one.
 
+### Sigil auto-selection — settings for what comes next (BASIC MODE polish)
+
+**Status: open, named 2026-11-02 by the developer (Graphic Numerology D-GN.31, D-GN.35).** When a sigil completes, the player chooses between
+stopping and an automatic switch, on by default, and the automatic choice is **a provisional default, to be optimized**: the least played
+sigil the player owns, or an open planetary activation at a lower level, the zodiac sigil winning at the same level. For the Basic Mode polish,
+design it properly, with more levels of personalization. The developer's direction: the player can **personalize the change of sigil**, both
+when one finishes and when one reaches a chosen level, and then **leave the auto-selection settings to choose the next**. One thing stands
+whatever the design: with nothing left to play nothing stops and nothing is refused, since only bets move the clock. Spec of what exists:
+`AIHelperFiles/graphic_numerology-plan.md` §8.2.
+
+### Sigils in the historical narrative — always something to draw, and a reason to draw it (BASIC MODE polish)
+
+**Status: open, named 2026-11-02 by the developer (Graphic Numerology D-GN.36). This is what the fun of the sigils rests on, not a detail of the
+polish.** The game should be designed so that **the player always has a sigil to draw**. If at some stage they have none, the game either
+does not mention sigils at all, or mentions them together with a way to get one, **depending on how each stage of the game is designed**.
+This is historical narrative: when sigils reach the player, and through what, is part of the story the game tells of its era.
+
+**Why it matters:** it is what has to hold up both **the logic that makes the game fun** and **the sense of playing different sigils**. A player
+who owns one finished sigil and has nowhere to go has met a dead end the design allowed. A player with many sigils and no reason to prefer one has
+a list, not a choice. So this objective answers, stage by stage: which sigils the player can have, how each arrives, and why this one rather
+than that one now. Until it does, "levels are not advancing" exists only as a DEV warning (D-GN.36), because **a player should never need to
+read that sentence**. It connects with the channels and prices left to the next plan (`AIHelperFiles/sigil_benefits-proposal.md`) and with
+the auto-selection objective above.
+
 ### UI built in scenes — code-built controls move into `.tscn` (BASIC MODE refinement)
 
 **Status: open, named 2026-10-21 by the developer (mini-plan 27 unit 3b).** Many controls are created in C# rather
